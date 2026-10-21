@@ -1251,8 +1251,7 @@ impl Shell {
                 }
             })
             .child(tooltip(
-                back.left(nav_left)
-                    .on_click(dispatch::<GoBack>),
+                back.left(nav_left).on_click(dispatch::<GoBack>),
                 "Back",
                 Some("⌘["),
                 Side::Bottom,
