@@ -1154,7 +1154,9 @@ impl Host for LocalHost {
             "apply-patch" => git::apply_cloud_patch(&params)?,
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-init-repo"
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
-            | "git-checkout" | "git-cat-file" | "git-file-url" => git::fetch(endpoint, &params)?,
+            | "git-checkout" | "git-cat-file" | "git-review-patch" | "git-file-url" => {
+                git::fetch(endpoint, &params)?
+            }
             "create-worktree" => self.create_worktree(&params)?,
             "set-worktree-owner-thread" | "worktree-set-owner-thread" => {
                 let worktree = params["worktree"].as_str().context("missing worktree")?;
