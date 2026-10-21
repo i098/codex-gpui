@@ -5,7 +5,10 @@ use crate::{
     NextChat, OpenFolder, OpenSettings, PreviousChat, Quit, ShowAll, ShowKeyboardShortcuts,
     ToggleChangesPanel, ToggleSidebar, Zoom,
 };
-use gpui::{App, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType, actions};
+use gpui::{
+    App, Context, Div, InteractiveElement as _, KeyBinding, Menu, MenuItem, OsAction,
+    SystemMenuType, actions,
+};
 use ui::{
     Copy, Cut, DeleteSelection, OpenBackgroundTerminal, Paste, PasteAndMatchStyle, Redo, SelectAll,
     Undo,
@@ -51,6 +54,14 @@ pub(crate) fn init(cx: &mut App) {
             });
         }
     });
+}
+
+pub(crate) fn actions(root: Div, cx: &mut Context<crate::Root>) -> Div {
+    if ui::native_text::is_speaking(cx) {
+        root.on_action(|_: &ui::StopSpeaking, _, cx| ui::native_text::stop_speaking(cx))
+    } else {
+        root
+    }
 }
 
 fn bring_all_to_front(cx: &mut App) {
@@ -100,6 +111,11 @@ pub fn menus() -> Vec<Menu> {
             MenuItem::action("Delete", DeleteSelection),
             MenuItem::separator(),
             MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
+            MenuItem::separator(),
+            MenuItem::submenu(Menu::new("Speech").items([
+                MenuItem::action("Start Speaking", ui::StartSpeaking),
+                MenuItem::action("Stop Speaking", ui::StopSpeaking),
+            ])),
         ]),
         Menu::new("View").items([
             MenuItem::action("Toggle Sidebar", ToggleSidebar),

@@ -587,6 +587,7 @@ pub struct Composer {
     history: editor::History,
     /// The right-click menu (Electron's native editable-field menu).
     context_menu: Option<crate::screens::thread::view::menu::ContextMenu>,
+    context_spelling: Option<(Range<usize>, String)>,
     is_selecting: bool,
     /// Shaped lines and editor bounds of the last paint, for hit testing.
     lines: Vec<WrappedLine>,
@@ -675,6 +676,7 @@ impl Composer {
             marked_range: None,
             history: editor::History::default(),
             context_menu: None,
+            context_spelling: None,
             is_selecting: false,
             lines: Vec::new(),
             bounds: None,
@@ -1134,6 +1136,7 @@ impl Composer {
         self.selected_range = s.len()..s.len();
         self.marked_range = None;
         self.history = editor::History::default();
+        self.context_spelling = None;
         self.slash.reset();
         self.end_search(cx);
         cx.notify();
@@ -1898,6 +1901,10 @@ impl Render for Composer {
                     this.insert("", window, cx);
                 }
             }))
+            .when(
+                cfg!(target_os = "macos") && !self.secret && !self.content.is_empty(),
+                |card| card.on_action(cx.listener(Self::speak_selection)),
+            )
             .on_action(self.request_listener(cx, Self::dismiss))
             .on_action(cx.listener(Self::complete_command))
             .on_action(cx.listener(Self::next_command))

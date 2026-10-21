@@ -25,6 +25,7 @@ pub mod fixture;
 pub mod focus;
 pub mod icon;
 pub mod motion;
+pub mod native_text;
 pub mod screens;
 pub mod settings_kit;
 pub mod toast;
@@ -73,7 +74,9 @@ actions!(
         Paste,
         PasteAndMatchStyle,
         DeleteSelection,
-        SelectAll
+        SelectAll,
+        StartSpeaking,
+        StopSpeaking,
     ]
 );
 

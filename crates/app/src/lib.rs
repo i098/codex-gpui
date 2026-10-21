@@ -5084,19 +5084,22 @@ fn generation_instructions(context: &str) -> String {
 impl Render for Root {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(login) = &self.login {
-            return div()
-                .size_full()
-                .relative()
-                .font_family(ui::SANS)
-                .track_focus(&self.focus)
-                .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
-                    this.close_window(window, cx);
-                }))
-                .on_action(|_: &Minimize, window, _| window.minimize_window())
-                .on_action(|_: &Zoom, window, _| window.zoom_window())
-                .child(login.clone())
-                .children(self.dialog.clone())
-                .into_any_element();
+            return native_menus::actions(
+                div()
+                    .size_full()
+                    .relative()
+                    .font_family(ui::SANS)
+                    .track_focus(&self.focus)
+                    .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
+                        this.close_window(window, cx);
+                    }))
+                    .on_action(|_: &Minimize, window, _| window.minimize_window())
+                    .on_action(|_: &Zoom, window, _| window.zoom_window())
+                    .child(login.clone())
+                    .children(self.dialog.clone()),
+                cx,
+            )
+            .into_any_element();
         }
         let content: AnyElement = match (&self.page, &self.split) {
             (_, Some(split)) if self.sidebar_automation.is_some() => {
@@ -5143,7 +5146,11 @@ impl Render for Root {
             .child(self.toaster.clone())
             .children(self.dialog.clone());
         let root = routes::actions(root, cx);
-        section_actions::actions(features::actions(root, cx), cx).into_any_element()
+        native_menus::actions(
+            section_actions::actions(features::actions(root, cx), cx),
+            cx,
+        )
+        .into_any_element()
     }
 }
 
