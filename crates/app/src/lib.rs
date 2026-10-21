@@ -16,6 +16,7 @@ mod routes;
 pub use routes::Route;
 mod search;
 mod section_actions;
+pub mod settings_import;
 pub mod updater;
 pub mod windows;
 
@@ -730,6 +731,7 @@ impl Root {
             .detach();
         root.bind_context_files(cx);
         root.connect(window, cx);
+        root.install_import(cx);
         root.load_projects(cx);
         windows::bind_root(window, cx);
         root
@@ -859,6 +861,7 @@ impl Root {
                 this.skills = skills;
                 this.models = models;
                 this.ready = true;
+                this.load_import_policy(cx);
                 this.select_route(cx);
                 this.sync(window, cx);
                 if bridge.is_acp() {
@@ -1007,6 +1010,7 @@ impl Root {
         }
         self.host = host;
         self.bind_context_files(cx);
+        if self.ready { self.load_import_policy(cx); }
         self.automations = None;
         self.load_projects(cx);
         if self.scheduled_route() {
@@ -2048,6 +2052,7 @@ impl Root {
             });
         }
     }
+
 
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
@@ -4221,6 +4226,7 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        self.on_import_event(&event, cx);
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             if matches!(&event, Event::Notification { method, params }
