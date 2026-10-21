@@ -831,6 +831,42 @@ pub(super) fn chip_color(t: &Theme) -> Hsla {
     crate::over(t.text_accent.opacity(0.8), t.text)
 }
 
+/// `text` cut to `max` with a trailing `…` (the longest prefix, without its trailing
+/// whitespace, that fits), or `text` itself when it fits.
+fn ellipsize(window: &Window, text: &str, size: Pixels, font: gpui::Font, max: Pixels) -> String {
+    let width = |s: &str| {
+        window
+            .text_system()
+            .layout_line(
+                s,
+                size,
+                &[TextRun {
+                    len: s.len(),
+                    font: font.clone(),
+                    color: gpui::black(),
+                    ..Default::default()
+                }],
+                None,
+            )
+            .width
+    };
+    if width(text) <= max {
+        return text.to_owned();
+    }
+    let cuts: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
+    let fits = |end: usize| width(&format!("{}…", text[..cuts[end]].trim_end())) <= max;
+    let (mut low, mut high) = (0, cuts.len());
+    while low < high {
+        let mid = (low + high).div_ceil(2);
+        if fits(mid.min(cuts.len() - 1)) {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    format!("{}…", text[..cuts[low.min(cuts.len() - 1)]].trim_end())
+}
+
 /// Shapes `content` (or the placeholder) for one paint: one run per stretch of plain, marked
 /// (underlined) or chip (`chip` color, weight 500) text.
 pub(super) fn shape(
@@ -842,8 +878,18 @@ pub(super) fn shape(
     window: &Window,
 ) -> Vec<WrappedLine> {
     let style = window.text_style();
+    let size = if composer.request_compact && !composer.secret {
+        px(13.)
+    } else {
+        FONT_SIZE
+    };
     let (s, color) = if composer.content.is_empty() {
-        (composer.placeholder.to_string(), placeholder)
+        // The placeholder is one line that `text-overflow: ellipsis` cuts.
+        let fitted = match width {
+            Some(width) => ellipsize(window, &composer.placeholder, size, style.font(), width),
+            None => composer.placeholder.to_string(),
+        };
+        (fitted, placeholder)
     } else {
         (
             if composer.secret {
@@ -895,13 +941,13 @@ pub(super) fn shape(
         .text_system()
         .shape_text(
             s.into(),
-            if composer.request_compact && !composer.secret {
-                px(13.)
-            } else {
-                FONT_SIZE
-            },
+            size,
             &runs,
-            width,
+            if composer.content.is_empty() {
+                None
+            } else {
+                width
+            },
             None,
         )
         .map(|lines| lines.into_iter().collect())
