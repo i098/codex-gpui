@@ -82,6 +82,29 @@ pub(super) fn problem_body(message: &'static str, t: &Theme) -> Div {
         .child(text(message, 13., 130. / 7., 430., t.text.opacity(0.65)))
 }
 
+pub(super) fn file_icon(file_name: &str, t: &Theme) -> crate::icon::Icon {
+    let extension = std::path::Path::new(file_name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("");
+    let dark = t.appearance == Appearance::Dark;
+    let (name, color) = if extension.eq_ignore_ascii_case("py") {
+        ("diff-file-python", if dark { 0x69b1ff } else { 0x1a85d4 })
+    } else if [
+        "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tif", "tiff",
+    ]
+    .iter()
+    .any(|suffix| extension.eq_ignore_ascii_case(suffix))
+    {
+        ("diff-file-image", if dark { 0xff678d } else { 0xd32a61 })
+    } else if extension.eq_ignore_ascii_case("txt") {
+        ("diff-file-text", if dark { 0xadadb1 } else { 0x84848a })
+    } else {
+        ("diff-file-default", if dark { 0xadadb1 } else { 0x84848a })
+    };
+    icon(name, 16., rgb(color).into())
+}
+
 #[derive(Default)]
 pub(super) struct TextField {
     pub(super) text: String,
@@ -216,6 +239,9 @@ impl FileDiff {
         }
         if hunks.is_empty() && problem.is_none() && !diff.is_empty() {
             hunks.push(Hunk {
+                layout: Default::default(),
+                old_start: 0,
+                new_start: 0,
                 separator: None,
                 lines: diff
                     .lines()
@@ -263,6 +289,13 @@ impl FileDiff {
             hunks,
             open: true,
             problem,
+            raw: diff.to_owned(),
+            raw_kind: None,
+            full: None,
+            full_loading: false,
+            full_error: None,
+            original_hunks: None,
+            pending_expansion: None,
         }
     }
 }
@@ -484,12 +517,6 @@ impl DiffPanel {
         cx: &mut Context<Self>,
     ) -> Div {
         let t = cx.theme().clone();
-        let python = rgb(if t.appearance == Appearance::Dark {
-            0x69b1ff
-        } else {
-            0x1a85d4
-        })
-        .into();
         let focus = self
             .filter_focus
             .get_or_insert_with(|| cx.focus_handle())
@@ -562,19 +589,7 @@ impl DiffPanel {
                             cx.notify();
                         }
                     }))
-                    .child(icon(
-                        if file.name.ends_with(".py") {
-                            "diff-file-python"
-                        } else {
-                            "thread-file-diff"
-                        },
-                        16.,
-                        if file.name.ends_with(".py") {
-                            python
-                        } else {
-                            t.text_tertiary
-                        },
-                    ))
+                    .child(file_icon(&file.name, &t))
                     .child(
                         text(file.name.clone(), 13., 20., 400., t.text)
                             .flex_1()

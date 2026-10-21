@@ -14,12 +14,17 @@ use gpui::{
     Action, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context, Corners,
     CursorStyle, Div, Entity, FocusHandle, Font, FontFeatures, FontWeight, Global, HighlightStyle,
     Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString, Stateful,
+    ParentElement, Pixels, Render, ScrollHandle, SharedString, Stateful,
     StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black, combine_highlights,
     deferred, div, font, prelude::FluentBuilder as _, px, rgb,
 };
 use shapes::Decoration;
-use std::{cell::Cell, ops::Range, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    ops::Range,
+    rc::Rc,
+    sync::Arc,
+};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
 #[path = "diff/menu.rs"]
@@ -31,7 +36,9 @@ pub use controls::DiffLayout;
 
 #[path = "diff/content.rs"]
 mod content;
-pub use content::{BlobError, BlobReply, BlobRequest, FullError, FullFileRequest, FullText};
+pub use content::{
+    BlobError, BlobReply, BlobRequest, FullError, FullFileLoad, FullFileRequest, FullText,
+};
 
 #[path = "diff/word.rs"]
 pub mod word;
@@ -48,6 +55,9 @@ const CODE_SIZE: f32 = 12.;
 const CODE_LINE: f32 = 21.6;
 /// Menlo advance at 12 px (0.602em); `--diffs-min-number-column-width` is 4ch.
 const CH: f32 = 7.224_609_4;
+const MAX_DIFF_BYTES: usize = 2_000_000;
+const MAX_DIFF_LINES: usize = 20_000;
+const MAX_DIFF_LINE_BYTES: usize = 10_000;
 
 /// The panel width the user last dragged the divider to (DT-056); `STORED_WIDTH` until then.
 struct PanelWidth(Pixels);
@@ -95,6 +105,7 @@ enum Kind {
     Removed,
 }
 
+#[derive(Clone)]
 struct Line {
     kind: Kind,
     /// New-file number; old-file number for removed lines.
@@ -106,10 +117,14 @@ struct Line {
     word_change: Option<Range<usize>>,
 }
 
+#[derive(Clone)]
 struct Hunk {
+    old_start: u32,
+    new_start: u32,
     /// `N unmodified lines` bar for the old-file lines the diff skips before this hunk.
     separator: Option<SharedString>,
     lines: Vec<Line>,
+    layout: Rc<RefCell<content::ContextLayout>>,
 }
 
 pub struct FileDiff {
@@ -123,6 +138,13 @@ pub struct FileDiff {
     hunks: Vec<Hunk>,
     pub open: bool,
     problem: Option<&'static str>,
+    raw: String,
+    raw_kind: Option<Kind>,
+    full: Option<FullText>,
+    full_loading: bool,
+    full_error: Option<FullError>,
+    original_hunks: Option<Vec<Hunk>>,
+    pending_expansion: Option<(usize, content::Expand)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -176,6 +198,7 @@ pub enum DiffRequest {
     CreateRepository,
     /// Open this absolute path in the configured editor.
     Open(String),
+    LoadFullFile(FullFileLoad),
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -246,6 +269,9 @@ pub struct DiffPanel {
     standalone: bool,
     base_branch: Option<String>,
     commit: Option<String>,
+    cwd: String,
+    full_files: bool,
+    content_generation: u64,
 }
 
 impl DiffPanel {
@@ -272,9 +298,16 @@ impl DiffPanel {
             })
             .flatten();
         for change in changes {
-            let path = match change.path.strip_prefix(workspace_root) {
-                Some(rel) => format!("{cwd}/{}", rel.trim_start_matches('/')),
-                None => change.path.clone(),
+            let path = std::path::Path::new(&change.path);
+            let path = if path.starts_with(cwd) {
+                change.path.clone()
+            } else if let Ok(relative) = path.strip_prefix(workspace_root) {
+                std::path::Path::new(cwd)
+                    .join(relative)
+                    .to_string_lossy()
+                    .into_owned()
+            } else {
+                change.path.clone()
             };
             let shown = relative(workspace_root, &path);
             let split = shown.rfind('/').map_or(0, |i| i + 1);
@@ -302,6 +335,7 @@ impl DiffPanel {
                     f.added += added;
                     f.removed += removed;
                     f.hunks.extend(hunks);
+                    f.raw.push_str(&change.diff);
                 }
                 None => {
                     let dir: SharedString = dir.to_owned().into();
@@ -317,6 +351,13 @@ impl DiffPanel {
                         hunks,
                         open: true,
                         problem,
+                        raw: change.diff.clone(),
+                        raw_kind: raw,
+                        full: None,
+                        full_loading: false,
+                        full_error: None,
+                        original_hunks: None,
+                        pending_expansion: None,
                     });
                 }
             }
@@ -348,6 +389,9 @@ impl DiffPanel {
             standalone: false,
             base_branch: None,
             commit: None,
+            cwd: cwd.to_owned(),
+            full_files: false,
+            content_generation: 0,
         }
     }
 
@@ -484,7 +528,10 @@ impl DiffPanel {
     }
 
     fn request_revert(&self, file: usize, hunk: Option<usize>, cx: &mut Context<Self>) {
-        if self.pending || self.error.is_some() || !self.source.mutable() {
+        if self.pending
+            || self.error.is_some()
+            || !matches!(self.source, DiffSource::Unstaged | DiffSource::Staged)
+        {
             return;
         }
         let files = self.actionable_files();
@@ -588,7 +635,8 @@ impl DiffPanel {
                 if params["item"]["type"] == "fileChange"
                     && self.aggregated_turn.as_deref() != Some(&turn.id) =>
             {
-                Self::last_turn(workspace, workspace, turns).files
+                self.aggregated_turn = None;
+                Self::last_turn(workspace, &self.cwd, turns).files
             }
             _ => return,
         };
@@ -601,6 +649,7 @@ impl DiffPanel {
     }
 
     fn replace_files(&mut self, mut files: Vec<FileDiff>) {
+        self.content_generation = self.content_generation.wrapping_add(1);
         self.active_file = self
             .files
             .get(self.active_file)
@@ -611,6 +660,7 @@ impl DiffPanel {
             })
             .unwrap_or(0);
         for file in &mut files {
+            file.full_loading = false;
             if let Some(old) = self
                 .files
                 .iter()
@@ -1055,6 +1105,7 @@ impl DiffPanel {
 
 impl Render for DiffPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.request_visible_full_files(cx);
         let t = cx.theme().clone();
         let width = if self.standalone {
             window.viewport_size().width
@@ -1080,19 +1131,20 @@ impl Render for DiffPanel {
         let status = self.repository_status(&t, cx);
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let line_index = Cell::new(0);
+        let scroll_top = self.scroll.logical_scroll_top();
         let files = self.files.iter().enumerate().map(|(i, file)| {
             div()
+                .relative()
+                .pt(px(if self.standalone { 36. } else { 39. }))
                 .flex()
                 .flex_col()
                 .flex_none()
                 .pb(px(2.))
                 .when(self.standalone, |d| {
-                    d.relative()
-                        .overflow_hidden()
-                        .child(shapes::decoration(Decoration {
-                            fill: Some(t.surface),
-                            ..Default::default()
-                        }))
+                    d.overflow_hidden().child(shapes::decoration(Decoration {
+                        fill: Some(t.surface),
+                        ..Default::default()
+                    }))
                 })
                 .on_mouse_down(
                     MouseButton::Right,
@@ -1100,14 +1152,7 @@ impl Render for DiffPanel {
                         this.open_menu(i, menu::Kind::Body, event.position, window, cx);
                     }),
                 )
-                .child(file_header(i, file, self, &t, cx).on_click(cx.listener(
-                    move |this, _, _, cx| {
-                        this.files[i].open ^= true;
-                        this.active_file = i;
-                        this.selection = None;
-                        cx.notify();
-                    },
-                )))
+                .when(file.open, |d| d.children(self.full_error_notice(i, cx)))
                 .map(|d| {
                     if file.open && file.problem.is_some() {
                         d.child(controls::problem_body(file.problem.unwrap_or_default(), &t))
@@ -1190,6 +1235,7 @@ impl Render for DiffPanel {
                                     &line_index,
                                     self,
                                     self.layout.split(file, code_width),
+                                    (i, index),
                                     cx,
                                 ))
                         }))
@@ -1201,6 +1247,7 @@ impl Render for DiffPanel {
                         d
                     }
                 })
+                .child(self.scrolling_file_header(i, file, scroll_top, &t, cx))
                 .map(|d| {
                     if self.standalone {
                         crate::rounded_clip(px(12.5), shapes::Corner::Squircle, d)
@@ -1358,6 +1405,7 @@ impl Render for DiffPanel {
                             .overflow_y_scroll()
                             .overflow_x_scroll()
                             .track_scroll(&self.scroll)
+                            .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
                             .flex()
                             .flex_col()
                             .pb(px(12.))
@@ -2455,19 +2503,6 @@ fn highlight(line: &str, s: &Syntax) -> Vec<(Range<usize>, HighlightStyle)> {
     out
 }
 
-/// `color-mix(in srgb, a (1 - w), b w)`.
-fn mix(a: Hsla, b: Hsla, w: f32) -> Hsla {
-    let (a, b) = (Rgba::from(a), Rgba::from(b));
-    let m = |x: f32, y: f32| x + (y - x) * w;
-    Rgba {
-        r: m(a.r, b.r),
-        g: m(a.g, b.g),
-        b: m(a.b, b.b),
-        a: 1.,
-    }
-    .into()
-}
-
 fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
     let color = |dark, light| {
         rgb(if t.appearance == Appearance::Dark {
@@ -2478,7 +2513,14 @@ fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
         .into()
     };
     match kind {
-        Kind::Context => (t.surface, t.surface, color(0xa1a1a1, 0x585858)),
+        Kind::Context => {
+            let [r, g, b] = if t.appearance == Appearance::Dark {
+                [0.629856, 0.629859, 0.629858]
+            } else {
+                [0.344692, 0.344700, 0.344697]
+            };
+            (t.surface, t.surface, gpui::Rgba { r, g, b, a: 1. }.into())
+        }
         Kind::Added => (
             color(0x132017, 0xedf7ed),
             color(0x1f3124, 0xe7f4e7),
@@ -2500,6 +2542,11 @@ fn word_mark(line: &Line, layout: gpui::TextLayout, t: &Theme) -> Option<gpui::A
     } else {
         t.git_deleted
     };
+    let color = color.opacity(if t.appearance == Appearance::Dark {
+        0.2
+    } else {
+        0.15
+    });
     Some(
         gpui::canvas(
             |_, _, _| {},
@@ -2510,7 +2557,7 @@ fn word_mark(line: &Line, layout: gpui::TextLayout, t: &Theme) -> Option<gpui::A
                 let mut end = start;
                 let decoration = Decoration {
                     radius: Corners::all(px(3.)),
-                    fill: Some(color.opacity(0.2)),
+                    fill: Some(color),
                     ..Default::default()
                 };
                 let paint =
@@ -2590,6 +2637,7 @@ fn hunk(
     line_index: &Cell<usize>,
     panel: &DiffPanel,
     split: bool,
+    location: (usize, usize),
     cx: &Context<DiffPanel>,
 ) -> Div {
     let syntax = Syntax::of(t);
@@ -2670,7 +2718,6 @@ fn hunk(
                     .child(content),
             )
     };
-    let separator = mix(t.surface, t.info_solid, 0.06);
     let render_line = |l: &Line, index: usize, number: u32| {
         let (number_bg, bg, number_fg) = line_colors(l.kind, t);
         let found = l.matches.iter().enumerate().map(|(ordinal, range)| {
@@ -2781,21 +2828,7 @@ fn hunk(
         .line_height(px(CODE_LINE))
         .text_color(foreground)
         .when_some(h.separator.clone(), |d, label| {
-            let len = label.len();
-            d.child(row(
-                None,
-                (separator, t.text_tertiary),
-                separator,
-                StyledText::new(label).with_highlights([(
-                    0..len,
-                    HighlightStyle {
-                        color: Some(t.text_tertiary),
-                        ..Default::default()
-                    },
-                )]),
-                None,
-                None,
-            ))
+            d.child(panel.context_row(label, gutter, location, cx))
         })
         .map(|d| {
             if split {
@@ -2834,6 +2867,21 @@ fn hunk(
                 )
             }
         })
+        .map(|body| panel.track_hunk_layout(h, body, cx))
+}
+
+fn exceeds_diff_limits<'a>(lines: impl Iterator<Item = &'a str>) -> bool {
+    let mut bytes = 0;
+    for (index, line) in lines.enumerate() {
+        if index >= MAX_DIFF_LINES || line.len() > MAX_DIFF_LINE_BYTES {
+            return true;
+        }
+        bytes += line.len() + 1;
+        if bytes > MAX_DIFF_BYTES {
+            return true;
+        }
+    }
+    false
 }
 
 /// Hunks of a unified diff; file headers (`diff --git`, `---`, `+++`) before the first `@@`
@@ -2841,16 +2889,14 @@ fn hunk(
 fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
     const TOO_LARGE: &str = "Diff too large to display";
     const INVALID: &str = "Diff failed to render";
-    if diff.len() > 2_000_000
-        || diff
-            .lines()
-            .enumerate()
-            .any(|(index, line)| index >= 20_000 || line.len() > 10_000)
-    {
+    if diff.len() > MAX_DIFF_BYTES || exceeds_diff_limits(diff.lines()) {
         return Err(TOO_LARGE);
     }
     if let Some(kind) = raw {
         return Ok(vec![Hunk {
+            layout: Default::default(),
+            old_start: if kind == Kind::Added { 0 } else { 1 },
+            new_start: if kind == Kind::Removed { 0 } else { 1 },
             separator: None,
             lines: diff
                 .lines()
@@ -2872,10 +2918,13 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
     for line in diff.lines() {
         if let Some(rest) = line.strip_prefix("@@ -") {
             let start = |s: &str| {
-                s.split(',')
-                    .next()
-                    .and_then(|n| n.parse::<u32>().ok())
-                    .ok_or(INVALID)
+                let (line, count) = s.split_once(',').unwrap_or((s, "1"));
+                let line = line.parse::<u32>().map_err(|_| INVALID)?;
+                if count.parse::<u32>().map_err(|_| INVALID)? == 0 {
+                    line.checked_add(1).ok_or(INVALID)
+                } else {
+                    Ok(line)
+                }
             };
             let mut ranges = rest.split(' ');
             let old_start = start(ranges.next().ok_or(INVALID)?)?;
@@ -2891,6 +2940,9 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
                 return Err(INVALID);
             }
             hunks.push(Hunk {
+                layout: Default::default(),
+                old_start,
+                new_start: new,
                 separator: (skipped > 0).then(|| {
                     format!(
                         "{skipped} unmodified line{}",
