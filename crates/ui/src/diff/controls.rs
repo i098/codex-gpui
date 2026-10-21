@@ -82,29 +82,6 @@ pub(super) fn problem_body(message: &'static str, t: &Theme) -> Div {
         .child(text(message, 13., 130. / 7., 430., t.text.opacity(0.65)))
 }
 
-pub(super) fn file_icon(file_name: &str, t: &Theme) -> crate::icon::Icon {
-    let extension = std::path::Path::new(file_name)
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or("");
-    let dark = t.appearance == Appearance::Dark;
-    let (name, color) = if extension.eq_ignore_ascii_case("py") {
-        ("diff-file-python", if dark { 0x69b1ff } else { 0x1a85d4 })
-    } else if [
-        "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tif", "tiff",
-    ]
-    .iter()
-    .any(|suffix| extension.eq_ignore_ascii_case(suffix))
-    {
-        ("diff-file-image", if dark { 0xff678d } else { 0xd32a61 })
-    } else if extension.eq_ignore_ascii_case("txt") {
-        ("diff-file-text", if dark { 0xadadb1 } else { 0x84848a })
-    } else {
-        ("diff-file-default", if dark { 0xadadb1 } else { 0x84848a })
-    };
-    icon(name, 16., rgb(color).into())
-}
-
 #[derive(Default)]
 pub(super) struct TextField {
     pub(super) text: String,
