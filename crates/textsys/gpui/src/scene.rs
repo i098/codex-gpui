@@ -741,9 +741,9 @@ impl Default for TransformationMatrix {
 #[expect(missing_docs)]
 pub struct MonochromeSprite {
     pub order: DrawOrder,
-    /// The Chromium layers the sprite is painted into (`Window::sprite_layers`): 0 for none,
-    /// else the outermost in the low 16 bits and the next in the high 16, each `id << 8 | alpha`.
-    pub layers: u32,
+    /// Four Chromium layers, each packed as `id << 8 | alpha`, outermost first.
+    /// Zero entries mark unused layers.
+    pub layers: [u16; 4],
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
@@ -786,7 +786,7 @@ pub struct PolychromeSprite {
     pub skia: u32,
     /// The same packed compositor layers as a monochrome sprite.
     #[cfg(target_vendor = "apple")]
-    pub layers: u32,
+    pub layers: [u16; 4],
     pub grayscale: PaddedBool32,
     pub opacity: f32,
     pub bounds: Bounds<ScaledPixels>,
@@ -799,7 +799,7 @@ impl PolychromeSprite {
     fn is_layered(&self) -> bool {
         #[cfg(target_vendor = "apple")]
         {
-            self.layers != 0
+            self.layers != [0; 4]
         }
         #[cfg(not(target_vendor = "apple"))]
         {

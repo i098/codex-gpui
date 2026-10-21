@@ -67,6 +67,7 @@ actions!(
 
 mod attach;
 pub mod computer_use;
+pub mod dictation;
 mod editor;
 mod footer;
 mod requests;
@@ -649,6 +650,8 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    dictation: Option<dictation::Active>,
+    dictation_error: Option<String>,
 }
 
 impl Composer {
@@ -727,6 +730,8 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            dictation: None,
+            dictation_error: None,
         }
     }
 
@@ -880,6 +885,9 @@ impl Composer {
             .as_ref()
             .map(|approval| approval.identity.as_ref())
             == approval.as_ref().map(|approval| approval.identity.as_ref());
+        if !same_request {
+            self.cancel_dictation(cx);
+        }
         if !same_request
             && let Some(old) = &self.approval
             && old.form.is_some()
@@ -1135,6 +1143,8 @@ impl Composer {
     }
 
     pub fn set_text(&mut self, s: &str, cx: &mut Context<Self>) {
+        self.cancel_dictation(cx);
+        self.dictation_error = None;
         self.content = s.into();
         self.mentions.clear();
         self.selected_range = s.len()..s.len();
@@ -1248,6 +1258,7 @@ impl Composer {
         {
             return;
         }
+        self.cancel_dictation(cx);
         self.submitted = std::mem::take(&mut self.attachments);
         let mut attachments = Vec::new();
         let mut context_files = Vec::new();
@@ -1292,6 +1303,7 @@ impl Composer {
     }
 
     fn decide(&mut self, decision: ApprovalDecision, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_dictation(cx);
         if self.approval.is_none() {
             return;
         }
@@ -1355,6 +1367,10 @@ impl Composer {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dictation.is_some() {
+            self.cancel_dictation(cx);
+            return;
+        }
         if self.marked_range.is_some() {
             return;
         }
