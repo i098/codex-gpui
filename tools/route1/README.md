@@ -40,6 +40,7 @@ The default wait is 300 seconds, and the command limit is 180 seconds.
 Set `R1_CAPTURE_WAIT` or `R1_CAPTURE_TIMEOUT` to change these limits.
 Exit 75 means the lease wait expired; exit 124 means the capture timed out.
 The lease releases after command exit, including a timeout.
+The capture inherits the lock, so cancelling its launcher cannot unlock a capture that still runs.
 It serializes captures only, not builds.
 Linux state discovery still supports `linux/start.sh`; set `R1_ORACLE` to an owned oracle copy first.
 Set `R1_OUT` to an owned capture directory before importing `linux/lib.mjs`.
@@ -64,7 +65,7 @@ CDP_PORT=19333 R1_RPC_MODULE=./assets/rpc-a387904149fd.js \
   node tools/route1/record-bootstrap.mjs "$scratch/oracle.json"
 ```
 
-The recorder rejects account-backed identities.
+The recorder rejects account-backed and API-key identities.
 It records `startup.whenReady`, `threadReadState.open`, and the matching execution-host keys.
 Set `R1_RPC_MODULE` to the installed app's RPC entry; its default is the pinned 26.1007 entry.
 Use `R1_ORACLE` to select the writable oracle when serving these recordings.
@@ -75,6 +76,13 @@ The bootstrap transport was recorded with the installed 26.1013.40934 main proce
 Its read-state response matches the retained 26.1007 service contract.
 The renderer assets, browser, fonts, references, and pixel thresholds remain pinned.
 Re-pinning the renderer from 26.1007 to 26.1013 is separate work.
+
+Run the regression checks without a browser or an account:
+
+```sh
+TMPDIR="$scratch" python3 tools/route1/test_lease.py
+node --experimental-vm-modules tools/route1/test_preload.mjs
+```
 
 For a renderer without the Mac fonts (Linux Chrome), start the server with `R1_SF_FONTS=1`:
 `@font-face` aliases then map `-apple-system`, `BlinkMacSystemFont`, `system-ui`, `SF Pro*`,

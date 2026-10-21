@@ -6,5 +6,5 @@ if (($# == 0)); then
 fi
 lock=${R1_CAPTURE_LOCK:-/sdc-disk/tmp/cgx/cgx-capture-service/capture.lock}
 mkdir -p "$(dirname "$lock")"
-exec flock --close --conflict-exit-code 75 --wait "${R1_CAPTURE_WAIT:-300}" "$lock" \
+exec flock --conflict-exit-code 75 --wait "${R1_CAPTURE_WAIT:-300}" "$lock" \
   timeout --kill-after=5 "${R1_CAPTURE_TIMEOUT:-180}" "$@"

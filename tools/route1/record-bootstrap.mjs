@@ -11,7 +11,7 @@ try {
     const services = (await import(${JSON.stringify(modulePath)})).appServices;
     const snapshot = await services.threadReadState.open(() => {});
     try {
-      if (snapshot.status !== "ready" || snapshot.identity?.kind !== "execution-storage")
+      if (snapshot.status !== "ready" || snapshot.identity?.kind !== "execution-storage" || snapshot.identity.authMode !== "none")
         throw new Error("Use an owned, credential-free app-server profile with requires_openai_auth=false");
       const { session, ...state } = snapshot;
       return {
