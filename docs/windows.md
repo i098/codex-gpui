@@ -64,7 +64,7 @@ Each new process starts on Home; saved geometry does not restore the last route.
 
 ## Shell controls
 
-Below 768 logical pixels, the sidebar opens as a floating panel.
+Below 768 logical pixels, the sidebar starts collapsed and opens as a docked panel.
 The narrow panel does not change the saved wide-window preference.
 When the wide sidebar is hidden, a rail hover opens a preview after 100 milliseconds.
 Switching the preview waits 300 milliseconds; leaving it waits 100 milliseconds.

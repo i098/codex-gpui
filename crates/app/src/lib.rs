@@ -2037,7 +2037,6 @@ impl Root {
         }
     }
 
-
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
     /// Content ancestors can hold plain focus handles without being popovers.
@@ -5185,7 +5184,6 @@ impl Render for Root {
             .capture_action(cx.listener(|this, _: &Undo, window, cx| {
                 this.undo_queued(window, cx);
             }))
-
             .on_action(cx.listener(|this, _: &GoBack, window, cx| this.step(true, window, cx)))
             .on_action(cx.listener(|this, _: &GoForward, window, cx| this.step(false, window, cx)))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
@@ -5218,11 +5216,7 @@ impl Render for Root {
         let root = features::actions(root, cx);
         let root = section_actions::actions(root, cx);
         let root = native_menus::actions(root, cx);
-        error_shell::actions(
-            window_shell::actions(root, cx),
-            cx,
-        )
-        .into_any_element()
+        error_shell::actions(window_shell::actions(root, cx), cx).into_any_element()
     }
 }
 

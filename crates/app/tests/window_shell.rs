@@ -73,7 +73,21 @@ fn sidebar_peek_waits_for_hover_and_does_not_navigate() -> Result<()> {
 }
 
 #[test]
-fn a_narrow_sidebar_floats_and_an_outside_press_closes_it() -> Result<()> {
+fn clicking_the_new_tab_trigger_keeps_composer_focus() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.focus_composer()?;
+    fx.hover((1258., 22.))?;
+    fx.advance(Duration::from_millis(350))?;
+    fx.capture_evidence("CGX_WINDOW_SHELL_PROOF", "new-tab")?;
+    fx.click((1258., 22.))?;
+    assert!(fx.composer_focused()?);
+    fx.type_text("The draft keeps focus")?;
+    assert_eq!(fx.composer_text()?, "The draft keeps focus");
+    Ok(())
+}
+
+#[test]
+fn a_narrow_sidebar_opens_docked_and_preserves_the_wide_preference() -> Result<()> {
     let mut fx = Fx::new()?;
     fx.resize(600., 832.)?;
     assert!(!fx.sidebar_open());
@@ -83,11 +97,16 @@ fn a_narrow_sidebar_floats_and_an_outside_press_closes_it() -> Result<()> {
     fx.capture_evidence("CGX_WINDOW_SHELL_PROOF", "narrow-sidebar")?;
     fx.click((500., 100.))?;
     fx.advance(Duration::from_millis(350))?;
+    assert!(
+        fx.sidebar_open(),
+        "a docked sidebar must stay open after an outside press"
+    );
+    fx.keys("cmd-b")?;
     assert!(!fx.sidebar_open());
     fx.resize(1280., 832.)?;
     assert!(
         fx.sidebar_open(),
-        "the narrow overlay must not replace the wide-window preference"
+        "the narrow layout must not replace the wide-window preference"
     );
     Ok(())
 }

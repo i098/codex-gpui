@@ -16,6 +16,7 @@ pub(super) struct WindowState {
     pub menu_open: bool,
     pub menu_focus: Option<usize>,
     pub menu_hovered: bool,
+    menu_return_focus: Option<gpui::FocusHandle>,
 }
 
 pub(crate) fn resized(
@@ -104,59 +105,39 @@ impl Shell {
         }
     }
 
-    pub fn dismiss_overlay(&mut self, cx: &mut Context<Self>) -> bool {
+    pub fn dismiss_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if !self.is_peeking() && !self.window_state.menu_open {
             return false;
         }
         self.close_peek(cx);
-        self.window_state.menu_open = false;
-        self.window_state.menu_task = None;
+        self.close_new_tab(window, cx);
         true
     }
 
-    pub(super) fn floating_sidebar(
+    pub(super) fn close_new_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.window_state.menu_open = false;
+        self.window_state.menu_task = None;
+        self.window_state.menu_focus = None;
+        if let Some(focus) = self.window_state.menu_return_focus.take() {
+            window.focus(&focus, cx);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn peek_sidebar(
         &self,
-        narrow: bool,
-        progress: f32,
         t: &Theme,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<Div> {
-        let sidebar = if narrow {
-            &self.sidebar
-        } else {
-            self.window_state.sidebar.as_ref().unwrap_or(&self.sidebar)
-        };
-        let radius = if narrow { Theme::RADIUS_LG } else { px(8.) };
-        let shadows = if narrow {
-            vec![
-                composer::shadow(t.border_strong, 0., 0., 0.5, false),
-                composer::shadow(gpui::rgba(0x00000008).into(), 3., 7.5, 0., false),
-                composer::shadow(gpui::rgba(0x00000005).into(), 0., 16., 0., false),
-            ]
-        } else {
-            vec![composer::shadow(t.shadow_card, 8., 32., 0., false)]
-        };
+        let sidebar = self.window_state.sidebar.as_ref().unwrap_or(&self.sidebar);
+        let radius = px(8.);
         div()
             .id("floating-sidebar")
             .absolute()
-            .left(if narrow {
-                px(-8.) * (1. - progress)
-            } else {
-                RAIL_WIDTH
-            })
-            .top(if narrow {
-                px(0.)
-            } else {
-                Theme::TITLEBAR_HEIGHT
-            })
-            .bottom(if narrow { px(0.) } else { PAGE_INSET })
-            .w(if narrow {
-                self.sidebar_width
-            } else {
-                self.sidebar_width - RAIL_WIDTH
-            })
-            .opacity(if narrow { progress } else { 1. })
+            .left(RAIL_WIDTH)
+            .top(Theme::TITLEBAR_HEIGHT)
+            .bottom(PAGE_INSET)
+            .w(self.sidebar_width - RAIL_WIDTH)
             .occlude()
             .on_hover(
                 cx.listener(|this, entered, window, cx| this.hover_peek(*entered, window, cx)),
@@ -165,19 +146,13 @@ impl Shell {
                 if event.position.x >= this.sidebar_width
                     || event.position.y < Theme::TITLEBAR_HEIGHT
                 {
-                    if narrow {
-                        if this.sidebar_open {
-                            this.toggle_sidebar(cx);
-                        }
-                    } else {
-                        this.close_peek(cx);
-                    }
+                    this.close_peek(cx);
                 }
             }))
             .child(shapes::decoration(shapes::Decoration {
                 radius: Corners::all(radius),
                 fill: Some(t.surface),
-                shadows,
+                shadows: vec![composer::shadow(t.shadow_card, 8., 32., 0., false)],
                 ..Default::default()
             }))
             .child(rounded_clip(
@@ -187,19 +162,6 @@ impl Shell {
                     .size_full()
                     .flex()
                     .flex_col()
-                    .when(narrow, |d| {
-                        d.child(
-                            div()
-                                .relative()
-                                .h(Theme::TITLEBAR_HEIGHT)
-                                .flex_none()
-                                .child(
-                                    window.with_element_namespace("floating-sidebar", |window| {
-                                        self.titlebar(t, window, cx, false)
-                                    }),
-                                ),
-                        )
-                    })
                     .child(div().flex_1().min_h_0().child(sidebar.clone())),
             ))
     }
@@ -220,10 +182,7 @@ impl Shell {
                 cx.background_executor()
                     .timer(Duration::from_millis(100))
                     .await;
-                let _ = this.update(cx, |this, cx| {
-                    this.window_state.menu_open = false;
-                    cx.notify();
-                });
+                let _ = this.update_in(cx, |this, window, cx| this.close_new_tab(window, cx));
             }));
         }
     }
@@ -231,13 +190,14 @@ impl Shell {
     pub(super) fn new_tab_key(
         &mut self,
         event: &KeyDownEvent,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if matches!(
             event.keystroke.key.as_str(),
             "enter" | "space" | "down" | "up"
         ) {
+            self.window_state.menu_return_focus = window.focused(cx);
             self.window_state.menu_task = None;
             self.window_state.menu_open = true;
             self.window_state.menu_focus = Some(usize::from(event.keystroke.key == "up"));
@@ -257,16 +217,15 @@ impl Shell {
             .id("new-tab-menu")
             .role(gpui::Role::Menu)
             .absolute()
-            .right(px(8.))
-            .top(px(40.))
+            .right(px(9.))
+            .top(px(38.))
             .on_hover(
                 cx.listener(|this, entered, window, cx| this.hover_new_tab(*entered, window, cx)),
             )
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
                 if !this.window_state.menu_hovered {
-                    this.window_state.menu_open = false;
-                    this.window_state.menu_task = None;
-                    cx.notify();
+                    this.window_state.menu_return_focus = None;
+                    this.close_new_tab(window, cx);
                 }
             }));
         let mut body = div().flex().flex_col();
@@ -279,24 +238,45 @@ impl Shell {
             let item = focus::ring(
                 div()
                     .id(("new-tab-option", index))
-                    .h(px(32.))
+                    .h(px(28.571_428))
                     .px(px(8.))
+                    .rounded(px(15.))
                     .flex()
                     .items_center()
-                    .gap(px(8.))
+                    .gap(px(6.))
                     .role(gpui::Role::MenuItem)
                     .aria_label(label)
                     .hover(move |s| s.bg(hover))
-                    .child(text(label, 14., 20., 430., t.text))
-                    .when(index == 1, |d| {
-                        d.child(text("⇧⌘F", 12., 16., 430., t.text_tertiary))
-                    }),
+                    .child(icon(
+                        if index == 0 {
+                            "automations-plus"
+                        } else {
+                            "window-full-view"
+                        },
+                        16.,
+                        t.text,
+                    ))
+                    .child(
+                        text(label, 13., 18.571_428, 430., t.text)
+                            .flex_1()
+                            .min_w_0(),
+                    )
+                    .child(
+                        text(
+                            if index == 0 { "⇧⌘B" } else { "⇧⌘F" },
+                            12.,
+                            16.,
+                            430.,
+                            t.text_tertiary,
+                        )
+                        .ml(px(8.)),
+                    ),
                 &handle,
-                px(8.),
+                px(15.),
                 px(0.),
                 cx,
             )
-            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                 if matches!(event.keystroke.key.as_str(), "up" | "down" | "home" | "end") {
                     this.window_state.menu_focus = Some(if event.keystroke.key == "home" {
                         0
@@ -306,22 +286,21 @@ impl Shell {
                         1 - index
                     });
                 } else if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    this.window_state.menu_open = false;
+                    this.close_new_tab(window, cx);
                 } else {
                     return;
                 }
                 cx.stop_propagation();
                 cx.notify();
             }))
-            .on_click(cx.listener(|this, _, _, cx| {
+            .on_click(cx.listener(|this, _, window, cx| {
                 // The original creates its first content tab only with browser.in-app capability.
                 // Browser pages remain gated out of the native product.
-                this.window_state.menu_open = false;
-                cx.notify();
+                this.close_new_tab(window, cx);
             }));
             body = body.child(item);
         }
-        menu = menu.child(composer::popover(&t, 256., |d| d.child(body)));
+        menu = menu.child(composer::popover(&t, 240., |d| d.child(body)));
         menu
     }
 }

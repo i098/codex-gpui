@@ -1055,7 +1055,7 @@ impl Shell {
         new_tab: bool,
     ) -> Div {
         let fullscreen_shift = if window.is_fullscreen() {
-            px(84.)
+            px(80.)
         } else {
             px(0.)
         };
@@ -1161,25 +1161,40 @@ impl Shell {
             })
             .when(new_tab, |d| {
                 d.child(
-                    focus::ring(div().id("new-tab"), &new_tab_focus, px(8.), px(2.), cx)
-                        .role(gpui::Role::Button)
-                        .aria_label("New tab")
-                        .on_hover(cx.listener(|this, entered, window, cx| {
-                            this.hover_new_tab(*entered, window, cx)
-                        }))
-                        .on_key_down(cx.listener(Self::new_tab_key))
-                        .absolute()
-                        .top(px(8.))
-                        .right(px(8.))
-                        .size(px(28.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                            new_tab_focus.read(cx).handle.clone().focus(window, cx);
-                            cx.stop_propagation();
-                        })
-                        .child(icon::icon("new-tab", 16., t.text_tertiary)),
+                    focus::ring(
+                        div()
+                            .id("new-tab")
+                            .rounded(Theme::RADIUS_LG)
+                            .when(self.window_state.menu_open, |d| d.bg(t.ghost_hover))
+                            .child(motion::ButtonVisual {
+                                glyph: icon::icon("new-tab", 16., t.text_tertiary),
+                                radius: Theme::RADIUS_LG,
+                                hover: t.ghost_hover,
+                                foreground: t.text_tertiary,
+                                selected: self.window_state.menu_open,
+                            }),
+                        &new_tab_focus,
+                        Theme::RADIUS_LG,
+                        px(2.),
+                        cx,
+                    )
+                    .role(gpui::Role::Button)
+                    .aria_label("New tab")
+                    .on_hover(cx.listener(|this, entered, window, cx| {
+                        this.hover_new_tab(*entered, window, cx)
+                    }))
+                    .on_key_down(cx.listener(Self::new_tab_key))
+                    .absolute()
+                    .top(px(8.))
+                    .right(px(8.))
+                    .size(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.close_new_tab(window, cx);
+                    })),
                 )
             })
     }
@@ -1277,9 +1292,7 @@ impl Render for Shell {
         {
             window.request_animation_frame();
         }
-        let narrow = window.viewport_size().width < px(768.);
-        let floating_progress = self.sidebar_progress(now);
-        let progress = if narrow { 0. } else { floating_progress };
+        let progress = self.sidebar_progress(now);
         // The original keeps the page-sidebar shape (`data-app-shell-page-sidebar`) above 0.1
         // of progress; its hairline fades out over 0.2 to 0.05 while closing.
         let open = progress > 0.1;
@@ -1506,7 +1519,7 @@ impl Render for Shell {
             .when(composited || self.main_backgrounds > 0, |d| {
                 d.child(corners)
             })
-            .when(self.sidebar_open && !narrow, |d| {
+            .when(self.sidebar_open, |d| {
                 d.child(focus::ring(
                     div()
                         .id("sidebar-resize")
@@ -1579,21 +1592,9 @@ impl Render for Shell {
             .child(self.rail(&t, window, cx))
             .child(self.titlebar(&t, window, cx, self.new_tab))
             .child(skip_link)
-            .when(
-                self.is_peeking() || (narrow && floating_progress > 0.),
-                |d| {
-                    d.child(
-                        gpui::deferred(self.floating_sidebar(
-                            narrow,
-                            floating_progress,
-                            &t,
-                            window,
-                            cx,
-                        ))
-                        .with_priority(42),
-                    )
-                },
-            )
+            .when(self.is_peeking(), |d| {
+                d.child(gpui::deferred(self.peek_sidebar(&t, cx)).with_priority(42))
+            })
             .when_some(new_tab_menu, |d, menu| {
                 d.child(gpui::deferred(menu).with_priority(43))
             })

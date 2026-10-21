@@ -46,7 +46,7 @@ pub(crate) fn actions(root: gpui::Div, cx: &mut gpui::Context<Root>) -> gpui::Di
 }
 
 impl Root {
-    fn dismiss_shell_overlay(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
+    fn dismiss_shell_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if self.dialog.is_some() || self.command_menu.is_some() {
             return false;
         }
@@ -57,7 +57,7 @@ impl Root {
         }
         self.shell()
             .clone()
-            .update(cx, |shell, cx| shell.dismiss_overlay(cx))
+            .update(cx, |shell, cx| shell.dismiss_overlay(window, cx))
     }
 }
 
