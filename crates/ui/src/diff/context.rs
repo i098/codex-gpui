@@ -15,6 +15,7 @@ pub struct ContextRequest {
     pub relative: String,
     pub cwd: String,
     pub new_tab: bool,
+    pub deleted: bool,
     pub selected: String,
 }
 
@@ -190,12 +191,12 @@ impl DiffPanel {
             return;
         };
         let relative = relative(self.file_root(), &path);
-        let new_tab = !self.standalone
-            && shown.raw_kind != Some(Kind::Removed)
-            && !shown
+        let deleted = shown.raw_kind == Some(Kind::Removed)
+            || shown
                 .raw
                 .lines()
                 .any(|line| line.starts_with("deleted file mode "));
+        let new_tab = !self.standalone && !deleted;
         self.context.epoch = self.context.epoch.wrapping_add(1);
         self.context.pending = true;
         self.menu = None;
@@ -210,6 +211,7 @@ impl DiffPanel {
             window: window.window_handle(),
             cwd: self.working_directory().to_owned(),
             new_tab,
+            deleted,
             selected: self.selected_text().trim().to_owned(),
         }));
         cx.stop_propagation();

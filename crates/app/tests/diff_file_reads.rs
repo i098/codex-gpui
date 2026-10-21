@@ -286,11 +286,12 @@ fn whitespace_filtered_review_still_exports_the_complete_patch() -> Result<()> {
 }
 
 #[test]
-fn github_file_links_use_the_repository_commit_and_encode_paths() -> Result<()> {
+fn github_file_links_use_the_original_branch_and_path_rules() -> Result<()> {
     #[cfg(target_os = "macos")]
     common::install_panic_hook();
     let repo = tempfile::tempdir()?;
-    let root = repo.path();
+    let canonical = repo.path().canonicalize()?;
+    let root = canonical.as_path();
     git(root, &["init", "-q"])?;
     git(root, &["config", "user.name", "Link proof"])?;
     git(root, &["config", "user.email", "proof@example.invalid"])?;
@@ -298,6 +299,15 @@ fn github_file_links_use_the_repository_commit_and_encode_paths() -> Result<()> 
     fs::write(root.join("src/a b#c.rs"), "fn value() {}\n")?;
     git(root, &["add", "."])?;
     git(root, &["commit", "-qm", "base"])?;
+    git(root, &["checkout", "-qb", "feature/link-encoding"])?;
+    let host = LocalHost::new(root);
+    let request = Request::post(
+        "git-file-url",
+        Some(json!({
+            "cwd":root, "path":root.join("src/a b#c.rs"), "line":7,
+        })),
+    );
+    ensure!(json_body(&host.fetch(&request)?)?["url"].is_null());
     git(
         root,
         &[
@@ -307,19 +317,32 @@ fn github_file_links_use_the_repository_commit_and_encode_paths() -> Result<()> 
             "git@github.com:example/project.git",
         ],
     )?;
-    let commit = git(root, &["rev-parse", "HEAD"])?;
-    let host = LocalHost::new(root);
-    let request = Request::post(
+    for remote in [
+        "git@github.com:example/project.git",
+        "https://github.com/example/project.git",
+        "ssh://git@github.com/example/project.git",
+        "https://github.com/example/project",
+    ] {
+        git(root, &["remote", "set-url", "origin", remote])?;
+        ensure!(
+            json_body(&host.fetch(&request)?)?["url"]
+                == "https://github.com/example/project/blob/feature/link-encoding/src/a%20b%23c.rs#L7",
+            "Wrong GitHub URL for {remote}",
+        );
+    }
+    let untracked = Request::post(
         "git-file-url",
-        Some(json!({
-            "cwd":root, "path":root.join("src/a b#c.rs"), "line":7,
-        })),
+        Some(json!({"cwd":root,"path":"src/../new.txt","line":1})),
     );
-    let response = json_body(&host.fetch(&request)?)?;
     ensure!(
-        response["url"]
-            == format!("https://github.com/example/project/blob/{commit}/src/a%20b%23c.rs#L7")
+        json_body(&host.fetch(&untracked)?)?["url"]
+            == "https://github.com/example/project/blob/feature/link-encoding/new.txt#L1"
     );
+    let outside = Request::post(
+        "git-file-url",
+        Some(json!({"cwd":root,"path":"../outside.txt"})),
+    );
+    ensure!(json_body(&host.fetch(&outside)?)?["url"].is_null());
     git(
         root,
         &[
@@ -329,6 +352,17 @@ fn github_file_links_use_the_repository_commit_and_encode_paths() -> Result<()> 
             "https://gitlab.com/example/project.git",
         ],
     )?;
+    ensure!(json_body(&host.fetch(&request)?)?["url"].is_null());
+    git(
+        root,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/example/project.git",
+        ],
+    )?;
+    git(root, &["checkout", "--detach", "-q", "HEAD"])?;
     ensure!(json_body(&host.fetch(&request)?)?["url"].is_null());
     Ok(())
 }

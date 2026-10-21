@@ -372,3 +372,40 @@ fn context_menu_opens_line_comments_and_file_tabs() -> Result<()> {
         .save(output()?.join("diff-context-file-tab.png"))?;
     Ok(())
 }
+
+#[test]
+fn removed_files_hide_github_and_new_tab_actions() -> Result<()> {
+    let (repo, mut fx) = prepare(false)?;
+    git(
+        repo.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:example/project.git",
+        ],
+    )?;
+    fs::remove_file(repo.path().join("file.txt"))?;
+    let patch = git(repo.path(), &["diff", "--full-index", "--", "file.txt"])?;
+    update_patch(&mut fx, patch);
+    fx.reference_shot()?;
+    body_menu(&mut fx, (900., 164.))?;
+    ensure!(fx.read(|root, cx| {
+        root.diff_panel()
+            .unwrap()
+            .read(cx)
+            .menu_items()
+            .all(|(label, _)| label != "Open in GitHub")
+    }));
+    fx.reference_shot()?
+        .save(output()?.join("diff-deleted-menu.png"))?;
+    choose(&mut fx, "Open with")?;
+    ensure!(fx.read(|root, cx| {
+        root.diff_panel()
+            .unwrap()
+            .read(cx)
+            .menu_items()
+            .all(|(label, _)| label != "New tab")
+    }));
+    Ok(())
+}

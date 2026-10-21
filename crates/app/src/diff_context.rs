@@ -16,11 +16,13 @@ pub(crate) fn load(
         let catalog = host.fetch(&Request::post("open-in-targets", Some(params.clone())))
             .and_then(|response| json_body(&response))
             .map_err(|error| error.to_string());
-        let github = if request.new_tab {
+        let github = if request.deleted {
+            None
+        } else {
             host.fetch(&Request::post("git-file-url", Some(params))).ok()
                 .and_then(|response| json_body(&response).ok())
                 .and_then(|value| value["url"].as_str().map(str::to_owned))
-        } else { None };
+        };
         (request, catalog, github)
     });
     cx.spawn(async move |cx| {

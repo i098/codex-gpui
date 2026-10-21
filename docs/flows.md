@@ -596,9 +596,10 @@ File headers stay at the top of the viewport while their diff scrolls.
 Its Cloud changes source has no local source selector or repository mutation controls.
 The file viewer handles `⌘L`, clamps line numbers, and counts negative numbers from the end.
 The line input stays closed until file contents are available.
-The `git-file-url` host read returns a GitHub blob link at HEAD when the repository uses a GitHub origin.
+The `git-file-url` host read uses the current branch for a GitHub origin, as in the original.
 It encodes path segments and can include a line anchor.
 Other origins return no link.
+A detached HEAD returns no link.
 A file stops rendering above 15,000 changed lines, 3,145,728 changed UTF-16 units, or 1,048,576 units in one changed line.
 The count includes retained newlines and excludes unchanged context.
 Oversized files keep their change counts and large-diff navigation.
