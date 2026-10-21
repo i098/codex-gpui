@@ -58,6 +58,7 @@ pub(super) enum Kind {
     Options,
     Branches,
     Commits,
+    Repositories,
 }
 
 pub(super) struct Menu {
@@ -67,9 +68,141 @@ pub(super) struct Menu {
     active: Option<usize>,
     selected: String,
     return_focus: Option<FocusHandle>,
+    query: controls::TextField,
+    choices: Vec<(usize, i32)>,
+    parent_source: bool,
 }
 
 impl DiffPanel {
+    pub(super) fn refresh_picker(&mut self) {
+        let Some(menu) = &mut self.menu else { return };
+        menu.choices.clear();
+        let Some(repository) = &self.repository else {
+            return;
+        };
+        match menu.kind {
+            Kind::Branches => {
+                let query = menu.query.text.trim();
+                if query.is_empty() {
+                    menu.choices
+                        .extend((0..repository.branches.len()).map(|index| (index, 0)));
+                } else {
+                    let pattern = crate::screens::sidebar::MatchPattern::new(query);
+                    menu.choices
+                        .extend(repository.branches.iter().enumerate().filter_map(
+                            |(index, name)| {
+                                let score = pattern.score(name);
+                                (score > 0).then_some((index, score))
+                            },
+                        ));
+                    menu.choices
+                        .sort_unstable_by_key(|(index, score)| (std::cmp::Reverse(*score), *index));
+                }
+            }
+            Kind::Commits => menu
+                .choices
+                .extend((0..repository.commits.len()).map(|index| (index, 0))),
+            _ => {}
+        }
+    }
+
+    fn picker_status(&self, kind: Kind) -> Option<&'static str> {
+        if !matches!(kind, Kind::Branches | Kind::Commits) {
+            return None;
+        }
+        let branches = kind == Kind::Branches;
+        if self.pending {
+            return Some(if branches {
+                "Loading branches…"
+            } else {
+                "Loading commits…"
+            });
+        }
+        if self.error.is_some() {
+            return Some(if branches {
+                "Unable to load branches"
+            } else {
+                "Unable to load commits"
+            });
+        }
+        if self
+            .menu
+            .as_ref()
+            .is_none_or(|menu| menu.choices.is_empty())
+        {
+            return Some(if branches {
+                if self
+                    .menu
+                    .as_ref()
+                    .is_some_and(|menu| !menu.query.text.is_empty())
+                {
+                    "No matching branches"
+                } else {
+                    "No branches"
+                }
+            } else {
+                "No commits on branch"
+            });
+        }
+        None
+    }
+
+    pub(super) fn paste_picker(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
+        if let Some(menu) = &mut self.menu
+            && menu.kind == Kind::Branches
+        {
+            menu.query.paste(text);
+            menu.active = None;
+            self.refresh_picker();
+            cx.notify();
+            return true;
+        }
+        false
+    }
+
+    pub(super) fn select_picker_text(&mut self, cx: &mut Context<Self>) -> bool {
+        if let Some(menu) = &mut self.menu
+            && menu.kind == Kind::Branches
+        {
+            menu.query.selected = true;
+            cx.notify();
+            return true;
+        }
+        false
+    }
+    fn picker_selected(&self, kind: Kind, index: usize) -> bool {
+        if kind == Kind::Repositories {
+            return self.source != DiffSource::LastTurn
+                && self.repositories.get(index).is_some_and(|repository| {
+                    self.selected_repository
+                        .as_deref()
+                        .or_else(|| self.repository.as_ref().map(|r| r.root.as_str()))
+                        == Some(repository.root.as_str())
+                });
+        }
+        if self.picker_status(kind).is_some() {
+            return false;
+        }
+        let Some(index) = self
+            .menu
+            .as_ref()
+            .and_then(|menu| menu.choices.get(index))
+            .map(|choice| choice.0)
+        else {
+            return false;
+        };
+        self.repository
+            .as_ref()
+            .is_some_and(|repository| match kind {
+                Kind::Branches => repository.branches.get(index) == self.base_branch.as_ref(),
+                Kind::Commits => repository
+                    .commits
+                    .get(index)
+                    .is_some_and(|commit| Some(&commit.id) == self.commit.as_ref()),
+                _ => false,
+            })
+    }
+
     pub fn menu_items(&self) -> impl ExactSizeIterator<Item = (&str, bool)> + Clone {
         self.menu_items_for(self.menu.as_ref().map(|m| m.kind))
     }
@@ -83,8 +216,18 @@ impl DiffPanel {
             None => 0,
             Some(Kind::Source) => SOURCES.len(),
             Some(Kind::Options) => 7,
-            Some(Kind::Branches) => repository.map_or(0, |r| r.branches.len()),
-            Some(Kind::Commits) => repository.map_or(0, |r| r.commits.len()),
+            Some(kind @ (Kind::Branches | Kind::Commits)) => {
+                if self.picker_status(kind).is_some() {
+                    if self.error.is_some() && !self.pending {
+                        2
+                    } else {
+                        1
+                    }
+                } else {
+                    self.menu.as_ref().map_or(0, |menu| menu.choices.len())
+                }
+            }
+            Some(Kind::Repositories) => self.repositories.len(),
             Some(Kind::Header) => {
                 if matches!(self.source, DiffSource::Unstaged | DiffSource::Staged) {
                     5
@@ -107,11 +250,23 @@ impl DiffPanel {
                     5 => ("Load full files", true),
                     _ => ("Rich preview", true),
                 },
-                Kind::Branches => (repository.unwrap().branches[index].as_str(), !self.pending),
-                Kind::Commits => (
-                    repository.unwrap().commits[index].label.as_str(),
-                    !self.pending,
-                ),
+                Kind::Branches | Kind::Commits => {
+                    if let Some(status) = self.picker_status(kind.unwrap()) {
+                        if index == 1 {
+                            ("Retry", true)
+                        } else {
+                            (status, false)
+                        }
+                    } else {
+                        let selected = self.menu.as_ref().unwrap().choices[index].0;
+                        if kind == Some(Kind::Branches) {
+                            (repository.unwrap().branches[selected].as_str(), true)
+                        } else {
+                            (repository.unwrap().commits[selected].label.as_str(), true)
+                        }
+                    }
+                }
+                Kind::Repositories => (self.repositories[index].name.as_str(), !self.pending),
                 Kind::Header => match index {
                     0 => ("Copy path", true),
                     1 => ("Open in editor", true),
@@ -177,9 +332,32 @@ impl DiffPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let position = if kind == Kind::Source {
+        let position = if matches!(kind, Kind::Source | Kind::Repositories) {
+            let extra = if kind == Kind::Source {
+                self.repository_label().map_or(px(0.), |label| {
+                    let line = window.text_system().layout_line(
+                        label,
+                        px(13.),
+                        &[TextRun {
+                            len: label.len(),
+                            font: Font {
+                                weight: FontWeight(430.),
+                                ..font(SANS)
+                            },
+                            color: cx.theme().text,
+                            background_color: None,
+                            underline: None,
+                            strikethrough: None,
+                        }],
+                        None,
+                    );
+                    (line.width + px(32.)).min(px(230.))
+                })
+            } else {
+                px(0.)
+            };
             point(
-                window.viewport_size().width - panel_width(window, cx) + px(7.),
+                window.viewport_size().width - panel_width(window, cx) + px(7.) + extra,
                 px(83.),
             )
         } else {
@@ -197,7 +375,11 @@ impl DiffPanel {
             active: None,
             selected,
             return_focus: window.focused(cx),
+            query: controls::TextField::default(),
+            choices: Vec::new(),
+            parent_source: false,
         });
+        self.refresh_picker();
         if let Some(focus) = &self.focus {
             window.focus(focus, cx);
         }
@@ -212,8 +394,22 @@ impl DiffPanel {
         cx: &mut Context<Self>,
     ) {
         let Some(menu) = &self.menu else { return };
+        if menu.kind == Kind::Branches
+            && !matches!(
+                event.keystroke.key.as_str(),
+                "escape" | "enter" | "up" | "down" | "home" | "end" | "tab"
+            )
+        {
+            if self.menu.as_mut().unwrap().query.key(event) {
+                self.refresh_picker();
+                self.menu.as_mut().unwrap().active = None;
+                cx.stop_propagation();
+                cx.notify();
+            }
+            return;
+        }
         match event.keystroke.key.as_str() {
-            "left" | "escape" if menu.kind == Kind::Commits => {
+            "left" | "escape" if menu.kind == Kind::Commits && menu.parent_source => {
                 let menu = self.menu.as_mut().unwrap();
                 menu.kind = Kind::Source;
                 menu.active = Some(4);
@@ -275,14 +471,12 @@ impl DiffPanel {
         let source = SOURCES[index];
         if source == DiffSource::Commits {
             self.open_menu(0, Kind::Commits, position, window, cx);
+            self.menu.as_mut().unwrap().parent_source = true;
             if !self.pending {
                 cx.emit(DiffRequest::Refresh);
             }
         } else {
             self.select_source(source, cx);
-            if source == DiffSource::Branch {
-                self.open_menu(0, Kind::Branches, position, window, cx);
-            }
         }
     }
 
@@ -295,9 +489,12 @@ impl DiffPanel {
                 &self.workspace
             }
         } else {
-            self.repository
-                .as_ref()
-                .map_or(self.workspace.as_str(), |r| r.root.as_str())
+            self.repository.as_ref().map_or(
+                self.selected_repository
+                    .as_deref()
+                    .unwrap_or(self.workspace.as_str()),
+                |r| r.root.as_str(),
+            )
         }
     }
 
@@ -332,6 +529,17 @@ impl DiffPanel {
     }
 
     fn activate_menu(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self
+            .menu
+            .as_ref()
+            .is_some_and(|menu| matches!(menu.kind, Kind::Branches | Kind::Commits))
+            && self.error.is_some()
+            && !self.pending
+            && index == 1
+        {
+            cx.emit(DiffRequest::Refresh);
+            return;
+        }
         let Some((_, true)) = self.menu_items().nth(index) else {
             return;
         };
@@ -342,9 +550,12 @@ impl DiffPanel {
         if matches!(menu.kind, Kind::Branches | Kind::Commits) {
             if let Some(repository) = &self.repository {
                 if menu.kind == Kind::Branches {
-                    self.base_branch = repository.branches.get(index).cloned();
+                    self.base_branch = repository.branches.get(menu.choices[index].0).cloned();
                 } else {
-                    self.commit = repository.commits.get(index).map(|c| c.id.clone());
+                    self.commit = repository
+                        .commits
+                        .get(menu.choices[index].0)
+                        .map(|c| c.id.clone());
                 }
                 self.select_source(
                     if menu.kind == Kind::Branches {
@@ -357,6 +568,10 @@ impl DiffPanel {
             }
             cx.stop_propagation();
             cx.notify();
+            return;
+        }
+        if menu.kind == Kind::Repositories {
+            self.select_repository(index, cx);
             return;
         }
         if menu.kind == Kind::Options {
@@ -434,7 +649,45 @@ impl DiffPanel {
     fn popup(&self, kind: Kind, active: Option<usize>, cx: &Context<Self>) -> Stateful<Div> {
         let t = cx.theme();
         let source = kind == Kind::Source;
-        let opaque = matches!(kind, Kind::Source | Kind::Branches | Kind::Commits);
+        let filter = (kind == Kind::Branches).then(|| {
+            let query = &self.menu.as_ref().unwrap().query;
+            div()
+                .id("diff-branch-filter")
+                .role(Role::TextInput)
+                .aria_label("Search branches")
+                .aria_placeholder("Search branches")
+                .aria_value(query.text.clone())
+                .h(px(32.))
+                .px(px(8.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(icon("diff-jump-to-file", 14., t.text_tertiary))
+                .child(
+                    text(
+                        if query.text.is_empty() {
+                            "Search branches"
+                        } else {
+                            &query.text
+                        },
+                        13.,
+                        20.,
+                        430.,
+                        if query.text.is_empty() {
+                            t.text_tertiary
+                        } else {
+                            t.text
+                        },
+                    )
+                    .min_w_0()
+                    .truncate(),
+                )
+                .into_any_element()
+        });
+        let opaque = matches!(
+            kind,
+            Kind::Source | Kind::Branches | Kind::Commits | Kind::Repositories
+        );
         let popup_id = if kind == Kind::Commits {
             "diff-commits-menu"
         } else {
@@ -513,7 +766,9 @@ impl DiffPanel {
                             if opaque { 430. } else { 400. },
                             if enabled { t.text } else { t.text_tertiary },
                         )
-                        .flex_1(),
+                        .flex_1()
+                        .min_w_0()
+                        .truncate(),
                     )
                     .when(source && SOURCES[i] == self.source, |d| {
                         d.child(source_glyph(SOURCE_CHECK, "diff-source-check", t.text, 191))
@@ -524,6 +779,11 @@ impl DiffPanel {
                                 || (i == 5 && self.full_files)
                                 || (i == 6 && self.rich_preview)),
                         |d| d.child(source_glyph(SOURCE_CHECK, "diff-word-check", t.text, 191)),
+                    )
+                    .when(
+                        matches!(kind, Kind::Branches | Kind::Commits | Kind::Repositories)
+                            && self.picker_selected(kind, i),
+                        |d| d.child(source_glyph(SOURCE_CHECK, "diff-picker-check", t.text, 191)),
                     )
                     .when(source && i == 4, |d| {
                         d.child(source_glyph(
@@ -575,6 +835,7 @@ impl DiffPanel {
                         .flex()
                         .flex_col()
                         .p(px(4.))
+                        .children(filter)
                         .children(rows),
                 ));
             div()
@@ -595,6 +856,9 @@ impl DiffPanel {
             .aria_label(match kind {
                 Kind::Source => "Changes source",
                 Kind::Options => "Changes options",
+                Kind::Branches => "Select branch",
+                Kind::Commits => "Select commit",
+                Kind::Repositories => "Select repository",
                 _ => "File actions",
             })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -603,7 +867,7 @@ impl DiffPanel {
 
     pub(super) fn menu_overlay(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let menu = self.menu.as_ref().expect("open diff menu");
-        let parent = menu.kind == Kind::Commits;
+        let parent = menu.kind == Kind::Commits && menu.parent_source;
         let position = if parent {
             menu.position + point(px(SOURCE_WIDTH), px(4. + 4. * ROW + 18.))
         } else {
@@ -660,4 +924,66 @@ fn absolute_path(workspace: &str, relative: &str) -> String {
         }
     }
     path.to_string_lossy().into_owned()
+}
+
+#[cfg(test)]
+mod picker_tests {
+    use super::*;
+
+    #[test]
+    fn branch_search_and_commit_loading_preserve_distinct_states() {
+        let mut panel = DiffPanel::from_patch("/repo", "");
+        panel.repository = Some(
+            serde_json::from_value(serde_json::json!({
+                "root":"/repo", "unstaged":[], "staged":[],
+                "branches":["main","feature/needle","release"],
+                "commits":[{"id":"0123456789abcdef","label":"01234567 change"}]
+            }))
+            .unwrap(),
+        );
+        panel.menu = Some(Menu {
+            file: 0,
+            kind: Kind::Branches,
+            position: point(px(0.), px(0.)),
+            active: None,
+            selected: String::new(),
+            return_focus: None,
+            query: controls::TextField {
+                text: "needle".into(),
+                selected: false,
+            },
+            choices: Vec::new(),
+            parent_source: false,
+        });
+        panel.refresh_picker();
+        assert_eq!(
+            panel.menu_items().collect::<Vec<_>>(),
+            [("feature/needle", true)]
+        );
+        panel.pending = true;
+        assert_eq!(
+            panel.menu_items().collect::<Vec<_>>(),
+            [("Loading branches…", false)]
+        );
+        panel.pending = false;
+        panel.error = Some("read failed".into());
+        assert_eq!(
+            panel.menu_items().collect::<Vec<_>>(),
+            [("Unable to load branches", false), ("Retry", true)]
+        );
+        panel.error = None;
+        panel.menu.as_mut().unwrap().query.text = "no-match".into();
+        panel.refresh_picker();
+        assert_eq!(
+            panel.menu_items().collect::<Vec<_>>(),
+            [("No matching branches", false)]
+        );
+        panel.menu.as_mut().unwrap().kind = Kind::Commits;
+        panel.repository.as_mut().unwrap().commits.clear();
+        panel.refresh_picker();
+        assert_eq!(
+            panel.menu_items().collect::<Vec<_>>(),
+            [("No commits on branch", false)]
+        );
+    }
 }

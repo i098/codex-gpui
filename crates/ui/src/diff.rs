@@ -66,6 +66,10 @@ mod comment_view;
 #[path = "diff/comments.rs"]
 pub mod comments;
 
+#[path = "diff/repositories.rs"]
+mod repositories;
+pub use repositories::ReviewRepository;
+
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
 const STORED_WIDTH: f32 = 664.17;
 /// Room the chat keeps beside the panel (`unified` layout), also the panel's minimum.
@@ -254,6 +258,8 @@ pub struct RepositoryChanges {
     #[serde(default)]
     pub commit: Option<String>,
     #[serde(default)]
+    pub head_branch: Option<String>,
+    #[serde(default)]
     pub before_ref: Option<String>,
     #[serde(default)]
     pub after_ref: Option<String>,
@@ -305,6 +311,8 @@ pub struct DiffPanel {
     standalone: bool,
     base_branch: Option<String>,
     commit: Option<String>,
+    repositories: Vec<ReviewRepository>,
+    selected_repository: Option<String>,
     word_diffs: bool,
     jump: Option<navigation::JumpToFile>,
     watch_limited: bool,
@@ -426,6 +434,8 @@ impl DiffPanel {
             standalone: false,
             base_branch: None,
             commit: None,
+            repositories: Vec::new(),
+            selected_repository: None,
             jump: None,
             watch_limited: false,
             last_turn_state: None,
@@ -449,7 +459,7 @@ impl DiffPanel {
     }
 
     pub fn review_params(&self) -> serde_json::Value {
-        serde_json::json!({"reviewSource": self.source.key(), "baseBranch": self.base_branch, "commit": self.commit})
+        serde_json::json!({"cwd": self.working_directory(), "reviewSource": self.source.key(), "baseBranch": self.base_branch, "commit": self.commit})
     }
 
     fn actionable_files(&self) -> &[RepositoryFile] {
@@ -569,6 +579,7 @@ impl DiffPanel {
         if self.source != DiffSource::LastTurn {
             self.show_repository();
         }
+        self.refresh_picker();
         cx.notify();
     }
 
@@ -1026,6 +1037,7 @@ impl DiffPanel {
             .gap(px(8.))
             .child(
                 capsule(t, clamped)
+                    .children(self.repository_control(t, cx))
                     .child(
                         div()
                             .id("diff-source")
@@ -1037,7 +1049,7 @@ impl DiffPanel {
                             .aria_label(if self.source == DiffSource::Cloud {
                                 "Cloud changes"
                             } else {
-                                "Changes source"
+                                "Review source"
                             })
                             .aria_expanded(source_open)
                             .when(self.source != DiffSource::Cloud, |d| {
@@ -1066,6 +1078,7 @@ impl DiffPanel {
                                 d.child(icon("diff-chevron-down", 12., t.text))
                             }),
                     )
+                    .children(self.comparison_control(t, cx))
                     .child(stats(added, removed, 14., t).mr(px(4.))),
             )
             .child(
@@ -1441,7 +1454,15 @@ impl Render for DiffPanel {
                 }
             }))
             .on_action(cx.listener(|this, _: &crate::Paste, window, cx| {
-                if let Some(jump) = &mut this.jump {
+                if this
+                    .menu
+                    .as_ref()
+                    .is_some_and(|menu| menu.kind == menu::Kind::Branches)
+                {
+                    if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                        this.paste_picker(&text, cx);
+                    }
+                } else if let Some(jump) = &mut this.jump {
                     if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
                         jump.query.paste(&text);
                         this.refresh_jump();
@@ -1461,6 +1482,9 @@ impl Render for DiffPanel {
                 }
             }))
             .on_action(cx.listener(|this, _: &crate::SelectAll, window, cx| {
+                if this.select_picker_text(cx) {
+                    return;
+                }
                 if let Some(jump) = &mut this.jump {
                     jump.query.selected = true;
                     cx.notify();

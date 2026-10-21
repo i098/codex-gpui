@@ -7,6 +7,7 @@ pub mod computer_use_requests;
 mod diff_comments;
 mod diff_content;
 mod diff_preview;
+mod diff_repositories;
 pub use diff_content::bind_standalone_diff;
 mod diff_find;
 mod diff_watch;
@@ -2170,7 +2171,22 @@ impl Root {
     /// A file link in an answer: the file viewer tab, filled with the local file.
     fn open_file(&mut self, action: &OpenFile, window: &mut Window, cx: &mut Context<Self>) {
         let Some(view) = &self.thread else { return };
-        let cwd = std::path::Path::new(view.read(cx).cwd())
+        let root = self
+            .diff
+            .as_ref()
+            .and_then(|panel| {
+                panel
+                    .read(cx)
+                    .repositories()
+                    .iter()
+                    .filter(|repository| {
+                        std::path::Path::new(&action.path).starts_with(&repository.root)
+                    })
+                    .max_by_key(|repository| repository.root.len())
+                    .map(|repository| repository.root.clone())
+            })
+            .unwrap_or_else(|| view.read(cx).cwd().to_owned());
+        let cwd = std::path::Path::new(&root)
             .components()
             .as_path()
             .to_string_lossy()
@@ -2181,11 +2197,11 @@ impl Root {
             format!("{cwd}/{}", action.path.trim_start_matches("./"))
         };
         let file = cx.new(|_| FileView::new(&cwd, path.clone(), action.line));
-        // The original asks its Electron main for `vscode://codex/read-file`; the port's local
-        // host is this process, so it reads the file itself.
-        // ponytail: FileView loads the whole file; add paging there instead of a command-only size limit.
+        let host = self.host.clone();
+        let read_cwd = cwd.clone();
         let read = cx.background_spawn(async move {
-            let contents = std::fs::read_to_string(&path).map_err(|error| error.to_string());
+            let contents = diff_content::read_file(host.as_ref(), &read_cwd, &path)
+                .map_err(|error| error.to_string());
             (path, contents)
         });
         let target = file.clone();
@@ -2781,6 +2797,13 @@ impl Root {
         let composer = self.thread_composer.clone().into();
         let diff = diff_content::new_panel(&self.cwd, &thread.cwd, &thread.turns, cx);
         self.configure_diff_comments(&diff, &thread.id, cx);
+        diff_repositories::load(
+            diff.clone(),
+            self.host.clone(),
+            thread.id.clone(),
+            thread.cwd.clone(),
+            cx,
+        );
         let cwd = thread.cwd.clone();
         cx.subscribe_in(
             &diff,
@@ -2792,7 +2815,10 @@ impl Root {
                 DiffRequest::Changes {
                     action: "revert", ..
                 } => this.confirm_revert(panel.clone(), &cwd, request, window, cx),
-                DiffRequest::Open(path) => this.open_in_editor(&cwd, path, cx),
+                DiffRequest::Open(path) => {
+                    let directory = panel.read(cx).working_directory().to_owned();
+                    this.open_in_editor(&directory, path, cx);
+                }
                 DiffRequest::SourceChanged => this.sync_diff_watch(cx),
                 DiffRequest::Notice(text) => this.toast(Toast::info(*text), cx),
                 DiffRequest::Refresh => this.refresh_diff(panel.clone(), &cwd, cx),
