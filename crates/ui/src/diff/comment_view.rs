@@ -378,11 +378,16 @@ impl DiffPanel {
             })
             .unwrap_or_default();
         let weak = cx.entity().downgrade();
+        if let Some(previous) = self.annotations.draft.take() {
+            previous
+                .editor
+                .update(cx, |editor, cx| editor.cancel_dictation(cx));
+        }
         let editor = cx.new(|cx| {
             Composer::comment_editor(
                 &initial,
                 move |window, cx| {
-                    let _ = weak.update(cx, |panel, cx| panel.abort_comment(window, cx));
+                    let _ = weak.update(cx, |panel, cx| panel.close_comment(window, cx));
                 },
                 window,
                 cx,
@@ -411,7 +416,24 @@ impl DiffPanel {
         cx.notify();
     }
 
+    fn dictate_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(draft) = &self.annotations.draft {
+            draft
+                .editor
+                .update(cx, |editor, cx| editor.dictate(window, cx));
+        }
+    }
+
     fn abort_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(draft) = self.annotations.draft.take() {
+            draft
+                .editor
+                .update(cx, |editor, cx| editor.cancel_dictation(cx));
+        }
+        self.close_comment(window, cx);
+    }
+
+    fn close_comment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.annotations.draft = None;
         self.annotations.selection = None;
         if self.hide_imports {
@@ -674,6 +696,7 @@ impl DiffPanel {
         {
             let editing = draft.editing.is_some();
             let enabled = !draft.editor.read(cx).field_text().trim().is_empty();
+            let dictation_label = draft.editor.read(cx).dictation_label();
             rows.push((
                 div()
                     .w_full()
@@ -707,6 +730,43 @@ impl DiffPanel {
                                             .flex()
                                             .items_center()
                                             .gap(px(8.))
+                                            .child(
+                                                crate::composer::pill("diff-comment-dictate", t)
+                                                    .size(px(24.))
+                                                    .justify_center()
+                                                    .role(gpui::Role::Button)
+                                                    .aria_label(dictation_label)
+                                                    .aria_disabled(
+                                                        dictation_label == "Transcribing",
+                                                    )
+                                                    .tab_index(0)
+                                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                                        cx.stop_propagation()
+                                                    })
+                                                    .on_click(cx.listener(|this, _, window, cx| {
+                                                        this.dictate_comment(window, cx)
+                                                    }))
+                                                    .on_key_down(cx.listener(
+                                                        |this, event: &KeyDownEvent, window, cx| {
+                                                            if matches!(
+                                                                event.keystroke.key.as_str(),
+                                                                "enter" | "space"
+                                                            ) {
+                                                                this.dictate_comment(window, cx);
+                                                                cx.stop_propagation();
+                                                            }
+                                                        },
+                                                    ))
+                                                    .child(if dictation_label == "Dictate" {
+                                                        icon("mic", 16., t.text).into_any_element()
+                                                    } else {
+                                                        div()
+                                                            .size(px(8.8))
+                                                            .rounded(px(1.))
+                                                            .bg(t.text)
+                                                            .into_any_element()
+                                                    }),
+                                            )
                                             .child(comment_button(
                                                 "Cancel",
                                                 false,

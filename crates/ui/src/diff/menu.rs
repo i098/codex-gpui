@@ -22,13 +22,16 @@ fn source_glyph(
     id: &'static str,
     color: Hsla,
     opacity: u8,
+    compositor_opacity: u8,
 ) -> impl IntoElement {
     let data = data.into();
     gpui::canvas(
         |_, _, _| {},
         move |bounds, (), window, cx| {
             let paint = |window: &mut Window| {
-                if !shapes::paint_icon(data.as_ref(), id, bounds, false, color, None, window, cx) {
+                let origin = (opacity != 255 || compositor_opacity != 255).then_some(bounds.origin);
+                if !shapes::paint_icon(data.as_ref(), id, bounds, false, color, origin, window, cx)
+                {
                     window
                         .paint_svg(
                             bounds,
@@ -41,10 +44,19 @@ fn source_glyph(
                         .ok();
                 }
             };
-            if opacity == 255 {
-                paint(window);
+            let svg = |window: &mut Window| {
+                if opacity == 255 {
+                    paint(window);
+                } else {
+                    let ink = shapes::icon_paint_bounds(data.as_ref(), id, bounds, false, window)
+                        .unwrap_or(bounds);
+                    shapes::with_layer(opacity, ink, window, paint);
+                }
+            };
+            if compositor_opacity == 255 {
+                svg(window);
             } else {
-                shapes::with_composited_opacity(opacity, bounds, window, cx, paint);
+                shapes::with_composited_opacity(compositor_opacity, bounds, window, cx, svg);
             }
         },
     )
@@ -785,7 +797,6 @@ impl DiffPanel {
                         })
                     })
                     .aria_disabled(!enabled)
-                    .when(options && !enabled, |d| d.opacity(0.5))
                     .when(active == Some(i), |d| {
                         d.aria_active_descendant().bg(t.menu_item_hover)
                     })
@@ -855,7 +866,13 @@ impl DiffPanel {
                         } else {
                             255
                         };
-                        d.child(source_glyph(data, name, t.text, opacity))
+                        d.child(source_glyph(
+                            data,
+                            name,
+                            t.text,
+                            opacity,
+                            if enabled { 255 } else { 128 },
+                        ))
                     })
                     .when_some(context_icon, |d, image| {
                         d.child(
@@ -879,24 +896,43 @@ impl DiffPanel {
                         )
                         .flex_1()
                         .min_w_0()
-                        .truncate(),
+                        .truncate()
+                        .when(options && !enabled, |d| d.opacity(0.5)),
                     )
                     .when(source && SOURCES[i] == self.source, |d| {
-                        d.child(source_glyph(SOURCE_CHECK, "diff-source-check", t.text, 191))
+                        d.child(source_glyph(
+                            SOURCE_CHECK,
+                            "diff-source-check",
+                            t.text,
+                            191,
+                            255,
+                        ))
                     })
                     .when(checked.is_some(), |d| {
                         d.child(
-                            div().size(px(16.)).flex_none().children(
-                                checked
-                                    .filter(|checked| *checked)
-                                    .map(|_| icon("diff-option-check", 16., t.text)),
-                            ),
+                            div()
+                                .size(px(16.))
+                                .flex_none()
+                                .children(
+                                    checked
+                                        .filter(|checked| *checked)
+                                        .map(|_| icon("diff-option-check", 16., t.text)),
+                                )
+                                .when(!enabled, |d| d.opacity(0.5)),
                         )
                     })
                     .when(
                         matches!(kind, Kind::Branches | Kind::Commits | Kind::Repositories)
                             && self.picker_selected(kind, i),
-                        |d| d.child(source_glyph(SOURCE_CHECK, "diff-picker-check", t.text, 191)),
+                        |d| {
+                            d.child(source_glyph(
+                                SOURCE_CHECK,
+                                "diff-picker-check",
+                                t.text,
+                                191,
+                                255,
+                            ))
+                        },
                     )
                     .when(
                         source && i == 4
@@ -906,6 +942,7 @@ impl DiffPanel {
                                 SOURCE_SUBMENU,
                                 "diff-source-submenu",
                                 t.text_tertiary,
+                                255,
                                 255,
                             ))
                         },

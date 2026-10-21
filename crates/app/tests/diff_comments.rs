@@ -139,7 +139,7 @@ fn gutter_comments_keep_ranges_and_support_edit_cancel_delete_and_send() -> Resu
     fx.type_text("Check the complete range.")?;
     fx.reference_shot()?
         .save(output()?.join("comment-range-draft.png"))?;
-    fx.keys("tab tab enter")?;
+    fx.keys("tab tab tab enter")?;
     fx.wait("saved comment", |fx| {
         comment_text(fx).as_deref() == Some("Check the complete range.")
     })?;
@@ -163,7 +163,7 @@ fn gutter_comments_keep_ranges_and_support_edit_cancel_delete_and_send() -> Resu
     fx.click((850., 375.4))?;
     fx.keys("cmd-a")?;
     fx.type_text("Check overflow.")?;
-    fx.keys("tab tab tab enter")?;
+    fx.keys("tab tab tab tab enter")?;
     fx.wait("updated comment", |fx| {
         comment_text(fx).as_deref() == Some("Check overflow.")
     })?;
@@ -176,7 +176,7 @@ fn gutter_comments_keep_ranges_and_support_edit_cancel_delete_and_send() -> Resu
         .save(output()?.join("comment-deleted.png"))?;
     fx.click((704., 215.4))?;
     fx.type_text("Use checked arithmetic.")?;
-    fx.keys("tab tab enter")?;
+    fx.keys("tab tab tab enter")?;
     fx.wait("new comment", |fx| comment_text(fx).is_some())?;
     fx.focus_composer()?;
     fx.type_text("Apply this review.")?;
@@ -213,7 +213,7 @@ fn comment_attachment_opens_the_file_and_removes_persisted_comments() -> Result<
     fx.click((704., 302.4))?;
     fx.wait("comment editor", |fx| draft(fx))?;
     fx.type_text("Check this range.")?;
-    fx.keys("tab tab enter")?;
+    fx.keys("tab tab tab enter")?;
     fx.wait("saved attachment", |fx| {
         comment_text(fx).as_deref() == Some("Check this range.")
     })?;
@@ -313,5 +313,82 @@ fn model_comment_dismissal_uses_confirmation_and_persists() -> Result<()> {
     );
     fx.reference_shot()?
         .save(output()?.join("model-comment-dismissed.png"))?;
+    Ok(())
+}
+
+#[test]
+fn controlled_dictation_targets_the_comment_and_cancels_on_close() -> Result<()> {
+    use ui::composer::dictation::{
+        Command as DictationCommand, Dispatcher, Event as DictationEvent, Session,
+    };
+    common::install_panic_hook();
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-2")?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.focus_composer()?;
+    fx.type_text("Keep this draft.")?;
+    fx.keys("alt-cmd-b")?;
+    fx.hover((814., 239.6))?;
+    fx.click((704., 239.6))?;
+    fx.wait("comment editor", |fx| draft(fx))?;
+    fx.type_text("old")?;
+    fx.keys("cmd-a")?;
+    let editor = fx.read(|root, cx| {
+        root.diff_panel()
+            .unwrap()
+            .read(cx)
+            .comment_draft()
+            .unwrap()
+            .clone()
+    });
+    let (control, sessions) = std::sync::mpsc::channel();
+    let dispatcher = Dispatcher::new(move || {
+        let (commands, received) = std::sync::mpsc::channel();
+        let (events, delivered) = async_channel::unbounded();
+        control
+            .send((received, events))
+            .map_err(|error| error.to_string())?;
+        Ok(Session {
+            commands,
+            events: delivered,
+        })
+    });
+    fx.cx
+        .update_window(fx.window, |_, _, cx| dispatcher.install(cx))?;
+    fx.click((1099., 357.))?;
+    let (commands, events) = sessions.recv_timeout(std::time::Duration::from_secs(2))?;
+    events.send_blocking(DictationEvent::Recording)?;
+    fx.wait("controlled recording", |fx| {
+        fx.read(|_, cx| editor.read(cx).dictation_label() == "Stop dictation")
+    })?;
+    fx.click((1099., 357.))?;
+    ensure!(matches!(
+        commands.recv_timeout(std::time::Duration::from_secs(2)),
+        Ok(DictationCommand::Finish)
+    ));
+    events.send_blocking(DictationEvent::Finished(Ok("replacement".into())))?;
+    fx.wait("comment transcript", |fx| {
+        fx.read(|_, cx| editor.read(cx).field_text() == "replacement")
+    })?;
+    ensure!(fx.composer_text()? == "Keep this draft.");
+    fx.click((1099., 357.))?;
+    let (commands, events) = sessions.recv_timeout(std::time::Duration::from_secs(2))?;
+    events.send_blocking(DictationEvent::Recording)?;
+    fx.wait("second controlled recording", |fx| {
+        fx.read(|_, cx| editor.read(cx).dictation_label() == "Stop dictation")
+    })?;
+    fx.click((1148., 357.))?;
+    ensure!(!draft(&fx));
+    ensure!(matches!(
+        commands.recv_timeout(std::time::Duration::from_secs(2)),
+        Ok(DictationCommand::Cancel)
+    ));
+    let _ = events.try_send(DictationEvent::Finished(Ok("late result".into())));
+    fx.advance(std::time::Duration::from_millis(100))?;
+    ensure!(fx.read(|_, cx| editor.read(cx).field_text() == "replacement"));
+    ensure!(fx.composer_text()? == "Keep this draft.");
+    println!(
+        "Controlled comment dictation passed without microphone capture or a permission request."
+    );
     Ok(())
 }

@@ -548,6 +548,9 @@ Editing preserves the stored comment until Save.
 The composer groups comments in one count attachment.
 Its preview opens the selected source file; `Remove comments attachment` clears the stored comments.
 Closing the keyboard preview restores focus to its trigger.
+The comment's Dictate control targets its own Composer through the shared dispatcher.
+Controlled native input checks transcript placement, finish/cancel commands, and rejection of late results after closing.
+The test does not open a microphone or request permission.
 Dismissed model comments persist after confirmation.
 `diff_comments` checks those actions through native pointer and keyboard input.
 
