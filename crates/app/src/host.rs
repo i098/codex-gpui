@@ -45,6 +45,7 @@ pub mod computer_use_native;
 mod git;
 pub mod git_pr;
 mod native_apps;
+mod open_in;
 mod projectless;
 pub use projectless::Workspace;
 pub(crate) mod run_now;
@@ -475,6 +476,7 @@ pub struct LocalHost {
     /// process holds the same connection.
     bridge: Option<Arc<Bridge>>,
     opener: PathBuf,
+    settings: Option<crate::host_settings::Settings>,
     computer_use_settings: Option<computer_use::ComputerUseSettings>,
     native_computer_use: Arc<computer_use_native::NativeComputerUse>,
 }
@@ -488,11 +490,17 @@ impl LocalHost {
             home,
             bridge: None,
             opener: "/usr/bin/open".into(),
+            settings: None,
         }
     }
 
     pub fn with_bridge(mut self, bridge: Arc<Bridge>) -> Self {
         self.bridge = Some(bridge);
+        self
+    }
+
+    pub fn with_settings(mut self, settings: Option<crate::host_settings::Settings>) -> Self {
+        self.settings = settings;
         self
     }
 
@@ -1134,6 +1142,7 @@ impl Host for LocalHost {
                 json!({"success": true})
             }
             "open-file" => open_file(&self.opener, &params)?,
+            "open-in-targets" => self.open_in_targets(&params)?,
             "native-desktop-apps" => json!({"apps": native_apps::list(&params)?}),
             "native-desktop-app-by-bundle-id" => {
                 json!({"app": native_apps::by_bundle_id(&params)?})
@@ -1326,6 +1335,11 @@ impl CloudHost {
     /// Lets the local endpoints that start app-server work (`automation-run-now`) run.
     pub fn with_bridge(mut self, bridge: Arc<Bridge>) -> Self {
         self.local = self.local.with_bridge(bridge);
+        self
+    }
+
+    pub fn with_settings(mut self, settings: Option<crate::host_settings::Settings>) -> Self {
+        self.local = self.local.with_settings(settings);
         self
     }
 

@@ -653,7 +653,8 @@ impl Root {
             chatgpt_account: false,
             host: Arc::new(
                 host::CloudHost::from_env(host::app_server_credentials(bridge.clone()))
-                    .with_bridge(bridge.clone()),
+                    .with_bridge(bridge.clone())
+                    .with_settings(cx.try_global::<host_settings::Settings>().cloned()),
             ),
             bridge,
             automations: None,
@@ -806,11 +807,12 @@ impl Root {
                 }
                 let announcement = announcements_allowed
                     .then(|| {
+                        let seen = Self::model_announcement_history(cx);
                         catalog.data.iter().position(|entry| {
                             entry.availability_nux.is_some()
                                 && Some(entry.model.model.as_str()) != current_model
                                 && !LEGACY_MODEL_ANNOUNCEMENTS.contains(&entry.model.model.as_str())
-                                && !Self::model_announcement_history(cx)
+                                && !seen
                                     .iter()
                                     .any(|seen| seen.as_str() == Some(entry.model.model.as_str()))
                         })
@@ -1174,13 +1176,14 @@ impl Root {
     fn open_in_editor(&mut self, cwd: &str, path: &str, cx: &mut Context<Self>) {
         let target = cx
             .try_global::<host_settings::Settings>()
-            .and_then(|settings| settings.read_all().get("open-in-target-preferences"))
-            .and_then(|preferences| {
+            .and_then(|settings| {
+                let values = settings.read_all();
+                let preferences = values.get("open-in-target-preferences")?;
                 preferences["perPath"][cwd]
                     .as_str()
                     .or(preferences["global"].as_str())
-            })
-            .map(str::to_owned);
+                    .map(str::to_owned)
+            });
         let request = host::Request::post(
             "open-file",
             Some(json!({"hostId": "local", "cwd": cwd, "path": path, "target": target})),
@@ -1560,8 +1563,12 @@ impl Root {
         let request = request.clone();
         if cx
             .try_global::<host_settings::Settings>()
-            .and_then(|settings| settings.read_all().get("skip-revert-confirmation"))
-            .and_then(Value::as_bool)
+            .and_then(|settings| {
+                settings
+                    .read_all()
+                    .get("skip-revert-confirmation")
+                    .and_then(Value::as_bool)
+            })
             == Some(true)
         {
             self.repository_request(panel, cwd, &request, cx);
@@ -2212,20 +2219,23 @@ impl Root {
         self.dialog.as_ref()
     }
 
-    fn model_announcement_history(cx: &App) -> &[Value] {
+    fn model_announcement_history(cx: &App) -> Vec<Value> {
         cx.try_global::<host_settings::Settings>()
-            .and_then(|settings| settings.read_all().get("seen-model-upgrade-list"))
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
+            .and_then(|settings| {
+                settings
+                    .read_all()
+                    .get("seen-model-upgrade-list")
+                    .and_then(Value::as_array)
+                    .cloned()
+            })
             .unwrap_or_default()
     }
 
     fn remember_model_announcement(&mut self, model: &str, cx: &mut Context<Self>) {
-        let seen = Self::model_announcement_history(cx);
+        let mut seen = Self::model_announcement_history(cx);
         if seen.iter().any(|seen| seen.as_str() == Some(model)) {
             return;
         }
-        let mut seen = seen.to_vec();
         seen.push(json!(model));
         self.write_setting(
             &SettingChanged {
