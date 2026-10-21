@@ -10,8 +10,8 @@ mod features;
 pub mod host;
 pub mod host_settings;
 pub mod oauth;
-pub mod qa;
 mod plugins;
+pub mod qa;
 mod search;
 mod section_actions;
 mod window_shell;
@@ -798,139 +798,141 @@ impl Root {
         let generation = self.connection.generation;
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let result = async {
-            let server = bridge
-                .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
-                .await?;
-            let acp = bridge.is_acp();
-            let account = if acp {
-                None
-            } else {
-                Some(bridge.account_read().await?)
-            };
-            let threads = bridge.thread_list().await?;
-            let (mut catalog, config, skills) = if acp {
-                // The picker's one row says the agent picks: an empty id sends no model, and
-                // an empty effort shows no effort label.
-                let model = Model {
-                    id: String::new(),
-                    model: String::new(),
-                    display_name: "Agent model".into(),
-                    description: "Set on the agent's command line".into(),
-                    hidden: false,
-                    default_reasoning_effort: String::new(),
-                    supported_reasoning_efforts: Vec::new(),
-                    is_default: true,
-                };
-                let data = vec![CatalogModel {
-                    model,
-                    availability_nux: None,
-                }];
-                let config = ConfigReadResponse {
-                    config: json!({ "model_reasoning_effort": "" }),
-                };
-                (ModelCatalog { data }, config, Value::Null)
-            } else {
-                let catalog: ModelCatalog = bridge.request("model/list", json!({})).await?;
-                let config: ConfigReadResponse = bridge
-                    .request("config/read", json!({ "includeLayers": false, "cwd": cwd }))
+                let server = bridge
+                    .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
                     .await?;
-                // Only the settings page reads it (home directory), so a failure is not fatal.
-                let skills = bridge
-                    .request("skills/list", json!({ "cwds": [cwd] }))
-                    .await
-                    .unwrap_or(Value::Null);
-                (catalog, config, skills)
-            };
-            this.update_in(cx, |this, window, cx| {
-                if this.connection.generation != generation {
-                    return;
-                }
-                this.account_email = account.as_ref().and_then(chatgpt_email);
-                this.chatgpt_account = account.as_ref().is_some_and(|account| {
-                    matches!(account.account, Some(Account::Chatgpt { .. }))
-                });
-                if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
-                    this.login = Some(cx.new(Login::new));
-                }
-                this.set_threads(&threads.data, cx);
-                this.set_next_cursor(threads.next_cursor, cx);
-                if !acp && this.login.is_none() {
-                    this.load_sections(cx);
-                }
-                let announcements_allowed = this.login.is_none()
-                    && matches!(this.state.route, Route::Home | Route::Thread(_));
-                let current_model = config.config["model"].as_str().or_else(|| {
-                    catalog
-                        .data
-                        .iter()
-                        .find(|entry| !entry.model.hidden && entry.model.is_default)
-                        .map(|entry| entry.model.model.as_str())
-                });
-                if announcements_allowed
-                    && let Some(current) = current_model
-                    && !LEGACY_MODEL_ANNOUNCEMENTS.contains(&current)
-                    && catalog.data.iter().any(|entry| {
-                        entry.model.model == current && entry.availability_nux.is_some()
-                    })
-                {
-                    this.remember_model_announcement(current, cx);
-                }
-                let announcement = announcements_allowed
-                    .then(|| {
-                        catalog.data.iter().position(|entry| {
-                            entry.availability_nux.is_some()
-                                && Some(entry.model.model.as_str()) != current_model
-                                && !LEGACY_MODEL_ANNOUNCEMENTS.contains(&entry.model.model.as_str())
-                                && !Self::model_announcement_history(cx)
-                                    .iter()
-                                    .any(|seen| seen.as_str() == Some(entry.model.model.as_str()))
+                let acp = bridge.is_acp();
+                let account = if acp {
+                    None
+                } else {
+                    Some(bridge.account_read().await?)
+                };
+                let threads = bridge.thread_list().await?;
+                let (mut catalog, config, skills) = if acp {
+                    // The picker's one row says the agent picks: an empty id sends no model, and
+                    // an empty effort shows no effort label.
+                    let model = Model {
+                        id: String::new(),
+                        model: String::new(),
+                        display_name: "Agent model".into(),
+                        description: "Set on the agent's command line".into(),
+                        hidden: false,
+                        default_reasoning_effort: String::new(),
+                        supported_reasoning_efforts: Vec::new(),
+                        is_default: true,
+                    };
+                    let data = vec![CatalogModel {
+                        model,
+                        availability_nux: None,
+                    }];
+                    let config = ConfigReadResponse {
+                        config: json!({ "model_reasoning_effort": "" }),
+                    };
+                    (ModelCatalog { data }, config, Value::Null)
+                } else {
+                    let catalog: ModelCatalog = bridge.request("model/list", json!({})).await?;
+                    let config: ConfigReadResponse = bridge
+                        .request("config/read", json!({ "includeLayers": false, "cwd": cwd }))
+                        .await?;
+                    // Only the settings page reads it (home directory), so a failure is not fatal.
+                    let skills = bridge
+                        .request("skills/list", json!({ "cwds": [cwd] }))
+                        .await
+                        .unwrap_or(Value::Null);
+                    (catalog, config, skills)
+                };
+                this.update_in(cx, |this, window, cx| {
+                    if this.connection.generation != generation {
+                        return;
+                    }
+                    this.account_email = account.as_ref().and_then(chatgpt_email);
+                    this.chatgpt_account = account.as_ref().is_some_and(|account| {
+                        matches!(account.account, Some(Account::Chatgpt { .. }))
+                    });
+                    if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
+                        this.login = Some(cx.new(Login::new));
+                    }
+                    this.set_threads(&threads.data, cx);
+                    this.set_next_cursor(threads.next_cursor, cx);
+                    if !acp && this.login.is_none() {
+                        this.load_sections(cx);
+                    }
+                    let announcements_allowed = this.login.is_none()
+                        && matches!(this.state.route, Route::Home | Route::Thread(_));
+                    let current_model = config.config["model"].as_str().or_else(|| {
+                        catalog
+                            .data
+                            .iter()
+                            .find(|entry| !entry.model.hidden && entry.model.is_default)
+                            .map(|entry| entry.model.model.as_str())
+                    });
+                    if announcements_allowed
+                        && let Some(current) = current_model
+                        && !LEGACY_MODEL_ANNOUNCEMENTS.contains(&current)
+                        && catalog.data.iter().any(|entry| {
+                            entry.model.model == current && entry.availability_nux.is_some()
                         })
-                    })
-                    .flatten()
-                    .map(|index| {
-                        let message = catalog.data[index]
-                            .availability_nux
-                            .take()
-                            .expect("eligible model announcement")
-                            .message;
-                        (index, message)
-                    });
-                let models: Vec<Model> =
-                    catalog.data.into_iter().map(|entry| entry.model).collect();
-                let composers = [
-                    this.home.read(cx).composer.clone(),
-                    this.thread_composer.clone(),
-                ];
-                for composer in composers {
-                    composer.update(cx, |c, cx| {
-                        c.set_models(&models, &config.config, cx);
-                        c.set_slash_skills(&skills, cx);
-                    });
-                }
-                this.config = config.config;
-                this.config["host"]["confirm-before-close"] =
-                    serde_json::to_value(this.state.confirm_before_close)
-                        .expect("close preference");
-                this.skills = skills;
-                this.models = models;
-                this.ready = true;
-                this.select_route(cx);
-                this.sync(window, cx);
-                cx.defer(deep_links::flush);
-                if bridge.is_acp() {
-                    let note = format!(
-                        "{} over ACP: only chats, streaming, Stop and approvals work",
-                        server.user_agent
-                    );
-                    this.toast(Toast::info(note), cx);
-                }
-                if let Some((index, message)) = announcement {
-                    let dialog =
-                        cx.new(|cx| Dialog::model_announcement(&this.models[index], message, cx));
-                    this.show_dialog(dialog, window, cx);
-                }
-            })
-            }.await;
+                    {
+                        this.remember_model_announcement(current, cx);
+                    }
+                    let announcement = announcements_allowed
+                        .then(|| {
+                            catalog.data.iter().position(|entry| {
+                                entry.availability_nux.is_some()
+                                    && Some(entry.model.model.as_str()) != current_model
+                                    && !LEGACY_MODEL_ANNOUNCEMENTS
+                                        .contains(&entry.model.model.as_str())
+                                    && !Self::model_announcement_history(cx).iter().any(|seen| {
+                                        seen.as_str() == Some(entry.model.model.as_str())
+                                    })
+                            })
+                        })
+                        .flatten()
+                        .map(|index| {
+                            let message = catalog.data[index]
+                                .availability_nux
+                                .take()
+                                .expect("eligible model announcement")
+                                .message;
+                            (index, message)
+                        });
+                    let models: Vec<Model> =
+                        catalog.data.into_iter().map(|entry| entry.model).collect();
+                    let composers = [
+                        this.home.read(cx).composer.clone(),
+                        this.thread_composer.clone(),
+                    ];
+                    for composer in composers {
+                        composer.update(cx, |c, cx| {
+                            c.set_models(&models, &config.config, cx);
+                            c.set_slash_skills(&skills, cx);
+                        });
+                    }
+                    this.config = config.config;
+                    this.config["host"]["confirm-before-close"] =
+                        serde_json::to_value(this.state.confirm_before_close)
+                            .expect("close preference");
+                    this.skills = skills;
+                    this.models = models;
+                    this.ready = true;
+                    this.select_route(cx);
+                    this.sync(window, cx);
+                    cx.defer(deep_links::flush);
+                    if bridge.is_acp() {
+                        let note = format!(
+                            "{} over ACP: only chats, streaming, Stop and approvals work",
+                            server.user_agent
+                        );
+                        this.toast(Toast::info(note), cx);
+                    }
+                    if let Some((index, message)) = announcement {
+                        let dialog = cx
+                            .new(|cx| Dialog::model_announcement(&this.models[index], message, cx));
+                        this.show_dialog(dialog, window, cx);
+                    }
+                })
+            }
+            .await;
             if let Err(error) = result {
                 this.update(cx, |this, cx| this.connection_failed(error, generation, cx))?;
             }
@@ -2803,9 +2805,11 @@ impl Root {
         if self.dialog.is_some() {
             return;
         }
-        if let Some(side) = self.side.filter(|_| self.split.as_ref().is_some_and(|split| {
-            split.read(cx).panel_has_focus(window, cx)
-        })) {
+        if let Some(side) = self.side.filter(|_| {
+            self.split
+                .as_ref()
+                .is_some_and(|split| split.read(cx).panel_has_focus(window, cx))
+        }) {
             return self.close_side(side, window, cx);
         }
         if self.state.confirm_before_close == ConfirmBeforeClose::Never {
@@ -3008,9 +3012,12 @@ impl Root {
                     if error.is::<serde_json::Error>() {
                         this.update(cx, |this, cx| {
                             if this.state.route == Route::Thread(id.clone()) {
-                                this.connection.view.update(cx, |view, cx| view.set_state(
-                                    ui::screens::recovery::State::RouteError(error.to_string()), cx,
-                                ));
+                                this.connection.view.update(cx, |view, cx| {
+                                    view.set_state(
+                                        ui::screens::recovery::State::RouteError(error.to_string()),
+                                        cx,
+                                    )
+                                });
                                 cx.notify();
                             }
                         })?;
@@ -5647,7 +5654,14 @@ impl Render for Root {
             .child(self.toaster.clone())
             .children(self.dialog.clone())
             .children(self.connection.feedback.clone());
-        error_shell::actions(window_shell::actions(section_actions::actions(features::actions(root, cx), cx), cx), cx).into_any_element()
+        error_shell::actions(
+            window_shell::actions(
+                section_actions::actions(features::actions(root, cx), cx),
+                cx,
+            ),
+            cx,
+        )
+        .into_any_element()
     }
 }
 

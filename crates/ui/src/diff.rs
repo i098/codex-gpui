@@ -1110,10 +1110,22 @@ impl DiffPanel {
 
 impl Render for DiffPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.files.iter().any(|file| file.problem == Some("Diff failed to render")) {
-            let recovery = self.recovery.get_or_insert_with(|| cx.new(|cx| {
-                crate::screens::recovery::Recovery::new(crate::screens::recovery::State::TabError, cx)
-            })).clone();
+        if self
+            .files
+            .iter()
+            .any(|file| file.problem == Some("Diff failed to render"))
+        {
+            let recovery = self
+                .recovery
+                .get_or_insert_with(|| {
+                    cx.new(|cx| {
+                        crate::screens::recovery::Recovery::new(
+                            crate::screens::recovery::State::TabError,
+                            cx,
+                        )
+                    })
+                })
+                .clone();
             return div().size_full().child(recovery).into_any_element();
         }
         let t = cx.theme().clone();
@@ -1486,8 +1498,9 @@ pub struct CloseSideTab(pub usize);
 
 impl SplitScreen {
     pub fn panel_has_focus(&self, window: &Window, cx: &App) -> bool {
-        !self.tabs.is_empty() && (self.panel_focus.contains_focused(window, cx)
-            || self.tabs_focus.contains_focused(window, cx))
+        !self.tabs.is_empty()
+            && (self.panel_focus.contains_focused(window, cx)
+                || self.tabs_focus.contains_focused(window, cx))
     }
 
     /// Titlebar row over a side panel (`Task tabs`): every open tab in a 240 px slot (the
@@ -1753,9 +1766,12 @@ impl Render for SplitMain {
             .child(
                 div()
                     .track_focus(&self.focus)
-                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
-                        this.focus.focus(window, cx);
-                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            this.focus.focus(window, cx);
+                        }),
+                    )
                     .w(width)
                     .flex_none()
                     .border_l_1()
@@ -1764,44 +1780,49 @@ impl Render for SplitMain {
                     .border_color(over(t.border, t.surface))
                     .child(self.panel.clone()),
             )
-            .child(
-                crate::focus::ring(
-                    div()
-                        .id("panel-resize")
-                        .role(gpui::Role::Splitter)
-                        .aria_label("Resize workspace panes")
-                        .aria_orientation(gpui::Orientation::Vertical)
-                        .aria_numeric_value(f32::from(width) as f64)
-                        .aria_min_numeric_value(MIN_CHAT as f64)
-                        .aria_max_numeric_value(f32::from(panel_max(window)) as f64)
-                        .aria_numeric_value_step(10.)
-                        .absolute()
-                        .top_0()
-                        .bottom_0()
-                        .right(width - px(16.))
-                        .w(px(16.))
-                        .cursor(CursorStyle::ResizeLeftRight)
-                        .on_key_down(cx.listener(move |_, event: &KeyDownEvent, window, cx| {
-                            if let Some(width) = crate::window_shell::resized(
-                                &event.keystroke.key, panel_width(window, cx), px(MIN_CHAT), panel_max(window), true,
-                            ) {
-                                cx.set_global(PanelWidth(width));
-                                cx.stop_propagation();
-                                cx.notify();
-                            }
-                        }))
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |this, e: &MouseDownEvent, window, cx| {
-                                resize_handle.focus(window, cx);
-                                this.drag_anchor = Some(width + e.position.x);
-                                cx.stop_propagation();
-                                cx.notify();
-                            }),
-                        ),
-                    &resize_focus, px(2.), px(-2.), cx,
-                ),
-            )
+            .child(crate::focus::ring(
+                div()
+                    .id("panel-resize")
+                    .role(gpui::Role::Splitter)
+                    .aria_label("Resize workspace panes")
+                    .aria_orientation(gpui::Orientation::Vertical)
+                    .aria_numeric_value(f32::from(width) as f64)
+                    .aria_min_numeric_value(MIN_CHAT as f64)
+                    .aria_max_numeric_value(f32::from(panel_max(window)) as f64)
+                    .aria_numeric_value_step(10.)
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .right(width - px(16.))
+                    .w(px(16.))
+                    .cursor(CursorStyle::ResizeLeftRight)
+                    .on_key_down(cx.listener(move |_, event: &KeyDownEvent, window, cx| {
+                        if let Some(width) = crate::window_shell::resized(
+                            &event.keystroke.key,
+                            panel_width(window, cx),
+                            px(MIN_CHAT),
+                            panel_max(window),
+                            true,
+                        ) {
+                            cx.set_global(PanelWidth(width));
+                            cx.stop_propagation();
+                            cx.notify();
+                        }
+                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, e: &MouseDownEvent, window, cx| {
+                            resize_handle.focus(window, cx);
+                            this.drag_anchor = Some(width + e.position.x);
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    ),
+                &resize_focus,
+                px(2.),
+                px(-2.),
+                cx,
+            ))
             .when_some(self.drag_anchor, |d, anchor| {
                 let released = cx.entity().downgrade();
                 d.child(drag_layer(

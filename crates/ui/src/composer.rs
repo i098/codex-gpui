@@ -1762,7 +1762,12 @@ pub(crate) fn popover(t: &Theme, width: f32, content: impl FnOnce(Div) -> Div) -
     surface(t, width, px(8.), content)
 }
 
-pub(crate) fn surface(t: &Theme, width: f32, blur: Pixels, content: impl FnOnce(Div) -> Div) -> Div {
+pub(crate) fn surface(
+    t: &Theme,
+    width: f32,
+    blur: Pixels,
+    content: impl FnOnce(Div) -> Div,
+) -> Div {
     // `bg-surface-elevated-secondary/90` mixes in oklab: white's sRGB lands just outside
     // [0, 1] (red and blue above 1: the popup's edge px keep blue at red), so Skia blits it
     // with its float pipeline (theme `white_mix`).
