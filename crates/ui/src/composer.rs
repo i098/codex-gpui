@@ -572,6 +572,13 @@ const QUEUE_ACTIONS: &str = "Queued message actions";
 const QUEUE_EDIT: &str = "queuedEdit";
 const QUEUE_SWITCH: &str = "queuedQueueing";
 const QUEUE_MENU_WIDTH: f32 = 220.;
+#[derive(Clone, Copy, PartialEq)]
+enum PlainField {
+    SingleLine,
+    Multiline,
+    Search,
+}
+
 pub struct Composer {
     focus_handle: FocusHandle,
     placeholder: SharedString,
@@ -644,7 +651,7 @@ pub struct Composer {
     edit_pending: bool,
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
-    plain_field: Option<bool>,
+    plain_field: Option<PlainField>,
 }
 
 impl Composer {
@@ -731,9 +738,27 @@ impl Composer {
         cx: &mut Context<Self>,
     ) -> Self {
         let mut editor = Self::new(placeholder, false, cx);
-        editor.plain_field = Some(multiline);
+        editor.plain_field = Some(if multiline {
+            PlainField::Multiline
+        } else {
+            PlainField::SingleLine
+        });
         editor.set_text(value, cx);
         editor
+    }
+
+    pub fn page_search(placeholder: &'static str, cx: &mut Context<Self>) -> Self {
+        let mut editor = Self::settings_field(placeholder, "", false, cx);
+        editor.plain_field = Some(PlainField::Search);
+        editor
+    }
+
+    fn editor_line_height(&self) -> Pixels {
+        if self.plain_field == Some(PlainField::Search) {
+            px(18.)
+        } else {
+            LINE_HEIGHT
+        }
     }
 
     pub fn field_text(&self) -> &str {
@@ -1206,10 +1231,10 @@ impl Composer {
         if self.answer_request_parent(ApprovalDecision::Accept, window, cx) {
             return;
         }
-        if let Some(multiline) = self.plain_field {
-            if multiline {
+        if let Some(field) = self.plain_field {
+            if field == PlainField::Multiline {
                 self.insert("\n", window, cx);
-            } else {
+            } else if field == PlainField::SingleLine {
                 window.blur(cx);
             }
             return;
@@ -1893,6 +1918,58 @@ impl Render for Composer {
             .on_action(cx.listener(Self::next_command))
             .on_action(cx.listener(Self::previous_command))
             .relative();
+        if self.plain_field == Some(PlainField::Search) {
+            let clear_focus = crate::focus::handle("clear-page-search", 0, window, cx);
+            let clear_handle = clear_focus.read(cx).handle.clone();
+            return div().w_full().child(
+                card.key_context(KEY_CONTEXT)
+                    .role(gpui::Role::TextInput)
+                    .aria_label(self.placeholder.clone())
+                    .aria_placeholder(self.placeholder.clone())
+                    .aria_value(self.content.clone())
+                    .h(px(32.))
+                    .px(px(10.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(Theme::RADIUS_FULL),
+                        fill: Some(t.surface_elevated_secondary),
+                        border: Some((px(1.), t.border)),
+                        ..Default::default()
+                    }))
+                    .child(crate::icon::icon("search", 16., t.text_secondary))
+                    .child(div().flex_1().min_w_0().child(self.editor(cx)))
+                    .when(!self.content.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .id("clear-page-search")
+                                .role(gpui::Role::Button)
+                                .aria_label("Clear search")
+                                .track_focus(&clear_handle)
+                                .size(px(16.))
+                                .cursor_pointer()
+                                .child(crate::icon::icon("close", 16., t.text_secondary))
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.set_text("", cx);
+                                    this.focus_handle.focus(window, cx);
+                                    cx.stop_propagation();
+                                }))
+                                .on_key_down(cx.listener(
+                                    |this, event: &gpui::KeyDownEvent, window, cx| {
+                                        if matches!(event.keystroke.key.as_str(), "enter" | "space")
+                                        {
+                                            this.set_text("", cx);
+                                            this.focus_handle.focus(window, cx);
+                                            cx.stop_propagation();
+                                        }
+                                    },
+                                )),
+                        )
+                    }),
+            );
+        }
         if self.plain_field.is_some() {
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)

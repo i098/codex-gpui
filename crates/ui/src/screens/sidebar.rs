@@ -109,7 +109,12 @@ pub async fn archived_threads(
     let first = request(None).await?;
     let mut threads = first.data;
     let mut cursor = first.next_cursor;
+    let mut seen = HashSet::new();
     while let Some(next_cursor) = cursor {
+        anyhow::ensure!(
+            seen.insert(next_cursor.clone()),
+            "App Server repeated an archived thread list cursor"
+        );
         let page = request(Some(next_cursor)).await?;
         threads.extend(page.data);
         cursor = page.next_cursor;

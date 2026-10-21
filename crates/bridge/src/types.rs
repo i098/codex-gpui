@@ -37,6 +37,8 @@ pub struct Thread {
     pub reasoning_effort: Option<String>,
     pub model_provider: String,
     pub cwd: String,
+    #[serde(default)]
+    pub path: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     pub section: Option<ThreadSection>,
