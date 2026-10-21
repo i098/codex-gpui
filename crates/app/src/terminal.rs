@@ -146,35 +146,42 @@ impl Root {
     }
 
     pub(crate) fn sync_terminal(&mut self, cx: &mut Context<Self>) {
-        let font = cx
-            .try_global::<host_settings::Settings>()
-            .map(|settings| settings.read_all());
-        let mut style = TerminalStyle::default();
-        if let Some(value) = font
-            .and_then(|v| v.get("codeFontSize"))
-            .and_then(Value::as_f64)
-            && value.is_finite()
-            && (6.0..=72.0).contains(&value)
-        {
-            style.size = value as f32;
-        }
         let theme_key = if cx.theme().appearance == theme::Appearance::Dark {
             "appearanceDarkChromeTheme"
         } else {
             "appearanceLightChromeTheme"
         };
-        if let Some(fonts) = font.and_then(|v| v.get(theme_key)).map(|v| &v["fonts"]) {
-            let name = fonts["codeFace"]["postscriptName"].as_str().or_else(|| {
-                fonts["code"]
+        let (size, face) = cx
+            .try_global::<host_settings::Settings>()
+            .map(|settings| {
+                let values = settings.read_all();
+                let size = values.get("codeFontSize").and_then(Value::as_f64);
+                let fonts = values
+                    .get(theme_key)
+                    .map_or(Value::Null, |v| v["fonts"].clone());
+                let face = fonts["codeFace"]["postscriptName"]
                     .as_str()
-                    .and_then(|name| name.split(',').next())
-            });
-            if let Some(name) = name.map(|name| name.trim().trim_matches(['\"', '\'']))
-                && !name.is_empty()
-                && !matches!(name, "monospace" | "ui-monospace")
-            {
-                style.font = name.to_owned().into();
-            }
+                    .or_else(|| {
+                        fonts["code"]
+                            .as_str()
+                            .and_then(|name| name.split(',').next())
+                    })
+                    .map(|name| name.trim().trim_matches(['\"', '\'']).to_owned());
+                (size, face)
+            })
+            .unwrap_or_default();
+        let mut style = TerminalStyle::default();
+        if let Some(value) = size
+            && value.is_finite()
+            && (6.0..=72.0).contains(&value)
+        {
+            style.size = value as f32;
+        }
+        if let Some(name) = face
+            && !name.is_empty()
+            && !matches!(name.as_str(), "monospace" | "ui-monospace")
+        {
+            style.font = name.into();
         }
         cx.set_global(style);
         let panel = self.terminal_panel().cloned();

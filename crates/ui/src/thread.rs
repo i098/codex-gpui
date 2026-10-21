@@ -2069,7 +2069,7 @@ impl Render for ThreadView {
                 let h = (40. * s).round() as u32;
                 let fade = |x: i32, y: i32, _: u8| {
                     let (i, j) = ((x - x0) as u32, (y - y0) as u32);
-                    gradient_px(&stops, h, (0, 0), false, i, j)
+                    gradient_px(&stops, h, (0, 0), false, true, i, j)
                 };
                 let top = Corners {
                     top_right: Theme::RADIUS_XL_BASE,
@@ -2093,6 +2093,11 @@ impl Render for ThreadView {
         .size_full();
         // Fade above the composer's surface band (`-top-8`, `to top`).
         let surface_color = t.surface;
+        // The band's gradient is rastered into the thread page's layer. Beside a docked bottom
+        // panel that layer is shorter than the main panel and the original shows no 510 px tile
+        // wrap (one captured state: the 280 px terminal panel, gradient at y 402).
+        // ponytail: one data point for the layer height at which tiling stops.
+        let page_is_one_tile = f32::from(view) < f32::from(window.viewport_size().height) - 49.;
         let bottom_fade = canvas(
             move |bounds, window, _| {
                 gradient_image(
@@ -2101,6 +2106,7 @@ impl Render for ThreadView {
                     (f32::from(bounds.size.width), f32::from(bounds.size.height)),
                     (0., f32::from(bounds.top()) - 44.),
                     true,
+                    !page_is_one_tile,
                     window.scale_factor(),
                 )
             },
@@ -2393,11 +2399,13 @@ pub fn skia_gradient(
     to_top: bool,
     scale: f32,
 ) -> gpui::Img {
-    gpui::img(gradient_image(stops, under, size, origin, to_top, scale))
-        .w(px(size.0))
-        .h(px(size.1))
-        .top_layer()
-        .object_fit(gpui::ObjectFit::Fill)
+    gpui::img(gradient_image(
+        stops, under, size, origin, to_top, true, scale,
+    ))
+    .w(px(size.0))
+    .h(px(size.1))
+    .top_layer()
+    .object_fit(gpui::ObjectFit::Fill)
 }
 
 const MAX_GRADIENT_IMAGES: usize = 16;
@@ -2408,6 +2416,7 @@ fn gradient_image(
     size: (f32, f32),
     origin: (f32, f32),
     to_top: bool,
+    tiled: bool,
     scale: f32,
 ) -> Arc<gpui::RenderImage> {
     static CACHE: LazyLock<Mutex<HashMap<u64, Arc<gpui::RenderImage>>>> =
@@ -2425,7 +2434,7 @@ fn gradient_image(
     for v in [u.r, u.g, u.b] {
         v.to_bits().hash(&mut key);
     }
-    (w, h, ox, oy, to_top).hash(&mut key);
+    (w, h, ox, oy, to_top, tiled).hash(&mut key);
     let key = key.finish();
     let mut cache = CACHE.lock().unwrap_or_else(|error| error.into_inner());
     if let Some(image) = cache.get(&key) {
@@ -2438,7 +2447,7 @@ fn gradient_image(
     let stops = premul_stops(stops);
     let under = [u.r, u.g, u.b].map(|v| (v * 255.).round() as u32);
     let image = image::RgbaImage::from_fn(w, h, |i, j| {
-        let [r, g, b, a] = gradient_px(&stops, h, (ox, oy), to_top, i, j);
+        let [r, g, b, a] = gradient_px(&stops, h, (ox, oy), to_top, tiled, i, j);
         let [r, g, b] = [(r, under[0]), (g, under[1]), (b, under[2])].map(|(c, under)| {
             (u32::from(c) + (under * (255 - u32::from(a)) + 127) / 255).min(255) as u8
         });
@@ -2467,6 +2476,7 @@ fn gradient_px(
     h: u32,
     (ox, oy): (u32, u32),
     to_top: bool,
+    tiled: bool,
     i: u32,
     j: u32,
 ) -> [u8; 4] {
@@ -2475,9 +2485,10 @@ fn gradient_px(
         t = 1. - t;
     }
     let (color, alpha) = gradient_at(stops, t);
-    // Position inside the layer's tile; only the low 3 bits reach the dither.
+    // Position inside the layer's tile; only the low 3 bits reach the dither. A layer that is
+    // one tile tall (`tiled` false) keeps its raw row; columns always wrap.
     let tile = |v: u32| if v == 0 { 0 } else { (v - 1) % 510 + 1 };
-    let d = dither(tile(i + ox), tile(j + oy)) / 255.;
+    let d = dither(tile(i + ox), if tiled { tile(j + oy) } else { j + oy }) / 255.;
     let [r, g, b] = color.map(|c| ((c + d).clamp(0., alpha) * 255.).round_ties_even() as u8);
     [r, g, b, (alpha * 255.).round_ties_even() as u8]
 }
@@ -2630,7 +2641,7 @@ mod tests {
             (fade(0.12), 0.6),
             (gpui::transparent_black(), 1.),
         ];
-        let image = gradient_image(&stops, s, (1871., 80.), (0., 0.), false, 1.);
+        let image = gradient_image(&stops, s, (1871., 80.), (0., 0.), false, true, 1.);
         let pixels = image.as_bytes(0).unwrap();
         let px = |x: usize, y: usize| pixels[(y * 1871 + x) * 4 + 2];
         let rows: Vec<String> = [96, 116, 131]
@@ -2661,6 +2672,7 @@ mod tests {
             (1., 1.),
             (0., 0.),
             false,
+            true,
             1.,
         );
         assert_eq!(image.as_bytes(0).unwrap(), &[0x56, 0x34, 0x12, 0xff]);
@@ -2670,7 +2682,7 @@ mod tests {
     fn changing_fade_origins_releases_old_images() {
         let color = gpui::rgb(0x102030).into();
         let stops = [(color, 0.), (gpui::transparent_black(), 1.)];
-        let first = gradient_image(&stops, color, (2., 2.), (0., 0.), false, 1.);
+        let first = gradient_image(&stops, color, (2., 2.), (0., 0.), false, true, 1.);
         let weak = Arc::downgrade(&first);
         drop(first);
         for offset in 1..=MAX_GRADIENT_IMAGES {
@@ -2680,6 +2692,7 @@ mod tests {
                 (2., 2.),
                 (0., offset as f32),
                 false,
+                true,
                 1.,
             ));
         }
@@ -2710,6 +2723,59 @@ mod tests {
         assert_eq!(
             shell_command(r#"/bin/zsh -lc "python3 -c 'print(2)'""#, &[]),
             "python3 -c 'print(2)'"
+        );
+    }
+    /// refs of the interactive terminal state (original Codex, 1280x832 dark): the composer
+    /// gradient above a docked 280 px panel, device x 720.. and 1200.., rows 804..812.
+    #[test]
+    fn untiled_gradient_matches_chromium_beside_a_docked_panel() {
+        let s: Hsla = rgb(0x181818).into();
+        let image = gradient_image(
+            &[(s, 0.), (gpui::transparent_black(), 1.)],
+            s,
+            (935.5, 32.),
+            (0., 358.),
+            true,
+            false,
+            2.,
+        );
+        let pixels = image.as_bytes(0).unwrap();
+        let rows: Vec<String> = (0..8)
+            .map(|y| {
+                (39..55)
+                    .map(|x| format!("{}", pixels[(y * 1871 + x) * 4 + 2]))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                "25,24,24,24,25,24,24,24,25,24,24,24,25,24,24,24",
+                "24,24,23,24,24,24,23,24,24,24,23,24,24,24,23,24",
+                "24,24,24,24,24,24,24,24,24,24,24,24,24,24,24,24",
+                "24,24,24,24,24,24,24,24,24,24,24,24,24,24,24,24",
+                "24,23,24,23,24,23,24,23,24,23,24,23,24,23,24,23",
+                "24,24,24,24,24,24,24,24,24,24,24,24,24,24,24,24",
+                "25,24,25,24,25,24,25,24,25,24,25,24,25,24,25,24",
+                "24,24,24,24,24,24,24,24,24,24,24,24,24,24,24,24",
+            ]
+        );
+        // Columns still wrap at the 510 px tile width (device x 1200.., image column 519..).
+        let wrapped: Vec<String> = (0..2)
+            .map(|y| {
+                (519..535)
+                    .map(|x| format!("{}", pixels[(y * 1871 + x) * 4 + 2]))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .collect();
+        assert_eq!(
+            wrapped,
+            [
+                "24,24,25,24,24,24,25,24,24,24,25,24,24,24,25,24",
+                "23,24,24,24,23,24,24,24,23,24,24,24,23,24,24,24",
+            ]
         );
     }
 }
