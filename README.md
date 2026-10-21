@@ -256,6 +256,11 @@ Home, Thread, Settings, Automations, Mobile, and Archive each own their action r
 `app::Route` and its saved values stay unchanged.
 Shared RPC handlers and state remain on `Root` in `lib.rs`.
 
+`LocalHost` serves `native-desktop-apps` and `native-desktop-app-by-bundle-id` through the desktop fetch boundary.
+On macOS, the adapter reads Spotlight metadata, applies the original app exclusions, and supports usage or display-name ordering.
+It returns each app's path, bundle ID, and display name without launching the app.
+Linux returns an empty native app list, as the original host does.
+
 On macOS, `textsys::show_definition(window, selection, baseline)` opens AppKit's native Look Up popover.
 The baseline uses window-local logical pixels from the top left; the adapter handles both view orientations.
 Call it on the main thread with the unchanged selection.
