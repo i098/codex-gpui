@@ -255,11 +255,18 @@ pub(super) fn diff_card(
                                     .child(icon("thread-undo", 14., t.text))
                                     .id("undo-turn")
                                     .track_focus(&focus.undo)
-                                    .on_click(move |_, window, cx| {
-                                        window.dispatch_action(
-                                            Box::new(RevertTurn(turn_id.clone())),
-                                            cx,
-                                        )
+                                    .on_click({
+                                        let thread_id = focus.thread_id.clone();
+                                        move |_, window, cx| {
+                                            window.dispatch_action(
+                                                Box::new(ThreadPressed(thread_id.clone())),
+                                                cx,
+                                            );
+                                            window.dispatch_action(
+                                                Box::new(RevertTurn(turn_id.clone())),
+                                                cx,
+                                            )
+                                        }
                                     })
                             })
                             // Blink's background bleed avoidance paints the fill and the
@@ -284,7 +291,17 @@ pub(super) fn diff_card(
                                 )
                                 .id("view-changes")
                                 .track_focus(&focus.view)
-                                .on_click(crate::dispatch::<crate::OpenChangesPanel>),
+                                .on_click({
+                                    let thread_id = focus.thread_id.clone();
+                                    move |_, window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(ThreadPressed(thread_id.clone())),
+                                            cx,
+                                        );
+                                        window
+                                            .dispatch_action(Box::new(crate::OpenChangesPanel), cx)
+                                    }
+                                }),
                             ),
                     ),
             ),

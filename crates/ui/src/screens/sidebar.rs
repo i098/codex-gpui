@@ -671,6 +671,15 @@ impl HomeSidebar {
     }
 
     /// A turn completed in thread `id` while it was not open: unread dot.
+    /// Marks thread `id` read (a press inside its open conversation).
+    pub fn set_read(&mut self, id: &str, cx: &mut Context<Self>) {
+        let before = self.unread.len();
+        self.unread.retain(|u| u != id);
+        if self.unread.len() != before {
+            cx.notify();
+        }
+    }
+
     pub fn set_unread(&mut self, id: &str, cx: &mut Context<Self>) {
         if !self.unread.iter().any(|u| u == id) {
             self.unread.push(id.to_owned());

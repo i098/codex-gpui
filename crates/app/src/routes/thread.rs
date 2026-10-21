@@ -39,7 +39,13 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
         }
     }))
     .on_action(cx.listener(|this, _: &OpenChangesPanel, window, cx| {
-        this.set_side(SidePanel::Changes, window, cx)
+        // The control that opened the panel keeps its focus, as in the original; the route
+        // refresh would move it to the composer.
+        let focused = window.focused(cx);
+        this.set_side(SidePanel::Changes, window, cx);
+        if let Some(focused) = focused {
+            window.focus(&focused, cx);
+        }
     }))
     .on_action(cx.listener(Root::open_file))
     .on_action(cx.listener(|this, _: &OpenBackgroundTerminal, window, cx| {
@@ -89,5 +95,9 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
         this.edit_message(edit.clone(), window, cx)
     }))
     .on_action(cx.listener(|this, a: &RevertTurn, window, cx| this.revert(a.0.clone(), window, cx)))
+    .on_action(cx.listener(|this, a: &ThreadPressed, _, cx| {
+        this.sidebar
+            .update(cx, |sidebar, cx| sidebar.set_read(&a.0, cx));
+    }))
     .on_action(cx.listener(|this, a: &GoToChat, window, cx| this.go_to_chat(Some(a.0), window, cx)))
 }

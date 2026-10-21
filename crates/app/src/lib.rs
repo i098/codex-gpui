@@ -61,8 +61,8 @@ use ui::screens::sidebar::{
 };
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
-    Clock, EditMessage, ForkThread, GitAction, History, RetryHistory, RevertTurn, ThreadView,
-    UsageLimitNotice,
+    Clock, EditMessage, ForkThread, GitAction, History, RetryHistory, RevertTurn, ThreadPressed,
+    ThreadView, UsageLimitNotice,
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};

@@ -495,15 +495,6 @@ fn background_depth_retains_selection_scrollback_and_completed_output() -> Resul
     shot(&mut fx, "link-hover")?;
     fx.click((581.2, 511.1))?;
     ensure!(fx.read(|root, _| root.side_panel() == Some(SidePanel::Changes)));
-    fx.keys("cmd-2")?;
-    if fx.read(|root, cx| {
-        root.diff_panel()
-            .is_some_and(|panel| panel.read(cx).files.iter().any(|file| file.open))
-    }) {
-        fx.click((left + 100., 111.5))?;
-    }
-    // The original's button keeps focus after the press; `cmd-2` above moved it to the composer.
-    fx.click((581.2, 511.1))?;
     fx.hover((left + 120., 22.))?;
     fx.advance(std::time::Duration::from_millis(700))?;
     shot(&mut fx, "thumbnail")?;
