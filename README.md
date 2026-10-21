@@ -402,10 +402,13 @@ The terminal command opens an existing background command, not an interactive sh
 Unsupported destinations remain known gaps; this change does not implement logout, git operations, cloud operations, or the project picker.
 Recorded command rows, ranking, and keyboard-editing checks remain unchanged.
 
-File > New standalone chat dispatches the shared `NewStandaloneChat` action.
+A hidden native menu item dispatches the shared `NewStandaloneChat` action and keeps its keyboard shortcut.
 Its first message creates a separate projectless workspace.
 File > New Temporary Chat uses the existing ephemeral mode and does not add a Recents entry.
 The temporary action is unavailable for ACP backends.
+Settings hides Toggle Sidebar and disables its action.
+Leaving Settings restores that item without changing the sidebar.
+Keyboard shortcut edits preserve the active window's menu visibility.
 
 ```sh
 tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'

@@ -160,7 +160,7 @@ fn rebind(previous: Option<&Preferences>, next: &Preferences, cx: &mut App) {
     }
     bindings.extend(enabled);
     cx.bind_keys(bindings);
-    cx.set_menus(crate::menus());
+    crate::refresh_menus(cx);
 }
 
 fn action(id: &str) -> Option<Box<dyn Action>> {

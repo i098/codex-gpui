@@ -3,10 +3,26 @@ mod common;
 use anyhow::{Context as _, Result, ensure};
 use common::{CWD, Fx, GREETING, GREETING_PROMPT, script};
 use serde_json::{Value, json};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
+use ui::screens::settings::keyboard_shortcuts::{Change, KeyboardState, NumberTarget};
+
+fn menu_hidden(fx: &Fx, menu: &str, item: &str) -> Result<bool> {
+    fx.read(|_, cx| cx.get_menus())
+        .context("installed menus")?
+        .into_iter()
+        .find(|entry| entry.name == menu)
+        .context("menu")?
+        .items
+        .into_iter()
+        .find_map(|entry| match entry {
+            gpui::OwnedMenuItem::Action { name, hidden, .. } if name == item => Some(hidden),
+            _ => None,
+        })
+        .context("menu item")
+}
 
 #[test]
-fn standalone_menu_allocates_and_records_its_own_workspace() -> Result<()> {
+fn hidden_standalone_menu_allocates_its_own_workspace() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let home = directory.path().join("codex");
     let workspaces = directory.path().join("standalone");
@@ -22,6 +38,7 @@ fn standalone_menu_allocates_and_records_its_own_workspace() -> Result<()> {
     )?;
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(Arc::new(host), cx));
+    ensure!(menu_hidden(&fx, "File", "New standalone chat")?);
     fx.menu("File", "New standalone chat")?;
     fx.type_text(GREETING_PROMPT)?;
     fx.keys("enter")?;
@@ -84,6 +101,33 @@ fn temporary_menu_starts_ephemeral_and_never_enters_recents() -> Result<()> {
     ));
     fx.keys("cmd-n")?;
     ensure!(fx.read(|root, _| !root.recents().contains(&TEMPORARY.to_owned())));
+    Ok(())
+}
+
+#[test]
+fn settings_sidebar_visibility_returns_after_back_navigation() -> Result<()> {
+    let mut fx = Fx::new()?;
+    let sidebar_open = |fx: &Fx| fx.read(|root, cx| root.shell().read(cx).sidebar_open);
+    let was_open = sidebar_open(&fx);
+    ensure!(!menu_hidden(&fx, "View", "Toggle Sidebar")?);
+    fx.menu("Codex", "Settings…")?;
+    fx.advance(Duration::ZERO)?;
+    ensure!(fx.route() == app::Route::Settings);
+    ensure!(menu_hidden(&fx, "View", "Toggle Sidebar")?);
+    fx.cx.update(|cx| {
+        let dispatch = cx.global::<KeyboardState>().dispatch.clone().unwrap();
+        dispatch(Change::NumberTarget(NumberTarget::Tabs), cx);
+    });
+    fx.advance(Duration::ZERO)?;
+    ensure!(menu_hidden(&fx, "View", "Toggle Sidebar")?);
+    fx.menu("View", "Toggle Sidebar")?;
+    fx.menu("View", "Back")?;
+    fx.advance(Duration::ZERO)?;
+    ensure!(fx.route() == app::Route::Home);
+    ensure!(!menu_hidden(&fx, "View", "Toggle Sidebar")?);
+    ensure!(sidebar_open(&fx) == was_open);
+    fx.menu("View", "Toggle Sidebar")?;
+    ensure!(sidebar_open(&fx) != was_open);
     Ok(())
 }
 

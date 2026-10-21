@@ -21,6 +21,7 @@ use bridge::types::{
     ThreadStartResponse, ThreadStartedNotification, ThreadStatus, TurnStatus,
 };
 use bridge::{Bridge, Event};
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, BorrowAppContext as _,
     Context, Entity, EntityInputHandler as _, FocusHandle, Focusable as _, InteractiveElement as _,
@@ -128,6 +129,20 @@ pub fn init(cx: &mut App) {
 
 /// Menu bar of the original (docs/inventory.md §13), limited to commands with a handler.
 pub fn menus() -> Vec<Menu> {
+    menus_for_route(true)
+}
+
+struct NativeMenuState(bool);
+impl gpui::Global for NativeMenuState {}
+
+fn refresh_menus(cx: &mut App) {
+    let sidebar_collapsible = cx
+        .try_global::<NativeMenuState>()
+        .is_none_or(|state| state.0);
+    cx.set_menus(menus_for_route(sidebar_collapsible));
+}
+
+fn menus_for_route(sidebar_collapsible: bool) -> Vec<Menu> {
     vec![
         Menu::new("Codex").items([
             MenuItem::action("Settings…", OpenSettings),
@@ -147,7 +162,8 @@ pub fn menus() -> Vec<Menu> {
             MenuItem::action(
                 "New standalone chat",
                 features::shortcuts::NewStandaloneChat,
-            ),
+            )
+            .hidden(true),
             MenuItem::separator(),
             MenuItem::action("Open Folder…", OpenFolder),
             MenuItem::separator(),
@@ -167,7 +183,7 @@ pub fn menus() -> Vec<Menu> {
             MenuItem::action("Find Previous", FindPrevious),
         ]),
         Menu::new("View").items([
-            MenuItem::action("Toggle Sidebar", ToggleSidebar),
+            MenuItem::action("Toggle Sidebar", ToggleSidebar).hidden(!sidebar_collapsible),
             MenuItem::action("Toggle Changes Panel", ToggleChangesPanel),
             MenuItem::separator(),
             MenuItem::action("Previous Chat", PreviousChat),
@@ -659,6 +675,12 @@ impl Root {
             })
             .detach();
         }
+        cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active() {
+                this.sync_native_menus(window, cx);
+            }
+        })
+        .detach();
         let _events = cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 if this
@@ -2134,9 +2156,25 @@ impl Root {
         self.sidebar.update(cx, |s, cx| s.select(id, cx));
     }
 
+    fn sync_native_menus(&self, window: &Window, cx: &mut Context<Self>) {
+        if cx.active_window().is_some() && !window.is_window_active() {
+            return;
+        }
+        let sidebar_collapsible = self.state.route != Route::Settings;
+        if cx
+            .try_global::<NativeMenuState>()
+            .is_some_and(|state| state.0 == sidebar_collapsible)
+        {
+            return;
+        }
+        cx.set_global(NativeMenuState(sidebar_collapsible));
+        refresh_menus(cx);
+    }
+
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_native_menus(window, cx);
         self.remember_recent_chat();
         self.flush_settings(cx);
         self.settings_page = None;
@@ -5534,9 +5572,11 @@ impl Render for Root {
                     this.go_to_chat(Some(a.0), window, cx)
                 }),
             )
-            .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
-                this.shell.update(cx, |shell, cx| shell.toggle_sidebar(cx))
-            }))
+            .when(self.state.route != Route::Settings, |root| {
+                root.on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
+                    this.shell.update(cx, |shell, cx| shell.toggle_sidebar(cx))
+                }))
+            })
             .on_action(cx.listener(|this, _: &ShowKeyboardShortcuts, window, cx| {
                 if this
                     .dialog
