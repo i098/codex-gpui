@@ -3,13 +3,15 @@
 //! (login-route chunk) that replaces the app when `account/read` reports no account.
 
 use crate::{
-    MONO, SANS, SetTheme, Shell,
+    MONO, SetTheme, Shell,
     composer::{Composer, popover, shadow},
     fixture, focus,
     icon::icon,
     in_layer, layout_color,
     motion::{self, HoverFade},
-    over, rounded_clip, sidebar_section, text,
+    over, rounded_clip,
+    screens::signin::Login,
+    sidebar_section, text,
 };
 use bridge::Bridge;
 use bridge::types::{AccountReadResponse, ConfigReadResponse};
@@ -17,9 +19,8 @@ use gpui::{
     Anchor, AnyElement, AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity,
     EventEmitter, FocusHandle, Focusable, Font, FontWeight, Global, HighlightStyle, Hsla,
     InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render,
-    RenderImage, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun,
-    Window, anchored, canvas, deferred, div, font, img, point, prelude::FluentBuilder as _, px,
-    size,
+    RenderImage, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window,
+    anchored, canvas, deferred, div, font, img, point, prelude::FluentBuilder as _, px, size,
 };
 use serde_json::{Value, json};
 use shapes::Corner::{self, Round, Squircle};
@@ -87,21 +88,6 @@ pub fn shell(
         shell
     });
     (shell, page)
-}
-
-/// Sends `method` to the app-server in the background; failures are logged.
-fn send(method: &'static str, params: Value, cx: &App) {
-    let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
-        return;
-    };
-    let bridge = bridge.clone();
-    cx.background_executor()
-        .spawn(async move {
-            if let Err(e) = bridge.request::<_, Value>(method, params).await {
-                eprintln!("{method}: {e:#}");
-            }
-        })
-        .detach();
 }
 
 /// Settings navigation (`gWa` order in app-initial): `(heading, [(label, icon)])`.
@@ -1531,315 +1517,6 @@ fn app_icon(page: Hsla) -> AnyElement {
     .size(px(18.))
     .flex_none()
     .into_any_element()
-}
-
-/// Signed-out start (`LoginRoute`, welcome v2): ChatGPT sign-in, another way (API key), sign up.
-pub struct Login {
-    stage: Stage,
-    api_key: String,
-    focus: FocusHandle,
-    error: Option<String>,
-    restart_blocked: bool,
-}
-
-enum Stage {
-    Welcome,
-    /// Browser sign-in started: the `loginId` that `account/login/cancel` takes.
-    Pending(String),
-    OtherMethods,
-    ApiKey,
-}
-
-impl Login {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        Self {
-            stage: Stage::Welcome,
-            api_key: String::new(),
-            focus: cx.focus_handle(),
-            error: None,
-            restart_blocked: false,
-        }
-    }
-
-    pub fn restart_ready(&self) -> bool {
-        !self.restart_blocked && matches!(self.stage, Stage::Welcome) && self.api_key.is_empty()
-    }
-
-    /// `account/login/completed`: a failed sign-in shows its error and returns to the start.
-    pub fn apply(&mut self, event: &bridge::Event, cx: &mut Context<Self>) {
-        let bridge::Event::Notification { method, params } = event else {
-            return;
-        };
-        if method != "account/login/completed" || params["success"] != false {
-            return;
-        }
-        let raw = params["error"].as_str().unwrap_or_default();
-        self.stage = Stage::Welcome;
-        self.error = Some(format!("Sign-in failed: {raw}"));
-        cx.notify();
-    }
-
-    /// `account/login/start` as the original's `loginWithChatGpt`: a ChatGPT login opens its
-    /// `authUrl` in the browser and waits in `Pending` for `account/login/completed`.
-    fn start(&mut self, params: Value, cx: &mut Context<Self>) {
-        let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
-            return;
-        };
-        let bridge = bridge.clone();
-        self.restart_blocked = true;
-        cx.spawn(async move |this, cx| {
-            let result = bridge
-                .request::<_, Value>("account/login/start", params)
-                .await;
-            this.update(cx, |this, cx| {
-                match result {
-                    Ok(r) => {
-                        if let (Some(id), Some(url)) =
-                            (r["loginId"].as_str(), r["authUrl"].as_str())
-                        {
-                            cx.open_url(url);
-                            this.stage = Stage::Pending(id.into());
-                        }
-                    }
-                    Err(e) => this.error = Some(format!("Sign-in failed: {e}")),
-                }
-                cx.notify();
-            })
-        })
-        .detach();
-    }
-
-    /// The ChatGPT sign-in request of the original (`appBrand`, hosted success page).
-    fn start_chatgpt(&mut self, cx: &mut Context<Self>) {
-        self.start(
-            json!({ "type": "chatgpt", "appBrand": "chatgpt", "useHostedLoginSuccessPage": true }),
-            cx,
-        );
-    }
-
-    fn key_down(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let k = &e.keystroke;
-        match (k.key.as_str(), &k.key_char) {
-            ("backspace", _) => _ = self.api_key.pop(),
-            ("enter", _) => self.submit_api_key(cx),
-            (_, Some(c)) if !k.modifiers.platform && !k.modifiers.control => {
-                self.api_key.push_str(c)
-            }
-            _ => return,
-        }
-        cx.notify();
-    }
-
-    fn submit_api_key(&mut self, cx: &mut Context<Self>) {
-        if !self.api_key.is_empty() {
-            let key = self.api_key.clone();
-            self.start(json!({ "type": "apiKey", "apiKey": key }), cx);
-        }
-    }
-
-    fn go(&mut self, stage: Stage, cx: &mut Context<Self>) {
-        self.stage = stage;
-        self.error = None;
-        cx.notify();
-    }
-}
-
-/// 46 px outlined pill button of the sign-in screen.
-fn login_button(id: &'static str, label: &'static str, t: &Theme) -> Stateful<Div> {
-    let hover = over(t.ghost_hover, t.surface);
-    div()
-        .id(id)
-        .h(px(46.))
-        .w_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .gap(px(8.))
-        .rounded_full()
-        .border_1()
-        .border_color(over(t.border, t.surface))
-        .bg(t.surface)
-        .hover(move |s| s.bg(hover))
-        .child(text(label, 14., 20., 500., t.text))
-}
-
-impl Render for Login {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme().clone();
-        let title = |s: &'static str| {
-            text(s, 28., 36., 400., t.text)
-                .w(px(316.))
-                .whitespace_normal()
-                .text_center()
-        };
-        let (heading, body): (Div, AnyElement) = match &self.stage {
-            Stage::Welcome => (
-                title("Sign in to ChatGPT"),
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(12.))
-                    .child(
-                        div()
-                            .id("continue")
-                            .h(px(48.))
-                            .w_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .gap(px(8.))
-                            .rounded_full()
-                            .bg(t.button_primary_solid)
-                            .child(icon("codex-logo", 24., t.text_inverse))
-                            .child(text("Continue to sign in", 14., 20., 500., t.text_inverse))
-                            .on_click(cx.listener(|this, _, _, cx| this.start_chatgpt(cx))),
-                    )
-                    .child(
-                        login_button("another-way", "Sign in another way", &t).on_click(
-                            cx.listener(|this, _, _, cx| this.go(Stage::OtherMethods, cx)),
-                        ),
-                    )
-                    .child(
-                        div()
-                            .id("sign-up")
-                            .h(px(36.))
-                            .px(px(8.))
-                            .flex()
-                            .items_center()
-                            .child(text("Sign up", 14., 20., 500., t.text_description).underline())
-                            .on_click(cx.listener(|this, _, _, cx| this.start_chatgpt(cx))),
-                    )
-                    .into_any_element(),
-            ),
-            Stage::Pending(id) => {
-                let id = id.clone();
-                (
-                    text(
-                        "Continue signing in with your browser",
-                        14.,
-                        20.,
-                        400.,
-                        t.text_description,
-                    ),
-                    login_button("cancel", "Cancel sign-in", &t)
-                        .h(px(42.))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            send("account/login/cancel", json!({ "loginId": id }), cx);
-                            this.go(Stage::Welcome, cx);
-                        }))
-                        .into_any_element(),
-                )
-            }
-            Stage::OtherMethods => (
-                title("Sign in another way"),
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(12.))
-                    .child(
-                        login_button("api-key", "OpenAI API Key", &t)
-                            .on_click(cx.listener(|this, _, _, cx| this.go(Stage::ApiKey, cx))),
-                    )
-                    .child(
-                        div()
-                            .id("back")
-                            .h(px(36.))
-                            .px(px(12.))
-                            .flex()
-                            .items_center()
-                            .child(text("Back", 14., 20., 500., t.text_tertiary))
-                            .on_click(cx.listener(|this, _, _, cx| this.go(Stage::Welcome, cx))),
-                    )
-                    .into_any_element(),
-            ),
-            Stage::ApiKey => {
-                let (value, color) = if self.api_key.is_empty() {
-                    ("sk-…".to_string(), t.text_tertiary)
-                } else {
-                    ("•".repeat(self.api_key.chars().count()), t.text)
-                };
-                (
-                    title("Sign in with an API key"),
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_col()
-                        .gap(px(32.))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(px(8.))
-                                .child(text("OpenAI API key", 14., 20., 500., t.text))
-                                .child(
-                                    div()
-                                        .id("api-key-field")
-                                        .track_focus(&self.focus)
-                                        .on_key_down(cx.listener(Self::key_down))
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.focus.focus(window, cx)
-                                        }))
-                                        .h(px(40.))
-                                        .px(px(12.))
-                                        .flex()
-                                        .items_center()
-                                        .rounded(Theme::RADIUS_LG)
-                                        .border_1()
-                                        .border_color(over(t.border, t.surface))
-                                        .child(text(value, 14., 20., 430., color)),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(12.))
-                                .child(login_button("api-cancel", "Cancel", &t).flex_1().on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.api_key.clear();
-                                        this.go(Stage::OtherMethods, cx)
-                                    }),
-                                ))
-                                .child(
-                                    login_button("api-continue", "Continue", &t)
-                                        .flex_1()
-                                        .when(self.api_key.is_empty(), |d| d.opacity(0.5))
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.submit_api_key(cx)),
-                                        ),
-                                ),
-                        )
-                        .into_any_element(),
-                )
-            }
-        };
-        div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .pb(px(48.))
-            .font_family(SANS)
-            .bg(t.surface)
-            .child(
-                div()
-                    .w(px(340.))
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(32.))
-                    .child(icon("codex-logo", 40., t.text))
-                    .child(heading)
-                    .child(body)
-                    .children(self.error.clone().map(|e| {
-                        text(SharedString::from(e), 14., 20., 430., t.text_error)
-                            .whitespace_normal()
-                    })),
-            )
-    }
 }
 
 #[cfg(test)]
