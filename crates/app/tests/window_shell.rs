@@ -6,44 +6,6 @@ use common::*;
 use std::time::Duration;
 
 #[test]
-fn proxy() {
-    proxy_child();
-}
-
-#[test]
-fn fullscreen_moves_history_controls_and_restores_them_on_exit() -> Result<()> {
-    let mut fx = Fx::new()?;
-    fx.cx.update_window(fx.window, |_, window, _| {
-        window.toggle_fullscreen();
-        window.refresh();
-    })?;
-    fx.capture_evidence("CGX_WINDOW_SHELL_PROOF", "fullscreen-rest")?;
-    fx.cx.update_window(fx.window, |_, window, _| {
-        window.toggle_fullscreen();
-        window.refresh();
-    })?;
-    fx.keys("cmd-,")?;
-    assert_eq!(fx.route(), app::Route::Settings);
-    fx.cx.update_window(fx.window, |_, window, _| {
-        window.toggle_fullscreen();
-        window.refresh();
-    })?;
-    fx.advance(Duration::ZERO)?;
-    fx.click((18., 22.))?;
-    assert_eq!(fx.route(), app::Route::Home);
-    fx.capture_evidence("CGX_WINDOW_SHELL_PROOF", "fullscreen")?;
-    fx.cx.update_window(fx.window, |_, window, _| {
-        window.toggle_fullscreen();
-        window.refresh();
-    })?;
-    fx.advance(Duration::ZERO)?;
-    fx.click(FORWARD)?;
-    assert_eq!(fx.route(), app::Route::Settings);
-    fx.capture_evidence("CGX_WINDOW_SHELL_PROOF", "windowed-restored")?;
-    Ok(())
-}
-
-#[test]
 fn sidebar_peek_waits_for_hover_and_does_not_navigate() -> Result<()> {
     let mut fx = Fx::new()?;
     fx.keys("cmd-b")?;

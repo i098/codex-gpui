@@ -43,6 +43,8 @@ Other child windows remain independent.
 Use `Presentation::Background` for non-activating display and `Presentation::Hidden` for prewarming.
 QA builds never request foreground presentation.
 The AppKit adapter supplies work-area bounds, background presentation, hiding, and overlay policies.
+Fullscreen moves the history and sidebar controls into the space left by the window controls.
+Leaving fullscreen restores their windowed positions.
 Unsupported background presentation returns an error instead of claiming success on other platforms.
 The page controllers retain responsibility for hotkey registration, browser transfer, overlay input transitions, and permissions.
 The window manager does not trigger permissions.
@@ -102,6 +104,7 @@ Each page family retains its own availability and permission gates.
 
 Run the geometry regression with `cargo test -p app --lib windows::tests`.
 Run `cargo test -p bridge concurrent_windows_initialize_the_shared_server_once` for concurrent initialization.
+Run `cargo test -p app --test fullscreen` on macOS for fullscreen control placement and history navigation.
 Run `native_windows` on macOS with `CODEX_GPUI_QA=1` and an owned recorded `CODEX_BIN` executable.
 Create an owned `/tmp/cgx-qa-smoke-<name>` directory, then pass it with `--qa-smoke-profile` to isolate all profile state.
 The smoke opens two actual native primary windows, checks independent drafts, closes one, hides the last, and restores it without activation.

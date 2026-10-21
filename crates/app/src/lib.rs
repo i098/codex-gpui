@@ -116,6 +116,7 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-n", NewChat, None),
         KeyBinding::new("cmd-shift-o", NewChat, None),
         KeyBinding::new("cmd-o", OpenFolder, None),
+        KeyBinding::new("alt-shift-cmd-o", OpenFolder, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
         KeyBinding::new("cmd-/", ShowKeyboardShortcuts, None),
         KeyBinding::new("cmd-z", Undo, None),
