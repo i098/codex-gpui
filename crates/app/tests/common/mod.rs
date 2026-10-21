@@ -205,7 +205,7 @@ impl Fx {
         Ok(fx)
     }
 
-    fn boot(
+    pub(super) fn boot(
         theme: &'static str,
         (w, h): (f32, f32),
         bridge: Bridge,

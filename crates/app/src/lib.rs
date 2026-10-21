@@ -13,6 +13,7 @@ pub mod host_settings;
 pub mod native_menus;
 pub mod qa;
 mod routes;
+pub mod terminal;
 pub use routes::Route;
 mod search;
 mod section_actions;
@@ -103,8 +104,8 @@ pub struct GoToChat(pub usize);
 #[action(namespace = app, no_json)]
 pub struct GoToRecentChat(pub usize);
 
-/// `(min-width: 768px)`: below it the original hides the sidebar panel.
-const SIDEBAR_BREAKPOINT: Pixels = px(768.);
+/// The original collapses the sidebar at widths of 720 px or less.
+const SIDEBAR_BREAKPOINT: Pixels = px(720.);
 
 /// Key bindings (docs/inventory.md §12) and the app-level commands.
 pub fn init(cx: &mut App) {
@@ -147,6 +148,7 @@ pub fn init(cx: &mut App) {
         (1..=6).map(|n| KeyBinding::new(&format!("cmd-alt-{n}"), GoToRecentChat(n - 1), None)),
     );
     ui::composer::bind_keys(cx);
+    terminal::init(cx);
     features::init(cx);
     native_menus::init(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
@@ -350,6 +352,7 @@ pub struct Root {
     file: Option<Entity<FileView>>,
     /// The open thread in the main shell, with its side panel if any.
     split: Option<Entity<SplitScreen>>,
+    terminal: terminal::Terminals,
     /// Side panel tabs of the thread route in opening order, and the selected one (always in
     /// `tabs`); kept across threads like the original's panel.
     tabs: Vec<SidePanel>,
@@ -571,7 +574,7 @@ impl Root {
         })
         .detach();
         let main = cx.new(|_| ui::EmptyMain).into();
-        let wide = window.viewport_size().width >= SIDEBAR_BREAKPOINT;
+        let wide = window.viewport_size().width > SIDEBAR_BREAKPOINT;
         let sidebar_open = state.sidebar_open && wide;
         let shell = cx.new(|_| {
             let mut shell = Shell::new(sidebar.clone().into(), main);
@@ -647,6 +650,7 @@ impl Root {
             diff: None,
             file: None,
             split: None,
+            terminal: terminal::Terminals::default(),
             tabs: Vec::new(),
             side: None,
             page: None,
@@ -2036,7 +2040,7 @@ impl Root {
     /// Below [`SIDEBAR_BREAKPOINT`] the sidebar hides; wider again it shows as the user
     /// left it.
     fn fit(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let wide = window.viewport_size().width >= SIDEBAR_BREAKPOINT;
+        let wide = window.viewport_size().width > SIDEBAR_BREAKPOINT;
         if wide != self.wide {
             self.wide = wide;
             let open = wide && self.state.sidebar_open;
@@ -2529,6 +2533,9 @@ impl Root {
         if self.dialog.is_some() {
             return;
         }
+        if self.close_focused_terminal(window, cx) {
+            return;
+        }
         if let Some(side) = self.side.filter(|_| self.split.is_some()) {
             return self.close_side(side, window, cx);
         }
@@ -2603,7 +2610,7 @@ impl Root {
                 "Toggle sidebar" => window.dispatch_action(Box::new(ToggleSidebar), cx),
                 "Open Changes tab" => window.dispatch_action(Box::new(OpenChangesPanel), cx),
                 "New tab" => window.dispatch_action(Box::new(ToggleChangesPanel), cx),
-                "Open terminal" => window.dispatch_action(Box::new(OpenBackgroundTerminal), cx),
+                "Open terminal" => window.dispatch_action(Box::new(terminal::OpenTerminal), cx),
                 "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 "Log out" => window.dispatch_action(Box::new(LogOut), cx),
@@ -3983,6 +3990,7 @@ impl Root {
                 };
                 self.toast(Toast::danger(message), cx);
             } else {
+                self.sync_terminal(cx);
                 let message = match key {
                     "git-branch-prefix" => Some("Saved branch prefix".to_owned()),
                     "git-pull-request-merge-method" => {
@@ -4206,6 +4214,7 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        self.terminal_event(&event, cx);
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             if matches!(&event, Event::Notification { method, params }
@@ -4455,6 +4464,7 @@ impl Root {
     pub fn set_theme(&mut self, theme: ThemeSetting, window: &mut Window, cx: &mut Context<Self>) {
         self.state.theme = theme;
         self.apply_theme(window, cx);
+        self.sync_terminal(cx);
         self.save(window, cx);
     }
 

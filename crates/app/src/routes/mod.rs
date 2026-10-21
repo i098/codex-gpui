@@ -30,6 +30,7 @@ pub enum Route {
 pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = home::actions(root, cx);
     root = thread::actions(root, cx);
+    root = crate::terminal::actions(root, cx);
     root = settings::actions(root, cx);
     root = automations::actions(root, cx);
     root = mobile::actions(root, cx);
@@ -183,6 +184,7 @@ impl Root {
         {
             self.list_queue(id, cx);
         }
+        self.sync_terminal(cx);
         self.save(window, cx);
         cx.notify();
     }
