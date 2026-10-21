@@ -153,7 +153,7 @@ pub struct Bridge {
     pending: Pending,
     next_id: AtomicI64,
     event_subscribers: EventSubscribers,
-    initialized: std::sync::OnceLock<InitializeResponse>,
+    initialized: async_lock::Mutex<Option<InitializeResponse>>,
     child: Option<Child>,
     acp: bool,
     automation_turns: Mutex<HashMap<String, Arc<AutomationTurn>>>,
@@ -252,7 +252,7 @@ impl Bridge {
             backend: Mutex::new(backend),
             pending: sink.pending,
             event_subscribers: sink.events,
-            initialized: std::sync::OnceLock::new(),
+            initialized: async_lock::Mutex::new(None),
             next_id: AtomicI64::new(1),
             child,
             acp,
@@ -342,7 +342,8 @@ impl Bridge {
 
     /// Sends `initialize` (opting into the experimental API, like the desktop app), then `initialized`.
     pub async fn initialize(&self, client_name: &str, version: &str) -> Result<InitializeResponse> {
-        if let Some(response) = self.initialized.get() {
+        let mut initialized = self.initialized.lock().await;
+        if let Some(response) = initialized.as_ref() {
             return Ok(response.clone());
         }
         let params = json!({
@@ -351,7 +352,7 @@ impl Bridge {
         });
         let response: InitializeResponse = self.request("initialize", params).await?;
         self.notify("initialized", ())?;
-        let _ = self.initialized.set(response.clone());
+        *initialized = Some(response.clone());
         Ok(response)
     }
 
@@ -505,5 +506,58 @@ mod event_tests {
         drop(producer);
         assert!(second.recv_blocking().is_err());
         assert!(bridge.subscribe_async().is_closed());
+    }
+
+    #[test]
+    fn concurrent_windows_initialize_the_shared_server_once() {
+        use std::{
+            future::Future as _,
+            pin::pin,
+            sync::atomic::{AtomicUsize, Ordering},
+            task::Poll,
+        };
+        let (input, mut response) = std::io::pipe().unwrap();
+        let (requests, output) = std::io::pipe().unwrap();
+        let (bridge, _) = Bridge::from_io(input, output, None);
+        let (release, ready) = std::sync::mpsc::channel();
+        let count = Arc::new(AtomicUsize::new(0));
+        let calls = count.clone();
+        let server = std::thread::spawn(move || {
+            for line in BufReader::new(requests).lines() {
+                let request: Value = serde_json::from_str(&line.unwrap()).unwrap();
+                match request["method"].as_str().unwrap() {
+                    "initialize" => {
+                        let first = calls.fetch_add(1, Ordering::SeqCst) == 0;
+                        if first {
+                            ready.recv().unwrap();
+                        }
+                        let reply = if first {
+                            json!({"id":request["id"],"result":{"userAgent":"shared","codexHome":"/fixture","platformOs":"macos"}})
+                        } else {
+                            json!({"id":request["id"],"error":{"code":-32600,"message":"Already initialized"}})
+                        };
+                        writeln!(response, "{reply}").unwrap();
+                    }
+                    "initialized" => break,
+                    _ => panic!("unexpected initialization method"),
+                }
+            }
+        });
+        futures_lite::future::block_on(async {
+            let mut first = pin!(bridge.initialize("primary", "1"));
+            let mut second = pin!(bridge.initialize("popout", "1"));
+            futures_lite::future::poll_fn(|cx| {
+                assert!(first.as_mut().poll(cx).is_pending());
+                assert!(second.as_mut().poll(cx).is_pending());
+                release.send(()).unwrap();
+                Poll::Ready(())
+            })
+            .await;
+            let (first, second) = futures_lite::future::zip(first, second).await;
+            assert_eq!(first.unwrap().user_agent, "shared");
+            assert_eq!(second.unwrap().user_agent, "shared");
+        });
+        server.join().unwrap();
+        assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 }

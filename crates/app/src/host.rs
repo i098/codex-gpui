@@ -44,6 +44,7 @@ pub mod computer_use;
 pub mod computer_use_native;
 mod git;
 mod projectless;
+pub use projectless::Workspace;
 pub(crate) mod run_now;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -89,6 +90,14 @@ pub trait Host: Send + Sync {
 
     fn add_project(&self, _root: &Path) -> Result<String> {
         bail!("adding a local project is unsupported by this host")
+    }
+
+    fn prepare_projectless(&self, _prompt: &str) -> Result<Workspace> {
+        bail!("projectless workspaces are unsupported by this host")
+    }
+
+    fn record_projectless(&self, _thread: &str, _workspace: &Workspace) -> Result<()> {
+        bail!("projectless thread storage is unsupported by this host")
     }
 
     /// Returns the trusted native Settings service, never a model-callable tool.
@@ -1002,6 +1011,14 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn prepare_projectless(&self, prompt: &str) -> Result<Workspace> {
+        self.create_projectless_workspace(prompt)
+    }
+
+    fn record_projectless(&self, thread: &str, workspace: &Workspace) -> Result<()> {
+        self.record_projectless_thread(thread, workspace)
+    }
+
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.computer_use_settings
             .as_ref()
@@ -1520,6 +1537,14 @@ impl CloudHost {
 }
 
 impl Host for CloudHost {
+    fn prepare_projectless(&self, prompt: &str) -> Result<Workspace> {
+        self.local.prepare_projectless(prompt)
+    }
+
+    fn record_projectless(&self, thread: &str, workspace: &Workspace) -> Result<()> {
+        self.local.record_projectless(thread, workspace)
+    }
+
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.local.computer_use_settings()
     }
