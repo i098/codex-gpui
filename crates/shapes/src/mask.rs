@@ -52,6 +52,39 @@ pub(crate) fn paint_top_fade(fade: Pixels, bounds: Bounds<Pixels>, window: &mut 
     paint_sprites(&sprites, Hsla::default(), [0, 0], window, cx);
 }
 
+pub(crate) fn paint_bottom_fade(
+    fade: Pixels,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    let scale = window.scale_factor();
+    let dev = |value: Pixels| (f32::from(value) * scale).round() as i32;
+    let (left, bottom, fade) = (dev(bounds.left()), dev(bounds.bottom()), dev(fade));
+    let (width, height) = (
+        dev(bounds.right()) - left,
+        fade.min(bottom - dev(bounds.top())),
+    );
+    if width <= 0 || height <= 0 {
+        return;
+    }
+    let top = bottom - height;
+    let sprites = sprites(
+        format!("bottom_fade {left} {top} {width} {height} {fade}"),
+        || {
+            let blits = (0..height)
+                .flat_map(|row| {
+                    let alpha =
+                        ((height as f32 - row as f32 - 0.5) / fade as f32 * 255.).round() as u8;
+                    std::iter::repeat_n([alpha, DST_IN, 0, MASK] as Blits, width as usize)
+                })
+                .collect();
+            ([left, top, width, height], blits)
+        },
+    );
+    paint_sprites(&sprites, Hsla::default(), [0, 0], window, cx);
+}
+
 /// `crate::x_fade` on macOS: the gradient's alpha at each column's center, rounded to a byte,
 /// over all of the box's rows.
 pub(crate) fn paint_x_fade(

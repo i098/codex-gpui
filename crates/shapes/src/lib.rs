@@ -238,6 +238,19 @@ pub fn top_fade(fade: Pixels) -> impl IntoElement {
     )
 }
 
+/// Fade the bottom of a composited layer to transparent, like [`top_fade`] in reverse.
+pub fn bottom_fade(fade: Pixels) -> impl IntoElement {
+    cover(
+        |_, _, _| {},
+        move |bounds, (), window, cx| {
+            #[cfg(target_os = "macos")]
+            mask::paint_bottom_fade(fade, bounds, window, cx);
+            #[cfg(not(target_os = "macos"))]
+            let _ = (fade, bounds, window, cx);
+        },
+    )
+}
+
 /// CSS `mask-image: linear-gradient(to right, transparent, black <left>, black calc(100% -
 /// <right>), transparent)` over its parent (`.text-fade-truncate` has `left` 0), which must be
 /// a `.layer()` element, like [`top_fade`]: put it last. macOS only, like [`top_fade`].
