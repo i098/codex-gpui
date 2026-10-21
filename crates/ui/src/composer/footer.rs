@@ -322,18 +322,24 @@ impl Composer {
                     this.submit(&Submit, window, cx);
                 }
             }));
-        // The model picker has no room below the width that holds both control groups
-        // (8 + 8 padding, 63 + 10 left, 28 picker, 64 microphone and send); it then drops out
-        // and the microphone and send overflow to the left of the footer's end.
+        // The original's right group: the model picker's slot is `flex-1 min-w-0` and takes what
+        // the microphone and send (`shrink-0`) leave, so it clips to nothing in a narrow
+        // footer; the fixed pair overflows to the left of the footer's end.
         let right = div()
             .flex()
             .flex_1()
             .min_w_0()
             .justify_end()
             .items_center()
-            .when(self.footer_width >= MODEL_FIT_WIDTH, |d| {
-                d.child(model_button)
-            })
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .justify_end()
+                    .overflow_hidden()
+                    .child(model_button),
+            )
             .child(
                 pill("dictate", t)
                     .flex_none()
