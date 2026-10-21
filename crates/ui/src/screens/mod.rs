@@ -9,5 +9,6 @@ pub mod home;
 pub mod mobile;
 pub mod settings;
 pub mod sidebar;
+pub mod signin;
 pub mod terminal;
 pub mod thread;

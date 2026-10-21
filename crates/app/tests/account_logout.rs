@@ -71,6 +71,11 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
         "account/read",
         json!({"account": {"type": "chatgpt", "email": "user@example.com", "planType": "promax"}, "requiresOpenaiAuth": true}),
     ));
+    lines.extend(exchange(
+        "configRequirements/read",
+        json!({"requirements":{"allowedLoginMethods":["api"]}}),
+    ));
+    lines.extend(exchange("account/login/start", json!({"type":"apiKey"})));
     let mut new_thread = common::recorded_thread(GREETING)?;
     new_thread["turns"] = json!([]);
     let pages: Vec<_> = (0..11)
@@ -178,6 +183,17 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
     fx.wait("login after logout", |fx| {
         fx.read(|root, _| root.signed_out())
     })?;
+    fx.wait("managed sign-in policy", |fx| {
+        fx.read(|root, cx| {
+            root.login().is_some_and(|login| {
+                login.read(cx).policy()
+                    == ui::screens::signin::policy::Policy::Ready {
+                        api: true,
+                        chatgpt: false,
+                    }
+            })
+        })
+    })?;
     ensure!(fx.read(|root, _| root.thread().is_none() && root.recents().is_empty()));
     ensure!(fx.route() == Route::Home);
     shot(&mut fx, "success")?;
@@ -204,15 +220,9 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
     }
     ensure!(fx.read(|root, _| root.signed_out() && root.command_menu().is_none()));
     ensure!(fx.route() == Route::Home && fx.sent()? == requests);
-    fx.root.update(&mut fx.cx, |root, cx| {
-        root.on_event(
-            bridge::Event::Notification {
-                method: "account/login/completed".into(),
-                params: json!({"success": true}),
-            },
-            cx,
-        );
-    });
+    fx.keys("tab tab enter")?;
+    fx.type_text("sk-local-test")?;
+    fx.keys("enter")?;
     fx.wait("first signed-in chat page", |fx| {
         fx.read(|root, _| root.recents().len() >= 10)
     })?;
@@ -268,4 +278,256 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
     );
     shot(&mut fx, "confirmation-new-session")?;
     Ok(())
+}
+
+mod signin_checks {
+    use super::common;
+    use anyhow::{Result, ensure};
+    use common::{Fx, exchange, script};
+    use gpui::EntityInputHandler as _;
+    use serde_json::{Value, json};
+    use ui::screens::signin::policy::Policy;
+    fn signed_out(line: &mut Value) {
+        if line["dir"] == "recv" && line["msg"]["result"].get("requiresOpenaiAuth").is_some() {
+            line["msg"]["result"] = json!({"account":null,"requiresOpenaiAuth":true});
+        }
+        if line["dir"] == "send" && line["msg"]["method"] == "thread/list" {
+            line["msg"]["params"] = json!({});
+        }
+    }
+
+    fn policy(fx: &Fx) -> Option<Policy> {
+        fx.read(|root, cx| root.login().map(|login| login.read(cx).policy()))
+    }
+
+    fn shot(fx: &mut Fx, name: &str) -> Result<()> {
+        if let Some(directory) = std::env::var_os("CGX_SIGNIN_SHOTS") {
+            let directory = std::path::PathBuf::from(directory);
+            std::fs::create_dir_all(&directory)?;
+            fx.shot()?.save(directory.join(format!("{name}.png")))?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn managed_signin_restrictions_hide_methods_and_api_paste_submits_once() -> Result<()> {
+        common::install_panic_hook();
+        for (requirements, expected, name) in [
+            (
+                json!({"allowedLoginMethods":["api","chatgpt"]}),
+                Policy::Ready {
+                    api: true,
+                    chatgpt: true,
+                },
+                "login-main",
+            ),
+            (json!({}), Policy::Unsupported, "requirements-old-cli"),
+            (
+                json!({"allowedLoginMethods":[]}),
+                Policy::Ready {
+                    api: false,
+                    chatgpt: false,
+                },
+                "requirements-disabled",
+            ),
+            (
+                json!({"allowedLoginMethods":["unknown"]}),
+                Policy::Error,
+                "requirements-error",
+            ),
+            (
+                json!({"allowedLoginMethods":["api"]}),
+                Policy::Ready {
+                    api: true,
+                    chatgpt: false,
+                },
+                "requirements-api-only",
+            ),
+        ] {
+            let mut lines = script(None, signed_out)?;
+            lines.extend(exchange(
+                "configRequirements/read",
+                json!({"requirements":requirements}),
+            ));
+            let mut refused = exchange("account/login/start", Value::Null);
+            refused[1]["msg"].as_object_mut().unwrap().remove("result");
+            refused[1]["msg"]["error"] = json!({"code":-32000,"message":"Invalid fixture API key"});
+            lines.extend(refused);
+            let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+            fx.wait("managed sign-in policy", |fx| policy(fx) == Some(expected))?;
+            shot(&mut fx, name)?;
+            if expected
+                != (Policy::Ready {
+                    api: true,
+                    chatgpt: false,
+                })
+            {
+                continue;
+            }
+            fx.keys("tab tab enter")?;
+            let field = fx.read(|root, cx| root.login().unwrap().read(cx).api_key_field().clone());
+            fx.cx.update(|cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                    "  sk-fixture-rejected  ".into(),
+                ))
+            });
+            fx.keys("cmd-v")?;
+            ensure!(field.read_with(&fx.cx, |field, _| field.field_text()
+                == "  sk-fixture-rejected  "));
+            let exposed = fx.cx.update_window(fx.window, |_, window, cx| {
+                field.update(cx, |field, cx| {
+                    field.text_for_range(0..usize::MAX, &mut None, window, cx)
+                })
+            })?;
+            ensure!(exposed == Some("*".repeat("  sk-fixture-rejected  ".len())));
+            shot(&mut fx, "api-key-paste")?;
+            fx.keys("enter")?;
+            fx.wait("API error", |fx| {
+                fx.read(|root, cx| {
+                    root.login()
+                        .is_some_and(|login| login.read(cx).error().is_some())
+                })
+            })?;
+            shot(&mut fx, "api-key-error")?;
+            let sent = fx.sent()?;
+            let attempts: Vec<_> = sent
+                .iter()
+                .filter(|message| message["method"] == "account/login/start")
+                .collect();
+            ensure!(attempts.len() == 1);
+            ensure!(
+                attempts[0]["params"] == json!({"type":"apiKey","apiKey":"sk-fixture-rejected"})
+            );
+            fx.root.update(&mut fx.cx, |root, cx| {
+                root.on_event(
+                    bridge::Event::Notification {
+                        method: "account/login/completed".into(),
+                        params: json!({"loginId":"unrelated","success":true}),
+                    },
+                    cx,
+                )
+            });
+            ensure!(fx.read(|root, _| root.signed_out()));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bedrock_restart_requires_warning_confirmation() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        common::install_panic_hook();
+        if std::env::var_os("CGX_BEDROCK_REPLAY_CHILD").is_some() {
+            return bedrock_warning_replay();
+        }
+        let directory = tempfile::tempdir()?;
+        let executable = std::env::current_exe()?;
+        let shim = directory.path().join("codex-fixture");
+        let home = directory.path().join("home");
+        let transcript = directory.path().join("replacement.jsonl");
+        let log = directory.path().join("replacement.log");
+        std::fs::create_dir(&home)?;
+        std::fs::write(
+            &shim,
+            "#!/bin/sh\nexec \"$CGX_BEDROCK_TEST_BIN\" --exact proxy --nocapture --quiet\n",
+        )?;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o700))?;
+        let mut replacement = script(None, |_| {})?;
+        replacement.extend(exchange(
+            "account/bedrock/checkGovCloudRequirements",
+            json!({"isGovCloud":true}),
+        ));
+        std::fs::write(
+            &transcript,
+            replacement
+                .iter()
+                .map(|line| format!("{line}\n"))
+                .collect::<String>(),
+        )?;
+        std::fs::write(&log, "")?;
+        let status = std::process::Command::new(&executable)
+            .args([
+                "--exact",
+                "signin_checks::bedrock_restart_requires_warning_confirmation",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("CGX_BEDROCK_REPLAY_CHILD", "1")
+            .env("CGX_BEDROCK_TEST_BIN", &executable)
+            .env("CGX_PROXY_SCRIPT", &transcript)
+            .env("CGX_PROXY_LOG", &log)
+            .env("CODEX_BIN", &shim)
+            .env("CODEX_HOME", &home)
+            .env("CODEX_API_BASE_URL", "http://127.0.0.1:1")
+            .status()?;
+        ensure!(status.success(), "Isolated Bedrock replay failed: {status}");
+        Ok(())
+    }
+
+    fn bedrock_warning_replay() -> Result<()> {
+        use ui::screens::signin::{Options, bedrock::GovCloud};
+
+        let mut lines = script(None, signed_out)?;
+        lines.extend(exchange(
+            "configRequirements/read",
+            json!({"requirements":{"allowedLoginMethods":["api","chatgpt"]}}),
+        ));
+        lines.extend(exchange(
+            "account/bedrock/discover",
+            json!({"profiles":[],"environmentCredentials":[{"region":"us-gov-west-1"}]}),
+        ));
+        lines.extend(exchange("account/bedrock/setup", json!({})));
+        let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+        fx.wait("Bedrock sign-in policy", |fx| {
+            matches!(
+                policy(fx),
+                Some(Policy::Ready {
+                    api: true,
+                    chatgpt: true
+                })
+            )
+        })?;
+        fx.root.update(&mut fx.cx, |root, cx| {
+            root.login().unwrap().update(cx, |login, cx| {
+                login.set_options(
+                    Options {
+                        bedrock: true,
+                        ..Options::default()
+                    },
+                    cx,
+                )
+            });
+        });
+        let original_bridge =
+            fx.read(|_, cx| cx.global::<ui::screens::settings::AppServer>().0.clone());
+        fx.keys("tab tab tab enter")?;
+        fx.keys("tab tab tab enter")?;
+        fx.wait("Bedrock discovery request", |fx| {
+            fx.sent().is_ok_and(|requests| {
+                requests
+                    .iter()
+                    .any(|request| request["method"] == "account/bedrock/discover")
+            })
+        })?;
+        fx.advance(std::time::Duration::ZERO)?;
+        fx.keys("tab enter")?;
+        fx.keys("enter")?;
+        fx.wait("Bedrock replacement and GovCloud warning", |fx| {
+            fx.read(|root, cx| {
+                !std::sync::Arc::ptr_eq(
+                    &original_bridge,
+                    &cx.global::<ui::screens::settings::AppServer>().0,
+                ) && root.login().is_some_and(|login| {
+                    login.read(cx).bedrock_warning() == Some(GovCloud::Warning)
+                })
+            })
+        })?;
+        ensure!(fx.read(|root, _| root.signed_out()));
+        shot(&mut fx, "bedrock-govcloud-warning")?;
+        fx.keys("tab enter")?;
+        fx.wait("explicit Bedrock confirmation", |fx| {
+            fx.read(|root, _| !root.signed_out())
+        })?;
+        Ok(())
+    }
 }

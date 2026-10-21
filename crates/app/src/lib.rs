@@ -13,6 +13,7 @@ mod routes;
 pub use routes::Route;
 mod search;
 mod section_actions;
+mod signin;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
@@ -48,12 +49,13 @@ use ui::screens::diff::panel::{
     with_side_tabs,
 };
 use ui::screens::home::{HomeMain, OpenFolder};
-use ui::screens::settings::{self, AppServer, Login, SettingChanged};
+use ui::screens::settings::{self, AppServer, SettingChanged};
 use ui::screens::sidebar::{
     ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
     PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, SearchRequest,
     SelectProject, title as thread_title,
 };
+use ui::screens::signin::Login;
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
     Clock, EditMessage, ForkThread, GitAction, RevertTurn, ThreadView,
@@ -775,7 +777,7 @@ impl Root {
                     matches!(account.account, Some(Account::Chatgpt { .. }))
                 });
                 if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
-                    this.login = Some(cx.new(Login::new));
+                    this.login = Some(this.new_login(window, cx));
                 }
                 this.set_threads(&threads.data, cx);
                 this.set_next_cursor(threads.next_cursor, cx);
@@ -2439,7 +2441,7 @@ impl Root {
                 this.logout_pending = false;
                 match result {
                     Ok(_) => {
-                        this.login = Some(cx.new(Login::new));
+                        this.login = Some(this.new_login(window, cx));
                         this.account_email = None;
                         this.chatgpt_account = false;
                         let host = this.host.clone();
@@ -4133,16 +4135,6 @@ impl Root {
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
-            if matches!(&event, Event::Notification { method, params }
-                if method == "account/login/completed" && params["success"] == true)
-            {
-                self.login = None;
-                self.read_account_email(cx);
-                self.refresh_threads(cx);
-                self.load_projects(cx);
-                self.load_sections(cx);
-                cx.notify();
-            }
             return;
         }
         if let Event::Notification { method, params } = &event
@@ -4314,28 +4306,6 @@ impl Root {
     }
 
     /// Reads the first `thread/list` page again; threads of later loaded pages stay after it.
-    /// Reads the email of the account that just signed in; a failure leaves the dialog without it.
-    fn read_account_email(&self, cx: &mut Context<Self>) {
-        let bridge = self.bridge.clone();
-        let host = self.host.clone();
-        let task = cx.spawn(async move |this, cx| -> Result<()> {
-            cx.background_spawn(async move { host.invalidate_identity() })
-                .await;
-            let account = bridge.account_read().await?;
-            this.update(cx, |this, cx| {
-                this.account_email = chatgpt_email(&account);
-                this.chatgpt_account = matches!(account.account, Some(Account::Chatgpt { .. }));
-                if this.chatgpt_account
-                    && this.host.supports_cloud_search()
-                    && let Some(menu) = &this.command_menu
-                {
-                    menu.update(cx, |menu, cx| menu.enable_cloud_search(cx));
-                }
-            })
-        });
-        log_err(task, cx);
-    }
-
     fn refresh_threads(&self, cx: &mut Context<Self>) {
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
@@ -5096,6 +5066,7 @@ impl Render for Root {
                     .relative()
                     .font_family(ui::SANS)
                     .track_focus(&self.focus)
+                    .on_key_down(ui::focus::tab)
                     .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
                         this.close_window(window, cx);
                     }))
