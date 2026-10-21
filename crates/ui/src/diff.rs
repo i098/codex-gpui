@@ -32,6 +32,9 @@ pub use controls::DiffLayout;
 #[path = "diff/word.rs"]
 pub mod word;
 
+#[path = "diff/patch.rs"]
+pub mod patch;
+
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
 const STORED_WIDTH: f32 = 664.17;
 /// Room the chat keeps beside the panel (`unified` layout), also the panel's minimum.
