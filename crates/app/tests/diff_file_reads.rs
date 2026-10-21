@@ -18,6 +18,14 @@ fn git(root: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8(output.stdout)?.trim_end().to_owned())
 }
 
+fn exported_bytes(value: &Value) -> Result<Vec<u8>> {
+    Ok(STANDARD.decode(
+        value["contentsBase64"]
+            .as_str()
+            .context("exported patch bytes")?,
+    )?)
+}
+
 #[test]
 fn object_reads_preserve_lines_and_bound_disk_fallbacks() -> Result<()> {
     #[cfg(target_os = "macos")]
@@ -303,12 +311,14 @@ fn whitespace_filtered_review_still_exports_the_complete_patch() -> Result<()> {
     fs::write(root.join("spacing.txt"), "value = 1\n")?;
     fs::write(root.join("value.txt"), "value = 1\n")?;
     fs::write(root.join("bytes.bin"), [0, 1, 2, 3])?;
+    fs::write(root.join("latin1.txt"), b"caf\xe9\n")?;
     git(root, &["add", "."])?;
     git(root, &["commit", "-qm", "base"])?;
     fs::write(root.join("spacing.txt"), "value  =  1\n")?;
     git(root, &["add", "spacing.txt"])?;
     fs::write(root.join("value.txt"), "value = 2\n")?;
     fs::write(root.join("bytes.bin"), [0, 9, 8, 7])?;
+    fs::write(root.join("latin1.txt"), b"th\xe9\n")?;
     fs::write(root.join("new file.txt"), "new content\n")?;
     let host = LocalHost::new(root);
     let review = json_body(&host.fetch(&Request::post(
@@ -337,7 +347,7 @@ fn whitespace_filtered_review_still_exports_the_complete_patch() -> Result<()> {
         .collect::<std::collections::BTreeSet<_>>();
     ensure!(
         names
-            == ["bytes.bin", "new file.txt", "value.txt"]
+            == ["bytes.bin", "latin1.txt", "new file.txt", "value.txt"]
                 .map(String::from)
                 .into_iter()
                 .collect()
@@ -361,9 +371,10 @@ fn whitespace_filtered_review_still_exports_the_complete_patch() -> Result<()> {
         ],
     )?;
     let patch = destination.path().join("change.patch");
-    fs::write(&patch, exported["diff"].as_str().context("exported diff")?)?;
+    fs::write(&patch, exported_bytes(&exported)?)?;
     git(&clone, &["apply", "--3way", patch.to_str().unwrap()])?;
     ensure!(fs::read(clone.join("bytes.bin"))? == [0, 9, 8, 7]);
+    ensure!(fs::read(clone.join("latin1.txt"))? == b"th\xe9\n");
     ensure!(fs::read_to_string(clone.join("spacing.txt"))? == "value  =  1\n");
     ensure!(fs::read_to_string(clone.join("value.txt"))? == "value = 2\n");
     ensure!(fs::read_to_string(clone.join("new file.txt"))? == "new content\n");
@@ -403,7 +414,7 @@ fn raw_export_keeps_tracked_changes_when_untracked_files_exceed_the_limit() -> R
         ],
     )?;
     let patch = destination.path().join("change.patch");
-    fs::write(&patch, exported["diff"].as_str().context("exported diff")?)?;
+    fs::write(&patch, exported_bytes(&exported)?)?;
     git(&clone, &["apply", "--3way", patch.to_str().unwrap()])?;
     ensure!(fs::read_to_string(clone.join("tracked.txt"))? == "after\n");
     ensure!(!clone.join("generated").exists());
@@ -460,7 +471,7 @@ fn review_exports_respect_index_and_commit_boundaries() -> Result<()> {
             git(&clone, &["add", "."])?;
         }
         let patch = destination.path().join("change.patch");
-        fs::write(&patch, exported["diff"].as_str().context("exported diff")?)?;
+        fs::write(&patch, exported_bytes(&exported)?)?;
         git(&clone, &["apply", "--3way", patch.to_str().unwrap()])?;
         ensure!(
             fs::read_to_string(clone.join("file.txt"))? == expected,
@@ -487,11 +498,121 @@ fn uncommitted_export_supports_a_repository_without_commits() -> Result<()> {
     let destination = tempfile::tempdir()?;
     git(destination.path(), &["init", "-q"])?;
     let patch = destination.path().join("change.patch");
-    fs::write(&patch, exported["diff"].as_str().context("exported diff")?)?;
+    fs::write(&patch, exported_bytes(&exported)?)?;
     git(
         destination.path(),
         &["apply", "--3way", patch.to_str().unwrap()],
     )?;
     ensure!(fs::read_to_string(destination.path().join("new.txt"))? == "new content\n");
+    Ok(())
+}
+
+#[test]
+fn filtered_mutations_preserve_hidden_whitespace_changes() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    common::install_panic_hook();
+    let base = (1..=30)
+        .map(|line| format!("line {line}\n"))
+        .collect::<String>();
+    let spacing = base
+        .replace("line 2\n", "line  2\n")
+        .replace("line 24\n", "line  24\n");
+    let modified = spacing.replace("line 25\n", "changed 25\n");
+    let content_only = base.replace("line 25\n", "changed 25\n");
+    for (endpoint, source, legacy) in [
+        ("git-stage", "unstaged", false),
+        ("git-unstage", "staged", false),
+        ("git-revert", "unstaged", false),
+        ("git-revert", "staged", false),
+        ("git-revert", "unstaged", true),
+        ("git-revert", "staged", true),
+    ] {
+        let repo = tempfile::tempdir()?;
+        let root = repo.path();
+        git(root, &["init", "-q"])?;
+        git(root, &["config", "user.name", "Patch proof"])?;
+        git(root, &["config", "user.email", "proof@example.invalid"])?;
+        fs::write(root.join("file.txt"), &base)?;
+        git(root, &["add", "."])?;
+        git(root, &["commit", "-qm", "base"])?;
+        fs::write(root.join("file.txt"), &modified)?;
+        if source == "staged" {
+            git(root, &["add", "."])?;
+        }
+        let host = LocalHost::new(root);
+        let review = json_body(&host.fetch(&Request::post(
+            "git-changes",
+            Some(json!({"cwd":root,"hideWhitespace":true})),
+        ))?)?;
+        let diff = review[source][0]["diff"]
+            .as_str()
+            .context("filtered diff")?;
+        let mut params = json!({"cwd":root,"source":source,"hideWhitespace":true});
+        if legacy {
+            params["path"] = "file.txt".into();
+            params["diff"] = diff.into();
+        } else {
+            params["files"] = json!([{"path":"file.txt","diff":diff}]);
+        }
+        let response = json_body(&host.fetch(&Request::post(endpoint, Some(params)))?)?;
+        ensure!(
+            response["status"] == "success",
+            "{endpoint} {source} failed"
+        );
+        let expected_index = match (endpoint, source) {
+            ("git-stage", _) => &content_only,
+            (_, "staged") => &spacing,
+            _ => &base,
+        };
+        let expected_working = if endpoint == "git-revert" {
+            &spacing
+        } else {
+            &modified
+        };
+        ensure!(
+            git(root, &["show", ":file.txt"])? == expected_index.trim_end(),
+            "{endpoint} {source} changed hidden index whitespace"
+        );
+        ensure!(
+            fs::read_to_string(root.join("file.txt"))? == *expected_working,
+            "{endpoint} {source} changed hidden working whitespace"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn filtered_mutations_still_reject_a_stale_snapshot() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    common::install_panic_hook();
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    git(root, &["init", "-q"])?;
+    git(root, &["config", "user.name", "Patch proof"])?;
+    git(root, &["config", "user.email", "proof@example.invalid"])?;
+    fs::write(root.join("file.txt"), "before\n")?;
+    git(root, &["add", "."])?;
+    git(root, &["commit", "-qm", "base"])?;
+    fs::write(root.join("file.txt"), "after\n")?;
+    let host = LocalHost::new(root);
+    let review = json_body(&host.fetch(&Request::post(
+        "git-changes",
+        Some(json!({"cwd":root,"hideWhitespace":true})),
+    ))?)?;
+    fs::write(root.join("file.txt"), "changed again\n")?;
+    let error = host
+        .fetch(&Request::post(
+            "git-stage",
+            Some(json!({"cwd":root,"source":"unstaged","hideWhitespace":true,
+            "files":[{"path":"file.txt","diff":review["unstaged"][0]["diff"]}]})),
+        ))
+        .unwrap_err();
+    ensure!(
+        error
+            .to_string()
+            .contains("file changed since its diff was shown")
+    );
+    ensure!(git(root, &["show", ":file.txt"])? == "before");
+    ensure!(fs::read_to_string(root.join("file.txt"))? == "changed again\n");
     Ok(())
 }
