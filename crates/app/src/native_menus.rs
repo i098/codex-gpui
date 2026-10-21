@@ -116,6 +116,8 @@ pub(crate) fn menus() -> Vec<Menu> {
         ]),
         Menu::new("View").items([
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
+            MenuItem::action("Toggle Bottom Panel", crate::terminal::ToggleBottomPanel),
+            MenuItem::action("Open Terminal", crate::terminal::OpenTerminal),
             MenuItem::action("Toggle Changes Panel", ToggleChangesPanel),
             MenuItem::separator(),
             MenuItem::action("Find", FindInThread),

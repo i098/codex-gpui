@@ -165,6 +165,7 @@ struct StreamSegment {
 struct LaidOut {
     key: Option<(Size<Pixels>, bool)>,
     width: Pixels,
+    height: Pixels,
     turns: HashMap<String, (Pixels, Pixels)>,
 }
 
@@ -1865,6 +1866,7 @@ impl Render for ThreadView {
         self.carets.publish(cx);
         let key = (window.viewport_size(), self.clip_right);
         let (view, offset) = (self.scroll.bounds().size.height, self.scroll.offset().y);
+        let following_bottom = offset <= -self.scroll.max_offset().y + px(1.);
         let laid_out = self.laid_out.borrow();
         let turns: Vec<Div> = self
             .turns
@@ -1900,6 +1902,16 @@ impl Render for ThreadView {
             let origin = scroll.bounds().top() + scroll.offset().y;
             let width = bounds.first().map_or(px(0.), |b| b.size.width);
             let mut l = laid_out.borrow_mut();
+            let height = scroll.bounds().size.height;
+            if l.height != height || l.width != width {
+                l.height = height;
+                let mut offset = scroll.offset();
+                if following_bottom && offset.y != -scroll.max_offset().y {
+                    offset.y = -scroll.max_offset().y;
+                    scroll.set_offset(offset);
+                    window.defer(cx, move |_, cx| cx.notify(view_id));
+                }
+            }
             if l.key == Some(key) && l.width != width {
                 // The column width changed with the window size and side panel unchanged (the
                 // sidebar): the stand-ins' heights are stale, so lay every turn out again.
@@ -2107,7 +2119,7 @@ impl Render for ThreadView {
                             .w_full()
                             .max_w(CONTENT_MAX_WIDTH)
                             .px(px(16.))
-                            .pb(px(32.))
+                            .pb(px(32. + 12.))
                             .flex()
                             .flex_col()
                             .gap(px(12.))
