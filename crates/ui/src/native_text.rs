@@ -203,7 +203,7 @@ mod native {
             eprintln!("{info}");
             std::process::exit(101);
         }));
-        let mut cx = gpui::TestAppContext::single();
+        let cx = gpui::TestAppContext::single();
         cx.update(|cx| {
             let synthesizer = synthesizer().expect("native speech service");
             unsafe {
