@@ -9,7 +9,7 @@ use std::sync::Arc;
 #[cfg(target_os = "macos")]
 mod mac;
 #[cfg(target_os = "macos")]
-pub use mac::{SkiaMatchedTextSystem, show_definition};
+pub use mac::{SkiaMatchedTextSystem, font_faces, show_definition};
 
 #[cfg(target_os = "macos")]
 pub fn text_system() -> Arc<dyn PlatformTextSystem> {
@@ -19,6 +19,19 @@ pub fn text_system() -> Arc<dyn PlatformTextSystem> {
 #[cfg(not(target_os = "macos"))]
 pub fn text_system() -> Arc<dyn PlatformTextSystem> {
     Arc::new(gpui::NoopTextSystem::new())
+}
+
+#[derive(Clone, Debug)]
+pub struct FontFace {
+    pub family: String,
+    pub style: String,
+    pub full_name: String,
+    pub postscript_name: String,
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn font_faces(_: &str) -> Vec<FontFace> {
+    Vec::new()
 }
 
 /// Private `FontFeatures` tag carrying CSS `letter-spacing` (1/100 CSS px, i32 bits); textsys
@@ -32,4 +45,14 @@ pub fn letter_spacing(px: f32) -> FontFeatures {
         LETTER_SPACING_TAG.into(),
         (px * 100.).round() as i32 as u32,
     )]))
+}
+
+pub const FONT_SMOOTHING_TAG: &str = "cgsm";
+
+pub fn font_smoothing(enabled: bool) -> FontFeatures {
+    if enabled {
+        FontFeatures::default()
+    } else {
+        FontFeatures(Arc::new(vec![(FONT_SMOOTHING_TAG.into(), 1)]))
+    }
 }

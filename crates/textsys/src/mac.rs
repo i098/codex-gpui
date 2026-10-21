@@ -102,6 +102,26 @@ impl SkiaMatchedTextSystem {
     }
 }
 
+pub fn font_faces(family: &str) -> Vec<crate::FontFace> {
+    let Some(collection) = font_collection::create_for_family(family) else {
+        return Vec::new();
+    };
+    let Some(descriptors) = collection.get_descriptors() else {
+        return Vec::new();
+    };
+    let mut faces = descriptors
+        .iter()
+        .map(|descriptor| crate::FontFace {
+            family: descriptor.family_name(),
+            style: descriptor.style_name(),
+            full_name: descriptor.display_name(),
+            postscript_name: descriptor.font_name(),
+        })
+        .collect::<Vec<_>>();
+    faces.sort_by(|a, b| (a.style != "Regular", &a.style).cmp(&(b.style != "Regular", &b.style)));
+    faces
+}
+
 #[derive(Default)]
 struct State {
     faces: Vec<Face>,
@@ -115,6 +135,7 @@ struct State {
     /// Per face: CSS `letter-spacing` (from [`crate::letter_spacing`]) and the other
     /// `FontFeatures` as OpenType (tag, value) pairs for HarfBuzz.
     shaping: HashMap<usize, (f32, Vec<(u32, u32)>)>,
+    native_smoothing: HashMap<usize, bool>,
 }
 
 enum Face {
@@ -369,21 +390,28 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
             };
             state.face_id(face, None)
         } else {
-            let matched = state
-                .match_family(&font.family, font.weight.0, italic)
+            let exact = core_text::font::new_from_name(&font.family, 16.)
+                .ok()
+                .filter(|face| face.postscript_name() == font.family.as_ref());
+            let matched = exact
+                .or_else(|| state.match_family(&font.family, font.weight.0, italic))
                 .ok_or_else(|| anyhow::anyhow!("no font family {:?}", font.family))?;
             let name = matched.postscript_name();
             state.face_id(Face::Fixed(matched), Some(name))
         };
         let mut shaping = (0., Vec::new());
+        let mut native_smoothing = false;
         for (tag, value) in font.features.tag_value_list() {
             if tag == crate::LETTER_SPACING_TAG {
                 shaping.0 = *value as i32 as f32 / 100.;
+            } else if tag == crate::FONT_SMOOTHING_TAG {
+                native_smoothing = *value != 0;
             } else if let Ok(tag) = <[u8; 4]>::try_from(tag.as_bytes()) {
                 shaping.1.push((u32::from_be_bytes(tag), *value));
             }
         }
         state.shaping.insert(id.0, shaping);
+        state.native_smoothing.insert(id.0, native_smoothing);
         state.by_font.insert(font.clone(), id);
         Ok(id)
     }
@@ -506,7 +534,14 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
         cx.set_should_subpixel_position_fonts(true);
         cx.set_text_drawing_mode(CGTextDrawingMode::CGTextFill);
         cx.set_should_antialias(true);
-        cx.set_should_smooth_fonts(false);
+        cx.set_should_smooth_fonts(
+            self.0
+                .lock()
+                .native_smoothing
+                .get(&params.font_id.0)
+                .copied()
+                .unwrap_or(false),
+        );
         cx.set_text_matrix(&CGAffineTransform::new(1., 0., 0., 1., 0., 0.));
         font.draw_glyphs(&[glyph], &[origin], cx);
         if params.is_emoji {

@@ -554,25 +554,29 @@ impl Composer {
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
-            .px(px(
-                if self.request_parent.is_some() && self.request_compact && !self.secret {
-                    10.
+            .px(px(if self.inline_font_size.is_some() {
+                0.
+            } else if self.request_parent.is_some() && self.request_compact && !self.secret {
+                10.
+            } else {
+                12.
+            }))
+            .pb(px(
+                if self.request_parent.is_some() || self.inline_font_size.is_some() {
+                    0.
                 } else {
-                    12.
+                    4.
                 },
             ))
-            .pb(px(if self.request_parent.is_some() {
-                0.
-            } else {
-                4.
-            }))
-            .min_h(px(if self.request_parent.is_some() {
-                20.
-            } else {
-                48.
-            }))
+            .min_h(px(
+                if self.request_parent.is_some() || self.inline_font_size.is_some() {
+                    20.
+                } else {
+                    48.
+                },
+            ))
             .cursor(CursorStyle::IBeam)
-            .text_size(FONT_SIZE)
+            .text_size(self.inline_font_size.unwrap_or(FONT_SIZE))
             .line_height(LINE_HEIGHT)
             .font_weight(gpui::FontWeight(430.))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
@@ -812,7 +816,9 @@ pub(super) fn shape(
         .text_system()
         .shape_text(
             s.into(),
-            if composer.request_compact && !composer.secret {
+            if let Some(size) = composer.inline_font_size {
+                size
+            } else if composer.request_compact && !composer.secret {
                 px(13.)
             } else {
                 FONT_SIZE

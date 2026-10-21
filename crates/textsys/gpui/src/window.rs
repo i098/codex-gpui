@@ -1239,6 +1239,7 @@ pub struct Window {
     text_system: Arc<WindowTextSystem>,
     text_rendering_mode: Rc<Cell<TextRenderingMode>>,
     rem_size: Pixels,
+    pointer_cursors: bool,
     /// The stack of override values for the window's rem size.
     ///
     /// This is used by `with_rem_size` to allow rendering an element tree with
@@ -2161,6 +2162,7 @@ impl Window {
             text_system,
             text_rendering_mode: cx.text_rendering_mode.clone(),
             rem_size: px(16.),
+            pointer_cursors: true,
             rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
@@ -2922,14 +2924,16 @@ impl Window {
             }
             let size = self.viewport_size.to_device_pixels(self.scale_factor());
             let opaque = checkpoint.is_none()
-                && self.platform_window.background_appearance() == WindowBackgroundAppearance::Opaque;
+                && self.platform_window.background_appearance()
+                    == WindowBackgroundAppearance::Opaque;
             let scene = if let Some((epoch, start)) = checkpoint {
                 anyhow::ensure!(
                     epoch == self.scene_epoch && start <= self.next_frame.scene.len(),
                     "stale scene checkpoint"
                 );
                 self.scene_capture_scratch.clear();
-                self.scene_capture_scratch.replay(start..self.next_frame.scene.len(), &self.next_frame.scene);
+                self.scene_capture_scratch
+                    .replay(start..self.next_frame.scene.len(), &self.next_frame.scene);
                 self.scene_capture_scratch.finish();
                 &self.scene_capture_scratch
             } else {
@@ -3195,6 +3199,11 @@ impl Window {
     /// UI to scale, just like zooming a web page.
     pub fn set_rem_size(&mut self, rem_size: impl Into<Pixels>) {
         self.rem_size = rem_size.into();
+    }
+
+    /// Allows pointing-hand cursors when enabled; otherwise keeps arrow cursors without changing text or resize cursors.
+    pub fn set_pointer_cursors(&mut self, enabled: bool) {
+        self.pointer_cursors = enabled;
     }
 
     /// Acquire a globally unique identifier for the given ElementId.
@@ -4211,6 +4220,11 @@ impl Window {
     /// during the paint phase of element drawing.
     pub fn set_cursor_style(&mut self, style: CursorStyle, hitbox: &Hitbox) {
         self.invalidator.debug_assert_paint();
+        let style = if !self.pointer_cursors && style == CursorStyle::PointingHand {
+            CursorStyle::Arrow
+        } else {
+            style
+        };
         self.next_frame.cursor_styles.push(CursorStyleRequest {
             hitbox_id: Some(hitbox.id),
             style,

@@ -31,13 +31,16 @@ impl Settings {
     }
 
     pub fn write(&mut self, key: &str, value: Value) -> Result<()> {
-        let old = self.values.insert(key.to_owned(), value);
+        self.write_many([(key, value)])
+    }
+
+    pub fn write_many<const N: usize>(&mut self, values: [(&str, Value); N]) -> Result<()> {
+        let old = values.map(|(key, value)| (key, self.values.insert(key.to_owned(), value)));
         if let Err(error) = self.save() {
-            match old {
-                Some(value) => {
+            for (key, previous) in old {
+                if let Some(value) = previous {
                     self.values.insert(key.to_owned(), value);
-                }
-                None => {
+                } else {
                     self.values.remove(key);
                 }
             }
@@ -55,5 +58,28 @@ impl Settings {
         fs::write(&temporary, serde_json::to_vec_pretty(&self.values)?)?;
         fs::rename(&temporary, path)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn appearance_pair_write_failure_restores_both_values() {
+        let root = tempfile::tempdir().unwrap();
+        let blocker = root.path().join("file");
+        fs::write(&blocker, "not a directory").unwrap();
+        let mut settings = Settings {
+            values: Map::from_iter([("theme".into(), json!("old"))]),
+            path: Some(blocker.join("settings.json")),
+        };
+        let result = settings.write_many([("theme", json!("new")), ("preset", json!("github"))]);
+        assert!(result.is_err());
+        assert_eq!(
+            settings.read_all(),
+            &Map::from_iter([("theme".into(), json!("old"))])
+        );
     }
 }
