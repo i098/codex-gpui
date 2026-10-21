@@ -13,7 +13,8 @@
 //! (`getAuthStatus` with `includeToken`) plus the account route from `account/read`, retries once
 //! after a 401 with a refreshed token, and answers the original wire shapes, including errors.
 //! The token never reaches logs, errors, or `Debug` output.
-//! Local fetches support `list-automations`, `create-automation`, `automation-update`, `automation-run-now`, `inbox-items`, the `git-*` endpoints, `create-worktree`, `set-worktree-owner-thread`, and `paths-exist`; other endpoints return errors.
+//! Local fetches support the automation and `git-*` endpoints, scoped text and binary file reads,
+//! worktree operations, and `paths-exist`; other endpoints return errors.
 //! `Root` loads the automation list off the UI thread when the Scheduled route opens.
 //! Consumers read the result through `Root::automations`; this service slice does not change the static screens.
 //!
@@ -42,6 +43,7 @@ use url::Url;
 mod automation_schedule;
 pub mod computer_use;
 pub mod computer_use_native;
+mod diff_files;
 mod git;
 mod projectless;
 pub(crate) mod run_now;
@@ -1111,7 +1113,7 @@ impl Host for LocalHost {
             "inbox-items" => self.inbox(&params)?,
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-init-repo"
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
-            | "git-checkout" => git::fetch(endpoint, &params)?,
+            | "git-checkout" | "git-cat-file" => git::fetch(endpoint, &params)?,
             "create-worktree" => self.create_worktree(&params)?,
             "set-worktree-owner-thread" => {
                 let worktree = params["worktree"].as_str().context("missing worktree")?;
@@ -1123,6 +1125,9 @@ impl Host for LocalHost {
                 json!({"success": true})
             }
             "open-file" => open_file(&self.opener, &params)?,
+            "read-file" => diff_files::text(&params)?,
+            "read-file-binary" => diff_files::binary(&params)?,
+            "read-git-file-binary" => diff_files::git_binary(&params)?,
             "paths-exist" => {
                 let paths: Vec<String> =
                     serde_json::from_value(params.get("paths").cloned().unwrap_or(json!([])))?;
@@ -1162,30 +1167,7 @@ const EDITORS: [(&str, &str); 11] = [
 /// default app without one). The path must resolve, symlinks included, to a regular file under
 /// the Git root of `cwd` (`cwd` itself outside a repository). `opener` reports its own failure.
 fn open_file(opener: &Path, params: &Value) -> Result<Value> {
-    let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
-    let path = Path::new(params["path"].as_str().context("missing path")?);
-    ensure!(
-        cwd.is_absolute() && path.is_absolute(),
-        "cwd and path must be absolute"
-    );
-    let root = std::process::Command::new("git")
-        .arg("-C")
-        .arg(cwd)
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map_or_else(
-            || cwd.to_path_buf(),
-            |root| PathBuf::from(root.trim_end_matches('\n')),
-        );
-    let root = root.canonicalize().context("resolve the project folder")?;
-    let file = path
-        .canonicalize()
-        .with_context(|| format!("{} no longer exists", path.display()))?;
-    ensure!(file.starts_with(&root), "file is outside the project");
-    ensure!(file.is_file(), "{} is not a file", file.display());
+    let file = diff_files::scoped_path(params)?;
     let mut command = std::process::Command::new(opener);
     match params["target"].as_str() {
         None | Some("systemDefault") => {}

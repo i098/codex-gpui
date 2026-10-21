@@ -9,6 +9,10 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+#[path = "git/contents.rs"]
+mod contents;
+pub(super) use contents::read_file_version;
+
 /// Git in `root` without pathspec options: `check-ignore` rejects `--literal-pathspecs`, and
 /// the original's `ls-files` calls use pathspec magic.
 fn plain_command(root: &Path) -> Command {
@@ -510,6 +514,9 @@ pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
     let root = checked(run(cwd, &["rev-parse", "--show-toplevel"])?)?;
     let root = String::from_utf8(root).context("Git root must be UTF-8")?;
     let root = Path::new(root.strip_suffix('\n').unwrap_or(&root));
+    if endpoint == "git-cat-file" {
+        return contents::cat_file(root, params);
+    }
     if let Some(result) = commit_flow(endpoint, root, params) {
         return result;
     }
