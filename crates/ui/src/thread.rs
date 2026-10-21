@@ -22,8 +22,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bridge::Event;
 use bridge::types::{
-    AgentMessageDeltaNotification, FileUpdateChange, ItemNotification, Thread, ThreadItem, Turn,
-    TurnNotification, TurnStatus, UserInput,
+    AgentMessageDeltaNotification, CommandAction, FileUpdateChange, ItemNotification, Thread,
+    ThreadItem, Turn, TurnNotification, TurnStatus, UserInput,
 };
 use gpui::{
     Action, AnyView, App, Bounds, ClipboardItem, Context, Corners, Div, FontWeight, Hsla,
@@ -1055,10 +1055,11 @@ impl ThreadView {
             .filter_map(|item| match item {
                 ThreadItem::CommandExecution {
                     command,
+                    command_actions,
                     aggregated_output,
                     ..
                 } => Some((
-                    shell_command(command).to_owned(),
+                    shell_command(command, command_actions).to_owned(),
                     aggregated_output.as_deref().unwrap_or_default(),
                 )),
                 _ => None,
@@ -1079,11 +1080,12 @@ impl ThreadView {
             ThreadItem::CommandExecution {
                 id,
                 command,
+                command_actions,
                 aggregated_output,
                 ..
             } => Some((
                 id,
-                shell_command(command),
+                shell_command(command, command_actions),
                 aggregated_output.as_deref().unwrap_or_default(),
             )),
             _ => None,
@@ -1225,7 +1227,13 @@ impl ThreadView {
                     .child(header("Background processes".into()))
                     .children(self.background_terminal_items().enumerate().filter_map(
                         |(ix, item)| {
-                            let ThreadItem::CommandExecution { id, command, .. } = item else {
+                            let ThreadItem::CommandExecution {
+                                id,
+                                command,
+                                command_actions,
+                                ..
+                            } = item
+                            else {
                                 return None;
                             };
                             let id = id.clone();
@@ -1273,7 +1281,7 @@ impl ThreadView {
                                 .child(div().size(px(8.8)).rounded(px(1.)).bg(t.text_tertiary));
                             let control = row(
                                 "thread-summary-terminal",
-                                shell_command(command).to_owned(),
+                                shell_command(command, command_actions).to_owned(),
                                 22.,
                                 ix,
                                 window,
@@ -2190,8 +2198,11 @@ fn work(turn: &Turn) -> (&[ThreadItem], Option<(&str, &str)>) {
     }
 }
 
-/// The command inside the `<shell> -lc "<command>"` wrapper the server reports.
-fn shell_command(command: &str) -> &str {
+/// Uses the server's parsed command when it reports one, otherwise removes the shell wrapper.
+fn shell_command<'a>(command: &'a str, actions: &'a [CommandAction]) -> &'a str {
+    if let [action] = actions {
+        return &action.command;
+    }
     let Some((_, inner)) = command.split_once(" -lc ") else {
         return command;
     };
@@ -2585,8 +2596,19 @@ mod tests {
         );
         assert_eq!(day_and_time(at, at + 3 * 86_400, -25_200).0, "Oct 14");
         assert_eq!(duration(17), "17s");
+    }
+
+    #[test]
+    fn terminal_labels_preserve_parsed_shell_escapes() {
+        let command = r#"/bin/zsh -lc "printf '\\033[31mred\\033[0m'""#;
+        let actions = [CommandAction {
+            kind: "unknown".into(),
+            command: r"printf '\033[31mred\033[0m'".into(),
+            name: None,
+        }];
+        assert_eq!(shell_command(command, &actions), actions[0].command);
         assert_eq!(
-            shell_command(r#"/bin/zsh -lc "python3 -c 'print(2)'""#),
+            shell_command(r#"/bin/zsh -lc "python3 -c 'print(2)'""#, &[]),
             "python3 -c 'print(2)'"
         );
     }

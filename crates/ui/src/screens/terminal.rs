@@ -5,12 +5,15 @@
 use bridge::Event;
 use gpui::{
     Action, AnyView, App, AppContext as _, Context, Entity, InteractiveElement, IntoElement,
-    ParentElement, Render, Styled, TextRun, UniformListScrollHandle, Window, div, font,
-    prelude::FluentBuilder as _, px, rgb, uniform_list,
+    ParentElement, Render, Styled, TextRun, Window, div, font, px,
 };
 use serde_json::{Value, json};
-use theme::{ActiveTheme as _, Appearance};
-use unicode_width::UnicodeWidthChar as _;
+use theme::ActiveTheme as _;
+use unicode_width::UnicodeWidthChar;
+
+pub mod buffer;
+pub mod surface;
+pub use surface::{TerminalEvent, TerminalStyle, TerminalSurface};
 
 use super::diff::panel::with_side_panel;
 use super::sidebar::{HomeSidebar, home_sidebar};
@@ -54,79 +57,59 @@ pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     with_side_panel(shell, thread, Some(panel), cx).into()
 }
 
-/// Read-only output of the selected command, including its completed buffer.
 pub struct Xterm {
-    thread: Entity<ThreadView>,
-    scroll: UniformListScrollHandle,
+    surface: Entity<TerminalSurface>,
+    output: String,
+    selected: String,
 }
 
 impl Xterm {
     pub fn new(thread: Entity<ThreadView>, cx: &mut Context<Self>) -> Self {
         thread.update(cx, |thread, cx| thread.select_terminal(None, cx));
-        cx.observe(&thread, |this, _, cx| {
-            let scroll = this.scroll.0.borrow().base_handle.clone();
-            if scroll.offset().y <= -scroll.max_offset().y + px(1.) {
-                scroll.scroll_to_bottom();
-            }
-            cx.notify();
-        })
-        .detach();
-        Self {
-            thread,
-            scroll: UniformListScrollHandle::new(),
+        let mut this = Self {
+            surface: cx.new(|cx| TerminalSurface::new(false, cx)),
+            output: String::new(),
+            selected: String::new(),
+        };
+        this.update(&thread, cx);
+        cx.observe(&thread, |this, thread, cx| this.update(&thread, cx))
+            .detach();
+        this
+    }
+
+    fn update(&mut self, thread: &Entity<ThreadView>, cx: &mut Context<Self>) {
+        let (id, _, output) = thread.read(cx).terminal().unwrap_or(("", "", ""));
+        if id == self.selected && output == self.output {
+            return;
         }
+        let append = id == self.selected && output.starts_with(&self.output);
+        let delta = if append {
+            &output[self.output.len()..]
+        } else {
+            output
+        };
+        let normalized = delta.replace("\r\n", "\n").replace('\n', "\r\n");
+        self.selected = id.to_owned();
+        self.output = output.to_owned();
+        self.surface.update(cx, |surface, cx| {
+            if append {
+                surface.append(normalized.as_bytes(), cx);
+            } else {
+                surface.replace(normalized.as_bytes(), cx);
+            }
+        });
+        cx.notify();
     }
 }
 
 impl Render for Xterm {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme();
-        // xterm theme foreground.
-        let fg = match t.appearance {
-            Appearance::Dark => rgb(0xdfdfdf).into(),
-            Appearance::Light => t.text,
-        };
-        let thread = self.thread.read(cx);
-        let output = thread.terminal().map_or("", |(_, _, output)| output);
-        let columns = terminal_columns(window, cx);
-        let rows: Vec<_> = output
-            .lines()
-            .flat_map(|line| wrap_line(line, columns))
-            .map(|row| {
-                let start = row.as_ptr() as usize - output.as_ptr() as usize;
-                start..start + row.len()
-            })
-            .collect();
-        let thread = self.thread.clone();
-        let list = uniform_list(
-            "background-terminal-rows",
-            rows.len(),
-            move |visible, _, cx| {
-                let output = thread
-                    .read(cx)
-                    .terminal()
-                    .map_or("", |(_, _, output)| output);
-                visible
-                    .map(|index| {
-                        text(output[rows[index].clone()].to_owned(), 12., 16.5, 400., fg)
-                            .h(px(16.5))
-                    })
-                    .collect()
-            },
-        )
-        .size_full()
-        .track_scroll(&self.scroll);
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
-            .id("background-terminal-output")
             .size_full()
             .min_w_0()
-            .p(px(if output.is_empty() { 16. } else { 12. }))
+            .p(px(if self.output.is_empty() { 16. } else { 12. }))
             .pr_0()
-            .font_family(crate::MONO)
-            .when(output.is_empty(), |d| {
-                d.child(text("No output yet", 12., 16.5, 400., t.text_tertiary))
-            })
-            .when(!output.is_empty(), |d| d.child(list))
+            .child(self.surface.clone())
     }
 }
 
@@ -151,7 +134,6 @@ fn terminal_columns(window: &Window, cx: &App) -> usize {
         .floor()
         .max(1.) as usize
 }
-
 fn wrap_line(mut line: &str, columns: usize) -> impl Iterator<Item = &str> {
     let mut done = false;
     std::iter::from_fn(move || {
@@ -277,20 +259,4 @@ pub fn running_command_replay() -> Vec<Event> {
         params,
     })
     .into()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::wrap_line;
-
-    #[test]
-    fn refit_keeps_blank_rows_and_unicode_cells() {
-        assert_eq!(wrap_line("", 3).collect::<Vec<_>>(), [""]);
-        assert_eq!(wrap_line("abcdef", 3).collect::<Vec<_>>(), ["abc", "def"]);
-        assert_eq!(wrap_line("界a界b", 3).collect::<Vec<_>>(), ["界a", "界b"]);
-        assert_eq!(
-            wrap_line("e\u{301}abc", 2).collect::<Vec<_>>(),
-            ["e\u{301}a", "bc"]
-        );
-    }
 }

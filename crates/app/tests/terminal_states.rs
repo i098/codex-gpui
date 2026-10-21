@@ -106,6 +106,7 @@ fn completion_keeps_the_selected_buffer_when_other_commands_run() -> Result<()> 
     let mut other = completed.clone();
     other["item"]["id"] = "other-running-command".into();
     other["item"]["command"] = "other command".into();
+    other["item"]["commandActions"] = json!([]);
     other["item"]["aggregatedOutput"] = "other output".into();
     emit(&mut fx, "item/started", other);
     completed["item"]["status"] = "failed".into();
@@ -190,6 +191,7 @@ fn stop_failure_keeps_commands_and_allows_a_retry() -> Result<()> {
     let mut other = completed.clone();
     other["item"]["id"] = "second-background-command".into();
     other["item"]["command"] = "second command".into();
+    other["item"]["commandActions"] = json!([]);
     emit(&mut fx, "item/started", other.clone());
     let panel_width = fx.cx.update_window(fx.window, |_, window, cx| {
         f32::from(ui::screens::diff::panel::panel_width(window, cx))
@@ -249,5 +251,72 @@ fn stop_failure_keeps_commands_and_allows_a_retry() -> Result<()> {
         "successful clean lost its retained output or kept a completed command running"
     );
     shot(&mut fx, "stopped")?;
+    Ok(())
+}
+
+#[test]
+fn background_ansi_output_supports_selection_and_copy() -> Result<()> {
+    let payload: serde_json::Value =
+        serde_json::from_str(include_str!("../../../fixtures/terminal-depth.json"))?;
+    let mut replay = script(None, |_| {})?;
+    let thread_list: serde_json::Value = ui::fixture::response("readback.jsonl", "thread/list", 0);
+    replay.extend(exchange("thread/list", thread_list));
+    let mut fx = Fx::captured("dark", (1280., 832.), replay)?;
+    fx.keys("cmd-2")?;
+    fx.wait_thread(SUBTRACT)?;
+    for event in payload["start"]
+        .as_array()
+        .context("recorded start events")?
+    {
+        emit(
+            &mut fx,
+            event["method"].as_str().context("method")?,
+            event["params"].clone(),
+        );
+    }
+    let append = |fx: &mut Fx, part: usize| {
+        emit(
+            fx,
+            "item/commandExecution/outputDelta",
+            json!({
+                "threadId":SUBTRACT, "turnId":payload["turnId"], "itemId":payload["itemId"],
+                "delta":payload["parts"][part]
+            }),
+        );
+    };
+    append(&mut fx, 0);
+    emit(
+        &mut fx,
+        "turn/completed",
+        payload["turnComplete"]["params"].clone(),
+    );
+    emit(
+        &mut fx,
+        "thread/status/changed",
+        payload["threadIdle"]["params"].clone(),
+    );
+    fx.click((1217., 22.))?;
+    fx.click((1078., 179.7))?;
+    ensure!(fx.read(|root, _| root.side_panel() == Some(SidePanel::Terminal)));
+    let left = fx.cx.update_window(fx.window, |_, window, cx| {
+        1280. - 4. - f32::from(ui::screens::diff::panel::panel_width(window, cx))
+    })?;
+    fx.hover((768., 6.))?;
+    shot(&mut fx, "ansi")?;
+    fx.drag((left + 14., 80.), (left + 114., 112.), 4)?;
+    shot(&mut fx, "selection")?;
+    let terminal_focused = fx.cx.update_window(fx.window, |_, window, _| {
+        window
+            .context_stack()
+            .iter()
+            .any(|context| context.contains("Terminal"))
+    })?;
+    ensure!(terminal_focused, "drag did not focus the terminal");
+    fx.keys("cmd-c")?;
+    let selected = fx
+        .cx
+        .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+        .context("selected terminal text")?;
+    ensure!(selected.contains("ANSI"), "{selected:?}");
     Ok(())
 }
