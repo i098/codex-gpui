@@ -6157,6 +6157,7 @@ dependencies = [
  "serde_json",
  "shapes",
  "syntect",
+ "tempfile",
  "textsys",
  "theme",
  "tree-sitter",

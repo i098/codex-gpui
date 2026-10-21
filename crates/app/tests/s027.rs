@@ -354,7 +354,7 @@ fn open_in_editor_native_input_reaches_the_host_opener() -> Result<()> {
 
     let mut settings =
         Settings::load(scratch.join(format!("host-settings-{}.json", std::process::id())))?;
-    for (key, value) in common::recorded_host_settings()?.read_all() {
+    for (key, value) in common::recorded_host_settings()?.read_all().iter() {
         settings.write(key, value.clone())?;
     }
     settings.write("open-in-target-preferences", json!({"global": "zed"}))?;

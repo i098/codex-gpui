@@ -8,7 +8,7 @@ use ui::screens::diff::panel::{
 
 fn configure(panel: &mut DiffPanel, cx: &App) {
     if let Some(settings) = cx.try_global::<crate::host_settings::Settings>() {
-        panel.set_preferences(settings.read_all());
+        panel.set_preferences(&settings.read_all());
     }
 }
 

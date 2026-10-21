@@ -9,10 +9,11 @@ use ui::{
 };
 
 fn stored_comments(cx: &App, key: &str, thread: &str) -> Vec<Comment> {
-    let value = cx
-        .try_global::<Settings>()
-        .and_then(|settings| settings.read_all().get(key))
-        .and_then(|threads| threads.get(thread));
+    let Some(settings) = cx.try_global::<Settings>() else {
+        return Vec::new();
+    };
+    let values = settings.read_all();
+    let value = values.get(key).and_then(|threads| threads.get(thread));
     match value {
         None | Some(Value::Null) => Vec::new(),
         Some(value) => serde_json::from_value(value.clone()).unwrap_or_else(|error| {
@@ -75,11 +76,15 @@ impl Root {
         let prefix = format!("dismissed-model-diff-comments-v3:{thread}:");
         let dismissed: HashSet<String> = cx
             .try_global::<Settings>()
-            .into_iter()
-            .flat_map(|settings| settings.read_all())
-            .filter(|(_, value)| **value == true)
-            .filter_map(|(key, _)| key.strip_prefix(&prefix).map(str::to_owned))
-            .collect();
+            .map(|settings| {
+                settings
+                    .read_all()
+                    .iter()
+                    .filter(|(_, value)| **value == true)
+                    .filter_map(|(key, _)| key.strip_prefix(&prefix).map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default();
         panel.update(cx, |panel, cx| {
             panel.set_comment_context(user.clone(), model, dismissed, cx)
         });

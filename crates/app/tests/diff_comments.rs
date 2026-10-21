@@ -72,8 +72,8 @@ fn prepare(model: bool) -> Result<(tempfile::TempDir, Fx)> {
             thread["cwd"] = root.to_string_lossy().into_owned().into();
         }
     }
-    let mut settings = app::host_settings::Settings::load(root.join(".proof-settings/host.json"))?;
-    for (key, value) in common::recorded_host_settings()?.read_all() {
+    let settings = app::host_settings::Settings::load(root.join(".proof-settings/host.json"))?;
+    for (key, value) in common::recorded_host_settings()?.read_all().iter() {
         settings.write(key, value.clone())?;
     }
     if model {

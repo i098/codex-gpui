@@ -314,11 +314,29 @@ impl Composer {
                                 return self.text_attachment(i, content, t, cx);
                             }
                             Content::Image(image) => {
+                                let context = crate::image_context::ImageContext {
+                                    image: image.clone(),
+                                    path: Some(attachment.path.clone()),
+                                };
                                 return div()
                                     .relative()
                                     .size(px(122.))
                                     .rounded(px(8.))
                                     .overflow_hidden()
+                                    .on_mouse_down(
+                                        MouseButton::Right,
+                                        cx.listener(
+                                            move |this, event: &MouseDownEvent, window, cx| {
+                                                this.menu = None;
+                                                this.context_spelling = None;
+                                                this.context_menu =
+                                                    Some(context.menu(event.position, window, cx));
+                                                this.context_image = Some(context.clone());
+                                                cx.stop_propagation();
+                                                cx.notify();
+                                            },
+                                        ),
+                                    )
                                     .child(
                                         gpui::img(image.clone())
                                             .size_full()
