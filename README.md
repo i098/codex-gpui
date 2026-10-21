@@ -494,6 +494,8 @@ Recorded command rows, ranking, and keyboard-editing checks remain unchanged.
 The native menu lives in `crates/app/src/native_menus.rs`.
 Edit supports plain-text Paste and Match Style and selection-only Delete, including undo.
 View contains Find; Help opens the Codex changelog, troubleshooting guide, and service status page.
+View > Toggle Pinned Summary opens and closes the current thread summary.
+Home, sign-in, and pending thread loads keep this command disabled.
 The `native_menus` and `s013` tests check the edit actions and Find navigation on macOS.
 About shows this build's version in a separate window; Escape closes it.
 The Window menu has Bring All to Front, and Control+Command+F toggles the active window's fullscreen state.

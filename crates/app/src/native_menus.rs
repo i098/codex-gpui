@@ -21,6 +21,7 @@ actions!(
         OpenSystemStatus,
         BringAllToFront,
         ToggleFullScreen,
+        TogglePinnedSummary,
     ]
 );
 
@@ -53,12 +54,38 @@ pub(crate) fn init(cx: &mut App) {
     });
 }
 
-pub(crate) fn actions(root: Div, cx: &mut Context<crate::Root>) -> Div {
+pub(crate) fn actions(root: Div, owner: &crate::Root, cx: &mut Context<crate::Root>) -> Div {
+    let root = if active_thread(owner, cx).is_some() {
+        root.on_action(cx.listener(|this, _: &TogglePinnedSummary, _, cx| {
+            if let Some(thread) = active_thread(this, cx) {
+                thread.update(cx, |view, cx| {
+                    view.summary_open = !view.summary_open;
+                    cx.notify();
+                });
+            }
+        }))
+    } else {
+        root
+    };
     if ui::native_text::is_speaking(cx) {
         root.on_action(|_: &ui::StopSpeaking, _, cx| ui::native_text::stop_speaking(cx))
     } else {
         root
     }
+}
+
+fn active_thread<'a>(
+    root: &'a crate::Root,
+    cx: &App,
+) -> Option<&'a gpui::Entity<crate::ThreadView>> {
+    if root.login.is_some() {
+        return None;
+    }
+    let crate::Route::Thread(id) = root.route() else {
+        return None;
+    };
+    root.thread()
+        .filter(|thread| thread.read(cx).id() == id.as_str())
 }
 
 fn bring_all_to_front(cx: &mut App) {
@@ -116,6 +143,7 @@ pub(crate) fn menus() -> Vec<Menu> {
         ]),
         Menu::new("View").items([
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
+            MenuItem::action("Toggle Pinned Summary", TogglePinnedSummary),
             MenuItem::action("Toggle Changes Panel", ToggleChangesPanel),
             MenuItem::separator(),
             MenuItem::action("Find", FindInThread),
