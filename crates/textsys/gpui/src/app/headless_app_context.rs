@@ -167,6 +167,15 @@ impl HeadlessAppContext {
         self.platform.simulate_path_prompt_response(select_paths);
     }
 
+    /// Answers the platform's Save dialog without showing an OS window.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn simulate_new_path_selection(
+        &self,
+        select_path: impl FnOnce(&std::path::Path) -> Option<std::path::PathBuf>,
+    ) {
+        self.platform.simulate_new_path_selection(select_path);
+    }
+
     /// Updates app state.
     pub fn update<R>(&mut self, f: impl FnOnce(&mut App) -> R) -> R {
         let mut app = self.app.borrow_mut();
