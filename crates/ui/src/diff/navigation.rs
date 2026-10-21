@@ -51,6 +51,7 @@ impl DiffPanel {
             let maximum = self
                 .scroll
                 .bounds_for_item(index)
+                .or_else(|| self.scroll.bounds_for_item(0))
                 .map_or(px(0.), |bounds| (bounds.size.height - height).max(px(0.)));
             (-top.1).max(px(0.)).min(maximum)
         } else {
@@ -96,7 +97,8 @@ impl DiffPanel {
         if let Some(file) = self.files.get_mut(index) {
             file.open = true;
             self.active_file = index;
-            self.scroll.scroll_to_top_of_item(index);
+            self.scroll
+                .scroll_to_top_of_item(if self.capped() { 0 } else { index });
         }
         self.jump = None;
         cx.notify();

@@ -73,10 +73,29 @@ impl DiffPanel {
         if self.matches > 0 {
             self.active_match =
                 (self.active_match + if previous { self.matches - 1 } else { 1 }) % self.matches;
+            self.reveal_find_match();
             self.find_scroll.pending.set(true);
             cx.notify();
         }
         true
+    }
+
+    pub(super) fn reveal_find_match(&mut self) {
+        if !self.capped() {
+            return;
+        }
+        if let Some(index) = self.files.iter().position(|file| {
+            file.hunks.iter().any(|hunk| {
+                hunk.lines.iter().any(|line| {
+                    (line.match_start..line.match_start + line.matches.len())
+                        .contains(&self.active_match)
+                })
+            })
+        }) && self.active_file != index
+        {
+            self.active_file = index;
+            self.scroll.set_offset(gpui::point(px(0.), px(0.)));
+        }
     }
 }
 

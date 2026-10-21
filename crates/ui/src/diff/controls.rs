@@ -135,6 +135,7 @@ impl FileDiff {
             name: path[split..].to_owned().into(),
             added,
             removed,
+            changed_bytes: diff.len(),
             hunks,
             open: true,
             problem,
@@ -169,7 +170,12 @@ impl DiffPanel {
         t: &Theme,
         cx: &Context<Self>,
     ) -> Div {
-        let label = file.problem.unwrap_or("No content");
+        let too_large = file.problem == Some("Diff too large to display");
+        let label = if too_large {
+            "This file is too large to display here."
+        } else {
+            file.problem.unwrap_or("No content")
+        };
         let empty = matches!(
             label,
             "No content" | "Binary file not shown" | "File renamed without changes"
@@ -178,10 +184,20 @@ impl DiffPanel {
             .flex()
             .items_center()
             .px(px(if empty { 16. } else { 12. }))
-            .py(px(16.))
+            .py(px(if too_large { 8. } else { 16. }))
             .when(empty, |d| d.justify_center().bg(t.surface_tertiary))
-            .child(text(label, 13., 18.571_428, 400., t.text_secondary))
-            .when(label == "Diff too large to display", |d| {
+            .when(too_large, |d| d.bg(t.surface_tertiary))
+            .child(
+                text(
+                    label,
+                    if too_large { 14. } else { 13. },
+                    if too_large { 21. } else { 18.571_428 },
+                    400.,
+                    t.text_secondary,
+                )
+                .when(too_large, |d| d.flex_1().min_w_0().truncate()),
+            )
+            .when(too_large, |d| {
                 d.child(
                     div()
                         .id(("diff-too-large-open", index))
@@ -191,6 +207,12 @@ impl DiffPanel {
                         .cursor_pointer()
                         .ml(px(8.))
                         .on_click(cx.listener(move |this, _, _, cx| this.request_open(index, cx)))
+                        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                this.request_open(index, cx);
+                                cx.stop_propagation();
+                            }
+                        }))
                         .child(text("Open in editor", 13., 18.571_428, 400., t.text)),
                 )
             })
@@ -473,14 +495,16 @@ impl DiffPanel {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.files[i].open = true;
                         this.active_file = i;
-                        this.scroll.scroll_to_top_of_item(i);
+                        this.scroll
+                            .scroll_to_top_of_item(if this.capped() { 0 } else { i });
                         cx.notify();
                     }))
                     .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
                         if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                             this.files[i].open = true;
                             this.active_file = i;
-                            this.scroll.scroll_to_top_of_item(i);
+                            this.scroll
+                                .scroll_to_top_of_item(if this.capped() { 0 } else { i });
                             cx.stop_propagation();
                             cx.notify();
                         }
@@ -602,14 +626,21 @@ impl DiffPanel {
                 "Refresh to try loading the changes again",
             )
         } else {
-            (
-                match self.source {
-                    DiffSource::Unstaged => "No unstaged changes",
-                    DiffSource::Staged => "No staged changes",
-                    _ => "No file changes yet",
-                },
-                "Changes in this project will appear here.",
-            )
+            match self.source {
+                DiffSource::Staged => ("No staged changes", "Accept edits to stage them"),
+                DiffSource::Unstaged => ("No unstaged changes", "Code changes will appear here"),
+                DiffSource::LastTurn => (
+                    "No file changes yet",
+                    self.last_turn_state.map_or(
+                        "Changes in this project will appear here.",
+                        LastTurnState::description,
+                    ),
+                ),
+                _ => (
+                    "No file changes yet",
+                    "Changes in this project will appear here.",
+                ),
+            }
         };
         Some(
             div()
@@ -626,6 +657,33 @@ impl DiffPanel {
                 .child(icon("thread-file-diff", 40., t.text_tertiary))
                 .child(text(title, 16., 24., 500., t.text))
                 .child(text(description, 13., 20., 400., t.text_tertiary))
+                .when(
+                    self.source == DiffSource::LastTurn && self.last_turn_state.is_some(),
+                    |d| {
+                        d.child(
+                            div()
+                                .id("diff-view-branch")
+                                .role(gpui::Role::Button)
+                                .aria_label("View branch diff")
+                                .focusable()
+                                .cursor_pointer()
+                                .px(px(12.))
+                                .py(px(6.))
+                                .rounded(px(14.))
+                                .bg(t.text_alpha_10)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.select_source(DiffSource::Branch, cx)
+                                }))
+                                .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                        this.select_source(DiffSource::Branch, cx);
+                                        cx.stop_propagation();
+                                    }
+                                }))
+                                .child(text("View branch diff", 13., 20., 430., t.text)),
+                        )
+                    },
+                )
                 .when(
                     self.error.is_some() && !self.pending && self.source != DiffSource::LastTurn,
                     |d| {

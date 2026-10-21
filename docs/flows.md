@@ -495,7 +495,11 @@ The open panel keeps its state across streamed updates and uses `turn/diff/updat
 Search chat and Search diffs keep the query while switching the active find surface.
 Enter, Shift+Enter, and the Find Next commands move the active diff highlight and scroll it into view.
 The diff matcher reuses the chat's Unicode matcher and retains the total count beyond the 250 highlighted matches.
-Repository-watch sources remain a separate slice.
+Local repository sources keep a recursive filesystem watch while the Changes tab is active.
+The app drops the watch when the repository or active route changes.
+Changes that arrive during a read cause one more refresh after that read.
+Watch failures show the original Refresh notice.
+`item/fileChange/patchUpdated` replaces the streamed file changes until an aggregate turn diff takes precedence.
 
 `refs/interactions/s027.json` records the original diff menus, text selection, clipboard writes, and line hover.
 `s027::diff_selection_and_hover_replay` checks forward and reverse text selection and `Cmd+C` without line numbers.
@@ -564,8 +568,8 @@ The standalone entry reads a Git-style unified patch from disk without starting 
 Auto uses split layout only when both sides change and the file pane is at least 800 px wide.
 The file tree filter changes the tree, not the displayed code.
 The Word diffs option toggles separate changed-word spans without changing the patch or line counts.
-The tokenizer keeps UTF-8 boundaries and limits its comparison table to 2 MB.
-Larger replacements use one changed span per side.
+The tokenizer follows the original word-alt joining rule and keeps UTF-8 boundaries.
+It skips word spans above 1,000 UTF-16 units per line or 2,000 changed lines per file.
 Diffs and file tabs cache syntax tokens from the installed Syntect grammars.
 The old and new sides keep separate multiline parser state.
 Binary, empty, and unchanged rename entries stay in the file list with their original placeholder labels.
@@ -581,6 +585,11 @@ The line input stays closed until file contents are available.
 The parser stops above 2,000,000 input bytes, 20,000 input lines, or 10,000 bytes per input line.
 Invalid hunk numbers show `Diff failed to render` instead of overflowing a line counter.
 File boundaries must start a line; a `diff --git` string inside changed code does not split the file.
+The view shows one file at a time above 128 files, 9,000 changed lines, or 12 MiB of diff input.
+Previous file, Next file, the tree, and Jump to file share that active file.
+Above 256 untracked files, repository reads omit all untracked patches and report the actual omitted count.
+The warning offers the original interactive cleanup command without running it.
+Known commit and revert results clear the last-turn diff and offer View branch diff.
 Refresh retains the displayed changes.
 A failed read or mutation adds a status row with Retry.
 `cargo test -p app --test diff_controls -- --nocapture --test-threads=1` runs the native input proof on macOS.
@@ -589,6 +598,8 @@ The proof covers header wrap, file filtering, layout changes, empty and loading 
 The `diff_review` native proof also checks visible find navigation, scope changes, and Escape against the recorded subtract patch.
 `cargo test -p app --test diff_review -- --nocapture --test-threads=1` checks the Word diffs toggle and four real Git file states.
 `CGX_DIFF_REVIEW_EVIDENCE` retains that proof's screenshots and source patch.
+`cargo test -p app --test diff_states --test git_review -- --nocapture` checks the omission limit and preserves real Git data.
+On macOS, `diff_states` also drives nested file updates, streamed patches, and large-diff page selection through the native view.
 Original captures for the file tree and file filter remain open capture items.
 The release comparison omits both pairs and identifies its exact matching component crops.
 Whole-window pixel parity is not claimed by those component comparisons.
@@ -600,7 +611,7 @@ Whole-window pixel parity is not claimed by those component comparisons.
 | 3 | Source selector | click | Uncommitted / Staged / … | Last Turn, Uncommitted, Unstaged, Staged, Committed, and Branch select the corresponding local comparison. | PASS (`git_review`, `git_revert_ui`) |
 | 4 | Show / Hide files | click | Toggles the file tree. | The header toggles the file tree without losing its filter. | PASS (`diff_controls` native frames) |
 | 5 | File tree filter | focus | `Filter files…`. | Filters paths and shows `No matching files`; typing and paste retain keyboard ownership. | PASS (`diff_controls` native frames) |
-| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Open in editor works from the header icon and the menu. Local sources add Stage file, Unstage file, and confirmed Revert file. | PARTIAL (`s027::diff_selection_and_hover_replay`, `s027::open_in_editor_native_input_reaches_the_host_opener`, `git_stage`, `git_revert_ui`) |
+| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. The header opens a native file tab; Open in editor uses the context menu. Local sources add Stage file, Unstage file, and confirmed Revert file. | PARTIAL (`s027::diff_selection_and_hover_replay`, `s027::open_in_editor_native_input_reaches_the_host_opener`, `git_stage`, `git_revert_ui`) |
 | 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | Local staged and unstaged hunks have confirmed Revert and Stage/Unstage controls. | PASS (`git_review`, `git_revert_ui`) |
 | 8 | Revert all | click | `Revert changes?` dialog. | Unstaged provides section-wide Revert all with confirmation and the saved skip preference. Uncommitted does not expose this action. | PASS (`git_revert_ui`) |
 | 9 | Split / unified toggle | click | Switch diff layout. | Unified, Split, and Auto share the existing line renderer. The narrow header exposes layout through Changes options. | PASS (`diff_controls`; split pairing regression check) |
@@ -613,7 +624,7 @@ Whole-window pixel parity is not claimed by those component comparisons.
 | 16 | Not a git repo | empty | `Create a Git repository`. | The action initializes the thread's folder and preserves existing files. | PASS (`git_review`, `git_revert_ui`) |
 | 17 | Loading | loading | `Loading diff`. | Initial local reads show `Loading diff`. Refresh retains the file list and disables mutations until completion. | PASS (`diff_controls` native frame) |
 | 18 | Load failure | error | `Couldn't load changes`. | Shows the host error and Retry without hiding existing changes. Invalid hunk data shows `Diff failed to render`. | PASS (`diff_controls` real read failure and recovery; parser regression checks) |
-| 19 | Too large | error | `Diff too large to display`. | Oversized input shows the boundary and retains the file header. | PASS (`diff_controls` native frame; parser limit checks) |
+| 19 | Too large | error | `This file is too large to display here.` | Oversized input keeps its header and offers Open in editor. | PASS (`diff_controls` native frame; parser limit checks) |
 | 20 | Resize | resize | Split → inline for narrow panes. | Auto uses inline at 767 and 600 px and split for a wide, two-sided diff. | PASS (`diff_controls`; original 1280, 767, and 600 px captures) |
 
 ### DT-139: Commit or push

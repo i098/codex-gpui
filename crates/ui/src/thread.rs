@@ -1419,6 +1419,36 @@ impl ThreadView {
                     self.tick(cx);
                 }
             }
+            "item/fileChange/patchUpdated" => {
+                let (Some(turn_id), Some(change_id)) =
+                    (params["turnId"].as_str(), params["itemId"].as_str())
+                else {
+                    return;
+                };
+                let Ok(changes) =
+                    serde_json::from_value::<Vec<FileUpdateChange>>(params["changes"].clone())
+                else {
+                    return;
+                };
+                let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == turn_id) else {
+                    return;
+                };
+                match turn
+                    .items
+                    .iter_mut()
+                    .find(|item| item_id(item) == Some(change_id))
+                {
+                    Some(ThreadItem::FileChange {
+                        changes: current, ..
+                    }) => *current = changes,
+                    Some(_) => return,
+                    None => turn.items.push(ThreadItem::FileChange {
+                        id: change_id.to_owned(),
+                        changes,
+                        status: "inProgress".into(),
+                    }),
+                }
+            }
             "item/started" | "item/completed" => {
                 let Ok(mut n) = serde_json::from_value::<ItemNotification>(params.clone()) else {
                     return;
