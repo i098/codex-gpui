@@ -553,24 +553,27 @@ impl Composer {
     }
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
+        let compact_settings = self.request_parent.is_none() && self.request_compact;
         div()
-            .px(px(
-                if self.request_parent.is_some() && self.request_compact && !self.secret {
-                    10.
+            .px(px(if self.request_compact && !self.secret {
+                10.
+            } else {
+                12.
+            }))
+            .pb(px(
+                if self.request_parent.is_some() || self.request_compact {
+                    0.
                 } else {
-                    12.
+                    4.
                 },
             ))
-            .pb(px(if self.request_parent.is_some() {
-                0.
-            } else {
-                4.
-            }))
-            .min_h(px(if self.request_parent.is_some() {
-                20.
-            } else {
-                48.
-            }))
+            .min_h(px(
+                if self.request_parent.is_some() || self.request_compact {
+                    20.
+                } else {
+                    48.
+                },
+            ))
             .cursor(CursorStyle::IBeam)
             .text_size(FONT_SIZE)
             .line_height(LINE_HEIGHT)
@@ -580,13 +583,13 @@ impl Composer {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
-            // `--opacity-composer-placeholder: .5` on the placeholder. The text blends like
-            // Chromium's: blitted into a transparent layer (`_ComposerLayoutInput`'s
-            // `overflow-y: auto` contents), then composited onto the card.
+            // Composer placeholders add an opacity layer; compact settings inputs use their text color directly.
             .child(
                 div()
-                    .when(self.content.is_empty(), |d| d.opacity(0.5))
-                    .layer()
+                    .when(self.content.is_empty() && !compact_settings, |d| {
+                        d.opacity(0.5)
+                    })
+                    .when(!compact_settings, |d| d.layer())
                     .child(Editor(cx.entity())),
             )
     }

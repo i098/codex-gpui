@@ -89,6 +89,8 @@ pub struct State {
     pub hidden_plugins: Arc<HashSet<String>>,
     pub gates_loaded: bool,
     pub pending: bool,
+    pub refresh_requested: bool,
+    pub identity_generation: u64,
     pub reload_required: bool,
     pub form_error: Option<String>,
     pub operation_error: Option<String>,
@@ -108,6 +110,16 @@ pub fn render(section: &'static str, window: &mut Window, cx: &mut App) -> AnyEl
         cx,
         |_, cx| {
             cx.observe_global::<State>(|this: &mut Manager, cx| {
+                let generation = cx.global::<State>().identity_generation;
+                if generation != this.identity_generation {
+                    this.identity_generation = generation;
+                    this.form = None;
+                    this.marketplace_form = None;
+                    this.marketplace = None;
+                    this.selected_hooks = None;
+                    this.menu = None;
+                    this.registrations.clear();
+                }
                 let saved = cx.global::<State>().form_saved;
                 if saved != this.form_saved {
                     this.form = None;
@@ -144,6 +156,9 @@ pub fn render(section: &'static str, window: &mut Window, cx: &mut App) -> AnyEl
                 return_focus: None,
                 expanded_hooks: HashSet::new(),
                 registrations: BTreeMap::new(),
+                identity_generation: cx
+                    .try_global::<State>()
+                    .map_or(0, |state| state.identity_generation),
             }
         },
     );
@@ -182,6 +197,7 @@ struct Manager {
     return_focus: Option<gpui::FocusHandle>,
     expanded_hooks: HashSet<String>,
     registrations: BTreeMap<String, &'static str>,
+    identity_generation: u64,
 }
 
 pub(super) fn dispatch(action: Action, cx: &mut App) {
@@ -226,6 +242,28 @@ pub fn visible_plugin(plugin: &Value, hidden: &HashSet<String>) -> bool {
         && !plugin["remotePluginId"]
             .as_str()
             .is_some_and(|id| hidden.contains(id))
+}
+
+pub fn builtin_marketplace(name: &str) -> bool {
+    [
+        "codex-official",
+        "openai-bundled",
+        "openai-curated",
+        "openai-curated-remote",
+        "openai-primary-runtime",
+    ]
+    .iter()
+    .any(|reserved| {
+        let mut expected = reserved.split('-');
+        name.split(|character: char| !character.is_ascii_alphanumeric())
+            .filter(|part| !part.is_empty())
+            .all(|part| {
+                expected
+                    .next()
+                    .is_some_and(|word| part.eq_ignore_ascii_case(word))
+            })
+            && expected.next().is_none()
+    })
 }
 
 pub fn needs_review(hook: &Value) -> bool {
@@ -300,6 +338,30 @@ pub(super) fn action_button(
         .aria_label(label)
 }
 
+pub(super) fn primary_button(
+    id: impl Into<SharedString>,
+    label: &'static str,
+    t: &Theme,
+) -> Stateful<Div> {
+    div()
+        .id(id.into())
+        .role(gpui::Role::Button)
+        .aria_label(label)
+        .h(px(28.))
+        .px(px(9.))
+        .relative()
+        .flex()
+        .items_center()
+        .gap(px(4.))
+        .child(on_card(
+            12.5,
+            Squircle,
+            t.button_primary_solid,
+            Some(t.border),
+        ))
+        .child(text(label, 13., 18., 430., t.control_background))
+}
+
 pub(super) trait Activate: Sized {
     fn on_activate<T: 'static>(
         self,
@@ -337,6 +399,22 @@ pub(super) fn card<E: IntoElement>(
     layer: &Layer,
     t: &Theme,
 ) -> Div {
+    let mut rows = rows.into_iter().peekable();
+    let mut content = div().flex().flex_col();
+    while let Some(row) = rows.next() {
+        let divided = rows.peek().is_some();
+        content = content.child(div().relative().child(row).when(divided, |d| {
+            d.child(
+                div()
+                    .absolute()
+                    .left(px(16.))
+                    .right(px(16.))
+                    .bottom_0()
+                    .h(px(1.))
+                    .bg(t.border),
+            )
+        }));
+    }
     div()
         .relative()
         .flex()
@@ -344,12 +422,12 @@ pub(super) fn card<E: IntoElement>(
         .p(px(1.))
         .child(deco(
             layer,
-            16.,
+            20.,
             Squircle,
             t.background_panel,
             Some(t.border),
         ))
-        .children(rows)
+        .child(crate::rounded_clip(px(19.), Squircle, content))
 }
 
 fn section_card(title: &str, rows: impl IntoIterator<Item = Div>, layer: &Layer, t: &Theme) -> Div {
@@ -470,7 +548,7 @@ impl Manager {
                     .items_center()
                     .gap(px(6.))
                     .when(self.tab == tab, |d| {
-                        d.child(on_card(12.5, Squircle, t.primary_soft_alpha, None))
+                        d.child(on_card(12.5, Squircle, t.text_alpha_5, None))
                     })
                     .child(text(
                         label,
@@ -498,7 +576,7 @@ impl Manager {
             .justify_between()
             .items_center()
             .gap(px(12.))
-            .child(div().flex().items_center().children(tabs))
+            .child(div().flex().items_center().gap(px(2.)).children(tabs))
             .child(
                 div()
                     .id("integrations-search")
@@ -508,12 +586,17 @@ impl Manager {
                     .w(px(224.))
                     .h(px(32.))
                     .relative()
-                    .px(px(12.))
+                    .px(px(11.))
                     .flex()
                     .items_center()
                     .gap(px(8.))
-                    .child(on_card(12., Squircle, t.primary_soft_alpha, Some(t.border)))
-                    .child(icon("search", 16., t.text_tertiary))
+                    .child(on_card(
+                        12.5,
+                        Squircle,
+                        t.control_background,
+                        Some(t.border_strong),
+                    ))
+                    .child(icon("settings-mcp-search", 18., t.text_secondary))
                     .child(text(
                         if self.query.is_empty() {
                             placeholder.to_owned()
@@ -1106,9 +1189,10 @@ impl Manager {
                 .filter(|marketplace| {
                     marketplace["isBuiltIn"] != true
                         && marketplace["name"].as_str().is_some_and(|name| {
-                            state.configuration["config"]["marketplaces"]
-                                .get(name)
-                                .is_some()
+                            !builtin_marketplace(name)
+                                && state.configuration["config"]["marketplaces"]
+                                    .get(name)
+                                    .is_some()
                         })
                 })
                 .collect(),
@@ -2031,7 +2115,11 @@ impl Render for Manager {
         } else {
             actions = actions
                 .child(
-                    action_button("browse-extension-directory", "Browse directory", &t)
+                    button("Browse directory", t.primary_soft_alpha, Some(t.border), &t)
+                        .id("browse-extension-directory")
+                        .role(gpui::Role::Button)
+                        .aria_label("Browse directory")
+                        .h(px(32.))
                         .on_activate(window, cx, {
                             let path = if self.tab == Tab::Skills {
                                 "/skills"
@@ -2043,41 +2131,48 @@ impl Render for Manager {
                             }
                         }),
                 )
-                .child(action_button("integrations-add", "Add", &t).on_activate(
-                    window,
-                    cx,
-                    |this, _, cx| {
-                        this.menu = Some(Menu::Add);
-                        cx.notify();
-                    },
-                ));
+                .child(
+                    primary_button("integrations-add", "Add", &t)
+                        .h(px(32.))
+                        .child(icon("settings-mcp-down", 16., t.control_background))
+                        .on_activate(window, cx, |this, _, cx| {
+                            this.menu = Some(Menu::Add);
+                            cx.notify();
+                        }),
+                );
         }
-        let mut content = div()
+        let header = div()
             .w_full()
-            .max_w(px(768.))
-            .px(px(20.))
-            .pt(px(28.))
-            .pb(px(40.))
+            .pt(px(16.))
+            .pb(px(1.))
             .flex()
-            .flex_col()
-            .gap(px(40.))
+            .justify_center()
             .child(
                 div()
+                    .w_full()
+                    .max_w(px(768.))
+                    .px(px(20.))
                     .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(12.))
+                    .gap(px(16.))
                     .child(
                         div()
                             .flex_1()
+                            .py(px(12.))
                             .flex()
                             .flex_col()
                             .gap(px(4.))
                             .child(text(heading, 28., 33.6, 500., t.text))
                             .child(subtitle),
                     )
-                    .child(actions),
+                    .child(div().py(px(12.)).flex().items_center().child(actions)),
             );
+        let mut content = div()
+            .w_full()
+            .max_w(px(768.))
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .gap(px(40.));
         if !hooks {
             content = content.child(self.toolbar(&state, &t, window, cx));
         }
@@ -2109,7 +2204,14 @@ impl Render for Manager {
                     .overflow_y_scroll()
                     .layer()
                     .child(probe(&self.layer))
-                    .child(div().flex().justify_center().child(content)),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .child(header)
+                            .child(content),
+                    ),
             )
             .children(self.overlay(&state, &t, window, cx))
     }
@@ -2133,6 +2235,14 @@ fn test_panic_hook() {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn reserved_marketplaces_do_not_appear_as_custom_sources() {
+        test_panic_hook();
+        assert!(builtin_marketplace("openai-bundled"));
+        assert!(builtin_marketplace(" OpenAI__Curated_Remote "));
+        assert!(!builtin_marketplace("openai-bundled-team"));
+    }
 
     #[test]
     fn new_and_changed_hooks_stay_off_until_trusted() {

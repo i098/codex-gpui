@@ -1,4 +1,4 @@
-use super::{Action, Activate as _, State, action_button, dispatch, form::Close};
+use super::{Action, Activate as _, State, action_button, dispatch, form::Close, primary_button};
 use crate::{composer::Composer, text};
 use gpui::{
     App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
@@ -19,7 +19,7 @@ impl EventEmitter<Close> for MarketplaceForm {}
 impl MarketplaceForm {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let mut field = |placeholder| {
-            let field = cx.new(|cx| Composer::settings_field(placeholder, "", false, cx));
+            let field = cx.new(|cx| Composer::settings_compact_field(placeholder, "", cx));
             cx.observe(&field, |_, _, cx| cx.notify()).detach();
             field
         };
@@ -133,7 +133,7 @@ impl Render for MarketplaceForm {
                             }),
                     )
                     .child(
-                        action_button("submit-marketplace-add", "Add marketplace", &t)
+                        primary_button("submit-marketplace-add", "Add marketplace", &t)
                             .aria_disabled(pending)
                             .on_activate(window, cx, move |this, _, cx| {
                                 if !pending {

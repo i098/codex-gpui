@@ -15,6 +15,8 @@ use ui::{
     toast::Toast,
 };
 
+const MCP_OAUTH_COMPLETED: &str = "mcpServer/oauthLogin/completed";
+
 impl Root {
     pub(crate) fn load_settings_integrations(&mut self, cx: &mut Context<Self>) {
         if cx
@@ -73,6 +75,9 @@ impl Root {
 
     fn settings_integration_action(&mut self, action: Action, cx: &mut Context<Self>) {
         if cx.global::<State>().pending {
+            if matches!(action, Action::Refresh) {
+                cx.update_global::<State, _>(|state, _| state.refresh_requested = true);
+            }
             return;
         }
         let saved_form = matches!(action, Action::SaveServer { .. } | Action::RemoveServer(_));
@@ -110,6 +115,7 @@ impl Root {
             (state.evaluations.clone(), state.hidden_plugins.clone())
         });
         let operation = action.clone();
+        let generation = cx.global::<State>().identity_generation;
         let read = cx.background_spawn(async move {
             let result = execute(&bridge, host.as_ref(), &operation, &roots, &configuration).await;
             let snapshot = if oauth.is_none() {
@@ -122,6 +128,9 @@ impl Root {
         cx.spawn(async move |this, cx| {
             let (result, snapshot) = read.await;
             this.update(cx, |this, cx| {
+                if cx.global::<State>().identity_generation != generation {
+                    return;
+                }
                 if let Some(snapshot) = snapshot {
                     if let Ok(configuration) = &snapshot.configuration {
                         this.config = configuration["config"].clone();
@@ -129,8 +138,8 @@ impl Root {
                     cx.update_global::<State, _>(|state, _| snapshot.apply(state));
                 }
                 let mut notice = None;
-                cx.update_global::<State, _>(|state, cx| {
-                    state.pending = false;
+                let refresh = cx.update_global::<State, _>(|state, cx| {
+                    let refresh = finish_operation(state);
                     match result {
                         Ok(url) => {
                             if saved_form {
@@ -158,7 +167,9 @@ impl Root {
                                 state.suppressed_servers.insert(key.clone());
                             }
                             if let Action::Authenticate { name, .. } = &action {
-                                if let Some(url) = url {
+                                if let Some(url) = url
+                                    && state.oauth.contains_key(name)
+                                {
                                     state.oauth.insert(name.clone(), Some(url.clone()));
                                     cx.open_url(&url);
                                 }
@@ -184,6 +195,7 @@ impl Root {
                             }
                         }
                     }
+                    refresh
                 });
                 if let Some(notice) = notice {
                     this.toast(Toast::danger(notice), cx);
@@ -193,6 +205,9 @@ impl Root {
                 {
                     this.toast(Toast::info("Refreshed hooks"), cx);
                 }
+                if refresh {
+                    this.settings_integration_action(Action::Refresh, cx);
+                }
             })
             .ok();
         })
@@ -200,30 +215,81 @@ impl Root {
     }
 
     pub(crate) fn settings_integration_event(&mut self, event: &Event, cx: &mut Context<Self>) {
-        let Event::Notification { method, params } = event else {
+        let Event::Notification { method, .. } = event else {
             return;
         };
-        if method != "mcpServer/oauth/login/completed" || !cx.has_global::<State>() {
+        if !cx.has_global::<State>() {
             return;
         }
-        let Some(name) = params["name"].as_str() else {
+        if method == "account/updated" {
+            let active = cx.global::<State>().dispatch.is_some();
+            self.host.invalidate_identity();
+            cx.update_global::<State, _>(|state, _| invalidate_identity(state));
+            if active {
+                self.settings_integration_action(Action::Refresh, cx);
+            }
+            return;
+        }
+        if method != MCP_OAUTH_COMPLETED {
+            return;
+        }
+        let completed = cx.update_global::<State, _>(|state, _| complete_oauth(state, event));
+        let Some(completed) = completed else {
             return;
         };
-        cx.update_global::<State, _>(|state, _| {
-            state.oauth.remove(name);
-        });
-        if params["success"] == true {
-            self.settings_integration_action(Action::Refresh, cx);
-        } else {
+        if let Some(error) = completed.error {
             self.toast(
                 Toast::danger(format!(
-                    "Could not authenticate {name}: {}",
-                    params["error"].as_str().unwrap_or("Authentication failed")
+                    "Could not authenticate {}: {error}",
+                    completed.name
                 )),
                 cx,
             );
+        } else if completed.refresh_now {
+            self.settings_integration_action(Action::Refresh, cx);
         }
     }
+}
+
+struct OAuthCompletion<'a> {
+    name: &'a str,
+    error: Option<&'a str>,
+    refresh_now: bool,
+}
+
+fn complete_oauth<'a>(state: &mut State, event: &'a Event) -> Option<OAuthCompletion<'a>> {
+    let Event::Notification { method, params } = event else {
+        return None;
+    };
+    if method != MCP_OAUTH_COMPLETED {
+        return None;
+    }
+    let name = params["name"].as_str()?;
+    state.oauth.remove(name);
+    let success = params["success"] == true;
+    if success && state.pending {
+        state.refresh_requested = true;
+    }
+    Some(OAuthCompletion {
+        name,
+        error: (!success).then(|| params["error"].as_str().unwrap_or("Authentication failed")),
+        refresh_now: success && !state.pending,
+    })
+}
+
+fn finish_operation(state: &mut State) -> bool {
+    state.pending = false;
+    std::mem::take(&mut state.refresh_requested)
+}
+
+fn invalidate_identity(state: &mut State) {
+    let generation = state.identity_generation.wrapping_add(1);
+    let dispatch = state.dispatch.clone();
+    *state = State {
+        identity_generation: generation,
+        dispatch,
+        ..Default::default()
+    };
 }
 
 struct Snapshot {
@@ -324,11 +390,15 @@ async fn load(
                     .flat_map(|marketplace| marketplace["plugins"].as_array().into_iter().flatten())
                     .find(|old| {
                         old["id"] == plugin["id"] && old["interface"] == plugin["interface"]
-                    })
-                    .and_then(|old| old["iconDataUrl"].as_str());
-                if let Some(data) = cached {
-                    plugin["iconDataUrl"] = data.into();
-                    continue;
+                    });
+                if let Some(cached) = cached {
+                    if plugin["installedAt"].is_null() && cached["installedAt"].is_string() {
+                        plugin["installedAt"] = cached["installedAt"].clone();
+                    }
+                    if let Some(data) = cached["iconDataUrl"].as_str() {
+                        plugin["iconDataUrl"] = data.into();
+                        continue;
+                    }
                 }
                 let url = plugin["interface"]["logoUrlDark"]
                     .as_str()
@@ -336,6 +406,41 @@ async fn load(
                 if let Some(url) = url {
                     if let Ok(data) = load_icon(host, url) {
                         plugin["iconDataUrl"] = data.into();
+                    }
+                }
+            }
+        }
+        let needs_dates = value["marketplaces"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|marketplace| marketplace["plugins"].as_array().into_iter().flatten())
+            .any(|plugin| {
+                plugin["remotePluginId"].is_string()
+                    && plugin["installedAt"].is_null()
+                    && ui::screens::settings::integrations::visible_plugin(plugin, &hidden_plugins)
+            });
+        if needs_dates {
+            let request = plugin_request(
+                host,
+                "/ps/plugins/installed?limit=1000&includeExtensions=true".into(),
+                "GET",
+            );
+            if let Ok(remote) = host
+                .fetch(&request)
+                .and_then(|reply| host::json_body(&reply))
+            {
+                for marketplace in value["marketplaces"].as_array_mut().into_iter().flatten() {
+                    for plugin in marketplace["plugins"].as_array_mut().into_iter().flatten() {
+                        if let Some(metadata) = remote["plugins"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .find(|entry| entry["id"] == plugin["remotePluginId"])
+                            && metadata["installed_at"].is_string()
+                        {
+                            plugin["installedAt"] = metadata["installed_at"].clone();
+                        }
                     }
                 }
             }
@@ -556,6 +661,7 @@ async fn execute(
                 host::json_body(&host.fetch(&plugin_request(
                     host,
                     format!("/ps/plugins/{id}/{endpoint}"),
+                    "POST",
                 ))?)?;
             } else {
                 let id = plugin["id"].as_str().context("Plugin has no identifier")?;
@@ -614,8 +720,8 @@ async fn execute(
     Ok(None)
 }
 
-fn plugin_request(host: &dyn Host, url: String) -> Request {
-    let mut request = json!({"url":url,"method":"POST","body":"{}","headers":{
+fn plugin_request(host: &dyn Host, url: String, method: &str) -> Request {
+    let mut request = json!({"url":url,"method":method,"body":(method == "POST").then_some("{}"),"headers":{
         "Content-Type":"application/json","X-OpenAI-Attach-Auth":"1",
         "X-OpenAI-Attach-Desktop-Surface":"1","X-OpenAI-Attach-Integrity-State":"1"
     },"returnErrorResponse":true});
@@ -652,6 +758,10 @@ pub(crate) fn read_bootstrap(host: &dyn Host) -> Result<Value> {
 }
 
 async fn remove_marketplace(bridge: &Bridge, name: &str, roots: &[String]) -> Result<()> {
+    ensure!(
+        !ui::screens::settings::integrations::builtin_marketplace(name),
+        "Built-in marketplaces cannot be removed"
+    );
     let config: Value = bridge
         .request("config/read", json!({"includeLayers":false}))
         .await?;
@@ -735,6 +845,76 @@ fn authorization_url(response: &Value) -> Result<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn panic_hook() {
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+    }
+
+    #[test]
+    fn oauth_completion_during_a_refresh_runs_a_fresh_read_afterward() {
+        panic_hook();
+        let mut state = State {
+            pending: true,
+            ..Default::default()
+        };
+        state.oauth.insert(
+            "service".into(),
+            Some("https://service.example/authorize".into()),
+        );
+        let event = Event::Notification {
+            method: "mcpServer/oauthLogin/completed".into(),
+            params: json!({"name":"service","success":true}),
+        };
+        let completed = complete_oauth(&mut state, &event).unwrap();
+        assert!(!completed.refresh_now);
+        assert!(!state.oauth.contains_key("service"));
+        assert!(finish_operation(&mut state));
+        assert!(!state.pending);
+        assert!(!finish_operation(&mut state));
+    }
+
+    #[test]
+    fn failed_oauth_completion_keeps_other_servers_pending() {
+        panic_hook();
+        let mut state = State::default();
+        state.oauth.insert("service".into(), None);
+        state.oauth.insert("other".into(), None);
+        let event = Event::Notification {
+            method: "mcpServer/oauthLogin/completed".into(),
+            params: json!({"name":"service","success":false,"error":"Cancelled"}),
+        };
+        let completed = complete_oauth(&mut state, &event).unwrap();
+        assert_eq!(completed.error, Some("Cancelled"));
+        assert!(!completed.refresh_now);
+        assert_eq!(
+            state.oauth.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["other"]
+        );
+    }
+
+    #[test]
+    fn account_changes_discard_old_gate_and_login_state() {
+        panic_hook();
+        let mut state = State {
+            pending: true,
+            gates_loaded: true,
+            evaluations: Arc::new(json!({"old":"account"})),
+            ..Default::default()
+        };
+        state
+            .oauth
+            .insert("service".into(), Some("https://old.example".into()));
+        let previous = state.identity_generation;
+        invalidate_identity(&mut state);
+        assert_ne!(state.identity_generation, previous);
+        assert!(!state.gates_loaded);
+        assert!(state.evaluations.is_null());
+        assert!(state.oauth.is_empty());
+    }
 
     #[test]
     fn oauth_cannot_open_an_executable_or_local_file_url() {

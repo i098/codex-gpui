@@ -707,20 +707,24 @@ S034b still checks the recorded sign-in path; no account or authentication chang
 
 Settings owns the Plugins, Apps, MCPs, Skills, and Marketplace management tabs.
 The manager reads the app-server and keeps confirmed state after each completed operation.
-MCP edits preserve fields outside the form, and project-owned server definitions stay read-only.
-OAuth links must use HTTP or HTTPS; completion notifications refresh server status.
+MCP edits preserve fields outside the form, exact argument values, and empty arguments.
+Project-owned server definitions stay read-only, and new names cannot replace hidden servers.
+OAuth links must use HTTP or HTTPS.
+The `mcpServer/oauthLogin/completed` notification refreshes server status, including after an operation already in progress.
 Hooks stay off until their current definition is trusted.
 Managed hooks stay on and cannot be edited.
 Marketplace removal uninstalls its remaining plugins before removing the configured source.
+Built-in marketplaces cannot be removed.
 The shared host reads the original Statsig bootstrap and caches its parsed evaluations for the current Root.
 
 `cargo test -p ui --lib screens::settings::integrations` checks key collisions, form preservation, skill precedence, read-only origins, and hook trust.
-`cargo test -p app --lib settings_integrations` checks the OAuth URL boundary.
+`cargo test -p app --lib settings_integrations` checks OAuth boundaries, notification handling, and queued status refreshes.
 An owned-profile application smoke checked Root dispatch against the real app-server on Linux and macOS.
 It covered MCP toggling, saving, trust, invalid-save preservation, deletion, marketplace add/remove, and directory navigation.
 The native renderer produced a manager screenshot without a new crash report.
 These checks do not establish appearance parity.
-Strict original/native pairs remain blocked on capture recovery.
+Strict form comparisons use the original renderer at the same state and size.
+The current form pairs meet the text limit but still differ outside text.
 ST-155 remains gated while the native MCP app sandbox is absent; the manager never reports a synthetic data-clear success.
 
 

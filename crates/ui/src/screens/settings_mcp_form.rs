@@ -1,10 +1,12 @@
-use super::{Action, Activate as _, State, action_button, card, configured_servers, dispatch};
-use crate::{composer::Composer, text};
+use super::{Action, Activate as _, State, action_button, card, dispatch, on_card, primary_button};
+use crate::{composer::Composer, icon::icon, text};
 use gpui::{
-    AppContext as _, Context, Div, Entity, EventEmitter, IntoElement, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
+    AppContext as _, Context, Div, Entity, EventEmitter, InteractiveElement, IntoElement,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use serde_json::{Map, Value, json};
+use shapes::Corner::Squircle;
 use theme::{ActiveTheme as _, Theme};
 
 pub struct Close;
@@ -35,7 +37,12 @@ enum Kind {
 
 struct List {
     kind: Kind,
-    rows: Vec<Vec<Entity<Composer>>>,
+    rows: Vec<Row>,
+}
+
+struct Row {
+    fields: Vec<Entity<Composer>>,
+    preserve_empty: bool,
 }
 
 impl Kind {
@@ -73,7 +80,7 @@ impl Kind {
 impl Form {
     pub fn new(key: Option<String>, config: Value, cx: &mut Context<Self>) -> Self {
         let mut field = |placeholder, value: &str| {
-            let field = cx.new(|cx| Composer::settings_field(placeholder, value, false, cx));
+            let field = cx.new(|cx| Composer::settings_compact_field(placeholder, value, cx));
             cx.observe(&field, |_, _, cx| cx.notify()).detach();
             field
         };
@@ -87,10 +94,13 @@ impl Form {
         );
         let cwd = field("", config["cwd"].as_str().unwrap_or(""));
         let url = field(
-            "https://example.com/mcp",
+            "https://mcp.example.com/mcp",
             config["url"].as_str().unwrap_or(""),
         );
-        let bearer = field("", config["bearer_token_env_var"].as_str().unwrap_or(""));
+        let bearer = field(
+            "MCP_BEARER_TOKEN",
+            config["bearer_token_env_var"].as_str().unwrap_or(""),
+        );
         let mut lists = Vec::new();
         for kind in [
             Kind::Args,
@@ -104,11 +114,12 @@ impl Form {
                     .as_object()
                     .into_iter()
                     .flatten()
-                    .map(|(key, value)| {
-                        vec![
+                    .map(|(key, value)| Row {
+                        fields: vec![
                             field("Key", key),
                             field("Value", value.as_str().unwrap_or("")),
-                        ]
+                        ],
+                        preserve_empty: false,
                     })
                     .collect::<Vec<_>>()
             } else {
@@ -116,7 +127,10 @@ impl Form {
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .map(|value| vec![field("", value.as_str().unwrap_or(""))])
+                    .map(|value| Row {
+                        fields: vec![field("", value.as_str().unwrap_or(""))],
+                        preserve_empty: kind == Kind::Args,
+                    })
                     .collect::<Vec<_>>()
             };
             lists.push(List { kind, rows });
@@ -151,12 +165,15 @@ impl Form {
         let row = placeholders
             .into_iter()
             .map(|placeholder| {
-                let field = cx.new(|cx| Composer::settings_field(placeholder, "", false, cx));
+                let field = cx.new(|cx| Composer::settings_compact_field(placeholder, "", cx));
                 cx.observe(&field, |_, _, cx| cx.notify()).detach();
                 field
             })
             .collect();
-        self.lists[index].rows.push(row);
+        self.lists[index].rows.push(Row {
+            fields: row,
+            preserve_empty: false,
+        });
         cx.notify();
     }
 
@@ -201,9 +218,13 @@ impl Form {
                     .rows
                     .iter()
                     .filter_map(|row| {
-                        let key = row[0].read(cx).field_text().trim();
-                        (!key.is_empty())
-                            .then(|| (key.to_owned(), Value::from(row[1].read(cx).field_text())))
+                        let key = row.fields[0].read(cx).field_text().trim();
+                        (!key.is_empty()).then(|| {
+                            (
+                                key.to_owned(),
+                                Value::from(row.fields[1].read(cx).field_text()),
+                            )
+                        })
                     })
                     .collect::<Map<String, Value>>();
                 if !pairs.is_empty() {
@@ -213,9 +234,15 @@ impl Form {
                 let values = list
                     .rows
                     .iter()
-                    .map(|row| row[0].read(cx).field_text().trim())
-                    .filter(|value| !value.is_empty())
-                    .map(Value::from)
+                    .filter_map(|row| {
+                        let text = row.fields[0].read(cx).field_text();
+                        let value = if list.kind == Kind::Args {
+                            text
+                        } else {
+                            text.trim()
+                        };
+                        (!value.is_empty() || row.preserve_empty).then(|| Value::from(value))
+                    })
                     .collect::<Vec<_>>();
                 if !values.is_empty() {
                     object.insert(list.kind.key().into(), Value::Array(values));
@@ -244,47 +271,97 @@ impl Form {
 
     fn field(&self, title: &'static str, field: &Entity<Composer>, t: &Theme) -> Div {
         div()
-            .p(px(12.))
+            .relative()
+            .px(px(12.))
+            .py(px(8.))
             .flex()
             .flex_col()
             .gap(px(8.))
+            .child(on_card(
+                12.5,
+                Squircle,
+                t.control_background.opacity(0.96),
+                None,
+            ))
             .child(text(title, 14., 21., 500., t.text))
             .child(field.clone())
     }
 
     fn list(&self, index: usize, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let list = &self.lists[index];
-        let rows = list.rows.iter().enumerate().map(|(row_index, fields)| {
+        let rows = list.rows.iter().enumerate().map(|(row_index, row)| {
+            let removable = row.preserve_empty
+                || row
+                    .fields
+                    .iter()
+                    .any(|field| !field.read(cx).field_text().is_empty());
             div()
                 .flex()
                 .items_center()
                 .gap(px(8.))
                 .children(
-                    fields
+                    row.fields
                         .iter()
                         .map(|field| div().flex_1().min_w_0().child(field.clone())),
                 )
                 .child(
-                    action_button(
-                        format!("remove-{}-{row_index}", list.kind.key()),
-                        "Remove entry",
-                        t,
-                    )
-                    .on_activate(window, cx, move |this, _, cx| {
-                        this.lists[index].rows.remove(row_index);
-                        cx.notify();
-                    }),
+                    div()
+                        .id(gpui::SharedString::from(format!(
+                            "remove-{}-{row_index}",
+                            list.kind.key()
+                        )))
+                        .role(gpui::Role::Button)
+                        .aria_label("Remove entry")
+                        .aria_disabled(!removable)
+                        .size(px(24.))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .when(!removable, |d| d.opacity(0.4))
+                        .child(icon("settings-remove", 14., t.text_tertiary))
+                        .on_activate(window, cx, move |this, _, cx| {
+                            if removable {
+                                this.lists[index].rows.remove(row_index);
+                                if this.lists[index].rows.is_empty() {
+                                    this.add_row(index, cx);
+                                }
+                                cx.notify();
+                            }
+                        }),
                 )
         });
+        let muted = t.text_secondary.opacity(0.9);
         div()
-            .p(px(12.))
+            .relative()
+            .px(px(12.))
+            .py(px(8.))
             .flex()
             .flex_col()
-            .gap(px(8.))
+            .gap(px(12.))
+            .child(on_card(
+                12.5,
+                Squircle,
+                t.control_background.opacity(0.96),
+                None,
+            ))
             .child(text(list.kind.label(), 14., 21., 500., t.text))
-            .children(rows)
+            .child(div().flex().flex_col().gap(px(8.)).children(rows))
             .child(
-                action_button(format!("add-{}", list.kind.key()), list.kind.add_label(), t)
+                div()
+                    .id(gpui::SharedString::from(format!("add-{}", list.kind.key())))
+                    .role(gpui::Role::Button)
+                    .aria_label(list.kind.add_label())
+                    .relative()
+                    .h(px(28.))
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(4.))
+                    .child(on_card(10., Squircle, t.text_alpha_5, None))
+                    .child(icon("settings-mcp-plus", 14., muted))
+                    .child(text(list.kind.add_label(), 13., 18., 430., muted))
                     .on_activate(window, cx, move |this, _, cx| this.add_row(index, cx)),
             )
     }
@@ -313,7 +390,7 @@ pub fn server_key(name: &str, configuration: &Value) -> String {
     if normalized.is_empty() {
         normalized = "custom-server".into();
     }
-    let used = |key: &str| configured_servers(configuration).any(|(name, _)| name == key);
+    let used = |key: &str| configuration["config"]["mcp_servers"].get(key).is_some();
     if !used(&normalized) {
         return normalized;
     }
@@ -334,10 +411,25 @@ impl Render for Form {
             || "Connect to a custom MCP".to_owned(),
             |key| format!("Update {key} MCP"),
         );
-        let mut header = div().flex().items_center().justify_between().child(
-            action_button("mcp-back", "Back", &t)
-                .on_activate(window, cx, |_, _, cx| cx.emit(Close)),
-        );
+        let mut header = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .pb(px(20.))
+            .child(
+                div()
+                    .id("mcp-back")
+                    .role(gpui::Role::Button)
+                    .aria_label("Back")
+                    .h(px(28.))
+                    .px(px(9.))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(icon("settings-mcp-back", 16., t.text_tertiary))
+                    .child(text("Back", 13., 18., 430., t.text_tertiary))
+                    .on_activate(window, cx, |_, _, cx| cx.emit(Close)),
+            );
         if let Some(key) = &self.key {
             let key = key.clone();
             header = header.child(action_button("uninstall-mcp", "Uninstall", &t).on_activate(
@@ -351,7 +443,8 @@ impl Render for Form {
             identity.push(self.field("Name", &self.name, &t));
             identity.push(
                 div()
-                    .p(px(16.))
+                    .px(px(16.))
+                    .py(px(12.))
                     .flex()
                     .items_center()
                     .justify_between()
@@ -359,18 +452,54 @@ impl Render for Form {
                     .child(
                         div()
                             .flex()
-                            .gap(px(8.))
+                            .gap(px(2.))
                             .child(
-                                action_button("mcp-stdio", "STDIO", &t)
+                                div()
+                                    .id("mcp-stdio")
+                                    .role(gpui::Role::Button)
+                                    .aria_label("STDIO")
                                     .aria_selected(!self.http)
+                                    .h(px(28.))
+                                    .px(px(9.))
+                                    .relative()
+                                    .flex()
+                                    .items_center()
+                                    .when(!self.http, |d| {
+                                        d.child(on_card(12.5, Squircle, t.text_alpha_5, None))
+                                    })
+                                    .child(text(
+                                        "STDIO",
+                                        13.,
+                                        18.,
+                                        430.,
+                                        if self.http { t.text_tertiary } else { t.text },
+                                    ))
                                     .on_activate(window, cx, |this, _, cx| {
                                         this.http = false;
                                         cx.notify();
                                     }),
                             )
                             .child(
-                                action_button("mcp-http", "Streamable HTTP", &t)
+                                div()
+                                    .id("mcp-http")
+                                    .role(gpui::Role::Button)
+                                    .aria_label("Streamable HTTP")
                                     .aria_selected(self.http)
+                                    .h(px(28.))
+                                    .px(px(9.))
+                                    .relative()
+                                    .flex()
+                                    .items_center()
+                                    .when(self.http, |d| {
+                                        d.child(on_card(12.5, Squircle, t.text_alpha_5, None))
+                                    })
+                                    .child(text(
+                                        "Streamable HTTP",
+                                        13.,
+                                        18.,
+                                        430.,
+                                        if self.http { t.text } else { t.text_tertiary },
+                                    ))
                                     .on_activate(window, cx, |this, _, cx| {
                                         this.http = true;
                                         cx.notify();
@@ -379,7 +508,7 @@ impl Render for Form {
                     ),
             );
         } else {
-            identity.push(div().p(px(12.)).child(text(
+            identity.push(div().child(text(
                 "If you would like to switch MCP server type, please uninstall first.",
                 13.,
                 18.,
@@ -409,25 +538,41 @@ impl Render for Form {
                 .as_str()
                 .is_none_or(|value| value.trim().is_empty())
             || (self.key.is_some() && value == self.initial);
-        let mut body = div()
+        let heading = div()
+            .pb(px(20.))
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .child(header)
-            .child(text(title, 20., 28., 500., t.text))
+            .gap(px(6.))
+            .child(text(title, 20., 26.6, 500., t.text))
             .child(
-                action_button("mcp-docs", "Docs", &t).on_activate(window, cx, |_, _, cx| {
-                    cx.open_url("https://developers.openai.com/codex/mcp")
-                }),
-            )
-            .child(card(identity, &self.layer, &t))
-            .child(card(fields, &self.layer, &t));
+                div().h(px(21.)).flex().items_start().pt(px(1.5)).child(
+                    div()
+                        .id("mcp-docs")
+                        .role(gpui::Role::Link)
+                        .aria_label("Open MCP documentation")
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(text("Docs", 13., 18.571_428, 430., t.text_secondary))
+                        .child(icon("settings-mcp-docs", 12., t.text_secondary))
+                        .on_activate(window, cx, |_, _, cx| {
+                            cx.open_url("https://developers.openai.com/codex/mcp")
+                        }),
+                ),
+            );
+        let mut body = div().flex().flex_col().gap(px(6.));
+        if self.key.is_none() {
+            body = body.child(card(identity, &self.layer, &t));
+        } else {
+            body = body.children(identity);
+        }
+        body = body.child(card(fields, &self.layer, &t));
         if let Some(error) = &state.form_error {
             body = body.child(text(error.clone(), 13., 18., 430., t.text_error));
         }
-        body.child(
+        body = body.child(
             div().flex().justify_end().child(
-                action_button("mcp-save", "Save", &t)
+                primary_button("mcp-save", "Save", &t)
                     .aria_disabled(disabled)
                     .when(disabled, |d| d.opacity(0.4))
                     .on_activate(window, cx, move |this, _, cx| {
@@ -436,8 +581,14 @@ impl Render for Form {
                         }
                     }),
             ),
-        )
-        .into_any_element()
+        );
+        div()
+            .flex()
+            .flex_col()
+            .child(header)
+            .child(heading)
+            .child(body)
+            .into_any_element()
     }
 }
 
@@ -451,6 +602,10 @@ mod tests {
         assert_eq!(server_key(" Team tools ", &configuration), "team_tools-3");
         assert_eq!(server_key("A.b/Service", &configuration), "a-b-service");
         assert_eq!(server_key(" Team   tools ", &configuration), "team_tools-3");
+        let hidden =
+            json!({"config":{"mcp_servers":{"cua_repl":{"command":"keep"},"codex_app":{}}}});
+        assert_eq!(server_key("cua repl", &hidden), "cua_repl-2");
+        assert_eq!(server_key("codex app", &hidden), "codex_app-2");
     }
 
     #[test]
@@ -511,5 +666,41 @@ mod tests {
             })
         });
         assert_eq!(value["env"], json!({"TOKEN":"existing","EMPTY":""}));
+    }
+
+    #[test]
+    fn editing_a_directory_preserves_exact_arguments() {
+        use gpui::HeadlessAppContext;
+        use std::sync::Arc;
+        super::super::test_panic_hook();
+        let mut cx = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let args = json!(["--label", " team ", "", "next"]);
+        let form = cx.update(|cx| {
+            cx.new(|cx| {
+                Form::new(
+                    Some("service".into()),
+                    json!({"command":"server","args":args,"cwd":"/old"}),
+                    cx,
+                )
+            })
+        });
+        let saved = cx.update(|cx| {
+            form.update(cx, |form, cx| {
+                form.cwd.update(cx, |field, cx| field.set_text("/new", cx));
+                let args_index = form
+                    .lists
+                    .iter()
+                    .position(|list| list.kind == Kind::Args)
+                    .unwrap();
+                form.add_row(args_index, cx);
+                form.value(cx)
+            })
+        });
+        assert_eq!(saved["args"], args);
+        assert_eq!(saved["cwd"], "/new");
     }
 }
