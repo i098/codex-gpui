@@ -121,6 +121,7 @@ pub(super) fn disclosure(label: String, angle: f32, window: &Window, t: &Theme) 
 pub(super) fn diff_card(
     turn_id: &str,
     items: &[ThreadItem],
+    focus: &TurnFocus,
     window: &Window,
     t: &Theme,
 ) -> Option<Div> {
@@ -157,9 +158,12 @@ pub(super) fn diff_card(
             .children(decoration)
             .child(measured(window, label, 13., 18., 430., t.text, None))
     };
+    let engaged = focus.engaged;
+    let card_group = SharedString::from(format!("diff-card-{turn_id}"));
     Some(
         div()
             .relative()
+            .group(card_group.clone())
             .child(shapes::decoration(shapes::Decoration {
                 radius: Corners::all(Theme::RADIUS_LG),
                 corner: shapes::Corner::Squircle,
@@ -201,11 +205,43 @@ pub(super) fn diff_card(
                             .flex()
                             .flex_col()
                             .child(text(title, 14., 21., 500., t.text).text_ellipsis())
-                            .child(
-                                div().h(px(19.5)).pt(px(3.)).overflow_hidden().child(
+                            // `turn-diff-default-subtitle` / `turn-diff-hover-subtitle`: hover or
+                            // focus within the card swaps the counts for `View changes`.
+                            .child({
+                                let default = div().h(px(19.5)).pt(px(3.)).overflow_hidden().child(
                                     crate::screens::diff::panel::stats(added, removed, 13., t),
-                                ),
-                            ),
+                                );
+                                let hover = div()
+                                    .h(px(19.5))
+                                    .overflow_hidden()
+                                    .items_center()
+                                    .gap(px(4.))
+                                    .child(measured(
+                                        window,
+                                        "View changes",
+                                        13.,
+                                        19.5,
+                                        430.,
+                                        t.text_secondary,
+                                        None,
+                                    ))
+                                    .child(icon("thread-chevron-right", 14., t.text_secondary));
+                                // Both lines occupy the same box; only paint swaps.
+                                let default = if engaged {
+                                    default.invisible()
+                                } else {
+                                    default.group_hover(card_group.clone(), |s| s.invisible())
+                                };
+                                let hover = hover.absolute().top_0().left_0().w_full().flex();
+                                let hover = if engaged {
+                                    hover
+                                } else {
+                                    hover
+                                        .invisible()
+                                        .group_hover(card_group.clone(), |s| s.visible())
+                                };
+                                div().relative().child(default).child(hover)
+                            }),
                     )
                     .child(
                         div()
@@ -218,6 +254,7 @@ pub(super) fn diff_card(
                                 button("Undo", None)
                                     .child(icon("thread-undo", 14., t.text))
                                     .id("undo-turn")
+                                    .track_focus(&focus.undo)
                                     .on_click(move |_, window, cx| {
                                         window.dispatch_action(
                                             Box::new(RevertTurn(turn_id.clone())),
@@ -246,6 +283,7 @@ pub(super) fn diff_card(
                                     ),
                                 )
                                 .id("view-changes")
+                                .track_focus(&focus.view)
                                 .on_click(crate::dispatch::<crate::OpenChangesPanel>),
                             ),
                     ),

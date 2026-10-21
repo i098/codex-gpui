@@ -502,6 +502,8 @@ fn background_depth_retains_selection_scrollback_and_completed_output() -> Resul
     }) {
         fx.click((left + 100., 111.5))?;
     }
+    // The original's button keeps focus after the press; `cmd-2` above moved it to the composer.
+    fx.click((581.2, 511.1))?;
     fx.hover((left + 120., 22.))?;
     fx.advance(std::time::Duration::from_millis(700))?;
     shot(&mut fx, "thumbnail")?;
