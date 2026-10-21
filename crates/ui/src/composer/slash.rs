@@ -311,6 +311,7 @@ impl Composer {
     /// its query, newlines not), else `/` without whitespace in its query.
     pub(super) fn refresh_slash(&mut self, cx: &mut Context<Self>) {
         if self.plain_field.is_some() {
+            self.field_autoscroll = self.plain_field == Some(true);
             return;
         }
         let cursor = self.cursor();

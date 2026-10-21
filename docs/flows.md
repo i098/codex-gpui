@@ -718,10 +718,19 @@ Late replies from an earlier instruction load cannot replace a reopened editor o
 The editor provides a keyboard-accessible Learn more link to the original instructions guide.
 ST-094 saves through `codex-agents-md-save`; the host replaces the file atomically and preserves its permissions.
 Success shows `Instructions updated`; failure shows `Unable to save instructions` and retains the draft.
+ST-095 reads the original `2826489636` feature gate from the authenticated Statsig bootstrap.
+The gate keeps the legacy editor unchanged when it is off or unavailable.
+When the gate is on, the AGENTS.md editor switches between Markdown preview and source without replacing its draft.
+ST-096 reads the sibling `AGENTS.override.md` file and shows the original override notice when that file contains non-whitespace text.
+Missing or empty override files do not show the notice.
+Other override read failures use the existing instruction load error instead of reporting a false absence.
 Cancel discards the draft.
 Navigation, Back, window close, and Quit ask `Discard changes?` while edits remain.
 Application-wide Quit checks every open Root window before it exits.
 After discard, native close uses the existing window lifecycle and retains the final primary window on macOS.
+The multiline field resizes vertically and keeps its document while its viewport changes.
+The field keeps its border outside the scrolling content.
+Typing scrolls the caret into view; the field keeps a minimum height of 96 pixels.
 The instructions tests use owned files and cover save, cancel, discard, load failure, and save retry.
 The coordinate-based instructions cases run on macOS because Linux uses the no-op text system.
 The remaining action and host tests also run on Linux.
@@ -732,6 +741,29 @@ Skip creates an unused `New project` folder under `~/Documents/ChatGPT`, registe
 Existing names get a numeric suffix; the host does not overwrite an existing project.
 The workspace tests use an owned host root and the native path-prompt test hook.
 They do not create folders in the normal profile.
+
+### Memory and Writing
+
+Memory reads the selected computer's configuration and its paginated experimental feature list.
+Enabling memory updates `features.memories`, `memories.generate_memories`, and `memories.use_memories`.
+Disabling also turns off Chronicle on the local computer.
+The tool-assisted switch writes `memories.disable_on_external_context` and removes the legacy alias.
+Reads and writes use the user configuration layer when it supplies a file path.
+After a partial failure, the page shows the values that the server actually saved.
+Delete requires confirmation before `memory/reset`; failure keeps the confirmation available for retry.
+
+Writing is available to a ChatGPT account through its existing authenticated host.
+The page reads the canonical Writing plugin and the installed plugin list.
+Enable installs or enables that plugin; disable uninstalls it.
+A failed operation retries the requested value, not its inverse.
+Account identity checks prevent a later response or write from switching accounts.
+Enabling Writing replaces Settings with its previous route before it opens setup.
+Setup uses the existing discard guard before it replaces an edited instruction document.
+Cancel keeps the document and its unsaved draft.
+Setup keeps the same account snapshot until it closes.
+The setup dialog supports optional app connections through their supplied browser URLs.
+A dialog that cannot open leaves Writing retryable instead of waiting for authorization.
+Show me opens a prepared draft; it does not start a turn.
 
 
 ## 15.1 Automations ("Scheduled")

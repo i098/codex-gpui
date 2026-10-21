@@ -1,6 +1,6 @@
 mod common;
 
-use anyhow::{Result, ensure};
+use anyhow::{Context as _, Result, ensure};
 use common::*;
 use serde_json::{Value, json};
 use theme::ActiveTheme as _;
@@ -8,6 +8,29 @@ use theme::ActiveTheme as _;
 #[test]
 fn proxy() {
     proxy_child();
+}
+
+#[test]
+fn only_nonempty_override_files_take_precedence_over_personal_instructions() -> Result<()> {
+    use app::host::{Host as _, LocalHost, Request, json_body};
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    let read = || {
+        json_body(&host.fetch(&Request::post(
+            "codex-agents-md",
+            Some(json!({"hostId": "local"})),
+        ))?)
+    };
+    let override_path = home.path().join("AGENTS.override.md");
+    assert_eq!(read()?["hasOverride"], false);
+    std::fs::write(&override_path, " \t\r\n")?;
+    assert_eq!(read()?["hasOverride"], false);
+    std::fs::write(&override_path, "Use the project rules.\n")?;
+    assert_eq!(read()?["hasOverride"], true);
+    std::fs::remove_file(&override_path)?;
+    std::fs::create_dir(&override_path)?;
+    assert!(read().is_err());
+    Ok(())
 }
 
 fn press(fx: &mut Fx, keys: &str) -> Result<()> {
@@ -18,6 +41,26 @@ fn press(fx: &mut Fx, keys: &str) -> Result<()> {
         }))?;
     }
     Ok(())
+}
+
+fn script(session: Option<&str>, edit: fn(&mut Value)) -> Result<Vec<Value>> {
+    let mut lines = common::script(session, edit)?;
+    for method in ["config/read", "experimentalFeature/list"] {
+        let id = lines
+            .iter()
+            .find(|line| line["dir"] == "send" && line["msg"]["method"] == method)
+            .context("recorded preference read")?["msg"]["id"]
+            .clone();
+        let result = lines
+            .iter()
+            .find(|line| line["dir"] == "recv" && line["msg"]["id"] == id)
+            .context("recorded preference result")?["msg"]["result"]
+            .clone();
+        for _ in 0..4 {
+            lines.extend(exchange(method, result.clone()));
+        }
+    }
+    Ok(lines)
 }
 
 fn signed_out(methods: Value) -> Result<Vec<Value>> {
@@ -197,14 +240,21 @@ fn prepare_instructions(fx: &mut Fx) -> Result<()> {
     fx.keys("escape")?;
     fx.type_text("Personalization")?;
     press(fx, "tab enter")?;
-    press(fx, "tab tab")?;
+    fx.click((200., 118.))?;
+    fx.keys("escape")?;
+    fx.wait("memory settings ready", |fx| {
+        fx.read(|root, cx| {
+            root.personal_instructions(cx)
+                .is_some_and(|view| view.read(cx).memory().is_some())
+        })
+    })?;
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
 fn show_instructions(fx: &mut Fx) -> Result<()> {
     prepare_instructions(fx)?;
-    press(fx, "enter")
+    fx.click((800., 540.))
 }
 
 #[cfg(target_os = "macos")]
@@ -230,7 +280,7 @@ fn instructions_save_cancel_and_navigation_guard_preserve_the_document() -> Resu
     let path = home.path().join("AGENTS.md");
     std::fs::write(&path, "Use spaces.\n")?;
     let host = std::sync::Arc::new(app::host::LocalHost::new(home.path()));
-    let mut fx = Fx::new()?;
+    let mut fx = Fx::scripted(script(None, |_| {})?)?;
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
     open_instructions(&mut fx)?;
@@ -295,12 +345,95 @@ fn instructions_save_cancel_and_navigation_guard_preserve_the_document() -> Resu
 
 #[cfg(target_os = "macos")]
 #[test]
+fn an_override_notice_keeps_the_personal_document_editable() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let path = home.path().join("AGENTS.md");
+    std::fs::write(&path, "Use spaces.\n")?;
+    std::fs::write(home.path().join("AGENTS.override.md"), "Prefer tabs.\n")?;
+    let host = std::sync::Arc::new(app::host::LocalHost::new(home.path()));
+    let mut fx = Fx::scripted(script(None, |_| {})?)?;
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
+    open_instructions(&mut fx)?;
+    fx.click((800., 380.))?;
+    evidence(&mut fx, "instructions-override")?;
+    fx.keys("cmd-a")?;
+    fx.type_text("Keep instructions editable.")?;
+    press(&mut fx, "shift-tab shift-tab enter")?;
+    fx.wait("overridden personal instructions saved", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|text| text.as_ref() == "Instructions updated")
+        })
+    })?;
+    assert_eq!(
+        std::fs::read_to_string(path)?,
+        "Keep instructions editable."
+    );
+    assert_eq!(
+        std::fs::read_to_string(home.path().join("AGENTS.override.md"))?,
+        "Prefer tabs.\n"
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn source_and_preview_keep_the_same_unsaved_instructions() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let path = home.path().join("AGENTS.md");
+    std::fs::write(&path, "# Project rules\n\nUse spaces.\n")?;
+    let host = std::sync::Arc::new(app::host::LocalHost::new(home.path()));
+    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
+    prepare_instructions(&mut fx)?;
+    drain(&mut fx)?;
+    let view = fx.read(|root, cx| root.personal_instructions(cx).unwrap().clone());
+    view.update(&mut fx.cx, |view, cx| {
+        view.set_unified_instructions(true, cx)
+    });
+    fx.click((800., 540.))?;
+    fx.wait("Markdown instructions loaded", |fx| {
+        fx.read(|root, cx| {
+            root.personal_instructions(cx)
+                .is_some_and(|view| !view.read(cx).loading())
+        })
+    })?;
+    fx.click((700., 67.))?;
+    evidence(&mut fx, "instructions-preview")?;
+    fx.click((1080., 67.))?;
+    evidence(&mut fx, "instructions-source-initial")?;
+    fx.keys("cmd-a")?;
+    fx.type_text("# Updated rules\n\nKeep this **draft**.")?;
+    evidence(&mut fx, "instructions-source")?;
+    fx.click((1080., 67.))?;
+    evidence(&mut fx, "instructions-preview-draft")?;
+    fx.click((1080., 67.))?;
+    fx.keys("cmd-a cmd-c")?;
+    assert_eq!(
+        fx.cx
+            .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .as_deref(),
+        Some("# Updated rules\n\nKeep this **draft**.")
+    );
+    fx.click((1230., 67.))?;
+    fx.wait("Markdown instructions saved", |_| {
+        std::fs::read_to_string(&path).ok().as_deref()
+            == Some("# Updated rules\n\nKeep this **draft**.")
+    })?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn a_failed_instruction_save_keeps_the_draft_for_retry() -> Result<()> {
     let home = tempfile::tempdir()?;
     let path = home.path().join("AGENTS.md");
     let backup = home.path().join("saved-instructions");
     std::fs::write(&path, "Original instructions.")?;
-    let mut fx = Fx::new()?;
+    let mut fx = Fx::scripted(script(None, |_| {})?)?;
     fx.root.update(&mut fx.cx, |root, cx| {
         root.set_host(
             std::sync::Arc::new(app::host::LocalHost::new(home.path())),
@@ -395,15 +528,29 @@ fn instruction_load_failure_can_retry_without_losing_the_page() -> Result<()> {
     let path = home.path().join("AGENTS.md");
     std::fs::create_dir(&path)?;
     let host = std::sync::Arc::new(app::host::LocalHost::new(home.path()));
-    let mut fx = Fx::new()?;
+    let mut fx = Fx::scripted(script(None, |_| {})?)?;
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
     prepare_instructions(&mut fx)?;
-    let key = gpui::Keystroke::parse("enter")?;
+    let position = gpui::point(gpui::px(800.), gpui::px(540.));
     fx.cx.update_window(fx.window, |_, window, cx| {
-        window.dispatch_keystroke(key.clone(), cx);
         window.dispatch_event(
-            gpui::PlatformInput::KeyUp(gpui::KeyUpEvent { keystroke: key }),
+            gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+                button: gpui::MouseButton::Left,
+                position,
+                modifiers: gpui::Modifiers::default(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+                button: gpui::MouseButton::Left,
+                position,
+                modifiers: gpui::Modifiers::default(),
+                click_count: 1,
+            }),
             cx,
         );
     })?;
@@ -558,6 +705,481 @@ fn failed_workspace_registration_removes_only_the_new_empty_folder() -> Result<(
     );
     assert!(!home.path().join("projects/New project").exists());
     assert_eq!(std::fs::read_to_string(state)?, "[]");
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn resizing_instructions_keeps_the_document_and_scrolls_within_the_field() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    std::fs::write(home.path().join("AGENTS.md"), "Resize me")?;
+    let mut fx = Fx::scripted(script(None, |_| {})?)?;
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.set_host(
+            std::sync::Arc::new(app::host::LocalHost::new(home.path())),
+            cx,
+        );
+    });
+    open_instructions(&mut fx)?;
+    let span = |image: &image::RgbaImage| -> Result<(u32, u32)> {
+        let rows: Vec<u32> = (0..image.height())
+            .filter(|&y| {
+                let pixel = image.get_pixel(1800, y);
+                pixel[0] < 100 && pixel[1] > 80 && pixel[1] < 180 && pixel[2] > 180
+            })
+            .collect();
+        Ok((
+            *rows.first().context("field top border")?,
+            *rows.last().context("field bottom border")?,
+        ))
+    };
+    let initial = span(&fx.reference_shot()?)?;
+    fx.drag((1168., 468.), (1168., 618.), 4)?;
+    let enlarged = span(&fx.reference_shot()?)?;
+    assert!((298..=302).contains(&(enlarged.1 - initial.1)));
+    fx.drag((1168., 618.), (1168., 250.), 4)?;
+    let minimum = span(&fx.reference_shot()?)?;
+    assert!((190..=194).contains(&(minimum.1 - minimum.0)));
+    let document = (0..40)
+        .map(|line| format!("Instruction line {line}\n"))
+        .collect::<String>()
+        + "LAST_VISIBLE_LINE";
+    fx.keys("cmd-a")?;
+    fx.type_text(&document)?;
+    let filled = span(&fx.reference_shot()?)?;
+    assert_eq!(filled, minimum);
+    evidence(&mut fx, "instructions-resized-scroll")?;
+    fx.keys("cmd-a cmd-c")?;
+    assert_eq!(
+        fx.cx
+            .update(|cx| cx.read_from_clipboard().and_then(|item| item.text())),
+        Some(document)
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn enabling_memory_updates_the_persisted_state_and_the_switch() -> Result<()> {
+    let mut lines = common::script(None, |_| {})?;
+    let initial = lines
+        .iter()
+        .find_map(|line| {
+            (line["dir"] == "recv" && line["msg"]["result"]["config"].is_object())
+                .then(|| line["msg"]["result"].clone())
+        })
+        .context("initial memory config")?;
+    let mut enabled = initial.clone();
+    enabled["config"]["memories"] = json!({"generate_memories": true, "use_memories": true});
+    enabled["config"]["features"]["memories"] = true.into();
+    lines.extend(exchange("config/read", initial));
+    lines.extend(exchange("config/read", enabled));
+    lines.extend(exchange(
+        "experimentalFeature/list",
+        json!({
+            "data": [{"name": "memories", "enabled": true}], "nextCursor": null
+        }),
+    ));
+    lines.extend(exchange("config/batchWrite", Value::Null));
+    lines.extend(exchange("config/batchWrite", Value::Null));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    prepare_instructions(&mut fx)?;
+    fx.click((1140., 270.))?;
+    fx.wait("enabled memory", |fx| {
+        fx.read(|root, cx| {
+            root.personal_instructions(cx)
+                .and_then(|view| view.read(cx).memory())
+                .is_some_and(|memory| memory.enabled())
+        })
+    })?;
+    assert_eq!(
+        fx.read(|root, _| root.config()["features"]["memories"].clone()),
+        json!(true)
+    );
+    assert_eq!(
+        fx.read(|root, _| root.config()["memories"]["generate_memories"].clone()),
+        json!(true)
+    );
+    assert_eq!(
+        fx.read(|root, _| root.config()["memories"]["use_memories"].clone()),
+        json!(true)
+    );
+    evidence(&mut fx, "memory-enabled")?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn deleting_memory_requires_confirmation_and_cancel_sends_no_reset() -> Result<()> {
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("memory/reset", Value::Null));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    prepare_instructions(&mut fx)?;
+    fx.click((1125., 392.))?;
+    assert_eq!(
+        fx.read(|root, cx| root.dialog().map(|dialog| dialog.read(cx).kind())),
+        Some(ui::dialog::Kind::DeleteMemories)
+    );
+    evidence(&mut fx, "memory-delete-confirmation")?;
+    fx.keys("enter")?;
+    assert!(fx.read(|root, _| root.dialog().is_none()));
+    assert!(
+        !fx.sent()?
+            .iter()
+            .any(|request| request["method"] == "memory/reset")
+    );
+    fx.click((1125., 392.))?;
+    press(&mut fx, "tab enter")?;
+    fx.wait("memory reset", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|message| message.as_ref() == "Codex memories deleted")
+        })
+    })?;
+    assert!(fx.read(|root, _| root.dialog().is_none()));
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+struct WritingSequenceHost {
+    states: std::sync::Mutex<std::collections::VecDeque<bool>>,
+    enables: std::sync::atomic::AtomicUsize,
+}
+
+#[cfg(target_os = "macos")]
+impl app::host::Host for WritingSequenceHost {
+    fn identity(&self) -> Option<app::host::Identity> {
+        Some(app::host::Identity {
+            account_id: "account".into(),
+            user_id: "user".into(),
+            device_id: "device".into(),
+        })
+    }
+
+    fn fetch(&self, request: &app::host::Request) -> Result<Value> {
+        let app::host::Request::Http(request) = request else {
+            anyhow::bail!("unexpected local request");
+        };
+        let url = request["url"].as_str().context("HTTP URL")?;
+        let body = if url.starts_with("/ps/plugins/canonical-app/") {
+            json!({"plugin_id": "writing-plugin"})
+        } else if url.starts_with("/ps/plugins/installed?") {
+            let mut states = self.states.lock().unwrap();
+            let enabled = if states.len() > 1 {
+                states.pop_front().unwrap()
+            } else {
+                states[0]
+            };
+            json!({"plugins": [{
+                "id": "writing-plugin", "name": "writing", "enabled": enabled,
+                "canonical_app_id": "connector_openai_write_like_me", "status": "ENABLED",
+                "installation_policy": "AVAILABLE", "release": {"display_name": "Writing style"}
+            }], "pagination": {"next_page_token": null}})
+        } else if url.ends_with("/enable") {
+            self.enables
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            *self.states.lock().unwrap() = [true].into();
+            Value::Null
+        } else if url == "/aip/connectors/links/list_accessible" {
+            json!({"links": []})
+        } else if url.starts_with("/ps/plugins/plugin_") {
+            return Ok(json!({"status": 404, "bodyJsonString": "{}"}));
+        } else {
+            anyhow::bail!("unexpected Writing request");
+        };
+        Ok(json!({"status": 200, "bodyJsonString": body.to_string()}))
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn retrying_a_failed_writing_disable_does_not_reenable_a_saved_change() -> Result<()> {
+    let mut lines = script(None, |_| {})?;
+    let mut failed = exchange("plugin/uninstall", Value::Null);
+    failed[1]["msg"].as_object_mut().unwrap().remove("result");
+    failed[1]["msg"]["error"] = json!({"code": -32000, "message": "response lost"});
+    lines.extend(failed);
+    lines.extend(exchange("plugin/uninstall", Value::Null));
+    lines.extend(exchange("skills/list", json!({"data": []})));
+    let host = std::sync::Arc::new(WritingSequenceHost {
+        states: std::sync::Mutex::new([true, false, false].into()),
+        enables: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+    prepare_instructions(&mut fx)?;
+    fx.wait("Writing preference", |fx| {
+        fx.read(|root, cx| {
+            root.personal_instructions(cx)
+                .and_then(|view| view.read(cx).writing_preference())
+                .is_some_and(|preference| preference.enabled)
+        })
+    })?;
+    fx.click((1140., 689.))?;
+    fx.wait("Writing retry", |fx| {
+        fx.read(|root, cx| {
+            root.personal_instructions(cx)
+                .is_some_and(|view| view.read(cx).can_retry_writing())
+        })
+    })?;
+    assert!(!fx.read(|root, cx| {
+        root.personal_instructions(cx)
+            .unwrap()
+            .read(cx)
+            .writing_preference()
+            .unwrap()
+            .enabled
+    }));
+    fx.click((800., 737.))?;
+    fx.wait("second Writing removal", |fx| {
+        fx.sent().is_ok_and(|requests| {
+            requests
+                .iter()
+                .filter(|request| request["method"] == "plugin/uninstall")
+                .count()
+                == 2
+        })
+    })?;
+    fx.wait("Writing retry complete", |fx| {
+        fx.read(|root, cx| {
+            root.personal_instructions(cx)
+                .is_some_and(|view| !view.read(cx).can_retry_writing())
+        })
+    })?;
+    assert_eq!(host.enables.load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert!(!fx.read(|root, cx| {
+        root.personal_instructions(cx)
+            .unwrap()
+            .read(cx)
+            .writing_preference()
+            .unwrap()
+            .enabled
+    }));
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn writing_setup_opens_the_sample_draft_without_starting_a_turn() -> Result<()> {
+    let mut lines = script(None, |_| {})?;
+    for _ in 0..2 {
+        lines.extend(exchange("skills/list", json!({"data": []})));
+    }
+    lines.extend(exchange(
+        "app/list",
+        json!({"data": [], "nextCursor": null}),
+    ));
+    lines.extend(exchange(
+        "plugin/installed",
+        json!({"marketplaces": [], "marketplaceLoadErrors": []}),
+    ));
+    let host = std::sync::Arc::new(WritingSequenceHost {
+        states: std::sync::Mutex::new([false].into()),
+        enables: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+    prepare_instructions(&mut fx)?;
+    fx.wait("Writing preference", |fx| {
+        fx.read(|root, cx| {
+            root.personal_instructions(cx)
+                .and_then(|view| view.read(cx).writing_preference())
+                .is_some()
+        })
+    })?;
+    fx.click((1140., 689.))?;
+    fx.wait("Writing setup", |fx| {
+        fx.read(|root, cx| {
+            root.dialog()
+                .is_some_and(|dialog| dialog.read(cx).kind() == ui::dialog::Kind::WritingStyle)
+        })
+    })?;
+    drain(&mut fx)?;
+    assert_eq!(fx.route(), app::Route::Home);
+    evidence(&mut fx, "writing-setup")?;
+    fx.click((640., 680.))?;
+    fx.wait("Writing draft", |fx| fx.route() == app::Route::Home)?;
+    assert!(fx.read(|root, _| root.dialog().is_none()));
+    assert!(
+        !fx.sent()?
+            .iter()
+            .any(|request| request["method"] == "turn/start")
+    );
+    assert_eq!(host.enables.load(std::sync::atomic::Ordering::SeqCst), 1);
+    evidence(&mut fx, "writing-draft")?;
+    Ok(())
+}
+
+struct WritingRaceHost {
+    local: app::host::LocalHost,
+    installed: bool,
+    enabled: std::sync::atomic::AtomicBool,
+}
+
+impl WritingRaceHost {
+    fn new(home: &std::path::Path, installed: bool) -> Self {
+        Self {
+            local: app::host::LocalHost::new(home),
+            installed,
+            enabled: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+}
+
+impl app::host::Host for WritingRaceHost {
+    fn identity(&self) -> Option<app::host::Identity> {
+        Some(app::host::Identity {
+            account_id: "account".into(),
+            user_id: "user".into(),
+            device_id: "device".into(),
+        })
+    }
+
+    fn fetch(&self, request: &app::host::Request) -> Result<Value> {
+        let app::host::Request::Http(request) = request else {
+            return app::host::Host::fetch(&self.local, request);
+        };
+        let url = request["url"].as_str().context("HTTP URL")?;
+        if url.ends_with("/enable") {
+            self.enabled
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            return Ok(json!({"status": 204, "bodyJsonString": ""}));
+        }
+        let plugin = json!({
+            "id": "writing-plugin", "name": "writing",
+            "canonical_app_id": "connector_openai_write_like_me",
+            "status": "ENABLED", "installation_policy": "AVAILABLE",
+            "enabled": self.enabled.load(std::sync::atomic::Ordering::SeqCst),
+            "release": {"display_name": "Writing style"}
+        });
+        let body = if url.starts_with("/ps/plugins/canonical-app/") {
+            json!({"plugin_id": "writing-plugin"})
+        } else if url.starts_with("/ps/plugins/installed?") {
+            json!({
+                "plugins": if self.installed { vec![plugin] } else { vec![] },
+                "pagination": {"next_page_token": null}
+            })
+        } else if url == "/ps/plugins/writing-plugin" {
+            plugin
+        } else {
+            anyhow::bail!("unexpected Writing request: {url}");
+        };
+        Ok(json!({"status": 200, "bodyJsonString": body.to_string()}))
+    }
+}
+
+#[test]
+fn another_dialog_leaves_writing_authorization_retryable() -> Result<()> {
+    use ui::screens::settings::personalization::{Event, WritingPlugin, WritingPreference};
+    let home = tempfile::tempdir()?;
+    let host = std::sync::Arc::new(WritingRaceHost::new(home.path(), false));
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange(
+        "plugin/install",
+        json!({
+            "appsNeedingAuth": [{
+                "id": "mail", "name": "Mail", "installUrl": "https://example.invalid/connect"
+            }]
+        }),
+    ));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+    fx.keys("cmd-,")?;
+    let view = fx.read(|root, cx| root.personal_instructions(cx).unwrap().clone());
+    view.update(&mut fx.cx, |view, cx| {
+        view.writing_loaded(
+            Ok(Some(WritingPreference {
+                account_id: "account".into(),
+                user_id: "user".into(),
+                enabled: false,
+                installed: false,
+                can_install: true,
+                plugin: Some(WritingPlugin {
+                    id: "writing-plugin".into(),
+                }),
+            })),
+            cx,
+        );
+        cx.emit(Event::DeleteMemory);
+    });
+    fx.wait("memory confirmation", |fx| {
+        fx.read(|root, cx| {
+            root.dialog()
+                .is_some_and(|dialog| dialog.read(cx).kind() == ui::dialog::Kind::DeleteMemories)
+        })
+    })?;
+    view.update(&mut fx.cx, |_, cx| cx.emit(Event::Writing(true)));
+    fx.wait("Writing authorization retry", |fx| {
+        fx.read(|_, cx| view.read(cx).can_retry_writing())
+    })?;
+    assert_eq!(
+        fx.read(|root, cx| root.dialog().map(|dialog| dialog.read(cx).kind())),
+        Some(ui::dialog::Kind::DeleteMemories)
+    );
+    fx.keys("escape")?;
+    assert!(fx.read(|_, cx| view.read(cx).can_retry_writing()));
+    assert!(fx.cx.take_opened_url().is_none());
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn writing_setup_preserves_an_existing_instruction_draft() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    std::fs::write(home.path().join("AGENTS.md"), "Saved instructions.")?;
+    let host = std::sync::Arc::new(WritingRaceHost::new(home.path(), true));
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("skills/list", json!({"data": []})));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+    prepare_instructions(&mut fx)?;
+    fx.wait("Writing preference", |fx| {
+        fx.read(|root, cx| {
+            root.personal_instructions(cx)
+                .and_then(|view| view.read(cx).writing_preference())
+                .is_some()
+        })
+    })?;
+    fx.click((800., 540.))?;
+    fx.wait("instructions editor", |fx| {
+        fx.read(|root, cx| {
+            root.personal_instructions(cx)
+                .is_some_and(|view| view.read(cx).editor_focus(cx).is_some())
+        })
+    })?;
+    fx.click((800., 225.))?;
+    fx.keys("cmd-a")?;
+    fx.type_text("Unsaved instruction draft.")?;
+    assert!(fx.read(|root, cx| { root.personal_instructions(cx).unwrap().read(cx).dirty(cx) }));
+    let view = fx.read(|root, cx| root.personal_instructions(cx).unwrap().clone());
+    view.update(&mut fx.cx, |_, cx| {
+        cx.emit(ui::screens::settings::personalization::Event::Writing(true))
+    });
+    fx.wait("Writing discard confirmation", |fx| {
+        fx.read(|root, cx| {
+            root.dialog().is_some_and(|dialog| {
+                dialog.read(cx).kind() == ui::dialog::Kind::DiscardInstructions
+            })
+        })
+    })?;
+    fx.keys("escape")?;
+    assert_eq!(fx.route(), app::Route::Settings);
+    fx.keys("cmd-a cmd-c")?;
+    assert_eq!(
+        fx.cx
+            .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .as_deref(),
+        Some("Unsaved instruction draft.")
+    );
+    assert_eq!(
+        std::fs::read_to_string(home.path().join("AGENTS.md"))?,
+        "Saved instructions."
+    );
     Ok(())
 }
 

@@ -69,6 +69,10 @@ use markdown::{markdown, tones};
 pub use select::Selection;
 use select::{Carets, block_end, frame_start, highlight};
 
+pub fn markdown_preview(source: &str, window: &Window, t: &Theme) -> Div {
+    markdown::document_preview(source, window, t)
+}
+
 /// `--thread-content-max-width`
 const CONTENT_MAX_WIDTH: Pixels = px(768.);
 

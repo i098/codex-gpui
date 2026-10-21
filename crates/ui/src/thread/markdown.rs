@@ -119,6 +119,7 @@ struct Typography {
     italic: bool,
     strike: bool,
     color: Option<Hsla>,
+    document: bool,
 }
 
 impl Default for Typography {
@@ -130,6 +131,7 @@ impl Default for Typography {
             italic: false,
             strike: false,
             color: None,
+            document: false,
         }
     }
 }
@@ -154,6 +156,32 @@ pub(super) fn with_find(
     find: Option<&FindPaint>,
     segments: &[StreamSegment],
 ) -> Div {
+    render(source, window, t, find, segments, Typography::default())
+}
+
+pub(super) fn document_preview(source: &str, window: &Window, t: &Theme) -> Div {
+    render(
+        source,
+        window,
+        t,
+        None,
+        &[],
+        Typography {
+            line_height: 19.6,
+            document: true,
+            ..Typography::default()
+        },
+    )
+}
+
+fn render(
+    source: &str,
+    window: &Window,
+    t: &Theme,
+    find: Option<&FindPaint>,
+    segments: &[StreamSegment],
+    typography: Typography,
+) -> Div {
     Markdown {
         events: Events {
             inner: Parser::new_ext(source, OPTIONS)
@@ -170,7 +198,7 @@ pub(super) fn with_find(
         segments,
         block_index: 0,
     }
-    .blocks(Typography::default(), 0)
+    .blocks(typography, 0)
     .0
 }
 
@@ -191,7 +219,9 @@ impl Markdown<'_> {
         let mut bottom: f32 = 0.;
         let mut previous_paragraph = false;
         let mut task = false;
-        while let Some(event) = self.events.peek() {
+        let mut previous_end = 0;
+        while let Some((event, range)) = self.events.inner.peek() {
+            let block_start = range.start;
             if matches!(event, Event::End(_)) {
                 break;
             }
@@ -202,7 +232,11 @@ impl Markdown<'_> {
                     let (row, checked) = self.inline(style);
                     task |= checked;
                     self.events.next();
-                    (block(row, 2), 7., 3.5)
+                    (
+                        block(row, 2).when(style.document, |d| d.py(px(2.))),
+                        7.,
+                        3.5,
+                    )
                 }
                 Event::Start(Tag::Heading { level, .. }) => {
                     let (size, line_height, top, bottom) = match level {
@@ -212,17 +246,33 @@ impl Markdown<'_> {
                         HeadingLevel::H4 => (14., 21., 14., 0.),
                         HeadingLevel::H5 | HeadingLevel::H6 => (14., 22.75, 0., 0.),
                     };
+                    let (size, line_height, top, bottom) = if style.document {
+                        let size = match level {
+                            HeadingLevel::H1 => 24.,
+                            HeadingLevel::H2 => 20.,
+                            HeadingLevel::H3 => 18.,
+                            HeadingLevel::H4 => 16.,
+                            HeadingLevel::H5 | HeadingLevel::H6 => 14.,
+                        };
+                        (size, size * 1.4, 0., 0.)
+                    } else {
+                        (size, line_height, top, bottom)
+                    };
                     self.events.next();
                     let row = self
                         .inline(Typography {
                             size,
                             line_height,
-                            weight: 600.,
+                            weight: if style.document { 500. } else { 600. },
                             ..style
                         })
                         .0;
                     self.events.next();
-                    (block(row, 2), top, bottom)
+                    (
+                        block(row, 2).when(style.document, |d| d.py(px(2.))),
+                        top,
+                        bottom,
+                    )
                 }
                 Event::Start(Tag::List(start)) => {
                     let start = *start;
@@ -320,6 +370,12 @@ impl Markdown<'_> {
             };
             let gap = if first || style.weight == 400. {
                 0.
+            } else if style.document {
+                self.source[previous_end.min(block_start)..block_start]
+                    .bytes()
+                    .filter(|&byte| byte == b'\n')
+                    .count() as f32
+                    * 23.59375
             } else if paragraph && previous_paragraph {
                 // Keep the established spacing of plain answer paragraphs.
                 12.
@@ -330,6 +386,7 @@ impl Markdown<'_> {
             first = false;
             bottom = next_bottom;
             previous_paragraph = paragraph;
+            previous_end = self.events.range.end;
         }
         (column, task)
     }
@@ -397,6 +454,10 @@ impl Markdown<'_> {
                     }));
                 }
                 Event::SoftBreak => {
+                    if style.document {
+                        row.push(block_end(1).w_full().h(px(4.)).into_any_element());
+                        continue;
+                    }
                     let at = self.events.start;
                     row.push(self.word(" ", Some(at), style).into_any_element());
                 }

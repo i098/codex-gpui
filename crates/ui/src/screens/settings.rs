@@ -104,6 +104,7 @@ pub mod workspace {
     impl Render for Workspace {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let t = cx.theme().clone();
+            let description_color = t.text.opacity(0.498);
             let busy = self.busy();
             let add_focus = focus::handle("workspace-add", 0, window, cx);
             let skip_focus = focus::handle("workspace-skip", 0, window, cx);
@@ -214,7 +215,7 @@ pub mod workspace {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(text(skip_label, 14., 18., 500., t.text_tertiary)),
+                    .child(text(skip_label, 14., 18., 500., description_color)),
                 &skip_focus,
                 theme::Theme::RADIUS_FULL,
                 px(2.),
@@ -237,7 +238,7 @@ pub mod workspace {
                 .child(div().w_full().flex().flex_col().gap(px(24.))
                     .child(div().flex().flex_col().gap(px(24.)).items_center()
                         .child(text("Select a project", 24., 36., 600., t.text))
-                        .child(text("ChatGPT will be able to edit files and run commands in selected folders", 16., 24., 430., t.text_tertiary)
+                        .child(text("ChatGPT will be able to edit files and run commands in selected folders", 16., 24., 430., description_color)
                             .w_full().whitespace_normal().text_center()))
                     .child(div().w_full().flex().flex_col().gap(px(12.))
                         .child(div().relative().child(add).children(menu))
@@ -2065,6 +2066,7 @@ fn login_button(id: &'static str, label: &'static str, color: Hsla, t: &Theme) -
     let hover = over(t.ghost_hover, t.surface);
     div()
         .id(id)
+        .relative()
         .h(px(46.))
         .w_full()
         .flex()
@@ -2072,16 +2074,21 @@ fn login_button(id: &'static str, label: &'static str, color: Hsla, t: &Theme) -
         .justify_center()
         .gap(px(8.))
         .rounded_full()
-        .border_1()
-        .border_color(over(t.border, t.surface))
         .bg(t.surface)
         .hover(move |s| s.bg(hover))
+        .child(shapes::decoration(shapes::Decoration {
+            radius: Corners::all(px(9999.)),
+            corner: Round,
+            border: Some((px(1.), t.border)),
+            ..Default::default()
+        }))
         .child(text(label, 14., 20., 500., color))
 }
 
 impl Render for Login {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        let description_color = t.text.opacity(0.498);
         let requirements = matches!(
             self.stage,
             Stage::LoadingRequirements | Stage::RequirementsError(_)
@@ -2172,9 +2179,9 @@ impl Render for Login {
                         14.,
                         20.,
                         400.,
-                        t.text_tertiary,
+                        description_color,
                     ),
-                    login_button("cancel", "Cancel sign-in", t.text_tertiary, &t)
+                    login_button("cancel", "Cancel sign-in", description_color, &t)
                         .h(px(42.))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             send("account/login/cancel", json!({ "loginId": id }), cx);
