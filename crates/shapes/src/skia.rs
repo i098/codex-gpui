@@ -1734,13 +1734,31 @@ pub(crate) fn paint_sprites(
     window: &mut Window,
     cx: &App,
 ) {
+    paint_transformed_sprites(
+        sprites,
+        color,
+        origin,
+        TransformationMatrix::unit(),
+        window,
+        cx,
+    );
+}
+
+fn paint_transformed_sprites(
+    sprites: &[Sprite],
+    color: Hsla,
+    origin: [i32; 2],
+    transformation: TransformationMatrix,
+    window: &mut Window,
+    cx: &App,
+) {
     // An op's opaque-layer sprites cover disjoint px: one GPUI layer holds them all. A layer
     // per sprite burns layer ids, which wrap at 255, and a px whose last layer had the same id
     // would resume that unrelated layer.
-    paint_each(sprites, false, color, origin, window, cx);
+    paint_each(sprites, false, color, origin, transformation, window, cx);
     if sprites.iter().any(|s| s.opaque_layer) {
         window.with_skia_layer(255, |window| {
-            paint_each(sprites, true, color, origin, window, cx)
+            paint_each(sprites, true, color, origin, transformation, window, cx)
         });
     }
 }
@@ -1750,6 +1768,7 @@ fn paint_each(
     layered: bool,
     color: Hsla,
     [ox, oy]: [i32; 2],
+    transformation: TransformationMatrix,
     window: &mut Window,
     cx: &App,
 ) {
@@ -1764,7 +1783,7 @@ fn paint_each(
             ),
             size(px(sp.size[0] as f32 / s), px(sp.size[1] as f32 / s)),
         );
-        if !bounds.intersects(&mask) {
+        if transformation == TransformationMatrix::unit() && !bounds.intersects(&mask) {
             continue;
         }
         let color: Hsla = sp.color.map_or(color, |[r, g, b, a]| {
@@ -1786,7 +1805,7 @@ fn paint_each(
                 bounds,
                 sp.path.clone(),
                 Some(sp.svg.as_bytes()),
-                TransformationMatrix::unit(),
+                transformation,
                 color,
                 cx,
             )
@@ -2321,16 +2340,80 @@ struct IconPath {
     layer: f32,
 }
 
+impl IconPath {
+    fn paint(&self, color: Color4f) -> Paint {
+        let mut paint = fill_paint(color);
+        if let Some((width, cap, join)) = self.stroke {
+            paint
+                .set_style(PaintStyle::Stroke)
+                .set_stroke_width(width)
+                .set_stroke_cap(cap)
+                .set_stroke_join(join);
+        }
+        paint
+    }
+}
+
 /// A parsed icon: viewBox and drawables, in document order.
 struct IconSvg {
     view_box: [f32; 4],
     paths: Vec<IconPath>,
+    paint_bounds: std::cell::OnceCell<Option<Rect>>,
 }
 
 thread_local! {
     /// Parsed icons by asset key (skia paths are not `Sync`; GPUI paints on one thread).
     static ICONS: std::cell::RefCell<HashMap<String, Option<std::rc::Rc<IconSvg>>>> =
         Default::default();
+}
+
+fn cached_icon(src: &[u8], key: &str) -> Option<std::rc::Rc<IconSvg>> {
+    ICONS.with_borrow_mut(|icons| {
+        if let Some(icon) = icons.get(key) {
+            return icon.clone();
+        }
+        let icon = std::str::from_utf8(src)
+            .ok()
+            .and_then(parse_icon)
+            .map(std::rc::Rc::new);
+        icons.insert(key.to_owned(), icon.clone());
+        icon
+    })
+}
+
+impl IconSvg {
+    fn paint_bounds(&self) -> Option<Rect> {
+        *self.paint_bounds.get_or_init(|| {
+            let mut bounds = Rect::new_empty();
+            for drawable in &self.paths {
+                if drawable.opacity <= 0. || drawable.layer <= 0. {
+                    continue;
+                }
+                let outlined = if drawable.stroke.is_some() {
+                    let stroke = skia_safe::StrokeRec::from_paint(
+                        &drawable.paint(Color4f::new(1., 1., 1., 1.)),
+                        None,
+                        None,
+                    );
+                    let mut path = PathBuilder::new();
+                    if !stroke.apply_to_path(&mut path, &drawable.path) {
+                        return None;
+                    }
+                    Some(path.detach())
+                } else {
+                    None
+                };
+                let path = outlined.as_ref().unwrap_or(&drawable.path);
+                bounds.join(if drawable.transform.is_identity() {
+                    path.compute_tight_bounds()
+                } else {
+                    path.with_transform(&drawable.transform)
+                        .compute_tight_bounds()
+                });
+            }
+            (!bounds.is_empty()).then_some(bounds)
+        })
+    }
 }
 
 fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
@@ -2480,7 +2563,54 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
     Some(IconSvg {
         view_box: [v[0], v[1], *v.get(2)?, *v.get(3)?],
         paths,
+        paint_bounds: Default::default(),
     })
+}
+
+pub(crate) fn icon_paint_bounds(
+    src: &[u8],
+    key: &str,
+    bounds: Bounds<Pixels>,
+    flip_x: bool,
+    window: &Window,
+) -> Option<Bounds<Pixels>> {
+    let icon = cached_icon(src, key)?;
+    let ink = icon.paint_bounds()?;
+    let s = window.scale_factor();
+    let snap = |value: Pixels| f64::from((f32::from(value) * s + 0.5).floor());
+    let (w, h) = (
+        f64::from(f32::from(bounds.size.width) * s),
+        f64::from(f32::from(bounds.size.height) * s),
+    );
+    let [vx, vy, vw, vh] = icon.view_box.map(f64::from);
+    if w <= 0. || h <= 0. || vw <= 0. || vh <= 0. {
+        return None;
+    }
+    let scale = (w / vw).min(h / vh);
+    let (tx, ty) = (
+        (w - vw * scale) / 2. - vx * scale,
+        (h - vh * scale) / 2. - vy * scale,
+    );
+    let mut left = f64::from(ink.left) * scale + tx;
+    let mut right = f64::from(ink.right) * scale + tx;
+    if flip_x {
+        (left, right) = (w - right, w - left);
+    }
+    let (x, y) = (snap(bounds.left()), snap(bounds.top()));
+    let left = (x + left).floor().max(x);
+    let top = (y + f64::from(ink.top) * scale + ty).floor().max(y);
+    let right = (x + right).ceil().min(snap(bounds.right()));
+    let bottom = (y + f64::from(ink.bottom) * scale + ty)
+        .ceil()
+        .min(snap(bounds.bottom()));
+    if left >= right || top >= bottom {
+        return None;
+    }
+    let css = |value: f64| px(value as f32 / s);
+    Some(Bounds::new(
+        point(css(left), css(top)),
+        size(css(right - left), css(bottom - top)),
+    ))
 }
 
 /// `crate::paint_icon` on macOS.
@@ -2492,33 +2622,50 @@ pub(crate) fn paint_icon(
     flip_x: bool,
     color: Hsla,
     composited: Option<gpui::Point<Pixels>>,
+    transformation: Option<TransformationMatrix>,
     window: &mut Window,
     cx: &App,
 ) -> bool {
     if window.element_opacity() <= 0. {
         return true;
     }
-    let icon = ICONS.with_borrow_mut(|icons| {
-        icons
-            .entry(key.to_string())
-            .or_insert_with(|| parse_icon(std::str::from_utf8(src).ok()?).map(std::rc::Rc::new))
-            .clone()
-    });
+    let icon = cached_icon(src, key);
     let Some(icon) = icon else {
         return false;
     };
     let s = window.scale_factor();
-    let layer = Layer::new(window, composited);
-    // The svg root snaps to the nearest device px (half up); the viewBox maps onto its
-    // unsnapped CSS size (`xMidYMid meet`), in doubles like Blink's AffineTransform.
+    let transformed = transformation.is_some();
+    let transformation = transformation.unwrap_or_default();
     let snap = |v: Pixels| (f32::from(v) * s + 0.5).floor();
-    // In layer space, like the decorations.
-    let b = layer.local(bounds, s);
-    let origin = [snap(b.origin.x), snap(b.origin.y)];
     let (w, h) = (
         f64::from(f32::from(bounds.size.width) * s),
         f64::from(f32::from(bounds.size.height) * s),
     );
+    let layer = if transformed {
+        Layer {
+            origin: [0, 0],
+            tile_origin: [0, 0],
+            window: [w.ceil() as i32, h.ceil() as i32],
+            tile: [TILE; 2],
+            composited: true,
+            device: None,
+            recorded: None,
+        }
+    } else {
+        Layer::new(window, composited)
+    };
+    let paint_origin = if transformed {
+        [snap(bounds.left()) as i32, snap(bounds.top()) as i32]
+    } else {
+        layer.origin
+    };
+    // A transformed SVG is rasterized in its own viewport before scene clipping.
+    let b = if transformed {
+        Bounds::new(point(px(0.), px(0.)), bounds.size)
+    } else {
+        layer.local(bounds, s)
+    };
+    let origin = [snap(b.origin.x), snap(b.origin.y)];
     let [vx, vy, vw, vh] = icon.view_box.map(f64::from);
     let scale = (w / vw).min(h / vh);
     let (tx, ty) = (
@@ -2544,14 +2691,18 @@ pub(crate) fn paint_icon(
         snap(b.origin.x + bounds.size.width),
         snap(b.origin.y + bounds.size.height),
     );
-    let clips = clips(window, layer);
+    let clips = if transformed {
+        Vec::new()
+    } else {
+        clips(window, layer)
+    };
     let bbox = [
         origin[0] as i32 - 2,
         origin[1] as i32 - 2,
         (origin[0] as f64 + w).ceil() as i32 + 2,
         (origin[1] as f64 + h).ceil() as i32 + 2,
     ];
-    if !shown(bbox, layer, window) {
+    if !transformed && !shown(bbox, layer, window) {
         return true;
     }
     let prepare = |c: &Canvas| {
@@ -2566,15 +2717,7 @@ pub(crate) fn paint_icon(
     };
     let draw_path = |c: &Canvas, p: &IconPath, col: Color4f| {
         c.concat(&p.transform);
-        let mut paint = fill_paint(col);
-        if let Some((width, cap, join)) = p.stroke {
-            paint
-                .set_style(PaintStyle::Stroke)
-                .set_stroke_width(width)
-                .set_stroke_cap(cap)
-                .set_stroke_join(join);
-        }
-        c.draw_path(&p.path, &paint);
+        c.draw_path(&p.path, &p.paint(col));
     };
     if layer.composited && !wide(color) {
         let rgba = Rgba::from(color);
@@ -2599,7 +2742,7 @@ pub(crate) fn paint_icon(
                 })
             },
         );
-        paint_sprites(&sprites, color, layer.origin, window, cx);
+        paint_transformed_sprites(&sprites, color, paint_origin, transformation, window, cx);
         return true;
     }
     for (n, p) in icon.paths.iter().enumerate() {
@@ -2622,7 +2765,7 @@ pub(crate) fn paint_icon(
             ),
             || raster(bbox, layer, a, black, wide, &clips, &draw),
         );
-        paint_sprites(&sprites, color, layer.origin, window, cx);
+        paint_transformed_sprites(&sprites, color, paint_origin, transformation, window, cx);
     }
     true
 }
