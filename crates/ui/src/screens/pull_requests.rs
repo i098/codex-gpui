@@ -42,7 +42,6 @@ pub struct Page {
     pub repository: Option<Repository>,
     pub selected: Option<Identity>,
     pub detail: Option<Result<Value, String>>,
-    pub media: Option<String>,
     media_images: HashMap<String, Option<Result<Arc<gpui::RenderImage>, String>>>,
     pub generation: u64,
     pub detail_generation: u64,
@@ -99,7 +98,6 @@ impl Page {
             repository: None,
             selected: None,
             detail: None,
-            media: None,
             media_images: HashMap::new(),
             generation: 0,
             detail_generation: 0,
@@ -129,7 +127,6 @@ impl Page {
             Availability::Checking => {
                 self.detail_generation += 1;
                 self.detail = None;
-                self.media = None;
                 self.media_images.clear();
                 self.streams.clear();
                 self.last_filters = None;
@@ -227,7 +224,6 @@ impl Page {
         }
         self.selected = identity;
         self.detail = None;
-        self.media = None;
         self.media_images.clear();
         self.detail_generation += 1;
         self.collapsed_detail = [false; 3];
@@ -267,62 +263,44 @@ impl Page {
         if self.detail_generation != generation {
             return;
         }
-        self.media_images.insert(
-            url.to_owned(),
-            Some(result.and_then(|value| {
-                let source = value["contentsBase64"]
-                    .as_str()
-                    .ok_or("GitHub media is unavailable")?;
-                let bytes = base64::engine::general_purpose::STANDARD
-                    .decode(source)
-                    .map_err(|e| e.to_string())?;
-                let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
-                    .with_guessed_format()
-                    .map_err(|e| e.to_string())?;
-                let pixels = reader.decode().map_err(|e| e.to_string())?.into_rgba8();
-                Ok(Arc::new(gpui::RenderImage::new([image::Frame::new(
-                    pixels,
-                )])))
-            })),
-        );
+        self.media_images
+            .insert(url.to_owned(), Some(result.and_then(decode_image_preview)));
         cx.notify();
     }
 
-    fn media_overlay(&self, cx: &Context<Self>) -> Div {
+    fn unavailable_media(&self, url: &str, cx: &Context<Self>) -> Div {
         let t = cx.theme();
-        let mut content = div()
-            .absolute()
-            .inset_0()
-            .p(px(24.))
+        let url = url.to_owned();
+        div()
+            .my(px(12.))
+            .min_h(px(96.))
+            .min_w(px(160.))
+            .px(px(16.))
+            .py(px(12.))
+            .rounded(px(12.5))
+            .bg(t.ghost_hover)
             .flex()
             .flex_col()
             .items_center()
             .justify_center()
-            .gap(px(16.))
-            .bg(t.dialog_backdrop);
-        content = content.child(self.button("close-media", "Close preview", cx).on_click(
-            cx.listener(|this, _, _, cx| {
-                this.media = None;
-                cx.notify();
-            }),
-        ));
-        match self
-            .media
-            .as_ref()
-            .and_then(|url| self.media_images.get(url))
-            .and_then(Option::as_ref)
-        {
-            None => content.child(text("Loading image", 14., 21., 430., t.text)),
-            Some(Err(error)) => {
-                content.child(text(error.clone(), 14., 21., 430., t.text).whitespace_normal())
-            }
-            Some(Ok(image)) => content.child(
-                gpui::img(image.clone())
-                    .max_w_full()
-                    .max_h_full()
-                    .object_fit(gpui::ObjectFit::Contain),
-            ),
-        }
+            .gap(px(8.))
+            .child(text(
+                "Preview unavailable",
+                13.,
+                18.571_428,
+                430.,
+                t.text_secondary,
+            ))
+            .child(
+                self.button(
+                    SharedString::from(format!("open-media:{url}")),
+                    "Open in GitHub",
+                    cx,
+                )
+                .bg(gpui::transparent_black())
+                .border_color(t.border)
+                .on_click(move |_, _, cx| cx.open_url(&url)),
+            )
     }
 
     fn description(&self, body: &str, window: &Window, cx: &Context<Self>) -> Div {
@@ -345,36 +323,34 @@ impl Page {
                     cx.theme(),
                 ));
             }
-            let mut preview = div()
-                .id(("github-media", index))
-                .role(gpui::Role::Button)
-                .aria_label("Preview image")
-                .track_focus(&self.control(("github-media", index), cx))
-                .cursor_pointer()
-                .max_w_full()
-                .max_h(px(400.));
-            preview = match self.media_images.get(&url).and_then(Option::as_ref) {
-                None => preview.child(text(
-                    "Loading image",
-                    14.,
-                    21.,
-                    430.,
-                    cx.theme().text_tertiary,
-                )),
-                Some(Err(error)) => preview.child(
-                    text(error.clone(), 14., 21., 430., cx.theme().text_error).whitespace_normal(),
-                ),
-                Some(Ok(image)) => preview.child(
-                    gpui::img(image.clone())
-                        .max_w_full()
-                        .max_h(px(400.))
-                        .object_fit(gpui::ObjectFit::Contain),
-                ),
+            let preview = match self.media_images.get(&url).and_then(Option::as_ref) {
+                None => div()
+                    .id(("github-media", index))
+                    .aria_label("Loading GitHub media…")
+                    .min_h(px(96.))
+                    .min_w(px(160.))
+                    .px(px(16.))
+                    .py(px(12.))
+                    .rounded(px(10.))
+                    .bg(cx.theme().ghost_hover)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("sidebar-cmd-spinner", 16., cx.theme().text_secondary))
+                    .into_any_element(),
+                Some(Err(_)) => self.unavailable_media(&url, cx).into_any_element(),
+                Some(Ok(image)) => div()
+                    .my(px(12.))
+                    .child(
+                        gpui::img(image.clone())
+                            .max_w_full()
+                            .max_h((window.viewport_size().height * 0.7).min(px(640.)))
+                            .rounded(px(10.))
+                            .object_fit(gpui::ObjectFit::Contain),
+                    )
+                    .into_any_element(),
             };
-            content = content.child(preview.on_click(cx.listener(move |this, _, _, cx| {
-                this.media = Some(url.clone());
-                cx.notify();
-            })));
+            content = content.child(preview);
             cursor = span.end;
         }
         if cursor < body.len() {
@@ -1148,9 +1124,6 @@ impl Render for Page {
                         .child(self.detail(window, cx)),
                 )
             })
-            .when(self.media.is_some(), |d| {
-                d.child(gpui::deferred(self.media_overlay(cx)).with_priority(3))
-            })
     }
 }
 
@@ -1184,30 +1157,94 @@ fn relative_age(date: &str, clock: Clock) -> String {
 }
 
 fn media_spans(body: &str) -> Vec<(std::ops::Range<usize>, String)> {
-    pulldown_cmark::Parser::new(body)
-        .into_offset_iter()
-        .filter_map(|(event, span)| {
-            let url = match event {
-                pulldown_cmark::Event::Start(pulldown_cmark::Tag::Image { dest_url, .. }) => {
-                    dest_url.into_string()
-                }
-                pulldown_cmark::Event::Html(html) | pulldown_cmark::Event::InlineHtml(html) => {
-                    html_image_source(&html)?.replace("&amp;", "&")
-                }
-                _ => return None,
-            };
-            (url.starts_with("https://github.com/user-attachments/assets/")
-                || url.starts_with("https://user-images.githubusercontent.com/")
-                || url.starts_with("https://private-user-images.githubusercontent.com/"))
-            .then_some((span, url))
-        })
-        .collect()
+    let mut spans = Vec::new();
+    let mut paragraph = None;
+    for (event, span) in pulldown_cmark::Parser::new(body).into_offset_iter() {
+        let url = match event {
+            pulldown_cmark::Event::Start(pulldown_cmark::Tag::Paragraph) => {
+                paragraph = Some(span.clone());
+                let raw = body[span.clone()].trim();
+                video_link(raw).then(|| raw.to_owned())
+            }
+            pulldown_cmark::Event::End(pulldown_cmark::TagEnd::Paragraph) => {
+                paragraph = None;
+                None
+            }
+            pulldown_cmark::Event::Start(pulldown_cmark::Tag::Image { dest_url, .. }) => {
+                Some(dest_url.into_string())
+            }
+            pulldown_cmark::Event::Start(pulldown_cmark::Tag::Link { dest_url, .. })
+                if paragraph.as_ref().is_some_and(|range| {
+                    body[range.clone()].trim() == body[span.clone()].trim()
+                }) =>
+            {
+                video_link(&dest_url).then(|| dest_url.into_string())
+            }
+            pulldown_cmark::Event::Html(html) | pulldown_cmark::Event::InlineHtml(html) => {
+                html_media_source(&html).map(|url| url.replace("&amp;", "&"))
+            }
+            _ => None,
+        };
+        if let Some(url) = url.filter(|url| media_url(url))
+            && spans
+                .last()
+                .is_none_or(|(previous, _): &(std::ops::Range<usize>, String)| {
+                    previous.end <= span.start
+                })
+        {
+            spans.push((span, url));
+        }
+    }
+    spans
 }
 
-fn html_image_source(html: &str) -> Option<&str> {
+fn media_url(url: &str) -> bool {
+    url.starts_with("https://github.com/user-attachments/assets/")
+        || url.starts_with("https://user-images.githubusercontent.com/")
+        || url.starts_with("https://private-user-images.githubusercontent.com/")
+}
+
+fn video_link(url: &str) -> bool {
+    let path = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    media_url(url)
+        && !url.chars().any(char::is_whitespace)
+        && (url.starts_with("https://github.com/user-attachments/assets/")
+            || [".mp4", ".mov", ".webm"]
+                .iter()
+                .any(|extension| path.ends_with(extension)))
+}
+
+fn decode_image_preview(value: Value) -> Result<Arc<gpui::RenderImage>, String> {
+    let mime = value["mimeType"].as_str().ok_or("Preview unavailable")?;
+    if !mime.starts_with("image/") && mime != "application/octet-stream" {
+        return Err("Preview unavailable".into());
+    }
+    let source = value["contentsBase64"]
+        .as_str()
+        .ok_or("Preview unavailable")?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(source)
+        .map_err(|e| e.to_string())?;
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?;
+    let pixels = reader.decode().map_err(|e| e.to_string())?.into_rgba8();
+    Ok(Arc::new(gpui::RenderImage::new([image::Frame::new(
+        pixels,
+    )])))
+}
+
+fn html_media_source(html: &str) -> Option<&str> {
     let tag = html.trim_start().strip_prefix('<')?;
     let name_end = tag.find(|c: char| c.is_whitespace() || c == '>')?;
-    if !tag[..name_end].eq_ignore_ascii_case("img") {
+    if !["img", "video"]
+        .iter()
+        .any(|name| tag[..name_end].eq_ignore_ascii_case(name))
+    {
         return None;
     }
     let mut attributes = &tag[name_end..];
@@ -1373,5 +1410,26 @@ mod tests {
             "https://github.com/user-attachments/assets/one?a=1&b=2"
         );
         assert!(media_spans("<img src='https://example.com/image.png'>").is_empty());
+    }
+
+    #[test]
+    fn video_attachments_use_the_original_unavailable_preview_path() {
+        let url = "https://github.com/user-attachments/assets/video";
+        for body in [
+            url.to_owned(),
+            format!("[Video]({url})"),
+            format!("<video src='{url}' controls></video>"),
+        ] {
+            let spans = media_spans(&body);
+            assert_eq!(spans.len(), 1, "{body}");
+            assert_eq!(spans[0].1, url);
+        }
+        let video =
+            serde_json::json!({"status":"success", "mimeType":"video/mp4", "contentsBase64":""});
+        assert_eq!(
+            decode_image_preview(video).err().as_deref(),
+            Some("Preview unavailable")
+        );
+        assert!(media_spans(&format!("Text before [video]({url})")).is_empty());
     }
 }
