@@ -25,6 +25,7 @@ gpui.workspace = true
 gpui_platform.workspace = true
 iana-time-zone = "0.1"
 pollster = "0.4"
+portable-pty = "0.9"
 rrule = { path = "../../vendor/rrule", features = ["exrule"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
@@ -36,6 +37,7 @@ theme = { path = "../theme" }
 ui = { path = "../ui" }
 ureq = "3"
 url = "2"
+vt100 = "0.15.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSRunningApplication", "NSImage", "NSImageRep", "NSBitmapImageRep"] }

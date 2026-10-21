@@ -31,14 +31,26 @@ impl Settings {
     }
 
     pub fn write(&mut self, key: &str, value: Value) -> Result<()> {
-        let old = self.values.insert(key.to_owned(), value);
+        self.write_batch([(key, value)])
+    }
+
+    pub fn write_batch<'a>(
+        &mut self,
+        values: impl IntoIterator<Item = (&'a str, Value)>,
+    ) -> Result<()> {
+        let previous: Vec<_> = values
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), self.values.insert(key.to_owned(), value)))
+            .collect();
         if let Err(error) = self.save() {
-            match old {
-                Some(value) => {
-                    self.values.insert(key.to_owned(), value);
-                }
-                None => {
-                    self.values.remove(key);
+            for (key, value) in previous.into_iter().rev() {
+                match value {
+                    Some(value) => {
+                        self.values.insert(key, value);
+                    }
+                    None => {
+                        self.values.remove(&key);
+                    }
                 }
             }
             return Err(error);

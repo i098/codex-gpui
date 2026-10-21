@@ -101,20 +101,12 @@ pub struct GoToRecentChat(pub usize);
 /// `(min-width: 768px)`: below it the original hides the sidebar panel.
 const SIDEBAR_BREAKPOINT: Pixels = px(768.);
 
-/// Key bindings (docs/inventory.md §12) and the app-level commands.
+/// Fixed platform bindings and app-level commands; configurable bindings are installed by the keymap module.
 pub fn init(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("cmd-h", Hide, None),
         KeyBinding::new("alt-cmd-h", HideOthers, None),
         KeyBinding::new("cmd-q", Quit, None),
-        KeyBinding::new("cmd-n", NewChat, None),
-        KeyBinding::new("cmd-shift-o", NewChat, None),
-        KeyBinding::new("cmd-o", OpenFolder, None),
-        KeyBinding::new("cmd-w", CloseWindow, None),
-        KeyBinding::new("cmd-/", ShowKeyboardShortcuts, None),
-        KeyBinding::new("cmd-z", Undo, None),
-        KeyBinding::new("cmd-shift-z", Redo, None),
         KeyBinding::new("cmd-x", Cut, None),
         KeyBinding::new("cmd-c", Copy, None),
         KeyBinding::new("cmd-v", Paste, None),
@@ -122,24 +114,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-f", FindInThread, None),
         KeyBinding::new("cmd-g", FindNext, None),
         KeyBinding::new("cmd-shift-g", FindPrevious, None),
-        KeyBinding::new("cmd-shift-s", ToggleSidebar, None),
-        KeyBinding::new("cmd-b", ToggleSidebar, None),
-        KeyBinding::new("cmd-[", GoBack, None),
-        KeyBinding::new("cmd-]", GoForward, None),
-        KeyBinding::new("cmd-shift-[", PreviousChat, None),
-        KeyBinding::new("cmd-alt-left", PreviousChat, None),
-        KeyBinding::new("cmd-shift-]", NextChat, None),
-        KeyBinding::new("cmd-alt-right", NextChat, None),
         KeyBinding::new("cmd-m", Minimize, None),
-        KeyBinding::new("cmd-k", OpenCommandMenu, None),
-        KeyBinding::new("cmd-shift-p", OpenCommandMenu, None),
-        KeyBinding::new("alt-cmd-b", ToggleChangesPanel, None),
-        KeyBinding::new("cmd-shift-a", ArchiveChat, None),
     ]);
-    cx.bind_keys((1..=9).map(|n| KeyBinding::new(&format!("cmd-{n}"), GoToChat(n - 1), None)));
-    cx.bind_keys(
-        (1..=6).map(|n| KeyBinding::new(&format!("cmd-alt-{n}"), GoToRecentChat(n - 1), None)),
-    );
     ui::composer::bind_keys(cx);
     features::init(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
@@ -193,6 +169,10 @@ pub fn menus() -> Vec<Menu> {
             MenuItem::action("Next Chat", NextChat),
             MenuItem::action("Back", GoBack),
             MenuItem::action("Forward", GoForward),
+            MenuItem::separator(),
+            MenuItem::action("Zoom In", features::shortcuts::ZoomIn),
+            MenuItem::action("Zoom Out", features::shortcuts::ZoomOut),
+            MenuItem::action("Actual Size", features::shortcuts::ActualSize),
         ]),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),
@@ -227,6 +207,8 @@ pub enum SidePanel {
     Changes,
     /// The first background command's terminal.
     Terminal,
+    /// An interactive shell, separate from a background command's read-only output.
+    Console,
     /// A file link in an answer: the file viewer ([`Root::file`]).
     File,
 }
@@ -265,6 +247,7 @@ pub struct State {
     pub theme: ThemeSetting,
     pub confirm_before_close: ConfirmBeforeClose,
     pub project_root: Option<String>,
+    pub zoom: f32,
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -280,6 +263,7 @@ impl Default for State {
             theme: ThemeSetting::System,
             confirm_before_close: ConfirmBeforeClose::default(),
             project_root: None,
+            zoom: 1.,
             path: None,
         }
     }
@@ -389,6 +373,8 @@ pub struct Root {
     sidebar: Entity<HomeSidebar>,
     /// Recents in sidebar order, for `⌘1`…`⌘9`, Previous/Next Chat and the command menu.
     threads: Vec<Thread>,
+    recent_chats: Vec<String>,
+    shortcut_state: features::shortcuts::ShortcutState,
     new_chat_section: Option<String>,
     /// `thread/list` cursor of the page after `threads`, while the sidebar's end asks for it.
     next_cursor: Option<String>,
@@ -492,13 +478,14 @@ impl Root {
     }
 
     fn with_connection(
-        state: State,
+        mut state: State,
         bridge: Arc<Bridge>,
         events: Receiver<Event>,
         cwd: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        features::shortcuts::initialize_window(&mut state, window);
         cx.set_global(AppServer(bridge.clone()));
         if !cx.has_global::<host_settings::Settings>() {
             let settings = match state.path.as_ref() {
@@ -512,6 +499,7 @@ impl Root {
                 Err(error) => eprintln!("codex-gpui: cannot load host settings: {error:#}"),
             }
         }
+        features::install_shortcuts(cx);
         let this = cx.weak_entity();
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
@@ -625,7 +613,7 @@ impl Root {
         })
         .detach();
         let main = cx.new(|_| ui::EmptyMain).into();
-        let wide = window.viewport_size().width >= SIDEBAR_BREAKPOINT;
+        let wide = window.viewport_size().width * window.ui_scale() >= SIDEBAR_BREAKPOINT;
         let sidebar_open = state.sidebar_open && wide;
         let shell = cx.new(|_| {
             let mut shell = Shell::new(sidebar.clone().into(), main);
@@ -685,6 +673,8 @@ impl Root {
             shell,
             sidebar,
             threads: Vec::new(),
+            recent_chats: Vec::new(),
+            shortcut_state: features::shortcuts::ShortcutState::default(),
             new_chat_section: None,
             next_cursor: None,
             loading_more: false,
@@ -2043,6 +2033,11 @@ impl Root {
 
     /// `⌘N`, the `New chat` row and rail Home: Home with an empty, focused composer.
     fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.shortcut_state.new_chat_mode = features::shortcuts::NewChatMode::Project;
+        self.home.update(cx, |home, cx| {
+            home.project = self.state.project_root.as_deref().map(project_name);
+            cx.notify();
+        });
         self.new_chat_section = None;
         self.navigate(Route::Home, window, cx);
         let composer = self.home.read(cx).composer.clone();
@@ -2073,7 +2068,7 @@ impl Root {
     /// Below [`SIDEBAR_BREAKPOINT`] the sidebar hides; wider again it shows as the user
     /// left it.
     fn fit(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let wide = window.viewport_size().width >= SIDEBAR_BREAKPOINT;
+        let wide = window.viewport_size().width * window.ui_scale() >= SIDEBAR_BREAKPOINT;
         if wide != self.wide {
             self.wide = wide;
             let open = wide && self.state.sidebar_open;
@@ -2137,6 +2132,7 @@ impl Root {
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.remember_recent_chat();
         self.flush_settings(cx);
         self.settings_page = None;
         self.suggestion_load = None;
@@ -2285,6 +2281,7 @@ impl Root {
         {
             self.list_queue(id, cx);
         }
+        self.sync_terminal_panel(cx);
         self.save(window, cx);
         cx.notify();
     }
@@ -2350,6 +2347,7 @@ impl Root {
         side: SidePanel,
         view: &Entity<ThreadView>,
         file: Option<&Entity<FileView>>,
+        console: bool,
         cx: &App,
     ) -> Option<Tab> {
         match side {
@@ -2358,6 +2356,7 @@ impl Root {
                 let (_, command, _) = view.read(cx).terminal()?;
                 Some(("thread-terminal", command.into()))
             }
+            SidePanel::Console => console.then(|| ("terminal-interactive", "Terminal".into())),
             SidePanel::File => {
                 let file = file?.read(cx);
                 Some((file.tab_icon(), file.name()))
@@ -2373,12 +2372,13 @@ impl Root {
         cx: &mut Context<Self>,
     ) -> Option<(AnyView, Vec<Tab>, usize)> {
         let file = self.file.clone();
+        let console = self.shortcut_state.terminal.is_some();
         self.tabs
-            .retain(|side| Self::side_tab(*side, view, file.as_ref(), cx).is_some());
+            .retain(|side| Self::side_tab(*side, view, file.as_ref(), console, cx).is_some());
         let tabs: Vec<Tab> = self
             .tabs
             .iter()
-            .filter_map(|side| Self::side_tab(*side, view, file.as_ref(), cx))
+            .filter_map(|side| Self::side_tab(*side, view, file.as_ref(), console, cx))
             .collect();
         let active = self
             .side
@@ -2389,6 +2389,7 @@ impl Root {
         let view: AnyView = match self.tabs[active] {
             SidePanel::Changes => self.diff.as_ref()?.clone().into(),
             SidePanel::Terminal => cx.new(|cx| Xterm::new(view.clone(), cx)).into(),
+            SidePanel::Console => self.shortcut_state.terminal.as_ref()?.clone().into(),
             SidePanel::File => self.file.as_ref()?.clone().into(),
         };
         Some((view, tabs, active))
@@ -2835,7 +2836,21 @@ impl Root {
                 self.navigate(Route::Thread(id.clone()), window, cx)
             }
             CommandMenuEvent::Command(label) => match label.as_ref() {
-                "New chat" | "New standalone chat" => window.dispatch_action(Box::new(NewChat), cx),
+                "New chat" => window.dispatch_action(Box::new(NewChat), cx),
+                "New standalone chat" => {
+                    window.dispatch_action(Box::new(features::shortcuts::NewStandaloneChat), cx)
+                }
+                "New Temporary Chat" => {
+                    window.dispatch_action(Box::new(features::shortcuts::NewTemporaryChat), cx)
+                }
+                "Undo last action" => window.dispatch_action(Box::new(Undo), cx),
+                "Redo last action" => window.dispatch_action(Box::new(Redo), cx),
+                "Clear all unreads" => {
+                    window.dispatch_action(Box::new(features::shortcuts::ClearAllUnreads), cx)
+                }
+                "Next chat needing attention" => {
+                    window.dispatch_action(Box::new(features::shortcuts::NextAttentionChat), cx)
+                }
                 "Search files" => self.open_file_search(window, cx),
                 "Open in new window" => {
                     window.dispatch_action(Box::new(features::OpenThreadInNewWindow), cx)
@@ -2856,7 +2871,8 @@ impl Root {
                 "Toggle sidebar" => window.dispatch_action(Box::new(ToggleSidebar), cx),
                 "Open Changes tab" => window.dispatch_action(Box::new(OpenChangesPanel), cx),
                 "New tab" => window.dispatch_action(Box::new(ToggleChangesPanel), cx),
-                "Open terminal" => window.dispatch_action(Box::new(OpenBackgroundTerminal), cx),
+                "Open terminal" => window
+                    .dispatch_action(Box::new(features::shortcuts::OpenInteractiveTerminal), cx),
                 "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 "Log out" => window.dispatch_action(Box::new(LogOut), cx),
@@ -3070,86 +3086,6 @@ impl Root {
         } else {
             self.navigate(route, window, cx);
         }
-    }
-
-    /// Home composer: `thread/start` with the chosen model and permissions, open it, then
-    /// `turn/start`; the turn streams in through [`Self::on_event`].
-    fn start_thread(&mut self, s: Submission, window: &mut Window, cx: &mut Context<Self>) {
-        self.qa_work_started = true;
-        let bridge = self.bridge.clone();
-        let cwd = self
-            .state
-            .project_root
-            .as_ref()
-            .unwrap_or(&self.cwd)
-            .clone();
-        let section = self.new_chat_section.clone();
-        let computer_use = computer_use_overrides(&self.config);
-        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let mut params = json!({ "cwd": cwd, "model": model(&s) });
-            apply_permissions(&mut params, s.permission);
-            if let Some(config) = computer_use {
-                params["config"] = config;
-            }
-            let mut thread = match bridge
-                .request::<_, ThreadStartResponse>("thread/start", params)
-                .await
-            {
-                Ok(started) => started.thread,
-                Err(error) => {
-                    // The draft, its attachments and the chosen project stay as they were.
-                    this.update(cx, |this, cx| {
-                        let composer = this.home.read(cx).composer.clone();
-                        composer.update(cx, |c, cx| c.restore_submission(&s.text, cx));
-                        this.toast(Toast::danger("Error starting chat"), cx);
-                    })?;
-                    return Err(error);
-                }
-            };
-            // Title the new chat (Recents row, header) with its prompt until it has a preview.
-            if thread.preview.is_empty() {
-                thread.preview = s.text.clone();
-            }
-            let id = thread.id.clone();
-            let section = if let Some(section) = section {
-                match bridge
-                    .request::<_, Value>(
-                        "thread/section/move",
-                        json!({
-                            "threadId": id, "sectionId": section, "beforeThreadId": null
-                        }),
-                    )
-                    .await
-                {
-                    Ok(_) => {
-                        thread.section = Some(ThreadSection {
-                            id: section.clone(),
-                        });
-                        Some(section)
-                    }
-                    Err(_) => {
-                        this.update(cx, |this, cx| {
-                            this.toast(Toast::danger("Couldn't move chat to section"), cx)
-                        })?;
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-            this.update_in(cx, |this, window, cx| {
-                this.new_chat_section = None;
-                this.loaded.insert(id.clone());
-                this.add_thread(&thread, cx);
-                if let Some(section) = &section {
-                    this.sidebar
-                        .update(cx, |s, cx| s.assign_section(&id, section, cx));
-                }
-                this.show_thread(thread, window, cx);
-            })?;
-            turn_start(&bridge, &id, &s, user_input(&s)).await
-        });
-        log_err(task, cx);
     }
 
     /// Thread composer: `turn/start` on the open thread, resuming it first if needed. While a
@@ -3756,6 +3692,12 @@ impl Root {
                     }
                     this.sidebar
                         .update(cx, |s, cx| s.set_threads(&this.threads, cx));
+                } else {
+                    let before = old_section.map(|section| section.id);
+                    let after = pinned.then(|| PINNED_SECTION_ID.to_owned());
+                    if before != after {
+                        this.record_app_edit(features::shortcuts::AppEdit::Section { id: id.clone(), before, after });
+                    }
                 }
             })?;
             done.map(drop)
@@ -3766,6 +3708,12 @@ impl Root {
     /// `Rename chat`'s Save: `thread/name/set`; the row (and the open chat's header) take the
     /// name once the write succeeds, else `Couldn't save your changes. Try again`.
     fn rename(&mut self, id: String, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        let previous_name = self
+            .threads
+            .iter()
+            .find(|thread| thread.id == id)
+            .map(thread_title)
+            .map(|name| name.to_string());
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let done = bridge
@@ -3773,11 +3721,14 @@ impl Root {
                 .await;
             this.update(cx, |this, cx| match &done {
                 Ok(_) => {
-                    if let Some(thread) = this.threads.iter_mut().find(|thread| thread.id == id) {
-                        thread.name = Some(name);
+                    this.apply_thread_title(&id, &name, cx);
+                    if let Some(before) = previous_name.filter(|before| before != &name) {
+                        this.record_app_edit(features::shortcuts::AppEdit::Rename {
+                            id: id.clone(),
+                            before,
+                            after: name,
+                        });
                     }
-                    this.sidebar
-                        .update(cx, |s, cx| s.set_threads(&this.threads, cx));
                 }
                 Err(_) => this.toast(Toast::danger("Couldn't save your changes. Try again"), cx),
             })?;
@@ -3804,6 +3755,12 @@ impl Root {
                 .await;
             this.update(cx, |this, cx| match &done {
                 Ok(_) => {
+                    if let Some(thread) = thread {
+                        this.record_app_edit(features::shortcuts::AppEdit::Archive {
+                            thread,
+                            index: at.unwrap_or(0),
+                        });
+                    }
                     let (view, undo) = (cx.weak_entity(), cx.weak_entity());
                     let toast = Toast::info("Archived chat")
                         .icon("sidebar-archive")
@@ -3853,6 +3810,7 @@ impl Root {
                     .and_then(|r| serde_json::from_value::<Thread>(r["thread"].clone()).ok());
                 match thread {
                     Some(thread) => {
+                        this.forget_archive_edit(&thread.id);
                         if let Some(page) = &this.archive_page {
                             page.update(cx, |page, cx| page.unarchived(&thread.id, cx));
                         }
@@ -4667,7 +4625,7 @@ impl Root {
             self.state.sidebar_open = self.shell.read(cx).sidebar_open;
         }
         self.state.sidebar_width = self.shell.read(cx).sidebar_width.into();
-        self.state.save();
+        self.save_shortcut_state();
     }
 }
 
@@ -5401,8 +5359,19 @@ impl Render for Root {
             .font_family(ui::SANS)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::type_anywhere))
-            .capture_action(cx.listener(|this, _: &Undo, window, cx| {
-                this.undo_queued(window, cx);
+            .on_action(cx.listener(|this, _: &Undo, window, cx| {
+                if this.deleted_queued.is_empty() {
+                    if !this.undo_app_edit(true, window, cx) {
+                        cx.propagate();
+                    }
+                } else {
+                    this.undo_queued(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &Redo, window, cx| {
+                if !this.undo_app_edit(false, window, cx) {
+                    cx.propagate();
+                }
             }))
             .on_action(cx.listener(|this, _: &FindInThread, window, cx| {
                 if matches!(this.state.route, Route::Thread(_)) {
@@ -5585,7 +5554,9 @@ impl Render for Root {
             .child(content)
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
-            .children(self.dialog.clone());
+            .children(self.dialog.clone())
+            .children(self.shortcut_state.confirmation.clone())
+            .children(self.shortcut_state.zoom_banner.clone());
         section_actions::actions(features::actions(root, cx), cx).into_any_element()
     }
 }

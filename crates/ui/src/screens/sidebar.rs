@@ -1428,14 +1428,14 @@ impl Item {
 }
 
 /// The original `_4o`/`k2` score uses the first matching fragments, not the highest-scoring path.
-struct MatchPattern {
+pub(crate) struct MatchPattern {
     main: WordPattern,
     fallback: Option<WordPattern>,
     paths: bool,
 }
 
 impl MatchPattern {
-    fn new(query: &str) -> Self {
+    pub(crate) fn new(query: &str) -> Self {
         let mut lower = String::with_capacity(query.len());
         for c in query.trim().chars() {
             let folded = c.to_lowercase();
@@ -1466,7 +1466,7 @@ impl MatchPattern {
         }
     }
 
-    fn score(&self, value: &str) -> i32 {
+    pub(crate) fn score(&self, value: &str) -> i32 {
         let text: Vec<_> = value
             .encode_utf16()
             .map(|unit| {
@@ -1929,6 +1929,7 @@ pub struct CommandMenu {
     cloud_searching: bool,
     cloud_error: bool,
     file_search: Option<FileSearch>,
+    recent_cycle: bool,
 }
 
 struct FileSearch {
@@ -2473,6 +2474,19 @@ impl CommandMenu {
                 item.search_value = "theme appearance Codex".into();
                 item.keywords = "color theme preset dark light night".into();
             }
+            if let Some(state) =
+                cx.try_global::<crate::screens::settings::keyboard_shortcuts::KeyboardState>()
+                && let Some(definition) = crate::screens::settings::keyboard_shortcuts::commands()
+                    .iter()
+                    .find(|definition| definition.title == *label)
+            {
+                item.keys = state
+                    .preferences
+                    .keys(definition)
+                    .next()
+                    .map(crate::screens::settings::keyboard_shortcuts::key_label)
+                    .map(Into::into);
+            }
             item
         };
         let group = |name: &'static str| {
@@ -2549,6 +2563,15 @@ impl CommandMenu {
             ("Settings", settings.into()),
         ];
         groups.extend(GROUPS.into_iter().map(group));
+        Self::with_groups(groups, thread_open, query, cx)
+    }
+
+    fn with_groups(
+        groups: Vec<(&'static str, Vec<Item>)>,
+        thread_open: bool,
+        query: &str,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             groups,
             retry_item: Item {
@@ -2576,6 +2599,29 @@ impl CommandMenu {
             cloud_searching: false,
             cloud_error: false,
             file_search: None,
+            recent_cycle: false,
+        }
+    }
+
+    pub fn recent_chats(threads: &[&Thread], direction: isize, cx: &mut Context<Self>) -> Self {
+        let groups = vec![(
+            "Recently viewed",
+            threads
+                .iter()
+                .map(|thread| Item::chat(thread, None, false))
+                .collect(),
+        )];
+        let mut menu = Self::with_groups(groups, true, "", cx);
+        menu.recent_cycle = true;
+        menu.cycle_recent(direction, cx);
+        menu
+    }
+
+    pub fn cycle_recent(&mut self, direction: isize, cx: &mut Context<Self>) {
+        if self.recent_cycle && !self.groups[0].1.is_empty() {
+            let count = self.groups[0].1.len() as isize;
+            self.select((self.selected as isize + direction).rem_euclid(count) as usize);
+            cx.notify();
         }
     }
 
@@ -2883,6 +2929,9 @@ impl CommandMenu {
 
     /// Keep registered groups; rank matches within each group.
     fn visible(&self) -> Vec<(&'static str, Vec<&Item>)> {
+        if self.recent_cycle {
+            return vec![("Recently viewed", self.groups[0].1.iter().collect())];
+        }
         if let Some(search) = &self.file_search {
             return vec![(
                 if search.rows.iter().all(|row| row.file.is_none()) {
@@ -2993,12 +3042,9 @@ impl CommandMenu {
                         )];
                         parts.extend(item.description.map(|d| format!("desc:{d}")));
                         parts.extend(item.project.as_ref().map(|p| p.to_string()));
-                        parts.extend(
-                            item.keys
-                                .as_ref()
-                                .map(|k| k.to_string())
-                                .or_else(|| item.is_chat().then(|| format!("⌃{index}"))),
-                        );
+                        parts.extend(item.keys.as_ref().map(|k| k.to_string()).or_else(|| {
+                            (item.is_chat() && !self.recent_cycle).then(|| format!("⌃{index}"))
+                        }));
                         let mut text = parts.join(" | ");
                         if let Some(s) = &item.snippet {
                             text += &format!(" || {}", bracket(s, highlight(s, query, false)));
@@ -3532,7 +3578,7 @@ impl Render for CommandMenu {
         // `.command-menu-dialog` / `.global-command-menu-dialog` sizing.
         let list_height = (0.9 * h - 64.).clamp(120., 440.);
         let width = 520f32.min(0.92 * w);
-        let input = self.query_input(width - 30., window, cx);
+        let input = (!self.recent_cycle).then(|| self.query_input(width - 30., window, cx));
         let top = ((h - list_height - 64.) / 2.).max(16.);
         let surface = t.surface_elevated_secondary;
         // `border-color: var(--color-border)` in dark, transparent in light (still a 1 px
@@ -3593,7 +3639,7 @@ impl Render for CommandMenu {
                             menu_row(
                                 item,
                                 if retry { "" } else { query },
-                                index,
+                                (index, !self.recent_cycle),
                                 selected,
                                 text_width,
                                 t,
@@ -3629,8 +3675,21 @@ impl Render for CommandMenu {
             .child(
                 div()
                     .id("command-menu")
+                    .when(!self.recent_cycle, |d| d.key_context("Editable"))
                     .track_focus(&self.focus)
                     .on_key_down(cx.listener(Self::on_key))
+                    .on_key_up(cx.listener(|this, event: &gpui::KeyUpEvent, _, cx| {
+                        if this.recent_cycle && !event.keystroke.modifiers.control {
+                            this.confirm(cx);
+                        }
+                    }))
+                    .on_modifiers_changed(cx.listener(
+                        |this, event: &gpui::ModifiersChangedEvent, _, cx| {
+                            if this.recent_cycle && !event.modifiers.control {
+                                this.confirm(cx);
+                            }
+                        },
+                    ))
                     .on_action(cx.listener(|this, _: &crate::SelectAll, _, cx| {
                         this.query_anchor = 0;
                         this.query_cursor = this.query.len();
@@ -3679,7 +3738,9 @@ impl Render for CommandMenu {
                                     .flex_col()
                                     .gap(px(4.))
                                     .overflow_hidden()
-                                    .child(div().h(px(33.)).px(px(10.)).py(px(6.)).child(input))
+                                    .children(input.map(|input| {
+                                        div().h(px(33.)).px(px(10.)).py(px(6.)).child(input)
+                                    }))
                                     .child(
                                         div()
                                             .id("command-menu-list")
@@ -3754,7 +3815,7 @@ fn layered(color: Hsla, opacities: &[f32], bottom: Hsla) -> Hsla {
 fn menu_row(
     item: &Item,
     query: &str,
-    ordinal: usize,
+    (ordinal, show_keys): (usize, bool),
     selected: bool,
     text_width: f32,
     t: &Theme,
@@ -3848,7 +3909,7 @@ fn menu_row(
         .when_some(
             item.keys
                 .clone()
-                .or_else(|| item.is_chat().then(|| format!("⌃{ordinal}").into())),
+                .or_else(|| (item.is_chat() && show_keys).then(|| format!("⌃{ordinal}").into())),
             |d, keys| {
                 let kbd_bg = layered(t.text_alpha_10, &[0.8, row_opacity], bottom);
                 // `kbd` sits on the 21 px line's baseline, 3 px below its top.

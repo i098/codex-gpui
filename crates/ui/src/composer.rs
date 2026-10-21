@@ -645,6 +645,7 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    search_field: bool,
 }
 
 impl Composer {
@@ -721,6 +722,7 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            search_field: false,
         }
     }
 
@@ -734,6 +736,12 @@ impl Composer {
         editor.plain_field = Some(multiline);
         editor.set_text(value, cx);
         editor
+    }
+
+    pub fn search_field(placeholder: &'static str, cx: &mut Context<Self>) -> Self {
+        let mut field = Self::settings_field(placeholder, "", false, cx);
+        field.search_field = true;
+        field
     }
 
     pub fn field_text(&self) -> &str {
@@ -1896,7 +1904,7 @@ impl Render for Composer {
         if self.plain_field.is_some() {
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)
-                    .when(self.request_parent.is_none(), |d| {
+                    .when(self.request_parent.is_none() && !self.search_field, |d| {
                         d.border_1()
                             .border_color(t.border)
                             .rounded(px(8.))

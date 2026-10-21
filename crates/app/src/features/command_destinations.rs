@@ -5,10 +5,6 @@ actions!(app, [SearchFiles, OpenThreadInNewWindow]);
 
 const FILE_HISTORY: &str = "recent-command-files";
 
-pub(super) fn init(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("cmd-p", SearchFiles, None)]);
-}
-
 pub(super) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
     root.on_action(cx.listener(|this, _: &SearchFiles, window, cx| {
         this.open_file_search(window, cx);

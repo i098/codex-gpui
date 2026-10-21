@@ -32,6 +32,8 @@ use theme::{ActiveTheme as _, Theme};
 
 #[path = "computer_use.rs"]
 pub mod computer_use;
+#[path = "keyboard_shortcuts.rs"]
+pub mod keyboard_shortcuts;
 
 #[path = "voice.rs"]
 pub mod voice;
@@ -305,6 +307,7 @@ impl SettingsNav {
         };
         div()
             .id("settings-search")
+            .key_context("Editable")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
             .on_click(cx.listener(|this, _, window, cx| this.focus.focus(window, cx)))
@@ -1147,6 +1150,9 @@ impl Render for SettingsPane {
         }
         if section == "Voice" {
             return voice::render(window, cx);
+        }
+        if section == "Keyboard shortcuts" {
+            return keyboard_shortcuts::render(window, cx);
         }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {

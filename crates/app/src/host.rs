@@ -44,6 +44,7 @@ pub mod computer_use;
 pub mod computer_use_native;
 mod git;
 mod projectless;
+pub use projectless::Workspace;
 pub(crate) mod run_now;
 pub mod voice;
 
@@ -94,6 +95,18 @@ pub trait Host: Send + Sync {
 
     fn add_project(&self, _root: &Path) -> Result<String> {
         bail!("adding a local project is unsupported by this host")
+    }
+
+    fn prepare_projectless(&self, _prompt: &str) -> Result<Workspace> {
+        bail!("Standalone chats are unsupported by this host")
+    }
+
+    fn record_projectless(&self, _thread: &str, _workspace: &Workspace) -> Result<()> {
+        bail!("Standalone chats are unsupported by this host")
+    }
+
+    fn clear_inbox_unreads(&self) -> Result<()> {
+        bail!("Clearing unread tasks is unsupported by this host")
     }
 
     /// Returns the trusted native Settings service, never a model-callable tool.
@@ -1018,6 +1031,26 @@ impl Host for LocalHost {
         ))
     }
 
+    fn clear_inbox_unreads(&self) -> Result<()> {
+        if let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? {
+            db.execute(
+                "UPDATE automation_runs SET read_at = ? WHERE read_at IS NULL
+                 AND status IN ('PENDING_REVIEW', 'ACCEPTED') AND automation_id IN
+                 (SELECT id FROM automations WHERE account_id IS NULL AND user_id IS NULL AND installation_id IS NULL)",
+                params![chrono::Utc::now().timestamp_millis()],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn prepare_projectless(&self, prompt: &str) -> Result<Workspace> {
+        self.create_projectless_workspace(prompt)
+    }
+
+    fn record_projectless(&self, thread: &str, workspace: &Workspace) -> Result<()> {
+        self.record_projectless_thread(thread, workspace)
+    }
+
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.computer_use_settings
             .as_ref()
@@ -1543,6 +1576,18 @@ impl CloudHost {
 impl Host for CloudHost {
     fn voice_settings(&self) -> Result<voice::Settings> {
         self.local.voice_settings()
+    }
+
+    fn clear_inbox_unreads(&self) -> Result<()> {
+        self.local.clear_inbox_unreads()
+    }
+
+    fn prepare_projectless(&self, prompt: &str) -> Result<Workspace> {
+        self.local.prepare_projectless(prompt)
+    }
+
+    fn record_projectless(&self, thread: &str, workspace: &Workspace) -> Result<()> {
+        self.local.record_projectless(thread, workspace)
     }
 
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
