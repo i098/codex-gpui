@@ -332,6 +332,10 @@ Inline-code backgrounds use both snapped label edges, so fractional text widths 
 Monochrome glyphs and SVGs keep their paint alpha.
 Element opacity is applied once when the enclosing layer is restored.
 
+Character-unit widths use the raw glyph advance at the requested font size.
+They exclude tracking; text layout still includes it.
+Use `TextSystem::ch_advance` for CSS `ch` columns, not glyph ink bounds.
+
 Canvas callbacks honor their `opacity`, `layer`, and `top_layer` styles.
 These styles use the same compositor boundary as other elements.
 
