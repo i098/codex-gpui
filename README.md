@@ -317,6 +317,10 @@ Home, Thread, Settings, Automations, Mobile, and Archive each own their action r
 `app::Route` and its saved values stay unchanged.
 Shared RPC handlers and state remain on `Root` in `lib.rs`.
 
+Opening an unloaded chat reads its history and resumes the thread before showing it.
+The composer restores that thread's returned model, reasoning effort, and permissions instead of using startup defaults.
+An unset effort stays unset in requests; the picker shows Medium.
+The composer labels modified workspace policies as Custom.
 The default pinned-summary layout hides the thread identity in a single pane.
 Opening a right pane restores the header identity; the toolbar actions stay available.
 
