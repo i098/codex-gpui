@@ -17,6 +17,7 @@ pub use routes::Route;
 mod search;
 mod section_actions;
 pub mod updater;
+mod usage;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
@@ -460,6 +461,7 @@ impl Root {
             }
         }
         let this = cx.weak_entity();
+        usage::install(this.clone(), cx);
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
             available: cfg!(target_os = "macos") && !bridge.is_acp(),
@@ -1007,6 +1009,7 @@ impl Root {
         }
         self.host = host;
         self.bind_context_files(cx);
+        usage::invalidate(cx);
         self.automations = None;
         self.load_projects(cx);
         if self.scheduled_route() {
@@ -4221,6 +4224,7 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        usage::on_event(&event, cx);
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             if matches!(&event, Event::Notification { method, params }

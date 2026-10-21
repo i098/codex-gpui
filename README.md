@@ -189,6 +189,14 @@ It preserves line endings and the host's working-file fallback policy, with a 5 
 Missing or oversized objects return `FullError::Unavailable`; invalid disk-fallback paths or reply structures return `FullError::Failed`.
 Run `cargo test -p app --test diff_content` for real Git object and repository-boundary checks.
 
+Settings > Usage & billing reads plan limits and reset credits from the app-server.
+It keeps the original account gates for credit controls, enterprise usage requests, analytics, and balance history.
+Reset retries keep the same idempotency key; billing changes keep their confirmed state when a request fails.
+The input fields reuse `Composer::settings_field`, including selection, clipboard access, and input methods.
+Run `cargo test -p ui -p app --lib usage` for the protocol and validation checks.
+Run `cargo run -p ui --example usage -- /path/to/usage.png` for the recorded native screen.
+Add `confirm-reset` after the output path to capture the confirmation state without redeeming a reset.
+
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
 Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
 The app reloads the task list after a successful write and retains the draft if the write fails.
