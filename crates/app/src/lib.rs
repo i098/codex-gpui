@@ -17,6 +17,7 @@ mod routes;
 pub use routes::Route;
 mod search;
 mod section_actions;
+pub mod updater;
 mod window_shell;
 pub mod windows;
 
@@ -421,6 +422,7 @@ pub struct Root {
     /// The `Notifications` region over the window.
     toaster: Entity<Toaster>,
     _events: Task<()>,
+    _update_policy: Option<Task<()>>,
 }
 
 impl Root {
@@ -691,6 +693,7 @@ impl Root {
             generation: None,
             toaster: cx.new(|_| Toaster::new()),
             _events,
+            _update_policy: None,
             state,
         };
         let this = cx.weak_entity();
@@ -782,6 +785,7 @@ impl Root {
                     if this.connection.generation != generation {
                         return;
                     }
+                    this._update_policy = updater::poll_policy(bridge.clone(), cx);
                     this.account_email = account.as_ref().and_then(chatgpt_email);
                     this.chatgpt_account = account.as_ref().is_some_and(|account| {
                         matches!(account.account, Some(Account::Chatgpt { .. }))

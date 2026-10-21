@@ -149,6 +149,7 @@ pub struct ThreadView {
     find: Option<FindState>,
     /// The link menu (`menu.rs`): `subject` is the right-clicked link.
     menu: Option<menu::ContextMenu>,
+    context_image: Option<crate::image_context::ImageContext>,
 }
 
 struct StreamSegment {
@@ -592,6 +593,7 @@ impl ThreadView {
             press_focus: None,
             find: None,
             menu: None,
+            context_image: None,
         }
     }
 

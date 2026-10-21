@@ -636,8 +636,19 @@ pub(super) fn activity(
                                     if let Some((_, image)) =
                                         decoded.iter().find(|(at, _)| *at == index)
                                     {
-                                        output =
-                                            output.child(gpui::img(image.clone()).max_w_full());
+                                        let context = crate::image_context::ImageContext {
+                                            image: image.clone(),
+                                            path: None,
+                                        };
+                                        output = output.child(
+                                            gpui::img(image.clone()).max_w_full()
+                                                .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                                    this.menu = Some(context.menu(event.position, window, cx));
+                                                    this.context_image = Some(context.clone());
+                                                    cx.stop_propagation();
+                                                    cx.notify();
+                                                })),
+                                        );
                                     } else {
                                         output = output.child(text(
                                             "Could not display tool image",
