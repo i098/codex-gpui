@@ -10,6 +10,7 @@ pub mod host_settings;
 pub mod qa;
 mod search;
 mod section_actions;
+mod storage;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
@@ -2156,6 +2157,7 @@ impl Root {
                 config["host"]["confirm-before-close"] = json!(self.state.confirm_before_close);
                 let section = self.settings_section.take();
                 let (shell, page) = settings::shell(&config, &self.skills, section, cx);
+                page.update(cx, |page, _| page.set_toaster(self.toaster.clone()));
                 self.settings_page = Some(page.clone());
                 cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
                     this.write_setting(e, cx);
@@ -4488,6 +4490,11 @@ impl Root {
                 "thread/started" if params["thread"]["ephemeral"] != true => {
                     if let Ok(n) = serde_json::from_value::<ThreadStartedNotification>(params) {
                         self.add_thread(&n.thread, cx);
+                    }
+                }
+                "thread/deleted" => {
+                    if let Some(id) = params["threadId"].as_str() {
+                        storage::thread_deleted(self, id, cx);
                     }
                 }
                 // The row's spinner follows the thread status.

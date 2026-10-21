@@ -33,6 +33,9 @@ use theme::{ActiveTheme as _, Theme};
 #[path = "computer_use.rs"]
 pub mod computer_use;
 
+#[path = "storage.rs"]
+pub mod storage;
+
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
@@ -173,6 +176,7 @@ pub struct SettingsPage {
     /// `projectlessWorkspaceRoot` default: `~/Documents/Codex`.
     projectless_root: String,
     pending_instructions: Vec<SettingChanged>,
+    toaster: Option<Entity<crate::toast::Toaster>>,
 }
 
 impl SettingsPage {
@@ -196,7 +200,12 @@ impl SettingsPage {
             values,
             projectless_root,
             pending_instructions: Vec::new(),
+            toaster: None,
         }
+    }
+
+    pub fn set_toaster(&mut self, toaster: Entity<crate::toast::Toaster>) {
+        self.toaster = Some(toaster);
     }
 
     fn get(&self, path: &str) -> &Value {
@@ -461,6 +470,7 @@ pub struct SettingsPane {
     /// Pointer over that menu: a press there is not a click outside.
     menu_hovered: bool,
     git_fields: Vec<(&'static str, Entity<Composer>)>,
+    storage: Entity<storage::StoragePage>,
 }
 
 /// `Confirm before closing a window` options, default first.
@@ -490,6 +500,7 @@ impl SettingsPane {
         })
         .detach();
         Self {
+            storage: cx.new(|cx| storage::StoragePage::new(page.clone(), cx)),
             page,
             layer: Layer::default(),
             open_select: None,
@@ -1141,6 +1152,9 @@ impl Render for SettingsPane {
         let section = self.page.read(cx).section;
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
+        }
+        if section == "Storage" {
+            return self.storage.clone().into_any_element();
         }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {

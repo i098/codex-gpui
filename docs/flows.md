@@ -1231,3 +1231,26 @@ The default hover delay and `side_offset` geometry remain unchanged.
 This API does not complete Home focus behavior or add the separate F1d overflow predicate.
 The original Home inputs and edge probes remain unchanged.
 The scoped issue is [Add an opt-in focus API to the shared tooltip](https://github.com/i098/codex-gpui/issues/186).
+
+## Storage settings (ST-159, ST-160, ST-161)
+
+`Settings > Storage` measures the app-server's Codex home without following file symlinks.
+The usage bar separates chats, subagents, archived chats, unclassified chats, worktrees, and other files.
+Refresh reports completed categories separately from a failed or active scan.
+The page uses actual file lengths and app-server thread metadata.
+
+`Clean up old chats` requires descendant discovery support.
+The review starts with archived chats last updated more than 90 days ago.
+The age filter also offers 30, 180, and 365 days; the scope filter also offers all chats.
+Only inactive, non-ephemeral roots and complete, inactive descendant trees can enter the selection.
+The final confirmation warns that deletion is permanent.
+Before deleting, the app reloads the inventory, discovers descendants, and checks each thread's update time and active state.
+It skips changed trees and reports deleted, skipped, and failed root counts.
+The deletion request goes through `thread/delete`; the UI never removes rollout files directly.
+
+The management controls open Worktrees and Archived chats.
+Their destination pages remain owned by their separate settings families.
+The focused checks run with `cargo test -p bridge -p ui --lib storage -- --test-threads=1`.
+They cover measured file categories, symlink exclusion, descendant safety, version eligibility, and keyboard cancellation.
+Native test captures use synthetic interaction data and do not establish pixel parity with the original.
+Strict original comparison remains pending while the shared capture service is unavailable.

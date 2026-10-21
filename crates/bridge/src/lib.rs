@@ -17,6 +17,7 @@ mod acp;
 mod automation;
 pub use automation::AutomationTurn;
 mod replay;
+pub mod storage;
 pub mod types;
 
 use std::collections::HashMap;
