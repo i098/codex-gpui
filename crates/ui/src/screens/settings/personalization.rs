@@ -9,7 +9,7 @@ use theme::ActiveTheme as _;
 
 #[derive(Clone)]
 pub enum Event {
-    Load,
+    Load(u64),
     Save(String),
     Leave,
     Section(&'static str),
@@ -20,6 +20,7 @@ pub struct Personalization {
     loading: bool,
     saving: bool,
     load_error: bool,
+    load_generation: u64,
     saved: String,
     editor: Option<Entity<Composer>>,
 }
@@ -33,6 +34,7 @@ impl Personalization {
             loading: false,
             saving: false,
             load_error: false,
+            load_generation: 0,
             saved: String::new(),
             editor: None,
         }
@@ -66,17 +68,22 @@ impl Personalization {
         self.opened = true;
         self.loading = true;
         self.load_error = false;
+        self.load_generation = self.load_generation.wrapping_add(1);
         self.editor = None;
-        cx.emit(Event::Load);
+        cx.emit(Event::Load(self.load_generation));
         cx.notify();
     }
 
     pub fn loaded(
         &mut self,
+        generation: u64,
         result: Result<Value, String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.opened || generation != self.load_generation {
+            return;
+        }
         self.loading = false;
         match result {
             Ok(value) if value["contents"].is_string() && value["path"].is_string() => {
@@ -358,5 +365,66 @@ impl Render for Personalization {
                     .px(px(20.))
                     .child(div().mx_auto().w_full().max_w(px(728.)).child(content)),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn stale_instruction_reads_preserve_the_current_draft() -> anyhow::Result<()> {
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut app = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            theme::load_fonts(cx);
+            cx.set_global(theme::Theme::dark());
+        });
+        let window = app.open_window(gpui::size(px(1280.), px(832.)), |_, cx| {
+            cx.new(Personalization::new)
+        })?;
+        window.update(&mut app, |view, window, cx| {
+            view.load(cx);
+            let old_generation = view.load_generation;
+            view.discard(cx);
+            view.load(cx);
+            let current_generation = view.load_generation;
+            view.loaded(
+                current_generation,
+                Ok(serde_json::json!({"path": "/fixture/AGENTS.md", "contents": "Saved instructions."})),
+                window,
+                cx,
+            );
+            view.editor.as_ref().unwrap().update(cx, |editor, cx| {
+                editor.set_text("Current unsaved draft.", cx)
+            });
+            view.loaded(
+                old_generation,
+                Ok(serde_json::json!({"path": "/fixture/AGENTS.md", "contents": "Old instructions."})),
+                window,
+                cx,
+            );
+            assert_eq!(view.editor.as_ref().unwrap().read(cx).field_text(), "Current unsaved draft.");
+            assert!(view.dirty(cx));
+            view.discard(cx);
+            view.loaded(
+                current_generation,
+                Ok(serde_json::json!({"path": "/fixture/AGENTS.md", "contents": "Late instructions."})),
+                window,
+                cx,
+            );
+            assert!(!view.opened());
+            assert!(view.editor.is_none());
+        })?;
+        Ok(())
     }
 }

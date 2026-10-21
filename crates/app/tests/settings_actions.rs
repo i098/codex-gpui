@@ -560,3 +560,75 @@ fn failed_workspace_registration_removes_only_the_new_empty_folder() -> Result<(
     assert_eq!(std::fs::read_to_string(state)?, "[]");
     Ok(())
 }
+
+
+#[cfg(target_os = "macos")]
+#[test]
+fn quit_from_a_clean_window_protects_another_windows_draft() -> Result<()> {
+    use gpui::AppContext as _;
+    use std::io::Write as _;
+    let home = tempfile::tempdir()?;
+    std::fs::write(home.path().join("AGENTS.md"), "Saved instructions.")?;
+    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.set_host(
+            std::sync::Arc::new(app::host::LocalHost::new(home.path())),
+            cx,
+        )
+    });
+    open_instructions(&mut fx)?;
+    fx.keys("cmd-a")?;
+    fx.type_text("Draft in the first window.")?;
+
+    let mut recording = tempfile::NamedTempFile::new()?;
+    for line in script(None, |_| {})? {
+        writeln!(recording, "{line}")?;
+    }
+    let (bridge, events) = bridge::Bridge::replay(recording.path())?;
+    let second_host = std::sync::Arc::new(app::host::LocalHost::new(home.path().join("second")));
+    let second = fx
+        .cx
+        .open_window(gpui::size(gpui::px(1280.), gpui::px(832.)), |window, cx| {
+            let root = cx.new(|cx| {
+                app::Root::new(
+                    app::State::default(),
+                    bridge,
+                    events,
+                    CWD.into(),
+                    window,
+                    cx,
+                )
+            });
+            root.update(cx, |root, cx| root.set_host(second_host, cx));
+            root
+        })?;
+    let second_root = second.root(&mut fx.cx)?;
+    fx.wait("second window startup", |fx| {
+        fx.cx.update(|cx| second_root.read(cx).ready())
+    })?;
+    second.update(&mut fx.cx, |_, window, cx| {
+        window.activate_window();
+        window.dispatch_action(Box::new(ui::Quit), cx);
+    })?;
+    fx.wait("first window discard confirmation", |fx| {
+        fx.read(|root, cx| {
+            root.dialog().is_some_and(|dialog| {
+                dialog.read(cx).kind() == ui::dialog::Kind::DiscardInstructions
+            })
+        })
+    })?;
+    fx.keys("escape")?;
+    fx.keys("cmd-a cmd-c")?;
+    assert_eq!(
+        fx.cx
+            .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .as_deref(),
+        Some("Draft in the first window.")
+    );
+    assert!(second.read_with(&fx.cx, |_, _| ()).is_ok());
+    assert_eq!(
+        std::fs::read_to_string(home.path().join("AGENTS.md"))?,
+        "Saved instructions."
+    );
+    Ok(())
+}

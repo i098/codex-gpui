@@ -2,7 +2,7 @@
 
 mod platform;
 
-use crate::{Root, Route, State, host_settings, qa};
+use crate::{Root, Route, SettingsLeave, State, host_settings, qa};
 use anyhow::{Context as _, Result};
 use async_channel::Receiver;
 use bridge::{Bridge, Event};
@@ -336,6 +336,27 @@ pub fn close(window: &mut Window, cx: &mut App) {
     if allow_close(window, cx) {
         window.remove_window();
     }
+}
+
+pub(crate) fn request_quit(cx: &mut App) {
+    for window in cx.windows() {
+        let Some(window) = window.downcast::<Root>() else {
+            continue;
+        };
+        if window
+            .read(cx)
+            .is_ok_and(|root| root.instructions_changed(cx))
+        {
+            if let Err(error) = window.update(cx, |root, window, cx| {
+                window.activate_window();
+                root.confirm_instructions_leave(SettingsLeave::Quit, window, cx);
+            }) {
+                eprintln!("codex-gpui: confirm quit: {error:#}");
+            }
+            return;
+        }
+    }
+    cx.quit();
 }
 
 pub fn show(handle: AnyWindowHandle, presentation: Presentation, cx: &mut App) -> Result<()> {

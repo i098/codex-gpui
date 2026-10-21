@@ -143,7 +143,7 @@ pub fn init(cx: &mut App) {
     );
     ui::composer::bind_keys(cx);
     features::init(cx);
-    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &Quit, cx| cx.defer(windows::request_quit));
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
@@ -4078,14 +4078,14 @@ impl Root {
                     self.open_dialog(DialogKind::CloseWindow, window, cx);
                 } else {
                     self.flush_settings(cx);
-                    window.remove_window();
+                    windows::close(window, cx);
                 }
             }
             SettingsLeave::LogOut => {
                 let dialog = cx.new(|cx| Dialog::logout(self.account_email.clone(), cx));
                 self.show_dialog(dialog, window, cx);
             }
-            SettingsLeave::Quit => cx.quit(),
+            SettingsLeave::Quit => cx.defer(windows::request_quit),
         }
     }
 
@@ -4100,7 +4100,8 @@ impl Root {
         };
         let view = page.read(cx).personalization.clone();
         match event {
-            settings::personalization::Event::Load => {
+            settings::personalization::Event::Load(generation) => {
+                let generation = *generation;
                 let host = self.host.clone();
                 let read = cx.background_spawn(async move {
                     host.fetch(&host::Request::post(
@@ -4119,7 +4120,7 @@ impl Root {
                             .is_some_and(|page| page.read(cx).personalization == view)
                             && view.read(cx).opened()
                         {
-                            view.update(cx, |view, cx| view.loaded(result, window, cx));
+                            view.update(cx, |view, cx| view.loaded(generation, result, window, cx));
                         }
                     })
                     .ok();
@@ -5507,13 +5508,9 @@ impl Render for Root {
             .on_action(
                 cx.listener(|this, _: &CloseWindow, window, cx| this.close_window(window, cx)),
             )
-            .on_action(cx.listener(|this, _: &Quit, window, cx| {
+            .on_action(cx.listener(|_, _: &Quit, _, cx| {
                 cx.stop_propagation();
-                if this.instructions_changed(cx) {
-                    this.confirm_instructions_leave(SettingsLeave::Quit, window, cx);
-                } else {
-                    cx.quit();
-                }
+                cx.defer(windows::request_quit);
             }))
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &Zoom, window, _| window.zoom_window())
