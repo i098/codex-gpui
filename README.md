@@ -138,6 +138,29 @@ Branch prefix saves on blur or Enter; multiline instructions save after three id
 The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
 This page does not implement Git operations or active pull request watchers, and it does not complete other settings pages.
 
+The desktop host exposes `git-review-patch` for complete, binary-capable patches from the selected review source.
+The response uses `contentsBase64` to preserve patch bytes, including non-UTF-8 text.
+`git-changes` accepts `hideWhitespace`; raw patch export never applies that display filter.
+Stage, Unstage, and Revert accept the same filter while retaining hidden whitespace edits and the stale-snapshot check.
+Revision exports use `beforeRef` and `afterRef`; staged and working-tree exports retain their separate Git states.
+Raw export omits untracked files above the original 256-file limit but keeps tracked changes. This does not limit the existing Changes list.
+Run `cargo test -p app --test diff_file_reads` for real Git apply round trips and source-boundary checks.
+
+`ui::screens::diff::panel::word::changes` returns removed and added UTF-8 byte ranges for the original `word-alt` comparison.
+It ignores a final LF or CRLF and returns no highlights above 1,000 UTF-16 units per line.
+The API preserves the original edit-path order and final-span boundaries. It does not change rendered controls.
+Run `cargo test -p ui --lib screens::diff::panel::word` for its boundary checks.
+
+`ui::screens::diff::panel::patch::file_path` reads the target path from one Git file patch.
+It decodes quoted names and handles rename, copy, binary, empty-file, and deleted-file metadata.
+Complete file headers preserve filenames under no-prefix and mnemonic-prefix settings. Hunk contents never supply a path.
+The parser does not access or authorize filesystem paths.
+Changes uses it for aggregate patches, preserving quoted names and metadata-only file entries through the file headers and Copy path action.
+File headers collapse display whitespace and show rename sources. Copy path keeps the decoded path unchanged.
+Metadata-only files show notices instead of raw Git headers.
+Unified deletions use source-sized striped markers. Split deletions keep solid markers.
+Run `cargo test -p ui --lib screens::diff::panel::patch` for its boundary checks.
+
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
@@ -293,6 +316,13 @@ On macOS and Linux, `workspace-directory-entries` lists workspace children with 
 `includeHidden` and `directoriesOnly` filter the reply.
 Directory requests reject lexical and symlink paths outside the workspace.
 Enumeration uses the validated directory handle, so replacing a symlink cannot redirect a listing.
+
+`add-context-file` sends a file reference to the host's bound view.
+The composer shows a file card without changing the draft text or selection.
+Repeated context files stay attached once; replacing the host disconnects its previous context channel.
+Submission lists these paths in the original `Files mentioned by the user` section, separate from image uploads.
+Editing a queued message restores its file cards and request text.
+Failed thread submissions restore the request and file cards.
 
 `open-in-targets` returns the original editor and terminal catalog, installed targets, and the preferred target.
 It reads `open-in-target-preferences` from the same shared host settings store as the UI.

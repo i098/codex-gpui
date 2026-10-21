@@ -419,6 +419,8 @@ pub struct Root {
     /// The `Notifications` region over the window.
     toaster: Entity<Toaster>,
     _events: Task<()>,
+    context_window: gpui::AnyWindowHandle,
+    context_files: Option<Task<()>>,
     _update_policy: Option<Task<()>>,
 }
 
@@ -697,6 +699,8 @@ impl Root {
             generation: None,
             toaster: cx.new(|_| Toaster::new()),
             _events,
+            context_window: window.window_handle(),
+            context_files: None,
             _update_policy: None,
             state,
         };
@@ -722,6 +726,7 @@ impl Root {
         // node leaves the tree), the root takes focus so the key bindings keep working.
         cx.on_focus_lost(window, |this, window, cx| window.focus(&this.focus, cx))
             .detach();
+        root.bind_context_files(cx);
         root.connect(window, cx);
         root.load_projects(cx);
         windows::bind_root(window, cx);
@@ -999,6 +1004,7 @@ impl Root {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
         self.host = host;
+        self.bind_context_files(cx);
         self.automations = None;
         self.load_projects(cx);
         if self.scheduled_route() {
@@ -2923,7 +2929,11 @@ impl Root {
                 }
                 this.show_thread(thread, window, cx);
             })?;
-            turn_start(&bridge, &id, &s, user_input(&s)).await
+            let result = turn_start(&bridge, &id, &s, user_input(&s)).await;
+            if result.is_err() {
+                this.update(cx, |this, cx| this.restore_failed_send(&s, cx))?;
+            }
+            result
         });
         log_err(task, cx);
     }
@@ -2950,42 +2960,43 @@ impl Root {
         let queue = self.config["desktop"]["followUpQueueMode"] == "queue";
         let edit = self.queue_edit.take().filter(|edit| edit.thread_id == id);
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            resume_if(resume, &bridge, &this, &id, cx).await?;
-            let mut input = user_input(&s);
-            input.extend(edit.iter().flat_map(|edit| edit.extra.clone()));
-            let Some(turn_id) = running else {
-                return turn_start(&bridge, &id, &s, input).await;
-            };
-            let (method, params) = if queue {
-                let params = json!({
-                    "threadId": id, "input": input, "clientUserMessageId": uuid_v4(),
-                });
-                ("thread/queue/add", params)
-            } else {
-                let params = json!({ "threadId": id, "input": input, "expectedTurnId": turn_id });
-                ("turn/steer", params)
-            };
-            let result = bridge.request::<_, Value>(method, params).await;
-            if queue
-                && let (Ok(added), Some(edit)) = (&result, &edit)
-                && let Some(added) = added["queuedSubmission"]["id"].as_str()
-                && let Err(error) = restore_place(&bridge, &id, added, edit).await
-            {
-                eprintln!("codex-gpui: thread/queue/reorder: {error:#}");
+            let result = async {
+                resume_if(resume, &bridge, &this, &id, cx).await?;
+                let mut input = user_input(&s);
+                input.extend(edit.iter().flat_map(|edit| edit.extra.clone()));
+                let Some(turn_id) = running.as_ref() else {
+                    return turn_start(&bridge, &id, &s, input).await;
+                };
+                let (method, params) = if queue {
+                    let params = json!({
+                        "threadId": id, "input": input, "clientUserMessageId": uuid_v4(),
+                    });
+                    ("thread/queue/add", params)
+                } else {
+                    let params =
+                        json!({ "threadId": id, "input": input, "expectedTurnId": turn_id });
+                    ("turn/steer", params)
+                };
+                let result = bridge.request::<_, Value>(method, params).await;
+                if queue
+                    && let (Ok(added), Some(edit)) = (&result, &edit)
+                    && let Some(added) = added["queuedSubmission"]["id"].as_str()
+                    && let Err(error) = restore_place(&bridge, &id, added, edit).await
+                {
+                    eprintln!("codex-gpui: thread/queue/reorder: {error:#}");
+                }
+                result.map(drop)
             }
+            .await;
             this.update(cx, |this, cx| match &result {
-                Ok(_) if queue => this.list_queue(id, cx),
+                Ok(_) if queue && running.is_some() => this.list_queue(id, cx),
                 Ok(_) => {}
                 Err(_) => {
                     this.queue_edit = edit;
-                    this.thread_composer.update(cx, |c, cx| {
-                        c.restore_text(&s.text, cx);
-                        c.drop_files(&s.attachments, cx);
-                    });
-                    this.toast(Toast::danger("Error submitting message"), cx);
+                    this.restore_failed_send(&s, cx);
                 }
             })?;
-            result.map(drop)
+            result
         });
         log_err(task, cx);
     }
@@ -3191,7 +3202,8 @@ impl Root {
         };
         let (previous, next) = (neighbour(index.checked_sub(1)), neighbour(Some(index + 1)));
         let (text, images, extra) = split_input(&rows[index].submission.input);
-        if text.is_empty() && images.is_empty() {
+        let (text, context_files) = native_menus::context_files::restore_prompt(text);
+        if text.is_empty() && images.is_empty() && context_files.is_empty() {
             self.toast(Toast::danger("Couldn’t edit this queued message"), cx);
             return;
         }
@@ -3211,8 +3223,12 @@ impl Root {
                             next,
                             extra,
                         });
-                        this.thread_composer
-                            .update(cx, |c, cx| c.load_queued(&text, &images, window, cx));
+                        this.thread_composer.update(cx, |c, cx| {
+                            c.load_queued(&text, &images, window, cx);
+                            for file in context_files {
+                                c.add_context_file(file, cx);
+                            }
+                        });
                     }
                     Ok(_) => {}
                     Err(_) => this.toast(Toast::danger("Couldn’t edit this queued message"), cx),
@@ -4625,6 +4641,7 @@ fn user_input(s: &Submission) -> Vec<Value> {
     let text = files
         .iter()
         .fold(s.text.clone(), |text, p| format!("{text}\n{}", p.display()));
+    let text = native_menus::context_files::prompt(text, &s.context_files);
     let mut input = vec![json!({ "type": "text", "text": text, "text_elements": [] })];
     input.extend(
         images

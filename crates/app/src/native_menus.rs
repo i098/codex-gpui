@@ -1,4 +1,5 @@
 mod about;
+pub(crate) mod context_files;
 
 use crate::{
     CloseWindow, FindInThread, GoBack, GoForward, Hide, HideOthers, LogOut, Minimize, NewChat,

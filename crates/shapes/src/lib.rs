@@ -136,6 +136,39 @@ pub fn paint(
     }
 }
 
+/// Paints a repeating two-color Lab gradient with a hard stop halfway through each CSS-pixel period.
+/// Colors retain their unrounded sRGB channels. The period must be finite and positive.
+pub fn paint_horizontal_stripes(
+    period: Pixels,
+    colors: [gpui::Rgba; 2],
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    assert!(f32::from(period).is_finite() && period > gpui::px(0.));
+    #[cfg(target_os = "macos")]
+    skia::paint_horizontal_stripes(period, colors, bounds, window, cx);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = cx;
+        let half = f32::from(period) / 2.;
+        let mut top = f32::from(bounds.top());
+        let bottom = f32::from(bounds.bottom());
+        let mut index = 1;
+        while top < bottom {
+            window.paint_quad(gpui::fill(
+                Bounds::new(
+                    gpui::point(bounds.left(), gpui::px(top)),
+                    gpui::size(bounds.size.width, gpui::px(half.min(bottom - top))),
+                ),
+                colors[index],
+            ));
+            index ^= 1;
+            top += half;
+        }
+    }
+}
+
 /// How image pixels compose over their background.
 #[derive(Clone, Copy, Debug)]
 pub enum ImageComposition {
