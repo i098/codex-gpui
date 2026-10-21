@@ -214,7 +214,8 @@ export async function capture(screen, theme, w, h, outDir = new URL("../../refs/
       if (await p.evaluate(`!!(${byText(t)})`)) await d.click(byText(t));
     await STATES[screen](d).catch(async (e) => {
       const shot = await p.send("Page.captureScreenshot", { format: "png" });
-      fs.writeFileSync(`/tmp/r1-fail-${screen}-${theme}.png`, Buffer.from(shot.data, "base64"));
+      fs.mkdirSync(path.join(outDir, screen), { recursive: true });
+      fs.writeFileSync(path.join(outDir, screen, `${theme}@${w}x${h}.failed.png`), Buffer.from(shot.data, "base64"));
       throw e;
     });
     // The announcement modal can come back after navigation; close it again.
