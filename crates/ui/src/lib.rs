@@ -1190,11 +1190,13 @@ impl Shell {
     }
 
     fn titlebar(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let fullscreen_shift = if window.is_fullscreen() {
-            px(80.)
+        let native_inset = if window.is_fullscreen() {
+            px(2.)
         } else {
-            px(0.)
+            px(82.)
         };
+        // The native traffic-light inset does not scale with the UI.
+        let nav_left = native_inset / window.ui_scale() + px(6.);
         // The header is the window drag region (`-webkit-app-region: drag`, macOS hiddenInset);
         // its buttons are `no-drag`: each stops the press before the move handler below.
         // Disabled history controls do not participate in keyboard navigation.
@@ -1249,7 +1251,7 @@ impl Shell {
                 }
             })
             .child(tooltip(
-                back.left(px(88.) - fullscreen_shift)
+                back.left(nav_left)
                     .on_click(dispatch::<GoBack>),
                 "Back",
                 Some("⌘["),
@@ -1257,7 +1259,7 @@ impl Shell {
             ))
             .child(tooltip(
                 forward
-                    .left(px(122.) - fullscreen_shift)
+                    .left(nav_left + px(34.))
                     .on_click(dispatch::<GoForward>),
                 "Forward",
                 Some("⌘]"),
@@ -1283,7 +1285,7 @@ impl Shell {
                         "Show sidebar"
                     })
                     .absolute()
-                    .left(px(156.) - fullscreen_shift)
+                    .left(nav_left + px(68.))
                     .top(px(8.))
                     .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                         sidebar_focus.read(cx).handle.clone().focus(window, cx);
