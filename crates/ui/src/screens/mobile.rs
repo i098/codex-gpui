@@ -142,6 +142,12 @@ impl MobileSetupPage {
         }
     }
 
+    pub fn setup_dialog(cx: &mut Context<Self>) -> Self {
+        let mut page = Self::pairing_dialog(cx);
+        page.step = SetupStep::Initial;
+        page
+    }
+
     pub(super) fn dialog_focus(&self) -> Option<gpui::FocusHandle> {
         self.dialog_focus.clone()
     }
@@ -192,9 +198,6 @@ impl MobileSetupPage {
         if matches!(step, SetupStep::Pending | SetupStep::Enabling) && self.step != step {
             self.pending_since = Some(cx.background_executor().now());
         }
-        if artwork_kind(self.step) != artwork_kind(step) {
-            self.artwork.borrow_mut().take();
-        }
         self.step = step;
         self.hovered = false;
         cx.notify();
@@ -222,7 +225,7 @@ impl MobileSetupPage {
     }
 }
 
-type ArtworkCache = Rc<RefCell<Option<(Bounds<Pixels>, Hsla, Arc<RenderImage>, bool)>>>;
+type ArtworkCache = Rc<RefCell<Option<(usize, Bounds<Pixels>, Hsla, Arc<RenderImage>, bool)>>>;
 
 /// The two artwork PNGs as RGBA; the overlay premultiplied (Skia's N32 premul,
 /// `round(c * a / 255)`).
@@ -249,20 +252,30 @@ static ARTWORK: LazyLock<(RgbaImage, [RgbaImage; 4])> = LazyLock::new(|| {
     (background, overlays)
 });
 
-static DIALOG_ARTWORK: LazyLock<[Arc<gpui::Image>; 3]> = LazyLock::new(|| {
+static DIALOG_ARTWORK: LazyLock<[RgbaImage; 4]> = LazyLock::new(|| {
     [
         include_bytes!("../../../../assets/ui/mobile/dialog-artwork-waiting-phone.png").as_slice(),
         include_bytes!("../../../../assets/ui/mobile/dialog-artwork-waiting-computer.png")
             .as_slice(),
         include_bytes!("../../../../assets/ui/mobile/dialog-artwork-connected.png").as_slice(),
+        include_bytes!("../../../../assets/ui/mobile/dialog-artwork-initial.png").as_slice(),
     ]
     .map(|bytes| {
-        Arc::new(gpui::Image::from_bytes(
-            gpui::ImageFormat::Png,
-            bytes.to_vec(),
-        ))
+        let mut image = image::load_from_memory(bytes)
+            .expect("dialog artwork PNG")
+            .to_rgba8();
+        shapes::premultiply(&mut image);
+        image
     })
 });
+
+fn artwork_layers(kind: usize) -> (&'static RgbaImage, Option<&'static RgbaImage>) {
+    if kind < 4 {
+        (&ARTWORK.0, Some(&ARTWORK.1[kind]))
+    } else {
+        (&DIALOG_ARTWORK[kind - 4], None)
+    }
+}
 
 fn artwork_kind(step: SetupStep) -> usize {
     match step {
@@ -273,16 +286,24 @@ fn artwork_kind(step: SetupStep) -> usize {
     }
 }
 
-/// The `rounded-xl` artwork box: `page-artwork-background` (cover) under `page-artwork-shared`
-/// (contain). On macOS Skia rasterizes both inside the anti-aliased clip over `page` like
-/// Chrome's software raster, drawn 1:1 since GPU texture filtering rounds differently;
-/// elsewhere [`compose`] resamples them on the CPU and GPUI rounds the corners.
-fn artwork(cache: ArtworkCache, page: Hsla, kind: usize) -> impl IntoElement {
-    let radius = Corners::all(Theme::RADIUS_XL);
+/// Rasterize layered page artwork or one dialog image with the original pixel alignment.
+/// Dialog images use a transparent backing; page artwork uses its surface color.
+/// Off macOS, [`compose`] resamples on the CPU and GPUI clips the corners.
+fn artwork(cache: ArtworkCache, page: Hsla, kind: usize) -> impl IntoElement + Styled {
+    let radius = if kind < 4 {
+        Corners::all(Theme::RADIUS_XL)
+    } else {
+        Corners {
+            top_left: px(25.),
+            top_right: px(25.),
+            ..Default::default()
+        }
+    };
     canvas(
         move |bounds, window, _| {
             let mut cache = cache.borrow_mut();
-            if let Some((b, p, image, rounded)) = &*cache
+            if let Some((cached_kind, b, p, image, rounded)) = &*cache
+                && *cached_kind == kind
                 && *b == bounds
                 && *p == page
             {
@@ -291,16 +312,19 @@ fn artwork(cache: ArtworkCache, page: Hsla, kind: usize) -> impl IntoElement {
             let scale = window.scale_factor();
             let dev = |v: Pixels| (f32::from(v) * scale).round() as u32;
             let (w, h) = (dev(bounds.size.width), dev(bounds.size.height));
-            let (background, overlays) = &*ARTWORK;
-            let overlay = &overlays[kind];
+            let (background, overlay) = artwork_layers(kind);
             let dst = |src: &RgbaImage, cover: bool| {
                 aligned_bounds(bounds, scale, w, h, src, cover, kind)
             };
+            let mut layers = [(background, dst(background, true)); 2];
+            let count = if let Some(overlay) = overlay {
+                layers[1] = (overlay, dst(overlay, false));
+                2
+            } else {
+                1
+            };
             let skia = shapes::raster_images(
-                &[
-                    (background, dst(background, true)),
-                    (overlay, dst(overlay, false)),
-                ],
+                &layers[..count],
                 bounds,
                 radius,
                 Squircle,
@@ -309,7 +333,7 @@ fn artwork(cache: ArtworkCache, page: Hsla, kind: usize) -> impl IntoElement {
             );
             let rounded = skia.is_none();
             let image = Arc::new(skia.unwrap_or_else(|| compose(w, h, kind)));
-            *cache = Some((bounds, page, image.clone(), rounded));
+            *cache = Some((kind, bounds, page, image.clone(), rounded));
             (image, rounded)
         },
         move |bounds, (image, rounded), window, _| {
@@ -416,26 +440,31 @@ fn bilerp(
 /// Background (cover) with the premultiplied overlay (contain) composited src-over, as BGRA:
 /// Chrome's software raster on the CPU, without its span restarts (the fallback off macOS).
 fn compose(w: u32, h: u32, kind: usize) -> RenderImage {
-    let (background, overlays) = &*ARTWORK;
-    let overlay = &overlays[kind];
+    let (background, overlay) = artwork_layers(kind);
     let span = |(start, len): (f32, f32)| (start as i32).max(0)..((start + len) as i32);
     let [bx, by] = fit(w, h, background, true);
     let (bcols, brows) = (
         skia_axis(0, w as i32, bx, background.width(), true),
         skia_axis(0, h as i32, by, background.height(), false),
     );
-    let [ox, oy] = aligned_fit(w, h, overlay, false, kind);
-    let (oxs, oys) = (span(ox), span(oy));
-    let (ocols, orows) = (
-        skia_axis(oxs.start, oxs.len() as i32, ox, overlay.width(), true),
-        skia_axis(oys.start, oys.len() as i32, oy, overlay.height(), false),
-    );
+    let overlay = overlay.map(|image| {
+        let [ox, oy] = aligned_fit(w, h, image, false, kind);
+        let (oxs, oys) = (span(ox), span(oy));
+        let (ocols, orows) = (
+            skia_axis(oxs.start, oxs.len() as i32, ox, image.width(), true),
+            skia_axis(oys.start, oys.len() as i32, oy, image.height(), false),
+        );
+        (image, oxs, oys, ocols, orows)
+    });
     let mut out = RgbaImage::new(w, h);
     for (y, row) in out.rows_mut().enumerate() {
         for (x, px) in row.enumerate() {
             let mut c = bilerp(background, bcols[x], brows[y]);
             let (xi, yi) = (x as i32, y as i32);
-            if oxs.contains(&xi) && oys.contains(&yi) {
+            if let Some((overlay, oxs, oys, ocols, orows)) = &overlay
+                && oxs.contains(&xi)
+                && oys.contains(&yi)
+            {
                 let s = bilerp(
                     overlay,
                     ocols[(xi - oxs.start) as usize],
@@ -620,6 +649,8 @@ impl Render for MobileSetupPage {
         };
         // A `size="large"` primary button: 36 px pill, 14/18 label after the loading spinner.
         let button = |id: &'static str, label: &'static str| -> Stateful<Div> {
+            let secondary = id == "later";
+            let foreground = if secondary { t.text } else { button_fg };
             div()
                 .id(id)
                 .role(gpui::Role::Button)
@@ -635,8 +666,8 @@ impl Render for MobileSetupPage {
                 .gap(px(4.))
                 .child(shapes::decoration(shapes::Decoration {
                     radius: Corners::all(px(9999.)),
-                    fill: Some(button_bg),
-                    border: Some((px(1.), t.border)),
+                    fill: Some(if secondary { t.text_alpha_5 } else { button_bg }),
+                    border: (!secondary).then_some((px(1.), t.border)),
                     ..Default::default()
                 }))
                 .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
@@ -650,7 +681,7 @@ impl Render for MobileSetupPage {
                     match id {
                         "allow-host" => connections::dispatch(Action::SetEnabled(true), cx),
                         "get-started" => window.dispatch_action(Box::new(GetStarted), cx),
-                        "finish-setup" | "close-device-pairing" => {
+                        "finish-setup" | "close-device-pairing" | "later" => {
                             window.dispatch_action(Box::new(FinishSetup), cx)
                         }
                         "manage-connections" => {
@@ -668,7 +699,7 @@ impl Render for MobileSetupPage {
                             .with_transformation(Transformation::rotate(radians(angle))),
                     )
                 })
-                .child(text(label, 14., 18., 430., button_fg))
+                .child(text(label, 14., 18., 430., foreground))
                 .when(disabled, |b| b.opacity(0.4))
         };
         let (heading, description) = match step {
@@ -693,12 +724,22 @@ impl Render for MobileSetupPage {
                 "Scan QR code to set up a new phone or manage existing connections",
             ),
             SetupStep::Initial | SetupStep::Pending | SetupStep::Error => (
-                "Connect your phone to this Mac",
+                if self.dialog_mode {
+                    "Connect a device to this Mac"
+                } else {
+                    "Connect your phone to this Mac"
+                },
                 "Continue chats from the ChatGPT desktop app on your phone or another device",
             ),
         };
         // `divide-y-[0.5px] divide-border`
-        let divider = |row: Div| row.border_b(px(0.5)).border_color(t.border);
+        let divider = |row: Div| {
+            if self.dialog_mode {
+                row
+            } else {
+                row.border_b(px(0.5)).border_color(t.border)
+            }
+        };
         let column = div()
             .w_full()
             .max_w(px(640.))
@@ -715,8 +756,26 @@ impl Render for MobileSetupPage {
                     .flex()
                     .flex_col()
                     .gap(px(8.))
-                    .child(text(heading, 28., 35., 400., t.text).whitespace_normal())
-                    .child(text(description, 16., 24., 430., t.text_tertiary).whitespace_normal()),
+                    .child(
+                        text(
+                            heading,
+                            if self.dialog_mode { 20. } else { 28. },
+                            if self.dialog_mode { 28. } else { 35. },
+                            if self.dialog_mode { 500. } else { 400. },
+                            t.text,
+                        )
+                        .whitespace_normal(),
+                    )
+                    .child(
+                        text(
+                            description,
+                            if self.dialog_mode { 14. } else { 16. },
+                            if self.dialog_mode { 21. } else { 24. },
+                            430.,
+                            t.text_tertiary,
+                        )
+                        .whitespace_normal(),
+                    ),
             );
         let column = match step {
             SetupStep::AllowHost | SetupStep::AllowError | SetupStep::Enabling => column
@@ -766,18 +825,17 @@ impl Render for MobileSetupPage {
             SetupStep::Initial | SetupStep::Pending | SetupStep::Error => column
                 .child(
                     div()
-                        .w_full()
-                        .max_w(px(400.))
+                        .when(self.dialog_mode, |card| card.w(px(380.)).gap(px(16.)))
+                        .when(!self.dialog_mode, |card| card.w_full().max_w(px(400.)))
                         .relative()
                         .flex()
                         .flex_col()
-                        .child(shapes::decoration(shapes::Decoration {
+                        .when(!self.dialog_mode, |card| card.child(shapes::decoration(shapes::Decoration {
                             radius: Corners::all(px(20.)),
                             corner: Squircle,
                             border: Some((px(1.), t.border)),
                             ..Default::default()
-                        }))
-                        .p(px(1.))
+                        })).p(px(1.)))
                         .text_left()
                         .child(divider(feature(
                             "mobile-phone",
@@ -799,12 +857,15 @@ impl Render for MobileSetupPage {
                         )),
                 )
                 .child(
-                    button("get-started", "Get started")
-                        .w_full()
-                        .max_w(px(400.))
-                        .when(!pending, |b| b.on_click(crate::dispatch::<GetStarted>)),
+                    div().flex().items_center().justify_center().gap(px(12.))
+                        .when(!self.dialog_mode, |row| row.w_full().max_w(px(400.)))
+                        .when(self.dialog_mode, |row| row.child(button("later", "Later").px(px(21.)).on_click(crate::dispatch::<FinishSetup>)))
+                        .child(button("get-started", "Get started")
+                            .when(self.dialog_mode, |button| button.px(px(21.)))
+                            .when(!self.dialog_mode, |button| button.w_full())
+                            .when(!pending, |button| button.on_click(crate::dispatch::<GetStarted>))),
                 )
-                .child(
+                .when(!self.dialog_mode, |column| column.child(
                     div().w_full().max_w(px(400.)).child(
                         text(
                             "ChatGPT can access your desktop—including files, apps, and your browser—to complete tasks you send from your phone. This can introduce security risks. Only connect devices that you own and trust.",
@@ -815,7 +876,7 @@ impl Render for MobileSetupPage {
                         )
                         .whitespace_normal(),
                     ),
-                )
+                ))
                 .when(step == SetupStep::Error, |c| {
                     c.child(text(
                         "Couldn’t check security requirements. Try again",
@@ -827,16 +888,16 @@ impl Render for MobileSetupPage {
                 }),
         };
         if self.dialog_mode {
-            let artwork = if step == SetupStep::Connected {
-                2
-            } else {
-                usize::from(self.computer_device)
+            let artwork_index = match step {
+                SetupStep::Initial | SetupStep::Pending | SetupStep::Error => 3,
+                SetupStep::Connected => 2,
+                _ => usize::from(self.computer_device),
             };
             return div()
                 .id("mobile-pairing-dialog")
-                .size_full()
+                .w_full()
+                .relative()
                 .overflow_y_scroll()
-                .bg(t.surface)
                 .flex()
                 .flex_col()
                 .when_some(self.dialog_focus.as_ref(), |page, focus| {
@@ -846,10 +907,35 @@ impl Render for MobileSetupPage {
                     cx.listener(|this, event, window, cx| this.trap_tab(event, window, cx)),
                 )
                 .child(
-                    gpui::img(DIALOG_ARTWORK[artwork].clone())
-                        .h(px(214.))
-                        .w_full()
-                        .flex_none(),
+                    artwork(
+                        self.artwork.clone(),
+                        gpui::Hsla { a: 0., ..t.surface },
+                        4 + artwork_index,
+                    )
+                    .h(px(214.))
+                    .w_full()
+                    .flex_none(),
+                )
+                .child(
+                    div()
+                        .id("setup-close")
+                        .absolute()
+                        .top(px(16.))
+                        .right(px(16.))
+                        .size(px(24.))
+                        .p(px(4.))
+                        .role(gpui::Role::Button)
+                        .aria_label("Close")
+                        .focusable()
+                        .tab_index(0)
+                        .child(icon::icon("close", 16., gpui::Hsla { a: 0.8, ..t.text }))
+                        .on_click(crate::dispatch::<FinishSetup>)
+                        .on_key_down(|event: &gpui::KeyDownEvent, window, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                window.dispatch_action(Box::new(FinishSetup), cx);
+                                cx.stop_propagation();
+                            }
+                        }),
                 )
                 .child(
                     div()
@@ -858,14 +944,7 @@ impl Render for MobileSetupPage {
                         .flex_col()
                         .items_center()
                         .gap(px(24.))
-                        .child(column)
-                        .when(step != SetupStep::Connected, |column| {
-                            column.child(
-                                button("close-device-pairing", "Cancel")
-                                    .px(px(20.))
-                                    .on_click(crate::dispatch::<FinishSetup>),
-                            )
-                        }),
+                        .child(column),
                 );
         }
         let page = div()

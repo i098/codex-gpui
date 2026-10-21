@@ -128,10 +128,14 @@ Settings > Connections saves SSH definitions under `CODEX_HOME` and keeps a sepa
 SSH discovery reads `~/.ssh/config` and its `Include` files without changing them.
 WSL rows appear only when Windows discovers a distribution.
 The editor keeps the entered values when a save fails.
+The SSH chooser lists aliases that are not saved yet.
+Manual entry reports all validation errors before it writes a connection.
+Connection colors use the original per-host setting and survive a restart.
 Mobile setup uses the app-server remote-control status, pairing, and authorized-device APIs.
 It does not bypass account authorization or MFA.
 The existing native policy controls remote-device visibility.
 The added connection and pairing states still require their original/native pixel checks before release.
+Capture tests require separate, owned `HOME` and `CODEX_HOME` directories.
 
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.

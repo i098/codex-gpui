@@ -12,7 +12,8 @@ use std::{
 };
 use ui::screens::{
     connections::{
-        self as view, Action, Client, Connection, ConnectionsState, Pairing, RemoteStatus, Status,
+        self as view, Action, Client, Connection, ConnectionsState, Pairing, RemoteStatus,
+        SshDraft, Status,
     },
     mobile,
 };
@@ -82,6 +83,7 @@ pub(super) fn sync(root: &mut Root, cx: &mut Context<Root>) {
     cx.update_global::<ConnectionsState, _>(|state, _| {
         state.generation = state.generation.wrapping_add(1);
         state.pending = false;
+        state.active_setup = None;
         state.gates.remote_connections = root.config["features"]["remote_connections"] == true
             || root.config["features.remote_connections"] == true;
         state.gates.slingshot = native.slingshot_enabled;
@@ -120,7 +122,7 @@ impl Runtime {
         &self,
         host: &dyn host::Host,
         executor: &gpui::BackgroundExecutor,
-    ) -> Result<(Vec<Connection>, Option<String>)> {
+    ) -> Result<(host::connections::SavedConnections, Option<String>)> {
         let wsl_error = match host::connections::discover_wsl() {
             Ok(rows) => {
                 *self
@@ -132,7 +134,7 @@ impl Runtime {
             Err(error) => Some(error.to_string()),
         };
         let mut rows = self.rows(host)?;
-        for row in &mut rows {
+        for row in &mut rows.rows {
             if row.auto_connect && row.state != "connected" {
                 match self.connect(host, &row.host_id, true, executor).await {
                     Ok(()) => row.state = "connected".into(),
@@ -146,9 +148,9 @@ impl Runtime {
         Ok((rows, wsl_error))
     }
 
-    fn rows(&self, host: &dyn host::Host) -> Result<Vec<Connection>> {
+    fn rows(&self, host: &dyn host::Host) -> Result<host::connections::SavedConnections> {
         let mut rows = host.remote_connections()?;
-        rows.extend(
+        rows.rows.extend(
             self.wsl
                 .lock()
                 .map_err(|_| anyhow::anyhow!("WSL state lock is poisoned"))?
@@ -157,7 +159,7 @@ impl Runtime {
         );
         let mut peers = self.peers()?;
         peers.retain(|_, peer| !peer.bridge.is_closed());
-        for row in &mut rows {
+        for row in &mut rows.rows {
             row.state = if peers.contains_key(&row.host_id) {
                 "connected"
             } else {
@@ -183,6 +185,7 @@ impl Runtime {
         }
         let connection = self
             .rows(host)?
+            .rows
             .into_iter()
             .find(|connection| connection.host_id == id)
             .context("Remote connection not found")?;
@@ -483,10 +486,18 @@ fn handle(root: &mut Root, runtime: Arc<Runtime>, action: Action, cx: &mut Conte
             row.state = "connecting".into();
             row.error = None;
         }
+        if let Action::ConnectBatch(ids) = &action
+            && let Some(rows) = &mut state.connections
+        {
+            for row in rows.iter_mut().filter(|row| ids.contains(&row.host_id)) {
+                row.state = "connecting".into();
+                row.error = None;
+            }
+        }
     });
     let bridge = root.bridge.clone();
     let generation = cx.global::<ConnectionsState>().generation;
-    let mobile = root.mobile_page.clone();
+    let mobile = mobile_page(root, cx);
     if matches!(action, Action::SetEnabled(true))
         && let Some(page) = &mobile
     {
@@ -602,11 +613,53 @@ fn handle(root: &mut Root, runtime: Arc<Runtime>, action: Action, cx: &mut Conte
                 }
                 Action::DiscoverSsh => Ok(Update::Aliases(host.discover_remote_ssh()?)),
                 Action::Save(draft) => {
+                    let connect = runtime
+                        .rows(host.as_ref())?
+                        .rows
+                        .iter()
+                        .find(|row| Some(&row.host_id) == draft.host_id.as_ref())
+                        .is_none_or(|row| row.auto_connect);
                     let connection = host.save_remote_connection(draft)?;
                     Ok(Update::Saved(
-                        runtime.rows(host.as_ref())?,
-                        connection.host_id,
+                        runtime.rows(host.as_ref())?.rows,
+                        if connect {
+                            vec![connection.host_id]
+                        } else {
+                            Vec::new()
+                        },
                     ))
+                }
+                Action::SaveAliases(aliases) => {
+                    let mut ids = Vec::with_capacity(aliases.len());
+                    for alias in aliases {
+                        let draft = SshDraft {
+                            display_name: alias.clone(),
+                            hostname: alias.clone(),
+                            alias: true,
+                            ..Default::default()
+                        };
+                        ids.push(host.save_remote_connection(&draft)?.host_id);
+                    }
+                    Ok(Update::Saved(runtime.rows(host.as_ref())?.rows, ids))
+                }
+                Action::ConnectBatch(ids) => {
+                    let mut errors = HashMap::new();
+                    // ponytail: Connect batches in order; use bounded concurrency for large host lists.
+                    for id in ids {
+                        if let Err(error) =
+                            runtime.connect(host.as_ref(), id, true, &executor).await
+                        {
+                            errors.insert(id.as_str(), error.to_string());
+                        }
+                    }
+                    let mut rows = runtime.rows(host.as_ref())?.rows;
+                    for row in &mut rows {
+                        if let Some(error) = errors.remove(row.host_id.as_str()) {
+                            row.state = "error".into();
+                            row.error = Some(error);
+                        }
+                    }
+                    Ok(Update::Rows(rows))
                 }
                 Action::RenameRemote {
                     environment_id,
@@ -649,22 +702,22 @@ fn handle(root: &mut Root, runtime: Arc<Runtime>, action: Action, cx: &mut Conte
                 Action::Delete(id) => {
                     host.delete_remote_connection(id)?;
                     runtime.peers()?.remove(id);
-                    Ok(Update::Rows(runtime.rows(host.as_ref())?))
+                    Ok(Update::Rows(runtime.rows(host.as_ref())?.rows))
                 }
                 Action::Connect(id, enabled) => {
                     runtime
                         .connect(host.as_ref(), id, *enabled, &executor)
                         .await?;
-                    Ok(Update::Rows(runtime.rows(host.as_ref())?))
+                    Ok(Update::Rows(runtime.rows(host.as_ref())?.rows))
                 }
                 Action::Restart(id) => {
                     runtime.peers()?.remove(id);
                     runtime.connect(host.as_ref(), id, true, &executor).await?;
-                    Ok(Update::Rows(runtime.rows(host.as_ref())?))
+                    Ok(Update::Rows(runtime.rows(host.as_ref())?.rows))
                 }
                 Action::Logout(id) => {
                     runtime.logout(host.as_ref(), id, &executor).await?;
-                    Ok(Update::Rows(runtime.rows(host.as_ref())?))
+                    Ok(Update::Rows(runtime.rows(host.as_ref())?.rows))
                 }
                 Action::KeepAwake(_) => unreachable!(),
             }
@@ -684,15 +737,16 @@ fn handle(root: &mut Root, runtime: Arc<Runtime>, action: Action, cx: &mut Conte
                     let mut start_poll = None;
                     let mut start_pairing = false;
                     let mut mobile_step = None;
-                    let mut connect_saved = None;
-                    let entering_mobile = root
-                        .mobile_page
+                    let mut connect_saved = Vec::new();
+                    let current_mobile = mobile_page(root, cx);
+                    let entering_mobile = current_mobile
                         .as_ref()
-                        .is_some_and(|p| p.read(cx).step() == mobile::SetupStep::Initial);
+                        .is_some_and(|page| page.read(cx).step() == mobile::SetupStep::Initial);
                     cx.update_global::<ConnectionsState, _>(|state, _| match update {
                         Update::Refresh(snapshot) => {
                             if let Some(rows) = snapshot.rows {
-                                state.connections = Some(rows);
+                                state.setup_complete = rows.setup_complete;
+                                state.connections = Some(rows.rows);
                                 state.wsl_error = snapshot.wsl_error;
                             }
                             if let Some(devices) = snapshot.devices {
@@ -731,7 +785,7 @@ fn handle(root: &mut Root, runtime: Arc<Runtime>, action: Action, cx: &mut Conte
                             let enabled = status.status == Status::Connected;
                             state.status = Some(status);
                             state.pairing = None;
-                            start_pairing = enabled && root.mobile_page.is_some();
+                            start_pairing = enabled && current_mobile.is_some();
                         }
                         Update::Pairing(pairing, before) => {
                             state.pairing = Some(pairing.clone());
@@ -747,7 +801,14 @@ fn handle(root: &mut Root, runtime: Arc<Runtime>, action: Action, cx: &mut Conte
                                 clients.retain(|c| c.client_id != id);
                             }
                         }
-                        Update::Aliases(aliases) => {
+                        Update::Aliases(mut aliases) => {
+                            let used: HashSet<_> = state
+                                .connections
+                                .iter()
+                                .flatten()
+                                .filter_map(|connection| connection.alias.as_deref())
+                                .collect();
+                            aliases.retain(|alias| !used.contains(alias.as_str()));
                             state.aliases = aliases;
                             state.aliases_loaded = true;
                         }
@@ -755,21 +816,26 @@ fn handle(root: &mut Root, runtime: Arc<Runtime>, action: Action, cx: &mut Conte
                         Update::Saved(rows, host_id) => {
                             state.connections = Some(rows);
                             state.saved_revision = state.saved_revision.wrapping_add(1);
-                            connect_saved = Some(host_id);
+                            connect_saved = host_id;
                         }
                     });
                     reconcile_awake(&runtime, cx);
-                    if let Some(host_id) = connect_saved {
-                        handle(root, runtime.clone(), Action::Connect(host_id, true), cx);
+                    if !connect_saved.is_empty() {
+                        handle(
+                            root,
+                            runtime.clone(),
+                            Action::ConnectBatch(connect_saved),
+                            cx,
+                        );
                     }
                     if let Some(step) = mobile_step
-                        && let Some(page) = &root.mobile_page
+                        && let Some(page) = &current_mobile
                     {
                         page.update(cx, |page, cx| page.set_step(step, cx));
                     }
                     if start_pairing {
                         if mobile_step.is_none()
-                            && let Some(page) = &root.mobile_page
+                            && let Some(page) = &current_mobile
                         {
                             page.update(cx, |page, cx| {
                                 page.set_step(mobile::SetupStep::Waiting, cx)
@@ -778,7 +844,14 @@ fn handle(root: &mut Root, runtime: Arc<Runtime>, action: Action, cx: &mut Conte
                         handle(root, runtime.clone(), Action::StartPairing, cx);
                     }
                     if let Some((pairing, before)) = start_poll {
-                        poll_pairing(bridge.clone(), pairing, before, generation, cx);
+                        poll_pairing(
+                            bridge.clone(),
+                            root.host.clone(),
+                            pairing,
+                            before,
+                            generation,
+                            cx,
+                        );
                     }
                 }
                 Err(error) => {
@@ -802,7 +875,7 @@ fn handle(root: &mut Root, runtime: Arc<Runtime>, action: Action, cx: &mut Conte
                         });
                     }
                     if matches!(action, Action::SetEnabled(true))
-                        && let Some(page) = &root.mobile_page
+                        && let Some(page) = mobile_page(root, cx)
                     {
                         page.update(cx, |page, cx| {
                             page.set_step(mobile::SetupStep::AllowError, cx)
@@ -823,12 +896,12 @@ enum Update {
     Revoked(String),
     Aliases(Vec<String>),
     Rows(Vec<Connection>),
-    Saved(Vec<Connection>, String),
+    Saved(Vec<Connection>, Vec<String>),
     Devices(Vec<Connection>),
 }
 
 struct Snapshot {
-    rows: Option<Vec<Connection>>,
+    rows: Option<host::connections::SavedConnections>,
     remote: Option<Result<(RemoteStatus, Vec<Client>)>>,
     devices: Option<Result<Vec<Connection>>>,
     wsl_error: Option<String>,
@@ -836,6 +909,7 @@ struct Snapshot {
 
 fn poll_pairing(
     bridge: Arc<Bridge>,
+    host: Arc<dyn host::Host>,
     pairing: Pairing,
     before: HashSet<String>,
     generation: u64,
@@ -860,13 +934,18 @@ fn poll_pairing(
                 let response: Value = bridge.request("remoteControl/pairing/status", json!({"pairingCode":pairing.pairing_code,"manualPairingCode":pairing.manual_pairing_code})).await?;
                 if response["claimed"] != true { return Ok(None); }
                 let clients = clients(&bridge, Some(&pairing.environment_id)).await?;
-                Ok(clients.iter().any(|client| !before.contains(&client.client_id)).then_some(clients))
+                if clients.iter().any(|client| !before.contains(&client.client_id)) {
+                    host.record_mobile_setup()?;
+                    Ok(Some(clients))
+                } else {
+                    Ok(None)
+                }
             }.await;
             let stop = weak.update(cx, |root, cx| match result {
                 Ok(None) => false,
                 Ok(Some(clients)) => {
-                    cx.update_global::<ConnectionsState, _>(|state, _| { state.clients = Some(clients); state.pairing_connected = true; });
-                    if let Some(page) = &root.mobile_page { page.update(cx, |page, cx| page.set_step(mobile::SetupStep::Connected, cx)); }
+                    cx.update_global::<ConnectionsState, _>(|state, _| { state.clients = Some(clients); state.pairing_connected = true; state.setup_complete = true; });
+                    if let Some(page) = mobile_page(root, cx) { page.update(cx, |page, cx| page.set_step(mobile::SetupStep::Connected, cx)); }
                     true
                 }
                 Err(error) => { cx.update_global::<ConnectionsState, _>(|state, _| state.pairing_error = Some(error.to_string())); true }
@@ -881,6 +960,12 @@ pub(super) fn open_mobile(root: &mut Root, cx: &mut Context<Root>) {
     cx.defer(|cx| view::dispatch(Action::Refresh, cx));
 }
 
+pub(super) fn mobile_page(root: &Root, cx: &App) -> Option<gpui::Entity<mobile::MobileSetupPage>> {
+    root.mobile_page
+        .clone()
+        .or_else(|| cx.global::<ConnectionsState>().active_setup.clone())
+}
+
 pub(super) fn remote_route(root: &mut Root, cx: &mut Context<Root>) {
     if cx.global::<ConnectionsState>().gates.remote_connections {
         root.state.route = Route::Settings;
@@ -893,5 +978,34 @@ pub(super) fn remote_route(root: &mut Root, cx: &mut Context<Root>) {
 pub(super) fn startup(root: &Root, cx: &mut Context<Root>) {
     if root.state.path.is_some() && !root.bridge.is_acp() {
         cx.defer(|cx| view::dispatch(Action::Refresh, cx));
+    }
+}
+
+impl Root {
+    pub fn open_connections(
+        &mut self,
+        path: &str,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if path.contains('?') || path.contains('#') {
+            return false;
+        }
+        let path = path.trim_start_matches('/');
+        if path == "remote-connections" {
+            self.navigate(Route::RemoteConnections, window, cx);
+            return true;
+        }
+        let path = path.strip_prefix("settings/").unwrap_or(path);
+        let tab = match path {
+            "connections" | "connections/computer" => view::Tab::Computer,
+            "connections/devices" => view::Tab::Devices,
+            "connections/ssh" => view::Tab::Ssh,
+            "connections/wsl" => view::Tab::Wsl,
+            _ => return false,
+        };
+        cx.update_global::<ConnectionsState, _>(|state, _| state.requested_tab = tab);
+        self.open_settings_section("Connections", window, cx);
+        true
     }
 }

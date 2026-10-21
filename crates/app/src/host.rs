@@ -98,7 +98,7 @@ pub trait Host: Send + Sync {
         bail!("Computer Use settings are unsupported by this host")
     }
 
-    fn remote_connections(&self) -> Result<Vec<RemoteConnection>> {
+    fn remote_connections(&self) -> Result<connections::SavedConnections> {
         bail!("Remote connections are unsupported by this host")
     }
     fn save_remote_connection(&self, _draft: &SshDraft) -> Result<RemoteConnection> {
@@ -112,6 +112,9 @@ pub trait Host: Send + Sync {
     }
     fn discover_remote_ssh(&self) -> Result<Vec<String>> {
         bail!("SSH discovery is unsupported by this host")
+    }
+    fn record_mobile_setup(&self) -> Result<()> {
+        bail!("Mobile setup persistence is unsupported by this host")
     }
 
     /// Finish the initial automation turn and settle its automatic archive before reading the inbox.
@@ -1020,8 +1023,11 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
-    fn remote_connections(&self) -> Result<Vec<RemoteConnection>> {
-        self.connections()
+    fn remote_connections(&self) -> Result<connections::SavedConnections> {
+        self.saved_connections()
+    }
+    fn record_mobile_setup(&self) -> Result<()> {
+        LocalHost::record_mobile_setup(self)
     }
     fn save_remote_connection(&self, draft: &SshDraft) -> Result<RemoteConnection> {
         self.save_connection(draft)
@@ -1556,8 +1562,11 @@ impl CloudHost {
 }
 
 impl Host for CloudHost {
-    fn remote_connections(&self) -> Result<Vec<RemoteConnection>> {
+    fn remote_connections(&self) -> Result<connections::SavedConnections> {
         self.local.remote_connections()
+    }
+    fn record_mobile_setup(&self) -> Result<()> {
+        self.local.record_mobile_setup()
     }
     fn save_remote_connection(&self, draft: &SshDraft) -> Result<RemoteConnection> {
         self.local.save_remote_connection(draft)

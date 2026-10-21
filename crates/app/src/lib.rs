@@ -1952,7 +1952,7 @@ impl Root {
     /// failed read or a body without the expected field returns to the initial step with its
     /// error.
     fn start_mobile_setup(&mut self, cx: &mut Context<Self>) {
-        let Some(page) = self.mobile_page.clone() else {
+        let Some(page) = connections::mobile_page(self, cx) else {
             return;
         };
         page.update(cx, |page, cx| page.set_step(mobile::SetupStep::Pending, cx));

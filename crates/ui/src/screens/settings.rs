@@ -1401,7 +1401,13 @@ pub(super) fn switch(id: &'static str, on: bool, disabled: bool, t: &Theme) -> S
 }
 
 /// A settings surface through `shapes`: CSS `radius`, corner shape, fill and 1 px border.
-fn deco(l: &Layer, radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> AnyElement {
+pub(super) fn deco(
+    l: &Layer,
+    radius: f32,
+    corner: Corner,
+    fill: Hsla,
+    border: Option<Hsla>,
+) -> AnyElement {
     let l = l.clone();
     in_layer(surface(radius, corner, fill, border), move || l.get()).into_any_element()
 }
@@ -1425,10 +1431,10 @@ fn surface(radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> sha
 
 /// The origin (window px) of the composited layer Chromium paints a scroll container's
 /// contents into (the scroller is `.layer()` for text). [`probe`] records it at prepaint.
-type Layer = Rc<Cell<Point<Pixels>>>;
+pub(super) type Layer = Rc<Cell<Point<Pixels>>>;
 
 /// An empty first child of the layer's root that records the root's origin.
-fn probe(l: &Layer) -> impl IntoElement {
+pub(super) fn probe(l: &Layer) -> impl IntoElement {
     let l = l.clone();
     canvas(move |b, _, _| l.set(b.origin), |_, _, _, _| {})
         .absolute()

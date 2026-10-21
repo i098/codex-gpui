@@ -12,9 +12,19 @@ use ui::screens::connections::{Connection, SshDraft};
 
 const SAVED: &str = "codex-managed-remote-connections";
 const AUTO_CONNECT: &str = "remote-connection-auto-connect-by-host-id";
+const SETUP_COMPLETE: &str = "codex-mobile-has-connected-device";
+
+pub struct SavedConnections {
+    pub rows: Vec<Connection>,
+    pub setup_complete: bool,
+}
 
 impl LocalHost {
     pub fn connections(&self) -> Result<Vec<Connection>> {
+        Ok(self.saved_connections()?.rows)
+    }
+
+    pub fn saved_connections(&self) -> Result<SavedConnections> {
         let state = match fs::read(self.home.join(".codex-global-state.json")) {
             Ok(bytes) => serde_json::from_slice::<Value>(&bytes)?,
             Err(error) if error.kind() == ErrorKind::NotFound => json!({}),
@@ -28,9 +38,22 @@ impl LocalHost {
         };
         for row in &mut rows {
             row.auto_connect = state[AUTO_CONNECT][&row.host_id].as_bool().unwrap_or(false);
+            row.color = state["remote-host-globe-color-by-host-id"][&row.host_id]
+                .as_str()
+                .map(str::to_owned);
         }
         rows.sort_by(|a, b| a.display_name.cmp(&b.display_name));
-        Ok(rows)
+        Ok(SavedConnections {
+            rows,
+            setup_complete: state[SETUP_COMPLETE].as_bool().unwrap_or(false),
+        })
+    }
+
+    pub fn record_mobile_setup(&self) -> Result<()> {
+        self.update_global_state(|state| {
+            state[SETUP_COMPLETE] = json!(true);
+            Ok(true)
+        })
     }
 
     pub fn save_connection(&self, draft: &SshDraft) -> Result<Connection> {
@@ -61,6 +84,13 @@ impl LocalHost {
                 .then(|| draft.port.trim().parse::<u16>().ok())
                 .flatten(),
             identity: (!draft.alias && draft.use_identity).then(|| draft.identity.trim().into()),
+            color: match &draft.color {
+                Some(color) => color.clone(),
+                None => rows
+                    .iter()
+                    .find(|row| Some(&row.host_id) == draft.host_id.as_ref())
+                    .and_then(|row| row.color.clone()),
+            },
             ..Default::default()
         };
         self.update_global_state(|state| {
@@ -92,6 +122,26 @@ impl LocalHost {
                     && row["hostId"] != connection.host_id
             });
             saved.push(value);
+            if let Some(color) = &draft.color {
+                let key = "remote-host-globe-color-by-host-id";
+                if state[key].is_null() {
+                    state[key] = json!({});
+                }
+                let colors = state[key]
+                    .as_object_mut()
+                    .context("Invalid remote connection colors")?;
+                if let Some(color) = color {
+                    colors.insert(connection.host_id.clone(), json!(color));
+                } else {
+                    colors.remove(&connection.host_id);
+                }
+                if colors.is_empty() {
+                    state
+                        .as_object_mut()
+                        .context("Invalid global state")?
+                        .remove(key);
+                }
+            }
             Ok(true)
         })?;
         Ok(connection)
@@ -353,6 +403,7 @@ mod tests {
             display_name: "Build".into(),
             hostname: "user@example.invalid".into(),
             port: "2222".into(),
+            color: Some(Some("#0285ff".into())),
             ..Default::default()
         };
         let saved = host.save_connection(&draft).unwrap();
@@ -360,6 +411,7 @@ mod tests {
             .unwrap();
         let rows = host.connections().unwrap();
         assert_eq!(rows[0].ssh_port, Some(2222));
+        assert_eq!(rows[0].color.as_deref(), Some("#0285ff"));
         let path = temp.path().join(".codex-global-state.json");
         let mut state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         state[SAVED][0]["connectionAnalyticsId"] = json!("retained");
@@ -367,10 +419,20 @@ mod tests {
         let mut edit = draft.clone();
         edit.host_id = Some(saved.host_id.clone());
         edit.display_name = "Renamed".into();
+        edit.color = None;
         host.save_connection(&edit).unwrap();
         let state: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(state[SAVED][0]["connectionAnalyticsId"], "retained");
         assert!(rows[0].auto_connect);
+        assert_eq!(
+            host.connections().unwrap()[0].color.as_deref(),
+            Some("#0285ff")
+        );
+        edit.color = Some(None);
+        host.save_connection(&edit).unwrap();
+        let reset = host.connections().unwrap();
+        assert_eq!(reset[0].color, None);
+        assert!(reset[0].auto_connect);
         host.delete_connection(&saved.host_id).unwrap();
         assert!(host.connections().unwrap().is_empty());
         let state: Value = serde_json::from_slice(

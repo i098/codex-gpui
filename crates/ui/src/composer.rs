@@ -736,6 +736,21 @@ impl Composer {
         editor
     }
 
+    pub fn inline_settings_field(
+        (label, placeholder): (&'static str, &'static str),
+        value: &str,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut editor = Self::settings_field(placeholder, value, false, cx);
+        editor.request_compact = true;
+        editor.request_label = Some(label.into());
+        editor
+    }
+
+    fn is_inline_field(&self) -> bool {
+        self.plain_field.is_some() && self.request_parent.is_none() && self.request_compact
+    }
+
     pub fn field_text(&self) -> &str {
         &self.content
     }
@@ -1893,6 +1908,21 @@ impl Render for Composer {
             .on_action(cx.listener(Self::next_command))
             .on_action(cx.listener(Self::previous_command))
             .relative();
+        if self.is_inline_field() {
+            return div().w_full().child(
+                card.key_context(KEY_CONTEXT)
+                    .role(gpui::Role::TextInput)
+                    .aria_label(
+                        self.request_label
+                            .as_ref()
+                            .unwrap_or(&self.placeholder)
+                            .clone(),
+                    )
+                    .aria_placeholder(self.placeholder.clone())
+                    .aria_value(self.content.clone())
+                    .child(self.editor(cx)),
+            );
+        }
         if self.plain_field.is_some() {
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)

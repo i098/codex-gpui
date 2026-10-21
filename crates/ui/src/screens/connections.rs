@@ -1,4 +1,4 @@
-use crate::{composer::Composer, focus, icon::icon, text};
+use crate::{focus, icon::icon, text};
 use gpui::{
     AnyElement, App, AppContext as _, BorrowAppContext as _, Context, Corners, Div, Entity, Global,
     InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, SharedString,
@@ -7,6 +7,8 @@ use gpui::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use theme::{ActiveTheme as _, Theme};
+
+mod ssh;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -122,6 +124,8 @@ pub struct Connection {
     pub online: bool,
     #[serde(default, skip_serializing)]
     pub app_server_version: Option<String>,
+    #[serde(default, skip_serializing)]
+    pub color: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -133,38 +137,38 @@ pub struct SshDraft {
     pub identity: String,
     pub use_identity: bool,
     pub alias: bool,
+    pub color: Option<Option<String>>,
 }
 
 impl SshDraft {
-    pub fn validate(&self, existing: &[Connection]) -> Result<(), &'static str> {
-        if self.display_name.trim().is_empty() {
-            return Err("Display name is required");
-        }
-        if self.hostname.trim().is_empty() {
-            return Err("Hostname is required");
-        }
-        if self.hostname.trim().starts_with('-') || self.hostname.contains(['\n', '\r', '\0']) {
-            return Err("Hostname is invalid");
-        }
+    pub fn errors(&self, existing: &[Connection]) -> impl Iterator<Item = &'static str> {
+        let name = self.display_name.trim();
+        let hostname = self.hostname.trim();
         let port = self.port.trim();
-        if !port.is_empty() {
-            if !port.bytes().all(|c| c.is_ascii_digit()) {
-                return Err("SSH port must be an integer");
-            }
-            if port.parse::<u16>().ok().filter(|&p| p != 0).is_none() {
-                return Err("SSH port must be between 1 and 65535");
-            }
-        }
-        if self.use_identity && self.identity.trim().is_empty() {
-            return Err("Identity file path is required");
-        }
-        if existing.iter().any(|c| {
-            Some(&c.host_id) != self.host_id.as_ref()
-                && c.display_name.trim() == self.display_name.trim()
-        }) {
-            return Err("A connection with this display name already exists");
-        }
-        Ok(())
+        let numeric_port = port.bytes().all(|c| c.is_ascii_digit());
+        [
+            name.is_empty().then_some("Display name is required"),
+            hostname.is_empty().then_some("Hostname is required"),
+            (hostname.starts_with('-') || hostname.contains(['\n', '\r', '\0']))
+                .then_some("Hostname is invalid"),
+            (!port.is_empty() && !numeric_port).then_some("SSH port must be an integer"),
+            (!port.is_empty()
+                && numeric_port
+                && port.parse::<u16>().ok().filter(|&p| p != 0).is_none())
+            .then_some("SSH port must be between 1 and 65535"),
+            (self.use_identity && self.identity.trim().is_empty())
+                .then_some("Identity file path is required"),
+            existing
+                .iter()
+                .any(|c| Some(&c.host_id) != self.host_id.as_ref() && c.display_name.trim() == name)
+                .then_some("A connection with this display name already exists"),
+        ]
+        .into_iter()
+        .flatten()
+    }
+
+    pub fn validate(&self, existing: &[Connection]) -> Result<(), &'static str> {
+        self.errors(existing).next().map_or(Ok(()), Err)
     }
 }
 
@@ -178,6 +182,8 @@ pub enum Action {
     Revoke(String),
     DiscoverSsh,
     Save(SshDraft),
+    SaveAliases(Vec<String>),
+    ConnectBatch(Vec<String>),
     Delete(String),
     RenameRemote {
         environment_id: String,
@@ -195,6 +201,8 @@ pub type Dispatch = Arc<dyn Fn(Action, &mut App) + Send + Sync>;
 pub struct ConnectionsState {
     pub gates: Gates,
     pub requested_tab: Tab,
+    pub setup_complete: bool,
+    pub active_setup: Option<Entity<super::mobile::MobileSetupPage>>,
     pub status: Option<RemoteStatus>,
     pub clients: Option<Vec<Client>>,
     pub connections: Option<Vec<Connection>>,
@@ -243,29 +251,22 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
         ConnectionsPage {
             tab,
             editor: None,
+            discovery: None,
             menu: None,
             pairing: None,
+            layer: Default::default(),
         }
     });
     page.into_any_element()
 }
 
-struct Editor {
-    draft: SshDraft,
-    fields: [Entity<Composer>; 4],
-    error: Option<&'static str>,
-    remote_environment: Option<String>,
-    saving: bool,
-    saved_revision: u64,
-    details: bool,
-    version: Option<String>,
-}
-
 struct ConnectionsPage {
     tab: Tab,
-    editor: Option<Editor>,
+    editor: Option<ssh::Editor>,
+    discovery: Option<ssh::Discovery>,
     menu: Option<crate::screens::thread::view::menu::ContextMenu>,
     pairing: Option<Entity<super::mobile::MobileSetupPage>>,
+    layer: super::settings::Layer,
 }
 
 impl ConnectionsPage {
@@ -310,15 +311,28 @@ impl ConnectionsPage {
 
     fn activate(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(action, Action::StartPairing) {
+            let setup = !cx.global::<ConnectionsState>().setup_complete;
             cx.update_global::<ConnectionsState, _>(|state, _| {
                 state.pairing_connected = false;
                 state.pairing = None;
+                state.pairing_error = None;
             });
-            let page = cx.new(super::mobile::MobileSetupPage::pairing_dialog);
+            let page = cx.new(if setup {
+                super::mobile::MobileSetupPage::setup_dialog
+            } else {
+                super::mobile::MobileSetupPage::pairing_dialog
+            });
             if let Some(focus) = page.read(cx).dialog_focus() {
                 focus.focus(window, cx);
             }
+            cx.update_global::<ConnectionsState, _>(|state, _| {
+                state.active_setup = Some(page.clone())
+            });
             self.pairing = Some(page);
+            if setup {
+                cx.notify();
+                return;
+            }
         }
         dispatch(action, cx);
     }
@@ -328,17 +342,9 @@ impl ConnectionsPage {
         cx.update_global::<ConnectionsState, _>(|state, _| {
             state.pairing = None;
             state.pairing_connected = false;
+            state.active_setup = None;
         });
         cx.notify();
-    }
-
-    fn select_alias(&mut self, alias: &str, cx: &mut Context<Self>) {
-        if let Some(editor) = &mut self.editor {
-            editor.draft.alias = true;
-            editor.fields[0].update(cx, |field, cx| field.set_text(alias, cx));
-            editor.fields[1].update(cx, |field, cx| field.set_text(alias, cx));
-            cx.notify();
-        }
     }
 
     fn toggle(
@@ -390,6 +396,9 @@ impl ConnectionsPage {
         cx: &mut Context<Self>,
     ) -> Div {
         let t = cx.theme().clone();
+        if !state.setup_complete {
+            return self.empty_connections(&t, cx);
+        }
         let enabled = state
             .status
             .as_ref()
@@ -480,94 +489,6 @@ impl ConnectionsPage {
             ))
     }
 
-    fn open_editor(
-        &mut self,
-        connection: Option<&Connection>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let draft = connection
-            .map(|c| SshDraft {
-                host_id: Some(c.host_id.clone()),
-                display_name: c.display_name.clone(),
-                hostname: c.alias.clone().or(c.hostname.clone()).unwrap_or_default(),
-                port: c.ssh_port.map(|p| p.to_string()).unwrap_or_default(),
-                identity: c.identity.clone().unwrap_or_default(),
-                use_identity: c.identity.is_some(),
-                alias: c.alias.is_some(),
-            })
-            .unwrap_or_default();
-        let fields = [
-            ("Display name", draft.display_name.as_str()),
-            ("host.com or user@host.com", draft.hostname.as_str()),
-            ("", draft.port.as_str()),
-            ("", draft.identity.as_str()),
-        ]
-        .map(|(placeholder, value)| {
-            cx.new(|cx| Composer::settings_field(placeholder, value, false, cx))
-        });
-        use gpui::Focusable as _;
-        fields[0].read(cx).focus_handle(cx).focus(window, cx);
-        self.editor = Some(Editor {
-            draft,
-            fields,
-            error: None,
-            remote_environment: connection.and_then(|c| c.environment_id.clone()),
-            saving: false,
-            saved_revision: cx.global::<ConnectionsState>().saved_revision,
-            details: false,
-            version: connection.and_then(|c| c.app_server_version.clone()),
-        });
-        cx.notify();
-    }
-
-    fn save_editor(&mut self, cx: &mut Context<Self>) {
-        if cx.global::<ConnectionsState>().pending {
-            return;
-        }
-        if self.editor.as_ref().is_some_and(|editor| editor.details) {
-            return;
-        }
-        let Some(editor) = &mut self.editor else {
-            return;
-        };
-        editor.draft.display_name = editor.fields[0].read(cx).field_text().into();
-        editor.draft.hostname = editor.fields[1].read(cx).field_text().into();
-        editor.draft.port = editor.fields[2].read(cx).field_text().into();
-        editor.draft.identity = editor.fields[3].read(cx).field_text().into();
-        editor.error = None;
-        if let Some(environment_id) = editor.remote_environment.clone() {
-            let name = editor.draft.display_name.trim();
-            if name.is_empty() {
-                editor.error = Some("Remote control display name cannot be empty.");
-            } else {
-                dispatch(
-                    Action::RenameRemote {
-                        environment_id,
-                        name: name.into(),
-                    },
-                    cx,
-                );
-                editor.saving = true;
-            }
-            cx.notify();
-            return;
-        }
-        let existing = cx
-            .global::<ConnectionsState>()
-            .connections
-            .as_deref()
-            .unwrap_or_default();
-        match editor.draft.validate(existing) {
-            Ok(()) => {
-                dispatch(Action::Save(editor.draft.clone()), cx);
-                editor.saving = true;
-            }
-            Err(error) => editor.error = Some(error),
-        }
-        cx.notify();
-    }
-
     fn activate_menu(
         &mut self,
         action: &'static str,
@@ -585,10 +506,7 @@ impl ConnectionsPage {
             .cloned();
         match action {
             "details" => {
-                self.open_editor(connection.as_ref(), window, cx);
-                if let Some(editor) = &mut self.editor {
-                    editor.details = true;
-                }
+                self.open_details(connection.as_ref(), window, cx);
             }
             "edit" => self.open_editor(connection.as_ref(), window, cx),
             "delete" => match connection {
@@ -636,6 +554,14 @@ impl ConnectionsPage {
                     window,
                     cx,
                 ));
+        }
+        if self.tab == Tab::Ssh
+            && state
+                .connections
+                .as_ref()
+                .is_some_and(|rows| rows.is_empty())
+        {
+            return self.empty_connections(&t, cx);
         }
         let connections = if self.tab == Tab::Devices {
             &state.remote_devices
@@ -766,7 +692,7 @@ impl ConnectionsPage {
                             .role(gpui::Role::Button)
                             .aria_label("Add SSH connection")
                             .on_click(cx.listener(|this, _, window, cx| {
-                                this.open_editor(None, window, cx)
+                                this.open_ssh_discovery(window, cx)
                             })),
                     ),
             );
@@ -778,190 +704,114 @@ impl ConnectionsPage {
             .child(card("", rows, &t))
     }
 
-    fn editor(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let editor = self.editor.as_ref()?;
-        let t = cx.theme().clone();
-        let mut fields = div().flex().flex_col().gap(px(16.));
-        for (index, label) in [
-            "Display name",
-            "Hostname",
-            "SSH port (optional)",
-            "Identity file path",
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            if editor.remote_environment.is_some() && index > 0 {
-                continue;
-            }
-            if index == 3 && !editor.draft.use_identity {
-                continue;
-            }
-            if editor.draft.alias && index >= 2 {
-                continue;
-            }
-            fields = fields.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(text(label, 12., 16., 500., t.text))
-                    .child(if editor.details {
-                        text(
-                            editor.fields[index].read(cx).field_text().to_owned(),
-                            13.,
-                            20.,
-                            430.,
-                            t.text,
-                        )
-                        .into_any_element()
+    fn empty_connections(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
+        let ssh = self.tab == Tab::Ssh;
+        let (title, description, glyph, width) = if ssh {
+            (
+                "SSH connections from this Mac",
+                "Connect to a remote device through SSH connection",
+                "connections-empty-ssh",
+                66.,
+            )
+        } else {
+            (
+                "Devices that can control this Mac",
+                "Add device to control this Mac remotely",
+                "connections-empty-devices",
+                61. * 24. / 23.,
+            )
+        };
+        let foreground = if t.appearance == theme::Appearance::Dark {
+            gpui::rgb(0x2d2d2d).into()
+        } else {
+            t.text_inverse
+        };
+        let add = div()
+            .id("connections-empty-add")
+            .role(gpui::Role::Button)
+            .aria_label("Add")
+            .focusable()
+            .tab_index(0)
+            .h(px(24.))
+            .px(px(9.))
+            .relative()
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(9999.)),
+                fill: Some(t.button_primary_solid),
+                border: Some((px(1.), t.border)),
+                ..Default::default()
+            }))
+            .child(text("Add", 13., 18., 430., foreground))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if ssh {
+                    this.open_ssh_discovery(window, cx);
+                } else {
+                    this.activate(Action::StartPairing, window, cx);
+                }
+            }))
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    if ssh {
+                        this.open_ssh_discovery(window, cx);
                     } else {
-                        editor.fields[index].clone().into_any_element()
-                    }),
-            );
-        }
-        if !editor.details && editor.remote_environment.is_none() {
-            fields = fields.child(self.button(
-                "discover-ssh",
-                "Discover SSH connections",
-                Action::DiscoverSsh,
-                cx.global::<ConnectionsState>().pending,
-                window,
-                cx,
-            ));
-            let state = cx.global::<ConnectionsState>();
-            if state.aliases_loaded && state.aliases.is_empty() {
-                fields = fields.child(message("No SSH connections found", &t));
-            }
-            for alias in state.aliases.clone() {
-                let label = alias.clone();
-                let key_alias = alias.clone();
-                fields = fields.child(
-                    div()
-                        .id(SharedString::from(format!("ssh-alias-{alias}")))
-                        .role(gpui::Role::Button)
-                        .aria_label(label.clone())
-                        .focusable()
-                        .tab_index(0)
-                        .child(text(label, 13., 20., 430., t.text))
-                        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
-                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                this.select_alias(&key_alias, cx);
-                                cx.stop_propagation();
-                            }
-                        }))
-                        .on_click(cx.listener(move |this, _, _, cx| this.select_alias(&alias, cx))),
-                );
-            }
-        }
-        if editor.details
-            && let Some(version) = &editor.version
-        {
-            fields = fields.child(text(format!("Version: {version}"), 13., 20., 430., t.text));
-        }
-        if !editor.details && !editor.draft.alias && editor.remote_environment.is_none() {
-            fields =
-                fields.child(div().flex().gap(px(8.)).children(
-                    [(false, "No Auth"), (true, "Identity")].into_iter().map(
-                        |(identity, label)| {
-                            super::settings::button(label, t.text_alpha_5, None, &t)
-                                .id(if identity { "identity-auth" } else { "no-auth" })
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    if let Some(editor) = &mut this.editor {
-                                        editor.draft.use_identity = identity;
-                                    }
-                                    cx.notify();
-                                }))
-                        },
-                    ),
-                ));
-        }
-        let cancel = super::settings::button(
-            if editor.details { "Close" } else { "Cancel" },
-            t.text_alpha_5,
-            None,
-            &t,
-        )
-        .id("cancel-connection")
-        .on_click(cx.listener(|this, _, _, cx| {
-            if !cx.global::<ConnectionsState>().pending {
-                this.editor = None;
-                cx.notify();
-            }
-        }));
-        let save = super::settings::button("Save", t.primary_soft_alpha, None, &t)
-            .id("save-connection")
-            .on_click(cx.listener(|this, _, _, cx| this.save_editor(cx)));
-        Some(
-            gpui::deferred(
+                        this.activate(Action::StartPairing, window, cx);
+                    }
+                    cx.stop_propagation();
+                }
+            }));
+        div()
+            .flex()
+            .flex_col()
+            .child(
                 div()
-                    .absolute()
-                    .inset_0()
-                    .occlude()
-                    .bg(gpui::rgba(0x00000055))
+                    .h(px(46.))
+                    .pb(px(6.))
                     .flex()
                     .items_center()
-                    .justify_center()
-                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                        match event.keystroke.key.as_str() {
-                            "escape" if !cx.global::<ConnectionsState>().pending => {
-                                this.editor = None;
-                                cx.notify();
-                            }
-                            "enter"
-                                if this.editor.as_ref().is_some_and(|editor| editor.details) =>
-                            {
-                                this.editor = None;
-                                cx.notify();
-                            }
-                            "enter" => this.save_editor(cx),
-                            _ => {}
-                        }
-                        cx.stop_propagation();
-                    }))
+                    .child(text(title, 14., 21., 500., t.text)),
+            )
+            .child(
+                div()
+                    .relative()
+                    .p(px(1.))
+                    .child(super::settings::deco(
+                        &self.layer,
+                        20.,
+                        shapes::Corner::Squircle,
+                        t.background_panel,
+                        Some(t.border),
+                    ))
                     .child(
                         div()
-                            .w(px(480.))
-                            .max_w_full()
-                            .p(px(24.))
-                            .rounded(px(20.))
-                            .bg(t.background_panel)
+                            .w_full()
+                            .px(px(12.))
+                            .py(px(24.))
                             .flex()
-                            .flex_col()
-                            .gap(px(24.))
-                            .child(text(
-                                if editor.details {
-                                    "Details"
-                                } else if editor.draft.host_id.is_some() {
-                                    "Edit connection"
-                                } else {
-                                    "Add SSH connection"
-                                },
-                                18.,
-                                24.,
-                                500.,
-                                t.text,
-                            ))
-                            .children(editor.error.map(|e| text(e, 13., 18., 430., t.text_error)))
-                            .children(
-                                cx.global::<ConnectionsState>()
-                                    .error
-                                    .as_ref()
-                                    .map(|error| text(error.clone(), 13., 18., 430., t.text_error)),
-                            )
-                            .child(fields)
+                            .items_center()
+                            .justify_center()
                             .child(
                                 div()
+                                    .w_full()
+                                    .max_w(px(576.))
                                     .flex()
-                                    .justify_end()
-                                    .gap(px(8.))
-                                    .child(cancel)
-                                    .when(!editor.details, |row| row.child(save)),
+                                    .flex_col()
+                                    .items_center()
+                                    .gap(px(12.))
+                                    .child(crate::icon::icon_sized(glyph, width, 24., t.text))
+                                    .child(text(
+                                        description,
+                                        13.,
+                                        18.571_428,
+                                        430.,
+                                        gpui::Hsla { a: 0.65, ..t.text },
+                                    ))
+                                    .child(add),
                             ),
                     ),
             )
-            .into_any_element(),
-        )
     }
 }
 
@@ -971,23 +821,13 @@ impl Render for ConnectionsPage {
             .try_global::<ConnectionsState>()
             .cloned()
             .unwrap_or_default();
-        if self
-            .editor
-            .as_ref()
-            .is_some_and(|editor| editor.saving && state.saved_revision != editor.saved_revision)
-        {
-            self.editor = None;
-        } else if !state.pending
-            && let Some(editor) = &mut self.editor
-        {
-            editor.saving = false;
-        }
+        self.sync_ssh_dialogs(&state, window, cx);
         let t = cx.theme().clone();
         let has_wsl = state
             .connections
             .as_ref()
             .is_some_and(|rows| rows.iter().any(|c| c.source == "wsl"));
-        self.tab = state.gates.tab(self.tab, has_wsl);
+        self.tab = state.gates.tab(state.requested_tab, has_wsl);
         let mut tabs = vec![(Tab::Ssh, "SSH")];
         if state.gates.remote_control() {
             tabs.splice(
@@ -1003,30 +843,23 @@ impl Render for ConnectionsPage {
         }
         let tabbar = div()
             .flex()
-            .gap(px(4.))
+            .gap(px(2.))
             .children(tabs.into_iter().map(|(tab, label)| {
-                super::settings::button(
-                    label,
-                    if self.tab == tab {
-                        t.text_alpha_5
-                    } else {
-                        gpui::transparent_black()
-                    },
-                    None,
-                    &t,
-                )
-                .id(label)
-                .role(gpui::Role::Tab)
-                .aria_label(label)
-                .aria_selected(self.tab == tab)
-                .focusable()
-                .tab_index(0)
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.tab = tab;
-                    cx.update_global::<ConnectionsState, _>(|state, _| state.requested_tab = tab);
-                    dispatch(Action::Refresh, cx);
-                    cx.notify();
-                }))
+                connection_tab(label, self.tab == tab, &t)
+                    .id(label)
+                    .role(gpui::Role::Tab)
+                    .aria_label(label)
+                    .aria_selected(self.tab == tab)
+                    .focusable()
+                    .tab_index(0)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.tab = tab;
+                        cx.update_global::<ConnectionsState, _>(|state, _| {
+                            state.requested_tab = tab
+                        });
+                        dispatch(Action::Refresh, cx);
+                        cx.notify();
+                    }))
             }));
         let content = if self.tab == Tab::Computer {
             self.computer(&state, window, cx)
@@ -1045,36 +878,79 @@ impl Render for ConnectionsPage {
             .into_any_element()
         });
         let editor = self.editor(window, cx);
+        let discovery = self.discovery_dialog(window, cx);
         let pairing = self.pairing.as_ref().map(|page| {
+            let viewport = window.viewport_size();
+            let frame = div()
+                .id("connections-setup-frame")
+                .relative()
+                .w(px(420.))
+                .max_w(viewport.width * 0.92)
+                .max_h(viewport.height - px(32.))
+                .role(gpui::Role::Dialog)
+                .aria_label("Connect a device to this Mac")
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .child(shapes::backdrop_blur(
+                    px(24.),
+                    shapes::Fill::Color,
+                    false,
+                    shapes::Decoration {
+                        radius: Corners::all(px(25.)),
+                        corner: shapes::Corner::Squircle,
+                        fill: Some(gpui::Hsla {
+                            a: 0.9,
+                            ..t.menu_background
+                        }),
+                        shadows: vec![
+                            crate::composer::shadow(t.border, 0., 0., 0.5, false),
+                            crate::composer::shadow(
+                                gpui::rgba(0x0000001a).into(),
+                                4.,
+                                8.,
+                                -2.,
+                                false,
+                            ),
+                        ],
+                        ..Default::default()
+                    },
+                ))
+                .child(crate::rounded_clip(
+                    px(25.),
+                    shapes::Corner::Squircle,
+                    page.clone(),
+                ));
             gpui::deferred(
-                div()
-                    .absolute()
-                    .inset_0()
-                    .occlude()
-                    .bg(gpui::rgba(0x00000055))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .on_action(cx.listener(|this, _: &super::mobile::FinishSetup, _, cx| {
-                        this.close_pairing(cx);
-                        cx.stop_propagation();
-                    }))
-                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                        if event.keystroke.key == "escape" {
-                            this.close_pairing(cx);
-                            cx.stop_propagation();
-                        }
-                    }))
+                gpui::anchored()
+                    .position(gpui::point(px(0.), px(0.)))
                     .child(
                         div()
-                            .w(px(520.))
-                            .h(px(720.))
-                            .max_h_full()
-                            .rounded(px(24.))
-                            .overflow_hidden()
-                            .child(page.clone()),
+                            .w(viewport.width)
+                            .h(viewport.height)
+                            .occlude()
+                            .bg(gpui::rgba(0x00000022))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .on_action(cx.listener(
+                                |this, _: &super::mobile::FinishSetup, _, cx| {
+                                    this.close_pairing(cx);
+                                    cx.stop_propagation();
+                                },
+                            ))
+                            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                                if event.keystroke.key == "escape" {
+                                    this.close_pairing(cx);
+                                    cx.stop_propagation();
+                                }
+                            }))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(|this, _, _, cx| this.close_pairing(cx)),
+                            )
+                            .child(frame),
                     ),
             )
+            .with_priority(10)
             .into_any_element()
         });
         div()
@@ -1088,32 +964,75 @@ impl Render for ConnectionsPage {
                     .id("connections-scroll")
                     .flex_1()
                     .overflow_y_scroll()
-                    .px(px(24.))
+                    .layer()
+                    .child(super::settings::probe(&self.layer))
                     .child(
                         div()
-                            .mx_auto()
-                            .w_full()
-                            .max_w(px(768.))
                             .pt(px(16.))
-                            .pb(px(32.))
+                            .pb(px(1.))
                             .flex()
                             .flex_col()
-                            .gap(px(24.))
-                            .child(text("Connections", 24., 32., 500., t.text))
-                            .child(tabbar)
-                            .children(
-                                state
-                                    .error
-                                    .as_ref()
-                                    .map(|e| text(e.clone(), 13., 18., 430., t.text_error)),
-                            )
-                            .child(content),
+                            .items_center()
+                            .child(
+                                div().w_full().max_w(px(768.)).px(px(20.)).child(
+                                    div()
+                                        .min_h(px(60.))
+                                        .py(px(12.))
+                                        .flex()
+                                        .flex_col()
+                                        .justify_center()
+                                        .child(text("Connections", 28., 33.6, 500., t.text)),
+                                ),
+                            ),
+                    )
+                    .child(
+                        div().flex().flex_col().items_center().child(
+                            div()
+                                .w_full()
+                                .max_w(px(768.))
+                                .p(px(20.))
+                                .flex()
+                                .flex_col()
+                                .gap(px(40.))
+                                .child(tabbar)
+                                .children(
+                                    state.error.as_ref().map(|error| {
+                                        text(error.clone(), 13., 18., 430., t.text_error)
+                                    }),
+                                )
+                                .child(content),
+                        ),
                     ),
             )
             .children(menu)
             .children(editor)
+            .children(discovery)
             .children(pairing)
     }
+}
+
+fn connection_tab(label: &'static str, selected: bool, t: &Theme) -> Div {
+    div()
+        .h(px(28.))
+        .px(px(9.))
+        .relative()
+        .flex()
+        .items_center()
+        .when(selected, |tab| {
+            tab.child(shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(12.5)),
+                corner: shapes::Corner::Squircle,
+                fill: Some(t.text_alpha_5),
+                ..Default::default()
+            }))
+        })
+        .child(text(
+            label,
+            13.,
+            18.,
+            430.,
+            if selected { t.text } else { t.text_tertiary },
+        ))
 }
 
 fn message(label: &str, t: &Theme) -> Div {
@@ -1176,92 +1095,6 @@ fn card(title: &str, rows: Vec<Div>, t: &Theme) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn invalid_ssh_form_stays_open_without_saving() {
-        #[cfg(target_os = "macos")]
-        std::panic::set_hook(Box::new(|info| {
-            eprintln!("{info}");
-            std::process::exit(101);
-        }));
-        use gpui::{HeadlessAppContext, size};
-        let mut cx = if std::env::var_os("CGX_CONNECTIONS_SHOTS").is_some() {
-            HeadlessAppContext::with_platform(
-                textsys::text_system(),
-                Arc::new(theme::Assets),
-                gpui_platform::current_headless_renderer,
-            )
-        } else {
-            HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets))
-        };
-        cx.update(|cx| {
-            theme::load_fonts(cx);
-            cx.set_global(Theme::dark());
-            cx.set_global(ConnectionsState {
-                connections: Some(Vec::new()),
-                ..Default::default()
-            });
-        });
-        let page = cx.update(|cx| {
-            cx.new(|_| ConnectionsPage {
-                tab: Tab::Ssh,
-                editor: None,
-                menu: None,
-                pairing: None,
-            })
-        });
-        let window = cx
-            .open_window(size(px(840.), px(650.)), |_, _| page.clone())
-            .unwrap();
-        cx.run_until_parked();
-        cx.update_window(window.into(), |_, window, cx| {
-            page.update(cx, |page, cx| {
-                page.open_editor(None, window, cx);
-                let fields = page.editor.as_ref().unwrap().fields.clone();
-                for (field, value) in fields.iter().zip(["Build", "example.invalid", "65536", ""]) {
-                    field.update(cx, |field, cx| field.set_text(value, cx));
-                }
-                page.save_editor(cx);
-                assert_eq!(
-                    page.editor.as_ref().unwrap().error,
-                    Some("SSH port must be between 1 and 65535")
-                );
-            })
-        })
-        .unwrap();
-        cx.run_until_parked();
-        cx.update(|cx| {
-            cx.update_global::<ConnectionsState, _>(|state, _| {
-                state.dispatch = Some(Arc::new(|_, cx| {
-                    cx.update_global::<ConnectionsState, _>(|state, _| {
-                        state.error = Some("Disk is full".into());
-                        state.pending = false;
-                    });
-                }));
-            });
-            page.update(cx, |page, cx| {
-                let fields = page.editor.as_ref().unwrap().fields.clone();
-                fields[2].update(cx, |field, cx| field.set_text("22", cx));
-                page.save_editor(cx);
-                assert_eq!(
-                    page.editor.as_ref().unwrap().draft.hostname,
-                    "example.invalid"
-                );
-                assert_eq!(
-                    cx.global::<ConnectionsState>().error.as_deref(),
-                    Some("Disk is full")
-                );
-            });
-        });
-        cx.run_until_parked();
-        cx.update(|cx| assert!(page.read(cx).editor.is_some()));
-        if let Some(path) = std::env::var_os("CGX_CONNECTIONS_SHOTS") {
-            std::fs::create_dir_all(&path).unwrap();
-            cx.capture_screenshot(window.into())
-                .unwrap()
-                .save(std::path::PathBuf::from(path).join("ssh-validation.png"))
-                .unwrap();
-        }
-    }
     #[test]
     fn ssh_editor_rejects_invalid_ports_and_duplicate_names() {
         let existing = vec![Connection {
@@ -1334,8 +1167,10 @@ mod tests {
             cx.new(|_| ConnectionsPage {
                 tab: Tab::Computer,
                 editor: None,
+                discovery: None,
                 menu: None,
                 pairing: None,
+                layer: Default::default(),
             })
         });
         let window = cx

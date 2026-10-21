@@ -554,23 +554,27 @@ impl Composer {
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
-            .px(px(
-                if self.request_parent.is_some() && self.request_compact && !self.secret {
-                    10.
+            .px(px(if self.is_inline_field() {
+                0.
+            } else if self.request_parent.is_some() && self.request_compact && !self.secret {
+                10.
+            } else {
+                12.
+            }))
+            .pb(px(
+                if self.request_parent.is_some() || self.is_inline_field() {
+                    0.
                 } else {
-                    12.
+                    4.
                 },
             ))
-            .pb(px(if self.request_parent.is_some() {
-                0.
-            } else {
-                4.
-            }))
-            .min_h(px(if self.request_parent.is_some() {
-                20.
-            } else {
-                48.
-            }))
+            .min_h(px(
+                if self.request_parent.is_some() || self.is_inline_field() {
+                    20.
+                } else {
+                    48.
+                },
+            ))
             .cursor(CursorStyle::IBeam)
             .text_size(FONT_SIZE)
             .line_height(LINE_HEIGHT)
