@@ -307,6 +307,14 @@ The baseline uses window-local logical pixels from the top left; the adapter han
 Call it on the main thread with the unchanged selection.
 Headless windows return their native-handle error; the adapter has no URL or clipboard fallback.
 
+On macOS, `TextInputConfiguration::text_substitutions` enables native text substitutions for an editable field.
+The composer enables this option only for non-secret text.
+Edit > Substitutions controls smart quotes, smart dashes, and text replacement for the window.
+`NSSpellChecker` supplies the edits; the adapter preserves UTF-16 ranges and the caret.
+Each check requests up to 512 UTF-16 units of context on either side of the accepted edit.
+`cargo run -p app --example native_substitutions` checks the input path in a hidden native window.
+The check uses process-local replacement options without changing shared OS settings or activating the app.
+
 On macOS, `SystemNotification::reply_placeholder` adds a text-input notification action.
 Register `App::on_system_notification_reply` before posting; it receives the notification identifier and reply text on the main thread.
 Without a registered handler, the notification omits the reply field.

@@ -787,6 +787,17 @@ impl EntityInputHandler for Composer {
         cx.notify();
     }
 
+    fn text_input_configuration(
+        &mut self,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> gpui::TextInputConfiguration {
+        gpui::TextInputConfiguration {
+            text_substitutions: !self.secret,
+            ..Default::default()
+        }
+    }
+
     fn bounds_for_range(
         &mut self,
         range_utf16: Range<usize>,

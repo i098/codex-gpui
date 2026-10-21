@@ -326,6 +326,15 @@ pub enum OsAction {
 
     /// The 'redo' action
     Redo,
+
+    /// Open the native text substitutions panel.
+    ShowSubstitutions,
+    /// Toggle native typographic quote substitution.
+    SmartQuotes,
+    /// Toggle native typographic dash substitution.
+    SmartDashes,
+    /// Toggle native user-defined text replacements.
+    TextReplacement,
 }
 
 pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &App) {

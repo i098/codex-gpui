@@ -21,6 +21,10 @@ actions!(
         OpenSystemStatus,
         BringAllToFront,
         ToggleFullScreen,
+        ShowSubstitutions,
+        SmartQuotes,
+        SmartDashes,
+        TextReplacement,
     ]
 );
 
@@ -109,6 +113,22 @@ pub(crate) fn menus() -> Vec<Menu> {
             MenuItem::separator(),
             MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
             MenuItem::separator(),
+            #[cfg(target_os = "macos")]
+            MenuItem::submenu(Menu::new("Substitutions").items([
+                MenuItem::os_action(
+                    "Show Substitutions",
+                    ShowSubstitutions,
+                    OsAction::ShowSubstitutions,
+                ),
+                MenuItem::separator(),
+                MenuItem::os_action("Smart Quotes", SmartQuotes, OsAction::SmartQuotes),
+                MenuItem::os_action("Smart Dashes", SmartDashes, OsAction::SmartDashes),
+                MenuItem::os_action(
+                    "Text Replacement",
+                    TextReplacement,
+                    OsAction::TextReplacement,
+                ),
+            ])),
             MenuItem::submenu(Menu::new("Speech").items([
                 MenuItem::action("Start Speaking", ui::StartSpeaking),
                 MenuItem::action("Stop Speaking", ui::StopSpeaking),
