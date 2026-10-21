@@ -51,7 +51,7 @@ actions!(
         OpenMobileSetup,
         /// `⌥⌘B`: show or hide the Changes side panel.
         ToggleChangesPanel,
-        /// A file change card's `View changes`, the thread summary's `Changes` row.
+        /// The thread summary's `Changes` row and generic Changes navigation.
         OpenChangesPanel,
         /// Thread summary ▸ `Background processes` row: the command's terminal tab.
         OpenBackgroundTerminal,
@@ -64,6 +64,11 @@ actions!(
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = shell, no_json)]
 pub struct SetTheme(pub &'static str);
+
+/// A change card opens review with an override for this exact requested path.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = shell, no_json)]
+pub struct ViewChanges(pub String);
 
 // Edit menu commands; text inputs handle them.
 actions!(
