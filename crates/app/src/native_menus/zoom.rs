@@ -235,10 +235,14 @@ impl Render for ZoomBanner {
                 )
                 .child(
                     div()
+                        .relative()
                         .mx(length(4.))
                         .h(length(16.))
                         .w(length(1.))
-                        .bg(theme.border),
+                        .child(shapes::decoration(shapes::Decoration {
+                            fill: Some(theme.border),
+                            ..Default::default()
+                        })),
                 )
                 .child(reset),
         )
