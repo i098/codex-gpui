@@ -567,3 +567,4 @@ The temporary action is unavailable for ACP backends.
 `⌘Z` and `⇧⌘Z` undo and redo the last chat rename, pin or archive when no text field or queued-message deletion owns the key.
 A refused undo keeps the edit available and shows `Could not undo action`.
 `⇧Esc` (or the command menu's Clear all unreads) asks `Clear all unreads?` and marks every chat and scheduled-task update read; the opt-out checkbox saves `skip-clear-all-unreads-confirmation`. `⌥⌘A` opens the next chat awaiting input or with unread activity, skipping the open one.
+Command keybindings come from the original registry (`crates/ui/src/keyboard.rs`) and the persisted `codex-command-keybindings`, `primary-number-shortcut-target` and `external-browser-link-shortcut` host settings. The keymap module binds them live and rebinds when a preference changes; a rejected edit (invalid or conflicting) and a failed write keep the previous bindings.

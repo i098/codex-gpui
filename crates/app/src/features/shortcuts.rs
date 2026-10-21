@@ -54,16 +54,7 @@ pub(crate) enum AppEdit {
 }
 
 pub(super) fn init(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("ctrl-tab", NextRecentChat, None),
-        KeyBinding::new("ctrl-shift-tab", PreviousRecentChat, None),
-        KeyBinding::new("cmd-shift-n", NewTemporaryChat, None),
-        KeyBinding::new("alt-cmd-o", NewStandaloneChat, None),
-        KeyBinding::new("shift-escape", ClearAllUnreads, None),
-        KeyBinding::new("alt-cmd-a", NextAttentionChat, None),
-        KeyBinding::new("ctrl-shift-g", OpenChangesPanel, None),
-        KeyBinding::new("ctrl-`", OpenBackgroundTerminal, None),
-    ]);
+    cx.bind_keys([KeyBinding::new("ctrl-`", OpenBackgroundTerminal, None)]);
 }
 
 pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> gpui::Div {
@@ -102,11 +93,11 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
     })
     .on_mouse_up(
         MouseButton::Navigate(NavigationDirection::Back),
-        cx.listener(|this, _, window, cx| this.step(true, window, cx)),
+        cx.listener(|_, _, window, cx| super::keymap::dispatch_mouse("MouseBack", window, cx)),
     )
     .on_mouse_up(
         MouseButton::Navigate(NavigationDirection::Forward),
-        cx.listener(|this, _, window, cx| this.step(false, window, cx)),
+        cx.listener(|_, _, window, cx| super::keymap::dispatch_mouse("MouseForward", window, cx)),
     )
 }
 

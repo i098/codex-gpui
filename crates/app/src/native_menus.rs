@@ -102,6 +102,11 @@ fn bring_all_to_front(cx: &mut App) {
     let _ = cx;
 }
 
+/// Rebuilds the native menus so their key equivalents follow the current bindings.
+pub(crate) fn refresh_menus(cx: &mut App) {
+    cx.set_menus(menus());
+}
+
 /// Builds the native menu items backed by the app's registered actions.
 pub(crate) fn menus() -> Vec<Menu> {
     vec![

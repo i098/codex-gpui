@@ -106,21 +106,12 @@ pub struct GoToRecentChat(pub usize);
 /// `(min-width: 768px)`: below it the original hides the sidebar panel.
 const SIDEBAR_BREAKPOINT: Pixels = px(768.);
 
-/// Key bindings (docs/inventory.md §12) and the app-level commands.
+/// Fixed platform bindings and app-level commands; configurable bindings are installed by the keymap module.
 pub fn init(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("cmd-,", OpenSettings, None),
         KeyBinding::new("cmd-h", Hide, None),
         KeyBinding::new("alt-cmd-h", HideOthers, None),
         KeyBinding::new("cmd-q", Quit, None),
-        KeyBinding::new("cmd-n", NewChat, None),
-        KeyBinding::new("cmd-shift-o", NewChat, None),
-        KeyBinding::new("cmd-o", OpenFolder, None),
-        KeyBinding::new("alt-shift-cmd-o", OpenFolder, None),
-        KeyBinding::new("cmd-w", CloseWindow, None),
-        KeyBinding::new("cmd-/", ShowKeyboardShortcuts, None),
-        KeyBinding::new("cmd-z", Undo, None),
-        KeyBinding::new("cmd-shift-z", Redo, None),
         KeyBinding::new("cmd-x", Cut, None),
         KeyBinding::new("cmd-c", Copy, None),
         KeyBinding::new("cmd-v", Paste, None),
@@ -128,24 +119,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-f", FindInThread, None),
         KeyBinding::new("cmd-g", FindNext, None),
         KeyBinding::new("cmd-shift-g", FindPrevious, None),
-        KeyBinding::new("cmd-shift-s", ToggleSidebar, None),
-        KeyBinding::new("cmd-b", ToggleSidebar, None),
-        KeyBinding::new("cmd-[", GoBack, None),
-        KeyBinding::new("cmd-]", GoForward, None),
-        KeyBinding::new("cmd-shift-[", PreviousChat, None),
-        KeyBinding::new("cmd-alt-left", PreviousChat, None),
-        KeyBinding::new("cmd-shift-]", NextChat, None),
-        KeyBinding::new("cmd-alt-right", NextChat, None),
         KeyBinding::new("cmd-m", Minimize, None),
-        KeyBinding::new("cmd-k", OpenCommandMenu, None),
-        KeyBinding::new("cmd-shift-p", OpenCommandMenu, None),
-        KeyBinding::new("alt-cmd-b", ToggleChangesPanel, None),
-        KeyBinding::new("cmd-shift-a", ArchiveChat, None),
     ]);
-    cx.bind_keys((1..=9).map(|n| KeyBinding::new(&format!("cmd-{n}"), GoToChat(n - 1), None)));
-    cx.bind_keys(
-        (1..=6).map(|n| KeyBinding::new(&format!("cmd-alt-{n}"), GoToRecentChat(n - 1), None)),
-    );
     ui::composer::bind_keys(cx);
     features::init(cx);
     native_menus::init(cx);
@@ -460,6 +435,7 @@ impl Root {
                 Err(error) => eprintln!("codex-gpui: cannot load host settings: {error:#}"),
             }
         }
+        features::install_shortcuts(cx);
         let this = cx.weak_entity();
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {

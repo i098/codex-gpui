@@ -25,6 +25,7 @@ pub mod fixture;
 pub mod focus;
 pub mod icon;
 mod image_context;
+pub mod keyboard;
 pub mod motion;
 pub mod native_text;
 pub mod screens;
