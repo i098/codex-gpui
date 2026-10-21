@@ -187,6 +187,7 @@ Restored patches without object IDs use the HEAD file for the before version and
 Select an unmodified-lines gap to expand it, or use its controls to add 20 lines from either edge.
 Expanding context preserves the reviewed line position, including wrapped rows, and enforces the normal diff display limits.
 File headers remain visible during scrolling.
+Diff code and context rows paint in their own opaque scroll layer, as in the original renderer.
 Failed reads retain the patch and provide Retry.
 Only Staged and Unstaged sources show staging actions. Uncommitted combines both states and does not expose those actions.
 
