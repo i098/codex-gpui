@@ -8,6 +8,8 @@ mod mobile;
 mod settings;
 mod thread;
 
+pub(crate) use settings::request_quit;
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Route {
     #[default]

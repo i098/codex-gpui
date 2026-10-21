@@ -608,7 +608,7 @@ fn quit_from_a_clean_window_protects_another_windows_draft() -> Result<()> {
     })?;
     second.update(&mut fx.cx, |_, window, cx| {
         window.activate_window();
-        window.dispatch_action(Box::new(ui::Quit), cx);
+        window.dispatch_action(Box::new(app::Quit), cx);
     })?;
     fx.wait("first window discard confirmation", |fx| {
         fx.read(|root, cx| {

@@ -143,7 +143,7 @@ pub fn init(cx: &mut App) {
     );
     ui::composer::bind_keys(cx);
     features::init(cx);
-    cx.on_action(|_: &Quit, cx| cx.defer(windows::request_quit));
+    cx.on_action(|_: &Quit, cx| cx.defer(routes::request_quit));
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
@@ -4085,7 +4085,7 @@ impl Root {
                 let dialog = cx.new(|cx| Dialog::logout(self.account_email.clone(), cx));
                 self.show_dialog(dialog, window, cx);
             }
-            SettingsLeave::Quit => cx.defer(windows::request_quit),
+            SettingsLeave::Quit => cx.defer(routes::request_quit),
         }
     }
 
@@ -5510,7 +5510,7 @@ impl Render for Root {
             )
             .on_action(cx.listener(|_, _: &Quit, _, cx| {
                 cx.stop_propagation();
-                cx.defer(windows::request_quit);
+                cx.defer(routes::request_quit);
             }))
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &Zoom, window, _| window.zoom_window())

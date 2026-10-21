@@ -70,3 +70,23 @@ pub(super) fn page(root: &mut Root, window: &mut Window, cx: &mut Context<Root>)
     .detach();
     shell
 }
+pub(crate) fn request_quit(cx: &mut App) {
+    for window in cx.windows() {
+        let Some(window) = window.downcast::<Root>() else {
+            continue;
+        };
+        if window
+            .read(cx)
+            .is_ok_and(|root| root.instructions_changed(cx))
+        {
+            if let Err(error) = window.update(cx, |root, window, cx| {
+                window.activate_window();
+                root.confirm_instructions_leave(SettingsLeave::Quit, window, cx);
+            }) {
+                eprintln!("codex-gpui: confirm quit: {error:#}");
+            }
+            return;
+        }
+    }
+    cx.quit();
+}
