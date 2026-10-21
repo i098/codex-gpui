@@ -78,6 +78,19 @@ fn word_diff_toggle_and_nontext_files_use_native_controls() -> Result<()> {
     fx.keys("cmd-2")?;
     fx.wait_thread(SUBTRACT)?;
     fx.keys("alt-cmd-b")?;
+    if let Some(reference) = std::env::var_os("CGX_DIFF_REFERENCE") {
+        let frame = fx.reference_shot()?;
+        let metrics =
+            parity::diff_ref(Path::new(&reference), &out, "diffExpanded", "dark", &frame)?;
+        fs::write(
+            out.join("recorded-expanded-metrics.json"),
+            serde_json::to_vec_pretty(&metrics)?,
+        )?;
+        ensure!(
+            metrics.pass,
+            "The recorded diff did not pass the strict original pair"
+        );
+    }
     let turn = fx.read(|root, cx| {
         root.thread()
             .unwrap()
