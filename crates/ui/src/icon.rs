@@ -7,9 +7,10 @@
 //! 2. The svg's paths rasterized at runtime with Chromium's Skia (`shapes::paint_icon`).
 //! 3. The plain svg mask (Linux, svg features the rasterizer does not parse).
 //!
-//! Opacity: put it in the color (`color.opacity(op)`) or on the icon itself (`.opacity(op)`),
-//! not on an ancestor. Icons that Chromium paints into a composited layer (inside a scroll
-//! container) round differently: give them the layer's origin ([`Icon::composited`]).
+//! Opacity: a color alpha (`color.opacity(op)`) is the svg paths' own alpha; the icon's
+//! `.opacity(op)` is CSS `opacity` on it, a group. Not on an ancestor. Icons that Chromium
+//! paints into a composited layer (inside a scroll container) round differently: give them the
+//! layer's origin ([`Icon::composited`]).
 
 use gpui::{
     App, Bounds, Corners, Element, ElementId, GlobalElementId, Hitbox, Hsla, Image, ImageFormat,
@@ -192,7 +193,8 @@ impl Element for Icon {
         window: &mut Window,
         cx: &mut App,
     ) {
-        // The icon's own opacity goes into the color (and the fitted images' key).
+        // The icon's own opacity goes into the fitted images' key; the runtime raster draws the
+        // svg opaque into a `saveLayerAlpha` with it, as Skia does for CSS `opacity`.
         let opacity = self.interactivity.base_style.opacity.take().unwrap_or(1.);
         let (name, flip_x, own_layer) = (self.name.clone(), self.flip_x, self.own_layer);
         let (composited, runtime) = (self.composited, self.runtime);
@@ -263,6 +265,21 @@ impl Element for Icon {
                             window,
                             cx,
                         )
+                    } else if opacity < 1. {
+                        let alpha = (opacity * 255.).round() as u8;
+                        let opaque = style.text.color.unwrap_or(color);
+                        shapes::with_layer(alpha, bounds, window, |window| {
+                            shapes::paint_icon(
+                                &src,
+                                &path,
+                                Bounds::new(bounds.origin, css),
+                                flip_x,
+                                opaque,
+                                layer,
+                                window,
+                                cx,
+                            )
+                        })
                     } else {
                         shapes::paint_icon(
                             &src,
