@@ -5,6 +5,8 @@
 
 mod cloud_task;
 pub use cloud_task::parse_task_response;
+mod cloud;
+pub use cloud::{CloudTaskRequest, create_cloud_task};
 pub mod computer_use_requests;
 pub mod diff_content;
 mod features;
@@ -159,6 +161,7 @@ pub fn init(cx: &mut App) {
 pub fn menus() -> Vec<gpui::Menu> {
     native_menus::menus()
 }
+
 
 /// The thread route's side panel tab.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -2048,6 +2051,7 @@ impl Root {
             });
         }
     }
+
 
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
