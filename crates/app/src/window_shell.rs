@@ -1,5 +1,5 @@
 use crate::{Root, host, windows};
-use gpui::{AnyWindowHandle, App, AppContext as _, Global, PromptLevel};
+use gpui::{AnyWindowHandle, App, AppContext as _, Context, Global, KeyDownEvent, PromptLevel, Window};
 
 #[derive(Default)]
 struct QuitPending(bool);
@@ -7,7 +7,17 @@ impl Global for QuitPending {}
 
 pub(crate) fn actions(root: gpui::Div, cx: &mut gpui::Context<Root>) -> gpui::Div {
     use gpui::InteractiveElement as _;
-    root.on_action(cx.listener(|root, action: &ui::PreviewSidebar, _, cx| {
+    root.capture_action(cx.listener(|root, _: &ui::composer::Dismiss, window, cx| {
+        if !root.dismiss_shell_overlay(window, cx) {
+            cx.propagate();
+        }
+    }))
+    .capture_key_down(cx.listener(|root, event: &KeyDownEvent, window, cx| {
+        if event.keystroke.key == "escape" && root.dismiss_shell_overlay(window, cx) {
+            cx.stop_propagation();
+        }
+    }))
+    .on_action(cx.listener(|root, action: &ui::PreviewSidebar, _, cx| {
         let sidebar = match action.0 {
             "home" => root.sidebar.clone().into(),
             "scheduled" => {
@@ -24,6 +34,20 @@ pub(crate) fn actions(root: gpui::Div, cx: &mut gpui::Context<Root>) -> gpui::Di
         };
         root.shell().clone().update(cx, |shell, cx| shell.set_peek_sidebar(sidebar, cx));
     }))
+}
+
+impl Root {
+    fn dismiss_shell_overlay(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
+        if self.dialog.is_some() || self.command_menu.is_some() {
+            return false;
+        }
+        let composer = self.composer(cx);
+        let composer = composer.read(cx);
+        if composer.menu_state(window).0 || composer.context_menu_at().is_some() {
+            return false;
+        }
+        self.shell().clone().update(cx, |shell, cx| shell.dismiss_overlay(cx))
+    }
 }
 
 pub(crate) fn request_quit(cx: &mut App) {

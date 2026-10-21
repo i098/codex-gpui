@@ -13,6 +13,15 @@ fn proxy() {
 #[test]
 fn fullscreen_moves_history_controls_and_restores_them_on_exit() -> Result<()> {
     let mut fx = Fx::new()?;
+    fx.cx.update_window(fx.window, |_, window, _| {
+        window.toggle_fullscreen();
+        window.refresh();
+    })?;
+    fx.capture_evidence("CGX_WINDOW_SHELL_PROOF", "fullscreen-rest")?;
+    fx.cx.update_window(fx.window, |_, window, _| {
+        window.toggle_fullscreen();
+        window.refresh();
+    })?;
     fx.keys("cmd-,")?;
     assert_eq!(fx.route(), app::Route::Settings);
     fx.cx.update_window(fx.window, |_, window, _| {
@@ -49,6 +58,14 @@ fn sidebar_peek_waits_for_hover_and_does_not_navigate() -> Result<()> {
     fx.advance(Duration::from_millis(200))?;
     assert!(fx.shell(|shell| shell.is_peeking()));
     fx.capture_evidence("CGX_WINDOW_SHELL_PROOF", "sidebar-peek")?;
+    fx.hover((800., 200.))?;
+    fx.advance(Duration::from_millis(99))?;
+    assert!(fx.shell(|shell| shell.is_peeking()));
+    fx.advance(Duration::from_millis(2))?;
+    assert!(!fx.shell(|shell| shell.is_peeking()));
+    fx.hover(RAIL_HOME)?;
+    fx.advance(Duration::from_millis(101))?;
+    assert!(fx.shell(|shell| shell.is_peeking()));
     fx.keys("escape")?;
     assert!(!fx.shell(|shell| shell.is_peeking()));
     assert!(!fx.sidebar_open());

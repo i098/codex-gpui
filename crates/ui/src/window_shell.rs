@@ -10,6 +10,7 @@ pub struct PreviewSidebar(pub &'static str);
 pub(super) struct WindowState {
     pub peek: Option<&'static str>,
     pub sidebar: Option<AnyView>,
+    peek_hovered: bool,
     hover_task: Option<Task<()>>,
     menu_task: Option<Task<()>>,
     pub menu_open: bool,
@@ -38,6 +39,7 @@ impl Shell {
         self.window_state.hover_task = None;
         self.window_state.peek = None;
         self.window_state.sidebar = None;
+        self.window_state.peek_hovered = false;
         cx.notify();
     }
 
@@ -58,7 +60,7 @@ impl Shell {
                     this.window_state.peek = Some(name);
                     window.dispatch_action(Box::new(PreviewSidebar(name)), cx);
                     cx.notify();
-                } else {
+                } else if !this.window_state.peek_hovered {
                     this.close_peek(cx);
                 }
             });
@@ -66,23 +68,35 @@ impl Shell {
     }
 
     fn hover_peek(&mut self, entered: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.window_state.peek_hovered = entered;
         self.window_state.hover_task = None;
         if !entered && let Some(name) = self.window_state.peek {
             self.hover_rail(name, false, window, cx);
         }
     }
 
-    pub(super) fn dismiss_window_overlay(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if event.keystroke.key == "escape" && (self.is_peeking() || self.window_state.menu_open) {
-            self.close_peek(cx);
-            self.window_state.menu_open = false;
-            self.window_state.menu_task = None;
-            cx.stop_propagation();
+    pub fn dismiss_overlay(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.is_peeking() && !self.window_state.menu_open {
+            return false;
         }
+        self.close_peek(cx);
+        self.window_state.menu_open = false;
+        self.window_state.menu_task = None;
+        true
     }
 
     pub(super) fn floating_sidebar(&self, narrow: bool, progress: f32, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
         let sidebar = if narrow { &self.sidebar } else { self.window_state.sidebar.as_ref().unwrap_or(&self.sidebar) };
+        let radius = if narrow { Theme::RADIUS_LG } else { px(8.) };
+        let shadows = if narrow {
+            vec![
+                composer::shadow(t.border_strong, 0., 0., 0.5, false),
+                composer::shadow(gpui::rgba(0x00000008).into(), 3., 7.5, 0., false),
+                composer::shadow(gpui::rgba(0x00000005).into(), 0., 16., 0., false),
+            ]
+        } else {
+            vec![composer::shadow(t.shadow_card, 8., 32., 0., false)]
+        };
         div()
             .id("floating-sidebar")
             .absolute()
@@ -103,18 +117,12 @@ impl Shell {
                 }
             }))
             .child(shapes::decoration(shapes::Decoration {
-                radius: Corners::all(px(8.)),
+                radius: Corners::all(radius),
                 fill: Some(t.surface),
-                shadows: vec![shapes::Shadow {
-                    color: t.shadow_card,
-                    offset: point(px(0.), px(8.)),
-                    blur: px(32.),
-                    spread: px(0.),
-                    inset: false,
-                }],
+                shadows,
                 ..Default::default()
             }))
-            .child(rounded_clip(px(8.), shapes::Corner::Round,
+            .child(rounded_clip(radius, shapes::Corner::Round,
                 div().size_full().flex().flex_col()
                     .when(narrow, |d| d.child(div().relative().h(Theme::TITLEBAR_HEIGHT).flex_none().child(
                         window.with_element_namespace("floating-sidebar", |window| self.titlebar(t, window, cx, false))

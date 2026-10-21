@@ -1450,7 +1450,6 @@ impl Render for Shell {
             .relative()
             .overflow_hidden()
             .on_key_down(focus::tab)
-            .on_key_down(cx.listener(Self::dismiss_window_overlay))
             .font_family(SANS)
             .bg(under)
             .child(page)
