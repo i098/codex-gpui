@@ -25,7 +25,7 @@ fn plain_command(root: &Path) -> Command {
     command
 }
 
-fn command(root: &Path, args: &[&str]) -> Command {
+pub(super) fn command(root: &Path, args: &[&str]) -> Command {
     let mut command = plain_command(root);
     command.arg("--literal-pathspecs").args(args);
     command
@@ -407,6 +407,7 @@ fn changes(root: &Path, params: &Value) -> Result<Value> {
         "untrackedFilesOmitted": omitted.then(|| json!({"count": untracked.len(), "limit": MAX_REVIEW_UNTRACKED_FILES})),
     });
     let head = commit_id(root, "HEAD")?;
+    body["head_branch"] = answer(root, &["symbolic-ref", "--quiet", "--short", "HEAD"])?.into();
     let branches = checked(run(
         root,
         &[
