@@ -1688,7 +1688,7 @@ impl Render for SplitMain {
                     .absolute()
                     .top_0()
                     .bottom_0()
-                    .right(width - px(16.))
+                    .right(width - px(8.))
                     .w(px(16.))
                     .cursor(CursorStyle::ResizeLeftRight)
                     .on_mouse_down(
@@ -1792,9 +1792,11 @@ impl Render for SplitScreen {
             })
             .when_some(
                 self.hovered.filter(|ix| {
-                    self.tabs
-                        .get(*ix)
-                        .is_some_and(|tab| tab.0 == "thread-terminal")
+                    *ix != self.active
+                        && self
+                            .tabs
+                            .get(*ix)
+                            .is_some_and(|tab| tab.0 == "thread-terminal")
                 }),
                 |d, ix| {
                     let left = (left.unwrap_or_default() + px(8. + ix as f32 * 240.))
