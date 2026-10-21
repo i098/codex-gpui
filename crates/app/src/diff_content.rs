@@ -25,6 +25,15 @@ pub(crate) fn new_panel(
     })
 }
 
+pub(crate) fn read_file(host: &dyn Host, cwd: &str, path: &str) -> anyhow::Result<String> {
+    let response = json_body(&host.fetch(&Request::post(
+        "read-file",
+        Some(json!({"cwd":cwd,"path":path})),
+    ))?)?;
+    response["contents"].as_str().map(str::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("file response has no text contents"))
+}
+
 fn fetch(host: &dyn Host, request: &FullFileRequest) -> Result<FullText, FullError> {
     let result = host
         .fetch(&Request::post(
