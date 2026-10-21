@@ -38,8 +38,13 @@ pub(super) fn read(root: &Path, params: &Value) -> Result<Value> {
     };
     let path = Path::new(params["path"].as_str().context("missing path")?);
     let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
+    let base = if path.is_absolute() {
+        Path::new("")
+    } else {
+        cwd
+    };
     let mut file = PathBuf::new();
-    for component in cwd.join(path).components() {
+    for component in base.components().chain(path.components()) {
         if component == std::path::Component::ParentDir {
             file.pop();
         } else {
