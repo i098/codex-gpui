@@ -130,6 +130,7 @@ pub struct ThreadView {
     turns: Vec<Turn>,
     clock: Clock,
     composer: AnyView,
+    embedded: bool,
     _tick: Option<Task<()>>,
     stream_fades: HashMap<String, Vec<StreamSegment>>,
     mcp_images: items::McpImages,
@@ -580,6 +581,7 @@ impl ThreadView {
             turns: thread.turns,
             clock,
             composer,
+            embedded: false,
             _tick: None,
             stream_fades: HashMap::new(),
             mcp_images: RefCell::default(),
@@ -593,6 +595,18 @@ impl ThreadView {
             find: None,
             menu: None,
         }
+    }
+
+    pub fn embedded(thread: Thread, clock: Clock, cx: &mut Context<Self>) -> Self {
+        let empty = cx.new(|_| crate::EmptyMain).into();
+        let mut view = Self::new(thread, clock, empty);
+        view.embedded = true;
+        view
+    }
+
+    pub fn set_embedded_turns(&mut self, turns: Vec<Turn>, cx: &mut Context<Self>) {
+        self.turns = turns;
+        cx.notify();
     }
 
     pub fn id(&self) -> &str {
@@ -1011,6 +1025,9 @@ impl ThreadView {
     /// Only the last user message is editable, and only when its later turns have stopped.
     /// Non-text content stays read-only because `UserInput::Other` cannot retain attachments.
     pub fn can_edit(&self, turn_id: &str) -> bool {
+        if self.embedded {
+            return false;
+        }
         for turn in self.turns.iter().rev() {
             if turn.status == TurnStatus::InProgress {
                 return false;
@@ -1629,6 +1646,15 @@ impl ThreadView {
             return col;
         }
         if let Some((item, answer)) = final_answer {
+            if self.embedded && work.is_empty() {
+                return col.child(div().h(px(16.))).child(markdown::with_find(
+                    answer,
+                    window,
+                    t,
+                    self.find_paint(item).as_ref(),
+                    self.fades(item),
+                ));
+            }
             let secs = turn.duration_ms.unwrap_or(0) / 1000;
             let open = self.expanded.contains(&turn.id)
                 || self.find.as_ref().is_some_and(|find| {
@@ -1721,9 +1747,11 @@ impl ThreadView {
             if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
             }
-            return col.child(action_row(last, &group, &turn.id, answer, t));
+            return col.when(!self.embedded, |col| {
+                col.child(action_row(last, &group, &turn.id, answer, t))
+            });
         }
-        if turn.status == TurnStatus::InProgress {
+        if turn.status == TurnStatus::InProgress && (!self.embedded || !work.is_empty()) {
             let secs = self.clock.now() - turn.started_at.unwrap_or(self.clock.now());
             col = col
                 .child(div().h(px(16.)))
@@ -1866,6 +1894,9 @@ impl Render for ThreadView {
             })
             .collect();
         drop(laid_out);
+        if self.embedded {
+            return div().w_full().children(turns);
+        }
         let ids: Vec<String> = self.turns.iter().map(|t| t.id.clone()).collect();
         let (laid_out, scroll) = (self.laid_out.clone(), self.scroll.clone());
         let find_scroll = self

@@ -3,6 +3,7 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+mod cloud_task;
 pub mod computer_use_requests;
 mod features;
 pub mod host;
@@ -406,6 +407,7 @@ pub struct Root {
     archive_page: Option<Entity<ArchivedChats>>,
     /// The Mobile route's setup page.
     mobile_page: Option<Entity<mobile::MobileSetupPage>>,
+    cloud: Option<cloud_task::Session>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
@@ -694,6 +696,7 @@ impl Root {
             page: None,
             archive_page: None,
             mobile_page: None,
+            cloud: None,
             settings_section: None,
             settings_page: None,
             command_menu: None,
@@ -1000,6 +1003,11 @@ impl Root {
     /// The composer of the route: Home's, or the one docked under the open thread.
     pub fn composer(&self, cx: &App) -> Entity<Composer> {
         match self.state.route {
+            Route::Remote { .. } => self
+                .cloud
+                .as_ref()
+                .map(|session| session.page.read(cx).composer.clone())
+                .unwrap_or_else(|| self.home.read(cx).composer.clone()),
             Route::Thread(_) => self.thread_composer.clone(),
             _ => self.home.read(cx).composer.clone(),
         }
@@ -1017,6 +1025,7 @@ impl Root {
 
     /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
+        self.cloud = None;
         self.automation_load = None;
         self.project_load = None;
         self.suggestion_load = None;
