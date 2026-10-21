@@ -4,6 +4,7 @@
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
 pub mod computer_use_requests;
+pub mod deep_links;
 pub mod error_shell;
 mod features;
 pub mod host;
@@ -439,6 +440,7 @@ pub struct Root {
     chatgpt_account: bool,
     bridge: Arc<Bridge>,
     connection: error_shell::Connection,
+    deep_link: deep_links::Navigation,
     host: Arc<dyn host::Host>,
     project_load: Option<Task<()>>,
     picking_project: bool,
@@ -733,6 +735,7 @@ impl Root {
             models: Vec::new(),
             ready: false,
             connection: error_shell::Connection::new(cx),
+            deep_link: deep_links::Navigation::default(),
             qa_work_started: false,
             loaded: HashSet::new(),
             queue_load: None,
@@ -910,6 +913,7 @@ impl Root {
                 this.ready = true;
                 this.select_route(cx);
                 this.sync(window, cx);
+                cx.defer(deep_links::flush);
                 if bridge.is_acp() {
                     let note = format!(
                         "{} over ACP: only chats, streaming, Stop and approvals work",
@@ -3098,6 +3102,7 @@ impl Root {
         } else {
             self.navigate(route, window, cx);
         }
+        self.finish_deep_link(window, cx);
     }
 
     /// Home composer: `thread/start` with the chosen model and permissions, open it, then

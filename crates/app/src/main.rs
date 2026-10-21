@@ -77,6 +77,11 @@ fn main() {
         .to_string_lossy()
         .into_owned();
     let application = gpui_platform::application().with_assets(theme::Assets);
+    let (url_sender, url_receiver) = async_channel::unbounded();
+    let _ = url_sender.try_send(std::env::args().skip(1).collect());
+    application.on_open_urls(move |urls| {
+        let _ = url_sender.try_send(urls);
+    });
     application.on_reopen(|cx| {
         if let Err(error) = app::windows::reopen(cx) {
             eprintln!("codex-gpui: cannot reopen the window: {error:#}");
@@ -87,6 +92,7 @@ fn main() {
         cx.set_global(state.theme.theme(cx.window_appearance()));
         app::init(cx);
         cx.set_menus(app::menus());
+        app::deep_links::listen(url_receiver, cx);
         match app::windows::open_primary(state.clone(), cwd.clone(), cx) {
             Ok(handle) => app::qa::monitor(handle, cx),
             Err(error) => {

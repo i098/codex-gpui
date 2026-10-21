@@ -391,24 +391,25 @@ pub fn set_pointer_interactive(
 }
 
 pub fn reopen(cx: &mut App) -> Result<()> {
-    let handle = cx.try_global::<Windows>().and_then(|windows| {
-        windows
-            .last_primary
-            .and_then(|id| windows.entries.get(&id))
-            .or_else(|| {
-                windows
-                    .entries
-                    .values()
-                    .find(|entry| entry.kind == Kind::Primary)
-            })
-            .map(|entry| entry.handle)
-    });
+    let handle = last_primary(cx);
     if let Some(handle) = handle {
         return show(handle, Presentation::Foreground, cx);
     }
     let cwd = std::env::current_dir().context("read launch directory")?;
     open_primary(State::load(), cwd.to_string_lossy().into_owned(), cx)?;
     Ok(())
+}
+
+fn last_primary(cx: &App) -> Option<AnyWindowHandle> {
+    cx.try_global::<Windows>().and_then(|windows| {
+        windows.last_primary.and_then(|id| windows.entries.get(&id))
+            .or_else(|| windows.entries.values().find(|entry| entry.kind == Kind::Primary))
+            .map(|entry| entry.handle)
+    })
+}
+
+pub(crate) fn navigation_root(cx: &App) -> Option<WindowHandle<Root>> {
+    last_primary(cx)?.downcast()
 }
 
 pub(crate) fn connect(cwd: &Path) -> Result<(Bridge, Receiver<Event>)> {

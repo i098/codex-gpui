@@ -86,6 +86,15 @@ Feedback checks the account and feedback policy before opening its form.
 Submission uses `feedback/upload`; a failed upload keeps the entered details.
 
 
+## Deep links
+
+Launch arguments and macOS URL events use the same validated dispatcher.
+Thread and project links prefill the composer; they do not submit a turn.
+An unavailable foreign host never falls back to a local thread.
+Unknown settings sections open General, as in the original parser.
+The normal bundle registers `codex`; the QA bundle uses `codex-gpui-qa`.
+Each page family retains its own availability and permission gates.
+
 ## Verification
 
 Run the geometry regression with `cargo test -p app --lib windows::tests`.

@@ -22,11 +22,11 @@ fi
 out=$2 mode=$3 revision=$4
 [[ $(uname -s) == Darwin && $out == /tmp/* && ! -L $out ]] || { echo 'assembly requires an owned /tmp directory on macOS' >&2; exit 2; }
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/app/Cargo.toml)
-name='Codex GPUI' identifier=dev.codexgpui.app
+name='Codex GPUI' identifier=dev.codexgpui.app scheme=codex
 export CODEX_GPUI_REVISION=$revision
 unset CODEX_GPUI_QA
 if [[ $mode == qa ]]; then
-    name='Codex GPUI QA' identifier=dev.codexgpui.qa
+    name='Codex GPUI QA' identifier=dev.codexgpui.qa scheme=codex-gpui-qa
     export CODEX_GPUI_QA=1
 elif [[ $mode != normal ]]; then
     exit 2
@@ -53,6 +53,11 @@ cat >"$app/Contents/Info.plist" <<PLIST
 <key>CFBundleShortVersionString</key><string>$version</string>
 <key>CFBundleVersion</key><string>$version</string>
 <key>CodexGPUIRevision</key><string>$revision</string>
+<key>CFBundleURLTypes</key><array><dict>
+<key>CFBundleTypeRole</key><string>Viewer</string>
+<key>CFBundleURLName</key><string>$identifier.links</string>
+<key>CFBundleURLSchemes</key><array><string>$scheme</string></array>
+</dict></array>
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>

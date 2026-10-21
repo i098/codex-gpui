@@ -229,6 +229,7 @@ pub struct DiffPanel {
     layout: DiffLayout,
     show_tree: bool,
     active_file: usize,
+    reveal_path: Option<String>,
     filter: controls::TextField,
     filter_focus: Option<FocusHandle>,
     scroll: ScrollHandle,
@@ -288,6 +289,7 @@ impl DiffPanel {
             let (added, removed) = (count(Kind::Added), count(Kind::Removed));
             match files.iter_mut().find(|f| f.dir == dir && f.name == name) {
                 Some(f) => {
+                    f.problem = f.problem.or(problem);
                     f.added += added;
                     f.removed += removed;
                     f.hunks.extend(hunks);
@@ -325,6 +327,7 @@ impl DiffPanel {
             layout: DiffLayout::Auto,
             show_tree: false,
             active_file: 0,
+            reveal_path: None,
             filter: Default::default(),
             filter_focus: None,
             scroll: ScrollHandle::new(),
@@ -490,7 +493,8 @@ impl DiffPanel {
         }));
     }
 
-    fn select_source(&mut self, source: DiffSource, cx: &mut Context<Self>) {
+    pub fn select_source(&mut self, source: DiffSource, cx: &mut Context<Self>) {
+        self.reveal_path = None;
         let previous = self.source;
         if previous == DiffSource::LastTurn && source != previous {
             self.turn_files = std::mem::take(&mut self.files);
@@ -583,6 +587,26 @@ impl DiffPanel {
         cx.notify();
     }
 
+    pub fn reveal_file(&mut self, path: String, cx: &mut Context<Self>) {
+        self.reveal_path = Some(path);
+        self.apply_reveal_path();
+        cx.notify();
+    }
+
+    fn apply_reveal_path(&mut self) {
+        let Some(path) = self.reveal_path.as_deref() else { return };
+        let path = path.strip_prefix(&self.workspace)
+            .and_then(|path| path.strip_prefix('/')).unwrap_or(path);
+        if let Some(index) = self.files.iter().position(|file| {
+            path.strip_prefix(file.dir.as_ref()) == Some(file.name.as_ref())
+        }) {
+            self.active_file = index;
+            self.files[index].open = true;
+            self.scroll.scroll_to_top_of_item(index);
+            self.reveal_path = None;
+        }
+    }
+
     fn replace_files(&mut self, mut files: Vec<FileDiff>) {
         self.active_file = self
             .files
@@ -603,6 +627,7 @@ impl DiffPanel {
             }
         }
         self.files = files;
+        self.apply_reveal_path();
         self.selection = None;
         self.selecting = false;
         if self

@@ -440,6 +440,7 @@ impl DiffPanel {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.files[i].open = true;
                         this.active_file = i;
+                        this.reveal_path = None;
                         this.scroll.scroll_to_top_of_item(i);
                         cx.notify();
                     }))
@@ -447,6 +448,7 @@ impl DiffPanel {
                         if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                             this.files[i].open = true;
                             this.active_file = i;
+                            this.reveal_path = None;
                             this.scroll.scroll_to_top_of_item(i);
                             cx.stop_propagation();
                             cx.notify();
