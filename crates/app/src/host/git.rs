@@ -460,6 +460,8 @@ fn changes(root: &Path, params: &Value) -> Result<Value> {
             let merge = answer(root, &["merge-base", &target, "HEAD"])?
                 .context("branches have no common ancestor")?;
             body["base_branch"] = branch.into();
+            body["before_ref"] = merge.clone().into();
+            body["after_ref"] = head.clone().into();
             json!(review_diffs(root, &[&merge, "HEAD"], false, &[])?)
         }
         "commits" => {
@@ -471,6 +473,8 @@ fn changes(root: &Path, params: &Value) -> Result<Value> {
             let id = commit_id(root, id)?.context("commit no longer exists")?;
             let parent = commit_id(root, &format!("{id}^"))?;
             body["commit"] = id.clone().into();
+            body["before_ref"] = parent.clone().into();
+            body["after_ref"] = id.clone().into();
             json!(review_diffs(
                 root,
                 &[parent.as_deref().unwrap_or(empty.trim()), &id],

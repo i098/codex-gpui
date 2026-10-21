@@ -81,6 +81,7 @@ fn file_and_index_reads_enforce_the_project_boundary() -> Result<()> {
     fs::write(&path, [0, 1, 2, 3])?;
     git(root, &["add", "."])?;
     git(root, &["commit", "-qm", "base"])?;
+    git(root, &["branch", "fixture-base"])?;
     fs::write(&path, [0, 9, 8, 7])?;
     git(root, &["add", "."])?;
     let home = tempfile::tempdir()?;
@@ -102,6 +103,32 @@ fn file_and_index_reads_enforce_the_project_boundary() -> Result<()> {
     ensure!(
         STANDARD.decode(index["contentsBase64"].as_str().context("index bytes")?)? == [0, 9, 8, 7]
     );
+    git(root, &["commit", "-qm", "changed"])?;
+    fs::write(&path, [0, 5, 5, 5])?;
+    for source in ["branch", "commits"] {
+        let changes = read(
+            "git-changes",
+            json!({
+                "cwd": root, "reviewSource": source, "baseBranch": "fixture-base",
+            }),
+        )?;
+        for (field, expected) in [("before_ref", [0, 1, 2, 3]), ("after_ref", [0, 9, 8, 7])] {
+            let version = read(
+                "read-git-file-binary",
+                json!({
+                    "cwd": root, "path": "bytes.dat", "ref": changes[field],
+                }),
+            )?;
+            ensure!(
+                STANDARD.decode(
+                    version["contentsBase64"]
+                        .as_str()
+                        .context("revision bytes")?
+                )? == expected,
+                "{source} {field} selected the wrong image version",
+            );
+        }
+    }
     let limited = read(
         "read-file-binary",
         json!({"cwd":root,"path":path,"maxBytes":3}),
