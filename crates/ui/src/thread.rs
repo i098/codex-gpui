@@ -1608,6 +1608,9 @@ impl ThreadView {
             });
         }
         let (work, final_answer) = work(turn);
+        let has_work = work
+            .iter()
+            .any(|item| !matches!(item, ThreadItem::UserMessage { .. }));
         if self.pending_question.as_deref() == Some(turn.id.as_str()) {
             col = col
                 .child(div().h(px(16.)))
@@ -1646,7 +1649,7 @@ impl ThreadView {
             return col;
         }
         if let Some((item, answer)) = final_answer {
-            if self.embedded && work.is_empty() {
+            if self.embedded && !has_work {
                 return col.child(div().h(px(16.))).child(markdown::with_find(
                     answer,
                     window,
@@ -1751,7 +1754,7 @@ impl ThreadView {
                 col.child(action_row(last, &group, &turn.id, answer, t))
             });
         }
-        if turn.status == TurnStatus::InProgress && (!self.embedded || !work.is_empty()) {
+        if turn.status == TurnStatus::InProgress && (!self.embedded || has_work) {
             let secs = self.clock.now() - turn.started_at.unwrap_or(self.clock.now());
             col = col
                 .child(div().h(px(16.)))

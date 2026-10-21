@@ -99,6 +99,7 @@ pub struct CloudTaskPage {
     results: Option<ApplyResult>,
     preview: Option<String>,
     focus: FocusHandle,
+    apply_focus: FocusHandle,
     scroll: ScrollHandle,
 }
 
@@ -127,8 +128,39 @@ impl CloudTaskPage {
             results: None,
             preview: None,
             focus: cx.focus_handle(),
+            apply_focus: cx.focus_handle().tab_stop(true),
             scroll: ScrollHandle::new(),
         }
+    }
+
+    pub fn has_composer(&self) -> bool {
+        self.data
+            .as_ref()
+            .is_some_and(|data| data.active_turn.is_some())
+    }
+
+    pub fn preview_image(&self) -> Option<&str> {
+        self.preview.as_deref()
+    }
+
+    pub fn apply_results(&self) -> Option<&ApplyResult> {
+        self.results.as_ref()
+    }
+
+    pub fn apply_menu_open(&self) -> bool {
+        self.apply_open
+    }
+
+    pub fn apply_button_focused(&self, window: &Window) -> bool {
+        self.apply_focus.is_focused(window)
+    }
+
+    pub fn transcript(&self, turn: &str) -> Option<&Entity<ThreadView>> {
+        self.transcripts.get(turn)
+    }
+
+    pub fn image_state(&self, pointer: &str) -> Option<&Asset> {
+        self.assets.get(pointer)
     }
 
     pub fn set_data(&mut self, data: CloudTask, cx: &mut Context<Self>) {
@@ -250,7 +282,7 @@ impl CloudTaskPage {
         cx.notify();
     }
 
-    fn is_applied(&self, cx: &App) -> bool {
+    pub fn is_applied(&self, cx: &App) -> bool {
         self.data
             .as_ref()
             .and_then(|data| data.diff_turn.as_ref())
@@ -424,7 +456,11 @@ impl CloudTaskPage {
                 t.text,
             ));
         if let Some(target) = target {
-            card = card.child(text(target.cwd.clone(), 13., 18., 430., t.text_secondary));
+            let name = std::path::Path::new(&target.cwd)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(&target.cwd);
+            card = card.child(text(name.to_owned(), 13., 18., 430., t.text_secondary));
             if let Some(branch) = &target.branch {
                 card = card.child(text(branch.clone(), 13., 18., 430., t.text_secondary));
             }
@@ -434,15 +470,12 @@ impl CloudTaskPage {
             .as_ref()
             .and_then(|data| data.environment_label.as_ref())
         {
-            card = card.child(text(
-                format!(
-                    "This chat was created in {environment} so its changes may not apply cleanly."
-                ),
-                13.,
-                18.,
-                430.,
-                t.text_secondary,
-            ));
+            card = card.child(
+                text(
+                    format!("This chat was created in {environment} so its changes may not apply cleanly."),
+                    13., 18., 430., t.text_secondary,
+                ).whitespace_normal()
+            );
         }
         card = card.child(
             self.button(
@@ -454,6 +487,7 @@ impl CloudTaskPage {
                 },
                 cx,
             )
+            .track_focus(&self.apply_focus)
             .when(target.is_none() || self.applying, |button| {
                 button.opacity(0.5)
             })
@@ -524,6 +558,9 @@ impl CloudTaskPage {
     }
 
     fn header(&self, cx: &mut Context<Self>) -> gpui::Div {
+        if self.error.is_some() && self.data.is_none() {
+            return div();
+        }
         let t = cx.theme().clone();
         let mut header = div().h(px(28.)).flex().items_center().gap(px(8.));
         if self.hotkey {
@@ -558,9 +595,14 @@ impl CloudTaskPage {
                 )
                 .h(px(28.))
                 .py(px(3.))
-                .on_click(cx.listener(|page, _, _, cx| {
+                .on_click(cx.listener(|page, _, window, cx| {
                     if page.target.is_some() && !page.applying {
                         page.apply_open = !page.apply_open;
+                        if page.apply_open {
+                            page.apply_focus.focus(window, cx);
+                        } else {
+                            page.focus.focus(window, cx);
+                        }
                         cx.notify();
                     }
                 })),
@@ -633,17 +675,15 @@ impl Render for CloudTaskPage {
             .min_h_0()
             .overflow_y_scroll()
             .track_scroll(&self.scroll);
-        if let Some(error) = &self.error
-            && self.data.is_none()
-        {
+        if self.error.is_some() && self.data.is_none() {
             content = content.child(
                 div()
-                    .size_full()
+                    .w_full()
+                    .pt(px(70.))
                     .flex()
                     .flex_col()
                     .items_center()
-                    .justify_center()
-                    .gap(px(16.))
+                    .gap(px(12.))
                     .child(text(
                         "Could not load this Codex chat",
                         16.,
@@ -651,9 +691,21 @@ impl Render for CloudTaskPage {
                         500.,
                         t.text,
                     ))
-                    .child(text(error.clone(), 13., 18., 430., t.text_secondary))
                     .child(
-                        self.button("cloud-retry", "Retry", cx)
+                        div()
+                            .id("cloud-retry")
+                            .role(gpui::Role::Button)
+                            .aria_label("Retry")
+                            .tab_index(0)
+                            .px(px(8.))
+                            .py(px(2.))
+                            .border_1()
+                            .border_color(gpui::transparent_black())
+                            .rounded(px(999.))
+                            .bg(t.text.opacity(0.05))
+                            .cursor_pointer()
+                            .hover(|button| button.bg(t.text.opacity(0.1)))
+                            .child(text("Retry", 13., 18., 430., t.text))
                             .on_click(cx.listener(|page, _, _, cx| {
                                 page.error = None;
                                 cx.emit(CloudAction::Retry);

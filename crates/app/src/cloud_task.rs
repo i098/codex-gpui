@@ -476,7 +476,7 @@ fn run(
             }
             let detail = json_body(&detail_wire)?;
             let turns = fetch_json(host, &identity, &format!("{base}/turns"))?;
-            let mut data = project(&detail, &turns)?;
+            let mut data = parse_task_response(&detail, &turns)?;
             for turn in &mut data.turns {
                 if turn.phase == Phase::SetupFailed
                     && let Ok(logs) = fetch_json(
@@ -640,7 +640,7 @@ fn content(items: &Value) -> String {
         .collect()
 }
 
-fn project(detail: &Value, turns: &Value) -> Result<CloudTask> {
+pub fn parse_task_response(detail: &Value, turns: &Value) -> Result<CloudTask> {
     let task = &detail["task"];
     let id = task["id"]
         .as_str()
@@ -900,7 +900,7 @@ mod tests {
     #[test]
     fn a_cloud_task_never_invents_an_answer_while_setup_is_pending() {
         let detail = json!({"task":{"id":"task","title":"Build"},"current_user_turn":{"id":"user","created_at":1,"input_items":[{"type":"message","content":[{"content_type":"text","text":"Build it"}]}]},"current_assistant_turn":{"id":"assistant","previous_turn_id":"user","turn_status":"pending","output_items":[]}});
-        let data = project(&detail, &json!({})).unwrap();
+        let data = parse_task_response(&detail, &json!({})).unwrap();
         assert_eq!(data.turns[0].phase, Phase::SettingUp);
         assert!(data.working);
         assert_eq!(data.turns[0].thread.turns[0].items.len(), 1);
@@ -908,7 +908,7 @@ mod tests {
     #[test]
     fn completed_events_win_over_duplicate_output_messages() {
         let detail = json!({"task":{"id":"task","title":"Build"},"current_user_turn":{"id":"user","input_items":[]},"current_assistant_turn":{"id":"assistant","previous_turn_id":"user","turn_status":"completed","output_items":[{"type":"message","content":[{"content_type":"text","text":"fallback"}]}],"thread_events":{"events":[{"method":"item/completed","params":{"item":{"type":"agentMessage","id":"answer","text":"recorded"}}}]}}});
-        let data = project(&detail, &json!({})).unwrap();
+        let data = parse_task_response(&detail, &json!({})).unwrap();
         assert!(
             matches!(&data.turns[0].thread.turns[0].items[..],[ThreadItem::AgentMessage{text,..}] if text=="recorded")
         );
@@ -925,19 +925,19 @@ mod tests {
                 "thread_events":{"events":[{"method":"turn/started","params":{"turn":{"status":"inProgress"}}}]}
             }
         });
-        let failed = project(&detail, &json!({})).unwrap();
+        let failed = parse_task_response(&detail, &json!({})).unwrap();
         assert_eq!(failed.turns[0].phase, Phase::SetupFailed);
         assert!(!failed.working);
         detail["current_assistant_turn"]["turn_status"] = "cancelled".into();
-        let cancelled = project(&detail, &json!({})).unwrap();
+        let cancelled = parse_task_response(&detail, &json!({})).unwrap();
         assert_eq!(cancelled.turns[0].phase, Phase::Cancelled);
         assert!(!cancelled.working);
         detail["current_assistant_turn"]["turn_status"] = "unknown".into();
-        assert!(project(&detail, &json!({})).is_err());
+        assert!(parse_task_response(&detail, &json!({})).is_err());
     }
     #[test]
     fn malformed_task_and_nested_route_ids_are_rejected() {
-        assert!(project(&json!({}), &json!({})).is_err());
+        assert!(parse_task_response(&json!({}), &json!({})).is_err());
         assert!(Route::remote_path("/remote/a/b").is_none());
         assert_eq!(
             Route::remote_path("/hotkey-window/remote/task"),

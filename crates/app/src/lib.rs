@@ -4,6 +4,7 @@
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
 mod cloud_task;
+pub use cloud_task::parse_task_response;
 pub mod computer_use_requests;
 mod features;
 pub mod host;
@@ -2323,7 +2324,14 @@ impl Root {
             Route::Remote { .. } => self
                 .cloud
                 .as_ref()
-                .map(|session| session.page.read(cx).composer.focus_handle(cx))
+                .map(|session| {
+                    let page = session.page.read(cx);
+                    if page.has_composer() {
+                        page.composer.focus_handle(cx)
+                    } else {
+                        page.focus_handle(cx)
+                    }
+                })
                 .unwrap_or_else(|| self.focus.clone()),
             Route::Thread(id) if open(id) => self.thread_composer.focus_handle(cx),
             _ if self.page.is_some() => self.focus.clone(),

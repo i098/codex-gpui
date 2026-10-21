@@ -159,7 +159,9 @@ The result dialog lists applied, conflicted, and skipped paths.
 `Root::open_remote_task` and `Root::remote_page` provide the same page to native window hosts.
 This route is separate from the durable `codex_cloud` thread service.
 Run `cargo test -p app -p ui --lib cloud` and `cargo test -p app --test host` for the protocol and native state checks.
-Live-account and strict pixel validation remain pending for this page.
+Run `cargo test -p app --test cloud_task_native -- --test-threads=1` on macOS for the native state and action checks.
+Those checks use constructed responses from the original schema and exercise real Git apply and revert operations.
+They do not certify live Cloud access or original pixel parity.
 
 
 ## Release bundle
