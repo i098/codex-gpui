@@ -9,14 +9,20 @@ use bridge::storage::{self, Candidate, Entry, Usage};
 use gpui::{
     App, AppContext as _, BorrowAppContext as _, Context, Entity, FocusHandle, Global,
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, Styled, Window, anchored, deferred, div, point,
+    SharedString, StatefulInteractiveElement, Styled, Window, deferred, div, point,
     prelude::FluentBuilder as _, px, relative, rgb,
 };
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
+    sync::{Arc, LazyLock},
 };
 use theme::{ActiveTheme as _, Appearance};
+
+gpui::actions!(storage, [ManageWorktrees, ManageArchivedChats]);
+
+static TABULAR_NUMBERS: LazyLock<gpui::FontFeatures> =
+    LazyLock::new(|| gpui::FontFeatures(Arc::new(vec![("tnum".into(), 1)])));
 
 #[derive(Default)]
 struct CleanupState {
@@ -42,6 +48,7 @@ enum Control {
     Worktrees,
     Archive,
     Close,
+    Dismiss,
     More,
     Delete,
     DaysMenu,
@@ -56,8 +63,96 @@ enum Menu {
     Include,
 }
 enum Measurement {
+    Supported(bool),
     Progress(Usage, usize),
     Done(Result<(), String>, bool),
+}
+
+#[derive(Clone, Copy)]
+enum OverlayOrigin {
+    Window,
+    PixelGrid,
+}
+
+// A fractional pane origin must not shift the full-window backdrop.
+// Snap the dialog itself, not the offset from its parent.
+struct PlacedOverlay {
+    child: gpui::AnyElement,
+    origin: OverlayOrigin,
+}
+
+impl gpui::Element for PlacedOverlay {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, ()) {
+        let child = self.child.request_layout(window, cx);
+        let layout = match self.origin {
+            OverlayOrigin::Window => window.request_layout(
+                gpui::Style {
+                    position: gpui::Position::Absolute,
+                    display: gpui::Display::Flex,
+                    ..Default::default()
+                },
+                [child],
+                cx,
+            ),
+            OverlayOrigin::PixelGrid => child,
+        };
+        (layout, ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let offset = match self.origin {
+            OverlayOrigin::Window => point(-bounds.origin.x, -bounds.origin.y),
+            OverlayOrigin::PixelGrid => point(
+                bounds.origin.x.round() - bounds.origin.x,
+                bounds.origin.y.round() - bounds.origin.y,
+            ),
+        };
+        window.with_element_offset(offset, |window| self.child.prepaint(window, cx));
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: gpui::Bounds<gpui::Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.paint(window, cx);
+    }
+}
+
+impl IntoElement for PlacedOverlay {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
 }
 
 pub struct StoragePage {
@@ -80,6 +175,7 @@ pub struct StoragePage {
     dialog_order: Vec<FocusHandle>,
     return_focus: Option<FocusHandle>,
     focused: Option<FocusHandle>,
+    keyboard_focus: bool,
 }
 
 impl StoragePage {
@@ -118,6 +214,7 @@ impl StoragePage {
             dialog_order: Vec::new(),
             return_focus: None,
             focused: None,
+            keyboard_focus: false,
         }
     }
 
@@ -146,6 +243,7 @@ impl StoragePage {
         let (sender, receiver) = async_channel::unbounded();
         cx.background_spawn(async move {
             let supported = storage::supports_cleanup(&bridge).await;
+            let _ = sender.try_send(Measurement::Supported(supported));
             let result = async {
                 let info = bridge
                     .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
@@ -169,25 +267,7 @@ impl StoragePage {
             while let Ok(event) = receiver.recv().await {
                 let done = matches!(event, Measurement::Done(..));
                 if this
-                    .update(cx, |this, cx| {
-                        match event {
-                            Measurement::Progress(usage, completed) => {
-                                this.usage = Some(usage);
-                                this.completed = completed;
-                            }
-                            Measurement::Done(result, supported) => {
-                                this.error = result.is_err();
-                                this.measured |= result.is_ok();
-                                this.scanning = false;
-                                this.cleanup_supported = supported;
-                            }
-                        }
-                        if !this.scanning && this.refresh_after_scan {
-                            this.refresh_after_scan = false;
-                            this.refresh(cx);
-                        }
-                        cx.notify();
-                    })
+                    .update(cx, |this, cx| this.apply_measurement(event, cx))
                     .is_err()
                 {
                     break;
@@ -199,6 +279,45 @@ impl StoragePage {
         })
         .detach();
         cx.notify();
+    }
+
+    fn apply_measurement(&mut self, event: Measurement, cx: &mut Context<Self>) {
+        match event {
+            Measurement::Supported(supported) => self.cleanup_supported = supported,
+            Measurement::Progress(mut usage, completed) => {
+                if self.measured
+                    && let Some(previous) = &self.usage
+                {
+                    if completed < 6 {
+                        usage.bytes[4] = previous.bytes[4];
+                    }
+                    if completed < 5 {
+                        usage.bytes[5] = previous.bytes[5];
+                    }
+                }
+                self.usage = Some(usage);
+                self.completed = completed;
+            }
+            Measurement::Done(result, supported) => {
+                self.error = result.is_err();
+                self.measured |= result.is_ok();
+                self.scanning = false;
+                self.cleanup_supported = supported;
+            }
+        }
+        if !self.scanning && self.refresh_after_scan {
+            self.refresh_after_scan = false;
+            self.refresh(cx);
+        }
+        cx.notify();
+    }
+
+    fn can_review(&self, cx: &App) -> bool {
+        self.cleanup_supported
+            && self.usage.is_some()
+            && self.completed >= 4
+            && !cx.global::<CleanupState>().deleting
+            && !self.loading_review
     }
 
     fn load_review(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -340,15 +459,9 @@ impl StoragePage {
         match action {
             Control::Refresh => self.refresh(cx),
             Control::Review => self.load_review(window, cx),
-            Control::Archive => self.settings.update(cx, |settings, cx| {
-                settings.section = "Archived chats";
-                cx.notify();
-            }),
-            Control::Worktrees => self.settings.update(cx, |settings, cx| {
-                settings.section = "Worktrees";
-                cx.notify();
-            }),
-            Control::Close => self.close(window, cx),
+            Control::Archive => window.dispatch_action(Box::new(ManageArchivedChats), cx),
+            Control::Worktrees => window.dispatch_action(Box::new(ManageWorktrees), cx),
+            Control::Close | Control::Dismiss => self.close(window, cx),
             Control::Delete => self.confirm(window, cx),
             Control::More => {
                 if let Some(review) = &mut self.review {
@@ -405,6 +518,8 @@ impl StoragePage {
         let checkbox = matches!(action, Control::Toggle(_));
         let destructive = matches!(action, Control::Delete);
         let dropdown = matches!(action, Control::DaysMenu | Control::IncludeMenu);
+        let dialog_button = matches!(action, Control::Close | Control::Delete);
+        let dismiss = matches!(action, Control::Dismiss);
         let checked = match &action {
             Control::Toggle(id) => self
                 .review
@@ -429,22 +544,33 @@ impl StoragePage {
                 })
             })
             .track_focus(&focus)
-            .h(px(28.))
-            .px(px(9.))
+            .h(px(if dialog_button { 32. } else { 28. }))
+            .px(px(if dialog_button {
+                17.
+            } else if dropdown {
+                13.
+            } else {
+                9.
+            }))
             .relative()
             .flex()
             .items_center()
             .justify_center()
-            .child(super::on_card(
-                12.5,
-                shapes::Corner::Squircle,
-                if destructive {
-                    t.text_error
-                } else {
-                    t.text_alpha_5
-                },
-                None,
-            ))
+            .when(!dismiss, |d| {
+                d.child(super::on_card(
+                    12.5,
+                    shapes::Corner::Squircle,
+                    if destructive {
+                        t.text_error.opacity(0.1)
+                    } else if dropdown || dialog_button {
+                        t.primary_soft_alpha
+                    } else {
+                        t.text_alpha_5
+                    },
+                    (dropdown || matches!(action, Control::Close)).then_some(t.border),
+                ))
+            })
+            .when(dismiss, |d| d.size(px(24.)).p(px(4.)))
             .when(checkbox, |d| {
                 d.size(px(16.)).p_0().rounded(px(4.)).bg(if checked {
                     t.button_primary_solid
@@ -453,13 +579,16 @@ impl StoragePage {
                 })
             })
             .when(!enabled, |d| d.opacity(0.4))
-            .when(enabled && self.focused.as_ref() == Some(&focus), |d| {
-                d.child(shapes::decoration(shapes::Decoration {
-                    radius: gpui::Corners::all(px(12.5)),
-                    border: Some((px(2.), t.focus_ring)),
-                    ..Default::default()
-                }))
-            })
+            .when(
+                enabled && self.keyboard_focus && self.focused.as_ref() == Some(&focus),
+                |d| {
+                    d.child(shapes::decoration(shapes::Decoration {
+                        radius: gpui::Corners::all(px(12.5)),
+                        border: Some((px(2.), t.focus_ring)),
+                        ..Default::default()
+                    }))
+                },
+            )
             .child(if checkbox {
                 div()
                     .size(px(14.))
@@ -467,13 +596,15 @@ impl StoragePage {
                         d.child(icon("menu-check", 14., t.text_inverse))
                     })
                     .into_any_element()
+            } else if dismiss {
+                icon("close", 16., gpui::Hsla { a: 0.8, ..t.text }).into_any_element()
             } else {
                 text(
                     label,
-                    13.,
+                    if dialog_button { 14. } else { 13. },
                     18.,
                     430.,
-                    if destructive { t.text_inverse } else { t.text },
+                    if destructive { t.text_error } else { t.text },
                 )
                 .into_any_element()
             })
@@ -555,7 +686,6 @@ impl StoragePage {
             })
             .collect();
         let more = review.limit < review.rows.len();
-        let cancel = self.control("review-cancel", "Cancel", true, Control::Close, cx);
         let mut days_button = self.control(
             "review-days",
             format!("Over {days} days ago"),
@@ -607,39 +737,57 @@ impl StoragePage {
                     })
                     .collect(),
             };
-            let popup = div()
-                .absolute()
-                .top_full()
-                .right_0()
-                .mt(px(4.))
-                .w(px(220.))
-                .p(px(4.))
-                .rounded(px(12.))
-                .bg(t.menu_background)
-                .occlude()
-                .flex()
-                .flex_col()
-                .gap(px(4.))
-                .children(choices);
+            let popup = deferred(
+                div()
+                    .absolute()
+                    .top_full()
+                    .right_0()
+                    .mt(px(4.))
+                    .child(crate::composer::popover(&t, 220., |d| d.children(choices))),
+            );
             match menu {
                 Menu::Days => days_button = days_button.child(popup),
                 Menu::Include => include_button = include_button.child(popup),
             }
         }
+        let divider = div()
+            .absolute()
+            .left(px(16.))
+            .right(px(16.))
+            .bottom_0()
+            .h(px(1.))
+            .bg(crate::over(t.border, t.background_panel));
         let body = div()
-            .flex()
-            .flex_col()
-            .child(super::settings_row(
-                "Last updated",
-                None,
-                days_button.into_any_element(),
-                &t,
+            .relative()
+            .p(px(1.))
+            .child(super::on_card(
+                20.,
+                shapes::Corner::Squircle,
+                t.background_panel,
+                Some(t.border),
             ))
-            .child(super::settings_row(
-                "Include",
-                None,
-                include_button.into_any_element(),
-                &t,
+            .child(crate::rounded_clip(
+                px(19.),
+                shapes::Corner::Squircle,
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        super::settings_row(
+                            "Last updated",
+                            None,
+                            days_button.into_any_element(),
+                            &t,
+                        )
+                        .py(px(8.))
+                        .gap(px(16.))
+                        .child(divider),
+                    )
+                    .child(
+                        super::settings_row("Include", None, include_button.into_any_element(), &t)
+                            .py(px(8.))
+                            .gap(px(16.)),
+                    ),
             ));
         let mut list = div()
             .id("storage-review-chats")
@@ -651,8 +799,8 @@ impl StoragePage {
         if rows.is_empty() {
             list = list.child(text(
                 "No chats match these filters",
-                14.,
-                20.,
+                13.,
+                18.571_428,
                 430.,
                 t.text_secondary,
             ));
@@ -670,9 +818,16 @@ impl StoragePage {
                     .flex()
                     .items_center()
                     .gap(px(12.))
-                    .py(px(10.))
-                    .child(div().flex_1().child(text(title, 13., 18., 500., t.text)))
-                    .child(text(format_bytes(bytes), 14., 20., 430., t.text_secondary))
+                    .py(px(8.))
+                    .child(
+                        div()
+                            .flex_1()
+                            .child(text(title, 13., 18.571_428, 500., t.text)),
+                    )
+                    .child(
+                        text(format_bytes(bytes), 13., 18.571_428, 430., t.text_secondary)
+                            .font_features(TABULAR_NUMBERS.clone()),
+                    )
                     .child(control),
             );
         }
@@ -680,6 +835,7 @@ impl StoragePage {
             list =
                 list.child(self.control("review-more", "Show more chats", true, Control::More, cx));
         }
+        let cancel = self.control("review-cancel", "Cancel", true, Control::Close, cx);
         let delete = self.control(
             "review-delete",
             "Delete selected",
@@ -687,6 +843,7 @@ impl StoragePage {
             Control::Delete,
             cx,
         );
+        let close = self.control("review-close", "Close", true, Control::Dismiss, cx);
         if window
             .focused(cx)
             .is_none_or(|focus| !self.dialog_order.iter().any(|handle| handle == &focus))
@@ -695,17 +852,50 @@ impl StoragePage {
         {
             focus.focus(window, cx);
         }
-        div().absolute().inset_0().occlude().flex().items_center().justify_center().bg(t.dialog_backdrop)
-            .on_mouse_down(MouseButton::Left,cx.listener(|this,_,window,cx|this.close(window,cx)))
-            .child(div().id("storage-review-dialog").role(gpui::Role::Dialog).aria_label("Review old chats")
-                .w(px(640.)).max_w(relative(0.95)).max_h(relative(0.9)).p(px(24.)).flex().flex_col().gap(px(20.)).rounded(px(24.)).bg(t.menu_background)
-                .on_mouse_down(MouseButton::Left,|_,_,cx|cx.stop_propagation())
-                .capture_key_down(cx.listener(Self::review_key))
-                .child(div().flex().justify_between().child(text("Review old chats",20.,26.,500.,t.text)).child(self.control("review-close","×",true,Control::Close,cx)))
-                .child(text("Sizes include subagents. Deleting a chat and its subagents is permanent.",14.,20.,430.,t.text_secondary).whitespace_normal())
-                .child(body).child(list)
-                .child(text(format!("Selected chats: {count} · Subagents: {subagents}"),14.,20.,430.,t.text_secondary))
-                .child(div().flex().justify_end().gap(px(8.)).child(cancel).child(delete)))
+        let panel = div().id("storage-review-dialog").role(gpui::Role::Dialog).aria_label("Review old chats")
+            .w(px(520.)).max_w(relative(0.92))
+            .max_h(px((f32::from(window.viewport_size().height) * 0.85).min(704.)))
+            .relative().flex().flex_col().layer()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .capture_key_down(cx.listener(Self::review_key))
+            .child(shapes::backdrop_blur(px(24.), shapes::Fill::Color, false, shapes::Decoration {
+                radius: gpui::Corners::all(px(25.)),
+                corner: shapes::Corner::Squircle,
+                fill: Some(gpui::Hsla { a: 0.9, ..t.menu_background }),
+                shadows: vec![
+                    crate::composer::shadow(t.border, 0., 0., 0.5, false),
+                    crate::composer::shadow(gpui::rgba(0x0000001a).into(), 4., 8., -2., false),
+                ],
+                ..Default::default()
+            }))
+            .child(div().p(px(20.)).flex().flex_col()
+                .child(div().flex().flex_col().gap(px(4.))
+                    .child(text("Review old chats", 20., 28., 600., t.text))
+                    .child(text("Sizes include subagents. Deleting a chat and its subagents is permanent.",
+                        14., 21., 430., t.text_tertiary).whitespace_normal()))
+                .child(div().pt(px(12.)).child(body))
+                .child(div().pt(px(12.)).min_h_0().flex_1().child(list))
+                .child(div().pt(px(12.)).flex().flex_col()
+                    .child(text(format!("Selected chats: {count} · Subagents: {subagents}"),
+                        13., 18.571_428, 430., t.text_secondary))
+                    .child(div().flex().justify_end().gap(px(12.)).child(cancel).child(delete))))
+            .child(div().absolute().top(px(16.)).right(px(16.)).child(close));
+        div()
+            .absolute()
+            .inset_0()
+            .occlude()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::rgba(0x00000022))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| this.close(window, cx)),
+            )
+            .child(PlacedOverlay {
+                child: panel.into_any_element(),
+                origin: OverlayOrigin::PixelGrid,
+            })
             .into_any_element()
     }
 }
@@ -742,6 +932,7 @@ pub fn format_bytes(bytes: u64) -> String {
 impl Render for StoragePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.focused = window.focused(cx);
+        self.keyboard_focus = window.last_input_was_keyboard();
         if !self.started {
             self.refresh(cx);
         }
@@ -795,17 +986,11 @@ impl Render for StoragePage {
                 .flex()
                 .items_center()
                 .justify_between()
-                .child(text(title, 14., 20., 600., t.text))
+                .child(text(title, 13., 18.571_428, 600., t.text))
                 .child(refresh),
         );
         if let Some(usage) = &self.usage {
-            let mut bar = div()
-                .h(px(24.))
-                .w_full()
-                .flex()
-                .overflow_hidden()
-                .rounded(px(8.))
-                .bg(t.border);
+            let mut bar = div().h(px(24.)).w_full().flex().overflow_hidden();
             let mut labels = div().flex().flex_wrap().gap_x(px(16.)).gap_y(px(6.));
             for (index, &bytes) in usage.bytes.iter().enumerate() {
                 if usage.total() > 0 {
@@ -846,20 +1031,40 @@ impl Render for StoragePage {
                                 .flex()
                                 .items_center()
                                 .gap(px(8.))
-                                .child(div().size(px(8.)).rounded_full().bg(colors[index]))
+                                .child(div().size(px(8.)).relative().child(super::on_card(
+                                    9999.,
+                                    shapes::Corner::Round,
+                                    colors[index],
+                                    None,
+                                )))
                                 .child(text(
                                     storage::CATEGORIES[index],
-                                    14.,
-                                    20.,
+                                    13.,
+                                    18.571_428,
                                     430.,
                                     t.text_secondary,
                                 )),
                         )
-                        .child(text(label, 12., 16., 430., t.text_secondary)),
+                        .child(
+                            text(label, 12., 16., 430., t.text_secondary)
+                                .font_features(TABULAR_NUMBERS.clone()),
+                        ),
                 );
             }
             chart = chart
-                .child(crate::rounded_clip(px(8.), shapes::Corner::Round, bar))
+                .child(
+                    div()
+                        .relative()
+                        .h(px(24.))
+                        .w_full()
+                        .child(super::on_card(
+                            12.5,
+                            shapes::Corner::Squircle,
+                            t.border,
+                            None,
+                        ))
+                        .child(crate::rounded_clip(px(12.5), shapes::Corner::Squircle, bar)),
+                )
                 .child(labels)
                 .child(
                     text(
@@ -872,13 +1077,13 @@ impl Render for StoragePage {
                     .whitespace_normal(),
                 );
         } else if self.scanning {
-            chart = chart.child(div().h(px(24.)).rounded(px(8.)).bg(t.border));
+            chart = chart.child(div().h(px(24.)).rounded(px(12.5)).bg(t.border));
         }
         if self.error {
             chart = chart.child(text(
                 "Couldn't measure storage. Try refreshing.",
-                14.,
-                20.,
+                13.,
+                18.571_428,
                 430.,
                 t.text_secondary,
             ));
@@ -890,12 +1095,7 @@ impl Render for StoragePage {
             } else {
                 "Review"
             },
-            self.cleanup_supported
-                && self.usage.is_some()
-                && self.completed >= 4
-                && !self.scanning
-                && !cx.global::<CleanupState>().deleting
-                && !self.loading_review,
+            self.can_review(cx),
             Control::Review,
             cx,
         );
@@ -914,12 +1114,23 @@ impl Render for StoragePage {
         let links = div()
             .flex()
             .flex_col()
-            .child(super::settings_row(
-                "Manage worktrees",
-                Some("Review working copies and choose how many old worktrees to keep"),
-                worktrees.into_any_element(),
-                &t,
-            ))
+            .child(
+                super::settings_row(
+                    "Manage worktrees",
+                    Some("Review working copies and choose how many old worktrees to keep"),
+                    worktrees.into_any_element(),
+                    &t,
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(16.))
+                        .right(px(16.))
+                        .bottom_0()
+                        .h(px(1.))
+                        .bg(crate::over(t.border, t.background_panel)),
+                ),
+            )
             .child(super::settings_row(
                 "Archived chats",
                 Some("Restore or delete individual archived chats"),
@@ -950,12 +1161,12 @@ impl Render for StoragePage {
                     .flex_col()
                     .gap(px(2.))
                     .pb(px(12.))
-                    .child(text("This device", 18., 27., 500., t.text))
+                    .child(text("This device", 16., 24.888_89, 500., t.text))
                     .child(text(
                         "Manage chats and worktrees stored on this computer",
-                        14.,
+                        13.,
                         18.,
-                        430.,
+                        400.,
                         t.text_secondary,
                     )),
             )
@@ -1002,8 +1213,13 @@ impl Render for StoragePage {
                             .w_full()
                             .max_w(px(768.))
                             .px(px(20.))
-                            .pt(px(28.))
-                            .pb(px(12.))
+                            .mt(px(16.))
+                            .mb(px(1.))
+                            .min_h(px(60.))
+                            .py(px(12.))
+                            .flex()
+                            .flex_col()
+                            .justify_center()
                             .child(text("Storage", 28., 33.6, 500., t.text)),
                     )
                     .child(content),
@@ -1019,9 +1235,10 @@ impl Render for StoragePage {
                     .w(viewport.width)
                     .h(viewport.height)
                     .child(dialog);
-                d.child(deferred(
-                    anchored().position(point(px(0.), px(0.))).child(overlay),
-                ))
+                d.child(deferred(PlacedOverlay {
+                    child: overlay.into_any_element(),
+                    origin: OverlayOrigin::Window,
+                }))
             })
             .when(self.settings.read(cx).toaster.is_none(), |d| {
                 d.child(self.toaster.clone())

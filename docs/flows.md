@@ -1237,6 +1237,7 @@ The scoped issue is [Add an opt-in focus API to the shared tooltip](https://gith
 `Settings > Storage` measures the app-server's Codex home without following file symlinks.
 The usage bar separates chats, subagents, archived chats, unclassified chats, worktrees, and other files.
 Refresh reports completed categories separately from a failed or active scan.
+It keeps cached category values until each replacement measurement completes.
 The page uses actual file lengths and app-server thread metadata.
 
 `Clean up old chats` requires descendant discovery support.
@@ -1247,10 +1248,13 @@ The final confirmation warns that deletion is permanent.
 Before deleting, the app reloads the inventory, discovers descendants, and checks each thread's update time and active state.
 It skips changed trees and reports deleted, skipped, and failed root counts.
 The deletion request goes through `thread/delete`; the UI never removes rollout files directly.
+The cleanup lock and result toast survive navigation away from Storage.
 
-The management controls open Worktrees and Archived chats.
+The management controls route through `Root::open_settings_section` for Worktrees and Archived chats.
 Their destination pages remain owned by their separate settings families.
 The focused checks run with `cargo test -p bridge -p ui --lib storage -- --test-threads=1`.
-They cover measured file categories, symlink exclusion, descendant safety, version eligibility, and keyboard cancellation.
-Native test captures use synthetic interaction data and do not establish pixel parity with the original.
-Strict original comparison remains pending while the shared capture service is unavailable.
+They cover measured categories, partial metadata, symlink exclusion, descendant safety, version eligibility, cached refresh state, and keyboard cancellation.
+The UI unit captures use synthetic interaction data and do not establish pixel parity.
+The ignored `storage_capture` integration test captures the real Root and can apply the unchanged parity gate.
+Set `CGX_STORAGE_HOME` to an owned fixture, `CGX_STORAGE_CAPTURE` to its output directory, and `CGX_STORAGE_REFS` to the original references.
+`CGX_STORAGE_REPLAY` supplies additional recorded read responses; `CGX_STORAGE_REVIEW_Y` selects the cleanup-dialog capture.

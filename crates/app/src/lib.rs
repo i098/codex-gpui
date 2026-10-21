@@ -5443,6 +5443,16 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.navigate(Route::Settings, window, cx)
             }))
+            .on_action(
+                cx.listener(|this, _: &settings::storage::ManageWorktrees, window, cx| {
+                    this.open_settings_section("Worktrees", window, cx)
+                }),
+            )
+            .on_action(cx.listener(
+                |this, _: &settings::storage::ManageArchivedChats, window, cx| {
+                    this.open_settings_section("Archived chats", window, cx)
+                },
+            ))
             .on_action(cx.listener(|this, _: &LogOut, window, cx| {
                 if !this.logout_pending {
                     let email = this.account_email.clone();
