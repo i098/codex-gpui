@@ -390,6 +390,17 @@ pub fn key_label(accelerator: &str) -> String {
 
 pub type Shortcut = (&'static str, &'static str, Vec<String>);
 
+/// Commands the original's `⌘/` dialog leaves out of the recorded Home state
+/// (`refs/interactions/f3b.json`): feature-gated or context-only commands whose handler is not
+/// registered there. Settings still lists them.
+const DIALOG_HIDDEN: &[&str] = &[
+    "temporaryChat",
+    "openReviewTab",
+    "toggleSidePanel",
+    "undoAppAction",
+    "redoAppAction",
+];
+
 pub fn active_shortcuts(cx: &App) -> Vec<Shortcut> {
     let Some(state) = cx.try_global::<KeyboardState>() else {
         return Vec::new();
@@ -405,10 +416,11 @@ pub fn active_shortcuts(cx: &App) -> Vec<Shortcut> {
         "app",
         "general",
     ] {
-        for command in COMMANDS
-            .iter()
-            .filter(|c| c.section == section && state.active_commands.contains(c.id))
-        {
+        for command in COMMANDS.iter().filter(|c| {
+            c.section == section
+                && state.active_commands.contains(c.id)
+                && !DIALOG_HIDDEN.contains(&c.id)
+        }) {
             let keys: Vec<_> = state.preferences.keys(command).map(key_label).collect();
             if !keys.is_empty() {
                 shortcuts.push((section_title(section), command.title, keys));
