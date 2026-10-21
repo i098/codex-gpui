@@ -740,6 +740,16 @@ impl Composer {
         &self.content
     }
 
+    pub fn set_secret(&mut self, secret: bool, cx: &mut Context<Self>) {
+        self.secret = secret;
+        cx.notify();
+    }
+
+    pub fn set_field_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.request_label = Some(label.into());
+        cx.notify();
+    }
+
     pub fn message_edit(
         message: &str,
         cancel: impl Fn(&mut Window, &mut App) + 'static,
@@ -1923,21 +1933,24 @@ impl Render for Composer {
                                 ..Default::default()
                             }))
                     })
-                    .when(self.request_parent.is_some(), |d| {
-                        d.role(if self.secret {
-                            gpui::Role::PasswordInput
-                        } else {
-                            gpui::Role::TextInput
-                        })
-                        .aria_label(
-                            self.request_label
-                                .as_ref()
-                                .unwrap_or(&self.placeholder)
-                                .clone(),
-                        )
-                        .aria_placeholder(self.placeholder.clone())
-                        .when(!self.secret, |d| d.aria_value(self.content.clone()))
-                    })
+                    .when(
+                        self.request_parent.is_some() || self.plain_field.is_some(),
+                        |d| {
+                            d.role(if self.secret {
+                                gpui::Role::PasswordInput
+                            } else {
+                                gpui::Role::TextInput
+                            })
+                            .aria_label(
+                                self.request_label
+                                    .as_ref()
+                                    .unwrap_or(&self.placeholder)
+                                    .clone(),
+                            )
+                            .aria_placeholder(self.placeholder.clone())
+                            .when(!self.secret, |d| d.aria_value(self.content.clone()))
+                        },
+                    )
                     .child(self.editor(cx).when(self.request_number, |d| d.pr(px(30.))))
                     .when(self.request_number, |d| {
                         d.child(self.request_number_stepper(&t, cx))

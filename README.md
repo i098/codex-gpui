@@ -89,6 +89,27 @@ It does not use optional agent capabilities (`loadSession`, session list, image 
 An unsupported method gets the JSON-RPC error `<method> is not supported by the ACP backend`, and the app shows its usual failure state.
 The client offers no file system or terminal capability, so the agent uses its own tools.
 
+## Sign-in
+
+The sign-in screen reads `configRequirements/read` before it shows account methods.
+Missing, invalid, and failed requirement reads keep those methods hidden.
+Null requirements fall back to `config/read` and its `forced_login_method`.
+
+The screen uses the original feature gates for Google, Microsoft, Amazon Bedrock, and browser account lookup.
+Browser account lookup uses the installed app's native eligibility helper and a bounded localhost callback.
+It does not read browser profiles or cookies.
+API-key fields support the native clipboard and keyboard editor.
+Bedrock sign-in discovers AWS profiles, accepts explicit credentials, restarts the app-server, and checks GovCloud requirements.
+No test signs into a real account or changes AWS credentials.
+
+The onboarding routes include `/welcome`, `/onboarding`, `/select-workspace`, and `/first-run`.
+The app reads the original onboarding context before it opens setup automatically for a new ChatGPT account.
+Role choices keep the original coding and non-coding groups.
+The optional import prompt opens Settings > Import after it saves the current role choices.
+Workspace selection uses real project folders; Start from scratch creates a free `Documents/ChatGPT/New project` folder.
+Failed saves stay on the setup page.
+The native sign-in test reads the retained original context and denies completion writes.
+
 ## Native Computer Use service
 
 The host keeps one managed native helper at `$CODEX_HOME/computer-use/Codex Computer Use.app`.

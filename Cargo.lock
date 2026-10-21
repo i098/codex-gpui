@@ -5876,6 +5876,7 @@ dependencies = [
  "parking_lot",
  "pulldown-cmark",
  "raw-window-handle",
+ "semver",
  "serde",
  "serde_json",
  "shapes",

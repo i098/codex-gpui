@@ -71,6 +71,11 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
         "account/read",
         json!({"account": {"type": "chatgpt", "email": "user@example.com", "planType": "promax"}, "requiresOpenaiAuth": true}),
     ));
+    lines.extend(exchange(
+        "configRequirements/read",
+        json!({"requirements":{"allowedLoginMethods":["api"]}}),
+    ));
+    lines.extend(exchange("account/login/start", json!({"type":"apiKey"})));
     let mut new_thread = common::recorded_thread(GREETING)?;
     new_thread["turns"] = json!([]);
     let pages: Vec<_> = (0..11)
@@ -178,6 +183,17 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
     fx.wait("login after logout", |fx| {
         fx.read(|root, _| root.signed_out())
     })?;
+    fx.wait("managed sign-in policy", |fx| {
+        fx.read(|root, cx| {
+            root.login().is_some_and(|login| {
+                login.read(cx).policy()
+                    == ui::screens::signin::policy::Policy::Ready {
+                        api: true,
+                        chatgpt: false,
+                    }
+            })
+        })
+    })?;
     ensure!(fx.read(|root, _| root.thread().is_none() && root.recents().is_empty()));
     ensure!(fx.route() == Route::Home);
     shot(&mut fx, "success")?;
@@ -204,15 +220,9 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
     }
     ensure!(fx.read(|root, _| root.signed_out() && root.command_menu().is_none()));
     ensure!(fx.route() == Route::Home && fx.sent()? == requests);
-    fx.root.update(&mut fx.cx, |root, cx| {
-        root.on_event(
-            bridge::Event::Notification {
-                method: "account/login/completed".into(),
-                params: json!({"success": true}),
-            },
-            cx,
-        );
-    });
+    fx.keys("tab tab enter")?;
+    fx.type_text("sk-local-test")?;
+    fx.keys("enter")?;
     fx.wait("first signed-in chat page", |fx| {
         fx.read(|root, _| root.recents().len() >= 10)
     })?;
