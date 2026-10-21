@@ -103,6 +103,8 @@ Bedrock sign-in discovers AWS profiles, accepts explicit credentials, restarts t
 No test signs into a real account or changes AWS credentials.
 
 The onboarding routes include `/welcome`, `/onboarding`, `/select-workspace`, and `/first-run`.
+The first-run tour retains the app shell and covers IDE, cloud, code, and autonomy pages.
+The background uses the original noise algorithm and supports the fixed fixture clock.
 The app reads the original onboarding context before it opens setup automatically for a new ChatGPT account.
 Role choices keep the original coding and non-coding groups.
 The optional import prompt opens Settings > Import after it saves the current role choices.

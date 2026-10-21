@@ -123,7 +123,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let view = cx.new(|_| Onboarding::new(page, self.chatgpt_account));
+        let view = cx.new(|_| Onboarding::new(page, self.chatgpt_account, self.clock));
         cx.subscribe_in(
             &view,
             window,
@@ -141,16 +141,9 @@ impl Root {
                         cx,
                     ),
                     OnboardingEvent::FirstRunComplete => {
-                        let key = if this.chatgpt_account {
-                            "viewed2025-09-15-full-chatgpt-auth-nux"
-                        } else {
-                            "viewed2025-09-15-apikey-auth-nux"
-                        };
-                        let result = (|| {
-                            let settings = cx.global_mut::<host_settings::Settings>();
-                            settings.write("viewed2025-09-15-nux", json!(true))?;
-                            settings.write(key, json!(true))
-                        })();
+                        let result = cx
+                            .global_mut::<host_settings::Settings>()
+                            .write("viewed2025-09-15-nux", json!(true));
                         match result {
                             Ok(()) => this.navigate(Route::Home, window, cx),
                             Err(error) => view.update(cx, |view, cx| {

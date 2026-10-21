@@ -1,5 +1,7 @@
+mod first_run;
+
 use crate::{
-    MONO, SANS,
+    SANS,
     confirmation::{Confirmation, Outcome},
     focus,
     icon::icon,
@@ -132,6 +134,7 @@ enum State {
 
 pub struct Onboarding {
     page: Page,
+    chatgpt: bool,
     state: State,
     roles: Vec<String>,
     suggestions: bool,
@@ -139,15 +142,22 @@ pub struct Onboarding {
     projects: Vec<Project>,
     roots: Vec<String>,
     add_project: bool,
+    hovered_button: Option<gpui::ElementId>,
+    backdrop: Option<first_run::Backdrop>,
     busy: bool,
     error: Option<String>,
     confirmation: Option<Entity<Confirmation>>,
 }
 
 impl Onboarding {
-    pub fn new(page: Page, chatgpt: bool) -> Self {
+    pub fn new(
+        page: Page,
+        chatgpt: bool,
+        clock: Option<crate::screens::thread::view::Clock>,
+    ) -> Self {
         Self {
             page,
+            chatgpt,
             state: if page == Page::FirstRun {
                 State::FirstRun(if chatgpt { 0 } else { 3 })
             } else {
@@ -159,6 +169,8 @@ impl Onboarding {
             projects: Vec::new(),
             roots: Vec::new(),
             add_project: false,
+            hovered_button: None,
+            backdrop: (page == Page::FirstRun).then(|| first_run::Backdrop::new(clock)),
             busy: false,
             error: None,
             confirmation: None,
@@ -374,40 +386,95 @@ impl Onboarding {
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let t = cx.theme();
-        let border = t.border;
+        let first_run = self.page == Page::FirstRun;
+        let disabled = self.busy
+            || (first_run
+                && matches!(action, Action::Back)
+                && matches!(self.state, State::FirstRun(0)));
+        let label = label.into();
+        let id = id.into();
+        let hovered = self.hovered_button.as_ref() == Some(&id);
         let (background, foreground) = if primary {
-            (t.button_primary_solid, t.text_inverse)
+            (
+                if first_run && hovered {
+                    t.text.opacity(0.8)
+                } else {
+                    t.button_primary_solid
+                },
+                if first_run {
+                    t.surface_elevated_secondary
+                } else {
+                    t.text_inverse
+                },
+            )
+        } else if first_run {
+            (
+                if hovered { t.ghost_hover } else { t.text.opacity(0.03) },
+                t.text,
+            )
         } else {
             (t.surface, t.text)
         };
-        let label = label.into();
-        let id = id.into();
-        let handle = focus::handle(id.clone(), 0, window, cx);
+        let border = t.border;
+        let hover_id = id.clone();
         let control = div()
-            .id(id)
+            .id(id.clone())
             .relative()
             .role(gpui::Role::Button)
             .aria_label(label.clone())
-            .h(px(44.))
-            .px(px(16.))
+            .aria_disabled(disabled)
+            .h(px(if first_run { 36. } else { 44. }))
+            .px(px(if first_run { 21. } else { 16. }))
             .flex()
             .items_center()
             .justify_center()
             .rounded_full()
-            .bg(background)
             .text_color(foreground)
-            .cursor_pointer()
-            .when(!primary, |button| button.border_1().border_color(border))
-            .when(self.busy, |button| button.opacity(0.5))
-            .on_click(cx.listener(move |this, _, window, cx| this.action(action, window, cx)))
+            .when(!disabled, |button| button.cursor_pointer())
+            .when(disabled, |button| button.opacity(if first_run { 0.4 } else { 0.5 }))
+            .when(first_run, |button| {
+                button
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: gpui::Corners::all(Theme::RADIUS_FULL),
+                        corner: shapes::Corner::Round,
+                        fill: Some(background),
+                        border: Some((px(1.), border)),
+                        ..Default::default()
+                    }))
+                    .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                        this.hovered_button = hovered.then(|| hover_id.clone());
+                        cx.notify();
+                    }))
+            })
+            .when(!first_run, |button| {
+                button
+                    .bg(background)
+                    .when(!primary, |button| button.border_1().border_color(border))
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if !disabled {
+                    this.action(action, window, cx);
+                }
+            }))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
                     this.action(action, window, cx);
                     cx.stop_propagation();
                 }
             }))
-            .child(text(label, 14., 20., 500., foreground));
-        focus::ring(control, &handle, Theme::RADIUS_FULL, px(2.), cx)
+            .child(text(
+                label,
+                14.,
+                if first_run { 18. } else { 20. },
+                if first_run { 430. } else { 500. },
+                foreground,
+            ));
+        if disabled {
+            control
+        } else {
+            let handle = focus::handle(id, 0, window, cx);
+            focus::ring(control, &handle, Theme::RADIUS_FULL, px(2.), cx)
+        }
     }
     fn role_view(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let t = cx.theme().clone();
@@ -625,162 +692,13 @@ impl Onboarding {
             cx,
         ))
     }
-    fn first_run_view(&self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let t = cx.theme().clone();
-        let titles = [
-            "Codex in your IDE",
-            "Hand off to Codex in the cloud",
-            "Turn TODOs into Codex tasks",
-            "Decide how much autonomy you want to grant",
-        ];
-        let descriptions = [
-            "Codex navigates, edits, runs commands, and executes tests directly in your repo. Powered by your ChatGPT account.",
-            "Send tasks to Codex to run in the background so you can stay focused and move faster.",
-            "Write a TODO comment and convert it into a Codex task with a single click.",
-            "For more details, see the Codex docs",
-        ];
-        let mut body = div()
-            .w(px(560.))
-            .max_w_full()
-            .p(px(40.))
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(24.))
-            .child(
-                text(titles[index], 28., 34., 500., t.text)
-                    .whitespace_normal()
-                    .text_center(),
-            )
-            .child(
-                text(descriptions[index], 14., 20., 400., t.text_description)
-                    .whitespace_normal()
-                    .text_center(),
-            );
-        if index < 3 {
-            let sample = match index {
-                0 => "Ask Codex to do anything",
-                1 => {
-                    "Explain repository to a new designer\nopenai/agi · Oct 12\n\nFix an onboarding bug\nopenai/agi · Oct 9\n\nCreate a darkmode theme\nopenai/codex · Oct 8"
-                }
-                _ => "// TODO: implement schema",
-            };
-            body = body.child(
-                text(sample, 14., 22., 400., t.text)
-                    .font_family(MONO)
-                    .whitespace_normal()
-                    .p(px(24.))
-                    .w_full()
-                    .border_1()
-                    .border_color(t.border)
-                    .rounded(px(16.)),
-            );
-        } else {
-            body = body.child(
-                div()
-                    .id("first-run-docs")
-                    .role(gpui::Role::Link)
-                    .child(text("Codex docs", 14., 20., 400., t.text).underline())
-                    .on_click(|_, _, cx| cx.open_url("https://developers.openai.com/codex/ide")),
-            );
-            body = body
-                .child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_col()
-                        .gap(px(4.))
-                        .child(text("Codex can make mistakes", 14., 20., 500., t.text))
-                        .child(
-                            text(
-                                "Review the code it writes and commands it runs",
-                                14.,
-                                20.,
-                                400.,
-                                t.text_description,
-                            )
-                            .whitespace_normal(),
-                        ),
-                )
-                .child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_col()
-                        .gap(px(4.))
-                        .child(text(
-                            "Powered by your ChatGPT account",
-                            14.,
-                            20.,
-                            500.,
-                            t.text,
-                        ))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .gap(px(4.))
-                                .child(text(
-                                    "Uses your plan’s rate limits and",
-                                    14.,
-                                    20.,
-                                    400.,
-                                    t.text_description,
-                                ))
-                                .child(
-                                    div()
-                                        .id("first-run-data-controls")
-                                        .role(gpui::Role::Link)
-                                        .child(
-                                            text(
-                                                "training data preferences",
-                                                14.,
-                                                20.,
-                                                400.,
-                                                t.text_description,
-                                            )
-                                            .underline(),
-                                        )
-                                        .on_click(|_, _, cx| {
-                                            cx.open_url(
-                                                "https://chatgpt.com/#settings/DataControls",
-                                            )
-                                        }),
-                                ),
-                        ),
-                );
-        }
-        body.child(
-            div()
-                .flex()
-                .gap(px(12.))
-                .when(index > 0, |row| {
-                    row.child(self.button(
-                        "first-run-back",
-                        "Back",
-                        Action::Back,
-                        false,
-                        window,
-                        cx,
-                    ))
-                })
-                .child(self.button(
-                    "first-run-next",
-                    if index < 3 { "Next" } else { "Continue" },
-                    Action::Continue,
-                    true,
-                    window,
-                    cx,
-                )),
-        )
-    }
 }
 
 impl Render for Onboarding {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let body=match self.state {
-            State::Loading=>div().child(text("Loading…",14.,20.,400.,t.text_description)),
+            State::Loading=>div().child(icon("signin-chatgpt",40.,t.text)),
             State::Error=>div().flex().flex_col().items_center().gap(px(16.))
                 .child(text("Couldn’t load setup. Please reload the app",14.,20.,400.,t.text_description))
                 .child(self.button("onboarding-reload","Reload app",Action::Reload,false,window,cx)),
@@ -796,8 +714,9 @@ impl Render for Onboarding {
         div()
             .size_full()
             .relative()
-            .bg(t.surface)
+            .when(self.page != Page::FirstRun, |page| page.bg(t.surface))
             .font_family(SANS)
+            .when(self.page == Page::FirstRun, |page| page.pt(px(46.)))
             .flex()
             .flex_col()
             .items_center()

@@ -498,4 +498,42 @@ mod signin_checks {
         ensure!(host.writes.lock().unwrap().len() == 1);
         Ok(())
     }
+
+    #[test]
+    fn first_run_preserves_back_bounds_and_finishes_after_all_steps() -> Result<()> {
+        common::install_panic_hook();
+        let mut fx = Fx::fixed_clock()?;
+        let shell = fx.read(|root, _| root.shell().clone());
+        shell.update(&mut fx.cx, |shell, cx| {
+            shell.sidebar_open = false;
+            cx.notify();
+        });
+        let root = fx.root.clone();
+        fx.cx.update_window(fx.window, |_, window, cx| {
+            root.update(cx, |root, cx| {
+                root.show_onboarding(ui::screens::onboarding::Page::FirstRun, window, cx)
+            })
+        })?;
+        fx.hover((768., 6.))?;
+        shot(&mut fx, "first-run-0")?;
+        fx.click((500., 770.))?;
+        fx.click((828., 770.))?;
+        fx.click((500., 770.))?;
+        for step in 0..4 {
+            ensure!(fx.route() == app::Route::Onboarding(ui::screens::onboarding::Page::FirstRun));
+            if step > 0 {
+                fx.hover((768., 6.))?;
+                shot(&mut fx, &format!("first-run-{step}"))?;
+            }
+            fx.click((828., 770.))?;
+        }
+        fx.wait("first-run completion", |fx| fx.route() == app::Route::Home)?;
+        ensure!(fx.read(|_, cx| {
+            cx.global::<app::host_settings::Settings>()
+                .read_all()
+                .get("viewed2025-09-15-nux")
+                == Some(&json!(true))
+        }));
+        Ok(())
+    }
 }

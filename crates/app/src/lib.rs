@@ -5128,6 +5128,7 @@ impl Render for Root {
             .or_else(|| {
                 self.onboarding_page
                     .as_ref()
+                    .filter(|view| view.read(cx).page() != ui::screens::onboarding::Page::FirstRun)
                     .map(|view| view.clone().into_any_element())
             });
         if let Some(exclusive) = exclusive {

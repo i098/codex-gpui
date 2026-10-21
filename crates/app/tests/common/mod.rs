@@ -152,6 +152,20 @@ impl Fx {
         Self::with("dark", (1280., 832.), None, |_| {})
     }
 
+    /// Dark replay with time paused at the original fixture epoch.
+    pub fn fixed_clock() -> Result<Self> {
+        let lines = script(None, |_| {})?;
+        let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
+        Self::boot(
+            "dark",
+            (1280., 832.),
+            bridge,
+            events,
+            recorded_host_settings()?,
+            Some(CAPTURE_CLOCK),
+        )
+    }
+
     /// `session` (under fixtures/) is appended to readback.jsonl; `edit` rewrites each
     /// recorded line first.
     pub fn with(
@@ -170,7 +184,7 @@ impl Fx {
 
     pub fn open(theme: &'static str, size: (f32, f32), lines: Vec<Value>) -> Result<Self> {
         let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
-        Self::boot(theme, size, bridge, events, recorded_host_settings()?)
+        Self::boot(theme, size, bridge, events, recorded_host_settings()?, None)
     }
 
     /// Like [`Fx::open`], but the app-server is this test binary again as a proxy
@@ -200,7 +214,7 @@ impl Fx {
             .env(PROXY_SCRIPT, &script)
             .env(PROXY_LOG, &log);
         let (bridge, events) = Bridge::spawn(cmd)?;
-        let mut fx = Self::boot(theme, size, bridge, events, settings)?;
+        let mut fx = Self::boot(theme, size, bridge, events, settings, None)?;
         fx.log = Some(log);
         Ok(fx)
     }
@@ -211,13 +225,14 @@ impl Fx {
         bridge: Bridge,
         events: async_channel::Receiver<Event>,
         settings: app::host_settings::Settings,
+        clock: Option<ui::screens::thread::view::Clock>,
     ) -> Result<Self> {
         #[cfg(target_os = "macos")]
         install_panic_hook();
-        let clock = ui::screens::thread::view::Clock {
+        let clock = clock.unwrap_or_else(|| ui::screens::thread::view::Clock {
             elapsed_since: Some(Instant::now()),
             ..CAPTURE_CLOCK
-        };
+        });
         let mut cx = HeadlessAppContext::with_platform(
             textsys::text_system(),
             Arc::new(theme::Assets),

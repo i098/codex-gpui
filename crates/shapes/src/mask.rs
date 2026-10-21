@@ -81,6 +81,46 @@ pub(crate) fn paint_x_fade(
     paint_sprites(&sprites, Hsla::default(), [0, 0], window, cx);
 }
 
+pub(crate) fn paint_radial_fade(
+    stops: [(f32, f32); 3],
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    let scale = window.scale_factor();
+    let dev = |value: Pixels| (f32::from(value) * scale).round() as i32;
+    let (x0, y0) = (dev(bounds.left()), dev(bounds.top()));
+    let (width, height) = (dev(bounds.right()) - x0, dev(bounds.bottom()) - y0);
+    if width <= 0 || height <= 0 {
+        return;
+    }
+    let sprites = sprites(
+        format!("radial_fade {x0} {y0} {width} {height} {stops:?}"),
+        || {
+            let mut blits = Vec::with_capacity(width as usize * height as usize);
+            for y in 0..height {
+                let dy = (y as f32 + 0.5 - height as f32 / 2.)
+                    / (height as f32 * std::f32::consts::FRAC_1_SQRT_2);
+                for x in 0..width {
+                    let dx = (x as f32 + 0.5 - width as f32 / 2.)
+                        / (width as f32 * std::f32::consts::FRAC_1_SQRT_2);
+                    let radius = dx.hypot(dy);
+                    let [start, end] = if radius < stops[1].0 {
+                        [stops[0], stops[1]]
+                    } else {
+                        [stops[1], stops[2]]
+                    };
+                    let progress = ((radius - start.0) / (end.0 - start.0)).clamp(0., 1.);
+                    let alpha = ((start.1 + (end.1 - start.1) * progress) * 255.).round() as u8;
+                    blits.push([alpha, DST_IN, 0, MASK] as Blits);
+                }
+            }
+            ([x0, y0, width, height], blits)
+        },
+    );
+    paint_sprites(&sprites, Hsla::default(), [0, 0], window, cx);
+}
+
 /// Skia's anti-aliased coverage of the rounded rect `bounds` with `radius` in each rounded
 /// corner's square of device px: (corner index top-left, top-right, bottom-right, bottom-left,
 /// the square `[x0, y0, n, n]`, row-major coverage).

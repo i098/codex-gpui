@@ -132,13 +132,18 @@ impl Root {
             .thread
             .clone()
             .filter(|v| Some(v.read(cx).id()) == thread_id.as_deref());
-        let main: AnyView = match (&thread_id, &view) {
-            (Some(_), Some(view)) => view.clone().into(),
-            (Some(id), None) => {
+        let main: AnyView = match (&thread_id, &view, &self.onboarding_page) {
+            (_, _, Some(page))
+                if page.read(cx).page() == ui::screens::onboarding::Page::FirstRun =>
+            {
+                page.clone().into()
+            }
+            (Some(_), Some(view), _) => view.clone().into(),
+            (Some(id), None, _) => {
                 self.load_thread(id.clone(), window, cx);
                 cx.new(|_| ui::EmptyMain).into()
             }
-            (None, _) => self.home.clone().into(),
+            (None, _, _) => self.home.clone().into(),
         };
         let shell = if self.sidebar_automation.is_some() {
             self.page.clone().unwrap_or_else(|| self.shell.clone())
@@ -147,6 +152,10 @@ impl Root {
         };
         window.focus(&self.route_focus(cx), cx);
         let home = matches!(self.state.route, Route::Home | Route::Thread(_));
+        let first_run = matches!(
+            self.state.route,
+            Route::Onboarding(ui::screens::onboarding::Page::FirstRun)
+        );
         shell.update(cx, |shell, cx| {
             shell.selected_rail = if self.sidebar_automation.is_some() {
                 Some("scheduled")
@@ -156,7 +165,8 @@ impl Root {
             shell.can_go_back = can_back;
             shell.can_go_forward = can_forward;
             // Thread routes: `with_side_panel` below sets its own.
-            shell.new_tab = true;
+            shell.new_tab = !first_run;
+            shell.chat_chrome = !first_run;
             shell.main_composited = false;
             shell.set_main(main, cx);
         });
