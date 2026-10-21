@@ -1482,7 +1482,9 @@ impl ThreadView {
                 {
                     Some(item) => {
                         if let (
-                            ThreadItem::AgentMessage { id, text: before },
+                            ThreadItem::AgentMessage {
+                                id, text: before, ..
+                            },
                             ThreadItem::AgentMessage { text: after, .. },
                         ) = (&*item, &n.item)
                             && before != after
