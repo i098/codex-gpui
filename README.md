@@ -578,6 +578,7 @@ Actual Size resets the scale to 100%; new windows restore the saved scale.
 Zoom keeps pointer input and text-input geometry in the same coordinate space.
 Native titlebar insets keep their physical size when the UI scale changes.
 The zoom banner separator uses the same composited paint path as its border.
+The banner contents use the original rounded padding-box clip.
 The `native_menus` and `s013` tests check the edit actions and Find navigation on macOS.
 About shows this build's version in a separate window; Escape closes it.
 The Window menu has Bring All to Front, and Control+Command+F toggles the active window's fullscreen state.

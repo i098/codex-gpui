@@ -190,7 +190,6 @@ impl Render for ZoomBanner {
                 ))
                 .right(length(16.))
                 .h(length(44.))
-                .px(length(8.5))
                 .flex()
                 .items_center()
                 .opacity(opacity)
@@ -214,37 +213,47 @@ impl Render for ZoomBanner {
                     }],
                     ..Default::default()
                 }))
-                .child(
-                    div().w(length(48.)).flex().justify_center().child(
-                        text(
-                            format!("{}%", (self.zoom * 100.).round() as u32),
-                            13. * inverse,
-                            18.571_428 * inverse,
-                            600.,
-                            theme.text,
-                        )
-                        .font_features(NUMERALS.clone()),
-                    ),
-                )
-                .child(
+                .child(ui::rounded_clip(
+                    length(19.5),
+                    shapes::Corner::Round,
                     div()
-                        .ml(length(4.))
+                        .m(length(0.5))
+                        .h(length(43.))
+                        .px(length(8.))
                         .flex()
                         .items_center()
-                        .children([zoom_out, zoom_in]),
-                )
-                .child(
-                    div()
-                        .relative()
-                        .mx(length(4.))
-                        .h(length(16.))
-                        .w(length(1.))
-                        .child(shapes::decoration(shapes::Decoration {
-                            fill: Some(theme.border),
-                            ..Default::default()
-                        })),
-                )
-                .child(reset),
+                        .child(
+                            div().w(length(48.)).flex().justify_center().child(
+                                text(
+                                    format!("{}%", (self.zoom * 100.).round() as u32),
+                                    13. * inverse,
+                                    18.571_428 * inverse,
+                                    600.,
+                                    theme.text,
+                                )
+                                .font_features(NUMERALS.clone()),
+                            ),
+                        )
+                        .child(
+                            div()
+                                .ml(length(4.))
+                                .flex()
+                                .items_center()
+                                .children([zoom_out, zoom_in]),
+                        )
+                        .child(
+                            div()
+                                .relative()
+                                .mx(length(4.))
+                                .h(length(16.))
+                                .w(length(1.))
+                                .child(shapes::decoration(shapes::Decoration {
+                                    fill: Some(theme.border),
+                                    ..Default::default()
+                                })),
+                        )
+                        .child(reset),
+                )),
         )
         .into_any_element()
     }
