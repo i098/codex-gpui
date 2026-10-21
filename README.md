@@ -124,6 +124,15 @@ Branch prefix saves on blur or Enter; multiline instructions save after three id
 The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
 This page does not implement Git operations or active pull request watchers, and it does not complete other settings pages.
 
+Settings > Connections saves SSH definitions under `CODEX_HOME` and keeps a separate app-server bridge for each connected host.
+SSH discovery reads `~/.ssh/config` and its `Include` files without changing them.
+WSL rows appear only when Windows discovers a distribution.
+The editor keeps the entered values when a save fails.
+Mobile setup uses the app-server remote-control status, pairing, and authorized-device APIs.
+It does not bypass account authorization or MFA.
+The existing native policy controls remote-device visibility.
+The added connection and pairing states still require their original/native pixel checks before release.
+
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.

@@ -1142,6 +1142,9 @@ impl Render for SettingsPane {
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
         }
+        if section == "Connections" {
+            return super::connections::render(window, cx);
+        }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
             "General" => self.general(&t, window, cx),
@@ -1435,7 +1438,7 @@ fn probe(l: &Layer) -> impl IntoElement {
 
 /// Toolbar `_Button` (`Change`, `View`: `bg-text/5`, transparent 1 px border; `Open System
 /// Settings`: outlined).
-fn button(label: &'static str, fill: Hsla, border: Option<Hsla>, t: &Theme) -> Div {
+pub(super) fn button(label: &'static str, fill: Hsla, border: Option<Hsla>, t: &Theme) -> Div {
     div()
         .h(px(28.))
         .px(px(9.))

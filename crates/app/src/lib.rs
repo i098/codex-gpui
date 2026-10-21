@@ -4,6 +4,7 @@
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
 pub mod computer_use_requests;
+pub mod connections;
 mod features;
 pub mod host;
 pub mod host_settings;
@@ -216,6 +217,7 @@ pub enum Route {
     Automation(String),
     /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
     Mobile,
+    RemoteConnections,
     Archive,
 }
 
@@ -750,6 +752,7 @@ impl Root {
             _events,
             state,
         };
+        connections::install(cx);
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
             this.update(cx, |this, cx| {
@@ -903,6 +906,7 @@ impl Root {
                 this.skills = skills;
                 this.models = models;
                 this.ready = true;
+                connections::startup(this, cx);
                 this.select_route(cx);
                 this.sync(window, cx);
                 if bridge.is_acp() {
@@ -1040,6 +1044,7 @@ impl Root {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
         self.host = host;
+        connections::sync(self, cx);
         self.automations = None;
         self.load_projects(cx);
         if self.scheduled_route() {
@@ -1942,7 +1947,7 @@ impl Root {
 
     /// Mobile `Get started` (`codex-mobile-setup-flow` `P`, `XNn`): the initial step shows its
     /// loading button while the host reads the account's MFA requirement. A non-`required`
-    /// answer opens the allow-host step (whose `Allow` is disabled); `required` also reads
+    /// answer opens the allow-host step; `required` also reads
     /// `/accounts/mfa_info` and opens the MFA step unless `mfa_enabled_v2` is already on. A
     /// failed read or a body without the expected field returns to the initial step with its
     /// error.
@@ -2136,6 +2141,10 @@ impl Root {
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        connections::sync(self, cx);
+        if self.state.route == Route::RemoteConnections {
+            connections::remote_route(self, cx);
+        }
         self.flush_settings(cx);
         self.settings_page = None;
         self.suggestion_load = None;
@@ -2217,9 +2226,11 @@ impl Root {
             Route::Mobile => {
                 let (shell, page) = mobile::shell(cx);
                 self.mobile_page = Some(page);
+                connections::open_mobile(self, cx);
                 Some(shell)
             }
             Route::Home | Route::Thread(_) => None,
+            Route::RemoteConnections => unreachable!("remote route resolves before rendering"),
         };
         if let Some(sidebar) = &self.scheduled {
             for id in self.automation_updates.keys() {
@@ -4412,6 +4423,7 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        connections::on_event(&event, cx);
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             if matches!(&event, Event::Notification { method, params }
@@ -5475,6 +5487,14 @@ impl Render for Root {
             .on_action(
                 cx.listener(|this, _: &mobile::GetStarted, _, cx| this.start_mobile_setup(cx)),
             )
+            .on_action(
+                cx.listener(|this, _: &mobile::ManageConnections, window, cx| {
+                    this.open_settings_section("Connections", window, cx);
+                }),
+            )
+            .on_action(cx.listener(|this, _: &mobile::FinishSetup, window, cx| {
+                this.navigate(Route::Home, window, cx);
+            }))
             .on_action(cx.listener(|this, _: &ToggleChangesPanel, window, cx| {
                 if this.side == Some(SidePanel::Changes) {
                     this.close_side(SidePanel::Changes, window, cx)

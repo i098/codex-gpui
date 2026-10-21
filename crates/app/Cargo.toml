@@ -21,6 +21,7 @@ base64 = "0.22"
 bridge = { path = "../bridge" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 chrono-tz = "0.10"
+glob = "0.3.4"
 gpui.workspace = true
 gpui_platform.workspace = true
 iana-time-zone = "0.1"

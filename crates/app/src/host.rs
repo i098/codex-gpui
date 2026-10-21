@@ -36,12 +36,14 @@ use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
+use ui::screens::connections::{Connection as RemoteConnection, SshDraft};
 use ui::screens::sidebar::Project;
 use url::Url;
 
 mod automation_schedule;
 pub mod computer_use;
 pub mod computer_use_native;
+pub mod connections;
 mod git;
 mod projectless;
 pub(crate) mod run_now;
@@ -94,6 +96,22 @@ pub trait Host: Send + Sync {
     /// Returns the trusted native Settings service, never a model-callable tool.
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         bail!("Computer Use settings are unsupported by this host")
+    }
+
+    fn remote_connections(&self) -> Result<Vec<RemoteConnection>> {
+        bail!("Remote connections are unsupported by this host")
+    }
+    fn save_remote_connection(&self, _draft: &SshDraft) -> Result<RemoteConnection> {
+        bail!("Saving remote connections is unsupported by this host")
+    }
+    fn delete_remote_connection(&self, _host_id: &str) -> Result<()> {
+        bail!("Deleting remote connections is unsupported by this host")
+    }
+    fn set_remote_auto_connect(&self, _host_id: &str, _enabled: bool) -> Result<()> {
+        bail!("Remote connections are unsupported by this host")
+    }
+    fn discover_remote_ssh(&self) -> Result<Vec<String>> {
+        bail!("SSH discovery is unsupported by this host")
     }
 
     /// Finish the initial automation turn and settle its automatic archive before reading the inbox.
@@ -1002,6 +1020,24 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn remote_connections(&self) -> Result<Vec<RemoteConnection>> {
+        self.connections()
+    }
+    fn save_remote_connection(&self, draft: &SshDraft) -> Result<RemoteConnection> {
+        self.save_connection(draft)
+    }
+    fn delete_remote_connection(&self, host_id: &str) -> Result<()> {
+        self.delete_connection(host_id)
+    }
+    fn set_remote_auto_connect(&self, host_id: &str, enabled: bool) -> Result<()> {
+        self.set_connection_auto_connect(host_id, enabled)
+    }
+    fn discover_remote_ssh(&self) -> Result<Vec<String>> {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .context("Home directory is unavailable")?;
+        connections::discover_ssh(&home)
+    }
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.computer_use_settings
             .as_ref()
@@ -1520,6 +1556,21 @@ impl CloudHost {
 }
 
 impl Host for CloudHost {
+    fn remote_connections(&self) -> Result<Vec<RemoteConnection>> {
+        self.local.remote_connections()
+    }
+    fn save_remote_connection(&self, draft: &SshDraft) -> Result<RemoteConnection> {
+        self.local.save_remote_connection(draft)
+    }
+    fn delete_remote_connection(&self, host_id: &str) -> Result<()> {
+        self.local.delete_remote_connection(host_id)
+    }
+    fn set_remote_auto_connect(&self, host_id: &str, enabled: bool) -> Result<()> {
+        self.local.set_remote_auto_connect(host_id, enabled)
+    }
+    fn discover_remote_ssh(&self) -> Result<Vec<String>> {
+        self.local.discover_remote_ssh()
+    }
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.local.computer_use_settings()
     }
