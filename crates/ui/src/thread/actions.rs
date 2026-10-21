@@ -453,8 +453,10 @@ pub(super) fn action_row(
     div()
         .mt(px(6.))
         .ml(px(-4.))
-        .h(px(26.))
+        .min_h(px(26.))
         .flex()
+        .flex_wrap()
+        .items_center()
         .gap(px(2.))
         .child(tooltip(
             action("thread-copy")
@@ -508,7 +510,6 @@ pub(super) fn action_row(
         .children(sent_at.map(|time| {
             let mut stamp = div()
                 .ml(px(6.))
-                .mt(px(3.))
                 .h(px(20.))
                 .flex()
                 .items_center()
