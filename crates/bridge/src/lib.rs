@@ -331,9 +331,7 @@ impl Bridge {
             id,
             pending: &self.pending,
         };
-        if let Err(err) = self.write(&msg) {
-            return Err(err);
-        }
+        self.write(&msg)?;
         let result = rx
             .recv()
             .await
