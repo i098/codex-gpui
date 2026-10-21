@@ -272,10 +272,12 @@ pub struct BalancePoint {
 pub struct Access {
     pub visible: bool,
     pub manage_credits: bool,
+    pub app_limits: bool,
     pub view_credits: bool,
     pub analytics: bool,
     pub balance_history: bool,
     pub enterprise: bool,
+    pub logged_in_pricing: bool,
     pub maximum_credits: u64,
 }
 

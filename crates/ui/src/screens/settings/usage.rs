@@ -2,26 +2,36 @@
 pub mod model;
 pub use model::*;
 
+#[path = "usage_analytics.rs"]
+pub mod analytics;
+
 use super::{Layer, deco, on_card, probe};
 use crate::screens::computer_use::Load;
-use crate::{composer::Composer, focus, text};
+use crate::{
+    composer::{Composer, popover},
+    focus, text,
+};
 use gpui::{
     AnyElement, App, AppContext as _, BorrowAppContext as _, Context, Div, Entity, Global,
     InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, SharedString,
     StatefulInteractiveElement, Styled, Window as AppWindow, div, prelude::FluentBuilder as _, px,
 };
 use serde_json::Value;
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 use theme::{ActiveTheme as _, Theme};
 
 #[derive(Clone, Debug)]
 pub enum Action {
     Refresh,
     History(i64),
+    Analytics(analytics::Query),
     Reset(Option<String>),
     SaveReload(ReloadDraft),
     DisableReload,
     RequestMore(String),
+    SaveAppLimits(BTreeMap<String, u8>),
+    SetAppCreditPreference(bool),
+    SetAgentResetEnabled(bool),
     OpenUrl(String),
 }
 
@@ -37,10 +47,16 @@ pub struct State {
     pub has_saved_payment_method: bool,
     pub reset_history: Load<Arc<Value>>,
     pub history: Load<Option<Arc<BalanceHistory>>>,
-    pub analytics: Load<Arc<Value>>,
+    pub analytics: analytics::Snapshot,
+    pub initial_analytics: bool,
     pub monthly: Load<Arc<Value>>,
     pub request_policy: Load<Arc<Value>>,
     pub requests: Load<Arc<Value>>,
+    pub app_limits: Load<Arc<Value>>,
+    pub app_credit_preference: Load<Arc<Value>>,
+    pub agent_reset_enabled: bool,
+    pub plan_origin: Option<String>,
+    pub reference_time: Option<i64>,
     pub page_open: bool,
     pub unavailable: bool,
     pub busy: bool,
@@ -63,6 +79,10 @@ enum Control {
     SubmitRequest,
     Reset(Option<String>),
     ResetHistory(bool),
+    AppLimitMenu(String),
+    AppLimitValue(String, u8),
+    AppLimitToggle(String, u8),
+    SaveAppLimits,
 }
 
 pub fn render(window: &mut AppWindow, cx: &mut App) -> AnyElement {
@@ -95,9 +115,12 @@ pub fn render(window: &mut AppWindow, cx: &mut App) -> AnyElement {
                 .detach();
                 field
             });
+            let analytics_view = cx.new(analytics::Analytics::new);
             Usage {
                 layer: Layer::default(),
-                analytics: false,
+                analytics: cx.global::<State>().initial_analytics,
+                analytics_view,
+                scroll: gpui::ScrollHandle::new(),
                 reload_open: false,
                 disable_confirmation: false,
                 fields,
@@ -106,6 +129,9 @@ pub fn render(window: &mut AppWindow, cx: &mut App) -> AnyElement {
                 reset_history: false,
                 field_error: None,
                 seen_revision: 0,
+                app_limit_values: BTreeMap::new(),
+                app_limit_menu: None,
+                number_features: gpui::FontFeatures(Arc::new(vec![("tnum".into(), 1)])),
             }
         })
         .into_any_element()
@@ -114,6 +140,8 @@ pub fn render(window: &mut AppWindow, cx: &mut App) -> AnyElement {
 struct Usage {
     layer: Layer,
     analytics: bool,
+    analytics_view: Entity<analytics::Analytics>,
+    scroll: gpui::ScrollHandle,
     reload_open: bool,
     disable_confirmation: bool,
     fields: [Entity<Composer>; 4],
@@ -122,6 +150,9 @@ struct Usage {
     reset_history: bool,
     field_error: Option<String>,
     seen_revision: u64,
+    app_limit_values: BTreeMap<String, (u8, u8)>,
+    app_limit_menu: Option<String>,
+    number_features: gpui::FontFeatures,
 }
 
 impl Usage {
@@ -203,6 +234,43 @@ impl Usage {
                 }
             }
             Control::ResetHistory(history) => self.reset_history = history,
+            Control::AppLimitMenu(id) => {
+                self.app_limit_menu = (self.app_limit_menu.as_ref() != Some(&id)).then_some(id);
+            }
+            Control::AppLimitValue(id, value) => {
+                self.app_limit_values.entry(id).or_insert((value, 10)).0 = value;
+                self.app_limit_menu = None;
+            }
+            Control::AppLimitToggle(id, current) => {
+                let entry = self.app_limit_values.entry(id).or_insert((current, 10));
+                if current == 0 {
+                    entry.0 = entry.1;
+                } else {
+                    *entry = (0, current);
+                }
+            }
+            Control::SaveAppLimits => {
+                if let Load::Ready(apps) = &cx.global::<State>().app_limits {
+                    let values = apps["items"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|app| {
+                            let id = app["id"].as_str()?;
+                            let value =
+                                self.app_limit_values.get(id).map(|entry| entry.0).or_else(
+                                    || {
+                                        app["allowed_usage_percent"]
+                                            .as_u64()
+                                            .and_then(|value| u8::try_from(value).ok())
+                                    },
+                                )?;
+                            Some((id.to_owned(), value))
+                        })
+                        .collect();
+                    self.dispatch(Action::SaveAppLimits(values), cx);
+                }
+            }
         }
         cx.notify();
     }
@@ -221,6 +289,8 @@ impl Usage {
         let label = label.into();
         let handle = focus::handle(id.clone(), 0, window, cx);
         let key = control.clone();
+        let selected = !matches!(&control, Control::Tab(value) if *value != self.analytics);
+        let tab = matches!(&control, Control::Tab(_));
         focus::ring(
             div()
                 .id(id)
@@ -228,17 +298,31 @@ impl Usage {
                 .aria_label(label.clone())
                 .relative()
                 .h(px(28.))
-                .px(px(13.))
+                .px(px(9.))
                 .flex()
                 .items_center()
                 .justify_center()
                 .child(on_card(
                     12.5,
                     shapes::Corner::Squircle,
-                    t.text_alpha_5,
+                    if selected {
+                        t.text_alpha_5
+                    } else {
+                        gpui::transparent_black()
+                    },
                     None,
                 ))
-                .child(text(label, 13., 18., 430., t.text))
+                .child(text(
+                    label,
+                    13.,
+                    18.,
+                    430.,
+                    if tab && !selected {
+                        t.text_tertiary
+                    } else {
+                        t.text
+                    },
+                ))
                 .when(disabled, |d| d.opacity(0.6)),
             &handle,
             px(12.5),
@@ -304,17 +388,67 @@ impl Usage {
         let control = self.action(
             "usage-view-plans",
             "View plans",
-            Control::Action(Action::OpenUrl("https://chatgpt.com/#pricing".into())),
+            Control::Action(Action::OpenUrl(
+                if state.access.logged_in_pricing {
+                    "https://chatgpt.com/#pricing"
+                } else {
+                    "https://chatgpt.com/pricing/"
+                }
+                .into(),
+            )),
             false,
             window,
             cx,
         );
-        Some(self.group(
-            "Your plan",
-            None,
-            row(name, None, control, cx.theme()),
-            cx.theme(),
-        ))
+        if state.plan == "free" {
+            return Some(self.group(
+                "Your plan",
+                None,
+                row(name, None, control, cx.theme()),
+                cx.theme(),
+            ));
+        }
+        let (prefix, link, suffix, url) = match state.plan_origin.as_deref() {
+            Some("ios") => (
+                "Your subscription is managed through your Apple account. You'll need to ",
+                "cancel via iOS",
+                "",
+                "https://help.openai.com/en/articles/7905690-how-to-cancel-your-apple-subscription-for-chatgpt-in-the-chatgpt-ios-app",
+            ),
+            Some("android") => (
+                "Your subscription is managed through your Google Play account. You'll need to ",
+                "cancel via Android",
+                "",
+                "https://help.openai.com/en/articles/8258076-how-to-cancel-a-subscription-in-the-chatgpt-android-app",
+            ),
+            _ => (
+                "Your subscription is managed through ChatGPT. Go to ",
+                "Settings > Billing on Web",
+                " to manage or cancel your plan",
+                "https://chatgpt.com/#settings/Billing",
+            ),
+        };
+        let subtitle = div()
+            .flex()
+            .child(text(prefix, 13., 18., 400., cx.theme().text_secondary))
+            .child(
+                text(link, 13., 18., 400., cx.theme().text_accent)
+                    .id("usage-manage-billing")
+                    .on_click(move |_, _, cx| cx.open_url(url)),
+            )
+            .child(text(suffix, 13., 18., 400., cx.theme().text_secondary));
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .child(heading(
+                    "Your plan",
+                    Some(subtitle.into_any_element()),
+                    16.,
+                    cx.theme(),
+                ))
+                .child(self.card(row(name, None, control, cx.theme()), cx.theme())),
+        )
     }
 
     fn limits(&self, state: &State, window: &mut AppWindow, cx: &mut Context<Self>) -> Div {
@@ -352,7 +486,7 @@ impl Usage {
                         .chain(limit.secondary.iter())
                         .enumerate()
                     {
-                        content = content.child(self.meter(limit, index, &t));
+                        content = content.child(self.meter(limit, index, state.reference_time, &t));
                     }
                 }
             }
@@ -360,20 +494,42 @@ impl Usage {
         if state.access.enterprise {
             content = content.child(self.enterprise(state, window, cx));
         }
-        self.group("Plan limits", Some("Shared across Codex, Work, Workspace Agents, and ChatGPT for Excel. Chat conversations are not included."), content, &t)
+        let origin = self.layer.clone();
+        let panel = crate::in_layer(
+            shapes::Decoration {
+                radius: gpui::Corners::all(px(20.)),
+                corner: shapes::Corner::Squircle,
+                fill: Some(t.background_panel),
+                shadows: vec![shapes::Shadow {
+                    color: t.border_subtle,
+                    offset: gpui::point(px(0.), px(0.)),
+                    blur: px(0.),
+                    spread: px(1.),
+                    inset: true,
+                }],
+                ..Default::default()
+            },
+            move || origin.get(),
+        );
+        div().flex().flex_col()
+            .child(heading("Plan limits", Some(text("Shared across Codex, Work, Workspace Agents, and ChatGPT for Excel. Chat conversations are not included.", 13., 18., 400., t.text_secondary).into_any_element()), 16., &t))
+            .child(div().relative().child(panel).child(content))
     }
 
-    fn meter(&self, limit: &model::Window, index: usize, t: &Theme) -> Div {
+    fn meter(&self, limit: &model::Window, index: usize, now: Option<i64>, t: &Theme) -> Div {
         let remaining = limit.remaining();
         let label = limit.label();
-        let reset = limit.resets_at.map(countdown).unwrap_or_default();
+        let reset = limit
+            .resets_at
+            .map(|at| countdown(at, now))
+            .unwrap_or_default();
         div()
             .px(px(16.))
             .py(px(12.))
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .child(text(label, 13., 19., 500., t.text))
+            .gap(px(4.))
+            .child(text(label, 13., 18.571_428, 500., t.text))
             .child(
                 div()
                     .flex()
@@ -384,13 +540,16 @@ impl Usage {
                             .flex()
                             .justify_between()
                             .child(text(reset, 12., 16., 430., t.text_secondary))
-                            .child(text(
-                                format!("{remaining:.0}% left"),
-                                12.,
-                                16.,
-                                430.,
-                                t.text_secondary,
-                            )),
+                            .child(
+                                text(
+                                    format!("{remaining:.0}% left"),
+                                    12.,
+                                    16.,
+                                    430.,
+                                    t.text_secondary,
+                                )
+                                .font_features(self.number_features.clone()),
+                            ),
                     )
                     .child(
                         div()
@@ -406,16 +565,25 @@ impl Usage {
                                 div()
                                     .h_full()
                                     .w(gpui::relative(remaining as f32 / 100.))
-                                    .child(on_card(
-                                        9999.,
-                                        shapes::Corner::Round,
-                                        if remaining <= 10. {
+                                    .child(shapes::decoration(shapes::Decoration {
+                                        radius: gpui::Corners {
+                                            top_left: px(3.),
+                                            bottom_left: px(3.),
+                                            top_right: px(if remaining >= 100. { 3. } else { 0. }),
+                                            bottom_right: px(if remaining >= 100. {
+                                                3.
+                                            } else {
+                                                0.
+                                            }),
+                                        },
+                                        corner: shapes::Corner::Round,
+                                        fill: Some(if remaining <= 10. {
                                             t.text_warning
                                         } else {
-                                            t.text_accent
-                                        },
-                                        None,
-                                    )),
+                                            t.composer_primary
+                                        }),
+                                        ..Default::default()
+                                    })),
                             ),
                     ),
             )
@@ -460,16 +628,18 @@ impl Usage {
                 window_duration_mins: Some(43200),
                 resets_at: None,
             };
-            content = content.child(self.meter(&usage, 100, cx.theme())).child(
-                text(
-                    format!("{used} of {amount} credits used"),
-                    13.,
-                    19.,
-                    430.,
-                    cx.theme().text_secondary,
-                )
-                .px(px(16.)),
-            );
+            content = content
+                .child(self.meter(&usage, 100, state.reference_time, cx.theme()))
+                .child(
+                    text(
+                        format!("{used} of {amount} credits used"),
+                        13.,
+                        19.,
+                        430.,
+                        cx.theme().text_secondary,
+                    )
+                    .px(px(16.)),
+                );
         } else {
             content = content.child(text(
                 "Your admin hasn’t set a usage limit",
@@ -640,7 +810,7 @@ impl Usage {
                 "usage-add-credits",
                 "Add more",
                 Control::Action(Action::OpenUrl(
-                    "https://chatgpt.com/settings/usage?credit_modal=true".into(),
+                    "https://chatgpt.com/codex/settings/usage?credit_modal=true".into(),
                 )),
                 false,
                 window,
@@ -649,13 +819,31 @@ impl Usage {
         } else {
             div().into_any_element()
         };
-        let mut content = div().flex().flex_col().child(row(
-            &balance,
-            Some("Current balance"),
-            control,
-            cx.theme(),
-        ));
-        if state.access.manage_credits {
+        let mut content = div().flex().flex_col().child(
+            div()
+                .p(px(16.))
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(16.))
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.))
+                        .child(text(balance, 13., 18.571_428, 430., cx.theme().text))
+                        .child(text(
+                            "Current balance",
+                            13.,
+                            18.571_428,
+                            430.,
+                            cx.theme().text_secondary,
+                        )),
+                )
+                .child(control),
+        );
+        if state.access.manage_credits && state.has_saved_payment_method {
             content = content.child(match &state.reload {
                 Load::Loading => {
                     self.status("Loading automatic reload settings…", None, window, cx)
@@ -684,8 +872,255 @@ impl Usage {
             });
         }
         Some(self.group("Credits", Some(if state.access.manage_credits {
-            "Buy credits or turn on automatic reload to continue using Work and Codex when you reach usage limits."
+            if state.has_saved_payment_method { "Buy credits or turn on automatic reload to continue using Work and Codex when you reach usage limits." } else { "Buy credits to continue using Work and Codex when you reach usage limits" }
         } else { "Your remaining credits" }), content, cx.theme()))
+    }
+
+    fn switch(
+        &self,
+        (id, label): (&'static str, impl Into<SharedString>),
+        checked: bool,
+        control: Control,
+        state: &State,
+        window: &mut AppWindow,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let label = label.into();
+        let handle = focus::handle(label.clone(), 0, window, cx);
+        let key = control.clone();
+        let disabled = state.busy;
+        focus::ring(
+            super::switch(id, checked, disabled, cx.theme())
+                .role(gpui::Role::CheckBox)
+                .aria_label(label)
+                .aria_toggled(if checked {
+                    gpui::Toggled::True
+                } else {
+                    gpui::Toggled::False
+                }),
+            &handle,
+            px(10.),
+            px(2.),
+            cx,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if !disabled {
+                this.control(control.clone(), cx);
+            }
+        }))
+        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+            if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                this.control(key.clone(), cx);
+                cx.stop_propagation();
+            }
+        }))
+        .into_any_element()
+    }
+
+    fn agent_reset(&self, state: &State, window: &mut AppWindow, cx: &mut Context<Self>) -> Div {
+        let control = self.switch(
+            ("usage-agent-reset", "Allow Codex to use resets"),
+            state.agent_reset_enabled,
+            Control::Action(Action::SetAgentResetEnabled(!state.agent_reset_enabled)),
+            state,
+            window,
+            cx,
+        );
+        self.card(row("Allow Codex to use resets",
+            Some("Give codex the ability to use a reset when you explicitly request it during a conversation, and your current limit has 10% or less remaining. Resets are never used automatically."),
+            control, cx.theme()), cx.theme())
+    }
+
+    fn app_limits(
+        &self,
+        state: &State,
+        window: &mut AppWindow,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        let t = cx.theme().clone();
+        let mut rows = div().flex().flex_col();
+        let mut dirty = false;
+        match &state.app_limits {
+            Load::Ready(apps) => {
+                let items = apps["items"].as_array()?;
+                if items.is_empty() {
+                    return None;
+                }
+                for app in items {
+                    let id = app["id"].as_str()?;
+                    let name = app["name"].as_str()?;
+                    let original = u8::try_from(app["allowed_usage_percent"].as_u64()?).ok()?;
+                    let value = self
+                        .app_limit_values
+                        .get(id)
+                        .map_or(original, |entry| entry.0);
+                    dirty |= value != original;
+                    let mut selector = div().relative().child(self.action(
+                        format!("usage-app-limit-{id}"),
+                        format!("{}%", value.max(10)),
+                        Control::AppLimitMenu(id.into()),
+                        state.busy || value == 0,
+                        window,
+                        cx,
+                    ));
+                    if self.app_limit_menu.as_deref() == Some(id) {
+                        let mut items = Vec::new();
+                        for value in (10..=100).step_by(10) {
+                            items.push(self.action(
+                                format!("usage-app-choice-{id}-{value}"),
+                                format!("{value}%"),
+                                Control::AppLimitValue(id.into(), value),
+                                state.busy,
+                                window,
+                                cx,
+                            ));
+                        }
+                        selector = selector
+                            .child(gpui::deferred(
+                                div()
+                                    .absolute()
+                                    .top(px(28.))
+                                    .right_0()
+                                    .occlude()
+                                    .child(popover(&t, 120., |menu| menu.children(items))),
+                            ))
+                            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                                this.app_limit_menu = None;
+                                cx.notify();
+                            }));
+                    }
+                    let toggle = self.switch(
+                        (
+                            "usage-app-enabled",
+                            format!("Allow {name} to use plan limits"),
+                        ),
+                        value > 0,
+                        Control::AppLimitToggle(id.into(), value),
+                        state,
+                        window,
+                        cx,
+                    );
+                    rows = rows.child(
+                        row_content(
+                            name,
+                            None,
+                            div()
+                                .flex()
+                                .gap(px(8.))
+                                .items_center()
+                                .child(selector)
+                                .child(toggle)
+                                .into_any_element(),
+                            &t,
+                        )
+                        .id(format!("usage-app-{id}")),
+                    );
+                }
+            }
+            Load::Loading => {
+                rows = rows.child(self.status("Loading app limits…", None, window, cx))
+            }
+            Load::Failed(_) => {
+                let retry = self.action(
+                    "usage-app-limits-retry",
+                    "Retry",
+                    Control::Action(Action::Refresh),
+                    state.busy,
+                    window,
+                    cx,
+                );
+                rows = rows.child(row("Couldn't load app limits", None, retry, &t));
+            }
+        }
+        let header = heading(
+            "App limits",
+            Some(
+                text(
+                    "Set limits for each app’s use of your ChatGPT plan and credits.",
+                    13.,
+                    18.,
+                    400.,
+                    t.text_secondary,
+                )
+                .into_any_element(),
+            ),
+            14.,
+            &t,
+        );
+        let header = if matches!(state.app_limits, Load::Ready(_)) {
+            div()
+                .flex()
+                .justify_between()
+                .child(header)
+                .child(self.action(
+                    "usage-save-app-limits",
+                    "Save",
+                    Control::SaveAppLimits,
+                    state.busy || !dirty,
+                    window,
+                    cx,
+                ))
+        } else {
+            header
+        };
+        let mut cards = div()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(self.card(rows, &t));
+        if state.access.view_credits
+            && matches!(&state.app_limits, Load::Ready(apps) if !apps.is_null())
+        {
+            let row = match &state.app_credit_preference {
+                Load::Ready(preference) => {
+                    let checked =
+                        preference["settings"]["can_consume_personal_credits_chatpass"] == true;
+                    let toggle = self.switch(
+                        (
+                            "usage-app-credits",
+                            "Allow other apps to use credits after reaching your usage limit",
+                        ),
+                        checked,
+                        Control::Action(Action::SetAppCreditPreference(!checked)),
+                        state,
+                        window,
+                        cx,
+                    );
+                    row(
+                        "Allow other apps to use credits after reaching your usage limit",
+                        Some("Applies to apps you’ve allowed to use your ChatGPT plan."),
+                        toggle,
+                        &t,
+                    )
+                }
+                Load::Loading => self.status("Loading credit preference…", None, window, cx),
+                Load::Failed(_) => self.status(
+                    "Couldn’t load credit preference",
+                    Some(Action::Refresh),
+                    window,
+                    cx,
+                ),
+            };
+            cards = cards.child(self.card(row, &t));
+        }
+        Some(div().flex().flex_col().child(header).child(cards))
+    }
+
+    fn reset_failure(&self, window: &mut AppWindow, cx: &mut Context<Self>) -> Div {
+        let control = self.action(
+            "usage-reset-retry",
+            "Retry",
+            Control::Action(Action::Refresh),
+            false,
+            window,
+            cx,
+        );
+        row(
+            "Couldn’t load usage limit resets",
+            None,
+            control,
+            cx.theme(),
+        )
     }
 
     fn resets(&self, state: &State, window: &mut AppWindow, cx: &mut Context<Self>) -> Div {
@@ -696,24 +1131,15 @@ impl Usage {
                     content.child(self.status("Loading usage limit resets…", None, window, cx))
             }
             Load::Failed(_) => {
-                content = content.child(self.status(
-                    "Couldn’t load usage limit resets",
-                    Some(Action::Refresh),
-                    window,
-                    cx,
-                ))
+                content = content.child(self.reset_failure(window, cx));
             }
             Load::Ready(limits) => {
                 let Some(resets) = &limits.rate_limit_reset_credits else {
+                    let error = self.reset_failure(window, cx);
                     return self.group(
                         "Usage limit resets",
                         Some("Use a reset to restore your 5-hour limit, weekly limit, or both"),
-                        self.status(
-                            "Couldn’t load usage limit resets",
-                            Some(Action::Refresh),
-                            window,
-                            cx,
-                        ),
+                        error,
                         cx.theme(),
                     );
                 };
@@ -1094,34 +1520,30 @@ impl Usage {
         content: Div,
         t: &Theme,
     ) -> Div {
+        let subtitle = subtitle.map(|s| {
+            text(s, 13., 18., 400., t.text_secondary)
+                .whitespace_normal()
+                .into_any_element()
+        });
         div()
             .flex()
             .flex_col()
-            .gap(px(12.))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(text(title, 14., 21., 500., t.text))
-                    .children(
-                        subtitle
-                            .map(|s| text(s, 13., 19., 430., t.text_secondary).whitespace_normal()),
-                    ),
-            )
-            .child(
-                div()
-                    .relative()
-                    .p(px(1.))
-                    .child(deco(
-                        &self.layer,
-                        20.,
-                        shapes::Corner::Squircle,
-                        t.background_panel,
-                        Some(t.border),
-                    ))
-                    .child(content),
-            )
+            .child(heading(title, subtitle, 16., t))
+            .child(self.card(content, t))
+    }
+
+    fn card(&self, content: Div, t: &Theme) -> Div {
+        div()
+            .relative()
+            .p(px(1.))
+            .child(deco(
+                &self.layer,
+                20.,
+                shapes::Corner::Squircle,
+                t.background_panel,
+                Some(t.border),
+            ))
+            .child(content)
     }
 }
 
@@ -1134,16 +1556,12 @@ impl Render for Usage {
                 self.reload_open = false;
                 self.request_open = false;
                 self.confirm_reset = None;
+                self.app_limit_values.clear();
+                self.app_limit_menu = None;
             }
         }
         let t = cx.theme().clone();
-        let mut groups = div()
-            .w_full()
-            .max_w(px(768.))
-            .p(px(20.))
-            .flex()
-            .flex_col()
-            .gap(px(40.));
+        let mut groups = div().w_full().pt(px(20.)).flex().flex_col().gap(px(40.));
         if let Some(error) = &state.error {
             groups =
                 groups.child(text(error.clone(), 13., 19., 430., t.text_error).whitespace_normal());
@@ -1163,37 +1581,7 @@ impl Render for Usage {
                 cx,
             ));
         } else if self.analytics && state.access.analytics {
-            groups = groups.child(match &state.analytics {
-                Load::Ready(value) => {
-                    let summary = &value["summary"];
-                    let mut data = div().flex().flex_col().gap(px(16.));
-                    for (key, label) in [
-                        ("lifetimeTokens", "Lifetime tokens"),
-                        ("peakDailyTokens", "Peak daily tokens"),
-                        ("longestRunningTurnSec", "Longest running turn"),
-                        ("currentStreakDays", "Current streak"),
-                        ("longestStreakDays", "Longest streak"),
-                    ] {
-                        if let Some(value) = summary[key].as_u64() {
-                            data = data.child(text(
-                                format!("{label}: {value}"),
-                                14.,
-                                21.,
-                                430.,
-                                t.text,
-                            ));
-                        }
-                    }
-                    data
-                }
-                Load::Loading => self.status("Loading usage settings…", None, window, cx),
-                Load::Failed(_) => self.status(
-                    "Could not load usage settings.",
-                    Some(Action::Refresh),
-                    window,
-                    cx,
-                ),
-            });
+            groups = groups.child(self.analytics_view.clone());
         } else {
             if let Some(plan) = self.plan(&state, window, cx) {
                 groups = groups.child(plan);
@@ -1205,11 +1593,19 @@ impl Render for Usage {
             if let Some(credits) = self.credits(&state, window, cx) {
                 groups = groups.child(credits);
             }
+            if state.access.app_limits
+                && let Some(apps) = self.app_limits(&state, window, cx)
+            {
+                groups = groups.child(apps);
+            }
+            if !state.access.enterprise {
+                groups = groups.child(self.agent_reset(&state, window, cx));
+            }
             if !state.access.enterprise {
                 groups = groups.child(self.resets(&state, window, cx));
             }
         }
-        let mut title = div()
+        let title = div()
             .w_full()
             .max_w(px(768.))
             .px(px(20.))
@@ -1217,31 +1613,58 @@ impl Render for Usage {
             .min_h(px(60.))
             .flex()
             .flex_col()
-            .gap(px(16.))
+            .justify_center()
             .child(text("Usage & billing", 28., 33.6, 500., t.text));
+        let mut body = div()
+            .w_full()
+            .max_w(px(768.))
+            .px(px(20.))
+            .pb(px(20.))
+            .flex()
+            .flex_col();
         if state.access.analytics {
-            title = title.child(
-                div()
-                    .flex()
-                    .gap(px(8.))
-                    .child(self.action(
-                        "usage-overview",
-                        "Overview",
-                        Control::Tab(false),
-                        false,
-                        window,
-                        cx,
-                    ))
-                    .child(self.action(
-                        "usage-analytics",
-                        "Analytics",
-                        Control::Tab(true),
-                        false,
-                        window,
-                        cx,
-                    )),
-            );
+            let offset = (-self.scroll.offset().y).min(self.scroll.max_offset().y);
+            let shift = (offset - px(77.)).max(px(0.));
+            let tabs = div()
+                .relative()
+                .top(shift)
+                .bg(t.surface)
+                .pt(px(20.))
+                .pb(px(8.))
+                .flex()
+                .gap(px(2.))
+                .child(self.action(
+                    "usage-overview",
+                    "Overview",
+                    Control::Tab(false),
+                    false,
+                    window,
+                    cx,
+                ))
+                .child(self.action(
+                    "usage-analytics",
+                    "Analytics",
+                    Control::Tab(true),
+                    false,
+                    window,
+                    cx,
+                ))
+                .child(gpui::deferred(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .bottom(px(-32.))
+                        .h(px(32.))
+                        .bg(gpui::linear_gradient(
+                            180.,
+                            gpui::linear_color_stop(t.surface, 0.),
+                            gpui::linear_color_stop(t.surface.opacity(0.), 1.),
+                        )),
+                ));
+            body = body.child(gpui::deferred(tabs));
         }
+        body = body.child(groups);
         div()
             .relative()
             .size_full()
@@ -1254,6 +1677,8 @@ impl Render for Usage {
                     .id("usage-settings-page")
                     .flex_1()
                     .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
                     .layer()
                     .child(probe(&self.layer))
                     .child(
@@ -1262,8 +1687,16 @@ impl Render for Usage {
                             .flex()
                             .flex_col()
                             .items_center()
-                            .child(title)
-                            .child(groups),
+                            .child(
+                                div()
+                                    .w_full()
+                                    .flex()
+                                    .justify_center()
+                                    .border_b_1()
+                                    .border_color(gpui::transparent_black())
+                                    .child(title),
+                            )
+                            .child(body),
                     ),
             )
             .when(self.reload_open, |d| {
@@ -1273,6 +1706,21 @@ impl Render for Usage {
 }
 
 fn row(title: &str, detail: Option<&str>, control: AnyElement, t: &Theme) -> Div {
+    row_content(
+        title,
+        detail,
+        div()
+            .min_w(px(160.))
+            .flex()
+            .items_center()
+            .justify_end()
+            .child(control)
+            .into_any_element(),
+        t,
+    )
+}
+
+fn row_content(title: &str, detail: Option<&str>, control: AnyElement, t: &Theme) -> Div {
     div()
         .px(px(16.))
         .py(px(12.))
@@ -1283,15 +1731,32 @@ fn row(title: &str, detail: Option<&str>, control: AnyElement, t: &Theme) -> Div
         .child(
             div()
                 .flex_1()
+                .min_w_0()
                 .flex()
                 .flex_col()
-                .gap(px(4.))
-                .child(text(title.to_owned(), 13., 19., 500., t.text))
+                .gap(px(2.))
+                .child(text(title.to_owned(), 13., 18.571_428, 500., t.text))
                 .children(detail.map(|s| {
                     text(s.to_owned(), 12., 16., 430., t.text_secondary).whitespace_normal()
                 })),
         )
         .child(control)
+}
+
+fn heading(title: &'static str, subtitle: Option<AnyElement>, size: f32, t: &Theme) -> Div {
+    div()
+        .pb(px(12.))
+        .flex()
+        .flex_col()
+        .gap(px(2.))
+        .child(text(
+            title,
+            size,
+            if size == 16. { 24.888_89 } else { 21. },
+            500.,
+            t.text,
+        ))
+        .children(subtitle)
 }
 
 pub fn pending_request(state: &State) -> Option<&Value> {
@@ -1324,8 +1789,9 @@ fn date(timestamp: i64) -> String {
         .unwrap_or_default()
 }
 
-fn countdown(timestamp: i64) -> String {
-    let minutes = ((timestamp - chrono::Utc::now().timestamp()).max(0) / 60) as u64;
+fn countdown(timestamp: i64, now: Option<i64>) -> String {
+    let minutes =
+        ((timestamp - now.unwrap_or_else(|| chrono::Utc::now().timestamp())).max(0) / 60) as u64;
     match minutes {
         0 => "Resets now".into(),
         1..=59 => format!("Resets in {minutes}m"),
