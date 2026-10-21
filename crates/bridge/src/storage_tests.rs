@@ -158,9 +158,7 @@ fn measurement_counts_files_without_following_symlinks() {
     std::os::unix::fs::symlink(root.join("settings.json"), root.join("sessions/link.jsonl"))
         .unwrap();
     let bridge = server(move |request| match request["method"].as_str().unwrap() {
-        "thread/list" => {
-            json!({"data":if request["params"]["archived"] == false { vec![main.thread.clone()] } else { vec![] },"nextCursor":null})
-        }
+        "thread/list" => json!({"data":[main.thread.clone()],"nextCursor":null}),
         method => panic!("unexpected method {method}"),
     });
     let result = futures_lite::future::block_on(measure(&bridge, &root, |_, _| {})).unwrap();

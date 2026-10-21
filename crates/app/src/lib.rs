@@ -5522,6 +5522,7 @@ impl Render for Root {
             .capture_action(cx.listener(|this, _: &Undo, window, cx| {
                 this.undo_queued(window, cx);
             }))
+
             .on_action(cx.listener(|this, _: &GoBack, window, cx| this.step(true, window, cx)))
             .on_action(cx.listener(|this, _: &GoForward, window, cx| this.step(false, window, cx)))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {

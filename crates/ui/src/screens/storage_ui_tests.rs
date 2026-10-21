@@ -79,6 +79,18 @@ fn review_keyboard_selection_and_two_cancel_levels() {
         .unwrap();
     cx.run_until_parked();
     capture(&mut cx, window.into(), "synthetic-review");
+    cx.update_window(window.into(), |_, window, cx| {
+        window.dispatch_keystroke(Keystroke::parse("tab").unwrap(), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        window
+            .update(cx, |page, window, _| {
+                assert!(page.controls["review-delete"].is_focused(window));
+            })
+            .unwrap()
+    });
     cx.update(|cx| {
         window
             .update(cx, |page, window, cx| {
@@ -184,4 +196,65 @@ fn byte_labels_match_original_rounding_and_grouping() {
     assert_eq!(format_bytes(1280), "1.3 kB");
     assert_eq!(format_bytes(1048320), "1,023.8 kB");
     assert_eq!(format_bytes(1024 * 1024), "1 MB");
+}
+
+#[test]
+fn refreshed_categories_keep_cached_values_until_complete() {
+    #[cfg(target_os = "macos")]
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
+    let mut cx =
+        HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
+    cx.update(|cx| {
+        let settings = cx.new(|_| SettingsPage::new(&json!({}), &json!({})));
+        let page = cx.new(|cx| StoragePage::new(settings, cx));
+        page.update(cx, |page, cx| {
+            page.measured = true;
+            page.scanning = true;
+            page.usage = Some(Usage {
+                bytes: [10, 0, 0, 0, 50, 100],
+                ..Default::default()
+            });
+            page.apply_measurement(Measurement::Supported(true), cx);
+            page.apply_measurement(
+                Measurement::Progress(
+                    Usage {
+                        bytes: [20, 0, 0, 0, 0, 0],
+                        ..Default::default()
+                    },
+                    4,
+                ),
+                cx,
+            );
+            assert_eq!(page.usage.as_ref().unwrap().bytes, [20, 0, 0, 0, 50, 100]);
+            assert!(page.can_review(cx));
+            assert!(page.scanning);
+            page.apply_measurement(
+                Measurement::Progress(
+                    Usage {
+                        bytes: [20, 0, 0, 0, 0, 200],
+                        ..Default::default()
+                    },
+                    5,
+                ),
+                cx,
+            );
+            assert_eq!(page.usage.as_ref().unwrap().bytes, [20, 0, 0, 0, 50, 200]);
+            page.apply_measurement(
+                Measurement::Progress(
+                    Usage {
+                        bytes: [20, 0, 0, 0, 70, 200],
+                        ..Default::default()
+                    },
+                    6,
+                ),
+                cx,
+            );
+            page.apply_measurement(Measurement::Done(Ok(()), true), cx);
+            assert_eq!(page.usage.as_ref().unwrap().bytes, [20, 0, 0, 0, 70, 200]);
+            assert!(!page.scanning);
+        });
+    });
 }

@@ -138,11 +138,15 @@ async fn list_all(bridge: &Bridge, mut params: Value) -> Result<Vec<Value>> {
     Ok(threads)
 }
 
+async fn list_scope(bridge: &Bridge, archived: bool) -> Result<Vec<Value>> {
+    list_all(bridge, json!({"archived":archived,"cursor":null,"limit":100,"modelProviders":[],"sourceKinds":SOURCES,"useStateDbOnly":true})).await
+}
+
 pub async fn inventory(bridge: &Bridge) -> Result<Vec<Entry>> {
     let mut entries = Vec::new();
     let mut ids = HashSet::new();
     for archived in [false, true] {
-        let threads = list_all(bridge, json!({"archived":archived,"cursor":null,"limit":100,"modelProviders":[],"sourceKinds":SOURCES,"useStateDbOnly":true})).await?;
+        let threads = list_scope(bridge, archived).await?;
         for thread in threads {
             let id = thread["id"].as_str().context("missing chat id")?;
             ensure!(
@@ -254,20 +258,27 @@ pub async fn measure(
     mut publish: impl FnMut(Usage, usize),
 ) -> Result<Usage> {
     ensure!(fs::metadata(home)?.is_dir(), "Storage root unavailable");
-    let entries = inventory(bridge).await.unwrap_or_default();
     let mut classifications = HashMap::new();
     let mut paths = HashMap::new();
-    for entry in &entries {
-        classifications.insert(
-            entry.id().to_owned(),
-            usize::from(entry.thread["source"].get("subAgent").is_some()),
-        );
-        if let Some(path) = entry.thread["path"]
-            .as_str()
-            .and_then(|path| Path::new(path).file_name())
-            .and_then(|name| name.to_str())
-        {
-            paths.insert(path.replace(".jsonl.zst", ".jsonl"), entry.id().to_owned());
+    for archived in [false, true] {
+        let Ok(threads) = list_scope(bridge, archived).await else {
+            continue;
+        };
+        for thread in threads {
+            let Some(id) = thread["id"].as_str() else {
+                continue;
+            };
+            classifications.insert(
+                id.to_owned(),
+                usize::from(thread["source"].get("subAgent").is_some()),
+            );
+            if let Some(path) = thread["path"]
+                .as_str()
+                .and_then(|path| Path::new(path).file_name())
+                .and_then(|name| name.to_str())
+            {
+                paths.insert(path.replace(".jsonl.zst", ".jsonl"), id.to_owned());
+            }
         }
     }
     let mut files = Vec::new();
