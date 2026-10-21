@@ -162,12 +162,8 @@ pub(super) fn files(diff: &str) -> Vec<FileDiff> {
         .chain(std::iter::once(diff.len()));
     for end in ends {
         let part = &diff[start..end];
-        if let Some(path) = part
-            .lines()
-            .find_map(|line| line.strip_prefix("+++ b/"))
-            .or_else(|| part.lines().find_map(|line| line.strip_prefix("--- a/")))
-        {
-            files.push(FileDiff::patch(path, part));
+        if let Some(path) = super::patch::file_path(part) {
+            files.push(FileDiff::patch(&path, part));
         }
         start = end;
     }
@@ -894,6 +890,49 @@ mod tests {
             );
             assert_eq!(parsed[1].hunks[0].lines[0].text.as_ref(), "second");
         }
+    }
+
+    #[test]
+    fn changes_preserve_decoded_and_metadata_only_file_paths() {
+        let patch = concat!(
+            "diff --git \"a/dir space/\\303\\251.txt\" \"b/dir space/\\303\\251.txt\"\n",
+            "--- \"a/dir space/\\303\\251.txt\"\n+++ \"b/dir space/\\303\\251.txt\"\n",
+            "@@ -1 +1 @@\n-old\n+new\n",
+            "diff --git a/old.txt b/new name.txt\nsimilarity index 100%\nrename from old.txt\nrename to new name.txt\n",
+            "diff --git a/image.bin b/image.bin\nBinary files a/image.bin and b/image.bin differ\n",
+            "diff --git a/empty.txt b/empty.txt\nnew file mode 100644\nindex 0000000..e69de29\n",
+            "diff --git a/file.txt a/file.txt\n--- a/file.txt\n+++ a/file.txt\n@@ -1 +1 @@\n-before\n+after\n",
+        );
+        let panel = DiffPanel::from_patch("/repo", patch);
+        assert_eq!(
+            panel
+                .files
+                .iter()
+                .map(|file| format!("{}{}", file.dir, file.name))
+                .collect::<Vec<_>>(),
+            [
+                "dir space/é.txt",
+                "new name.txt",
+                "image.bin",
+                "empty.txt",
+                "a/file.txt"
+            ],
+        );
+        assert_eq!((panel.files[0].added, panel.files[0].removed), (1, 1));
+        assert_eq!(panel.files[0].hunks[0].lines[1].text.as_ref(), "new");
+    }
+
+    #[test]
+    fn hunk_text_cannot_redirect_a_changes_file() {
+        let panel = DiffPanel::from_patch(
+            "/repo",
+            "diff --git a/right.txt b/right.txt\n@@ -0,0 +1 @@\n+++ b/wrong.txt\n",
+        );
+        assert_eq!(panel.files[0].name.as_ref(), "right.txt");
+        assert_eq!(
+            panel.files[0].hunks[0].lines[0].text.as_ref(),
+            "++ b/wrong.txt"
+        );
     }
 
     #[test]
