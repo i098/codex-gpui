@@ -3,6 +3,8 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+mod cloud;
+pub use cloud::{CloudTaskRequest, create_cloud_task};
 pub mod computer_use_requests;
 mod features;
 pub mod host;
@@ -210,6 +212,7 @@ pub enum Route {
     Home,
     Thread(String),
     Settings,
+    CloudEnvironments(String),
     /// Rail `Scheduled` (`/scheduled`): the Automations page.
     Scheduled,
     /// A sidebar task row (`/scheduled?automationId=<id>`): the task's thread.
@@ -2143,6 +2146,7 @@ impl Root {
         self.archive_page = None;
         self.mobile_page = None;
         self.page = match self.state.route.clone() {
+            Route::CloudEnvironments(path) => Some(cloud::shell(self, &path, cx)),
             Route::Settings => {
                 self.load_computer_use(cx);
                 // The Appearance page shows the theme the app keeps.
@@ -2156,6 +2160,7 @@ impl Root {
                 config["host"]["confirm-before-close"] = json!(self.state.confirm_before_close);
                 let section = self.settings_section.take();
                 let (shell, page) = settings::shell(&config, &self.skills, section, cx);
+                cloud::attach(&page, cx);
                 self.settings_page = Some(page.clone());
                 cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
                     this.write_setting(e, cx);
