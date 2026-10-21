@@ -1010,7 +1010,9 @@ impl Root {
         }
         self.host = host;
         self.bind_context_files(cx);
-        if self.ready { self.load_import_policy(cx); }
+        if self.ready {
+            self.load_import_policy(cx);
+        }
         self.automations = None;
         self.load_projects(cx);
         if self.scheduled_route() {
@@ -2052,7 +2054,6 @@ impl Root {
             });
         }
     }
-
 
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
