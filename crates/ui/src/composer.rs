@@ -67,8 +67,8 @@ actions!(
 
 mod attach;
 pub mod computer_use;
-mod diff_comments;
 pub mod dictation;
+mod diff_comments;
 mod editor;
 pub use diff_comments::DiffCommentsChanged;
 mod footer;
