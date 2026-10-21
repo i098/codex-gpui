@@ -5121,6 +5121,7 @@ impl Render for Root {
                     .on_action(|_: &Zoom, window, _| window.zoom_window())
                     .child(login.clone())
                     .children(self.dialog.clone()),
+                self,
                 cx,
             )
             .into_any_element();
@@ -5181,6 +5182,7 @@ impl Render for Root {
         let root = routes::actions(root, cx);
         native_menus::actions(
             section_actions::actions(features::actions(root, cx), cx),
+            self,
             cx,
         )
         .into_any_element()
