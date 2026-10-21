@@ -12,6 +12,9 @@ use ui::screens::{
     settings::usage::{self as view, Access, Action, BalanceHistory, Limits, Reload, State},
 };
 
+#[path = "usage_analytics.rs"]
+mod analytics_api;
+
 #[derive(Default)]
 struct Runtime {
     generation: u64,
@@ -45,7 +48,13 @@ impl Runtime {
 
 pub fn install(root: WeakEntity<Root>, cx: &mut App) {
     cx.set_global(Runtime::default());
+    let agent_reset_enabled = cx
+        .try_global::<crate::host_settings::Settings>()
+        .and_then(|settings| settings.read_all().get("agent-usage-reset-enabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     cx.set_global(State {
+        agent_reset_enabled,
         dispatch: Some(Arc::new(move |action, cx| {
             root.update(cx, |root, cx| root.usage_action(action, cx))
                 .ok();
@@ -63,9 +72,11 @@ pub fn invalidate(cx: &mut App) {
     let current = cx.global::<State>();
     let dispatch = current.dispatch.clone();
     let page_open = current.page_open;
+    let agent_reset_enabled = current.agent_reset_enabled;
     cx.set_global(State {
         dispatch: dispatch.clone(),
         page_open,
+        agent_reset_enabled,
         ..Default::default()
     });
     if page_open && let Some(dispatch) = dispatch {
@@ -130,7 +141,16 @@ fn http(
     if let Some(body) = body {
         request["body"] = body.to_string().into();
     }
-    host::json_body(&host.fetch(&Request::Http(request))?)
+    let response = host.fetch(&Request::Http(request))?;
+    let wire = response.get("value").unwrap_or(&response);
+    if wire
+        .pointer("/response/__response/status")
+        .and_then(Value::as_u64)
+        == Some(204)
+    {
+        return Ok(Value::Null);
+    }
+    host::json_body(&response)
 }
 
 fn read_reload(host: &dyn Host, identity: &Identity) -> Result<Reload> {
@@ -141,6 +161,36 @@ fn read_reload(host: &dyn Host, identity: &Identity) -> Result<Reload> {
         "/subscriptions/auto_top_up/settings?include_payment_method=true",
         None,
     )?)?)
+}
+
+fn read_app_limits(host: &dyn Host, identity: &Identity) -> Result<Value> {
+    let value = match http(host, identity, "GET", "/wham/usage/chatpass/apps", None) {
+        Err(error)
+            if [
+                "host HTTP status 401",
+                "host HTTP status 403",
+                "host HTTP status 404",
+            ]
+            .contains(&error.to_string().as_str()) =>
+        {
+            Value::Null
+        }
+        result => result?,
+    };
+    if !value.is_null() {
+        let items = value["items"]
+            .as_array()
+            .context("App limits have no items")?;
+        ensure!(
+            items.iter().all(|item| item["id"].is_string()
+                && item["name"].is_string()
+                && item["allowed_usage_percent"]
+                    .as_u64()
+                    .is_some_and(|value| value <= 100)),
+            "Invalid app limit response"
+        );
+    }
+    Ok(value)
 }
 
 fn reconcile_reload(state: &mut State, result: Option<Result<Reload>>) -> bool {
@@ -205,6 +255,9 @@ fn access(plan: &str, account: Option<&Value>, gates: &Value, has_balance: bool)
         view_credits: manage || free && has_balance || business && workspace_owner,
         analytics,
         balance_history: gate("2125321167") && gate("393259752"),
+        app_limits: gate("185496087"),
+        logged_in_pricing: gates["dynamic_configs"]["337040058"]["value"]["show_logged_in_pricing_page"]
+            == true,
         enterprise,
         maximum_credits:
             gates["dynamic_configs"]["2414703414"]["value"]["credit_purchase_quantity_max"]
@@ -273,6 +326,9 @@ async fn snapshot(bridge: Arc<Bridge>, host: Arc<dyn Host>) -> (State, Option<Id
         .as_ref()
         .map(|accounts| &accounts["accounts"][&identity.account_id]);
     let current = entry.map(|entry| &entry["account"]);
+    state.plan_origin = entry
+        .and_then(|entry| entry["last_active_subscription"]["purchase_origin_platform"].as_str())
+        .map(str::to_owned);
     if let Some(plan) = current.and_then(|account| account["plan_type"].as_str()) {
         state.plan = plan.into();
     }
@@ -282,16 +338,30 @@ async fn snapshot(bridge: Arc<Bridge>, host: Arc<dyn Host>) -> (State, Option<Id
         "system_name": std::env::consts::OS, "window_type": "electron",
     }))).and_then(payload_gates).unwrap_or(Value::Null);
     state.access = access(&state.plan, current, &gates, has_balance);
-    if let Ok(value) = http(
+    if state.access.app_limits {
+        state.app_limits = load(read_app_limits(host.as_ref(), &identity));
+        if matches!(&state.app_limits, Load::Ready(apps) if !apps.is_null())
+            && state.access.view_credits
+        {
+            state.app_credit_preference = load(http(
+                host.as_ref(),
+                &identity,
+                "GET",
+                "/settings/user",
+                None,
+            ));
+        }
+    }
+    let credits: Result<view::ResetCredits> = http(
         host.as_ref(),
         &identity,
         "GET",
         "/wham/rate-limit-reset-credits",
         None,
-    ) && let Ok(credits) = serde_json::from_value(value)
-        && let Load::Ready(limits) = &mut state.limits
-    {
-        Arc::make_mut(limits).rate_limit_reset_credits = Some(credits);
+    )
+    .and_then(|value| Ok(serde_json::from_value(value)?));
+    if let Load::Ready(limits) = &mut state.limits {
+        Arc::make_mut(limits).rate_limit_reset_credits = credits.ok();
     }
     if state.access.manage_credits {
         state.reload = load(read_reload(host.as_ref(), &identity));
@@ -374,11 +444,13 @@ async fn snapshot(bridge: Arc<Bridge>, host: Arc<dyn Host>) -> (State, Option<Id
         ));
     }
     if state.access.analytics {
-        state.analytics = load(
-            bridge
-                .request::<_, Value>("account/usage/read", json!({}))
-                .await,
-        );
+        state.analytics = analytics_api::snapshot(
+            bridge.as_ref(),
+            host.as_ref(),
+            &identity,
+            state.reference_time,
+        )
+        .await;
     }
     if state.access.balance_history {
         let minutes = match &state.limits {
@@ -478,6 +550,19 @@ fn history(host: &dyn Host, identity: &Identity, minutes: i64) -> Result<Option<
 
 impl Root {
     fn usage_action(&mut self, action: Action, cx: &mut Context<Self>) {
+        if let Action::SetAgentResetEnabled(enabled) = action {
+            let result = if cx.has_global::<crate::host_settings::Settings>() {
+                cx.global_mut::<crate::host_settings::Settings>()
+                    .write("agent-usage-reset-enabled", Value::Bool(enabled))
+            } else {
+                Err(anyhow::anyhow!("Host settings are unavailable"))
+            };
+            cx.update_global::<State, _>(|state, _| match result {
+                Ok(()) => state.agent_reset_enabled = enabled,
+                Err(error) => state.error = Some(error.to_string()),
+            });
+            return;
+        }
         if let Action::OpenUrl(url) = action {
             if let Ok(url) = url::Url::parse(&url)
                 && url.scheme() == "https"
@@ -489,6 +574,47 @@ impl Root {
             return;
         }
         if cx.global::<State>().busy {
+            return;
+        }
+        if let Action::Analytics(request) = action {
+            if !cx.global::<State>().access.analytics {
+                return;
+            }
+            let Some(identity) = cx.global::<Runtime>().identity.clone() else {
+                return;
+            };
+            let previous = cx.global::<State>().analytics.clone();
+            let now = cx.global::<State>().reference_time;
+            let generation = cx.global::<Runtime>().generation;
+            cx.update_global::<State, _>(|state, _| {
+                state.busy = true;
+                state.analytics.set(request.metric, Load::Loading);
+            });
+            let bridge = self.bridge.clone();
+            let host = self.host.clone();
+            let read = cx.background_executor().spawn(async move {
+                analytics_api::query(
+                    bridge.as_ref(),
+                    host.as_ref(),
+                    &identity,
+                    request,
+                    now,
+                    previous,
+                )
+                .await
+            });
+            cx.spawn(async move |_, cx| {
+                let data = read.await;
+                cx.update(|cx| {
+                    if cx.global::<Runtime>().generation == generation {
+                        cx.update_global::<State, _>(|state, _| {
+                            state.analytics = data;
+                            state.busy = false;
+                        });
+                    }
+                });
+            })
+            .detach();
             return;
         }
         if matches!(action, Action::Refresh) {
@@ -512,6 +638,11 @@ impl Root {
                     }
                     state.dispatch = cx.global::<State>().dispatch.clone();
                     state.page_open = cx.global::<State>().page_open;
+                    state.agent_reset_enabled = cx
+                        .try_global::<crate::host_settings::Settings>()
+                        .and_then(|settings| settings.read_all().get("agent-usage-reset-enabled"))
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
                     state.revision = cx.global::<State>().revision + 1;
                     cx.update_global::<Runtime, _>(|runtime, _| {
                         if runtime.identity != identity {
@@ -600,6 +731,22 @@ impl Root {
                     ensure!(result["is_enabled"] == false, "Auto-reload was not disabled");
                     Ok((action.clone(), result))
                 }
+                Action::SaveAppLimits(values) => {
+                    ensure!(snapshot.access.app_limits, "App limits are unavailable");
+                    let Load::Ready(apps) = &snapshot.app_limits else { bail!("App limits have not loaded") };
+                    let items = apps["items"].as_array().context("App limits have no items")?;
+                    ensure!(values.len() == items.len() && items.iter().all(|item| item["id"].as_str().is_some_and(|id| values.contains_key(id))), "App limits changed; reload before saving");
+                    ensure!(values.values().all(|value| *value <= 100), "Invalid app limit");
+                    http(host.as_ref(), &identity, "PUT", "/wham/usage/chatpass/limits",
+                        Some(json!({"global_percentage":100,"per_app_percentage":values})))?;
+                    Ok((action.clone(), read_app_limits(host.as_ref(), &identity)?))
+                }
+                Action::SetAppCreditPreference(enabled) => {
+                    ensure!(snapshot.access.app_limits && snapshot.access.view_credits, "Credit preference is unavailable");
+                    http(host.as_ref(), &identity, "PATCH",
+                        &format!("/settings/account_user_setting?feature=can_consume_personal_credits_chatpass&value={enabled}"), None)?;
+                    Ok((action.clone(), http(host.as_ref(), &identity, "GET", "/settings/user", None)?))
+                }
                 Action::RequestMore(justification) => {
                     ensure!(snapshot.access.enterprise, "Workspace usage requests are unavailable");
                     ensure!(matches!(&snapshot.request_policy, Load::Ready(policy) if policy["kind"] == "openai_native"), "Workspace requests are not enabled");
@@ -656,6 +803,14 @@ impl Root {
                                 }
                             }
                             Action::RequestMore(_) => { state.requests = Load::Ready(Arc::new(value)); state.notice = Some("Request submitted".into()); }
+                            Action::SaveAppLimits(_) => {
+                                state.app_limits = Load::Ready(Arc::new(value));
+                                state.notice = Some("App limits updated".into());
+                            }
+                            Action::SetAppCreditPreference(_) => {
+                                state.app_credit_preference = Load::Ready(Arc::new(value));
+                                state.notice = Some("Credit preference updated".into());
+                            }
                             _ => {}
                         }
                     }

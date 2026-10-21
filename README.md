@@ -196,6 +196,8 @@ The input fields reuse `Composer::settings_field`, including selection, clipboar
 Run `cargo test -p ui -p app --lib usage` for the protocol and validation checks.
 Run `cargo run -p ui --example usage -- /path/to/usage.png` for the recorded native screen.
 Add `confirm-reset` after the output path to capture the confirmation state without redeeming a reset.
+Add `analytics` or `reset-error` to capture the recorded error states.
+Add `links` to check plan, credit, and billing destinations without opening a browser.
 
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
 Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.

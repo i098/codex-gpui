@@ -7,6 +7,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.navigate(Route::Settings, window, cx)
         }),
     )
+    .on_action(cx.listener(
+        |this, action: &settings::usage::analytics::OpenChat, window, cx| {
+            this.navigate(Route::Thread(action.0.clone()), window, cx);
+        },
+    ))
     .on_action(cx.listener(|this, _: &LogOut, window, cx| {
         if !this.logout_pending {
             let email = this.account_email.clone();
