@@ -14,8 +14,10 @@ fn proxy() {
 
 fn catalog_fixture() -> Result<Vec<Value>> {
     let mut lines = script(None, |_| {})?;
-    let skills: Value = ui::fixture::response("readback.jsonl", "skills/list", 0);
-    lines.extend(exchange("skills/list", skills));
+    for method in ["skills/list", "plugin/list", "config/read"] {
+        let response: Value = ui::fixture::response("readback.jsonl", method, 0);
+        lines.extend(exchange(method, response));
+    }
     Ok(lines)
 }
 

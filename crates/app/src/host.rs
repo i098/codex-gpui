@@ -45,6 +45,7 @@ pub mod computer_use_native;
 mod git;
 mod projectless;
 pub(crate) mod run_now;
+mod skills;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
@@ -1109,6 +1110,11 @@ impl Host for LocalHost {
             "automation-update" => self.update_automation(&params)?,
             "automation-run-now" => self.automation_run_now(&params)?,
             "inbox-items" => self.inbox(&params)?,
+            "recommended-skills" => skills::recommended(&self.home, &params),
+            "install-recommended-skill" => skills::install(&self.home, &params),
+            "read-file" => {
+                json!({"contents":fs::read_to_string(params["path"].as_str().context("Missing file path")?)?})
+            }
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-init-repo"
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
             | "git-checkout" => git::fetch(endpoint, &params)?,
@@ -1184,7 +1190,11 @@ fn open_file(opener: &Path, params: &Value) -> Result<Value> {
         .canonicalize()
         .with_context(|| format!("{} no longer exists", path.display()))?;
     ensure!(file.starts_with(&root), "file is outside the project");
-    ensure!(file.is_file() || file.is_dir(), "{} is not a file or directory", file.display());
+    ensure!(
+        file.is_file() || file.is_dir(),
+        "{} is not a file or directory",
+        file.display()
+    );
     let mut command = std::process::Command::new(opener);
     match params["target"].as_str() {
         None | Some("systemDefault") => {}

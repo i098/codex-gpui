@@ -30,6 +30,9 @@ mod form;
 #[path = "settings_marketplace_form.rs"]
 mod marketplace_form;
 
+pub use form::Close as FormClosed;
+pub use marketplace_form::MarketplaceForm;
+
 #[derive(Clone, Debug)]
 pub enum Action {
     Refresh,

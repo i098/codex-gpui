@@ -645,6 +645,7 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    inline_field: bool,
 }
 
 impl Composer {
@@ -721,6 +722,7 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            inline_field: false,
         }
     }
 
@@ -733,6 +735,13 @@ impl Composer {
         let mut editor = Self::new(placeholder, false, cx);
         editor.plain_field = Some(multiline);
         editor.set_text(value, cx);
+        editor
+    }
+
+    pub fn inline_field(placeholder: &'static str, value: &str, cx: &mut Context<Self>) -> Self {
+        let mut editor = Self::settings_field(placeholder, value, false, cx);
+        editor.inline_field = true;
+        editor.request_compact = true;
         editor
     }
 
@@ -1896,7 +1905,7 @@ impl Render for Composer {
         if self.plain_field.is_some() {
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)
-                    .when(self.request_parent.is_none(), |d| {
+                    .when(self.request_parent.is_none() && !self.inline_field, |d| {
                         d.border_1()
                             .border_color(t.border)
                             .rounded(px(8.))
@@ -1922,6 +1931,12 @@ impl Render for Composer {
                                 border: Some((px(1.), t.border_strong)),
                                 ..Default::default()
                             }))
+                    })
+                    .when(self.inline_field, |d| {
+                        d.role(gpui::Role::TextInput)
+                            .aria_label(self.placeholder.clone())
+                            .aria_placeholder(self.placeholder.clone())
+                            .aria_value(self.content.clone())
                     })
                     .when(self.request_parent.is_some(), |d| {
                         d.role(if self.secret {

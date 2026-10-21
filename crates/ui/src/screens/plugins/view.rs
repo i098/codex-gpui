@@ -9,131 +9,47 @@ impl Page {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = cx.theme().clone();
-        let heading = self
+        if self.modal.is_none()
+            && self.marketplace_form.is_none()
+            && let Some(focus) = self.return_focus.take()
+        {
+            focus.focus(window, cx);
+        }
+        if self.share_on_load
+            && let Some(plugin) = self.detail.clone()
+        {
+            self.share_on_load = false;
+            self.act(Action::Share(plugin), cx);
+        }
+        let query = self.query.read(cx).field_text().trim().to_lowercase();
+        let title = self
             .detail
             .as_ref()
-            .map(|p| p.title())
+            .map(|plugin| plugin.title())
             .unwrap_or(self.tab.label())
             .to_owned();
-        let query = self.query.read(cx).field_text().trim().to_lowercase();
         let mut toolbar = div()
+            .w_full()
+            .max_w(px(960.))
+            .mx_auto()
+            .px(px(30.))
+            .h(px(60.))
             .flex()
             .items_center()
             .justify_between()
             .gap(px(16.))
-            .pb(px(24.))
-            .child(text(heading, 28., 36., 600., t.text));
-        let mut actions = div().flex().items_center().gap(px(8.));
-        if self.detail.is_some() {
-            actions = actions.child(self.action_button(
+            .child(text(title, 24., 28.8, 500., t.text));
+        toolbar = toolbar.child(if self.detail.is_some() {
+            self.action_button(
                 "back",
                 "Back",
                 Action::Navigate("/plugins".into()),
                 true,
                 window,
                 cx,
-            ));
+            )
         } else {
-            actions = actions.child(self.action_button(
-                "refresh",
-                "Refresh",
-                Action::Refresh,
-                true,
-                window,
-                cx,
-            ));
-            if self.tab == Tab::Skills {
-                let available = self
-                    .data
-                    .skills
-                    .value()
-                    .into_iter()
-                    .flatten()
-                    .any(|skill| skill["name"] == "skill-creator" && skill["enabled"] == true);
-                actions = actions.child(self.action_button(
-                    "new-skill",
-                    "New skill",
-                    Action::NewSkill,
-                    available,
-                    window,
-                    cx,
-                ));
-            }
-            actions = actions.child(self.action_button(
-                "manage",
-                "Manage",
-                Action::Manage,
-                true,
-                window,
-                cx,
-            ));
-        }
-        toolbar = toolbar.child(actions);
-        let mut body = div().id("plugins-body").flex().flex_col().gap(px(24.));
-        if self.detail.is_none() {
-            let mut tabs = div()
-                .flex()
-                .gap(px(24.))
-                .border_b_1()
-                .border_color(t.border);
-            for tab in Tab::ALL {
-                let id = format!("browse-{}", tab.label());
-                let handle = focus::handle(id.clone(), 0, window, cx);
-                let route = if tab == Tab::Skills {
-                    "/skills"
-                } else {
-                    "/plugins"
-                };
-                tabs = tabs.child(
-                    focus::ring(
-                        div()
-                            .id(id)
-                            .role(gpui::Role::Tab)
-                            .cursor_pointer()
-                            .pb(px(12.))
-                            .when(self.tab == tab, |d| d.border_b_2().border_color(t.text))
-                            .child(text(
-                                tab.label(),
-                                14.,
-                                20.,
-                                500.,
-                                if self.tab == tab {
-                                    t.text
-                                } else {
-                                    t.text_secondary
-                                },
-                            )),
-                        &handle,
-                        px(0.),
-                        px(2.),
-                        cx,
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.act(Action::Navigate(route.into()), cx)
-                    }))
-                    .on_key_down(cx.listener(
-                        move |this, event: &KeyDownEvent, _, cx| {
-                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                this.act(Action::Navigate(route.into()), cx);
-                                cx.stop_propagation();
-                            }
-                        },
-                    )),
-                );
-            }
-            body = body
-                .child(tabs)
-                .child(div().max_w(px(420.)).child(self.query.clone()));
-        }
-        if self.modal.is_none()
-            && let Some(error) = &self.error
-        {
-            body = body.child(text(error.clone(), 14., 20., 400., t.text));
-        }
-        body = body.child(if let Some(plugin) = &self.detail {
-            self.detail_view(plugin, window, cx)
-        } else {
-            self.list_view(&query, window, cx)
+            self.header_actions(window, cx)
         });
         let mut page = div()
             .id("plugins-page")
@@ -142,21 +58,415 @@ impl Page {
             .track_focus(&self.focus)
             .flex()
             .flex_col()
-            .p(px(24.))
-            .bg(t.surface)
-            .child(toolbar)
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if this.add_open && event.keystroke.key == "escape" {
+                    this.add_open = false;
+                    cx.notify();
+                    cx.stop_propagation();
+                }
+            }))
             .child(
                 div()
-                    .id("plugins-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(body),
+                    .flex_none()
+                    .pt(px(16.))
+                    .border_b_1()
+                    .border_color(gpui::transparent_black())
+                    .child(toolbar),
             );
-        if let Some(modal) = &self.modal {
+        if self.detail.is_none() {
+            page = page.child(
+                div().h(px(24.)).flex_none().child(
+                    div()
+                        .w_full()
+                        .max_w(px(960.))
+                        .mx_auto()
+                        .px(px(30.))
+                        .relative()
+                        .top(px(-6.))
+                        .child(text(
+                            if self.tab == Tab::Skills {
+                                "Extend Codex with task-specific skills"
+                            } else {
+                                "Connect plugins to let Codex work across your tools"
+                            },
+                            14.,
+                            24.,
+                            430.,
+                            t.text.opacity(0.65),
+                        )),
+                ),
+            );
+        }
+        let mut content = div()
+            .w_full()
+            .max_w(px(960.))
+            .mx_auto()
+            .px(px(30.))
+            .pb(px(if self.tab == Tab::Skills { 36. } else { 16. }));
+        if self.detail.is_none() && self.tab == Tab::Plugins {
+            content = content.child(self.directory_tabs(window, cx));
+        } else if self.detail.is_none() {
+            content = content.pt(px(8.));
+        }
+        if self.modal.is_none()
+            && let Some(error) = &self.error
+        {
+            content = content.child(text(error.clone(), 14., 20., 400., t.text));
+        }
+        let body = if let Some(plugin) = &self.detail {
+            self.detail_view(plugin, window, cx)
+        } else {
+            self.list_view(&query, window, cx)
+        };
+        content = content.child(
+            div()
+                .when(self.detail.is_none() && self.tab == Tab::Plugins, |body| {
+                    body.pt(px(8.)).mx(px(-8.))
+                })
+                .child(body),
+        );
+        page = page.child(
+            div()
+                .id("plugins-scroll")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(content),
+        );
+        if self.add_open {
+            page = page.child(self.add_menu(window, cx));
+        }
+        if let Some(form) = &self.marketplace_form {
+            page = page.child(form.clone());
+        } else if let Some(modal) = &self.modal {
             page = page.child(self.modal_view(modal, window, cx));
         }
         page.into_any_element()
+    }
+
+    fn header_actions(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let mut search = div()
+            .w(px(240.))
+            .h(px(32.))
+            .relative()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .px(px(13.))
+            .child(shapes::decoration(shapes::Decoration {
+                radius: gpui::Corners::all(px(9999.)),
+                corner: shapes::Corner::Round,
+                border: Some((px(1.), t.border_strong)),
+                ..Default::default()
+            }))
+            .child(icon("search", 16., t.text.opacity(0.65)))
+            .child(div().flex_1().min_w_0().child(self.query.clone()));
+        if !self.query.read(cx).field_text().is_empty() {
+            let handle = focus::handle("clear-plugin-search", 0, window, cx);
+            search = search.child(
+                focus::ring(
+                    div()
+                        .id("clear-plugin-search")
+                        .role(gpui::Role::Button)
+                        .aria_label("Clear search")
+                        .cursor_pointer()
+                        .size(px(16.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(icon("plugins-clear", 16., t.text.opacity(0.65))),
+                    &handle,
+                    px(8.),
+                    px(2.),
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.query.update(cx, |query, cx| query.set_text("", cx))
+                }))
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        this.query.update(cx, |query, cx| query.set_text("", cx));
+                        cx.stop_propagation();
+                    }
+                })),
+            );
+        }
+        let mut actions = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(self.icon_action(
+                "refresh",
+                "Refresh",
+                "plugins-refresh",
+                Action::Refresh,
+                window,
+                cx,
+            ))
+            .child(self.icon_action(
+                "manage",
+                "Manage",
+                "settings-general",
+                Action::Manage,
+                window,
+                cx,
+            ));
+        let is_skills = self.tab == Tab::Skills;
+        let enabled = !is_skills
+            || self.data.skills.value().is_some_and(|skills| {
+                skills
+                    .iter()
+                    .any(|skill| skill["name"] == "skill-creator" && skill["enabled"] == true)
+            });
+        let label = "Add";
+        let handle = focus::handle("plugins-add", 0, window, cx);
+        let button = div()
+            .id("plugins-add")
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .relative()
+            .h(px(32.))
+            .px(px(9.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap(px(4.))
+            .cursor_pointer()
+            .when(!enabled || self.pending, |button| button.opacity(0.5))
+            .child(shapes::decoration(shapes::Decoration {
+                radius: gpui::Corners::all(px(9999.)),
+                corner: shapes::Corner::Round,
+                fill: Some(t.button_primary_solid),
+                border: Some((px(1.), t.border)),
+                ..Default::default()
+            }))
+            .child(text(
+                label,
+                13.,
+                18.,
+                430.,
+                if t.appearance == theme::Appearance::Dark {
+                    gpui::rgb(0x2d2d2d).into()
+                } else {
+                    t.text_inverse
+                },
+            ))
+            .when(!is_skills, |button| {
+                button.child(icon(
+                    "chevron-down",
+                    16.,
+                    if t.appearance == theme::Appearance::Dark {
+                        gpui::rgb(0x2d2d2d).into()
+                    } else {
+                        t.text_inverse
+                    },
+                ))
+            });
+        actions = actions.child(
+            focus::ring(button, &handle, px(9999.), px(2.), cx)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if !enabled || this.pending {
+                        return;
+                    }
+                    if is_skills {
+                        this.act(Action::NewSkill, cx);
+                    } else {
+                        this.add_open = !this.add_open;
+                        cx.notify();
+                    }
+                }))
+                .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                    if enabled
+                        && !this.pending
+                        && matches!(event.keystroke.key.as_str(), "enter" | "space")
+                    {
+                        if is_skills {
+                            this.act(Action::NewSkill, cx);
+                        } else {
+                            this.add_open = !this.add_open;
+                            cx.notify();
+                        }
+                        cx.stop_propagation();
+                    }
+                })),
+        );
+        div()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .child(search)
+            .child(actions)
+            .into_any_element()
+    }
+
+    fn icon_action(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        name: &'static str,
+        action: Action,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = cx.theme().clone();
+        let handle = focus::handle(id, 0, window, cx);
+        let keyboard_action = action.clone();
+        focus::ring(
+            div()
+                .id(id)
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .size(px(32.))
+                .rounded_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .cursor_pointer()
+                .hover(|button| button.bg(t.ghost_hover))
+                .child(icon(name, 16., t.text_tertiary)),
+            &handle,
+            px(9999.),
+            px(2.),
+            cx,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| this.act(action.clone(), cx)))
+        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                this.act(keyboard_action.clone(), cx);
+                cx.stop_propagation();
+            }
+        }))
+        .into_any_element()
+    }
+
+    fn directory_tabs(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        div()
+            .h(px(60.))
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .children(
+                [Directory::Public, Directory::Personal]
+                    .into_iter()
+                    .map(|directory| {
+                        let handle = focus::handle(directory.label(), 0, window, cx);
+                        let selected = self.directory == directory;
+                        focus::ring(
+                            div()
+                                .id(directory.label())
+                                .role(gpui::Role::Tab)
+                                .relative()
+                                .h(px(36.))
+                                .px(px(17.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .cursor_pointer()
+                                .when(selected, |tab| {
+                                    tab.child(shapes::decoration(shapes::Decoration {
+                                        radius: gpui::Corners::all(px(9999.)),
+                                        corner: shapes::Corner::Round,
+                                        fill: Some(t.ghost_hover),
+                                        ..Default::default()
+                                    }))
+                                })
+                                .child(text(
+                                    directory.label(),
+                                    13.,
+                                    18.5714,
+                                    500.,
+                                    if selected { t.text } else { t.text_secondary },
+                                )),
+                            &handle,
+                            px(9999.),
+                            px(2.),
+                            cx,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.act(Action::SelectDirectory(directory), cx)
+                        }))
+                        .on_key_down(cx.listener(
+                            move |this, event: &KeyDownEvent, _, cx| {
+                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                    this.act(Action::SelectDirectory(directory), cx);
+                                    cx.stop_propagation();
+                                }
+                            },
+                        ))
+                    }),
+            )
+            .into_any_element()
+    }
+
+    fn add_menu(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let mut menu = div()
+            .absolute()
+            .top(px(68.))
+            .right(px(30.))
+            .w(px(220.))
+            .p(px(6.))
+            .rounded(px(16.))
+            .bg(t.menu_background)
+            .border_1()
+            .border_color(t.border)
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation());
+        if cx
+            .global::<crate::screens::settings::integrations::State>()
+            .plugin_creator
+            .is_some()
+        {
+            menu = menu.child(self.action_button(
+                "create-plugin",
+                "Create plugin",
+                Action::CreatePlugin,
+                true,
+                window,
+                cx,
+            ));
+        }
+        let handle = focus::handle("add-marketplace", 0, window, cx);
+        menu = menu.child(
+            focus::ring(
+                div()
+                    .id("add-marketplace")
+                    .role(gpui::Role::Button)
+                    .aria_label("Add marketplace")
+                    .h(px(36.))
+                    .px(px(8.))
+                    .flex()
+                    .items_center()
+                    .rounded(px(10.))
+                    .cursor_pointer()
+                    .hover(|row| row.bg(t.menu_item_hover))
+                    .child(text("Add marketplace", 13., 18.5714, 430., t.text)),
+                &handle,
+                px(10.),
+                px(2.),
+                cx,
+            )
+            .on_click(cx.listener(|this, _, window, cx| this.open_marketplace(window, cx)))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.open_marketplace(window, cx);
+                    cx.stop_propagation();
+                }
+            })),
+        );
+        div()
+            .absolute()
+            .inset_0()
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.add_open = false;
+                    cx.notify();
+                }),
+            )
+            .child(menu)
+            .into_any_element()
     }
 
     fn action_button(
@@ -236,40 +546,130 @@ impl Page {
         .into_any_element()
     }
 
-    fn status(&self, state: &str, description: Option<&str>, cx: &App) -> AnyElement {
+    pub(super) fn status(&self, state: &str, description: Option<&str>, cx: &App) -> AnyElement {
         let t = cx.theme();
         div()
             .flex()
             .flex_col()
-            .items_center()
-            .justify_center()
             .gap(px(8.))
-            .py(px(64.))
-            .child(text(state.to_owned(), 16., 24., 500., t.text_secondary))
+            .px(px(8.))
+            .child(text(state.to_owned(), 14., 21., 430., t.text_secondary))
             .children(
                 description.map(|value| text(value.to_owned(), 14., 20., 400., t.text_secondary)),
             )
             .into_any_element()
     }
 
-    fn list_view(&self, query: &str, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn failure(
+        &self,
+        title: &'static str,
+        error: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let t = cx.theme().clone();
+        let handle = focus::handle("retry-directory", 0, window, cx);
+        let retry = focus::ring(
+            div()
+                .id("retry-directory")
+                .role(gpui::Role::Button)
+                .aria_label("Retry")
+                .h(px(24.))
+                .px(px(9.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .bg(t.text_alpha_5)
+                .child(text("Retry", 13., 18., 430., t.text)),
+            &handle,
+            px(9999.),
+            px(2.),
+            cx,
+        )
+        .on_click(cx.listener(|this, _, _, cx| this.act(Action::Refresh, cx)))
+        .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                this.act(Action::Refresh, cx);
+                cx.stop_propagation();
+            }
+        }));
+        div()
+            .w_full()
+            .px(px(12.))
+            .py(px(24.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(576.))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(text(title, 16., 24., 500., t.text))
+                            .child(text(error.to_owned(), 13., 18.5714, 430., t.text_secondary)),
+                    )
+                    .child(retry),
+            )
+            .into_any_element()
+    }
+
+    fn list_view(&self, query: &str, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.tab {
             Tab::Plugins => {
                 if !self.available {
                     return self.status("Plugins are not available for this host", None, cx);
                 }
+                let state = cx.global::<crate::screens::settings::integrations::State>();
+                if !state.gates_loaded {
+                    return self.status("Loading plugins…", None, cx);
+                }
+                let hidden = state.hidden_plugins.clone();
                 let markets = match &self.data.plugins {
                     Resource::Loading => return self.status("Loading plugins…", None, cx),
                     Resource::Failed(error) => {
-                        return self.status("Failed to load plugins", Some(error), cx);
+                        return self.failure("Failed to load plugins", error, window, cx);
                     }
                     Resource::Ready(value) => value,
                 };
                 let plugins: Vec<_> = markets
                     .iter()
                     .flat_map(|m| &m.plugins)
-                    .filter(|p| p.visible() && p.matches(query))
+                    .filter(|p| {
+                        let personal =
+                            self.data
+                                .personal_marketplace
+                                .as_deref()
+                                .is_some_and(|path| {
+                                    p.marketplace_path
+                                        .as_deref()
+                                        .is_some_and(|market| Path::new(market) == path)
+                                });
+                        (personal == (self.directory == Directory::Personal))
+                            && self
+                                .marketplace_path
+                                .as_ref()
+                                .is_none_or(|path| p.marketplace_path.as_ref() == Some(path))
+                            && self.category.as_ref().is_none_or(|category| {
+                                p.summary["category"]
+                                    .as_str()
+                                    .or_else(|| p.summary["interface"]["category"].as_str())
+                                    .is_some_and(|value| value.eq_ignore_ascii_case(category))
+                            })
+                            && crate::screens::settings::integrations::visible_plugin(
+                                &p.summary, &hidden,
+                            )
+                            && p.matches(query)
+                    })
                     .collect();
                 if plugins.is_empty() {
                     return self.status("No plugins found", None, cx);
@@ -277,7 +677,7 @@ impl Page {
                 div()
                     .grid()
                     .grid_cols(2)
-                    .gap(px(16.))
+                    .gap(px(8.))
                     .children(
                         plugins
                             .into_iter()
@@ -285,88 +685,7 @@ impl Page {
                     )
                     .into_any_element()
             }
-            Tab::Skills => {
-                let skills = match &self.data.skills {
-                    Resource::Loading => return self.status("Loading skills…", None, cx),
-                    Resource::Failed(error) => {
-                        return self.status("Failed to load skills", Some(error), cx);
-                    }
-                    Resource::Ready(value) => value,
-                };
-                let filtered: Vec<_> = skills
-                    .iter()
-                    .filter(|skill| skill["pluginId"].is_null() && matches_value(skill, query))
-                    .collect();
-                if filtered.is_empty() {
-                    return self.status("No skills found", None, cx);
-                }
-                div()
-                    .grid()
-                    .grid_cols(2)
-                    .gap(px(16.))
-                    .children(filtered.into_iter().map(|skill| {
-                        let path = string(skill, "path");
-                        let enabled = skill["enabled"].as_bool().unwrap_or(true);
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(12.))
-                            .p(px(16.))
-                            .rounded(px(12.))
-                            .border_1()
-                            .border_color(t.border)
-                            .child(text(
-                                skill["interface"]["displayName"]
-                                    .as_str()
-                                    .unwrap_or(string(skill, "name"))
-                                    .to_owned(),
-                                16.,
-                                24.,
-                                500.,
-                                t.text,
-                            ))
-                            .child(text(
-                                string(skill, "description").to_owned(),
-                                14.,
-                                20.,
-                                400.,
-                                t.text_secondary,
-                            ))
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap(px(8.))
-                                    .child(self.modal_button(
-                                        format!("skill-{path}"),
-                                        "View skill",
-                                        Modal::Skill(skill.clone()),
-                                        window,
-                                        cx,
-                                    ))
-                                    .child(self.action_button(
-                                        format!("skill-toggle-{path}"),
-                                        if enabled { "Disable" } else { "Enable" },
-                                        Action::EnableSkill {
-                                            name: string(skill, "name").into(),
-                                            path: path.into(),
-                                            enabled: !enabled,
-                                        },
-                                        true,
-                                        window,
-                                        cx,
-                                    ))
-                                    .child(self.action_button(
-                                        format!("skill-open-{path}"),
-                                        "Open",
-                                        Action::OpenSkill(path.into()),
-                                        true,
-                                        window,
-                                        cx,
-                                    )),
-                            )
-                    }))
-                    .into_any_element()
-            }
+            Tab::Skills => self.skills_view(query, window, cx),
         }
     }
 
@@ -757,11 +1076,15 @@ impl Page {
                     Action::UpdateSharedVersion(plugin.clone()), true));
                 (format!("Share {}", plugin.title()), content.into_any_element(), update)
             }
-            Modal::Skill(skill) => (string(skill, "name").to_owned(),
+            Modal::Skill(skill) => (skill_title(skill),
                 div().flex().flex_col().gap(px(12.))
-                    .child(text(string(skill, "description").to_owned(), 14., 20., 400., t.text_secondary).whitespace_normal())
-                    .child(div().h(px(360.)).children(self.skill_file.clone())).into_any_element(),
-                Some(("Open", Action::OpenSkill(string(skill, "path").to_owned()), true))),
+                    .child(text(skill_description(skill).to_owned(), 14., 20., 400., t.text_secondary).whitespace_normal())
+                    .child(div().h(px(360.)).children(self.skill_file.clone()))
+                    .when(skill["scope"].is_string(), |content| content.child(self.action_button(
+                        "toggle-preview-skill", if skill["enabled"] == false { "Enable" } else { "Disable" },
+                        Action::EnableSkill {name:string(skill,"name").into(),path:string(skill,"path").into(),enabled:skill["enabled"] == false},
+                        true, window, cx))).into_any_element(),
+                Some(("Open", Action::OpenSkill(string(skill, "path").to_owned()), skill["path"].is_string()))),
             Modal::Connect(app) => (format!("Connect {}", string(app, "name")),
                 text(string(app, "description").to_owned(), 14., 20., 400., t.text_secondary).into_any_element(),
                 Some(("Connect", Action::ConnectApp(app.clone()), true))),
@@ -773,11 +1096,4 @@ impl Page {
                 Some(("Disconnect", Action::DisconnectApp(id.clone()), true))),
         }
     }
-}
-
-fn matches_value(value: &Value, query: &str) -> bool {
-    query.is_empty()
-        || ["name", "description"]
-            .iter()
-            .any(|field| string(value, field).to_lowercase().contains(query))
 }

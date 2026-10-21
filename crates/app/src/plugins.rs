@@ -47,20 +47,54 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<Shell> {
-        let available = !self.bridge.is_acp() && self.config["features"]["plugins"] != false;
+        let mut params = HashMap::new();
+        if let Ok(url) = url::Url::parse(&format!("https://codex.invalid{route}")) {
+            for (key, value) in url.query_pairs() {
+                params
+                    .entry(key.into_owned())
+                    .or_insert_with(|| value.into_owned());
+            }
+        }
+        let available = !self.bridge.is_acp()
+            && self.config["features"]["plugins"] != false
+            && params.get("hostId").is_none_or(|host| host == "local");
+        if !self.bridge.is_acp()
+            && cx
+                .try_global::<ui::screens::settings::integrations::State>()
+                .is_none_or(|state| !state.gates_loaded)
+        {
+            self.load_settings_integrations(cx);
+        }
         let page = cx.new(|cx| Page::new(&route, available, cx));
+        page.update(cx, |page, cx| {
+            page.directory = match params
+                .remove("directoryTab")
+                .or_else(|| params.remove("directory"))
+                .as_deref()
+            {
+                Some("personal") => plugins::Directory::Personal,
+                _ => plugins::Directory::Public,
+            };
+            page.category = params.remove("category");
+            page.marketplace_path = params.remove("marketplacePath");
+            page.share_on_load = params.remove("mode").as_deref() == Some("share");
+            if let Some(query) = params.remove("search") {
+                page.query
+                    .update(cx, |editor, cx| editor.set_text(query.trim(), cx));
+            }
+        });
         cx.subscribe_in(&page, window, |this, page, action, window, cx| {
             this.plugin_action(page.clone(), action, window, cx);
         })
         .detach();
         self.load_plugins(page.clone(), route, cx);
         self.plugins_page = Some(page.clone());
-        let sidebar = self.sidebar.clone().into();
+        let sidebar = cx.new(|cx| plugins::Sidebar::new(page.clone(), cx)).into();
         cx.new(|_| {
             let mut shell = Shell::new(sidebar, page.into());
             shell.selected_rail = Some("plugins");
-            shell.sidebar_open = false;
-            shell.chat_chrome = false;
+            shell.sidebar_open = true;
+            shell.chat_chrome = true;
             shell.new_tab = false;
             shell
         })
@@ -108,13 +142,19 @@ impl Root {
                     if page.read(cx).generation != generation {
                         return;
                     }
+                    let marketplace = page.read(cx).marketplace_path.as_deref();
                     let selected = route_plugin_id(&route).and_then(|id| {
                         data.plugins
                             .value()
                             .into_iter()
                             .flatten()
                             .flat_map(|market| &market.plugins)
-                            .find(|plugin| plugin.id() == id)
+                            .find(|plugin| {
+                                plugin.id() == id
+                                    && marketplace.is_none_or(|path| {
+                                        plugin.marketplace_path.as_deref() == Some(path)
+                                    })
+                            })
                             .cloned()
                     });
                     page.update(cx, |page, cx| {
@@ -124,6 +164,15 @@ impl Root {
                             })
                         {
                             page.modal = None;
+                        }
+                        if let Some(Modal::Skill(skill)) = &mut page.modal
+                            && let Some(updated) = data.skills.value().and_then(|skills| {
+                                skills
+                                    .iter()
+                                    .find(|updated| updated["path"] == skill["path"])
+                            })
+                        {
+                            *skill = updated.clone();
                         }
                         page.data = data;
                         cx.notify();
@@ -175,8 +224,20 @@ impl Root {
             page.skill_file = Some(view.clone());
             cx.notify();
         });
+        let host = self.host.clone();
         let read = cx.background_spawn(async move {
-            std::fs::read_to_string(&path).map_err(|error| error.to_string())
+            (|| -> Result<String> {
+                let response = host.fetch(&host::Request::post(
+                    "read-file",
+                    Some(json!({"hostId":"local","path":path})),
+                ))?;
+                let value = host::json_body(&response)?;
+                Ok(value["contents"]
+                    .as_str()
+                    .context("Skill file response has no contents")?
+                    .to_owned())
+            })()
+            .map_err(|error| error.to_string())
         });
         cx.spawn(async move |_, cx| {
             let result = read.await;
@@ -228,6 +289,58 @@ impl Root {
         .detach();
     }
 
+    fn load_recommended_skills(&self, page: Entity<Page>, refresh: bool, cx: &mut Context<Self>) {
+        if page.read(cx).pending {
+            return;
+        }
+        page.update(cx, |page, cx| {
+            page.recommended = Resource::Loading;
+            page.recommended_error = None;
+            page.pending = true;
+            cx.notify();
+        });
+        let host = self.host.clone();
+        let load = cx.background_spawn(async move {
+            let response = host.fetch(&host::Request::post(
+                "recommended-skills",
+                Some(json!({"hostId":"local","refresh":refresh})),
+            ))?;
+            let mut value = host::json_body(&response)?;
+            let root = value["repoRoot"].as_str().map(PathBuf::from);
+            let warning = value["error"].as_str().map(str::to_owned);
+            let Value::Array(mut skills) = value["skills"].take() else {
+                anyhow::bail!("Recommended skill response has no skills");
+            };
+            if let Some(root) = root {
+                for skill in &mut skills {
+                    if let Some(relative) = skill["repoPath"].as_str() {
+                        let mut path = root.join(relative);
+                        if !relative.to_lowercase().ends_with(".md") {
+                            path.push("SKILL.md");
+                        }
+                        skill["path"] = json!(path);
+                    }
+                }
+            }
+            Ok::<_, anyhow::Error>((skills, warning))
+        });
+        cx.spawn(async move |_, cx| {
+            let result = load.await;
+            let _ = page.update(cx, |page, cx| {
+                page.pending = false;
+                page.recommended = match result {
+                    Ok((skills, warning)) => {
+                        page.recommended_error = warning;
+                        Resource::Ready(skills)
+                    }
+                    Err(error) => Resource::Failed(error.to_string()),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn plugin_action(
         &mut self,
         page: Entity<Page>,
@@ -266,19 +379,32 @@ impl Root {
             Action::Navigate(route) => {
                 self.open_plugins(route, window, cx);
             }
+            Action::SelectDirectory(directory) => {
+                if let Route::Plugins(route) = &self.state.route {
+                    match route_query(route, "directoryTab", directory.query_value()) {
+                        Ok(route) => self.navigate(Route::Plugins(route), window, cx),
+                        Err(error) => self.toast(Toast::danger(error.to_string()), cx),
+                    }
+                }
+            }
+            Action::CreatePlugin => self.open_plugin_creator(window, cx),
+            Action::ReadRecommended => self.load_recommended_skills(page, false, cx),
             Action::Read(plugin) => self.navigate(
                 Route::Plugins(format!("/plugins/{}", plugin.id())),
                 window,
                 cx,
             ),
-            Action::Refresh => self.load_plugins(
-                page,
-                match &self.state.route {
+            Action::Refresh => {
+                self.load_settings_integrations(cx);
+                if page.read(cx).skill_section == plugins::SkillSection::Recommended {
+                    self.load_recommended_skills(page.clone(), true, cx);
+                }
+                let route = match &self.state.route {
                     Route::Plugins(route) => route.clone(),
                     _ => "/plugins".into(),
-                },
-                cx,
-            ),
+                };
+                self.load_plugins(page, route, cx);
+            }
             Action::TryPlugin(plugin) => {
                 let current = page
                     .read(cx)
@@ -419,6 +545,7 @@ impl Root {
                     return;
                 };
                 let copy_link = matches!(action, Action::CreateShare(_));
+                let preserve_skill = matches!(action, Action::EnableSkill { .. });
                 match action {
                     Action::CreateShare(plugin) | Action::UpdateSharedVersion(plugin) => {
                         page.update(cx, |page, cx| {
@@ -460,7 +587,9 @@ impl Root {
                     }
                     _ => {
                         page.update(cx, |page, cx| {
-                            page.modal = None;
+                            if !preserve_skill {
+                                page.modal = None;
+                            }
                             cx.notify();
                         });
                         let route = match &this.state.route {
@@ -495,12 +624,11 @@ async fn read_skills(bridge: &Bridge, cwd: &str) -> Resource<Vec<Value>> {
         .request::<_, Value>("skills/list", json!({"cwds":[cwd],"forceReload":true}))
         .await
     {
-        Ok(value) => Resource::Ready(
+        Ok(value) => Resource::Ready(plugins::standalone_skills(
             plugins::array(&value, "data")
                 .iter()
-                .flat_map(|entry| plugins::array(entry, "skills").iter().cloned())
-                .collect(),
-        ),
+                .flat_map(|entry| plugins::array(entry, "skills").iter().cloned()),
+        )),
         Err(error) => Resource::Failed(error.to_string()),
     }
 }
@@ -597,6 +725,27 @@ async fn perform(bridge: &Bridge, host: &dyn host::Host, action: &Action) -> Res
         }
         Action::EnableApp { id, enabled } => {
             write_config(bridge, format!("apps.{id}.enabled"), json!(enabled)).await
+        }
+        Action::InstallRecommended(skill) => {
+            let id = skill["id"]
+                .as_str()
+                .context("Recommended skill has no ID")?;
+            let repo = skill["repoPath"]
+                .as_str()
+                .context("Recommended skill has no repository path")?;
+            let response = host.fetch(&host::Request::post(
+                "install-recommended-skill",
+                Some(json!({"hostId":"local","skillId":id,"repoPath":repo,"installRoot":null})),
+            ))?;
+            let value = host::json_body(&response)?;
+            ensure!(
+                value["success"] == true,
+                "{}",
+                value["error"]
+                    .as_str()
+                    .unwrap_or("Recommended skill installation failed")
+            );
+            Ok(value)
         }
         Action::CreateShare(plugin) | Action::UpdateSharedVersion(plugin) => {
             let path = plugin
@@ -764,4 +913,17 @@ mod tests {
         );
         Ok(())
     }
+}
+
+fn route_query(route: &str, key: &str, value: &str) -> Result<String> {
+    let mut url = url::Url::parse(&format!("https://codex.invalid{route}"))?;
+    let mut pairs: Vec<_> = url
+        .query_pairs()
+        .filter(|(name, _)| name != key)
+        .map(|(name, value)| (name.into_owned(), value.into_owned()))
+        .collect();
+    pairs.push((key.to_owned(), value.to_owned()));
+    url.set_query(None);
+    url.query_pairs_mut().extend_pairs(pairs);
+    Ok(url[url::Position::BeforePath..].to_owned())
 }

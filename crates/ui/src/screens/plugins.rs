@@ -11,7 +11,10 @@ use std::{
 };
 use theme::ActiveTheme as _;
 
+mod sidebar;
+mod skills;
 mod view;
+pub use sidebar::Sidebar;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Tab {
@@ -27,6 +30,47 @@ impl Tab {
         match self {
             Self::Plugins => "Plugins",
             Self::Skills => "Skills",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Directory {
+    #[default]
+    Public,
+    Personal,
+}
+
+impl Directory {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Public => "Public",
+            Self::Personal => "Personal",
+        }
+    }
+    pub fn query_value(self) -> &'static str {
+        match self {
+            Self::Public => "openai",
+            Self::Personal => "personal",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SkillSection {
+    #[default]
+    Personal,
+    System,
+    Recommended,
+}
+
+impl SkillSection {
+    pub const ALL: [Self; 3] = [Self::Personal, Self::System, Self::Recommended];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Personal => "Personal",
+            Self::System => "System",
+            Self::Recommended => "Recommended",
         }
     }
 }
@@ -58,12 +102,6 @@ impl Plugin {
     }
     pub fn installed(&self) -> bool {
         self.summary["installed"] == true
-    }
-    pub fn visible(&self) -> bool {
-        !matches!(
-            self.id(),
-            "codex-app-tools@openai-bundled" | "unified-computer-use@openai-bundled"
-        )
     }
     pub fn enabled(&self) -> bool {
         self.summary["enabled"] == true
@@ -196,7 +234,11 @@ pub enum Action {
     Refresh,
     Manage,
     Navigate(String),
+    SelectDirectory(Directory),
+    CreatePlugin,
     Read(Arc<Plugin>),
+    ReadRecommended,
+    InstallRecommended(Value),
     Install(Arc<Plugin>),
     EnablePlugin(Arc<Plugin>, bool),
     Uninstall(Arc<Plugin>),
@@ -238,6 +280,16 @@ pub enum Modal {
 
 pub struct Page {
     pub tab: Tab,
+    pub directory: Directory,
+    pub category: Option<String>,
+    pub marketplace_path: Option<String>,
+    pub add_open: bool,
+    pub skill_section: SkillSection,
+    pub installed_expanded: bool,
+    pub section_expanded: bool,
+    pub recommended: Resource<Vec<Value>>,
+    pub recommended_error: Option<String>,
+    pub share_on_load: bool,
     pub data: Data,
     pub available: bool,
     pub query: Entity<Composer>,
@@ -248,6 +300,9 @@ pub struct Page {
     pub modal: Option<Modal>,
     pub share_url: Option<String>,
     pub skill_file: Option<Entity<crate::screens::diff::panel::FileView>>,
+    pub marketplace_form: Option<Entity<crate::screens::settings::integrations::MarketplaceForm>>,
+    marketplace_added: u64,
+    return_focus: Option<FocusHandle>,
     pub generation: u64,
     pub focus: FocusHandle,
     modal_focus: FocusHandle,
@@ -268,20 +323,45 @@ impl Page {
             Tab::Plugins
         };
         let query = cx.new(|cx| {
-            Composer::settings_field(
+            Composer::inline_field(
                 if tab == Tab::Skills {
                     "Search skills"
                 } else {
                     "Search plugins"
                 },
                 "",
-                false,
                 cx,
             )
         });
         cx.observe(&query, |_, _, cx| cx.notify()).detach();
+        if !cx.has_global::<crate::screens::settings::integrations::State>() {
+            cx.set_global(crate::screens::settings::integrations::State::default());
+        }
+        cx.observe_global::<crate::screens::settings::integrations::State>(|this, cx| {
+            let added = cx
+                .global::<crate::screens::settings::integrations::State>()
+                .marketplace_added;
+            if this.marketplace_form.is_some() && added != this.marketplace_added {
+                this.marketplace_form = None;
+                this.modal = None;
+                cx.emit(Action::Navigate("/plugins?directory=personal".into()));
+            }
+            this.marketplace_added = added;
+            cx.notify();
+        })
+        .detach();
         Self {
             tab,
+            directory: Directory::Public,
+            category: None,
+            marketplace_path: None,
+            add_open: false,
+            skill_section: SkillSection::Personal,
+            installed_expanded: false,
+            section_expanded: false,
+            recommended: Resource::Loading,
+            recommended_error: None,
+            share_on_load: false,
             data: Data::default(),
             available,
             query,
@@ -292,10 +372,24 @@ impl Page {
             modal: None,
             share_url: None,
             skill_file: None,
+            marketplace_form: None,
+            marketplace_added: cx
+                .global::<crate::screens::settings::integrations::State>()
+                .marketplace_added,
+            return_focus: None,
             generation: 0,
             focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),
         }
+    }
+
+    pub fn select_skill_section(&mut self, section: SkillSection, cx: &mut Context<Self>) {
+        self.skill_section = section;
+        self.section_expanded = false;
+        if section == SkillSection::Recommended && !self.pending {
+            cx.emit(Action::ReadRecommended);
+        }
+        cx.notify();
     }
 
     pub fn act(&mut self, action: Action, cx: &mut Context<Self>) {
@@ -306,6 +400,8 @@ impl Page {
 
     pub fn show_modal(&mut self, modal: Modal, window: &mut Window, cx: &mut Context<Self>) {
         self.error = None;
+        self.add_open = false;
+        self.return_focus = window.focused(cx);
         self.modal = Some(modal);
         if let Some(Modal::Skill(skill)) = &self.modal {
             cx.emit(Action::ReadSkill(string(skill, "path").to_owned()));
@@ -314,13 +410,47 @@ impl Page {
         cx.notify();
     }
 
+    pub fn open_marketplace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let form = cx.new(crate::screens::settings::integrations::MarketplaceForm::new);
+        cx.subscribe_in(
+            &form,
+            window,
+            |this, _, _: &crate::screens::settings::integrations::FormClosed, window, cx| {
+                this.close_modal(window, cx);
+            },
+        )
+        .detach();
+        self.marketplace_added = cx
+            .global::<crate::screens::settings::integrations::State>()
+            .marketplace_added;
+        self.return_focus = window.focused(cx);
+        self.modal = None;
+        self.add_open = false;
+        self.error = None;
+        let focus = form.update(cx, |form, cx| form.controls(window, cx).into_iter().next());
+        if let Some(focus) = focus {
+            focus.focus(window, cx);
+        }
+        self.marketplace_form = Some(form);
+        cx.notify();
+    }
+
     pub fn close_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pending {
+        if self.pending
+            || (self.marketplace_form.is_some()
+                && cx
+                    .global::<crate::screens::settings::integrations::State>()
+                    .pending)
+        {
             return;
         }
         self.modal = None;
+        self.marketplace_form = None;
         self.error = None;
-        self.focus.focus(window, cx);
+        self.return_focus
+            .take()
+            .unwrap_or_else(|| self.focus.clone())
+            .focus(window, cx);
         cx.notify();
     }
 }
@@ -330,6 +460,145 @@ pub fn string<'a>(value: &'a Value, key: &str) -> &'a str {
 }
 pub fn array<'a>(value: &'a Value, key: &str) -> &'a [Value] {
     value[key].as_array().map(Vec::as_slice).unwrap_or(&[])
+}
+
+pub fn skill_title(skill: &Value) -> String {
+    if let Some(title) = skill["interface"]["displayName"]
+        .as_str()
+        .filter(|title| !title.trim().is_empty())
+    {
+        return title.trim().to_owned();
+    }
+    string(skill, "name")
+        .split(':')
+        .map(|part| {
+            part.split(|c: char| c == '_' || c == '-' || c.is_whitespace())
+                .filter(|word| !word.is_empty())
+                .enumerate()
+                .map(|(index, word)| title_word(word, index))
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join(": ")
+}
+
+fn title_word(word: &str, index: usize) -> String {
+    const ACRONYMS: &[&str] = &[
+        "GH", "IA", "MCP", "API", "CI", "CLI", "LLM", "PDF", "PR", "RCS", "UI", "URL", "SQL", "TW",
+        "GPU", "CPU",
+    ];
+    let upper = word.to_uppercase();
+    if ACRONYMS.contains(&upper.as_str()) {
+        return upper;
+    }
+    if upper.ends_with('S') && ACRONYMS.contains(&&upper[..upper.len() - 1]) {
+        return format!("{}s", &upper[..upper.len() - 1]);
+    }
+    let lower = word.to_lowercase();
+    match lower.as_str() {
+        "openai" => "OpenAI".into(),
+        "openaideveloperdocs" => "OpenAI Developer Docs".into(),
+        "openapi" => "OpenAPI".into(),
+        "github" => "GitHub".into(),
+        "imessage" => "iMessage".into(),
+        "pagerduty" => "PagerDuty".into(),
+        "datadog" => "DataDog".into(),
+        "sharepoint" => "SharePoint".into(),
+        "sqlite" => "SQLite".into(),
+        "fastapi" => "FastAPI".into(),
+        "and" | "or" | "to" | "up" | "with" if index > 0 => lower,
+        _ => {
+            let mut chars = lower.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+                .unwrap_or_default()
+        }
+    }
+}
+
+pub fn skill_description(skill: &Value) -> &str {
+    skill["interface"]["shortDescription"]
+        .as_str()
+        .filter(|text| !text.is_empty())
+        .or_else(|| {
+            skill["shortDescription"]
+                .as_str()
+                .filter(|text| !text.is_empty())
+        })
+        .unwrap_or_else(|| string(skill, "description"))
+}
+
+pub fn standalone_skills(skills: impl IntoIterator<Item = Value>) -> Vec<Value> {
+    use std::collections::{HashMap, hash_map::Entry};
+    let rank = |skill: &Value| match string(skill, "scope") {
+        "repo" => 0,
+        "user" => 1,
+        "system" => 2,
+        "admin" => 3,
+        _ => 4,
+    };
+    let mut by_name: HashMap<String, Value> = HashMap::new();
+    for skill in skills {
+        if !skill["pluginId"].is_null() || plugin_skill_path(string(&skill, "path")) {
+            continue;
+        }
+        match by_name.entry(string(&skill, "name").to_owned()) {
+            Entry::Vacant(entry) => {
+                entry.insert(skill);
+            }
+            Entry::Occupied(mut entry) => {
+                let old = entry.get();
+                if (rank(&skill), string(&skill, "path")) < (rank(old), string(old, "path")) {
+                    entry.insert(skill);
+                }
+            }
+        }
+    }
+    let mut skills: Vec<_> = by_name.into_values().collect();
+    skills.sort_by_cached_key(|skill| {
+        (
+            skill_title(skill).to_lowercase(),
+            string(skill, "name").to_owned(),
+        )
+    });
+    skills
+}
+
+fn plugin_skill_path(path: &str) -> bool {
+    let parts: Vec<_> = path
+        .split(['/', '\\'])
+        .filter(|part| !part.is_empty())
+        .collect();
+    if parts.windows(2).any(|pair| {
+        (pair[0].eq_ignore_ascii_case(".agents") || pair[0].eq_ignore_ascii_case(".codex"))
+            && pair[1].eq_ignore_ascii_case("skills")
+    }) {
+        return false;
+    }
+    for (index, part) in parts.iter().enumerate() {
+        if !part.eq_ignore_ascii_case("plugins") {
+            continue;
+        }
+        let cached = parts
+            .get(index + 1)
+            .is_some_and(|part| part.eq_ignore_ascii_case("cache"));
+        let plugin = index + if cached { 3 } else { 1 };
+        if parts.get(plugin).is_none() {
+            continue;
+        }
+        let root = plugin + usize::from(cached);
+        if parts.iter().enumerate().any(|(index, part)| {
+            index > root && part.eq_ignore_ascii_case("skills") && parts.get(index + 1).is_some()
+        }) {
+            return true;
+        }
+        if parts.len() == root + 2 && parts[root + 1].eq_ignore_ascii_case("skill.md") {
+            return true;
+        }
+    }
+    false
 }
 
 impl Render for Page {
@@ -398,5 +667,37 @@ mod tests {
         assert_eq!(data.personal_path(&plugin), Some("/home/user/plugin"));
         plugin.marketplace_path = Some("/tmp/imported/.agents/plugins/marketplace.json".into());
         assert_eq!(data.personal_path(&plugin), None);
+    }
+
+    #[test]
+    fn standalone_skill_projection_keeps_the_nearest_scope_and_hides_plugin_skills() {
+        let skill =
+            |name: &str, scope: &str, path: &str| json!({"name":name,"scope":scope,"path":path});
+        let selected = standalone_skills([
+            skill("same", "user", "/home/user/.agents/skills/same/SKILL.md"),
+            skill("same", "repo", "/work/.agents/skills/same/SKILL.md"),
+            skill(
+                "same",
+                "system",
+                "/home/user/.codex/skills/.system/same/SKILL.md",
+            ),
+            skill("first", "user", "/home/user/.agents/skills/first/SKILL.md"),
+            skill(
+                "hidden",
+                "user",
+                "/home/user/.codex/plugins/cache/vendor/plugin/1/skills/hidden/SKILL.md",
+            ),
+            json!({"name":"explicit","path":"/work/skill.md","pluginId":"plugin"}),
+        ]);
+        assert_eq!(
+            selected
+                .iter()
+                .map(|skill| string(skill, "path"))
+                .collect::<Vec<_>>(),
+            [
+                "/home/user/.agents/skills/first/SKILL.md",
+                "/work/.agents/skills/same/SKILL.md",
+            ]
+        );
     }
 }

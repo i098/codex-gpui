@@ -151,6 +151,9 @@ Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice ch
 
 The Plugins rail opens the native plugin directory and the Skills page.
 Both pages load app-server data and support search.
+Skills groups standalone entries by scope and excludes plugin-owned skills.
+Recommended skills use the original vendor cache and installation paths.
+Directory navigation preserves the category, marketplace, search, and share query parameters.
 Plugin installation, removal, enablement, and sharing wait for server responses.
 Failed operations keep the last confirmed catalog state.
 Share creates a remote link only after Copy link; only personal-marketplace plugins can publish a shared version.

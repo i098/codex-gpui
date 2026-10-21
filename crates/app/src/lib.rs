@@ -5601,7 +5601,7 @@ impl Render for Root {
                 }),
             )
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
-                this.shell.update(cx, |shell, cx| shell.toggle_sidebar(cx))
+                this.shell().update(cx, |shell, cx| shell.toggle_sidebar(cx))
             }))
             .on_action(cx.listener(|this, _: &ShowKeyboardShortcuts, window, cx| {
                 if this
