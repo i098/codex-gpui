@@ -84,7 +84,7 @@ impl Render for Licenses {
                 .flex()
                 .items_center()
                 .gap(px(8.))
-                .child(icon("chevron-left", 16., t.text))
+                .child(icon("arrow-left", 16., t.text))
                 .child(text("Back", 13., 18., 430., t.text)),
             &back_focus,
             px(12.5),
