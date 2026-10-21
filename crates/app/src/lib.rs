@@ -4,6 +4,8 @@
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
 pub mod computer_use_requests;
+mod diff_content;
+pub use diff_content::bind_standalone_diff;
 mod diff_find;
 mod diff_watch;
 mod features;
@@ -1122,7 +1124,9 @@ impl Root {
             DiffRequest::Open(_)
             | DiffRequest::OpenTab(_)
             | DiffRequest::SourceChanged
-            | DiffRequest::Notice(_) => return,
+            | DiffRequest::Notice(_)
+            | DiffRequest::LoadFullFile(_)
+            | DiffRequest::Preference(_, _) => return,
         };
         let creating = endpoint == "git-init-repo";
         if let Some(review) = panel.read(cx).review_params().as_object() {
@@ -2761,7 +2765,7 @@ impl Root {
             elapsed_since: None,
         });
         let composer = self.thread_composer.clone().into();
-        let diff = cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns));
+        let diff = diff_content::new_panel(&self.cwd, &thread.cwd, &thread.turns, cx);
         let cwd = thread.cwd.clone();
         cx.subscribe_in(
             &diff,
@@ -2783,6 +2787,19 @@ impl Root {
                         line: None,
                     },
                     window,
+                    cx,
+                ),
+                DiffRequest::LoadFullFile(request) => diff_content::load_requested(
+                    panel.clone(),
+                    this.host.clone(),
+                    request.clone(),
+                    cx,
+                ),
+                DiffRequest::Preference(key, value) => this.write_setting(
+                    &SettingChanged {
+                        path: key,
+                        value: value.clone(),
+                    },
                     cx,
                 ),
                 _ => this.repository_request(panel.clone(), &cwd, request, cx),

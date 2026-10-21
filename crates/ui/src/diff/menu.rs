@@ -82,7 +82,7 @@ impl DiffPanel {
         let count = match kind {
             None => 0,
             Some(Kind::Source) => SOURCES.len(),
-            Some(Kind::Options) => 5,
+            Some(Kind::Options) => 6,
             Some(Kind::Branches) => repository.map_or(0, |r| r.branches.len()),
             Some(Kind::Commits) => repository.map_or(0, |r| r.commits.len()),
             Some(Kind::Header) => {
@@ -103,7 +103,8 @@ impl DiffPanel {
                     1 => ("Collapse all diffs", true),
                     2 => ("Word wrap", true),
                     3 => (self.layout.label(), true),
-                    _ => ("Word diffs", true),
+                    4 => ("Word diffs", true),
+                    _ => ("Load full files", true),
                 },
                 Kind::Branches => (repository.unwrap().branches[index].as_str(), !self.pending),
                 Kind::Commits => (
@@ -150,6 +151,21 @@ impl DiffPanel {
 
     pub fn shows_word_diffs(&self) -> bool {
         self.word_diffs
+    }
+
+    pub(super) fn toggle_all_files(&mut self, cx: &mut Context<Self>) {
+        let open = !self.files.iter().any(|file| file.open);
+        self.files.iter_mut().for_each(|file| file.open = open);
+        self.selection = None;
+        cx.notify();
+    }
+
+    pub(super) fn toggle_wrap(&mut self, cx: &mut Context<Self>) {
+        self.wrap = !self.wrap;
+        cx.emit(DiffRequest::Preference(
+            "host.wrapCodeDiff.2",
+            self.wrap.into(),
+        ));
     }
 
     pub(super) fn open_menu(
@@ -270,7 +286,7 @@ impl DiffPanel {
     }
 
     /// The directory a displayed file path is relative to.
-    fn file_root(&self) -> &str {
+    pub(super) fn file_root(&self) -> &str {
         if self.source == DiffSource::LastTurn {
             if self.aggregated_turn.is_some() {
                 &self.cwd
@@ -284,7 +300,7 @@ impl DiffPanel {
         }
     }
 
-    fn file_path(&self, index: usize) -> Option<String> {
+    pub(super) fn file_path(&self, index: usize) -> Option<String> {
         let file = self.files.get(index)?;
         Some(absolute_path(
             self.file_root(),
@@ -346,9 +362,16 @@ impl DiffPanel {
             match index {
                 0 => self.files.iter_mut().for_each(|file| file.open = true),
                 1 => self.files.iter_mut().for_each(|file| file.open = false),
-                2 => self.wrap = !self.wrap,
+                2 => self.toggle_wrap(cx),
                 3 => self.layout = self.layout.next(),
-                _ => self.word_diffs = !self.word_diffs,
+                4 => {
+                    self.word_diffs = !self.word_diffs;
+                    cx.emit(DiffRequest::Preference(
+                        "host.wordDiffsEnabled.2",
+                        self.word_diffs.into(),
+                    ));
+                }
+                _ => self.toggle_full_files(cx),
             }
             self.selection = None;
             cx.stop_propagation();
@@ -399,7 +422,7 @@ impl DiffPanel {
                 file.open = !file.open;
                 self.selection = None;
             }
-            "Toggle line wrap" => self.wrap = !self.wrap,
+            "Toggle line wrap" => self.toggle_wrap(cx),
             _ => unreachable!(),
         }
         cx.stop_propagation();
@@ -428,13 +451,14 @@ impl DiffPanel {
                     .id((row_id, i))
                     .role(Role::MenuItem)
                     .aria_label(label.to_owned())
-                    .when(kind == Kind::Options && i == 4, |d| {
-                        d.role(Role::MenuItemCheckBox)
-                            .aria_toggled(if self.word_diffs {
+                    .when(kind == Kind::Options && matches!(i, 4 | 5), |d| {
+                        d.role(Role::MenuItemCheckBox).aria_toggled(
+                            if (i == 4 && self.word_diffs) || (i == 5 && self.full_files) {
                                 gpui::Toggled::True
                             } else {
                                 gpui::Toggled::False
-                            })
+                            },
+                        )
                     })
                     .aria_disabled(!enabled)
                     .when(active == Some(i), |d| {
@@ -489,9 +513,11 @@ impl DiffPanel {
                     .when(source && SOURCES[i] == self.source, |d| {
                         d.child(source_glyph(SOURCE_CHECK, "diff-source-check", t.text, 191))
                     })
-                    .when(kind == Kind::Options && i == 4 && self.word_diffs, |d| {
-                        d.child(source_glyph(SOURCE_CHECK, "diff-word-check", t.text, 191))
-                    })
+                    .when(
+                        kind == Kind::Options
+                            && ((i == 4 && self.word_diffs) || (i == 5 && self.full_files)),
+                        |d| d.child(source_glyph(SOURCE_CHECK, "diff-word-check", t.text, 191)),
+                    )
                     .when(source && i == 4, |d| {
                         d.child(source_glyph(
                             SOURCE_SUBMENU,

@@ -50,6 +50,10 @@ pub use find::{FindInChat, FindInDiff};
 mod states;
 pub use states::{LastTurnState, OmittedFiles};
 
+#[path = "diff/content.rs"]
+mod content;
+pub use content::{BlobReply, BlobRequest, FullError, FullFileRequest, FullText};
+
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
 const STORED_WIDTH: f32 = 664.17;
 /// Room the chat keeps beside the panel (`unified` layout), also the panel's minimum.
@@ -106,6 +110,7 @@ enum Kind {
     Removed,
 }
 
+#[derive(Clone)]
 struct Line {
     kind: Kind,
     /// New-file number; old-file number for removed lines.
@@ -118,10 +123,13 @@ struct Line {
     syntax: Vec<syntax::Mark>,
 }
 
+#[derive(Clone)]
 struct Hunk {
     /// `N unmodified lines` bar for the old-file lines the diff skips before this hunk.
     separator: Option<SharedString>,
     lines: Vec<Line>,
+    old_start: u32,
+    new_start: u32,
 }
 
 pub struct FileDiff {
@@ -134,6 +142,13 @@ pub struct FileDiff {
     hunks: Vec<Hunk>,
     pub open: bool,
     problem: Option<&'static str>,
+    raw: Arc<str>,
+    raw_kind: Option<Kind>,
+    full: Option<FullText>,
+    full_error: Option<FullError>,
+    full_loading: bool,
+    original_hunks: Option<Vec<Hunk>>,
+    pending_expansion: Option<(usize, content::Expand)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -191,6 +206,8 @@ pub enum DiffRequest {
     OpenTab(String),
     SourceChanged,
     Notice(&'static str),
+    LoadFullFile(FullFileRequest),
+    Preference(&'static str, serde_json::Value),
     /// Open this absolute path in the configured editor.
     Open(String),
 }
@@ -272,6 +289,8 @@ pub struct DiffPanel {
     jump: Option<navigation::JumpToFile>,
     watch_limited: bool,
     last_turn_state: Option<LastTurnState>,
+    full_files: bool,
+    content_generation: u64,
 }
 
 impl DiffPanel {
@@ -329,6 +348,7 @@ impl DiffPanel {
                     f.removed += removed;
                     f.changed_bytes += change.diff.len();
                     f.hunks.extend(hunks);
+                    f.raw = format!("{}\n{}", f.raw, change.diff).into();
                 }
                 None => files.push(FileDiff {
                     dir: dir.to_string().into(),
@@ -339,6 +359,13 @@ impl DiffPanel {
                     hunks,
                     open: true,
                     problem,
+                    raw: change.diff.as_str().into(),
+                    raw_kind: raw,
+                    full: None,
+                    full_error: None,
+                    full_loading: false,
+                    original_hunks: None,
+                    pending_expansion: None,
                 }),
             }
         }
@@ -379,6 +406,8 @@ impl DiffPanel {
             jump: None,
             watch_limited: false,
             last_turn_state: None,
+            full_files: true,
+            content_generation: 0,
         }
     }
 
@@ -646,6 +675,7 @@ impl DiffPanel {
     }
 
     fn replace_files(&mut self, mut files: Vec<FileDiff>) {
+        self.content_generation = self.content_generation.wrapping_add(1);
         self.active_file = self
             .files
             .get(self.active_file)
@@ -658,10 +688,18 @@ impl DiffPanel {
         for file in &mut files {
             if let Some(old) = self
                 .files
-                .iter()
+                .iter_mut()
                 .find(|old| old.dir == file.dir && old.name == file.name)
             {
                 file.open = old.open;
+                if file.raw == old.raw {
+                    file.full = old.full.take();
+                    file.full_error = old.full_error.take();
+                    file.original_hunks = old.original_hunks.take();
+                    if file.original_hunks.is_some() {
+                        file.hunks = std::mem::take(&mut old.hunks);
+                    }
+                }
             }
         }
         self.files = files;
@@ -1071,7 +1109,7 @@ impl DiffPanel {
                                         .focusable()
                                         .cursor_pointer()
                                         .on_click(cx.listener(|this, _, _, cx| {
-                                            this.wrap = !this.wrap;
+                                            this.toggle_wrap(cx);
                                             cx.notify();
                                         }))
                                         .on_key_down(cx.listener(
@@ -1080,14 +1118,39 @@ impl DiffPanel {
                                                     event.keystroke.key.as_str(),
                                                     "enter" | "space"
                                                 ) {
-                                                    this.wrap = !this.wrap;
+                                                    this.toggle_wrap(cx);
                                                     cx.stop_propagation();
                                                     cx.notify();
                                                 }
                                             },
                                         )),
                                 )
-                                .child(tool("diff-load-full-files"))
+                                .child(
+                                    tool("diff-load-full-files")
+                                        .id("diff-expand-all")
+                                        .role(gpui::Role::Button)
+                                        .aria_label(if self.files.iter().any(|file| file.open) {
+                                            "Collapse all diffs"
+                                        } else {
+                                            "Expand all diffs"
+                                        })
+                                        .focusable()
+                                        .cursor_pointer()
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.toggle_all_files(cx)),
+                                        )
+                                        .on_key_down(cx.listener(
+                                            |this, event: &KeyDownEvent, _, cx| {
+                                                if matches!(
+                                                    event.keystroke.key.as_str(),
+                                                    "enter" | "space"
+                                                ) {
+                                                    this.toggle_all_files(cx);
+                                                    cx.stop_propagation();
+                                                }
+                                            },
+                                        )),
+                                )
                                 .child(self.layout_button(t, cx)),
                         )
                     })
@@ -1125,6 +1188,7 @@ impl DiffPanel {
 
 impl Render for DiffPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.request_visible_full_files(cx);
         *self.find_scroll.target.borrow_mut() = None;
         let t = cx.theme().clone();
         let width = if self.standalone {
@@ -1190,6 +1254,7 @@ impl Render for DiffPanel {
                         }),
                     )
                     .child(self.scrolling_file_header(i, file, scroll_top, &t, cx))
+                    .when(file.open, |d| d.children(self.full_error_notice(i, cx)))
                     .map(|d| {
                         if file.open && file.problem.is_some() {
                             d.child(self.file_placeholder(i, file, &t, cx))
@@ -1268,6 +1333,7 @@ impl Render for DiffPanel {
                                     })
                                     .child(hunk(
                                         h,
+                                        (i, index),
                                         &t,
                                         &line_index,
                                         self,
@@ -2563,6 +2629,7 @@ fn word_mark(
 
 fn hunk(
     h: &Hunk,
+    location: (usize, usize),
     t: &Theme,
     line_index: &Cell<usize>,
     panel: &DiffPanel,
@@ -2775,19 +2842,23 @@ fn hunk(
         }))
         .when_some(h.separator.clone(), |d, label| {
             let len = label.len();
-            d.child(row(
-                None,
-                (separator, t.text_tertiary),
-                separator,
-                StyledText::new(label).with_highlights([(
-                    0..len,
-                    HighlightStyle {
-                        color: Some(t.text_tertiary),
-                        ..Default::default()
-                    },
-                )]),
-                Vec::new(),
-                None,
+            d.child(panel.context_row(
+                row(
+                    None,
+                    (separator, t.text_tertiary),
+                    separator,
+                    StyledText::new(label).with_highlights([(
+                        0..len,
+                        HighlightStyle {
+                            color: Some(t.text_tertiary),
+                            ..Default::default()
+                        },
+                    )]),
+                    Vec::new(),
+                    None,
+                ),
+                location,
+                cx,
             ))
         })
         .map(|d| {
@@ -2844,6 +2915,8 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
     }
     if let Some(kind) = raw {
         return Ok(vec![Hunk {
+            old_start: if kind == Kind::Added { 0 } else { 1 },
+            new_start: if kind == Kind::Removed { 0 } else { 1 },
             separator: None,
             lines: diff
                 .lines()
@@ -2885,6 +2958,8 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
                 return Err(INVALID);
             }
             hunks.push(Hunk {
+                old_start,
+                new_start: new,
                 separator: (skipped > 0).then(|| {
                     format!(
                         "{skipped} unmodified line{}",

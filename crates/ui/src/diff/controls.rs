@@ -139,6 +139,13 @@ impl FileDiff {
             hunks,
             open: true,
             problem,
+            raw: diff.into(),
+            raw_kind: None,
+            full: None,
+            full_error: None,
+            full_loading: false,
+            original_hunks: None,
+            pending_expansion: None,
         };
         syntax::apply(&file.name, &mut file.hunks);
         file

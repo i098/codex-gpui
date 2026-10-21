@@ -57,7 +57,14 @@ fn main() {
                         ..Default::default()
                     },
                     |_, cx| {
-                        cx.new(|_| ui::screens::diff::panel::DiffPanel::from_patch(&cwd, &patch))
+                        let panel = cx
+                            .new(|_| ui::screens::diff::panel::DiffPanel::from_patch(&cwd, &patch));
+                        app::bind_standalone_diff(
+                            &panel,
+                            std::sync::Arc::new(app::host::LocalHost::from_env()),
+                            cx,
+                        );
+                        panel
                     },
                 )
                 .expect("open diff window");
