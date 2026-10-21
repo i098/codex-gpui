@@ -1064,7 +1064,12 @@ impl LocalHost {
     /// `getPendingArchives` over the original's persisted queue: the entries of `owner` for this
     /// host's `thread_id` that are neither completed, detaching nor failed. A missing state file
     /// or key is an empty queue.
-    fn queued_archives(&self, owner: &str, thread_id: &str) -> Result<Vec<PendingArchive>> {
+    pub fn archives_pending_for(
+        &self,
+        identity: &Identity,
+        thread_id: &str,
+    ) -> Result<Vec<PendingArchive>> {
+        let owner = serde_json::to_string(&[&identity.account_id, &identity.user_id])?;
         let contents = match fs::read(self.home.join(".codex-global-state.json")) {
             Ok(contents) => contents,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -1077,7 +1082,7 @@ impl LocalHost {
             .flatten()
             .filter(|entry| {
                 entry["kind"] == "attached"
-                    && entry["owner"] == owner
+                    && entry["owner"] == owner.as_str()
                     && entry["hostId"] == "local"
                     && entry["threadId"] == thread_id
                     && !matches!(
@@ -1723,8 +1728,7 @@ impl Host for CloudHost {
         let Some(identity) = self.identity() else {
             return Ok(Vec::new());
         };
-        let owner = serde_json::to_string(&[identity.account_id, identity.user_id])?;
-        self.local.queued_archives(&owner, thread_id)
+        self.local.archives_pending_for(&identity, thread_id)
     }
 
     fn identity(&self) -> Option<Identity> {
@@ -2116,20 +2120,30 @@ mod pending_archive_tests {
     fn only_the_owners_live_attached_entries_of_the_thread_count() {
         let home = tempfile::tempdir().unwrap();
         let host = LocalHost::new(home.path());
-        assert!(host.queued_archives("o", "t").unwrap().is_empty());
+        let identity = Identity {
+            account_id: "a".into(),
+            user_id: "u".into(),
+            device_id: "d".into(),
+        };
+        let owner = r#"["a","u"]"#;
+        assert!(
+            host.archives_pending_for(&identity, "t")
+                .unwrap()
+                .is_empty()
+        );
         let entry = |owner: &str, thread: &str, phase: &str, root: &str| {
             json!({"kind": "attached", "owner": owner, "hostId": "local", "threadId": thread,
                 "phase": phase, "root": root, "pullRequestIdentityKeys": []})
         };
         let state = json!({"electron-managed-worktree-archives": [
-            entry("o", "t", "archiving", "/w/live"),
-            entry("o", "t", "removing", "/w/live2"),
-            entry("o", "t", "detaching", "/w/detaching"),
-            entry("o", "t", "failed", "/w/failed"),
-            entry("o", "t", "completed", "/w/done"),
+            entry(owner, "t", "archiving", "/w/live"),
+            entry(owner, "t", "removing", "/w/live2"),
+            entry(owner, "t", "detaching", "/w/detaching"),
+            entry(owner, "t", "failed", "/w/failed"),
+            entry(owner, "t", "completed", "/w/done"),
             entry("other", "t", "archiving", "/w/other-owner"),
-            entry("o", "u", "archiving", "/w/other-thread"),
-            {"kind": "thread", "owner": "o", "hostId": "local", "threadId": "t", "phase": "archiving", "root": "/w/thread-kind"},
+            entry(owner, "u", "archiving", "/w/other-thread"),
+            {"kind": "thread", "owner": owner, "hostId": "local", "threadId": "t", "phase": "archiving", "root": "/w/thread-kind"},
         ]});
         fs::write(
             home.path().join(".codex-global-state.json"),
@@ -2137,7 +2151,7 @@ mod pending_archive_tests {
         )
         .unwrap();
         let roots: Vec<_> = host
-            .queued_archives("o", "t")
+            .archives_pending_for(&identity, "t")
             .unwrap()
             .into_iter()
             .map(|a| a.root)

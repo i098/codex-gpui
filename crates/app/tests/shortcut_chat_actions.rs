@@ -202,3 +202,85 @@ fn copy_working_directory_does_not_copy_a_stale_cwd_after_a_failed_refresh() -> 
     ensure!(clipboard(&mut fx).as_deref() == Some("untouched"));
     Ok(())
 }
+
+/// A signed-in host whose pending-archive queue is read from a temporary global state file.
+struct SignedIn(app::host::LocalHost);
+
+impl app::host::Host for SignedIn {
+    fn fetch(&self, _: &app::host::Request) -> Result<serde_json::Value> {
+        anyhow::bail!("no network in this test")
+    }
+
+    fn stream(
+        &self,
+        _: &app::host::Request,
+        _: &std::sync::atomic::AtomicBool,
+        _: &mut dyn FnMut(serde_json::Value) -> bool,
+    ) -> Result<()> {
+        anyhow::bail!("no network in this test")
+    }
+
+    fn identity(&self) -> Option<app::host::Identity> {
+        Some(app::host::Identity {
+            account_id: "acct".into(),
+            user_id: "user".into(),
+            device_id: "device".into(),
+        })
+    }
+
+    fn pending_worktree_archives(&self, thread_id: &str) -> Result<Vec<app::host::PendingArchive>> {
+        self.0
+            .archives_pending_for(&self.identity().unwrap(), thread_id)
+    }
+}
+
+#[test]
+fn copy_working_directory_skips_a_worktree_with_a_pending_archive_of_the_owner() -> Result<()> {
+    let worktree = |root: &str, workspace: &str, at: i64| {
+        json!({ "attachmentType": "worktree", "identityKey": root, "createdAt": at,
+            "payload": { "root": root, "workspaceRoot": workspace } })
+    };
+    let mut fx = copy_directory_fx(Some(json!({
+        "data": [
+            worktree("/w/kept", "/w/kept/app", 1),
+            worktree("/w/archiving", "/w/archiving/app", 3),
+            worktree("/w/other-owner", "/w/other-owner/app", 2),
+        ],
+        "nextCursor": null
+    })))?;
+    fx.keys("cmd-1")?;
+    fx.wait_thread(GREETING)?;
+    let home = tempfile::tempdir()?;
+    let entry = |owner: &str, root: &str, phase: &str| {
+        json!({ "kind": "attached", "owner": owner, "hostId": "local", "threadId": GREETING,
+            "phase": phase, "root": root, "pullRequestIdentityKeys": [] })
+    };
+    let owner = r#"["acct","user"]"#;
+    std::fs::write(
+        home.path().join(".codex-global-state.json"),
+        json!({ "electron-managed-worktree-archives": [
+            entry(owner, "/w/archiving/", "archiving"),
+            entry("someone-else", "/w/other-owner", "archiving"),
+            entry(owner, "/w/kept", "completed"),
+        ] })
+        .to_string(),
+    )?;
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.set_host(
+            std::sync::Arc::new(SignedIn(app::host::LocalHost::new(home.path()))),
+            cx,
+        )
+    });
+    fx.cx
+        .update(|cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(String::new())));
+    fx.keys("cmd-shift-c")?;
+    fx.wait("copy", |fx| {
+        clipboard(fx).is_some_and(|text| !text.is_empty())
+    })?;
+    ensure!(
+        clipboard(&mut fx).as_deref() == Some("/w/other-owner/app"),
+        "{:?}",
+        clipboard(&mut fx)
+    );
+    Ok(())
+}
