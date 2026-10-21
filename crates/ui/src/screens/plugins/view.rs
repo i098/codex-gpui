@@ -554,7 +554,7 @@ impl Page {
                     "try-plugin",
                     "Try now",
                     Action::TryPlugin(plugin.clone()),
-                    plugin.disabled_reason().is_none(),
+                    self.data.can_use(plugin, Some(detail)),
                     window,
                     cx,
                 ))
@@ -588,7 +588,7 @@ impl Page {
                 cx,
             ));
         }
-        if plugin.local_path().is_some() {
+        if self.data.personal_path(plugin).is_some() {
             actions = actions
                 .child(self.action_button(
                     "edit-plugin",
@@ -737,7 +737,7 @@ impl Page {
                 div().flex().flex_col().gap(px(16.))
                     .child(text("Get more relevant help from the apps you already use. You can always do this later.", 14., 20., 400., t.text_secondary))
                     .children(apps.iter().map(|app| self.app_row(app, window, cx))).into_any_element(),
-                Some(("Try now", Action::TryPlugin(plugin.clone()), true)),
+                Some(("Try now", Action::TryPlugin(plugin.clone()), self.data.can_use(plugin, self.detail_data.value()))),
             ),
             Modal::Uninstall(plugin) => (format!("Uninstall {}?", plugin.title()),
                 text("You can install this plugin again later.", 14., 20., 400., t.text_secondary).into_any_element(),
@@ -749,8 +749,13 @@ impl Page {
                     let url = url.clone();
                     content = content.child(button("Copy link", t.text_alpha_5, None, &t).id("copy-share-link")
                         .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(url.clone()))));
+                } else {
+                    content = content.child(self.action_button("create-share-link", "Copy link",
+                        Action::CreateShare(plugin.clone()), true, window, cx));
                 }
-                (format!("Share {}", plugin.title()), content.into_any_element(), Some(("Update shared version", Action::UpdateSharedVersion(plugin.clone()), self.share_url.is_some())))
+                let update = self.share_url.as_ref().map(|_| ("Update shared version",
+                    Action::UpdateSharedVersion(plugin.clone()), true));
+                (format!("Share {}", plugin.title()), content.into_any_element(), update)
             }
             Modal::Skill(skill) => (string(skill, "name").to_owned(),
                 div().flex().flex_col().gap(px(12.))

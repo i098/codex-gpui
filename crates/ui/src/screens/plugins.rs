@@ -5,7 +5,10 @@ use gpui::{
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
 use serde_json::Value;
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use theme::ActiveTheme as _;
 
 mod view;
@@ -161,6 +164,31 @@ pub struct Data {
     pub plugins: Resource<Vec<Marketplace>>,
     pub skills: Resource<Vec<Value>>,
     pub apps: Resource<Vec<Value>>,
+    pub personal_marketplace: Option<PathBuf>,
+}
+
+impl Data {
+    pub fn can_use(&self, plugin: &Plugin, detail: Option<&Value>) -> bool {
+        if !plugin.installed() || !plugin.enabled() || plugin.disabled_reason().is_some() {
+            return false;
+        }
+        if plugin.summary["authPolicy"] != "ON_INSTALL" {
+            return true;
+        }
+        let (Some(apps), Some(detail)) = (self.apps.value(), detail) else {
+            return false;
+        };
+        array(detail, "apps").iter().all(|required| {
+            apps.iter()
+                .any(|app| app["id"] == required["id"] && app["isAccessible"] == true)
+        })
+    }
+
+    pub fn personal_path<'a>(&self, plugin: &'a Plugin) -> Option<&'a str> {
+        let expected = self.personal_marketplace.as_deref()?;
+        let actual = Path::new(plugin.marketplace_path.as_deref()?);
+        (actual == expected).then(|| plugin.local_path()).flatten()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -182,6 +210,7 @@ pub enum Action {
         enabled: bool,
     },
     Share(Arc<Plugin>),
+    CreateShare(Arc<Plugin>),
     UpdateSharedVersion(Arc<Plugin>),
     TryPlugin(Arc<Plugin>),
     EditPlugin(Arc<Plugin>),
@@ -332,5 +361,42 @@ mod tests {
         assert!(plugin.can_uninstall());
         plugin.summary["id"] = json!("code-review@openai-bundled");
         assert!(!plugin.can_uninstall());
+    }
+
+    #[test]
+    fn install_time_auth_requires_confirmed_app_connections() {
+        let mut plugin = Plugin {
+            summary: json!({"id":"example","name":"example","installed":true,
+                "enabled":true,"authPolicy":"ON_INSTALL"}),
+            marketplace_name: String::new(),
+            marketplace_path: None,
+            remote_marketplace_name: None,
+        };
+        let detail = json!({"apps":[{"id":"required-app"}]});
+        let mut data = Data::default();
+        assert!(!data.can_use(&plugin, Some(&detail)));
+        data.apps = Resource::Ready(vec![json!({"id":"required-app","isAccessible":false})]);
+        assert!(!data.can_use(&plugin, Some(&detail)));
+        data.apps = Resource::Ready(vec![json!({"id":"required-app","isAccessible":true})]);
+        assert!(data.can_use(&plugin, Some(&detail)));
+        plugin.summary["authPolicy"] = json!("ON_USE");
+        assert!(Data::default().can_use(&plugin, None));
+    }
+
+    #[test]
+    fn sharing_requires_the_personal_marketplace_not_a_matching_filename() {
+        let mut plugin = Plugin {
+            summary: json!({"id":"example","name":"example","source":{"type":"local","path":"/home/user/plugin"}}),
+            marketplace_name: "personal".into(),
+            marketplace_path: Some("/home/user/.agents/plugins/marketplace.json".into()),
+            remote_marketplace_name: None,
+        };
+        let data = Data {
+            personal_marketplace: Some("/home/user/.agents/plugins/marketplace.json".into()),
+            ..Data::default()
+        };
+        assert_eq!(data.personal_path(&plugin), Some("/home/user/plugin"));
+        plugin.marketplace_path = Some("/tmp/imported/.agents/plugins/marketplace.json".into());
+        assert_eq!(data.personal_path(&plugin), None);
     }
 }
