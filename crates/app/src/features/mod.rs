@@ -6,6 +6,8 @@
 //! 2. call `<slice>::init(cx)` in [`init`] for key bindings and app-level `cx.on_action`s;
 //! 3. call `<slice>::actions(root, cx)` in [`actions`] for `root.on_action(cx.listener(..))`.
 //!
+//! Page-family actions and activation belong in `crate::routes`, not in interaction slices.
+//!
 //! Slice modules are children of the crate root, so they reach the private fields of [`Root`].
 
 use crate::Root;

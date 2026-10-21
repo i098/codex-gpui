@@ -637,6 +637,21 @@ impl ThreadView {
         }
     }
 
+    fn speak_selection(
+        &mut self,
+        _: &crate::StartSpeaking,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(text) = self.selected_text(window, cx) {
+            if let Err(error) = crate::native_text::speak(&text, cx) {
+                eprintln!("codex-gpui: cannot speak selection: {error:#}");
+            }
+        } else {
+            cx.propagate();
+        }
+    }
+
     /// The activity texts of turn `turn_id`, as drawn under its `Worked for` disclosure: each
     /// group's summary, then its rows while the group is open.
     pub fn activity_labels(&self, turn_id: &str) -> Option<Vec<String>> {
@@ -2052,6 +2067,10 @@ impl Render for ThreadView {
                     .track_scroll(&self.scroll)
                     .track_focus(&focus)
                     .on_action(cx.listener(Self::copy_selection))
+                    .when(
+                        cfg!(target_os = "macos") && self.carets.range().is_some(),
+                        |view| view.on_action(cx.listener(Self::speak_selection)),
+                    )
                     // A press on the transcript collapses the selection to a caret, takes the
                     // focus from the editor, and starts a drag (TH-127). Buttons stop it; a
                     // control that took the focus during the press (the inline editor) keeps it.

@@ -3,23 +3,86 @@
 The page renders in `chrome-headless-shell` on the Mac (CoreText text, the Mac's system fonts,
 native 2x), driven over CDP from Linux. The server runs on Linux.
 
-Regenerate all references (each long-lived command in its own shell; `$$` prints the shell pid so
-that only this process is stopped afterwards):
+Use the existing pinned Mac browser on port 9467.
+Do not restart it or use the global page selection on the shared Linux browser.
+Each `chrome.mjs` connection creates an owned context and disposes it on close or disconnect.
+Run the full capture command through the shared lease, including navigation and screenshots.
+Set `TASK_ID`, `R1_PORT`, and `R1_CDP_PORT` in each shell.
 
-```
-# 1. Mac renderer (no window; it makes its own temporary profile)
-ssh mac 'echo PID $$; exec /tmp/cgx-mac/chrome-headless-shell-mac-arm64/chrome-headless-shell --headless --remote-debugging-port=9444 --hide-scrollbars --force-device-scale-factor=2 --num-raster-threads=1 --disable-checker-imaging --disable-partial-raster about:blank'
-# 2. Tunnels: CDP to Linux :19444, the server to the Mac's :4517
-ssh -N -o ExitOnForwardFailure=yes -L 19444:127.0.0.1:9444 -R 4517:127.0.0.1:4517 mac
-# 3. Server, then the captures (R1_OUT=<dir> writes elsewhere than refs/)
-R1_OFFLINE=1 node tools/route1/server.mjs
-node tools/route1/capture-all.mjs
-# 4. Afterwards: ssh mac 'kill <PID from step 1>'
+```sh
+# Choose unused local CDP and server ports before starting this tunnel.
+ssh -N -o ControlMaster=no -o ControlPath=none -o ExitOnForwardFailure=yes \
+  -L "$R1_CDP_PORT":127.0.0.1:9467 -R "$R1_PORT":127.0.0.1:"$R1_PORT" mac
+
+# In another shell, keep the writable oracle and logs outside the checkout.
+scratch=/sdc-disk/tmp/cgx/"$TASK_ID"
+mkdir -p "$scratch"
+cp tools/route1/oracle.json "$scratch/oracle.json"
+env -u R1_SF_FONTS R1_OFFLINE=1 R1_ORACLE="$scratch/oracle.json" \
+  MOCK_LOG="$scratch/app-server.log" node tools/route1/server.mjs
+
+# In another shell, capture with the pinned renderer and native Mac fonts.
+scratch=/sdc-disk/tmp/cgx/"$TASK_ID"
+R1_CDP="http://127.0.0.1:$R1_CDP_PORT" R1_SERVER="http://127.0.0.1:$R1_PORT" \
+  R1_OUT="$scratch/refs" tools/route1/lease.sh \
+  node tools/route1/capture.mjs home dark 1280 832
 ```
 
-Prerequisites: the extracted app at `/tmp/cgx/asar-x/webview`, `ssh mac`, and the headless shell
-in `/tmp/cgx-mac/chrome-headless-shell-mac-arm64`. `R1_CDP` overrides the CDP endpoint
-(default `http://127.0.0.1:19444`).
+The server needs the extracted 26.1007.30912 renderer at `/tmp/cgx/asar-x/webview`.
+`R1_WEBVIEW` overrides that path.
+Keep `R1_SF_FONTS` unset on the Mac capture route; even `R1_SF_FONTS=0` enables font aliases.
+Close only owned contexts and stop only owned server and tunnel PIDs.
+
+The lease uses `flock` on Linux, shared by all workers on that host.
+Its default lock is `/sdc-disk/tmp/cgx/cgx-capture-service/capture.lock`.
+`R1_CAPTURE_LOCK` overrides the path; every worker must use the same path.
+The default wait is 300 seconds, and the command limit is 180 seconds.
+Set `R1_CAPTURE_WAIT` or `R1_CAPTURE_TIMEOUT` to change these limits.
+Exit 75 means the lease wait expired; exit 124 means the capture timed out.
+The lease releases after command exit, including a timeout.
+The capture inherits the lock, so cancelling its launcher cannot unlock a capture that still runs.
+It serializes captures only, not builds.
+Linux state discovery still supports `linux/start.sh`; set `R1_ORACLE` to an owned oracle copy first.
+Set `R1_OUT` to an owned capture directory before importing `linux/lib.mjs`.
+
+## Bootstrap recordings
+
+The renderer waits for `threadReadState.open` before its initial data becomes ready.
+Returning an empty value for that call leaves the startup spinner visible.
+The oracle includes a ready snapshot from an owned, credential-free app-server.
+The preload bridge replays its session and read-marker changes locally, per page.
+No read-marker change reaches a real account.
+
+To regenerate these entries, prepare an owned Mac `CODEX_HOME` and project under `/tmp`.
+Configure a provider with `requires_openai_auth = false` and a loopback-only `base_url`.
+Create scratch threads with that app-server; do not start a model turn.
+Launch the original app in the background with that same `CODEX_HOME`, a fresh
+`CODEX_ELECTRON_USER_DATA_PATH`, and `CODEX_ELECTRON_START_IN_BACKGROUND=1`.
+Forward its CDP port to Linux, then run:
+
+```sh
+CDP_PORT=19333 R1_RPC_MODULE=./assets/rpc-a387904149fd.js \
+  node tools/route1/record-bootstrap.mjs "$scratch/oracle.json"
+```
+
+The recorder rejects account-backed and API-key identities.
+It records `startup.whenReady`, `threadReadState.open`, and the matching execution-host keys.
+Set `R1_RPC_MODULE` to the installed app's RPC entry; its default is the pinned 26.1007 entry.
+Use `R1_ORACLE` to select the writable oracle when serving these recordings.
+In offline mode, the server runs the existing recorded app-server adapter directly.
+It does not open the shared Mac profile or need an SSH wrapper.
+
+The bootstrap transport was recorded with the installed 26.1013.40934 main process.
+Its read-state response matches the retained 26.1007 service contract.
+The renderer assets, browser, fonts, references, and pixel thresholds remain pinned.
+Re-pinning the renderer from 26.1007 to 26.1013 is separate work.
+
+Run the regression checks without a browser or an account:
+
+```sh
+TMPDIR="$scratch" python3 tools/route1/test_lease.py
+node --experimental-vm-modules tools/route1/test_preload.mjs
+```
 
 For a renderer without the Mac fonts (Linux Chrome), start the server with `R1_SF_FONTS=1`:
 `@font-face` aliases then map `-apple-system`, `BlinkMacSystemFont`, `system-ui`, `SF Pro*`,
@@ -36,14 +99,15 @@ For a renderer without the Mac fonts (Linux Chrome), start the server with `R1_S
 - App-host services (Cap'n Web over the `connect-app-host` MessagePort, about 130 services) are
   hosted in the page with the bundle's own Cap'n Web library; every call goes to the server.
 - `server.mjs` plays the main process:
-  - App-server JSON-RPC for host `local` goes to a real `codex app-server` on the Mac
-    (`CODEX_HOME=/tmp/cgx-mac/home`). Only reads (`*/read`, `*/list`, `*/get*`, `*/search`,
-    `thread/resume`, ...) pass; `thread/start`, `turn/start`, archive, delete and other writes
-    get a JSON-RPC error.
+  - App-server JSON-RPC for host `local` uses `linux/mock-app-server.mjs` when `R1_OFFLINE=1`.
+    It reads `fixtures/readback.jsonl` and `fixtures/sessions`.
+    Live mode instead uses the prepared scratch app-server on the Mac.
+    Only reads (`*/read`, `*/list`, `*/get*`, `*/search`, `thread/resume`, ...) pass.
+    `thread/start`, `turn/start`, archive, delete and other writes get a JSON-RPC error.
   - Everything else (vscode:// host fetches, persisted atoms, shared objects, cloud host
-    requests, git worker, app-host service calls) comes from `oracle.json`. A miss is asked once
-    from the live scratch app over CDP (`tools/capture/cdp.mjs`) and stored, so later runs are
-    offline (`R1_OFFLINE=1`). Only reading calls reach the live app; writes answer locally.
+    requests, git worker, app-host service calls) comes from `oracle.json`.
+    A miss is asked from the live scratch app only outside offline mode.
+    Only reading calls reach that app; writes answer locally.
   - `thread/resume` is answered by the live app (recorded): its app-server holds the fixture
     threads' writer locks, so a second app-server would show "This is open in another app".
   - Background terminal (`terminal` screen): no fixture thread has a running command and starting

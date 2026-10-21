@@ -681,6 +681,25 @@ The scenario checks real branch refs, retained file contents, commit recovery, a
 It also checks an exact tag checkout followed by native reattachment, a real `heads/main` branch, and committing dirty detached work.
 Its thread data uses replay fixtures, not a live installed-account session.
 
+### Native worktree ownership and GitHub process transport
+
+`LocalHost` accepts the native `worktree-set-owner-thread` request and the Git worker's `set-worktree-owner-thread` request.
+Both persist the original `codex-thread.json` format in a linked worktree's Git directory.
+The main checkout is not a valid ownership target.
+`automation_worktree::creates_the_automation_worktree_at_the_remote_default_without_touching_the_source` checks both request names against the same fixture.
+
+`host::git_pr::execute` runs an argv vector through the connected app-server's `process/spawn` method.
+It subscribes before spawning, matches `process/exited` by handle, and returns the exit code, stdout, stderr, and capture-limit flags.
+The caller supplies an absolute working directory and a timeout in milliseconds.
+One deadline bounds the spawn reply and process exit.
+Timeout cleanup sends `process/kill` without waiting for its reply.
+Dropped requests release their pending reply slots.
+The deadline regression delays spawn and cleanup replies; neither delay extends the caller's timeout.
+The transport disables Git and GitHub prompts and does not run a local shell.
+These trusted UI commands run without a Codex sandbox.
+Connection failures and process-spawn failures remain errors.
+The original bundled app-server smoke checked concurrent handles, separate stdout and stderr, and a nonzero exit code.
+
 ## 14.7 Settings, login and onboarding
 
 A settings row reports its change to `Root`.

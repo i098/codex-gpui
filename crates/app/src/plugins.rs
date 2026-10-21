@@ -1,6 +1,12 @@
 use crate::*;
 use ui::screens::plugins::{self, Action, Data, Modal, Page, Plugin, Resource};
 
+pub(crate) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
+    root.on_action(cx.listener(|root, _: &ui::OpenPlugins, window, cx| {
+        root.open_plugins("/plugins", window, cx);
+    }))
+}
+
 impl Root {
     pub fn plugins_page(&self) -> Option<&Entity<Page>> {
         self.plugins_page.as_ref()

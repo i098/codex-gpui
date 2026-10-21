@@ -9,9 +9,12 @@ pub mod error_shell;
 mod features;
 pub mod host;
 pub mod host_settings;
+pub mod native_menus;
 pub mod oauth;
 mod plugins;
 pub mod qa;
+mod routes;
+pub use routes::Route;
 mod search;
 mod section_actions;
 mod window_shell;
@@ -29,9 +32,8 @@ use bridge::{Bridge, Event};
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, BorrowAppContext as _,
     Context, Entity, EntityInputHandler as _, FocusHandle, Focusable as _, InteractiveElement as _,
-    IntoElement, KeyBinding, KeyDownEvent, Menu, MenuItem, OsAction, ParentElement as _,
-    PathPromptOptions, Pixels, Render, SharedString, Styled as _, SystemMenuType, Task, WeakEntity,
-    Window, WindowAppearance, actions, div, px,
+    IntoElement, KeyBinding, KeyDownEvent, ParentElement as _, PathPromptOptions, Pixels, Render,
+    SharedString, Styled as _, Task, WeakEntity, Window, WindowAppearance, actions, div, px,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -79,7 +81,6 @@ actions!(
         Hide,
         HideOthers,
         ShowAll,
-        OpenDocumentation,
         FindInThread,
         FindNext,
         FindPrevious,
@@ -146,83 +147,16 @@ pub fn init(cx: &mut App) {
     );
     ui::composer::bind_keys(cx);
     features::init(cx);
+    native_menus::init(cx);
     cx.on_action(|_: &Quit, cx| window_shell::request_quit(cx));
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
-    cx.on_action(|_: &OpenDocumentation, cx| {
-        cx.open_url("https://developers.openai.com/codex/app")
-    });
 }
 
-/// Menu bar of the original (docs/inventory.md §13), limited to commands with a handler.
-pub fn menus() -> Vec<Menu> {
-    vec![
-        Menu::new("Codex").items([
-            MenuItem::action("Settings…", OpenSettings),
-            MenuItem::action("Log Out", LogOut),
-            MenuItem::separator(),
-            MenuItem::os_submenu("Services", SystemMenuType::Services),
-            MenuItem::separator(),
-            MenuItem::action("Hide Codex", Hide),
-            MenuItem::action("Hide Others", HideOthers),
-            MenuItem::action("Show All", ShowAll),
-            MenuItem::separator(),
-            MenuItem::action("Quit Codex", Quit),
-        ]),
-        Menu::new("File").items([
-            MenuItem::action("New Chat", NewChat),
-            MenuItem::action("Open Folder…", OpenFolder),
-            MenuItem::separator(),
-            MenuItem::action("Close", CloseWindow),
-        ]),
-        Menu::new("Edit").items([
-            MenuItem::os_action("Undo", Undo, OsAction::Undo),
-            MenuItem::os_action("Redo", Redo, OsAction::Redo),
-            MenuItem::separator(),
-            MenuItem::os_action("Cut", Cut, OsAction::Cut),
-            MenuItem::os_action("Copy", Copy, OsAction::Copy),
-            MenuItem::os_action("Paste", Paste, OsAction::Paste),
-            MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
-            MenuItem::separator(),
-            MenuItem::action("Find", FindInThread),
-            MenuItem::action("Find Next", FindNext),
-            MenuItem::action("Find Previous", FindPrevious),
-        ]),
-        Menu::new("View").items([
-            MenuItem::action("Toggle Sidebar", ToggleSidebar),
-            MenuItem::action("Toggle Changes Panel", ToggleChangesPanel),
-            MenuItem::separator(),
-            MenuItem::action("Previous Chat", PreviousChat),
-            MenuItem::action("Next Chat", NextChat),
-            MenuItem::action("Back", GoBack),
-            MenuItem::action("Forward", GoForward),
-        ]),
-        Menu::new("Window").items([
-            MenuItem::action("Minimize", Minimize),
-            MenuItem::action("Zoom", Zoom),
-        ]),
-        Menu::new("Help").items([
-            MenuItem::action("Documentation", OpenDocumentation),
-            MenuItem::action("Keyboard Shortcuts", ShowKeyboardShortcuts),
-        ]),
-    ]
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub enum Route {
-    #[default]
-    Home,
-    Thread(String),
-    Settings,
-    /// Rail `Scheduled` (`/scheduled`): the Automations page.
-    Scheduled,
-    /// A sidebar task row (`/scheduled?automationId=<id>`): the task's thread.
-    Automation(String),
-    /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
-    Mobile,
-    Plugins(String),
-    Archive,
+/// Builds the application menu through the native menu family.
+pub fn menus() -> Vec<gpui::Menu> {
+    native_menus::menus()
 }
 
 /// The thread route's side panel tab.
@@ -2103,226 +2037,6 @@ impl Root {
         }
     }
 
-    fn navigate(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
-        self.navigate_with_sidebar(route, None, window, cx);
-    }
-
-    fn navigate_with_sidebar(
-        &mut self,
-        route: Route,
-        automation: Option<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.clear_route_error(cx);
-        if route != self.state.route || automation != self.sidebar_automation {
-            self.remember_thread_settings(cx);
-            self.back.push((
-                std::mem::replace(&mut self.state.route, route),
-                std::mem::replace(&mut self.sidebar_automation, automation),
-            ));
-            self.navigation_epoch += 1;
-            self.forward.clear();
-            self.sync(window, cx);
-        }
-        self.select_route(cx);
-    }
-
-    fn step(&mut self, back: bool, window: &mut Window, cx: &mut Context<Self>) {
-        self.remember_thread_settings(cx);
-        let (from, to) = if back {
-            (&mut self.back, &mut self.forward)
-        } else {
-            (&mut self.forward, &mut self.back)
-        };
-        if let Some((route, automation)) = from.pop() {
-            to.push((
-                std::mem::replace(&mut self.state.route, route),
-                std::mem::replace(&mut self.sidebar_automation, automation),
-            ));
-            self.navigation_epoch += 1;
-            self.select_route(cx);
-            self.sync(window, cx);
-        }
-    }
-
-    fn select_route(&self, cx: &mut Context<Self>) {
-        let id = match &self.state.route {
-            Route::Thread(id) => Some(id.as_str()),
-            _ => None,
-        };
-        self.sidebar.update(cx, |s, cx| s.select(id, cx));
-    }
-
-    /// Shows the route (loading its thread if needed), pushes history into the shell and
-    /// persists the state.
-    fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.flush_settings(cx);
-        self.settings_page = None;
-        self.suggestion_load = None;
-        self.oauth.leave_page();
-        let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
-        self.archive_page = None;
-        self.mobile_page = None;
-        self.plugins_page = None;
-        self.page = match self.state.route.clone() {
-            Route::Plugins(route) => Some(self.plugins_shell(route, window, cx)),
-            Route::Settings => {
-                self.load_computer_use(cx);
-                // The Appearance page shows the theme the app keeps.
-                let mut config = self.config.clone();
-                config["host"] = cx
-                    .try_global::<host_settings::Settings>()
-                    .map(|settings| Value::Object(settings.read_all().clone()))
-                    .unwrap_or(Value::Null);
-                let (store, key) = settings::THEME.split_once('.').expect("store.key");
-                config[store][key] = json!(self.state.theme);
-                config["host"]["confirm-before-close"] = json!(self.state.confirm_before_close);
-                let section = self.settings_section.take();
-                let (shell, page) = settings::shell(&config, &self.skills, section, cx);
-                self.settings_page = Some(page.clone());
-                cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
-                    this.write_setting(e, cx);
-                    if e.path.starts_with("host.") && e.path != settings::THEME {
-                        let mut values = cx
-                            .try_global::<host_settings::Settings>()
-                            .map(|settings| Value::Object(settings.read_all().clone()))
-                            .unwrap_or(Value::Null);
-                        values["appearance-theme"] = json!(this.state.theme);
-                        values["confirm-before-close"] = json!(this.state.confirm_before_close);
-                        page.update(cx, |page, cx| page.refresh_host(values, cx));
-                    }
-                })
-                .detach();
-                Some(shell)
-            }
-            Route::Scheduled => {
-                let tasks = self.tasks();
-                self.load_automations(cx);
-                let (shell, sidebar, page) = automations::shell(tasks, None, utc_offset(), cx);
-                self.scheduled = Some(sidebar);
-                self.sync_starting(cx);
-                self.suggestions = page;
-                Some(shell)
-            }
-            Route::Automation(id) => {
-                // The list is the one the Scheduled page read; a cold start reads it now.
-                if self.automations.is_none() && self.automation_load.is_none() {
-                    self.load_automations(cx);
-                }
-                let tasks = self.tasks();
-                let selected = tasks.iter().find(|t| t.id == id).cloned().map(|task| {
-                    let composer: AnyView = cx.new(|cx| Composer::automation(window, cx)).into();
-                    (task, composer)
-                });
-                let (shell, sidebar, page) = automations::shell(tasks, selected, utc_offset(), cx);
-                self.scheduled = Some(sidebar);
-                self.sync_starting(cx);
-                self.suggestions = page;
-                Some(shell)
-            }
-            Route::Archive => {
-                let (shell, page) = ui::screens::sidebar::archive_shell(cx);
-                self.archive_page = Some(page);
-                Some(shell)
-            }
-            Route::Thread(_) if self.sidebar_automation.is_some() => {
-                let tasks = self.tasks();
-                let task = tasks
-                    .iter()
-                    .find(|t| Some(&t.id) == self.sidebar_automation.as_ref())
-                    .cloned();
-                let selected = task.map(|task| (task, cx.new(|_| ui::EmptyMain).into()));
-                let (shell, sidebar, _) = automations::shell(tasks, selected, utc_offset(), cx);
-                self.scheduled = Some(sidebar);
-                self.sync_starting(cx);
-                Some(shell)
-            }
-            Route::Mobile => {
-                let (shell, page) = mobile::shell(cx);
-                self.mobile_page = Some(page);
-                Some(shell)
-            }
-            Route::Home | Route::Thread(_) => None,
-        };
-        if let Some(sidebar) = &self.scheduled {
-            for id in self.automation_updates.keys() {
-                sidebar.update(cx, |sidebar, cx| sidebar.set_pending(id, true, cx));
-            }
-        }
-        if self.scheduled_route() {
-            self.load_suggestions(cx);
-        }
-        if let Some(page) = &self.page {
-            page.update(cx, |shell, _| {
-                shell.can_go_back = can_back;
-                shell.can_go_forward = can_forward;
-            });
-        }
-        let thread_id = match &self.state.route {
-            Route::Thread(id) => Some(id.clone()),
-            _ => None,
-        };
-        let view = self
-            .thread
-            .clone()
-            .filter(|v| Some(v.read(cx).id()) == thread_id.as_deref());
-        let main: AnyView = match (&thread_id, &view) {
-            (Some(_), Some(view)) => view.clone().into(),
-            (Some(id), None) => {
-                self.load_thread(id.clone(), window, cx);
-                cx.new(|_| ui::EmptyMain).into()
-            }
-            (None, _) => self.home.clone().into(),
-        };
-        let shell = if self.sidebar_automation.is_some() {
-            self.page.clone().unwrap_or_else(|| self.shell.clone())
-        } else {
-            self.shell.clone()
-        };
-        window.focus(&self.route_focus(cx), cx);
-        let home = matches!(self.state.route, Route::Home | Route::Thread(_));
-        shell.update(cx, |shell, cx| {
-            shell.selected_rail = if self.sidebar_automation.is_some() {
-                Some("scheduled")
-            } else {
-                home.then_some("home")
-            };
-            shell.can_go_back = can_back;
-            shell.can_go_forward = can_forward;
-            // Thread routes: `with_side_panel` below sets its own.
-            shell.new_tab = true;
-            shell.main_composited = false;
-            shell.set_main(main, cx);
-        });
-        self.split = view.map(|view| {
-            let panel = self.side_tabs_view(&view, cx);
-            with_side_tabs(shell.clone(), view, panel, cx)
-        });
-        if let Some(id) = thread_id
-            && self
-                .thread
-                .as_ref()
-                .is_some_and(|view| view.read(cx).id() == id)
-        {
-            self.list_queue(id, cx);
-        }
-        self.save(window, cx);
-        cx.notify();
-    }
-
-    /// Keys need a focused element in the frame: the route's composer, else the root (the
-    /// route's own shell, a loading thread, the sign-in view, which take no keys of their own).
-    fn route_focus(&self, cx: &App) -> FocusHandle {
-        let open = |id: &str| self.thread.as_ref().is_some_and(|v| v.read(cx).id() == id);
-        match &self.state.route {
-            _ if self.login.is_some() => self.focus.clone(),
-            Route::Thread(id) if open(id) => self.thread_composer.focus_handle(cx),
-            _ if self.page.is_some() => self.focus.clone(),
-            Route::Thread(_) => self.focus.clone(),
-            _ => self.home.read(cx).composer.focus_handle(cx),
-        }
-    }
 
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
@@ -5432,19 +5146,22 @@ impl Render for Root {
             return page;
         }
         if let Some(login) = &self.login {
-            return div()
-                .size_full()
-                .relative()
-                .font_family(ui::SANS)
-                .track_focus(&self.focus)
-                .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
-                    this.close_window(window, cx);
-                }))
-                .on_action(|_: &Minimize, window, _| window.minimize_window())
-                .on_action(|_: &Zoom, window, _| window.zoom_window())
-                .child(login.clone())
-                .children(self.dialog.clone())
-                .into_any_element();
+            return native_menus::actions(
+                div()
+                    .size_full()
+                    .relative()
+                    .font_family(ui::SANS)
+                    .track_focus(&self.focus)
+                    .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
+                        this.close_window(window, cx);
+                    }))
+                    .on_action(|_: &Minimize, window, _| window.minimize_window())
+                    .on_action(|_: &Zoom, window, _| window.zoom_window())
+                    .child(login.clone())
+                    .children(self.dialog.clone()),
+                cx,
+            )
+            .into_any_element();
         }
         let content: AnyElement = match (&self.page, &self.split) {
             (_, Some(split)) if self.sidebar_automation.is_some() => {
@@ -5468,166 +5185,9 @@ impl Render for Root {
             .capture_action(cx.listener(|this, _: &Undo, window, cx| {
                 this.undo_queued(window, cx);
             }))
-            .on_action(cx.listener(|this, _: &FindInThread, window, cx| {
-                if matches!(this.state.route, Route::Thread(_)) {
-                    if this.side == Some(SidePanel::Changes)
-                        && let Some(panel) = &this.diff
-                        && panel.update(cx, |panel, cx| panel.open_find(window, cx))
-                    {
-                        return;
-                    }
-                    if let Some(thread) = &this.thread {
-                        thread.update(cx, |thread, cx| thread.open_find(window, cx));
-                    }
-                }
-            }))
-            .on_action(cx.listener(|this, _: &FindNext, _, cx| {
-                if let Some(thread) = &this.thread {
-                    thread.update(cx, |thread, cx| thread.next_find(false, cx));
-                }
-            }))
-            .on_action(cx.listener(|this, _: &FindPrevious, _, cx| {
-                if let Some(thread) = &this.thread {
-                    thread.update(cx, |thread, cx| thread.next_find(true, cx));
-                }
-            }))
-            .on_action(cx.listener(|this, _: &NewChat, window, cx| this.new_chat(window, cx)))
-            .on_action(cx.listener(|this, _: &OpenFolder, window, cx| this.open_folder(window, cx)))
-            .on_action(cx.listener(|this, _: &ui::composer::Stop, _, cx| this.stop(cx)))
-            .on_action(
-                cx.listener(|this, _: &ui::composer::RequestFullAccess, window, cx| {
-                    this.open_dialog(DialogKind::FullAccess, window, cx);
-                }),
-            )
-            .on_action(cx.listener(|this, _: &ui::OpenPlugins, window, cx| {
-                this.open_plugins("/plugins", window, cx);
-            }))
-            .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
-                this.navigate(Route::Settings, window, cx)
-            }))
-            .on_action(cx.listener(|this, _: &LogOut, window, cx| {
-                if !this.logout_pending {
-                    let email = this.account_email.clone();
-                    let dialog = cx.new(|cx| Dialog::logout(email, cx));
-                    this.show_dialog(dialog, window, cx);
-                }
-            }))
-            .on_action(cx.listener(|this, _: &OpenScheduled, window, cx| {
-                this.navigate(Route::Scheduled, window, cx)
-            }))
-            .on_action(
-                cx.listener(|this, a: &automations::OpenAutomation, window, cx| {
-                    this.navigate(Route::Automation(a.id.clone()), window, cx)
-                }),
-            )
-            .on_action(
-                cx.listener(|this, a: &automations::RunAutomationNow, window, cx| {
-                    this.run_automation_now(a.id.clone(), window, cx)
-                }),
-            )
-            .on_action(
-                cx.listener(|this, action: &automations::ToggleAutomation, _, cx| {
-                    this.toggle_automation(&action.id, cx);
-                }),
-            )
-            .on_action(cx.listener(|this, _: &automations::NewTask, window, cx| {
-                this.open_dialog(DialogKind::ScheduleTask, window, cx)
-            }))
-            .on_action(
-                cx.listener(|this, _: &automations::StartSuggestedTask, _, cx| {
-                    this.start_suggested_task(cx)
-                }),
-            )
-            .on_action(cx.listener(|this, _: &OpenMobileSetup, window, cx| {
-                this.navigate(Route::Mobile, window, cx)
-            }))
-            .on_action(
-                cx.listener(|this, _: &mobile::GetStarted, _, cx| this.start_mobile_setup(cx)),
-            )
-            .on_action(cx.listener(|this, _: &ToggleChangesPanel, window, cx| {
-                if this.side == Some(SidePanel::Changes) {
-                    this.close_side(SidePanel::Changes, window, cx)
-                } else {
-                    this.set_side(SidePanel::Changes, window, cx)
-                }
-            }))
-            .on_action(cx.listener(|this, _: &OpenChangesPanel, window, cx| {
-                this.set_side(SidePanel::Changes, window, cx)
-            }))
-            .on_action(cx.listener(Self::open_file))
-            .on_action(cx.listener(|this, _: &OpenBackgroundTerminal, window, cx| {
-                this.set_side(SidePanel::Terminal, window, cx)
-            }))
-            .on_action(cx.listener(|this, action: &OpenTerminalItem, window, cx| {
-                if let Some(thread) = &this.thread {
-                    thread.update(cx, |thread, cx| thread.select_terminal(Some(&action.0), cx));
-                }
-                if this.side == Some(SidePanel::Terminal) {
-                    this.sync(window, cx);
-                } else {
-                    this.set_side(SidePanel::Terminal, window, cx);
-                }
-            }))
-            .on_action(cx.listener(|this, _: &StopBackgroundTerminals, _, cx| {
-                this.stop_background_terminals(cx);
-            }))
-            .on_action(cx.listener(|this, a: &ActivateSideTab, window, cx| {
-                if let Some(side) = this.tabs.get(a.0).copied() {
-                    this.set_side(side, window, cx)
-                }
-            }))
-            .on_action(cx.listener(|this, a: &CloseSideTab, window, cx| {
-                if let Some(side) = this.tabs.get(a.0).copied() {
-                    this.close_side(side, window, cx)
-                }
-            }))
-            .on_action(cx.listener(|this, _: &OpenCommandMenu, window, cx| {
-                this.open_command_menu(window, cx)
-            }))
-            .on_action(cx.listener(|this, a: &SetTheme, window, cx| {
-                let theme = serde_json::from_value(json!(a.0)).unwrap_or_default();
-                this.set_theme(theme, window, cx)
-            }))
+
             .on_action(cx.listener(|this, _: &GoBack, window, cx| this.step(true, window, cx)))
             .on_action(cx.listener(|this, _: &GoForward, window, cx| this.step(false, window, cx)))
-            .on_action(
-                cx.listener(|this, _: &PreviousChat, window, cx| this.step_chat(-1, window, cx)),
-            )
-            .on_action(cx.listener(|this, _: &NextChat, window, cx| this.step_chat(1, window, cx)))
-            .on_action(cx.listener(|this, a: &GoToRecentChat, window, cx| {
-                this.go_to_recent_chat(a.0, window, cx)
-            }))
-            .on_action(cx.listener(|this, _: &ArchiveChat, window, cx| {
-                if let Route::Thread(id) = this.state.route.clone() {
-                    this.archive(id, window, cx)
-                }
-            }))
-            .on_action(cx.listener(|this, a: &ArchiveThread, window, cx| {
-                this.archive(a.0.clone(), window, cx)
-            }))
-            .on_action(cx.listener(|this, a: &PinThread, window, cx| {
-                this.set_pinned(a.0.clone(), a.1, window, cx)
-            }))
-            .on_action(cx.listener(|this, a: &RenameThread, window, cx| {
-                this.open_rename(a.0.clone(), false, window, cx)
-            }))
-            .on_action(cx.listener(|this, a: &ForkThread, window, cx| this.fork(&a.0, window, cx)))
-            .on_action(cx.listener(|this, a: &SelectProject, window, cx| {
-                this.select_project(a.0.clone(), window, cx)
-            }))
-            .on_action(cx.listener(|this, edit: &EditMessage, window, cx| {
-                this.edit_message(edit.clone(), window, cx)
-            }))
-            .on_action(
-                cx.listener(|this, a: &RevertTurn, window, cx| {
-                    this.revert(a.0.clone(), window, cx)
-                }),
-            )
-            .on_action(
-                cx.listener(|this, a: &GoToChat, window, cx| {
-                    this.go_to_chat(Some(a.0), window, cx)
-                }),
-            )
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
                 this.shell.update(cx, |shell, cx| shell.toggle_sidebar(cx))
             }))
@@ -5654,11 +5214,12 @@ impl Render for Root {
             .child(self.toaster.clone())
             .children(self.dialog.clone())
             .children(self.connection.feedback.clone());
+        let root = routes::actions(root, cx);
+        let root = features::actions(root, cx);
+        let root = section_actions::actions(root, cx);
+        let root = native_menus::actions(root, cx);
         error_shell::actions(
-            window_shell::actions(
-                section_actions::actions(features::actions(root, cx), cx),
-                cx,
-            ),
+            window_shell::actions(root, cx),
             cx,
         )
         .into_any_element()

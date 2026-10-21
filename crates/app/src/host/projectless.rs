@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(super) struct Workspace {
+pub struct Workspace {
     pub cwd: String,
     output: String,
     pub root: String,
