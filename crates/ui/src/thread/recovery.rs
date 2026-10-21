@@ -193,18 +193,80 @@ impl Render for History {
                         ),
                 )
             })
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .bottom(px(126.))
-                    .mx_auto()
-                    .w_full()
-                    .max_w(super::CONTENT_MAX_WIDTH)
-                    .px(px(16.))
-                    .child(notices),
-            )
+            .when(self.error.is_some(), |history| {
+                history.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .child(
+                            gpui::canvas(
+                                move |bounds, window, _| {
+                                    super::gradient_image(
+                                        &[(t.surface, 0.), (gpui::transparent_black(), 1.)],
+                                        t.surface,
+                                        (
+                                            f32::from(bounds.size.width),
+                                            f32::from(bounds.size.height),
+                                        ),
+                                        (0., f32::from(bounds.top()) - 44.),
+                                        true,
+                                        window.scale_factor(),
+                                    )
+                                },
+                                |bounds, image, window, _| {
+                                    window
+                                        .paint_image(
+                                            bounds,
+                                            bounds,
+                                            gpui::Corners::default(),
+                                            image,
+                                            0,
+                                            false,
+                                        )
+                                        .ok();
+                                },
+                            )
+                            .absolute()
+                            .left_0()
+                            .right_0()
+                            .top(px(-27.))
+                            .h(px(32.))
+                            .top_layer(),
+                        )
+                        .child(
+                            div()
+                                .relative()
+                                .w_full()
+                                .pt(px(5.))
+                                .pb(px(126.))
+                                .layer()
+                                .cc_tiles()
+                                .window_space_recording()
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .top(px(5.))
+                                        .left_0()
+                                        .right_0()
+                                        .bottom_0()
+                                        .child(shapes::decoration(shapes::Decoration {
+                                            fill: Some(t.surface),
+                                            ..Default::default()
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .mx_auto()
+                                        .w_full()
+                                        .max_w(super::CONTENT_MAX_WIDTH)
+                                        .px(px(16.))
+                                        .child(notices),
+                                ),
+                        ),
+                )
+            })
     }
 }
 
