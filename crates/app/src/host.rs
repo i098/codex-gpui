@@ -13,7 +13,8 @@
 //! (`getAuthStatus` with `includeToken`) plus the account route from `account/read`, retries once
 //! after a 401 with a refreshed token, and answers the original wire shapes, including errors.
 //! The token never reaches logs, errors, or `Debug` output.
-//! Local fetches support `list-automations`, `create-automation`, `automation-update`, `automation-run-now`, `inbox-items`, the `git-*` endpoints, `create-worktree`, `set-worktree-owner-thread`, and `paths-exist`; other endpoints return errors.
+//! Local fetches support automation storage, inbox items, Git operations, and read-only `gh-*` pull-request endpoints.
+//! Worktree ownership, file opening, and path checks also run locally. Other endpoints return errors.
 //! `Root` loads the automation list off the UI thread when the Scheduled route opens.
 //! Consumers read the result through `Root::automations`; this service slice does not change the static screens.
 //!
@@ -45,6 +46,7 @@ pub mod computer_use_native;
 mod git;
 pub mod git_pr;
 mod projectless;
+mod pull_requests;
 pub(crate) mod run_now;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1113,6 +1115,8 @@ impl Host for LocalHost {
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-init-repo"
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
             | "git-checkout" => git::fetch(endpoint, &params)?,
+            "gh-cli-status" | "gh-current-user" | "gh-pr-search" | "gh-pr-detail"
+            | "gh-pr-media" => self.pull_requests(endpoint, &params)?,
             "create-worktree" => self.create_worktree(&params)?,
             "set-worktree-owner-thread" | "worktree-set-owner-thread" => {
                 let worktree = params["worktree"].as_str().context("missing worktree")?;
