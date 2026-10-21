@@ -7,6 +7,7 @@ pub mod computer_use_requests;
 mod features;
 pub mod host;
 pub mod host_settings;
+pub mod plan_summary;
 pub mod qa;
 mod search;
 mod section_actions;
@@ -209,6 +210,7 @@ pub enum Route {
     #[default]
     Home,
     Thread(String),
+    PlanSummary(ui::screens::plan_summary::Plan),
     Settings,
     /// Rail `Scheduled` (`/scheduled`): the Automations page.
     Scheduled,
@@ -228,6 +230,7 @@ pub enum SidePanel {
     Terminal,
     /// A file link in an answer: the file viewer ([`Root::file`]).
     File,
+    Plan,
 }
 
 /// Settings ▸ Appearance ▸ Theme (the original's `appearanceTheme`): follow the system, or
@@ -406,6 +409,7 @@ pub struct Root {
     diff: Option<Entity<DiffPanel>>,
     /// The file viewer of [`SidePanel::File`]; cleared with the thread.
     file: Option<Entity<FileView>>,
+    plans: plan_summary::State,
     /// The open thread in the main shell, with its side panel if any.
     split: Option<Entity<SplitScreen>>,
     /// Side panel tabs of the thread route in opening order, and the selected one (always in
@@ -698,6 +702,7 @@ impl Root {
             thread: None,
             diff: None,
             file: None,
+            plans: plan_summary::State::default(),
             split: None,
             tabs: Vec::new(),
             side: None,
@@ -2139,6 +2144,7 @@ impl Root {
         self.flush_settings(cx);
         self.settings_page = None;
         self.suggestion_load = None;
+        self.sync_plan_route(cx);
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
         self.mobile_page = None;
@@ -2219,7 +2225,7 @@ impl Root {
                 self.mobile_page = Some(page);
                 Some(shell)
             }
-            Route::Home | Route::Thread(_) => None,
+            Route::Home | Route::Thread(_) | Route::PlanSummary(_) => None,
         };
         if let Some(sidebar) = &self.scheduled {
             for id in self.automation_updates.keys() {
@@ -2275,6 +2281,7 @@ impl Root {
             let panel = self.side_tabs_view(&view, cx);
             with_side_tabs(shell.clone(), view, panel, cx)
         });
+        self.sync_plan_preview(cx);
         if let Some(id) = thread_id
             && self
                 .thread
@@ -2360,6 +2367,7 @@ impl Root {
                 let file = file?.read(cx);
                 Some((file.tab_icon(), file.name()))
             }
+            SidePanel::Plan => Some(("plan-lightbulb", "Plan".into())),
         }
     }
 
@@ -2371,6 +2379,9 @@ impl Root {
         cx: &mut Context<Self>,
     ) -> Option<(AnyView, Vec<Tab>, usize)> {
         let file = self.file.clone();
+        if self.plans.panel.is_none() {
+            self.tabs.retain(|side| *side != SidePanel::Plan);
+        }
         self.tabs
             .retain(|side| Self::side_tab(*side, view, file.as_ref(), cx).is_some());
         let tabs: Vec<Tab> = self
@@ -2388,6 +2399,7 @@ impl Root {
             SidePanel::Changes => self.diff.as_ref()?.clone().into(),
             SidePanel::Terminal => cx.new(|cx| Xterm::new(view.clone(), cx)).into(),
             SidePanel::File => self.file.as_ref()?.clone().into(),
+            SidePanel::Plan => self.plans.panel.as_ref()?.clone().into(),
         };
         Some((view, tabs, active))
     }
@@ -3047,6 +3059,7 @@ impl Root {
         .detach();
         self.diff = Some(diff);
         self.file = None;
+        self.plans.panel = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         view.update(cx, |view, cx| view.set_git_phase(self.git_busy, cx));
         cx.subscribe_in(
@@ -5385,6 +5398,15 @@ impl Render for Root {
                 .children(self.dialog.clone())
                 .into_any_element();
         }
+        if let Some(page) = &self.plans.page {
+            return div()
+                .size_full()
+                .child(page.clone())
+                .on_action(
+                    cx.listener(|this, _: &CloseWindow, window, cx| this.close_window(window, cx)),
+                )
+                .into_any_element();
+        }
         let content: AnyElement = match (&self.page, &self.split) {
             (_, Some(split)) if self.sidebar_automation.is_some() => {
                 split.clone().into_any_element()
@@ -5486,6 +5508,8 @@ impl Render for Root {
                 this.set_side(SidePanel::Changes, window, cx)
             }))
             .on_action(cx.listener(Self::open_file))
+            .on_action(cx.listener(Self::open_plan))
+            .on_action(cx.listener(Self::download_plan))
             .on_action(cx.listener(|this, _: &OpenBackgroundTerminal, window, cx| {
                 this.set_side(SidePanel::Terminal, window, cx)
             }))

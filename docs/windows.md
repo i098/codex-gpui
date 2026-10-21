@@ -56,6 +56,24 @@ A dock reopen displays the retained primary before creating another one.
 The manager stores primary geometry through the existing host settings store.
 Page and auxiliary windows do not overwrite that geometry.
 
+## Plan summary
+
+`Route::PlanSummary(Plan)` renders the `/plan-summary` content without the main navigation shell.
+Missing conversation, host, or content fields show the original loading card.
+The original host ignores `show-plan-summary`, so this change adds no menu entry or automatic window launch.
+
+Thread plan cards use `ThreadItem::Plan` and `item/plan/delta`.
+The last work item shows `Writing plan` while its turn runs.
+A later work item or a finished turn changes the title to `Plan`.
+The completed card opens and closes the shared side panel.
+Download writes the unchanged markdown through the native save dialog with the suggested name `PLAN.md`.
+The standalone card supports collapse and expansion.
+
+Run `cargo test -p app --test plan_summary -- --test-threads=1`.
+These tests check protocol scoping, completion timing, card controls, file bytes, and cancellation.
+Synthetic regression data does not prove original pixel parity.
+The original capture gate remains required before release.
+
 ## Verification
 
 Run the geometry regression with `cargo test -p app --lib windows::tests`.

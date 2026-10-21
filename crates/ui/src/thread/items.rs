@@ -269,6 +269,7 @@ fn diff_counts<'a>(changes: impl Iterator<Item = &'a FileUpdateChange> + Clone) 
 pub(super) enum Activity<'a> {
     /// An agent message, by its item id and text.
     Markdown(&'a str, &'a str),
+    Plan(&'a str, &'a str),
     /// A command still running, by its command line.
     Running(&'a str),
     Mcp(&'a ThreadItem),
@@ -322,6 +323,7 @@ impl Activity<'_> {
     pub(super) fn labels(&self, open: &HashSet<String>) -> Vec<String> {
         match self {
             Activity::Markdown(_, text) => vec![(*text).to_owned()],
+            Activity::Plan(_, text) => vec![(*text).to_owned()],
             Activity::Running(command) => vec![(*command).to_owned()],
             Activity::Mcp(item) => vec![mcp_label(item)],
             Activity::Group {
@@ -358,6 +360,10 @@ pub(super) fn activities<'a>(items: &'a [ThreadItem], running: bool) -> Vec<Acti
             }
             ThreadItem::CommandExecution { .. } | ThreadItem::FileChange { .. } => {
                 group.push(item);
+            }
+            ThreadItem::Plan { id, text } => {
+                flush(&mut out, &mut group);
+                out.push(Activity::Plan(id, text));
             }
             ThreadItem::AgentMessage { id, text } if !text.is_empty() => {
                 flush(&mut out, &mut group);
@@ -561,6 +567,18 @@ pub(super) fn activity(
                 let segments = fades.get(id).map(Vec::as_slice).unwrap_or_default();
                 markdown(text, window, t, segments)
             }
+            Activity::Plan(id, text) => crate::screens::plan_summary::preview(
+                crate::screens::plan_summary::Plan {
+                    conversation_id: view.thread_id.clone(),
+                    host_id: "local".into(),
+                    item_id: id.to_owned(),
+                    content: text.to_owned(),
+                },
+                view.plan_completed(id),
+                view.open_plan.as_deref() == Some(id),
+                window,
+                t,
+            ),
             Activity::Running(command) => {
                 row("thread-terminal", plain(label(command.to_owned(), text60)))
             }

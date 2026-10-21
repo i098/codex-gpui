@@ -137,6 +137,7 @@ pub struct ThreadView {
     /// whose rows show, by the id of their first item.
     expanded: HashSet<String>,
     pending_question: Option<String>,
+    open_plan: Option<String>,
     scroll: ScrollHandle,
     /// The turns as last laid out, to stand in for the ones far off screen.
     laid_out: Rc<RefCell<LaidOut>>,
@@ -585,6 +586,7 @@ impl ThreadView {
             mcp_images: RefCell::default(),
             expanded: HashSet::new(),
             pending_question: None,
+            open_plan: None,
             scroll: ScrollHandle::new(),
             laid_out: Rc::default(),
             focus: None,
@@ -606,6 +608,29 @@ impl ThreadView {
 
     pub fn turns(&self) -> &[Turn] {
         &self.turns
+    }
+
+    pub fn set_open_plan(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+        self.open_plan = id;
+        cx.notify();
+    }
+
+    pub fn plan_completed(&self, id: &str) -> bool {
+        self.turns
+            .iter()
+            .find(|turn| {
+                turn.items.iter().any(
+                    |item| matches!(item, ThreadItem::Plan { id: item_id, .. } if item_id == id),
+                )
+            })
+            .is_some_and(|turn| {
+                turn.status != TurnStatus::InProgress
+                    || turn
+                        .items
+                        .iter()
+                        .rfind(|item| !matches!(item, ThreadItem::UserMessage { .. }))
+                        .is_none_or(|item| item_id(item) != Some(id))
+            })
     }
 
     /// Projects the visible question's turn from the root request queue.
@@ -1485,6 +1510,20 @@ impl ThreadView {
                 };
                 progress.push(params.clone());
             }
+            "item/plan/delta" => {
+                let Ok(n) = serde_json::from_value::<AgentMessageDeltaNotification>(params.clone())
+                else {
+                    return;
+                };
+                if let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == n.turn_id)
+                    && let Some(ThreadItem::Plan { text, .. }) = turn
+                        .items
+                        .iter_mut()
+                        .find(|item| item_id(item) == Some(n.item_id.as_str()))
+                {
+                    text.push_str(&n.delta);
+                }
+            }
             "item/agentMessage/delta" | "item/commandExecution/outputDelta" => {
                 let Ok(n) = serde_json::from_value::<AgentMessageDeltaNotification>(params.clone())
                 else {
@@ -2272,7 +2311,7 @@ pub fn skia_gradient(
 
 const MAX_GRADIENT_IMAGES: usize = 16;
 
-fn gradient_image(
+pub(crate) fn gradient_image(
     stops: &[(Hsla, f32)],
     under: Hsla,
     size: (f32, f32),
@@ -2571,4 +2610,8 @@ mod tests {
             "python3 -c 'print(2)'"
         );
     }
+}
+
+pub(crate) fn render_markdown(source: &str, window: &Window, theme: &Theme) -> Div {
+    markdown(source, window, theme, &[])
 }
