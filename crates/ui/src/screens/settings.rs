@@ -33,6 +33,9 @@ use theme::{ActiveTheme as _, Theme};
 #[path = "computer_use.rs"]
 pub mod computer_use;
 
+#[path = "settings_integrations.rs"]
+pub mod integrations;
+
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
@@ -1142,6 +1145,9 @@ impl Render for SettingsPane {
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
         }
+        if matches!(section, "Plugins" | "Hooks") {
+            return integrations::render(section, window, cx);
+        }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
             "General" => self.general(&t, window, cx),
@@ -1345,7 +1351,12 @@ fn description(s: &'static str, t: &Theme) -> Div {
 /// paints the track and thumb into one `saveLayerAlpha(153)`.
 /// Toggling moves the thumb 2 px -> 14 px and fades the track colour, both 150 ms `ease-out`
 /// (`refs/interactions/ms6a.json`); the tracks stay active under reduced motion.
-pub(super) fn switch(id: &'static str, on: bool, disabled: bool, t: &Theme) -> Stateful<Div> {
+pub(super) fn switch(
+    id: impl Into<gpui::ElementId>,
+    on: bool,
+    disabled: bool,
+    t: &Theme,
+) -> Stateful<Div> {
     let (track_off, track_on) = (t.switch_track, t.switch_track_checked);
     let thumb = shapes::Decoration {
         radius: Corners::all(px(9999.)),
