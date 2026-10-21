@@ -290,3 +290,208 @@ fn github_file_links_use_the_original_branch_and_path_rules() -> Result<()> {
     ensure!(json_body(&host.fetch(&request)?)?["url"].is_null());
     Ok(())
 }
+
+#[test]
+fn whitespace_filtered_review_still_exports_the_complete_patch() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    common::install_panic_hook();
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    git(root, &["init", "-q"])?;
+    git(root, &["config", "user.name", "Patch proof"])?;
+    git(root, &["config", "user.email", "proof@example.invalid"])?;
+    fs::write(root.join("spacing.txt"), "value = 1\n")?;
+    fs::write(root.join("value.txt"), "value = 1\n")?;
+    fs::write(root.join("bytes.bin"), [0, 1, 2, 3])?;
+    git(root, &["add", "."])?;
+    git(root, &["commit", "-qm", "base"])?;
+    fs::write(root.join("spacing.txt"), "value  =  1\n")?;
+    git(root, &["add", "spacing.txt"])?;
+    fs::write(root.join("value.txt"), "value = 2\n")?;
+    fs::write(root.join("bytes.bin"), [0, 9, 8, 7])?;
+    fs::write(root.join("new file.txt"), "new content\n")?;
+    let host = LocalHost::new(root);
+    let review = json_body(&host.fetch(&Request::post(
+        "git-changes",
+        Some(json!({
+            "cwd":root, "reviewSource":"uncommitted", "hideWhitespace":true,
+        })),
+    ))?)?;
+    ensure!(
+        review["staged"]
+            .as_array()
+            .context("staged files")?
+            .is_empty()
+    );
+    let names = review["review"]
+        .as_array()
+        .context("review files")?
+        .iter()
+        .map(|file| {
+            Path::new(file["path"].as_str().unwrap())
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    ensure!(
+        names
+            == ["bytes.bin", "new file.txt", "value.txt"]
+                .map(String::from)
+                .into_iter()
+                .collect()
+    );
+    let exported = json_body(&host.fetch(&Request::post(
+        "git-review-patch",
+        Some(json!({
+            "cwd":root, "reviewSource":"uncommitted",
+        })),
+    ))?)?;
+    let destination = tempfile::tempdir()?;
+    let clone = destination.path().join("copy");
+    git(
+        root,
+        &[
+            "clone",
+            "--quiet",
+            "--no-hardlinks",
+            root.to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
+    )?;
+    let patch = destination.path().join("change.patch");
+    fs::write(&patch, exported["diff"].as_str().context("exported diff")?)?;
+    git(&clone, &["apply", "--3way", patch.to_str().unwrap()])?;
+    ensure!(fs::read(clone.join("bytes.bin"))? == [0, 9, 8, 7]);
+    ensure!(fs::read_to_string(clone.join("spacing.txt"))? == "value  =  1\n");
+    ensure!(fs::read_to_string(clone.join("value.txt"))? == "value = 2\n");
+    ensure!(fs::read_to_string(clone.join("new file.txt"))? == "new content\n");
+    Ok(())
+}
+
+#[test]
+fn raw_export_keeps_tracked_changes_when_untracked_files_exceed_the_limit() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    common::install_panic_hook();
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    git(root, &["init", "-q"])?;
+    git(root, &["config", "user.name", "Patch proof"])?;
+    git(root, &["config", "user.email", "proof@example.invalid"])?;
+    fs::write(root.join("tracked.txt"), "before\n")?;
+    git(root, &["add", "."])?;
+    git(root, &["commit", "-qm", "base"])?;
+    fs::write(root.join("tracked.txt"), "after\n")?;
+    fs::create_dir(root.join("generated"))?;
+    for index in 0..257 {
+        fs::write(root.join(format!("generated/{index}.txt")), "generated\n")?;
+    }
+    let host = LocalHost::new(root);
+    let params = json!({"cwd":root, "reviewSource":"uncommitted"});
+    let exported = json_body(&host.fetch(&Request::post("git-review-patch", Some(params)))?)?;
+    let destination = tempfile::tempdir()?;
+    let clone = destination.path().join("copy");
+    git(
+        root,
+        &[
+            "clone",
+            "--quiet",
+            "--no-hardlinks",
+            root.to_str().unwrap(),
+            clone.to_str().unwrap(),
+        ],
+    )?;
+    let patch = destination.path().join("change.patch");
+    fs::write(&patch, exported["diff"].as_str().context("exported diff")?)?;
+    git(&clone, &["apply", "--3way", patch.to_str().unwrap()])?;
+    ensure!(fs::read_to_string(clone.join("tracked.txt"))? == "after\n");
+    ensure!(!clone.join("generated").exists());
+    Ok(())
+}
+
+#[test]
+fn review_exports_respect_index_and_commit_boundaries() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    common::install_panic_hook();
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    git(root, &["init", "-q"])?;
+    git(root, &["config", "user.name", "Patch proof"])?;
+    git(root, &["config", "user.email", "proof@example.invalid"])?;
+    fs::write(root.join("file.txt"), "base\n")?;
+    git(root, &["add", "."])?;
+    git(root, &["commit", "-qm", "base"])?;
+    let before = git(root, &["rev-parse", "HEAD"])?;
+    fs::write(root.join("file.txt"), "committed\n")?;
+    git(root, &["commit", "-qam", "changed"])?;
+    let after = git(root, &["rev-parse", "HEAD"])?;
+    fs::write(root.join("file.txt"), "staged\n")?;
+    git(root, &["add", "."])?;
+    fs::write(root.join("file.txt"), "working\n")?;
+    let host = LocalHost::new(root);
+    for (source, revision, expected) in [
+        ("staged", after.as_str(), "staged\n"),
+        ("unstaged", after.as_str(), "working\n"),
+        ("branch", before.as_str(), "committed\n"),
+        ("commits", before.as_str(), "committed\n"),
+    ] {
+        let exported = json_body(&host.fetch(&Request::post(
+            "git-review-patch",
+            Some(json!({
+                "cwd":root, "reviewSource":source, "beforeRef":before, "afterRef":after,
+            })),
+        ))?)?;
+        let destination = tempfile::tempdir()?;
+        let clone = destination.path().join("copy");
+        git(
+            root,
+            &[
+                "clone",
+                "--quiet",
+                "--no-hardlinks",
+                root.to_str().unwrap(),
+                clone.to_str().unwrap(),
+            ],
+        )?;
+        git(&clone, &["reset", "--hard", revision])?;
+        if source == "unstaged" {
+            fs::write(clone.join("file.txt"), "staged\n")?;
+            git(&clone, &["add", "."])?;
+        }
+        let patch = destination.path().join("change.patch");
+        fs::write(&patch, exported["diff"].as_str().context("exported diff")?)?;
+        git(&clone, &["apply", "--3way", patch.to_str().unwrap()])?;
+        ensure!(
+            fs::read_to_string(clone.join("file.txt"))? == expected,
+            "{source} used the wrong revision"
+        );
+    }
+    ensure!(fs::read_to_string(root.join("file.txt"))? == "working\n");
+    ensure!(git(root, &["show", ":file.txt"])? == "staged");
+    Ok(())
+}
+
+#[test]
+fn uncommitted_export_supports_a_repository_without_commits() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    common::install_panic_hook();
+    let repo = tempfile::tempdir()?;
+    git(repo.path(), &["init", "-q"])?;
+    fs::write(repo.path().join("new.txt"), "new content\n")?;
+    let host = LocalHost::new(repo.path());
+    let exported = json_body(&host.fetch(&Request::post(
+        "git-review-patch",
+        Some(json!({"cwd":repo.path(),"reviewSource":"uncommitted"})),
+    ))?)?;
+    let destination = tempfile::tempdir()?;
+    git(destination.path(), &["init", "-q"])?;
+    let patch = destination.path().join("change.patch");
+    fs::write(&patch, exported["diff"].as_str().context("exported diff")?)?;
+    git(
+        destination.path(),
+        &["apply", "--3way", patch.to_str().unwrap()],
+    )?;
+    ensure!(fs::read_to_string(destination.path().join("new.txt"))? == "new content\n");
+    Ok(())
+}

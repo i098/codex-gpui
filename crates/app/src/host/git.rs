@@ -298,6 +298,8 @@ mod contents;
 pub(super) use contents::read_file_version;
 #[path = "git/file_url.rs"]
 mod file_url;
+#[path = "git/review_patch.rs"]
+mod review_patch;
 
 /// Git in `root` without pathspec options: `check-ignore` rejects `--literal-pathspecs`, and
 /// the original's `ls-files` calls use pathspec magic.
@@ -375,15 +377,33 @@ fn serialize_diff<S: serde::Serializer>(
     serializer.serialize_str(&String::from_utf8_lossy(diff))
 }
 
-/// `binary` adds the data a reverse patch needs to restore a binary file. Both forms carry
-/// the full `index` line (`--binary` fills it for binary files only), so `head` compares one
-/// binary capture with the text Changes shows.
-fn diffs(root: &Path, staged: bool, binary: bool) -> Result<Vec<CapturedDiff>> {
+const MAX_REVIEW_UNTRACKED_FILES: usize = 256;
+
+fn untracked_paths(root: &Path) -> Result<Vec<String>> {
+    let paths = String::from_utf8(checked(run(
+        root,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )?)?)
+    .context("Git paths must be UTF-8")?;
+    Ok(paths
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
+fn diffs(root: &Path, staged: bool) -> Result<Vec<CapturedDiff>> {
+    let untracked = if staged {
+        Vec::new()
+    } else {
+        untracked_paths(root)?
+    };
     review_diffs(
         root,
         if staged { &["--cached"] } else { &[] },
-        binary,
-        !staged,
+        true,
+        &untracked,
+        false,
     )
 }
 
@@ -391,11 +411,12 @@ fn review_diffs(
     root: &Path,
     revisions: &[&str],
     binary: bool,
-    untracked: bool,
+    untracked: &[String],
+    ignore_whitespace: bool,
 ) -> Result<Vec<CapturedDiff>> {
     let mut args = vec![
         "diff",
-        "--raw",
+        "--numstat",
         "--patch",
         "-z",
         "--no-ext-diff",
@@ -406,13 +427,16 @@ fn review_diffs(
         "--full-index",
     ];
     args.extend_from_slice(revisions);
+    if ignore_whitespace {
+        args.push("--ignore-all-space");
+    }
     if binary {
         args.push("--binary");
     }
     args.push("--");
     let output = checked(run(root, &args)?)?;
     let mut files = Vec::new();
-    if !output.is_empty() {
+    if !output.is_empty() && output.as_slice() != b"\0" {
         let separator = output
             .windows(2)
             .position(|bytes| bytes == b"\0\0")
@@ -436,8 +460,10 @@ fn review_diffs(
             .chain(std::iter::once(patch.len()))
             .collect::<Vec<_>>();
         for range in starts.windows(2) {
-            records.next().context("missing Git diff metadata")?;
-            let path = records.next().context("missing Git diff path")?;
+            let path = records
+                .next()
+                .and_then(|record| record.splitn(3, '\t').nth(2))
+                .context("missing Git diff path")?;
             let mut diff = patch[range[0]..range[1]].to_vec();
             if !diff.ends_with(b"\n") {
                 diff.push(b'\n');
@@ -452,39 +478,32 @@ fn review_diffs(
             "Git diff paths and patches differ"
         );
     }
-    if untracked {
-        let untracked = checked(run(
-            root,
-            &["ls-files", "--others", "--exclude-standard", "-z"],
-        )?)?;
-        for path in std::str::from_utf8(&untracked)
-            .context("Git paths must be UTF-8")?
-            .split('\0')
-            .filter(|path| !path.is_empty())
-        {
-            let mut args = vec![
-                "diff",
-                "--no-index",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--no-color",
-                "--full-index",
-            ];
-            if binary {
-                args.push("--binary");
-            }
-            args.extend(["--", "/dev/null", path]);
-            let output = run(root, &args)?;
-            ensure!(
-                output.status.success() || output.status.code() == Some(1),
-                "Git: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-            files.push(CapturedDiff {
-                path: path.to_owned(),
-                diff: output.stdout,
-            });
+    for path in untracked {
+        let mut args = vec![
+            "diff",
+            "--no-index",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--full-index",
+        ];
+        if binary {
+            args.push("--binary");
         }
+        if ignore_whitespace {
+            args.push("--ignore-all-space");
+        }
+        args.extend(["--", "/dev/null", path]);
+        let output = run(root, &args)?;
+        ensure!(
+            output.status.success() || output.status.code() == Some(1),
+            "Git: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        files.push(CapturedDiff {
+            path: path.to_owned(),
+            diff: output.stdout,
+        });
     }
     Ok(files)
 }
@@ -554,7 +573,7 @@ fn revert(root: &Path, path: &str, params: &Value) -> Result<&'static str> {
         _ => bail!("Git revert source must be staged or unstaged"),
     };
     let displayed = params["diff"].as_str().context("missing Git diff")?;
-    let current = diffs(root, staged, true)?
+    let current = diffs(root, staged)?
         .into_iter()
         .find(|file| file.path == path)
         .map(|file| file.diff)
@@ -595,7 +614,7 @@ fn selected_patch(root: &Path, params: &Value) -> Result<(Vec<u8>, bool, Vec<Str
         Some("unstaged") => false,
         _ => bail!("Git patch source must be staged or unstaged"),
     };
-    let current = diffs(root, staged, true)?;
+    let current = diffs(root, staged)?;
     let files = params["files"]
         .as_array()
         .context("missing reviewed Git files")?;
@@ -672,7 +691,14 @@ fn patch_changes(root: &Path, endpoint: &str, params: &Value) -> Result<&'static
 }
 
 fn changes(root: &Path, params: &Value) -> Result<Value> {
-    let mut body = json!({"root": root, "unstaged": diffs(root, false, false)?, "staged": diffs(root, true, false)?});
+    let ignore_whitespace = params["hideWhitespace"].as_bool().unwrap_or(false);
+    let untracked = untracked_paths(root)?;
+    let mut body = json!({
+        "root": root,
+        "hideWhitespace": ignore_whitespace,
+        "unstaged": review_diffs(root, &[], false, &untracked, ignore_whitespace)?,
+        "staged": review_diffs(root, &["--cached"], false, &[], ignore_whitespace)?,
+    });
     let head = commit_id(root, "HEAD")?;
     let branches = checked(run(
         root,
@@ -710,7 +736,13 @@ fn changes(root: &Path, params: &Value) -> Result<Value> {
     let base = head.as_deref().unwrap_or(empty.trim());
     let source = params["reviewSource"].as_str().unwrap_or("unstaged");
     body["review"] = match source {
-        "uncommitted" => json!(review_diffs(root, &[base], false, true)?),
+        "uncommitted" => json!(review_diffs(
+            root,
+            &[base],
+            false,
+            &untracked,
+            ignore_whitespace
+        )?),
         "branch" | "commits" if head.is_none() => json!([]),
         "branch" => {
             let branch = params["baseBranch"]
@@ -729,7 +761,13 @@ fn changes(root: &Path, params: &Value) -> Result<Value> {
             body["base_branch"] = branch.into();
             body["before_ref"] = merge.clone().into();
             body["after_ref"] = head.clone().into();
-            json!(review_diffs(root, &[&merge, "HEAD"], false, false)?)
+            json!(review_diffs(
+                root,
+                &[&merge, "HEAD"],
+                false,
+                &[],
+                ignore_whitespace
+            )?)
         }
         "commits" => {
             let id = params["commit"]
@@ -746,7 +784,8 @@ fn changes(root: &Path, params: &Value) -> Result<Value> {
                 root,
                 &[parent.as_deref().unwrap_or(empty.trim()), &id],
                 false,
-                false
+                &[],
+                ignore_whitespace,
             )?)
         }
         _ => json!([]),
@@ -787,6 +826,9 @@ pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
     let root = Path::new(root.strip_suffix('\n').unwrap_or(&root));
     if endpoint == "git-cat-file" {
         return contents::cat_file(root, params);
+    }
+    if endpoint == "git-review-patch" {
+        return review_patch::read(root, params);
     }
     if endpoint == "git-file-url" {
         return file_url::read(root, params);

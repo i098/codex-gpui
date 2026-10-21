@@ -138,6 +138,12 @@ Branch prefix saves on blur or Enter; multiline instructions save after three id
 The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
 This page does not implement Git operations or active pull request watchers, and it does not complete other settings pages.
 
+The desktop host exposes `git-review-patch` for complete, binary-capable patches from the selected review source.
+`git-changes` accepts `hideWhitespace`; raw patch export never applies that display filter.
+Revision exports use `beforeRef` and `afterRef`; staged and working-tree exports retain their separate Git states.
+Raw export omits untracked files above the original 256-file limit but keeps tracked changes. This does not limit the existing Changes list.
+Run `cargo test -p app --test diff_file_reads` for real Git apply round trips and source-boundary checks.
+
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
