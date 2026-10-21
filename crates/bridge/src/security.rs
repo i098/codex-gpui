@@ -887,11 +887,11 @@ mod tests {
         let ready = json!({"plugin": {"id": "codex-security@openai-bundled", "enabled": true, "availability": "AVAILABLE"}});
         let admin = json!({"plugin": {"id": "codex-security@openai-bundled", "enabled": true, "availability": "DISABLED_BY_ADMIN"}});
         assert_eq!(
-            Gate::resolve(false, false, false, &[ready.clone()]),
+            Gate::resolve(false, false, false, std::slice::from_ref(&ready)),
             Gate::Disabled
         );
         assert_eq!(
-            Gate::resolve(true, true, false, &[ready.clone()]),
+            Gate::resolve(true, true, false, std::slice::from_ref(&ready)),
             Gate::RemoteHost
         );
         assert_eq!(
@@ -899,7 +899,7 @@ mod tests {
             Gate::Ready
         );
         assert_eq!(
-            Gate::resolve(true, false, true, &[admin.clone()]),
+            Gate::resolve(true, false, true, std::slice::from_ref(&admin)),
             Gate::Loading
         );
         assert_eq!(

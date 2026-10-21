@@ -564,14 +564,14 @@ impl SecurityPage {
                 },
                 Location::Repositories => client.repositories().await.map(Loaded::Repositories),
                 Location::Scan(id) => match client.scan(id, None).await {
-                    Ok(scan) => Ok(Loaded::Scan(scan, client.scans(None).await.ok())),
+                    Ok(scan) => Ok(Loaded::Scan(Box::new(scan), client.scans(None).await.ok())),
                     Err(error) => Err(error),
                 },
                 Location::Finding {
                     scan_id,
                     occurrence_id,
                 } => match client.scan(scan_id, Some(occurrence_id)).await {
-                    Ok(scan) => Ok(Loaded::Scan(scan, client.scans(None).await.ok())),
+                    Ok(scan) => Ok(Loaded::Scan(Box::new(scan), client.scans(None).await.ok())),
                     Err(error) => Err(error),
                 },
                 Location::Repository(id) => {
@@ -609,7 +609,7 @@ impl SecurityPage {
                         this.error = None;
                     }
                     Ok(Loaded::Scan(scan, scans)) => {
-                        this.scan = Some(scan);
+                        this.scan = Some(*scan);
                         if let Some(scans) = scans {
                             this.scans = Some(scans);
                         }
@@ -946,7 +946,7 @@ enum Loaded {
     Scans(Vec<Scan>),
     Findings(Findings, Option<Vec<Repository>>),
     Repositories(Vec<Repository>),
-    Scan(Scan, Option<Vec<Scan>>),
+    Scan(Box<Scan>, Option<Vec<Scan>>),
     Repository(Vec<Repository>, Vec<Scan>),
 }
 

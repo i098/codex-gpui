@@ -146,9 +146,11 @@ impl SecurityPage {
                             div()
                                 .w(px(detail_width))
                                 .flex_none()
+                                .bg(t.surface)
                                 .border_l_1()
-                                .border_color(t.border)
-                                .child(right),
+                                .snap_origin()
+                                .border_color(crate::over(t.border, t.surface))
+                                .child(div().size_full().bg(t.surface).child(right)),
                         )
                         .child(resizer),
                 )
@@ -206,20 +208,18 @@ impl SecurityPage {
         ] {
             header = header.child(self.button(
                 format!("security-tab-{label}"),
-                label,
+                (label, None),
                 Action::Navigate(location),
                 ButtonKind::Tab(section == label),
-                None,
                 window,
                 cx,
             ));
         }
         header = header.child(div().flex_1()).child(self.button(
             "security-start",
-            "Scan",
+            ("Scan", Some("security-plus")),
             Action::Navigate(Location::NewScan),
             ButtonKind::Primary,
-            Some("plus"),
             window,
             cx,
         ));
@@ -243,9 +243,7 @@ impl SecurityPage {
                     .h(px(32.))
                     .flex_1()
                     .min_w_0()
-                    .px(px(10.))
-                    .border_1()
-                    .border_color(t.text.opacity(0.))
+                    .px(px(11.))
                     .flex()
                     .items_center()
                     .gap(px(8.))
@@ -256,16 +254,15 @@ impl SecurityPage {
                         border: Some((px(1.), t.border_strong)),
                         ..Default::default()
                     }))
-                    .child(icon("search", 18., t.text.opacity(0.65)))
+                    .child(icon("security-search", 18., t.text.opacity(0.65)))
                     .child(div().flex_1().min_w_0().child(self.query.clone())),
             );
         if section != "Scans" {
             search = search.child(self.button(
                 "security-filter",
-                "Filter",
+                ("Filter", Some("security-filter")),
                 Action::ShowDialog("filters"),
                 ButtonKind::Filter,
-                Some("security-filter"),
                 window,
                 cx,
             ));
@@ -314,14 +311,13 @@ impl SecurityPage {
     ) -> Stateful<Div> {
         self.button(
             id,
-            label,
+            (label, None),
             action,
             if primary {
                 ButtonKind::Primary
             } else {
                 ButtonKind::Secondary
             },
-            None,
             window,
             cx,
         )
@@ -330,10 +326,9 @@ impl SecurityPage {
     fn button(
         &self,
         id: impl Into<SharedString>,
-        label: &'static str,
+        (label, glyph): (&'static str, Option<&'static str>),
         action: Action,
         kind: ButtonKind,
-        glyph: Option<&'static str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
@@ -352,9 +347,13 @@ impl SecurityPage {
             _ => (28., 8., 12.5, 13.),
         };
         let color = if primary {
-            t.text_inverse
+            if t.appearance == theme::Appearance::Dark {
+                gpui::rgb(0x2d2d2d).into()
+            } else {
+                t.text_inverse
+            }
         } else if matches!(kind, ButtonKind::Tab(false)) {
-            t.text.opacity(0.498)
+            t.text_tertiary
         } else {
             t.text
         };
@@ -375,9 +374,7 @@ impl SecurityPage {
                 .aria_disabled(disabled)
                 .relative()
                 .h(px(height))
-                .px(px(padding))
-                .border_1()
-                .border_color(t.text.opacity(0.))
+                .px(px(padding + 1.))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -577,10 +574,12 @@ impl SecurityPage {
             };
             let row = self.row(
                 format!("security-scan-{id}"),
-                scan.title(),
-                &scan.target_path,
-                scan.status_label(),
-                &format!("{} findings", scan.finding_count),
+                [
+                    scan.title(),
+                    &scan.target_path,
+                    scan.status_label(),
+                    &format!("{} findings", scan.finding_count),
+                ],
                 selected,
                 Action::Navigate(Location::Scan(id)),
                 window,
@@ -594,10 +593,7 @@ impl SecurityPage {
     fn row(
         &self,
         id: impl Into<SharedString>,
-        title: &str,
-        subtitle: &str,
-        right: &str,
-        bottom_right: &str,
+        [title, subtitle, right, bottom_right]: [&str; 4],
         selected: bool,
         action: Action,
         window: &mut Window,
@@ -702,10 +698,12 @@ impl SecurityPage {
             let severity = value(&finding["severity"], "level");
             list = list.child(self.row(
                 format!("security-finding-{occurrence_id}"),
-                value(finding, "title"),
-                value(finding, "locationPath"),
-                severity,
-                value(finding, "status"),
+                [
+                    value(finding, "title"),
+                    value(finding, "locationPath"),
+                    severity,
+                    value(finding, "status"),
+                ],
                 false,
                 Action::Navigate(Location::Finding {
                     scan_id,
@@ -774,14 +772,16 @@ impl SecurityPage {
                 matches!(&self.location, Location::Repository(current) if *current == id);
             list = list.child(self.row(
                 format!("security-repository-{id}"),
-                &repo.display_name,
-                if repo.checkout_available {
-                    &repo.target_path
-                } else {
-                    "Checkout unavailable"
-                },
-                &format!("{} open findings", repo.open_findings_count),
-                repo.latest_scan.status_label(),
+                [
+                    &repo.display_name,
+                    if repo.checkout_available {
+                        &repo.target_path
+                    } else {
+                        "Checkout unavailable"
+                    },
+                    &format!("{} open findings", repo.open_findings_count),
+                    repo.latest_scan.status_label(),
+                ],
                 selected,
                 Action::Navigate(Location::Repository(id)),
                 window,
@@ -802,10 +802,7 @@ impl SecurityPage {
                 let id = format!("project:{}", project.id);
                 list = list.child(self.row(
                     format!("security-unscanned-{index}"),
-                    &project.name,
-                    &project.path,
-                    "",
-                    "Not scanned",
+                    [&project.name, &project.path, "", "Not scanned"],
                     false,
                     Action::Navigate(Location::Repository(id)),
                     window,
@@ -827,8 +824,7 @@ impl SecurityPage {
                 .gap(px(2.))
                 .child(self.review_kind(
                     "standard",
-                    "Codebase",
-                    "Review the whole working tree",
+                    ("Codebase", "Review the whole working tree"),
                     self.mode != "diff",
                     false,
                     window,
@@ -837,8 +833,7 @@ impl SecurityPage {
                 .child(
                     self.review_kind(
                         "diff",
-                        "Changes",
-                        "Review a commit or working-tree changes",
+                        ("Changes", "Review a commit or working-tree changes"),
                         self.mode == "diff",
                         self.target_metadata
                             .as_ref()
@@ -901,8 +896,10 @@ impl SecurityPage {
         if self.mode != "diff" {
             form = form.child(self.setup_toggle(
                 "deep",
-                "Deep scan",
-                "More comprehensive, but takes substantially longer",
+                (
+                    "Deep scan",
+                    "More comprehensive, but takes substantially longer",
+                ),
                 self.mode == "deep",
                 Action::ToggleDeep,
                 window,
@@ -911,8 +908,10 @@ impl SecurityPage {
         }
         form = form.child(self.setup_toggle(
             "context",
-            "Additional context",
-            "Share areas you want Codex Security to prioritize during this review",
+            (
+                "Additional context",
+                "Share areas you want Codex Security to prioritize during this review",
+            ),
             self.context_expanded,
             Action::ToggleContext,
             window,
@@ -926,10 +925,9 @@ impl SecurityPage {
         }
         form = form.child(div().flex().justify_end().child(self.button(
             "security-setup-submit",
-            "Start scan",
+            ("Start scan", None),
             Action::Start,
             ButtonKind::FormPrimary,
-            None,
             window,
             cx,
         )));
@@ -961,8 +959,7 @@ impl SecurityPage {
     fn review_kind(
         &self,
         mode: &'static str,
-        title: &'static str,
-        detail: &'static str,
+        (title, detail): (&'static str, &'static str),
         selected: bool,
         disabled: bool,
         window: &mut Window,
@@ -982,10 +979,8 @@ impl SecurityPage {
                 .relative()
                 .flex_1()
                 .min_w_0()
-                .px(px(20.))
-                .py(px(8.))
-                .border_1()
-                .border_color(t.text.opacity(0.))
+                .px(px(21.))
+                .py(px(9.))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -1012,11 +1007,7 @@ impl SecurityPage {
                             13.,
                             18.571_428,
                             500.,
-                            if selected {
-                                t.text
-                            } else {
-                                t.text.opacity(0.498)
-                            },
+                            if selected { t.text } else { t.text_tertiary },
                         ))
                         .child(text(detail, 12., 16., 430., t.text.opacity(0.65))),
                 )
@@ -1104,9 +1095,9 @@ impl SecurityPage {
                     13.,
                     18.,
                     430.,
-                    if muted { t.text.opacity(0.498) } else { t.text },
+                    if muted { t.text_tertiary } else { t.text },
                 ))
-                .child(icon("chevron-down", 14., t.text.opacity(0.498))),
+                .child(icon("chevron-down", 14., t.text_tertiary)),
             &focus,
             px(9999.),
             px(2.),
@@ -1137,8 +1128,7 @@ impl SecurityPage {
     fn setup_toggle(
         &self,
         id: &'static str,
-        label: &'static str,
-        detail: &'static str,
+        (label, detail): (&'static str, &'static str),
         checked: bool,
         action: Action,
         window: &mut Window,
@@ -1288,10 +1278,10 @@ impl SecurityPage {
         if let Some(context) = &scan.user_context {
             panel = panel.child(text(context.clone(), 14., 21., 430., t.text));
         }
-        if let Some(usage) = &scan.usage {
-            if let Some(total) = usage["totalTokens"].as_u64() {
-                panel = panel.child(property("Token usage", &format!("{total} Tokens"), &t));
-            }
+        if let Some(usage) = &scan.usage
+            && let Some(total) = usage["totalTokens"].as_u64()
+        {
+            panel = panel.child(property("Token usage", &format!("{total} Tokens"), &t));
         }
         if scan.progress.status == "running" {
             for (phase, label) in [
@@ -1363,10 +1353,12 @@ impl SecurityPage {
             let occurrence_id = value(finding, "occurrenceId").to_owned();
             panel = panel.child(self.row(
                 format!("security-detail-finding-{occurrence_id}"),
-                value(finding, "title"),
-                value(finding, "summary"),
-                value(&finding["severity"], "level"),
-                value(&finding["triage"], "status"),
+                [
+                    value(finding, "title"),
+                    value(finding, "summary"),
+                    value(&finding["severity"], "level"),
+                    value(&finding["triage"], "status"),
+                ],
                 false,
                 Action::Navigate(Location::Finding {
                     scan_id,
@@ -1383,10 +1375,7 @@ impl SecurityPage {
             let path = path.clone();
             panel = panel.child(self.row(
                 format!("security-artifact-{kind}"),
-                kind,
-                &path,
-                "",
-                "",
+                [kind, &path, "", ""],
                 false,
                 Action::OpenPath(path.clone()),
                 window,
@@ -1567,10 +1556,7 @@ impl SecurityPage {
                         .to_owned();
                     panel = panel.child(self.row(
                         format!("security-location-{index}"),
-                        value(location, "path"),
-                        "View source",
-                        "",
-                        "",
+                        [value(location, "path"), "View source", "", ""],
                         false,
                         Action::OpenPath(path),
                         window,
@@ -1678,10 +1664,12 @@ impl SecurityPage {
             let id = scan.scan_id.clone();
             panel = panel.child(self.row(
                 format!("security-repository-scan-{id}"),
-                scan.mode_label(),
-                &scan.scope,
-                scan.status_label(),
-                &format!("{} findings", scan.finding_count),
+                [
+                    scan.mode_label(),
+                    &scan.scope,
+                    scan.status_label(),
+                    &format!("{} findings", scan.finding_count),
+                ],
                 false,
                 Action::Navigate(Location::Scan(id)),
                 window,
@@ -2065,10 +2053,7 @@ impl SecurityPage {
         let id = id.to_owned();
         self.row(
             format!("security-option-{kind}-{id}"),
-            label,
-            "",
-            if selected { "✓" } else { "" },
-            "",
+            [label, "", if selected { "✓" } else { "" }, ""],
             selected,
             Action::Choose(kind, id),
             window,
@@ -2080,19 +2065,18 @@ impl SecurityPage {
 fn setup_card(content: Div, t: &Theme) -> Div {
     div()
         .relative()
-        .p(px(1.))
-        .rounded(px(20.))
-        .overflow_hidden()
-        .flex()
-        .flex_col()
         .child(shapes::decoration(shapes::Decoration {
             radius: gpui::Corners::all(px(20.)),
-            corner: shapes::Corner::Round,
+            corner: shapes::Corner::Squircle,
             fill: Some(t.background_panel),
             border: Some((px(1.), t.border)),
             ..Default::default()
         }))
-        .child(content)
+        .child(crate::rounded_clip(
+            px(20.),
+            shapes::Corner::Squircle,
+            div().p(px(1.)).flex().flex_col().child(content),
+        ))
 }
 
 fn field(label: &str, input: Entity<Composer>, t: &Theme) -> Div {
