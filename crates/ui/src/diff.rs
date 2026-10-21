@@ -29,6 +29,10 @@ mod menu;
 mod controls;
 pub use controls::DiffLayout;
 
+#[path = "diff/content.rs"]
+mod content;
+pub use content::{BlobError, BlobReply, BlobRequest, FullError, FullFileRequest, FullText};
+
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
 const STORED_WIDTH: f32 = 664.17;
 /// Room the chat keeps beside the panel (`unified` layout), also the panel's minimum.
