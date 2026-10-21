@@ -67,6 +67,8 @@ pub enum Action {
     PickFolder,
     ShowDialog(&'static str),
     DetailTab(&'static str),
+    ToggleDeep,
+    ToggleContext,
     ViewThread(String),
     OpenPath(String),
     CloseFile,
@@ -86,6 +88,9 @@ pub struct SecurityPage {
     access: Access,
     gate: Gate,
     location: Location,
+    finding_from_global: bool,
+    detail_width: Option<f32>,
+    detail_drag: Option<(f32, f32)>,
     scans: Option<Vec<Scan>>,
     repositories: Option<Vec<Repository>>,
     findings: Option<Findings>,
@@ -118,6 +123,7 @@ pub struct SecurityPage {
     restore_focus: Option<gpui::FocusHandle>,
     close_reason: String,
     detail_tab: &'static str,
+    context_expanded: bool,
     error: Option<String>,
     busy: bool,
     loading: bool,
@@ -155,15 +161,18 @@ pub fn shell(
         shell.sidebar_open = false;
         shell.chat_chrome = false;
         shell.new_tab = false;
-        shell.selected_rail = Some("security");
+        shell.selected_rail = None;
         shell.main_backgrounds = 0;
         shell
     });
     shell.update(cx, |_, cx| {
         cx.observe(&page, |shell, page, cx| {
-            let backgrounds = u8::from(page.read(cx).gate == Gate::Ready);
-            if shell.main_backgrounds != backgrounds {
+            let ready = page.read(cx).gate == Gate::Ready;
+            let backgrounds = u8::from(ready);
+            let selected = ready.then_some("explore");
+            if shell.main_backgrounds != backgrounds || shell.selected_rail != selected {
                 shell.main_backgrounds = backgrounds;
+                shell.selected_rail = selected;
                 cx.notify();
             }
         })
@@ -174,6 +183,13 @@ pub fn shell(
 }
 
 impl SecurityPage {
+    pub fn set_detail_width(&mut self, width: f32, cx: &mut Context<Self>) {
+        if width.is_finite() {
+            self.detail_width = Some(width);
+            cx.notify();
+        }
+    }
+
     pub fn target_path(&self) -> std::path::PathBuf {
         std::path::PathBuf::from(
             self.scan
@@ -227,7 +243,7 @@ impl SecurityPage {
             }
         })
         .detach();
-        let query = cx.new(|cx| Composer::settings_field("Search", "", false, cx));
+        let query = cx.new(|cx| Composer::inline_field("Search scans", "", cx));
         cx.observe(&query, |this, _, cx| {
             if this.location == Location::Findings {
                 let query = this.query.read(cx).field_text().to_owned();
@@ -250,6 +266,9 @@ impl SecurityPage {
             access,
             gate: Gate::Loading,
             location: Location::Scans,
+            finding_from_global: false,
+            detail_width: None,
+            detail_drag: None,
             scans: None,
             repositories: None,
             findings: None,
@@ -289,6 +308,7 @@ impl SecurityPage {
             restore_focus: None,
             close_reason: "already_fixed".into(),
             detail_tab: "summary",
+            context_expanded: false,
             error: None,
             busy: false,
             loading: true,
@@ -387,6 +407,11 @@ impl SecurityPage {
                 if self.location != location {
                     self.history = None;
                 }
+                if matches!(location, Location::Finding { .. }) {
+                    self.finding_from_global = matches!(self.location, Location::Findings)
+                        || self.finding_from_global
+                            && matches!(self.location, Location::Finding { .. });
+                }
                 self.location = location;
                 self.error = None;
                 self.dialog = None;
@@ -394,6 +419,16 @@ impl SecurityPage {
                 self.detail_tab = "summary";
                 self.query.update(cx, |input, cx| input.set_text("", cx));
                 self.finding_filter.query.clear();
+                let placeholder = match &self.location {
+                    Location::Findings => "Search title, repository, or path",
+                    Location::Repositories | Location::Repository(_) => "Search name or path",
+                    Location::Finding { .. } if self.finding_from_global => {
+                        "Search title, repository, or path"
+                    }
+                    _ => "Search scans",
+                };
+                self.query
+                    .update(cx, |input, cx| input.set_placeholder(placeholder, cx));
                 self.reload(cx);
             }
             Action::Refresh => self.reload(cx),
@@ -415,6 +450,21 @@ impl SecurityPage {
                 self.dialog = (!dialog.is_empty()).then_some(dialog);
             }
             Action::DetailTab(tab) => self.detail_tab = tab,
+            Action::ToggleDeep => {
+                if !self.busy && self.mode != "diff" {
+                    self.mode = if self.mode == "deep" {
+                        "standard"
+                    } else {
+                        "deep"
+                    }
+                    .into();
+                }
+            }
+            Action::ToggleContext => {
+                if !self.busy {
+                    self.context_expanded = !self.context_expanded;
+                }
+            }
             Action::Choose(kind, id) => self.choose(kind, id, cx),
             Action::InspectTarget => self.inspect_target(cx),
             Action::CloseFile => self.file = None,
@@ -670,7 +720,7 @@ impl SecurityPage {
         }));
     }
 
-    fn setup(&self, cx: &App) -> Result<Setup, &'static str> {
+    fn validate_setup(&self, cx: &App) -> Result<(), &'static str> {
         if self.target.is_empty() {
             return Err("Select a repository");
         }
@@ -684,29 +734,38 @@ impl SecurityPage {
         if self.mode == "diff" && metadata["reviewChangesSupported"] != true {
             return Err("This repository does not support a Changes scan");
         }
+        if self.area == "folder" && self.folder.read(cx).field_text().trim().is_empty() {
+            return Err("Enter a repository-relative folder");
+        }
+        if self.mode == "diff"
+            && self.diff_kind != "working_tree"
+            && self.revision.read(cx).field_text().trim().is_empty()
+        {
+            return Err("Enter a commit or revision");
+        }
+        if self.mode == "diff"
+            && self.diff_kind == "range"
+            && self.base_revision.read(cx).field_text().trim().is_empty()
+        {
+            return Err("Enter a base revision");
+        }
+        Ok(())
+    }
+
+    fn setup(&self, cx: &App) -> Result<Setup, &'static str> {
+        self.validate_setup(cx)?;
         let scope = if self.area == "folder" {
             self.folder.read(cx).field_text().trim()
         } else {
             "."
         };
-        if scope.is_empty() {
-            return Err("Enter a repository-relative folder");
-        }
-        let revision = self.revision.read(cx).field_text().trim();
-        let base = self.base_revision.read(cx).field_text().trim();
         let diff_target = if self.mode == "diff" {
             let mut target = json!({"kind": self.diff_kind});
             if self.diff_kind != "working_tree" {
-                if revision.is_empty() {
-                    return Err("Enter a commit or revision");
-                }
-                target["headRevision"] = revision.into();
+                target["headRevision"] = self.revision.read(cx).field_text().trim().into();
             }
             if self.diff_kind == "range" {
-                if base.is_empty() {
-                    return Err("Enter a base revision");
-                }
-                target["baseRevision"] = base.into();
+                target["baseRevision"] = self.base_revision.read(cx).field_text().trim().into();
             }
             Some(target)
         } else {
@@ -719,7 +778,11 @@ impl SecurityPage {
             diff_target,
             model: self.model.clone(),
             reasoning_effort: self.effort.clone(),
-            user_context: self.context.read(cx).field_text().into(),
+            user_context: if self.context_expanded {
+                self.context.read(cx).field_text().into()
+            } else {
+                String::new()
+            },
         })
     }
 

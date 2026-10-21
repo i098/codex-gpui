@@ -646,6 +646,7 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    inline_field: bool,
 }
 
 impl Composer {
@@ -723,6 +724,7 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            inline_field: false,
         }
     }
 
@@ -736,6 +738,17 @@ impl Composer {
         editor.plain_field = Some(multiline);
         editor.set_text(value, cx);
         editor
+    }
+
+    pub fn inline_field(placeholder: &'static str, value: &str, cx: &mut Context<Self>) -> Self {
+        let mut editor = Self::settings_field(placeholder, value, false, cx);
+        editor.inline_field = true;
+        editor
+    }
+
+    pub fn set_placeholder(&mut self, placeholder: &'static str, cx: &mut Context<Self>) {
+        self.placeholder = placeholder.into();
+        cx.notify();
     }
 
     pub fn field_text(&self) -> &str {
@@ -1913,7 +1926,7 @@ impl Render for Composer {
         if self.plain_field.is_some() {
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)
-                    .when(self.request_parent.is_none(), |d| {
+                    .when(self.request_parent.is_none() && !self.inline_field, |d| {
                         d.border_1()
                             .border_color(t.border)
                             .rounded(px(8.))
@@ -1940,7 +1953,7 @@ impl Render for Composer {
                                 ..Default::default()
                             }))
                     })
-                    .when(self.request_parent.is_some(), |d| {
+                    .when(self.request_parent.is_some() || self.inline_field, |d| {
                         d.role(if self.secret {
                             gpui::Role::PasswordInput
                         } else {

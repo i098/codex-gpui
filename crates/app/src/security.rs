@@ -50,6 +50,12 @@ pub(super) fn shell(root: &mut Root, window: &mut Window, cx: &mut Context<Root>
         .unwrap_or_default();
     let effort = root.config["model_reasoning_effort"]
         .as_str()
+        .or_else(|| {
+            root.models
+                .iter()
+                .find(|entry| entry.model == model)
+                .map(|entry| entry.default_reasoning_effort.as_str())
+        })
         .unwrap_or("medium")
         .to_owned();
     let (shell, page) = security::shell(

@@ -6,6 +6,16 @@ use gpui::{
 };
 use theme::{ActiveTheme, Theme};
 
+#[derive(Clone, Copy)]
+enum ButtonKind {
+    Secondary,
+    Primary,
+    SmallPrimary,
+    FormPrimary,
+    Tab(bool),
+    Filter,
+}
+
 impl SecurityPage {
     pub(super) fn render_page(
         &mut self,
@@ -13,12 +23,7 @@ impl SecurityPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = cx.theme().clone();
-        let mut page = div()
-            .relative()
-            .size_full()
-            .flex()
-            .flex_col()
-            .when(self.gate == Gate::Ready, |page| page.bg(t.surface));
+        let mut page = div().relative().size_full().flex().flex_col();
         if self.gate != Gate::Ready {
             let title = if self.gate == Gate::Loading {
                 "Codex Security"
@@ -41,151 +46,128 @@ impl SecurityPage {
                 .child(div().flex_1().min_h_0().child(empty))
                 .into_any_element();
         }
-        let active = match self.location {
-            Location::Findings | Location::Finding { .. } => "Findings",
+        let split = !matches!(self.location, Location::Findings | Location::Repositories);
+        let section = match self.location {
             Location::Repositories | Location::Repository(_) => "Repositories",
+            Location::Findings => "Findings",
+            Location::Finding { .. } if self.finding_from_global => "Findings",
             _ => "Scans",
         };
-        let mut header = div()
-            .flex_none()
-            .h(px(48.))
-            .px(px(16.))
-            .flex()
-            .items_center()
-            .gap(px(4.));
-        for (label, location) in [
-            ("Scans", Location::Scans),
-            ("Findings", Location::Findings),
-            ("Repositories", Location::Repositories),
-        ] {
-            header = header.child(
-                self.action(
-                    format!("security-tab-{label}"),
-                    label,
-                    Action::Navigate(location),
-                    false,
-                    window,
-                    cx,
+        let total = f32::from(window.viewport_size().width) - 56.;
+        let height = f32::from(window.viewport_size().height) - 48.;
+        let default_width = 320_f32
+            .max((height * 1.6).min(total - 500.))
+            .max(640_f32.min(total - 352.));
+        let detail_width = self
+            .detail_width
+            .unwrap_or(default_width)
+            .clamp(320., (total - 352.).max(320.));
+        let main = self.workbench(section, split, window, cx);
+        if split {
+            let right = if let Some(file) = &self.file {
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(self.action(
+                        "security-file-back",
+                        "Back",
+                        Action::CloseFile,
+                        false,
+                        window,
+                        cx,
+                    ))
+                    .child(div().flex_1().min_h_0().child(file.clone()))
+                    .into_any_element()
+            } else {
+                match &self.location {
+                    Location::Scans => div()
+                        .size_full()
+                        .flex()
+                        .flex_col()
+                        .child(div().h(px(46.)).flex_none())
+                        .child(
+                            div()
+                                .flex_1()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(text("Select a scan to view", 16., 24., 500., t.text)),
+                        )
+                        .into_any_element(),
+                    Location::NewScan => self.setup_view(window, cx),
+                    Location::Repository(_) => self.repository_detail(window, cx),
+                    _ => self.detail_view(window, cx),
+                }
+            };
+            let resize_focus = focus::handle("security-detail-resize", 0, window, cx);
+            let resize_handle = resize_focus.read(cx).handle.clone();
+            let resizer = focus::ring(
+                div()
+                    .id("security-detail-resize")
+                    .role(gpui::Role::Button)
+                    .aria_label("Resize Security details")
+                    .absolute()
+                    .left(px(total - detail_width - 8.))
+                    .top_0()
+                    .bottom_0()
+                    .w(px(16.))
+                    .cursor(gpui::CursorStyle::ResizeLeftRight)
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                            resize_handle.focus(window, cx);
+                            this.detail_drag = Some((f32::from(event.position.x), detail_width));
+                            cx.stop_propagation();
+                        }),
+                    ),
+                &resize_focus,
+                px(0.),
+                px(0.),
+                cx,
+            )
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                let delta = match event.keystroke.key.as_str() {
+                    "left" => 16.,
+                    "right" => -16.,
+                    _ => return,
+                };
+                this.set_detail_width(detail_width + delta, cx);
+                cx.stop_propagation();
+            }));
+            page = page
+                .child(
+                    div()
+                        .relative()
+                        .size_full()
+                        .flex()
+                        .child(div().flex_1().min_w_0().child(main))
+                        .child(
+                            div()
+                                .w(px(detail_width))
+                                .flex_none()
+                                .border_l_1()
+                                .border_color(t.border)
+                                .child(right),
+                        )
+                        .child(resizer),
                 )
-                .bg(if label == active {
-                    t.text_alpha_10
-                } else {
-                    t.surface
-                }),
-            );
-        }
-        header = header.child(div().flex_1()).child(self.action(
-            "security-start",
-            "Scan",
-            Action::Navigate(Location::NewScan),
-            true,
-            window,
-            cx,
-        ));
-        page = page.child(header);
-        if !matches!(self.location, Location::NewScan) {
-            page = page.child(
-                div()
-                    .flex_none()
-                    .h(px(44.))
-                    .px(px(16.))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(div().flex_1().child(self.query.clone()))
-                    .when(
-                        matches!(
-                            self.location,
-                            Location::Findings | Location::Repositories | Location::Repository(_)
-                        ),
-                        |row| {
-                            row.child(self.action(
-                                "security-filter",
-                                "Filter",
-                                Action::ShowDialog("filters"),
-                                false,
-                                window,
-                                cx,
-                            ))
-                        },
-                    )
-                    .when(self.error.is_some(), |row| {
-                        row.child(self.action(
-                            "security-refresh",
-                            "Refresh",
-                            Action::Refresh,
-                            false,
-                            window,
-                            cx,
-                        ))
-                    }),
-            );
-        }
-        if let Some(error) = &self.error {
-            page = page.child(
-                div()
-                    .id("security-error")
-                    .px(px(20.))
-                    .py(px(8.))
-                    .role(gpui::Role::Alert)
-                    .child(text(error.clone(), 13., 20., 430., t.text_error)),
-            );
-        }
-        let content = if let Some(file) = &self.file {
-            div()
-                .size_full()
-                .flex()
-                .flex_col()
-                .child(self.action(
-                    "security-file-back",
-                    "Back",
-                    Action::CloseFile,
-                    false,
-                    window,
-                    cx,
-                ))
-                .child(div().flex_1().min_h_0().child(file.clone()))
-                .into_any_element()
+                .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _, cx| {
+                    if let Some((start, width)) = this.detail_drag {
+                        this.set_detail_width(width + start - f32::from(event.position.x), cx);
+                    }
+                }))
+                .on_mouse_up(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, _| this.detail_drag = None),
+                )
+                .on_mouse_up_out(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, _| this.detail_drag = None),
+                );
         } else {
-            match &self.location {
-                Location::NewScan => self.setup_view(window, cx),
-                Location::Scans => self.scan_list(window, cx),
-                Location::Scan(_) | Location::Finding { .. } => div()
-                    .size_full()
-                    .flex()
-                    .child(
-                        div()
-                            .w(px(340.))
-                            .flex_none()
-                            .border_r_1()
-                            .border_color(t.border_subtle)
-                            .child(self.scan_list(window, cx)),
-                    )
-                    .child(div().flex_1().min_w_0().child(self.detail_view(window, cx)))
-                    .into_any_element(),
-                Location::Findings => self.findings_list(window, cx),
-                Location::Repositories => self.repositories_list(window, cx),
-                Location::Repository(_) => div()
-                    .size_full()
-                    .flex()
-                    .child(
-                        div()
-                            .w(px(340.))
-                            .flex_none()
-                            .border_r_1()
-                            .border_color(t.border_subtle)
-                            .child(self.repositories_list(window, cx)),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(self.repository_detail(window, cx)),
-                    )
-                    .into_any_element(),
-            }
-        };
-        page = page.child(div().flex_1().min_h_0().child(content));
+            page = page.child(main);
+        }
         if self.rendered_dialog != self.dialog {
             if self.dialog.is_some() {
                 if self.rendered_dialog.is_none() {
@@ -203,6 +185,124 @@ impl SecurityPage {
         page.into_any_element()
     }
 
+    fn workbench(
+        &self,
+        section: &'static str,
+        split: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let mut header = div()
+            .h(px(46.))
+            .flex_none()
+            .px(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(2.));
+        for (label, location) in [
+            ("Scans", Location::Scans),
+            ("Findings", Location::Findings),
+            ("Repositories", Location::Repositories),
+        ] {
+            header = header.child(self.button(
+                format!("security-tab-{label}"),
+                label,
+                Action::Navigate(location),
+                ButtonKind::Tab(section == label),
+                None,
+                window,
+                cx,
+            ));
+        }
+        header = header.child(div().flex_1()).child(self.button(
+            "security-start",
+            "Scan",
+            Action::Navigate(Location::NewScan),
+            ButtonKind::Primary,
+            Some("plus"),
+            window,
+            cx,
+        ));
+        let t = cx.theme().clone();
+        let gutter = if split { 30. } else { 20. };
+        let mut search = div()
+            .h(px(60.))
+            .flex_none()
+            .w_full()
+            .pt(px(20.))
+            .pb(px(8.))
+            .px(px(gutter))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .when(!split, |d| d.max_w(px(768.)))
+            .mx_auto()
+            .child(
+                div()
+                    .relative()
+                    .h(px(32.))
+                    .flex_1()
+                    .min_w_0()
+                    .px(px(10.))
+                    .border_1()
+                    .border_color(t.text.opacity(0.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: gpui::Corners::all(px(9999.)),
+                        corner: shapes::Corner::Round,
+                        fill: Some(t.control_background),
+                        border: Some((px(1.), t.border_strong)),
+                        ..Default::default()
+                    }))
+                    .child(icon("search", 18., t.text.opacity(0.65)))
+                    .child(div().flex_1().min_w_0().child(self.query.clone())),
+            );
+        if section != "Scans" {
+            search = search.child(self.button(
+                "security-filter",
+                "Filter",
+                Action::ShowDialog("filters"),
+                ButtonKind::Filter,
+                Some("security-filter"),
+                window,
+                cx,
+            ));
+        }
+        let list = match section {
+            "Findings" => self.findings_list(window, cx),
+            "Repositories" => self.repositories_list(window, cx),
+            _ => self.scan_list(window, cx),
+        };
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(header)
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .bg(t.surface)
+                    .flex()
+                    .flex_col()
+                    .child(search)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .w_full()
+                            .when(!split, |d| d.max_w(px(768.)))
+                            .mx_auto()
+                            .px(px(gutter))
+                            .py(px(20.))
+                            .child(list),
+                    ),
+            )
+            .into_any_element()
+    }
+
     fn action(
         &self,
         id: impl Into<SharedString>,
@@ -212,44 +312,114 @@ impl SecurityPage {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
+        self.button(
+            id,
+            label,
+            action,
+            if primary {
+                ButtonKind::Primary
+            } else {
+                ButtonKind::Secondary
+            },
+            None,
+            window,
+            cx,
+        )
+    }
+
+    fn button(
+        &self,
+        id: impl Into<SharedString>,
+        label: &'static str,
+        action: Action,
+        kind: ButtonKind,
+        glyph: Option<&'static str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let t = cx.theme().clone();
         let id = id.into();
         let focus = focus::handle(id.clone(), 0, window, cx);
         let key_action = action.clone();
+        let primary = matches!(
+            kind,
+            ButtonKind::Primary | ButtonKind::SmallPrimary | ButtonKind::FormPrimary
+        );
+        let (height, padding, radius, font) = match kind {
+            ButtonKind::SmallPrimary => (24., 8., 9999., 13.),
+            ButtonKind::FormPrimary => (32., 16., 12.5, 14.),
+            ButtonKind::Filter => (28., 4., 12.5, 13.),
+            _ => (28., 8., 12.5, 13.),
+        };
+        let color = if primary {
+            t.text_inverse
+        } else if matches!(kind, ButtonKind::Tab(false)) {
+            t.text.opacity(0.498)
+        } else {
+            t.text
+        };
+        let fill = if primary {
+            Some(t.button_primary_solid)
+        } else if matches!(kind, ButtonKind::Tab(false)) {
+            None
+        } else {
+            Some(t.text_alpha_5)
+        };
+        let disabled =
+            self.busy || matches!(action, Action::Start) && self.validate_setup(cx).is_err();
         focus::ring(
             div()
                 .id(id)
                 .role(gpui::Role::Button)
                 .aria_label(label)
-                .aria_disabled(self.busy)
+                .aria_disabled(disabled)
                 .relative()
-                .h(px(28.))
-                .px(px(10.))
-                .rounded(px(9.375))
+                .h(px(height))
+                .px(px(padding))
+                .border_1()
+                .border_color(t.text.opacity(0.))
                 .flex()
                 .items_center()
                 .justify_center()
-                .bg(if primary {
-                    t.button_primary_solid
-                } else {
-                    t.text_alpha_5
+                .gap(px(4.))
+                .child(shapes::decoration(shapes::Decoration {
+                    radius: gpui::Corners::all(px(radius)),
+                    corner: if radius > 100. {
+                        shapes::Corner::Round
+                    } else {
+                        shapes::Corner::Squircle
+                    },
+                    fill,
+                    border: primary.then_some((px(1.), t.border)),
+                    ..Default::default()
+                }))
+                .children(glyph.map(|name| {
+                    icon(
+                        name,
+                        if matches!(kind, ButtonKind::Filter) {
+                            18.
+                        } else {
+                            16.
+                        },
+                        color,
+                    )
+                }))
+                .when(!matches!(kind, ButtonKind::Filter), |d| {
+                    d.child(text(label, font, 18., 430., color))
                 })
-                .child(text(
-                    label,
-                    13.,
-                    18.571428,
-                    500.,
-                    if primary { t.text_inverse } else { t.text },
-                ))
-                .when(self.busy, |d| d.opacity(0.6)),
+                .when(disabled, |d| d.opacity(0.4)),
             &focus,
-            px(9.375),
+            px(radius),
             px(2.),
             cx,
         )
-        .on_click(cx.listener(move |this, _, _, cx| this.activate(action.clone(), cx)))
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if !disabled {
+                this.activate(action.clone(), cx);
+            }
+        }))
         .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
-            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+            if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
                 this.activate(key_action.clone(), cx);
                 cx.stop_propagation();
             }
@@ -257,6 +427,59 @@ impl SecurityPage {
     }
 
     fn empty(&self, title: &str, description: Option<&str>, t: &Theme) -> Div {
+        self.empty_with_action(title, description, None, t)
+    }
+
+    fn empty_with_action(
+        &self,
+        title: &str,
+        description: Option<&str>,
+        action: Option<AnyElement>,
+        t: &Theme,
+    ) -> Div {
+        let mut content = div()
+            .w_full()
+            .max_w(px(576.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(12.))
+            .child(icon(
+                if self.loading {
+                    "sidebar-cmd-spinner"
+                } else {
+                    "security"
+                },
+                32.,
+                t.text.opacity(0.65),
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(text(title.to_owned(), 16., 24., 500., t.text))
+                    .children(description.map(|value| {
+                        text(
+                            value.to_owned(),
+                            13.,
+                            18.571_428,
+                            430.,
+                            t.text.opacity(0.65),
+                        )
+                    })),
+            );
+        if let Some(action) = action {
+            content = content.child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(action),
+            );
+        }
         div()
             .size_full()
             .flex()
@@ -265,40 +488,7 @@ impl SecurityPage {
             .justify_center()
             .px(px(12.))
             .py(px(24.))
-            .child(
-                div()
-                    .max_w(px(576.))
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(12.))
-                    .child(icon(
-                        if self.loading {
-                            "sidebar-cmd-spinner"
-                        } else {
-                            "security"
-                        },
-                        32.,
-                        t.text.opacity(0.65),
-                    ))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(text(title.to_owned(), 16., 24., 500., t.text))
-                            .children(description.map(|value| {
-                                text(
-                                    value.to_owned(),
-                                    13.,
-                                    18.571_428,
-                                    430.,
-                                    t.text.opacity(0.65),
-                                )
-                            })),
-                    ),
-            )
+            .child(content)
     }
 
     fn list_state(
@@ -344,23 +534,28 @@ impl SecurityPage {
         } else {
             "No Security scans yet"
         };
-        if let Some(mut state) = self.list_state(
-            self.scans.is_some(),
-            rows.is_empty(),
-            title,
-            "Scan a codebase or its changes to find security issues",
-            &t,
-        ) {
-            if self.scans.as_ref().is_some_and(Vec::is_empty) {
-                state = state.child(self.action(
+        if self.scans.as_ref().is_some_and(Vec::is_empty) {
+            let action = self
+                .button(
                     "security-first-scan",
                     "Start a scan",
                     Action::Navigate(Location::NewScan),
-                    true,
+                    ButtonKind::SmallPrimary,
+                    None,
                     window,
                     cx,
-                ));
-            }
+                )
+                .into_any_element();
+            return self
+                .empty_with_action(
+                    title,
+                    Some("Scan a codebase or its changes to find security issues"),
+                    Some(action),
+                    &t,
+                )
+                .into_any_element();
+        }
+        if let Some(state) = self.list_state(self.scans.is_some(), rows.is_empty(), title, "", &t) {
             return state.into_any_element();
         }
         let mut list = div()
@@ -626,61 +821,60 @@ impl SecurityPage {
         if self.busy {
             return self.empty("Starting scan", Some("Codex is preparing the selected folder and starting a Security scan thread. This can take a moment"), &t).into_any_element();
         }
-        let mut form = div()
-            .id("security-setup")
-            .size_full()
-            .overflow_y_scroll()
-            .p(px(24.))
+        let mut form = div().mt(px(32.)).flex().flex_col().gap(px(16.)).child(
+            div()
+                .flex()
+                .gap(px(2.))
+                .child(self.review_kind(
+                    "standard",
+                    "Codebase",
+                    "Review the whole working tree",
+                    self.mode != "diff",
+                    false,
+                    window,
+                    cx,
+                ))
+                .child(
+                    self.review_kind(
+                        "diff",
+                        "Changes",
+                        "Review a commit or working-tree changes",
+                        self.mode == "diff",
+                        self.target_metadata
+                            .as_ref()
+                            .is_none_or(|data| data["reviewChangesSupported"] != true),
+                        window,
+                        cx,
+                    ),
+                ),
+        );
+        let mut choices = div()
             .flex()
             .flex_col()
-            .gap(px(20.))
-            .child(text("New scan", 24., 28., 600., t.text))
-            .child(text(
-                "What should Codex review?",
-                14.,
-                21.,
-                430.,
-                t.text_secondary,
-            ));
-        form = form.child(self.choice_row(
-            "Review type",
-            "mode",
-            if self.mode == "diff" {
-                "Changes"
-            } else {
-                "Codebase"
-            },
-            window,
-            cx,
-        ));
-        form = form.child(self.choice_row(
-            "Repository",
-            "target",
-            if self.target.is_empty() {
-                "Select a repository"
-            } else {
-                &self.target
-            },
-            window,
-            cx,
-        ));
-        form = form.child(self.choice_row(
-            if self.mode == "diff" {
-                "Changes to review"
-            } else {
-                "Scan area"
-            },
-            "area",
-            if self.mode == "diff" {
-                &self.diff_kind
-            } else if self.area == "folder" {
-                "Folder"
-            } else {
-                "Entire repository"
-            },
-            window,
-            cx,
-        ));
+            .child(
+                self.setup_choice("target", window, cx).child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left(px(16.))
+                        .right(px(16.))
+                        .h(px(1.))
+                        .bg(t.border),
+                ),
+            )
+            .child(
+                self.setup_choice("area", window, cx).child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left(px(16.))
+                        .right(px(16.))
+                        .h(px(1.))
+                        .bg(t.border),
+                ),
+            );
+        choices = choices.child(self.setup_choice("model", window, cx));
+        form = form.child(setup_card(choices, &t));
         if self.mode == "diff" && self.diff_kind != "working_tree" {
             form = form.child(field("Commit", self.revision.clone(), &t));
             if self.diff_kind == "range" {
@@ -704,102 +898,300 @@ impl SecurityPage {
                     &t,
                 ));
         }
-        form = form
-            .when(self.mode != "diff", |form| {
-                form.child(self.choice_row(
-                    "Scan type",
-                    "depth",
-                    if self.mode == "deep" {
-                        "Deep scan"
-                    } else {
-                        "Standard scan"
-                    },
-                    window,
-                    cx,
-                ))
-            })
-            .child(self.choice_row(
-                "Model and reasoning",
-                "model",
-                &format!("{} · {}", self.model, self.effort),
+        if self.mode != "diff" {
+            form = form.child(self.setup_toggle(
+                "deep",
+                "Deep scan",
+                "More comprehensive, but takes substantially longer",
+                self.mode == "deep",
+                Action::ToggleDeep,
                 window,
                 cx,
-            ))
-            .child(field("Additional context", self.context.clone(), &t))
+            ));
+        }
+        form = form.child(self.setup_toggle(
+            "context",
+            "Additional context",
+            "Share areas you want Codex Security to prioritize during this review",
+            self.context_expanded,
+            Action::ToggleContext,
+            window,
+            cx,
+        ));
+        if self.context_expanded {
+            form = form.child(field("Additional context", self.context.clone(), &t));
+        }
+        if let Some(error) = &self.error {
+            form = form.child(text(error.clone(), 13., 20., 430., t.text_error));
+        }
+        form = form.child(div().flex().justify_end().child(self.button(
+            "security-setup-submit",
+            "Start scan",
+            Action::Start,
+            ButtonKind::FormPrimary,
+            None,
+            window,
+            cx,
+        )));
+        div()
+            .id("security-setup")
+            .size_full()
+            .overflow_y_scroll()
+            .p(px(20.))
+            .flex()
+            .flex_col()
             .child(
                 div()
                     .flex()
-                    .justify_end()
-                    .gap(px(8.))
-                    .child(self.action(
-                        "security-setup-cancel",
-                        "Cancel",
-                        Action::Navigate(Location::Scans),
-                        false,
-                        window,
-                        cx,
-                    ))
-                    .child(self.action(
-                        "security-setup-submit",
-                        "Start scan",
-                        Action::Start,
-                        true,
-                        window,
-                        cx,
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(text("New scan", 20., 26.6, 500., t.text))
+                    .child(text(
+                        "What should Codex review?",
+                        14.,
+                        21.,
+                        430.,
+                        t.text.opacity(0.65),
                     )),
-            );
-        form.into_any_element()
+            )
+            .child(form)
+            .into_any_element()
     }
 
-    fn choice_row(
+    fn review_kind(
         &self,
+        mode: &'static str,
+        title: &'static str,
+        detail: &'static str,
+        selected: bool,
+        disabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let t = cx.theme().clone();
+        let focus = focus::handle(format!("security-review-{mode}"), 0, window, cx);
+        let choose = move |this: &mut Self, cx: &mut Context<Self>| {
+            if !disabled {
+                this.choose("mode", mode.into(), cx);
+                cx.notify();
+            }
+        };
+        focus::ring(
+            div()
+                .id(format!("security-review-{mode}"))
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .px(px(20.))
+                .py(px(8.))
+                .border_1()
+                .border_color(t.text.opacity(0.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .role(gpui::Role::Button)
+                .aria_label(title)
+                .aria_selected(selected)
+                .aria_disabled(disabled)
+                .when(selected, |d| {
+                    d.child(shapes::decoration(shapes::Decoration {
+                        radius: gpui::Corners::all(px(9999.)),
+                        corner: shapes::Corner::Round,
+                        fill: Some(t.text_alpha_5),
+                        ..Default::default()
+                    }))
+                })
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(2.))
+                        .child(text(
+                            title,
+                            13.,
+                            18.571_428,
+                            500.,
+                            if selected {
+                                t.text
+                            } else {
+                                t.text.opacity(0.498)
+                            },
+                        ))
+                        .child(text(detail, 12., 16., 430., t.text.opacity(0.65))),
+                )
+                .when(disabled, |d| d.opacity(0.4)),
+            &focus,
+            px(9999.),
+            px(2.),
+            cx,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| choose(this, cx)))
+        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                choose(this, cx);
+                cx.stop_propagation();
+            }
+        }))
+    }
+
+    fn setup_choice(&self, menu: &'static str, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        let model = self
+            .models
+            .iter()
+            .find(|model| model.model == self.model)
+            .map(|model| model.display_name.as_str())
+            .unwrap_or(&self.model);
+        let model = crate::composer::model_label(model);
+        let effort = crate::composer::effort_label(&self.effort);
+        let (label, value, padding, muted) = match menu {
+            "target" => (
+                "Repository",
+                if self.target.is_empty() {
+                    "Select a repository".to_owned()
+                } else {
+                    self.target.clone()
+                },
+                6.,
+                false,
+            ),
+            "area" => (
+                if self.mode == "diff" {
+                    "Changes to review"
+                } else {
+                    "Scan area"
+                },
+                if self.mode == "diff" {
+                    self.diff_kind.clone()
+                } else if self.area == "folder" {
+                    "Folder".into()
+                } else {
+                    "Entire codebase".into()
+                },
+                12.,
+                true,
+            ),
+            _ => (
+                "Model and reasoning",
+                format!("{model} · {effort}"),
+                6.,
+                true,
+            ),
+        };
+        let focus = focus::handle(format!("security-setup-{menu}"), 0, window, cx);
+        let open = move |this: &mut Self, cx: &mut Context<Self>| {
+            if !this.busy {
+                this.dialog = Some(menu);
+                cx.notify();
+            }
+        };
+        let trigger = focus::ring(
+            div()
+                .id(format!("security-setup-{menu}"))
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .relative()
+                .h(px(28.))
+                .px(px(padding))
+                .border_1()
+                .border_color(t.text.opacity(0.))
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .child(text(
+                    value,
+                    13.,
+                    18.,
+                    430.,
+                    if muted { t.text.opacity(0.498) } else { t.text },
+                ))
+                .child(icon("chevron-down", 14., t.text.opacity(0.498))),
+            &focus,
+            px(9999.),
+            px(2.),
+            cx,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| open(this, cx)))
+        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                open(this, cx);
+                cx.stop_propagation();
+            }
+        }));
+        div()
+            .relative()
+            .h(px(44.))
+            .px(px(16.))
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .child(
+                text(label, 13., 18.571_428, 430., t.text)
+                    .flex_1()
+                    .min_w_0(),
+            )
+            .child(div().flex_1().min_w_0().flex().justify_end().child(trigger))
+    }
+
+    fn setup_toggle(
+        &self,
+        id: &'static str,
         label: &'static str,
-        menu: &'static str,
-        current: &str,
+        detail: &'static str,
+        checked: bool,
+        action: Action,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
         let t = cx.theme().clone();
-        let focus = focus::handle(format!("security-choice-{menu}"), 0, window, cx);
-        let open = move |this: &mut Self, cx: &mut Context<Self>| {
-            this.dialog = Some(menu);
-            cx.notify();
-        };
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(px(20.))
-            .child(text(label, 14., 21., 430., t.text))
-            .child(
-                focus::ring(
+        let focus = focus::handle(format!("security-switch-{id}"), 0, window, cx);
+        let key_action = action.clone();
+        let control = focus::ring(
+            crate::screens::settings::compact_switch(format!("security-switch-{id}"), checked, &t)
+                .role(gpui::Role::Switch)
+                .aria_label(label)
+                .aria_selected(checked)
+                .aria_value(if checked { "On" } else { "Off" }),
+            &focus,
+            px(9999.),
+            px(2.),
+            cx,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| this.activate(action.clone(), cx)))
+        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                this.activate(key_action.clone(), cx);
+                cx.stop_propagation();
+            }
+        }));
+        setup_card(
+            div()
+                .px(px(16.))
+                .py(px(8.))
+                .flex()
+                .items_center()
+                .gap(px(16.))
+                .child(
                     div()
-                        .id(format!("security-choice-{menu}"))
-                        .role(gpui::Role::Button)
-                        .aria_label(label)
-                        .relative()
-                        .min_h(px(28.))
-                        .px(px(12.))
-                        .rounded(px(9.375))
-                        .bg(t.text_alpha_5)
+                        .flex_1()
+                        .min_w_0()
                         .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .child(text(current.to_owned(), 13., 20., 430., t.text))
-                        .child(icon("chevron-down", 14., t.text_secondary)),
-                    &focus,
-                    px(9.375),
-                    px(2.),
-                    cx,
+                        .flex_col()
+                        .gap(px(2.))
+                        .child(text(label, 13., 18.571_428, 500., t.text))
+                        .child(text(detail, 12., 16., 430., t.text.opacity(0.65))),
                 )
-                .on_click(cx.listener(move |this, _, _, cx| open(this, cx)))
-                .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _, cx| {
-                    if matches!(e.keystroke.key.as_str(), "enter" | "space") {
-                        open(this, cx);
-                        cx.stop_propagation();
-                    }
-                })),
-            )
+                .child(
+                    div()
+                        .w(px(160.))
+                        .flex_none()
+                        .flex()
+                        .justify_end()
+                        .child(control),
+                ),
+            &t,
+        )
     }
 
     fn detail_view(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -1683,6 +2075,24 @@ impl SecurityPage {
             cx,
         )
     }
+}
+
+fn setup_card(content: Div, t: &Theme) -> Div {
+    div()
+        .relative()
+        .p(px(1.))
+        .rounded(px(20.))
+        .overflow_hidden()
+        .flex()
+        .flex_col()
+        .child(shapes::decoration(shapes::Decoration {
+            radius: gpui::Corners::all(px(20.)),
+            corner: shapes::Corner::Round,
+            fill: Some(t.background_panel),
+            border: Some((px(1.), t.border)),
+            ..Default::default()
+        }))
+        .child(content)
 }
 
 fn field(label: &str, input: Entity<Composer>, t: &Theme) -> Div {

@@ -628,19 +628,19 @@ impl Composer {
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
-            .px(px(
-                if self.request_parent.is_some() && self.request_compact && !self.secret {
-                    10.
-                } else {
-                    12.
-                },
-            ))
-            .pb(px(if self.request_parent.is_some() {
+            .px(px(if self.inline_field {
+                0.
+            } else if self.request_parent.is_some() && self.request_compact && !self.secret {
+                10.
+            } else {
+                12.
+            }))
+            .pb(px(if self.request_parent.is_some() || self.inline_field {
                 0.
             } else {
                 4.
             }))
-            .min_h(px(if self.request_parent.is_some() {
+            .min_h(px(if self.request_parent.is_some() || self.inline_field {
                 20.
             } else {
                 48.
@@ -659,8 +659,10 @@ impl Composer {
             // `overflow-y: auto` contents), then composited onto the card.
             .child(
                 div()
-                    .when(self.content.is_empty(), |d| d.opacity(0.5))
-                    .layer()
+                    .when(self.content.is_empty() && !self.inline_field, |d| {
+                        d.opacity(0.5)
+                    })
+                    .when(!self.inline_field, |d| d.layer())
                     .child(Editor(cx.entity())),
             )
     }
@@ -947,10 +949,15 @@ impl gpui::Element for Editor {
         cx: &mut App,
     ) {
         let t = cx.theme().clone();
+        let placeholder = if self.0.read(cx).inline_field {
+            t.text.opacity(0.498)
+        } else {
+            t.text_tertiary
+        };
         let lines = shape(
             self.0.read(cx),
             t.text,
-            t.text_tertiary,
+            placeholder,
             chip_color(&t),
             Some(bounds.size.width),
             window,
