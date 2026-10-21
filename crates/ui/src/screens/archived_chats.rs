@@ -411,8 +411,11 @@ impl ArchivedChats {
             DeleteScope::All
         };
         self.menu = None;
-        let confirmation =
-            cx.new(|cx| Confirmation::new(title, description, "Delete", window, cx).destructive());
+        let confirmation = cx.new(|cx| {
+            Confirmation::new(title, description, "Delete", window, cx)
+                .destructive()
+                .settings_dialog()
+        });
         cx.subscribe_in(
             &confirmation,
             window,
@@ -458,53 +461,91 @@ impl ArchivedChats {
             command,
             Control::DeleteRow(_) | Control::Menu(Menu::Project(_))
         );
-        let mut body = div()
-            .id(id)
-            .role(gpui::Role::Button)
-            .aria_label(label.clone())
-            .aria_disabled(disabled)
-            .relative()
-            .h(px(28.))
-            .px(px(9.))
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap(px(6.));
-        if icon_only {
-            body = body.w(px(28.)).px_0().child(icon(
-                if matches!(command, Control::DeleteRow(_)) {
-                    "archive-delete"
-                } else {
-                    "diff-more"
-                },
-                16.,
-                if matches!(command, Control::DeleteRow(_)) {
-                    t.text_error
-                } else {
-                    t.text
-                },
-            ));
-        } else {
-            let outline = matches!(command, Control::Menu(Menu::Filter | Menu::Projects));
-            let destructive = command == Control::DeleteAll;
-            let color = if destructive { t.text_error } else { t.text };
-            let fill = if outline {
-                t.primary_soft_alpha
-            } else if destructive {
-                t.text_error.opacity(0.1)
-            } else {
-                t.text_alpha_5
-            };
-            body = body.child(on_card(12.5, Squircle, fill, outline.then_some(t.border)));
-            body = match command {
-                Control::DeleteAll => body.child(icon("archive-delete", 16., color)),
-                Control::Menu(Menu::Filter) => body.child(icon("archive-filter", 16., color)),
-                Control::Menu(Menu::Projects) => body.child(icon("folder", 16., color)),
-                _ => body,
-            };
-            body = body.child(text(label, 13., 18., 430., color));
-        }
         let open = matches!(&command, Control::Menu(menu) if self.menu.as_ref() == Some(menu));
+        let outline = matches!(command, Control::Menu(Menu::Filter | Menu::Projects));
+        let mut body = if outline {
+            let leading = if command == Control::Menu(Menu::Filter) {
+                "archive-filter"
+            } else {
+                "archive-folder"
+            };
+            div()
+                .relative()
+                .h(px(28.))
+                .px(px(13.))
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(4.))
+                .child(on_card(
+                    12.5,
+                    Squircle,
+                    if open {
+                        t.ghost_hover
+                    } else {
+                        t.primary_soft_alpha
+                    },
+                    Some(t.border),
+                ))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .child(icon(leading, 16., t.text))
+                        .child(text(label.clone(), 13., 18., 430., t.text).truncate()),
+                )
+                .child(icon("chevron-down", 14., t.text_tertiary))
+        } else {
+            let destructive = command == Control::DeleteAll;
+            let mut content = div()
+                .relative()
+                .h(px(if destructive { 32. } else { 28. }))
+                .px(px(9.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap(px(4.));
+            if icon_only {
+                content = content.w(px(28.)).px_0().child(icon(
+                    if matches!(command, Control::DeleteRow(_)) {
+                        "archive-delete"
+                    } else {
+                        "diff-more"
+                    },
+                    16.,
+                    t.text_tertiary,
+                ));
+            } else {
+                let color = if destructive { t.text_error } else { t.text };
+                content = content.child(on_card(
+                    12.5,
+                    Squircle,
+                    if destructive {
+                        t.text_error.opacity(0.1)
+                    } else {
+                        t.text_alpha_5
+                    },
+                    None,
+                ));
+                if destructive {
+                    content = content.child(icon("archive-delete", 16., color));
+                }
+                content = content.child(text(label.clone(), 13., 18., 430., color));
+            }
+            content
+        }
+        .id(id)
+        .role(gpui::Role::Button)
+        .aria_label(label)
+        .aria_disabled(disabled);
+        if command == Control::Menu(Menu::Filter) {
+            body = body.aria_label("Filter archived chats");
+        } else if command == Control::Menu(Menu::Projects) {
+            body = body.aria_label("Filter archived chats by project");
+        }
         let popup = open.then(|| self.popup(window, cx)).flatten();
         let click = command.clone();
         focus::ring(body.children(popup), &focus, px(12.5), px(0.), cx)
@@ -640,6 +681,61 @@ impl ArchivedChats {
             )
     }
 
+    fn error_row(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        let control = self.control(
+            "archive-retry".into(),
+            "Retry".into(),
+            Control::Retry,
+            window,
+            cx,
+        );
+        div()
+            .relative()
+            .p(px(1.))
+            .child(deco(
+                &self.layer,
+                20.,
+                Squircle,
+                t.background_panel,
+                Some(t.border),
+            ))
+            .child(crate::rounded_clip(
+                px(19.),
+                Squircle,
+                super::settings_row(
+                    "Could not load archived chats",
+                    None,
+                    control.into_any_element(),
+                    &t,
+                ),
+            ))
+    }
+
+    fn message_row(&self, label: &'static str, glyph: Option<&'static str>, cx: &App) -> Div {
+        let t = cx.theme();
+        div()
+            .relative()
+            .p(px(1.))
+            .child(deco(
+                &self.layer,
+                20.,
+                Squircle,
+                t.background_panel,
+                Some(t.border),
+            ))
+            .child(
+                div()
+                    .px(px(16.))
+                    .py(px(12.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .children(glyph.map(|glyph| icon(glyph, 16., t.text_secondary)))
+                    .child(text(label, 13., 18.571_428, 400., t.text_secondary)),
+            )
+    }
+
     fn filter_controls(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let kind = match self.kind {
             Kind::All => "All chats",
@@ -665,9 +761,7 @@ impl ArchivedChats {
                 window,
                 cx,
             )
-            .w(px(144.))
-            .justify_between()
-            .child(icon("chevron-down", 14., cx.theme().text_tertiary));
+            .w(px(144.));
         let project_button = self
             .control(
                 "archive-projects".into(),
@@ -676,9 +770,7 @@ impl ArchivedChats {
                 window,
                 cx,
             )
-            .w(px(176.))
-            .justify_between()
-            .child(icon("chevron-down", 14., cx.theme().text_tertiary));
+            .w(px(176.));
         div()
             .flex()
             .items_center()
@@ -706,6 +798,7 @@ impl ArchivedChats {
                         Some(MenuChoice::Kind(kind)),
                     ));
                 }
+                entries.push(("".into(), false, None));
                 entries.push(("Sort by".into(), false, None));
                 for (sort, label) in [
                     (Sort::Updated, "Updated"),
@@ -725,6 +818,7 @@ impl ArchivedChats {
                     self.project_filter == ProjectFilter::All,
                     Some(MenuChoice::Project(ProjectFilter::All)),
                 ));
+                entries.push(("".into(), false, None));
                 for project in &self.projects {
                     let filter = ProjectFilter::Project(project.id.to_string());
                     entries.push((
@@ -733,6 +827,7 @@ impl ArchivedChats {
                         Some(MenuChoice::Project(filter)),
                     ));
                 }
+                entries.push(("".into(), false, None));
                 entries.push((
                     "Chats".into(),
                     self.project_filter == ProjectFilter::Chats,
@@ -754,6 +849,23 @@ impl ArchivedChats {
             .into_iter()
             .enumerate()
             .map(|(index, (label, checked, choice))| {
+                if label.is_empty() {
+                    return div()
+                        .px(px(8.))
+                        .py(px(4.))
+                        .child(div().h(px(1.)).bg(t.border))
+                        .into_any_element();
+                }
+                let destructive = matches!(choice, Some(MenuChoice::DeleteProject(_)));
+                let leading = match choice.as_ref() {
+                    Some(MenuChoice::DeleteProject(_)) => Some("archive-delete"),
+                    Some(MenuChoice::Project(ProjectFilter::Chats)) => Some("archive-chat"),
+                    Some(MenuChoice::Project(ProjectFilter::Scheduled)) => {
+                        Some("sidebar-cmd-manage-scheduled-tasks")
+                    }
+                    Some(MenuChoice::Project(ProjectFilter::Project(_))) => Some("archive-folder"),
+                    _ => None,
+                };
                 let focus = focus::handle(
                     SharedString::from(format!("archive-menu-{index}")),
                     0,
@@ -766,20 +878,26 @@ impl ArchivedChats {
                         d.role(gpui::Role::MenuItem)
                             .track_focus(&focus.read(cx).handle)
                     })
-                    .rounded(px(8.))
+                    .rounded(px(15.))
                     .px(px(8.))
-                    .py(px(6.))
+                    .py(px(if choice.is_some() { 5. } else { 4. }))
                     .flex()
                     .items_center()
-                    .gap(px(8.))
+                    .gap(px(6.))
                     .when(choice.is_some(), |d| d.hover(|s| s.bg(t.menu_item_hover)))
+                    .when_some(leading, |d, glyph| {
+                        let color = if destructive { t.text_error } else { t.text };
+                        d.child(icon(glyph, 16., color).opacity(0.75))
+                    })
                     .child(
                         text(
                             label,
                             13.,
-                            18.,
-                            if choice.is_some() { 430. } else { 500. },
-                            if choice.is_some() {
+                            18.571_428,
+                            430.,
+                            if destructive {
+                                t.text_error
+                            } else if choice.is_some() {
                                 t.text
                             } else {
                                 t.text_tertiary
@@ -787,7 +905,9 @@ impl ArchivedChats {
                         )
                         .flex_1(),
                     )
-                    .when(checked, |d| d.child(icon("menu-check", 14., t.text)))
+                    .when(checked, |d| {
+                        d.child(icon("archive-check", 16., t.text).opacity(0.75))
+                    })
                     .on_key_down(cx.listener({
                         let choice = choice.clone();
                         move |this, event: &KeyDownEvent, window, cx| {
@@ -801,15 +921,21 @@ impl ArchivedChats {
                         this.choose(choice.as_ref(), window, cx);
                         cx.stop_propagation();
                     }))
+                    .into_any_element()
             });
+        let width = match menu {
+            Menu::Filter => 208.,
+            Menu::Projects => 260.,
+            Menu::Project(_) => 220.,
+        };
         Some(
             gpui::deferred(
                 div().absolute().top_0().right_0().child(
                     gpui::anchored()
                         .anchor(gpui::Anchor::TopRight)
-                        .offset(gpui::point(px(0.), px(32.)))
+                        .offset(gpui::point(px(19.), px(30.)))
                         .child(
-                            crate::composer::popover(&t, 220., |d| d.children(rows))
+                            crate::composer::popover(&t, width, |d| d.children(rows))
                                 .id("archive-menu")
                                 .on_hover(
                                     cx.listener(|this, hovered, _, _| this.menu_hovered = *hovered),
@@ -870,67 +996,26 @@ impl Render for ArchivedChats {
             && self.threads.as_ref().is_some_and(Result::is_err))
             || (self.kind != Kind::Local && self.cloud_error.is_some())
             || self.metadata_error.is_some();
-        let mut content = div()
-            .w_full()
-            .max_w(px(768.))
-            .px(px(20.))
-            .flex()
-            .flex_col()
-            .gap(px(40.));
-        if has_threads {
-            content = content.child(self.filter_controls(window, cx));
-        }
+        let controls = has_threads.then(|| self.filter_controls(window, cx));
+        let mut content = div().flex().flex_col().gap(px(40.));
         match &self.threads {
             _ if self.groups.is_empty()
                 && (self.threads.is_none() || (self.kind != Kind::Local && self.cloud_loading)) =>
             {
-                content = content.child(text(
+                content = content.child(self.message_row(
                     "Loading archived chats…",
-                    13.,
-                    18.571_428,
-                    430.,
-                    t.text_secondary,
+                    Some("sidebar-cmd-spinner"),
+                    cx,
                 ))
             }
             Some(_) if !has_threads && show_error => {
-                content = content.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(text(
-                            "Could not load archived chats",
-                            13.,
-                            18.571_428,
-                            430.,
-                            t.text,
-                        ))
-                        .child(self.control(
-                            "archive-retry".into(),
-                            "Retry".into(),
-                            Control::Retry,
-                            window,
-                            cx,
-                        )),
-                );
+                content = content.child(self.error_row(window, cx));
             }
             Some(Ok(threads)) if threads.is_empty() && self.cloud.is_empty() => {
-                content = content.child(text(
-                    "No archived chats",
-                    13.,
-                    18.571_428,
-                    430.,
-                    t.text_secondary,
-                ))
+                content = content.child(self.message_row("No archived chats", None, cx))
             }
             Some(_) if self.groups.is_empty() && !show_error => {
-                content = content.child(text(
-                    "No matching archived chats",
-                    13.,
-                    18.571_428,
-                    430.,
-                    t.text_secondary,
-                ))
+                content = content.child(self.message_row("No matching archived chats", None, cx))
             }
             _ => {
                 for group in &self.groups {
@@ -951,7 +1036,7 @@ impl Render for ArchivedChats {
                             .flex()
                             .items_center()
                             .gap(px(8.))
-                            .child(icon("folder", 16., t.text))
+                            .child(icon("archive-folder", 16., t.text))
                             .child(text(label, 14., 21., 500., t.text).flex_1())
                             .child(text(
                                 format!(
@@ -1022,27 +1107,20 @@ impl Render for ArchivedChats {
             }
         }
         if has_threads && show_error {
-            content = content.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(text(
-                        "Could not load archived chats",
-                        13.,
-                        18.571_428,
-                        430.,
-                        t.text,
-                    ))
-                    .child(self.control(
-                        "archive-retry".into(),
-                        "Retry".into(),
-                        Control::Retry,
-                        window,
-                        cx,
-                    )),
-            );
+            content = content.child(self.error_row(window, cx));
         }
+        let content = content.when(has_threads, |d| {
+            d.pt(px(20.)).layer().child(shapes::top_fade(px(32.)))
+        });
+        let content = div()
+            .w_full()
+            .max_w(px(768.))
+            .px(px(20.))
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .children(controls)
+            .child(content);
         let delete_all = has_local.then(|| {
             self.control(
                 "archive-delete-all".into(),
@@ -1066,19 +1144,25 @@ impl Render for ArchivedChats {
                     .layer()
                     .child(probe(&self.layer))
                     .child(
-                        div().pt(px(16.)).flex().flex_col().items_center().child(
-                            div()
-                                .w_full()
-                                .max_w(px(768.))
-                                .px(px(20.))
-                                .min_h(px(60.))
-                                .py(px(12.))
-                                .flex()
-                                .items_center()
-                                .justify_between()
-                                .child(text("Archived chats", 28., 33.6, 500., t.text))
-                                .children(delete_all),
-                        ),
+                        div()
+                            .pt(px(16.))
+                            .pb(px(1.))
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(768.))
+                                    .px(px(20.))
+                                    .min_h(px(60.))
+                                    .py(px(12.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(text("Archived chats", 28., 33.6, 500., t.text))
+                                    .children(delete_all),
+                            ),
                     )
                     .child(
                         div()

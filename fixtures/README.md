@@ -13,6 +13,7 @@ The recorder replaces secrets with fixed placeholders (`user@example.com`, `<red
 - `readback.jsonl`: one connection that sends every startup read the desktop UI uses (auth, account, config, models, features, rate limits, usage, skills, hooks, plugins, apps, MCP status, projects, sections), then thread/list with the desktop Recents params and, for each thread, thread/read (includeTurns), thread/turns/list, thread/items/list, thread/goal/get and thread/queue/list. Error replies stay as recorded.
 - `sessions/archived-chats.jsonl`: real list, restore, and delete responses from CLI `0.163.0-alpha.10.2` in installed app `26.1013.40934`.
   The isolated profile copies the original three chats.
+  The archive inventory changes from three chats to two, then one, then none.
   No model turn, account mutation, or credential file is involved.
   This recording does not change the pinned `26.1007.30912` renderer used for visual comparisons.
 

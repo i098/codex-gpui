@@ -126,8 +126,9 @@ This page does not implement Git operations or active pull request watchers, and
 
 Settings > Archived chats lists local archives and account-authorized cloud tasks.
 Search, project filters, and sorting keep the archive on one page.
-Unarchive offers a View action; local deletion asks for confirmation.
+Unarchive preserves existing recent-chat order and offers a View action; local deletion asks for confirmation.
 Delete all permanently removes all local archived chats, regardless of the active search or type filter.
+Failed metadata reads keep loaded chats and known projects visible beside Retry.
 Run `cargo test -p app --test archived_chats -- --test-threads=1` for the native restore, confirmation, and deletion check.
 
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.

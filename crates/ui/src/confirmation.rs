@@ -18,7 +18,9 @@ pub struct Confirmation {
     confirm_label: SharedString,
     cancel_label: SharedString,
     destructive: bool,
+    settings_style: bool,
     controls: [FocusHandle; 2],
+    hovered_controls: [bool; 2],
     return_focus: Option<FocusHandle>,
     completed: bool,
 }
@@ -48,7 +50,9 @@ impl Confirmation {
             confirm_label: confirm_label.into(),
             cancel_label: "Cancel".into(),
             destructive: false,
+            settings_style: false,
             controls,
+            hovered_controls: [false; 2],
             return_focus,
             completed: false,
         }
@@ -56,6 +60,11 @@ impl Confirmation {
 
     pub fn destructive(mut self) -> Self {
         self.destructive = true;
+        self
+    }
+
+    pub fn settings_dialog(mut self) -> Self {
+        self.settings_style = true;
         self
     }
 
@@ -104,44 +113,102 @@ impl Confirmation {
 impl Render for Confirmation {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let width = 420_f32.min(f32::from(window.viewport_size().width) - 32.);
+        let settings = self.settings_style;
+        let viewport_width = f32::from(window.viewport_size().width);
+        let width = if settings {
+            520_f32.min(viewport_width * 0.92)
+        } else {
+            420_f32.min(viewport_width - 32.)
+        };
+        let button_radius = if settings {
+            Theme::RADIUS_LG
+        } else {
+            Theme::RADIUS_FULL
+        };
         let buttons = [self.cancel_label.clone(), self.confirm_label.clone()]
             .into_iter()
             .enumerate()
             .map(|(index, label)| {
                 let destructive = index == 1 && self.destructive;
                 let fill = if destructive {
-                    t.text_error
+                    if settings {
+                        t.text_error.opacity(0.1)
+                    } else {
+                        t.text_error
+                    }
                 } else if index == 1 {
                     t.button_primary_solid
+                } else if settings {
+                    rgba(0).into()
                 } else {
                     t.button_secondary
                 };
-                let foreground = if index == 1 { t.text_inverse } else { t.text };
+                let foreground = if settings && destructive {
+                    t.text_error
+                } else if settings && index == 0 {
+                    t.text_tertiary
+                } else if index == 1 {
+                    t.text_inverse
+                } else {
+                    t.text
+                };
+                let hover = if destructive {
+                    t.text_error.opacity(0.2)
+                } else {
+                    t.ghost_hover
+                };
                 div()
                     .id(("confirmation-button", index))
                     .role(gpui::Role::Button)
                     .aria_label(label.clone())
                     .track_focus(&self.controls[index])
-                    .h(px(36.))
-                    .px(px(14.))
+                    .h(px(if settings { 32. } else { 36. }))
+                    .px(px(if settings { 17. } else { 14. }))
                     .relative()
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded_full()
-                    .bg(fill)
+                    .when(!settings, |d| d.rounded(button_radius).bg(fill))
+                    .when(settings, |d| {
+                        d.child(shapes::decoration(shapes::Decoration {
+                            radius: Corners::all(button_radius),
+                            corner: shapes::Corner::Squircle,
+                            fill: Some(if self.hovered_controls[index] {
+                                hover
+                            } else {
+                                fill
+                            }),
+                            ..Default::default()
+                        }))
+                        .on_hover(cx.listener(
+                            move |this, hovered, _, cx| {
+                                this.hovered_controls[index] = *hovered;
+                                cx.notify();
+                            },
+                        ))
+                    })
                     .when(
                         self.controls[index].is_focused(window) && window.last_input_was_keyboard(),
                         |d| {
                             d.child(shapes::decoration(shapes::Decoration {
-                                radius: Corners::all(Theme::RADIUS_FULL),
+                                radius: Corners::all(button_radius),
+                                corner: if settings {
+                                    shapes::Corner::Squircle
+                                } else {
+                                    shapes::Corner::Round
+                                },
                                 border: Some((px(2.), t.focus_ring)),
                                 ..Default::default()
                             }))
                         },
                     )
-                    .child(text(label, 14., 20., 500., foreground))
+                    .child(text(
+                        label,
+                        14.,
+                        if settings { 18. } else { 20. },
+                        if settings { 430. } else { 500. },
+                        foreground,
+                    ))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.finish(
                             if index == 0 {
@@ -180,7 +247,12 @@ impl Render for Confirmation {
                         shapes::Fill::Color,
                         false,
                         shapes::Decoration {
-                            radius: Corners::all(px(24.)),
+                            radius: Corners::all(px(if settings { 25. } else { 24. })),
+                            corner: if settings {
+                                shapes::Corner::Squircle
+                            } else {
+                                shapes::Corner::Round
+                            },
                             fill: Some(gpui::Hsla {
                                 a: 0.9,
                                 ..t.menu_background
@@ -197,13 +269,19 @@ impl Render for Confirmation {
                             .p(px(20.))
                             .flex()
                             .flex_col()
-                            .gap(px(20.))
+                            .gap(px(if settings { 12. } else { 20. }))
                             .child(
                                 div()
                                     .flex()
                                     .flex_col()
                                     .gap(px(12.))
-                                    .child(text(self.title.clone(), 20., 26., 500., t.text))
+                                    .child(text(
+                                        self.title.clone(),
+                                        20.,
+                                        if settings { 28. } else { 26. },
+                                        if settings { 600. } else { 500. },
+                                        t.text,
+                                    ))
                                     .child(
                                         text(
                                             self.description.clone(),
@@ -215,7 +293,13 @@ impl Render for Confirmation {
                                         .whitespace_normal(),
                                     ),
                             )
-                            .child(div().flex().justify_end().gap(px(8.)).children(buttons)),
+                            .child(
+                                div()
+                                    .flex()
+                                    .justify_end()
+                                    .gap(px(if settings { 12. } else { 8. }))
+                                    .children(buttons),
+                            ),
                     ),
             )
     }

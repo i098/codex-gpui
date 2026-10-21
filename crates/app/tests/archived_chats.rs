@@ -1,103 +1,59 @@
 #![cfg(target_os = "macos")]
 
-use anyhow::{Result, ensure};
-use bridge::Bridge;
-use std::{fs, path::Path};
+mod common;
 
-const RECORDING: &str = include_str!("../../../fixtures/sessions/archived-chats.jsonl");
+use anyhow::{Result, ensure};
+use common::Fx;
+use gpui::{
+    Entity, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, point, px,
+};
+use std::{fs, path::Path, sync::Arc};
+use ui::screens::settings::archived_chats::{ArchivedChats, OpenArchivedChats};
 
 #[test]
-fn native_archived_settings_restores_and_deletes_chats() -> Result<()> {
-    use app::{Root, Route, State, ThemeSetting};
-    use gpui::{
-        AppContext as _, HeadlessAppContext, Keystroke, Modifiers, MouseButton, MouseDownEvent,
-        MouseUpEvent, PlatformInput, point, px, size,
-    };
-    use std::{
-        sync::Arc,
-        thread,
-        time::{Duration, Instant},
-    };
-    use ui::screens::settings::archived_chats::OpenArchivedChats;
+fn proxy() {
+    common::install_panic_hook();
+    common::proxy_child();
+}
 
-    std::panic::set_hook(Box::new(|info| {
-        eprintln!("{info}");
-        std::process::exit(101);
-    }));
-    let file = tempfile::NamedTempFile::new()?;
-    let mut script = fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/readback.jsonl"),
+fn fixture() -> Result<Fx> {
+    common::install_panic_hook();
+    let mut fx = Fx::captured(
+        "dark",
+        (1280., 832.),
+        common::script(Some("sessions/archived-chats.jsonl"), |_| {})?,
     )?;
-    script.push('\n');
-    script.push_str(RECORDING);
-    fs::write(file.path(), script)?;
-    let (bridge, events) = Bridge::replay(file.path())?;
-    let home = tempfile::tempdir()?;
-    let host = Arc::new(app::host::LocalHost::new(home.path()));
-    let oracle: serde_json::Value =
-        serde_json::from_str(include_str!("../../../tools/route1/oracle.json"))?;
-    let mut settings = app::host_settings::Settings::default();
-    settings.write(
-        "seen-model-upgrade-list",
-        oracle["persisted-atoms"]["state"]["seen-model-upgrade-list"].clone(),
-    )?;
-    let mut cx = HeadlessAppContext::with_platform(
-        textsys::text_system(),
-        Arc::new(theme::Assets),
-        gpui_platform::current_headless_renderer,
-    );
-    cx.update(|cx| {
-        theme::load_fonts(cx);
-        cx.set_global(theme::Theme::dark());
-        cx.set_global(settings);
-        ui::composer::Composer::set_caret_transparent(cx, true);
-        app::init(cx);
-    });
-    cx.allow_parking();
-    let window = cx.open_window(size(px(1280.), px(832.)), |window, cx| {
-        cx.new(|cx| {
-            let mut root = Root::new(
-                State {
-                    route: Route::Home,
-                    theme: ThemeSetting::Dark,
-                    ..State::default()
-                },
-                bridge,
-                events,
-                "/tmp/cgx-mac/proj".into(),
-                window,
-                cx,
-            );
-            root.set_host(host, cx);
-            root
+    if std::env::var_os("CGX_ARCHIVE_PARTIAL_ERROR").is_some() {
+        let host = Arc::new(match std::env::var("CGX_ARCHIVE_PROJECT_FIXTURE") {
+            Ok(path) => app::host::ReplayHost::from_recording(&fs::read_to_string(path)?)?,
+            Err(_) => app::host::ReplayHost::from_oracle(include_str!(
+                "../../../tools/route1/oracle.json"
+            ))?,
+        });
+        fx.root
+            .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
+    }
+    fx.cx
+        .update(|cx| ui::composer::Composer::set_caret_transparent(cx, true));
+    fx.action(Box::new(OpenArchivedChats))?;
+    fx.wait("archived settings", |fx| {
+        fx.read(|root, cx| {
+            root.archived_settings()
+                .is_some_and(|page| matches!(page.read(cx).threads, Some(Ok(_))))
         })
     })?;
-    let root = cx.read_window(&window, |root, _| root)?;
-    let until = Instant::now() + Duration::from_secs(30);
-    while !root.read_with(&cx, |root, _| root.ready()) {
-        cx.run_until_parked();
-        ensure!(Instant::now() < until, "application startup did not finish");
-        thread::sleep(Duration::from_millis(5));
-    }
-    cx.update_window(window.into(), |_, window, cx| {
-        window.dispatch_action(Box::new(OpenArchivedChats), cx);
-    })?;
-    let until = Instant::now() + Duration::from_secs(30);
-    let page = loop {
-        cx.run_until_parked();
-        let page = root.read_with(&cx, |root, cx| {
-            root.archived_settings()
-                .filter(|page| matches!(page.read(cx).threads, Some(Ok(_))))
-                .cloned()
-        });
-        if let Some(page) = page {
-            break page;
-        }
-        ensure!(Instant::now() < until, "archived list did not load");
-        thread::sleep(Duration::from_millis(5));
-    };
-    let ids: Vec<_> = page.read_with(&cx, |page, _| {
-        page.threads
+    Ok(fx)
+}
+
+fn page(fx: &Fx) -> Entity<ArchivedChats> {
+    fx.read(|root, _| root.archived_settings().expect("archived settings").clone())
+}
+
+fn ids(fx: &Fx) -> Vec<String> {
+    fx.read(|_, cx| {
+        page(fx)
+            .read(cx)
+            .threads
             .as_ref()
             .unwrap()
             .as_ref()
@@ -105,190 +61,154 @@ fn native_archived_settings_restores_and_deletes_chats() -> Result<()> {
             .iter()
             .map(|thread| thread.id.clone())
             .collect()
-    });
-    ensure!(ids.len() == 3);
-    let shots = std::env::var("CGX_ARCHIVE_SHOTS").ok();
-    if let Some(directory) = &shots {
-        fs::create_dir_all(directory)?;
+    })
+}
+
+fn shot(fx: &mut Fx, name: &str) -> Result<()> {
+    if let Ok(directory) = std::env::var("CGX_ARCHIVE_SHOTS") {
+        fs::create_dir_all(&directory)?;
+        fx.hover((768., 6.))?;
+        fx.shot()?
+            .save(Path::new(&directory).join(format!("archive-{name}.png")))?;
     }
-    let click = |cx: &mut HeadlessAppContext, x: f32, y: f32| -> Result<()> {
-        cx.update_window(window.into(), |_, window, cx| {
-            let position = point(px(x), px(y));
-            window.dispatch_event(
-                PlatformInput::MouseMove(gpui::MouseMoveEvent {
-                    position,
-                    pressed_button: None,
-                    modifiers: Modifiers::default(),
-                }),
-                cx,
-            );
-            window.dispatch_event(
-                PlatformInput::MouseDown(MouseDownEvent {
-                    button: MouseButton::Left,
-                    position,
-                    modifiers: Modifiers::default(),
-                    click_count: 1,
-                    first_mouse: false,
-                }),
-                cx,
-            );
-            window.dispatch_event(
-                PlatformInput::MouseUp(MouseUpEvent {
-                    button: MouseButton::Left,
-                    position,
-                    modifiers: Modifiers::default(),
-                    click_count: 1,
-                }),
-                cx,
-            );
-        })?;
-        cx.run_until_parked();
-        Ok(())
-    };
-    let key = |cx: &mut HeadlessAppContext, key: &str| -> Result<()> {
-        let stroke = Keystroke::parse(key)?;
-        cx.update_window(window.into(), |_, window, cx| {
-            window.dispatch_keystroke(stroke, cx);
-        })?;
-        cx.run_until_parked();
-        Ok(())
-    };
-    let type_text = |cx: &mut HeadlessAppContext, text: &str| -> Result<()> {
-        cx.update_window(window.into(), |_, window, cx| {
-            for character in text.chars() {
-                window.dispatch_keystroke(
-                    Keystroke {
-                        key: character.to_string(),
-                        ..Default::default()
-                    },
-                    cx,
-                );
-            }
-        })?;
-        cx.run_until_parked();
-        Ok(())
-    };
-    let shot = |cx: &mut HeadlessAppContext, name: &str| -> Result<()> {
-        if let Some(directory) = &shots {
-            cx.update_window(window.into(), |_, window, cx| {
-                window.dispatch_event(
-                    PlatformInput::MouseMove(gpui::MouseMoveEvent {
-                        position: point(px(768.), px(6.)),
-                        pressed_button: None,
-                        modifiers: Modifiers::default(),
-                    }),
-                    cx,
-                );
-            })?;
-            cx.run_until_parked();
-            cx.capture_screenshot(window.into())?
-                .save(Path::new(directory).join(format!("archive-{name}.png")))?;
-        }
-        Ok(())
-    };
-    shot(&mut cx, "list")?;
-    if shots.is_some() {
-        click(&mut cx, 916., 202.)?;
-        shot(&mut cx, "filter")?;
-        key(&mut cx, "escape")?;
-        click(&mut cx, 1084., 202.)?;
-        shot(&mut cx, "projects")?;
-        key(&mut cx, "escape")?;
+    Ok(())
+}
+
+#[test]
+fn native_archive_interactions() -> Result<()> {
+    let mut fx = fixture()?;
+    let initial = ids(&fx);
+    ensure!(initial.len() == 3);
+    shot(&mut fx, "list")?;
+    if std::env::var_os("CGX_ARCHIVE_PROJECT_FIXTURE").is_some() {
+        shot(&mut fx, "project-list")?;
+        fx.click((1158., 267.))?;
+        shot(&mut fx, "project-actions")?;
+        fx.click((1060., 301.))?;
+        ensure!(fx.read(|_, cx| page(&fx).read(cx).confirmation().is_some()));
+        shot(&mut fx, "project-delete")?;
+        fx.keys("escape")?;
     }
-    click(&mut cx, 1128., 136.)?;
+    if std::env::var_os("CGX_ARCHIVE_SHOTS").is_some() {
+        fx.click((916., 203.))?;
+        shot(&mut fx, "filter")?;
+        fx.keys("escape")?;
+        fx.click((1084., 203.))?;
+        shot(&mut fx, "projects")?;
+        fx.keys("escape")?;
+    }
+    fx.click((1128., 136.))?;
     ensure!(
-        page.read_with(&cx, |page, _| page.confirmation().is_some()),
+        fx.read(|_, cx| page(&fx).read(cx).confirmation().is_some()),
         "Delete all did not ask for confirmation"
     );
-    shot(&mut cx, "delete-all")?;
-    key(&mut cx, "escape")?;
-    ensure!(
-        page.read_with(&cx, |page, _| page.confirmation().is_none()
-            && page.threads.as_ref().unwrap().as_ref().unwrap().len() == 3),
-        "Cancel changed the archived list"
-    );
-    let restored = ids[0].clone();
-    if shots.is_some() {
-        click(&mut cx, 1054., 336.)?;
-        shot(&mut cx, "delete-single")?;
-        key(&mut cx, "escape")?;
-        click(&mut cx, 600., 202.)?;
-        type_text(&mut cx, "subtract")?;
-        shot(&mut cx, "search")?;
-        key(&mut cx, "cmd-a")?;
-        key(&mut cx, "backspace")?;
-        type_text(&mut cx, "zzzzzz")?;
-        shot(&mut cx, "no-matches")?;
-        key(&mut cx, "cmd-a")?;
-        key(&mut cx, "backspace")?;
+    shot(&mut fx, "delete-all")?;
+    fx.keys("escape")?;
+    ensure!(ids(&fx) == initial, "Cancel changed the archived list");
+    if std::env::var_os("CGX_ARCHIVE_SHOTS").is_some() {
+        fx.click((1054., 324.))?;
+        shot(&mut fx, "delete-single")?;
+        fx.keys("escape")?;
+        fx.click((600., 203.))?;
+        fx.type_text("subtract")?;
+        shot(&mut fx, "search")?;
+        fx.keys("cmd-a backspace")?;
+        fx.type_text("zzzzzz")?;
+        shot(&mut fx, "no-matches")?;
+        fx.keys("cmd-a backspace")?;
     }
-    click(&mut cx, 1115., 336.)?;
-    let until = Instant::now() + Duration::from_secs(30);
-    loop {
-        cx.run_until_parked();
-        let removed = page.read_with(&cx, |page, _| {
-            page.threads
-                .as_ref()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .iter()
-                .all(|thread| thread.id != restored)
-        });
-        if removed {
-            break;
-        }
-        ensure!(
-            Instant::now() < until,
-            "restored chat stayed in the archive"
-        );
-        thread::sleep(Duration::from_millis(5));
-    }
-    ensure!(root.read_with(&cx, |root, cx| {
-        root.recents().contains(&restored)
+    fx.click((1115., 324.))?;
+    fx.wait("restored archived chat", |fx| {
+        !ids(fx).contains(&initial[0])
+    })?;
+    ensure!(fx.read(|root, cx| {
+        root.recents().contains(&initial[0])
             && root
                 .toasts(cx)
                 .iter()
-                .filter(|title| title.as_ref() == "Unarchived chat")
-                .count()
-                == 1
-            && root
-                .toasts(cx)
-                .iter()
-                .all(|title| title.as_ref() != "Unarchiving chat")
+                .any(|title| title.as_ref() == "Unarchived chat")
     }));
-    shot(&mut cx, "restored")?;
-    let deleted = ids[2].clone();
-    click(&mut cx, 1054., 396.)?;
+    shot(&mut fx, "restored")?;
+    fx.click((1054., 385.))?;
     ensure!(
-        page.read_with(&cx, |page, _| page.confirmation().is_some()),
+        fx.read(|_, cx| page(&fx).read(cx).confirmation().is_some()),
         "Row delete did not ask for confirmation"
     );
-    click(&mut cx, 795., 456.)?;
-    let until = Instant::now() + Duration::from_secs(30);
-    loop {
-        cx.run_until_parked();
-        if page.read_with(&cx, |page, _| {
-            page.threads
-                .as_ref()
-                .unwrap()
-                .as_ref()
-                .unwrap()
-                .iter()
-                .all(|thread| thread.id != deleted)
-        }) {
-            break;
-        }
-        ensure!(Instant::now() < until, "deleted chat stayed in the archive");
-        thread::sleep(Duration::from_millis(5));
-    }
-    ensure!(root.read_with(&cx, |root, cx| {
-        !root.recents().contains(&deleted)
+    fx.click((842., 452.))?;
+    fx.wait("deleted archived chat", |fx| !ids(fx).contains(&initial[2]))?;
+    ensure!(fx.read(|root, cx| {
+        !root.recents().contains(&initial[2])
             && root
                 .toasts(cx)
                 .iter()
                 .any(|title| title.as_ref() == "Deleted archived chat")
     }));
-    shot(&mut cx, "deleted")?;
+    shot(&mut fx, "deleted")?;
+    fx.click((1128., 136.))?;
+    fx.click((842., 452.))?;
+    fx.wait("all archived chats deleted", |fx| ids(fx).is_empty())?;
+    ensure!(
+        fx.read(|root, _| root.recents()) == [initial[0].clone()],
+        "Delete all removed an active chat or retained an archived chat"
+    );
+    shot(&mut fx, "empty-error")?;
+    if let Ok(directory) = std::env::var("CGX_ARCHIVE_SHOTS") {
+        let archived = page(&fx);
+        let image = fx.cx.update_window(fx.window, |_, window, cx| {
+            let position = point(px(1128.), px(214.));
+            for event in [
+                PlatformInput::MouseMove(MouseMoveEvent {
+                    position,
+                    pressed_button: None,
+                    modifiers: Default::default(),
+                }),
+                PlatformInput::MouseDown(MouseDownEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                }),
+                PlatformInput::MouseUp(MouseUpEvent {
+                    button: MouseButton::Left,
+                    position,
+                    modifiers: Default::default(),
+                    click_count: 1,
+                }),
+            ] {
+                window.dispatch_event(event, cx);
+            }
+            ensure!(archived.read(cx).threads.is_none());
+            window.draw(cx).clear(cx);
+            window.render_to_image()
+        })??;
+        image.save(Path::new(&directory).join("archive-loading.png"))?;
+        fx.wait("retried empty archive", |fx| {
+            fx.read(|_, cx| page(fx).read(cx).threads.is_some())
+        })?;
+    }
+    Ok(())
+}
+
+#[test]
+fn view_opens_the_restored_chat() -> Result<()> {
+    let mut fx = fixture()?;
+    let restored = ids(&fx)[0].clone();
+    let prior_recents = fx.read(|root, _| root.recents());
+    fx.click((1115., 324.))?;
+    fx.wait("unarchive View action", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|title| title.as_ref() == "Unarchived chat")
+        })
+    })?;
+    ensure!(
+        fx.read(|root, _| root.recents()) == prior_recents,
+        "Unarchive reordered existing recent chats"
+    );
+    fx.click((699., 69.))?;
+    fx.wait_thread(&restored)?;
+    shot(&mut fx, "view")?;
     Ok(())
 }

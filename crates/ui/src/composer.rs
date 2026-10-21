@@ -1928,17 +1928,17 @@ impl Render for Composer {
                     .aria_placeholder(self.placeholder.clone())
                     .aria_value(self.content.clone())
                     .h(px(32.))
-                    .px(px(10.))
+                    .px(px(11.))
                     .flex()
                     .items_center()
                     .gap(px(8.))
                     .child(shapes::decoration(shapes::Decoration {
                         radius: Corners::all(Theme::RADIUS_FULL),
                         fill: Some(t.surface_elevated_secondary),
-                        border: Some((px(1.), t.border)),
+                        border: Some((px(1.), t.border_strong)),
                         ..Default::default()
                     }))
-                    .child(crate::icon::icon("search", 16., t.text_secondary))
+                    .child(crate::icon::icon("page-search", 18., t.text_secondary))
                     .child(div().flex_1().min_w_0().child(self.editor(cx)))
                     .when(!self.content.is_empty(), |d| {
                         d.child(
@@ -1949,7 +1949,11 @@ impl Render for Composer {
                                 .track_focus(&clear_handle)
                                 .size(px(16.))
                                 .cursor_pointer()
-                                .child(crate::icon::icon("close", 16., t.text_secondary))
+                                .child(crate::icon::icon(
+                                    "page-search-clear",
+                                    16.,
+                                    t.text_secondary,
+                                ))
                                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.set_text("", cx);

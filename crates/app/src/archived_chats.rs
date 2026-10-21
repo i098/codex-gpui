@@ -38,37 +38,9 @@ impl Root {
                 })
                 .detach();
                 cx.spawn(async move |_, cx| {
-                    let metadata = cx.background_spawn(async move {
-                        let mut state = json!({});
-                        for key in [
-                            "projectless-thread-ids",
-                            "thread-project-assignments",
-                            "thread-workspace-root-hints",
-                        ] {
-                            let reply = host::json_body(&host.fetch(&host::Request::post(
-                                "get-global-state",
-                                Some(json!({"key": key})),
-                            ))?)?;
-                            state[key] = reply["value"].clone();
-                        }
-                        let inbox = host::json_body(&host.fetch(&host::Request::post(
-                            "inbox-items",
-                            Some(json!({"limit": 100000})),
-                        ))?)?;
-                        let ids: std::collections::BTreeSet<String> = inbox["items"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .filter_map(|run| run["threadId"].as_str().map(str::to_owned))
-                            .collect();
-                        state["automationThreadIds"] = json!(ids);
-                        Ok::<_, anyhow::Error>((host.projects()?, state))
-                    });
+                    let metadata = cx.background_spawn(async move { archive_metadata(&*host) });
                     let threads = archived_threads(&bridge, 100).await;
-                    let (projects, metadata, metadata_error) = match metadata.await {
-                        Ok((projects, metadata)) => (projects, metadata, None),
-                        Err(error) => (Vec::new(), Value::Null, Some(error.to_string())),
-                    };
+                    let (projects, metadata, metadata_error) = metadata.await;
                     let data = ArchiveData {
                         threads,
                         projects,
@@ -96,8 +68,13 @@ impl Root {
                     });
                     this.update_in(cx, |this, _, cx| match result {
                         Ok(response) => {
-                            this.threads.retain(|thread| thread.id != id);
-                            this.threads.insert(0, response.thread);
+                            if let Some(thread) =
+                                this.threads.iter_mut().find(|thread| thread.id == id)
+                            {
+                                *thread = response.thread;
+                            } else {
+                                this.threads.insert(0, response.thread);
+                            }
                             this.sidebar
                                 .update(cx, |sidebar, cx| sidebar.set_threads(&this.threads, cx));
                             let root = cx.weak_entity();
@@ -221,6 +198,50 @@ impl Root {
     }
 }
 
+fn archive_metadata(
+    host: &dyn host::Host,
+) -> (Vec<ui::screens::sidebar::Project>, Value, Option<String>) {
+    let mut error = None;
+    let projects = host.projects().unwrap_or_else(|failure| {
+        error = Some(failure.to_string());
+        Vec::new()
+    });
+    let mut fetch = |request| {
+        host.fetch(&request)
+            .and_then(|reply| host::json_body(&reply))
+            .map_err(|failure| {
+                error.get_or_insert_with(|| failure.to_string());
+            })
+            .ok()
+    };
+    let mut state = json!({});
+    for key in [
+        "projectless-thread-ids",
+        "thread-project-assignments",
+        "thread-workspace-root-hints",
+    ] {
+        if let Some(reply) = fetch(host::Request::post(
+            "get-global-state",
+            Some(json!({"key": key})),
+        )) {
+            state[key] = reply["value"].clone();
+        }
+    }
+    if let Some(inbox) = fetch(host::Request::post(
+        "inbox-items",
+        Some(json!({"limit": 100000})),
+    )) {
+        let ids: std::collections::BTreeSet<&str> = inbox["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|run| run["threadId"].as_str())
+            .collect();
+        state["automationThreadIds"] = json!(ids);
+    }
+    (projects, state, error)
+}
+
 fn cloud_archived(host: &dyn host::Host) -> Result<Vec<CloudArchive>> {
     #[derive(Deserialize)]
     struct Page {
@@ -296,34 +317,55 @@ async fn delete_archived(
 mod tests {
     use super::*;
 
+    fn recorded_exchanges<'a>(records: &'a [Value], method: &str) -> Vec<(usize, [&'a Value; 2])> {
+        records
+            .iter()
+            .enumerate()
+            .filter_map(|(index, request)| {
+                if request["dir"] != "send" || request["msg"]["method"] != method {
+                    return None;
+                }
+                let reply = records[index + 1..].iter().find(|reply| {
+                    reply["dir"] == "recv" && reply["msg"]["id"] == request["msg"]["id"]
+                })?;
+                Some((index, [request, reply]))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn inbox_failure_keeps_known_archive_projects() -> Result<()> {
+        let fixture = include_str!("../../../refs/interactions/f1d_projects.json");
+        let host = host::ReplayHost::from_recording(fixture)?;
+        let (projects, _, error) = archive_metadata(&host);
+        ensure!(
+            projects
+                .iter()
+                .any(|project| project.label == "Parity project")
+        );
+        ensure!(error.is_some(), "missing metadata must remain visible");
+        Ok(())
+    }
+
     #[test]
     fn deletion_refuses_a_chat_that_is_no_longer_archived() -> Result<()> {
         let records: Vec<Value> = include_str!("../../../fixtures/sessions/archived-chats.jsonl")
             .lines()
             .map(serde_json::from_str)
             .collect::<serde_json::Result<_>>()?;
-        let pair = |method: &str| {
-            records
-                .windows(2)
-                .rfind(|pair| {
-                    pair[0]["dir"] == "send"
-                        && pair[0]["msg"]["method"] == method
-                        && pair[1]["dir"] == "recv"
-                })
-                .expect("recorded transaction")
-        };
-        let list = pair("thread/list");
+        let (_, list) = recorded_exchanges(&records, "thread/list")
+            .into_iter()
+            .last()
+            .context("recorded archived list")?;
         let archived = list[1]["msg"]["result"]["data"]
             .as_array()
             .context("archived list")?;
-        let delete = records
-            .windows(2)
-            .rfind(|pair| {
-                pair[0]["msg"]["method"] == "thread/delete"
-                    && pair[1]["dir"] == "recv"
-                    && !archived
-                        .iter()
-                        .any(|thread| thread["id"] == pair[0]["msg"]["params"]["threadId"])
+        let (_, delete) = recorded_exchanges(&records, "thread/delete")
+            .into_iter()
+            .rfind(|(_, pair)| {
+                !archived
+                    .iter()
+                    .any(|thread| thread["id"] == pair[0]["msg"]["params"]["threadId"])
             })
             .context("recorded stale delete")?;
         let id = delete[0]["msg"]["params"]["threadId"]
@@ -332,8 +374,8 @@ mod tests {
             .to_owned();
         let file = tempfile::NamedTempFile::new()?;
         let content = list
-            .iter()
-            .chain(delete.iter())
+            .into_iter()
+            .chain(delete)
             .map(Value::to_string)
             .collect::<Vec<_>>()
             .join("\n");
@@ -354,10 +396,20 @@ mod tests {
             .lines()
             .map(serde_json::from_str)
             .collect::<serde_json::Result<_>>()?;
-        let start = records
-            .iter()
-            .rposition(|line| line["msg"]["method"] == "thread/list")
+        let (start, pair) = recorded_exchanges(&records, "thread/list")
+            .into_iter()
+            .rfind(|(_, pair)| {
+                pair[1]["msg"]["result"]["data"]
+                    .as_array()
+                    .is_some_and(|threads| !threads.is_empty())
+            })
             .context("recorded current archive")?;
+        let expected: Vec<&str> = pair[1]["msg"]["result"]["data"]
+            .as_array()
+            .context("recorded archived chats")?
+            .iter()
+            .filter_map(|thread| thread["id"].as_str())
+            .collect();
         let file = tempfile::NamedTempFile::new()?;
         fs::write(
             file.path(),
@@ -370,7 +422,7 @@ mod tests {
         let (bridge, _) = Bridge::replay(file.path())?;
         let (deleted, error) = pollster::block_on(delete_archived(&bridge, &DeleteScope::All));
         ensure!(error.is_none(), "recorded delete failed: {error:?}");
-        ensure!(deleted == ["01a13de9-35ed-7c72-a36a-68eeb2f4e1ee"]);
+        ensure!(deleted == expected);
         Ok(())
     }
 
