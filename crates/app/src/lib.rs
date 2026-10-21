@@ -2592,6 +2592,12 @@ impl Root {
             }
             CommandMenuEvent::Command(label) => match label.as_ref() {
                 "New chat" | "New standalone chat" => window.dispatch_action(Box::new(NewChat), cx),
+                "Clear all unreads" => {
+                    window.dispatch_action(Box::new(features::shortcuts::ClearAllUnreads), cx)
+                }
+                "Next chat needing attention" => {
+                    window.dispatch_action(Box::new(features::shortcuts::NextAttentionChat), cx)
+                }
                 "Search files" => self.open_file_search(window, cx),
                 "Open in new window" => {
                     window.dispatch_action(Box::new(features::OpenThreadInNewWindow), cx)
@@ -5322,7 +5328,8 @@ impl Render for Root {
             }))
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
-            .children(self.dialog.clone());
+            .children(self.dialog.clone())
+            .children(self.shortcut_state.confirmation.clone());
         let root = routes::actions(root, cx);
         native_menus::actions(
             section_actions::actions(features::actions(root, self, cx), cx),

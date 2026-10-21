@@ -1,5 +1,6 @@
 use crate::*;
 use gpui::{MouseButton, NavigationDirection, prelude::FluentBuilder as _};
+use ui::confirmation::{Confirmation, Outcome as ConfirmationOutcome};
 
 actions!(
     app,
@@ -7,7 +8,9 @@ actions!(
         NextRecentChat,
         PreviousRecentChat,
         NewStandaloneChat,
-        NewTemporaryChat
+        NewTemporaryChat,
+        ClearAllUnreads,
+        NextAttentionChat
     ]
 );
 
@@ -24,6 +27,7 @@ pub(crate) struct ShortcutState {
     pub new_chat_mode: NewChatMode,
     /// Temporary chats: never in Recents, never restored on launch.
     pub ephemeral: HashSet<String>,
+    pub confirmation: Option<Entity<Confirmation>>,
     undo: Vec<AppEdit>,
     redo: Vec<AppEdit>,
     undo_pending: bool,
@@ -55,6 +59,8 @@ pub(super) fn init(cx: &mut App) {
         KeyBinding::new("ctrl-shift-tab", PreviousRecentChat, None),
         KeyBinding::new("cmd-shift-n", NewTemporaryChat, None),
         KeyBinding::new("alt-cmd-o", NewStandaloneChat, None),
+        KeyBinding::new("shift-escape", ClearAllUnreads, None),
+        KeyBinding::new("alt-cmd-a", NextAttentionChat, None),
         KeyBinding::new("ctrl-shift-g", OpenChangesPanel, None),
         KeyBinding::new("ctrl-`", OpenBackgroundTerminal, None),
     ]);
@@ -66,6 +72,25 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
     }))
     .on_action(cx.listener(|this, _: &PreviousRecentChat, window, cx| {
         this.cycle_recent_chat(-1, window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &ClearAllUnreads, window, cx| {
+        this.confirm_clear_unreads(window, cx);
+    }))
+    .on_action(cx.listener(|this, _: &NextAttentionChat, window, cx| {
+        let current = match &this.state.route {
+            Route::Thread(id) => Some(id.as_str()),
+            _ => None,
+        };
+        let next = this
+            .approvals
+            .iter()
+            .map(|request| request.thread())
+            .chain(this.sidebar.read(cx).unread.iter().map(String::as_str))
+            .find(|id| Some(*id) != current)
+            .map(str::to_owned);
+        if let Some(next) = next {
+            this.navigate(Route::Thread(next), window, cx);
+        }
     }))
     .on_action(cx.listener(|this, _: &NewStandaloneChat, window, cx| {
         this.new_special_chat(NewChatMode::Standalone, window, cx);
@@ -314,5 +339,74 @@ impl Root {
         });
         log_err(task, cx);
         true
+    }
+}
+
+impl Root {
+    fn confirm_clear_unreads(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let skip = cx
+            .global::<host_settings::Settings>()
+            .read_all()
+            .get("skip-clear-all-unreads-confirmation")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if skip {
+            self.clear_unreads(cx);
+            return;
+        }
+        if self.shortcut_state.confirmation.is_some() {
+            return;
+        }
+        let confirmation = cx.new(|cx| {
+            Confirmation::new(
+                "Clear all unreads?",
+                "This will mark all chats and scheduled task updates in Codex as read",
+                "Clear all",
+                window,
+                cx,
+            )
+            .with_opt_out("Don’t ask me again", cx)
+        });
+        cx.subscribe(&confirmation, |this, modal, result, cx| {
+            if *result == ConfirmationOutcome::Confirm {
+                if modal.read(cx).opt_out_checked() {
+                    let saved = cx.update_global::<host_settings::Settings, _>(|settings, _| {
+                        settings.write("skip-clear-all-unreads-confirmation", json!(true))
+                    });
+                    if let Err(error) = saved {
+                        this.toast(Toast::danger(error.to_string()), cx);
+                    }
+                }
+                this.clear_unreads(cx);
+            }
+            this.shortcut_state.confirmation = None;
+            cx.notify();
+        })
+        .detach();
+        self.shortcut_state.confirmation = Some(confirmation);
+        cx.notify();
+    }
+
+    fn clear_unreads(&self, cx: &mut Context<Self>) {
+        let host = self.host.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let result = cx
+                .background_executor()
+                .spawn(async move { host.clear_inbox_unreads() })
+                .await;
+            this.update(cx, |this, cx| {
+                if result.is_ok() {
+                    this.sidebar.update(cx, |sidebar, cx| {
+                        sidebar.unread.clear();
+                        cx.notify();
+                    });
+                    this.load_automations(cx);
+                } else {
+                    this.toast(Toast::danger("Could not clear all unreads"), cx);
+                }
+            })?;
+            result
+        });
+        log_err(task, cx);
     }
 }

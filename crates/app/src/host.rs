@@ -128,6 +128,10 @@ pub trait Host: Send + Sync {
         bail!("projectless thread storage is unsupported by this host")
     }
 
+    fn clear_inbox_unreads(&self) -> Result<()> {
+        bail!("Clearing unread tasks is unsupported by this host")
+    }
+
     /// Returns the trusted native Settings service, never a model-callable tool.
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         bail!("Computer Use settings are unsupported by this host")
@@ -1044,6 +1048,18 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn clear_inbox_unreads(&self) -> Result<()> {
+        if let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? {
+            db.execute(
+                "UPDATE automation_runs SET read_at = ? WHERE read_at IS NULL
+                 AND status IN ('PENDING_REVIEW', 'ACCEPTED') AND automation_id IN
+                 (SELECT id FROM automations WHERE account_id IS NULL AND user_id IS NULL AND installation_id IS NULL)",
+                params![chrono::Utc::now().timestamp_millis()],
+            )?;
+        }
+        Ok(())
+    }
+
     fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
         Some(self.context_files.bind())
     }
@@ -1561,6 +1577,10 @@ impl CloudHost {
 }
 
 impl Host for CloudHost {
+    fn clear_inbox_unreads(&self) -> Result<()> {
+        self.local.clear_inbox_unreads()
+    }
+
     fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
         self.local.bind_context_files()
     }

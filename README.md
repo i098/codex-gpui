@@ -566,3 +566,4 @@ File > New Temporary Chat (`⇧⌘N`) uses the existing ephemeral mode and does 
 The temporary action is unavailable for ACP backends.
 `⌘Z` and `⇧⌘Z` undo and redo the last chat rename, pin or archive when no text field or queued-message deletion owns the key.
 A refused undo keeps the edit available and shows `Could not undo action`.
+`⇧Esc` (or the command menu's Clear all unreads) asks `Clear all unreads?` and marks every chat and scheduled-task update read; the opt-out checkbox saves `skip-clear-all-unreads-confirmation`. `⌥⌘A` opens the next chat awaiting input or with unread activity, skipping the open one.
