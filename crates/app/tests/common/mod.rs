@@ -501,9 +501,7 @@ impl Fx {
 
     /// Clicks `menu` ▸ `item` of [`app::menus`]: dispatches its action like the menu bar.
     pub fn menu(&mut self, menu: &str, item: &str) -> Result<()> {
-        let action = self
-            .cx
-            .update(|cx| app::menus(cx))
+        let action = app::menus()
             .into_iter()
             .filter(|m| m.name == menu)
             .flat_map(|m| m.items)
