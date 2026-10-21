@@ -106,7 +106,7 @@ fn check(fx: &mut Fx, rec: &Value, after: &str) -> Result<()> {
                     let bound: Vec<&str> = ui::keyboard::commands()
                         .iter()
                         .filter(|c| active.contains(c.id))
-                        .map(|c| c.title)
+                        .map(ui::keyboard::dialog_title)
                         .collect();
                     let expected: Vec<&str> = titles
                         .iter()

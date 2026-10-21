@@ -34,7 +34,7 @@ fn expected_titles(fx: &mut Fx) -> Result<Vec<String>> {
     let bound: Vec<&str> = ui::keyboard::commands()
         .iter()
         .filter(|c| active.contains(c.id))
-        .map(|c| c.title)
+        .map(ui::keyboard::dialog_title)
         .collect();
     Ok(recording["catalog"]
         .as_array()
@@ -61,10 +61,13 @@ fn the_dialog_shows_every_recorded_row_the_app_binds_and_nothing_else() -> Resul
         shown == expected,
         "dialog {shown:?} != recorded-and-bound {expected:?}"
     );
+    ensure!(
+        shown.iter().any(|t| t == "New tab"),
+        "toggleSidePanel is the original's New tab"
+    );
     for hidden in [
         "New Temporary Chat",
         "Open Changes tab",
-        "Switch between Chat and tabs",
         "Undo last action",
         "Redo last action",
     ] {
