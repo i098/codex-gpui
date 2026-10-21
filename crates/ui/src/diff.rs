@@ -1751,7 +1751,7 @@ impl Render for SplitScreen {
             .when(open, |d| {
                 d.child(
                     self.thread
-                        .update(cx, |view, cx| view.titlebar_header(cx))
+                        .update(cx, |view, cx| view.titlebar_header(left.is_some(), cx))
                         .left(sidebar_width)
                         .when_some(left, |h, left| h.w(left - sidebar_width)),
                 )
