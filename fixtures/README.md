@@ -34,3 +34,13 @@ The commands read status, branch, diff statistics, diff text, commits, and remot
 The fixture branch has one committed `sample.txt` addition above its local `main`.
 These responses are reference data; replaying them does not execute Git commands.
 
+## Owned SSH discovery
+
+The route-1 oracle records `discover-remote-ssh-connections` from an isolated original-app profile.
+Its `HOME`, `ZDOTDIR`, `CODEX_HOME`, and Electron user-data paths were under `/tmp/cgx-capture-service`.
+The original confirmed that its home directory used this scratch path before discovery ran.
+The owned SSH config contained only the `capture-fixture` alias, pointing at loopback port 1.
+No connect or save request was recorded.
+The temporary original process and its CDP tunnel were stopped after recording.
+The transport used the installed 26.1013 main process; the capture renderer remains pinned to 26.1007.
+
