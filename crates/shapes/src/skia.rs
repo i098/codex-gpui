@@ -871,8 +871,8 @@ pub(crate) struct Layer {
     /// cc tile size of the layer ([`cc_tile`]).
     pub(crate) tile: [i32; 2],
     pub(crate) composited: bool,
-    /// The device origin (layer px) of the enclosing [`with_layer`].
-    pub(crate) device: Option<[i32; 2]>,
+    /// The device bounds (layer px) of the enclosing [`with_layer`].
+    pub(crate) device: Option<[i32; 4]>,
     /// Sparse recording's tiling rect, in these coordinates.
     recorded: Option<[i32; 4]>,
 }
@@ -906,14 +906,20 @@ impl Layer {
             };
         // The innermost `with_layer`, else a `saved_layer` div: Skia's layer device.
         let floor = |v: Pixels| (f32::from(v) * s).floor() as i32;
+        let ceil = |v: Pixels| (f32::from(v) * s).ceil() as i32;
         let device = DEVICE
             .get()
             .or_else(|| {
-                window
-                    .saved_layer()
-                    .map(|b| [floor(b.origin.x), floor(b.origin.y)])
+                window.saved_layer().map(|b| {
+                    [
+                        floor(b.left()),
+                        floor(b.top()),
+                        ceil(b.right()),
+                        ceil(b.bottom()),
+                    ]
+                })
             })
-            .map(|[x, y]| [x - origin[0], y - origin[1]]);
+            .map(|[l, t, r, b]| [l - origin[0], t - origin[1], r - origin[0], b - origin[1]]);
         let window = [dev(vp.width), dev(vp.height)];
         let sparse = recorded_bounds.is_none_or(|recording| recording.sparse);
         let recorded = recorded_bounds.map(|recording| {
@@ -984,7 +990,9 @@ impl Layer {
                     r[3] - offset[1],
                 ]
             });
-            self.device = self.device.map(|p| [p[0] - offset[0], p[1] - offset[1]]);
+            self.device = self
+                .device
+                .map(|[l, t, r, b]| [l - offset[0], t - offset[1], r - offset[0], b - offset[1]]);
         }
         self
     }
@@ -1012,8 +1020,12 @@ impl Layer {
     }
 
     fn clip_bounds(&self, [x0, y0, x1, y1]: [i32; 4]) -> [i32; 4] {
-        let min = self.recorded.map_or(self.tile_origin, |r| [r[0], r[1]]);
-        let max = self.clamp();
+        let mut min = self.recorded.map_or(self.tile_origin, |r| [r[0], r[1]]);
+        let mut max = self.clamp();
+        if let Some([l, t, r, b]) = self.device {
+            min = [min[0].max(l), min[1].max(t)];
+            max = [max[0].min(r), max[1].min(b)];
+        }
         let [right, bottom] = self.size();
         [
             x0.max(min[0]).max(-self.origin[0]),
@@ -1222,7 +1234,10 @@ fn raster(
         // A `with_layer` draws on a device of the layer's bounds within the tile, whose origin
         // moves the float geometry of curves.
         let lo = layer.device.map_or(o, |d| [o[0].max(d[0]), o[1].max(d[1])]);
-        let ls = (o[0] + ts.0 - lo[0], o[1] + ts.1 - lo[1]);
+        let hi = layer.device.map_or([o[0] + ts.0, o[1] + ts.1], |d| {
+            [(o[0] + ts.0).min(d[2]), (o[1] + ts.1).min(d[3])]
+        });
+        let ls = (hi[0] - lo[0], hi[1] - lo[1]);
         if ls.0 <= 0 || ls.1 <= 0 {
             continue;
         }
@@ -1299,7 +1314,10 @@ fn composited_sprites(
     let mut pixels = vec![0u8; (w * h * 4) as usize];
     for (o, ts, [ox0, oy0, ox1, oy1]) in tiles([x0, y0, x1, y1], size, layer.tile) {
         let lo = layer.device.map_or(o, |d| [o[0].max(d[0]), o[1].max(d[1])]);
-        let ls = (o[0] + ts.0 - lo[0], o[1] + ts.1 - lo[1]);
+        let hi = layer.device.map_or([o[0] + ts.0, o[1] + ts.1], |d| {
+            [(o[0] + ts.0).min(d[2]), (o[1] + ts.1).min(d[3])]
+        });
+        let ls = (hi[0] - lo[0], hi[1] - lo[1]);
         let rect = [ox0.max(lo[0]), oy0.max(lo[1]), ox1, oy1];
         if ls.0 <= 0 || ls.1 <= 0 || rect[0] >= rect[2] || rect[1] >= rect[3] {
             continue;
@@ -1790,8 +1808,8 @@ thread_local! {
     /// The anti-aliased clips of [`with_rounded_clip`], window device px, outermost first;
     /// with `layers: false`, the origin of the layer they apply in.
     static CLIPS: RefCell<Vec<(Contour, Option<[i32; 2]>)>> = const { RefCell::new(Vec::new()) };
-    /// The device origin of the innermost [`with_layer`], window device px.
-    static DEVICE: Cell<Option<[i32; 2]>> = const { Cell::new(None) };
+    /// The device bounds of the innermost [`with_layer`], window device px.
+    static DEVICE: Cell<Option<[i32; 4]>> = const { Cell::new(None) };
     static COLLECTED_BOUNDS: Cell<(bool, Option<[i32; 4]>)> = const { Cell::new((false, None)) };
     static RECORDED_BOUNDS: Cell<Option<RecordingBounds>> = const { Cell::new(None) };
 }
@@ -1917,7 +1935,33 @@ pub(crate) fn with_layer<R>(
         c.retain(|(clip, _)| !corners.iter().all(|&p| clip.path().contains(p)));
         outer
     });
-    let device = DEVICE.replace(Some([l.floor() as i32, t.floor() as i32]));
+    let mut bounds = [
+        l.floor() as i32,
+        t.floor() as i32,
+        r.ceil() as i32,
+        b.ceil() as i32,
+    ];
+    let parent = DEVICE.get().or_else(|| {
+        window.saved_layer().map(|bounds| {
+            let [l, t, r, b] = [bounds.left(), bounds.top(), bounds.right(), bounds.bottom()]
+                .map(|value| f32::from(value) * s);
+            [
+                l.floor() as i32,
+                t.floor() as i32,
+                r.ceil() as i32,
+                b.ceil() as i32,
+            ]
+        })
+    });
+    if let Some([l, t, r, b]) = parent {
+        bounds = [
+            bounds[0].max(l),
+            bounds[1].max(t),
+            bounds[2].min(r),
+            bounds[3].min(b),
+        ];
+    }
+    let device = DEVICE.replace(Some(bounds));
     let out = window.with_skia_layer(alpha, paint);
     DEVICE.set(device);
     CLIPS.with_borrow_mut(|c| *c = outer);
