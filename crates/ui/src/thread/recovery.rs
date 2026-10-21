@@ -84,13 +84,34 @@ pub(super) fn retry_button(
             .aria_label(label)
             .relative()
             .flex_none()
-            .px(px(8.))
-            .py(px(2.))
+            .px(px(9.))
+            .py(px(3.))
             .rounded(Theme::RADIUS_FULL)
-            .border_1()
-            .border_color(gpui::rgba(0x00000000))
+            .text_color(gpui::transparent_black())
             .cursor_pointer()
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(
+                gpui::canvas(
+                    |_, _, _| (),
+                    |bounds, (), window, cx| {
+                        shapes::paint(
+                            &shapes::Decoration {
+                                radius: gpui::Corners::all(Theme::RADIUS_FULL),
+                                fill: Some(window.text_style().color),
+                                ..Default::default()
+                            },
+                            None,
+                            bounds,
+                            window,
+                            cx,
+                        );
+                    },
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
             .child(text(label, 13., 18., 430., t.text)),
         &focus,
         Theme::RADIUS_FULL,
@@ -107,7 +128,7 @@ impl Render for History {
             let retry = retry_button("history-retry", "Retry", window, cx)
                 .debug_selector(|| "history-retry".into())
                 .aria_label(format!("Retry loading messages: {error}"))
-                .hover(|style| style.bg(t.ghost_hover))
+                .hover(|style| style.text_color(t.ghost_hover))
                 .on_click(cx.listener(|_, _, _, cx| cx.emit(RetryHistory)))
                 .on_key_down(cx.listener(|_, e: &gpui::KeyDownEvent, _, cx| {
                     if matches!(e.keystroke.key.as_str(), "enter" | "space") {
@@ -283,8 +304,8 @@ impl ThreadView {
         let retry = retry_button(format!("retry-turn-{turn}"), "Try again", window, cx)
             .debug_selector(|| format!("retry-turn-{turn}"))
             .aria_label(format!("Try again: {error}"))
-            .bg(t.text_alpha_5)
-            .hover(|style| style.bg(t.text_alpha_10))
+            .text_color(t.text_alpha_5)
+            .hover(|style| style.text_color(t.text_alpha_10))
             .on_click(cx.listener(move |view, _, _, cx| {
                 view.render_errors.borrow_mut().remove(&id);
                 cx.notify();
@@ -307,6 +328,7 @@ impl ThreadView {
             .py(px(13.))
             .child(shapes::decoration(shapes::Decoration {
                 radius: gpui::Corners::all(Theme::RADIUS_LG),
+                corner: shapes::Corner::Squircle,
                 fill: Some(t.surface),
                 border: Some((px(1.), t.border)),
                 ..Default::default()
