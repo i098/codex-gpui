@@ -284,6 +284,11 @@ On macOS, the adapter reads Spotlight metadata, applies the original app exclusi
 It returns each app's path, bundle ID, and display name without launching the app.
 Linux returns an empty native app list, as the original host does.
 
+On macOS and Linux, `workspace-directory-entries` lists workspace children with relative paths and directories first.
+`includeHidden` and `directoriesOnly` filter the reply.
+Directory requests reject lexical and symlink paths outside the workspace.
+Enumeration uses the validated directory handle, so replacing a symlink cannot redirect a listing.
+
 `open-in-targets` returns the original editor and terminal catalog, installed targets, and the preferred target.
 It reads `open-in-target-preferences` from the same shared host settings store as the UI.
 Saving one project's preference preserves entries for other projects.
