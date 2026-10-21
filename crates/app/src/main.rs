@@ -20,6 +20,7 @@ fn main() {
         return;
     }
     let state = State::load();
+    let launch_path = std::env::args().nth(1);
     if std::env::args().nth(1).as_deref() == Some("/diff") {
         let path = std::env::args_os().nth(2).unwrap_or_else(|| {
             eprintln!("usage: codex-gpui /diff <patch-file>");
@@ -87,6 +88,13 @@ fn main() {
             eprintln!("codex-gpui: cannot open the primary window: {error:#}");
             std::process::exit(1)
         });
+        if let Some(path) = &launch_path
+            && let Err(error) = handle.update(cx, |root, window, cx| {
+                root.open_browser_path(path, window, cx)
+            })
+        {
+            eprintln!("codex-gpui: cannot open browser route: {error:#}");
+        }
         app::qa::monitor(handle, cx);
         if !app::qa::ENABLED {
             cx.activate(true);

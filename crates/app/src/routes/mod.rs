@@ -13,6 +13,8 @@ pub enum Route {
     #[default]
     Home,
     Thread(String),
+    BrowserHandoff(Option<browser_use::HandoffTarget>),
+    BrowserSettings(browser_use::SettingsDestination),
     Settings,
     /// Rail `Scheduled` (`/scheduled`): the Automations page.
     Scheduled,
@@ -30,6 +32,7 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = automations::actions(root, cx);
     root = mobile::actions(root, cx);
     root = archive::actions(root, cx);
+    root = root.on_action(cx.listener(Root::leave_handoff));
     root
 }
 
@@ -94,7 +97,7 @@ impl Root {
         self.archive_page = None;
         self.mobile_page = None;
         self.page = match self.state.route.clone() {
-            Route::Settings => Some(settings::page(self, cx)),
+            Route::Settings | Route::BrowserSettings(_) => Some(settings::page(self, cx)),
             Route::Scheduled => Some(automations::scheduled(self, cx)),
             Route::Automation(id) => Some(automations::automation(self, id, window, cx)),
             Route::Archive => Some(archive::page(self, cx)),
@@ -102,7 +105,7 @@ impl Root {
                 Some(automations::thread(self, cx))
             }
             Route::Mobile => Some(mobile::page(self, cx)),
-            Route::Home | Route::Thread(_) => None,
+            Route::Home | Route::Thread(_) | Route::BrowserHandoff(_) => None,
         };
         if let Some(sidebar) = &self.scheduled {
             for id in self.automation_updates.keys() {
@@ -178,7 +181,7 @@ impl Root {
             _ if self.login.is_some() => self.focus.clone(),
             Route::Thread(id) if open(id) => self.thread_composer.focus_handle(cx),
             _ if self.page.is_some() => self.focus.clone(),
-            Route::Thread(_) => self.focus.clone(),
+            Route::Thread(_) | Route::BrowserHandoff(_) => self.focus.clone(),
             _ => self.home.read(cx).composer.focus_handle(cx),
         }
     }

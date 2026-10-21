@@ -1142,6 +1142,9 @@ impl Render for SettingsPane {
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
         }
+        if section == "Browser" {
+            return super::browser_use::settings(cx);
+        }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
             "General" => self.general(&t, window, cx),

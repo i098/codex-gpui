@@ -31,7 +31,13 @@ pub(super) fn page(root: &mut Root, cx: &mut Context<Root>) -> Entity<Shell> {
     let (store, key) = settings::THEME.split_once('.').expect("store.key");
     config[store][key] = json!(root.state.theme);
     config["host"]["confirm-before-close"] = json!(root.state.confirm_before_close);
-    let section = root.settings_section.take();
+    let section = root.settings_section.take().or_else(|| {
+        if let Route::BrowserSettings(destination) = &root.state.route {
+            Some(destination.section())
+        } else {
+            None
+        }
+    });
     let (shell, page) = settings::shell(&config, &root.skills, section, cx);
     root.settings_page = Some(page.clone());
     cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {

@@ -175,3 +175,29 @@ Reset ran one live cleanup; the final Stop had no live surface to clean.
 A 30-second JavaScript wait delayed the single Interrupt cleanup until the call ended.
 The original one-second hook envelope timed out before that cleanup completed.
 This does not verify built-in Browser, Messages, or locked use.
+
+## Browser routes
+
+`codex-gpui '/browser/handoff?thread_id=THREAD&tab_id=TAB'` opens the browser handoff route.
+An optional `connection_thread_id` selects the owning connection identity.
+The parser rejects duplicate parameters, blank thread identifiers, identifiers over 128 UTF-8 bytes, and invalid tab numbers.
+Tab numbers must be positive decimal JavaScript safe integers.
+Fragments invalidate the target.
+The route preserves the original unavailable state because the native client does not implement the excluded Orbit owner.
+`Return home` replaces the handoff route without starting a chat or changing its draft.
+The saved window state replaces handoff with Home and browser settings with Settings.
+It never stores handoff identifiers or reopens the unavailable handoff after a restart.
+
+The native host does not provide Chromium extension, built-in browser, browsing-history, download, or Messages services.
+LCU registration does not grant those services.
+Browser child routes therefore retain the unavailable-provider gate and return to Browser settings.
+This covers `extensions`, `downloads`, `history`, `contact-info`, `passwords`, and `site-settings/*` under `/settings/browser-use`.
+`/settings/computer-use/:browserFamily` returns to the existing Computer use page when no browser provider is present.
+The Browser page displays the original `In-app browser plugin unavailable` state.
+It does not expose working-looking controls or fabricate browser data.
+The app accepts these paths as its first command-line argument.
+
+Run `cargo test -p app --test browser_use -- --test-threads=1` for parser boundaries and provider-gated navigation.
+On macOS, the same test runs native Root navigation and checks draft preservation.
+Set `CGX_BROWSER_USE_SHOTS` to retain its native screenshots.
+These checks do not establish original-versus-native pixel parity.

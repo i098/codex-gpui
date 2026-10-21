@@ -1,6 +1,7 @@
 //! One module per parity screen; each `build` draws the screen in its refs/<screen> fixture state.
 
 pub mod automations;
+pub mod browser_use;
 pub mod composer;
 pub mod computer_use_native;
 pub use settings::computer_use;

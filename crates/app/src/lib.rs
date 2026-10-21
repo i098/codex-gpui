@@ -3,6 +3,7 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+pub mod browser_use;
 pub mod computer_use_requests;
 mod features;
 pub mod host;
@@ -206,6 +207,7 @@ pub fn menus() -> Vec<Menu> {
     ]
 }
 
+
 /// The thread route's side panel tab.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SidePanel {
@@ -247,6 +249,7 @@ pub struct State {
     pub height: f32,
     pub sidebar_open: bool,
     pub sidebar_width: f32,
+    #[serde(serialize_with = "browser_use::persisted_route")]
     pub route: Route,
     pub theme: ThemeSetting,
     pub confirm_before_close: ConfirmBeforeClose,
@@ -2069,6 +2072,7 @@ impl Root {
             });
         }
     }
+
 
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
@@ -5139,8 +5143,10 @@ fn generation_instructions(context: &str) -> String {
 }
 
 impl Render for Root {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if let Some(login) = &self.login {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(login) = &self.login
+            && !matches!(self.state.route, Route::BrowserHandoff(_))
+        {
             return div()
                 .size_full()
                 .relative()
@@ -5163,6 +5169,11 @@ impl Render for Root {
             (None, Some(split)) => split.clone().into_any_element(),
             (None, None) => self.shell.clone().into_any_element(),
         };
+        let content = if matches!(self.state.route, Route::BrowserHandoff(_)) {
+            ui::screens::browser_use::handoff(window, cx)
+        } else {
+            content
+        };
         let root = div()
             .size_full()
             .relative()
@@ -5172,6 +5183,7 @@ impl Render for Root {
             .capture_action(cx.listener(|this, _: &Undo, window, cx| {
                 this.undo_queued(window, cx);
             }))
+
             .on_action(cx.listener(|this, _: &GoBack, window, cx| this.step(true, window, cx)))
             .on_action(cx.listener(|this, _: &GoForward, window, cx| this.step(false, window, cx)))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
