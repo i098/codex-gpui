@@ -1,6 +1,8 @@
 use crate::{Root, Route, host};
 use anyhow::{Context as _, Result};
-use gpui::{AppContext as _, Context, Div, Entity, Focusable as _, InteractiveElement as _, Window};
+use gpui::{
+    AppContext as _, Context, Div, Entity, Focusable as _, InteractiveElement as _, Window,
+};
 use serde_json::{Value, json};
 use ui::screens::pull_requests::{
     self as screen, Availability, Event, Page,

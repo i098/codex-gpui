@@ -118,6 +118,7 @@ Missing CLI, unavailable access, empty results, loading, and partial failures re
 Ask Codex fills a new chat draft; it does not install software or start a turn.
 The detail panel shows the description, branches, checks, and supported GitHub attachment images.
 Media requests validate HTTPS hosts and stop at the size limit.
+Video attachments show the original `Preview unavailable` card and `Open in GitHub` action instead of an inline player.
 
 Implementation: `crates/app/src/pull_requests.rs`, `crates/app/src/host/pull_requests.rs`, and `crates/ui/src/screens/pull_requests.rs`.
 
