@@ -7,12 +7,8 @@ use theme::{ActiveTheme as _, Theme};
 use super::ThreadView;
 use crate::text;
 
-static RETRY_NUMERALS: std::sync::LazyLock<gpui::FontFeatures> = std::sync::LazyLock::new(|| {
-    gpui::FontFeatures(std::sync::Arc::new(vec![
-        ("tnum".into(), 1),
-        ("kern".into(), 0),
-    ]))
-});
+static RETRY_NUMERALS: std::sync::LazyLock<gpui::FontFeatures> =
+    std::sync::LazyLock::new(|| gpui::FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)])));
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum UsageLimitNotice {
@@ -415,12 +411,50 @@ impl ThreadView {
             .rsplit_once(' ')
             .filter(|(_, count)| retrying && count.contains('/'))
         {
+            let prefix = format!("{prefix} ");
+            let prefix_width =
+                px((f32::from(super::width(window, &prefix, 14., 430., None)) * 64.).ceil() / 64.);
+            let font = gpui::Font {
+                weight: gpui::FontWeight(430.),
+                ..gpui::font(crate::SANS)
+            };
+            let font_id = window.text_system().resolve_font(&font);
+            let digit_width = window
+                .text_system()
+                .ch_advance(font_id, px(14.))
+                .expect("The interface font must contain a zero glyph");
+            let digit_width = px((f32::from(digit_width) * 64.).round() / 64.);
+            let (digits, limit) = count.split_once('/').unwrap();
             div()
                 .flex()
-                .child(text(format!("{prefix} "), 14., 21., 430., color))
                 .child(
-                    text(count.to_owned(), 14., 21., 430., color)
-                        .font_features(RETRY_NUMERALS.clone()),
+                    div()
+                        .w(prefix_width)
+                        .flex_none()
+                        .child(text(prefix, 14., 21., 430., color)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .layer()
+                        .children(digits.chars().map(|digit| {
+                            div()
+                                .relative()
+                                .w(digit_width)
+                                .h(px(21.))
+                                .flex_none()
+                                .overflow_hidden()
+                                .snap_origin()
+                                .layer()
+                                .child(
+                                    text(digit.to_string(), 14., 21., 430., color)
+                                        .font_features(RETRY_NUMERALS.clone()),
+                                )
+                        }))
+                        .child(
+                            text(format!("/{limit}"), 14., 21., 430., color)
+                                .font_features(RETRY_NUMERALS.clone()),
+                        ),
                 )
         } else {
             div().child(text(title.clone(), 14., 21., 430., color))
