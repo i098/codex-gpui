@@ -578,6 +578,10 @@ Paired replacement lines mark the changed text range.
 The header and context menu share the same word-wrap state.
 The file viewer handles `⌘L`, clamps line numbers, and counts negative numbers from the end.
 The line input stays closed until file contents are available.
+The `git-file-url` host read uses the current branch for a GitHub origin, as in the original.
+It encodes path segments and can include a line anchor.
+Other origins return no link.
+A detached HEAD returns no link.
 The parser stops above 2,000,000 input bytes, 20,000 input lines, or 10,000 bytes per input line.
 Invalid hunk numbers show `Diff failed to render` instead of overflowing a line counter.
 File boundaries must start a line; a `diff --git` string inside changed code does not split the file.
