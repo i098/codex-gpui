@@ -521,7 +521,7 @@ impl ToTaffy<taffy::style::Style> for Style {
             max_size: self.max_size.to_taffy(rem_size, scale_factor),
             aspect_ratio: self.aspect_ratio,
             margin: self.margin.to_taffy(rem_size, scale_factor),
-            padding: self.padding.to_taffy(rem_size, scale_factor),
+            padding: padding_to_taffy(&self.padding, rem_size, scale_factor),
             border: border_widths_to_taffy(&self.border_widths, rem_size, scale_factor),
             align_items: self.align_items.map(|x| x.into()),
             align_self: self.align_self.map(|x| x.into()),
@@ -547,6 +547,28 @@ impl ToTaffy<taffy::style::Style> for Style {
                 .unwrap_or_default(),
             ..Default::default()
         }
+    }
+}
+
+/// Blink resolves padding with `MinimumValueForLength`, whose `LayoutUnit(float)` truncates:
+/// at a fractional zoom that is up to 1/64 device px less than rounding (16 px at 110% is
+/// 35.1875, not 35.203125).
+fn padding_to_taffy(
+    padding: &Edges<DefiniteLength>,
+    rem_size: Pixels,
+    scale_factor: f32,
+) -> TaffyRect<taffy::style::LengthPercentage> {
+    let side = |length: &DefiniteLength| match length {
+        DefiniteLength::Absolute(length) => taffy::style::LengthPercentage::length(
+            (length.to_pixels(rem_size).0 * scale_factor * 64.).trunc() / 64.,
+        ),
+        DefiniteLength::Fraction(fraction) => taffy::style::LengthPercentage::percent(*fraction),
+    };
+    TaffyRect {
+        top: side(&padding.top),
+        right: side(&padding.right),
+        bottom: side(&padding.bottom),
+        left: side(&padding.left),
     }
 }
 
@@ -804,6 +826,19 @@ mod tests {
             taffy_border.left,
             taffy::style::LengthPercentage::length(2.0)
         );
+    }
+
+    #[test]
+    fn padding_to_taffy_truncates_like_blink_layout_units() {
+        let padding = Edges::all(DefiniteLength::from(Pixels(16.0)));
+        // 110% zoom on a 2x display: 35.2 device px is 35.1875 (2252/64), not 35.203125.
+        let zoomed = padding_to_taffy(&padding, Pixels(16.0), 2.2);
+        assert_eq!(
+            zoomed.left,
+            taffy::style::LengthPercentage::length(2252. / 64.)
+        );
+        let whole = padding_to_taffy(&padding, Pixels(16.0), 2.0);
+        assert_eq!(whole.top, taffy::style::LengthPercentage::length(32.));
     }
 
     #[test]
