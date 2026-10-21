@@ -1,3 +1,5 @@
+mod about;
+
 use crate::{
     CloseWindow, FindInThread, GoBack, GoForward, Hide, HideOthers, LogOut, Minimize, NewChat,
     NextChat, OpenFolder, OpenSettings, PreviousChat, Quit, ShowAll, ShowKeyboardShortcuts,
@@ -12,17 +14,22 @@ use ui::{
 actions!(
     native_menus,
     [
+        ShowAbout,
         OpenDocumentation,
         OpenChangelog,
         OpenTroubleshooting,
-        OpenSystemStatus
+        OpenSystemStatus,
+        BringAllToFront,
+        ToggleFullScreen,
     ]
 );
 
 pub(crate) fn init(cx: &mut App) {
+    cx.on_action(|_: &ShowAbout, cx| cx.defer(about::open));
     cx.bind_keys([
         KeyBinding::new("cmd-shift-v", PasteAndMatchStyle, None),
         KeyBinding::new("cmd-alt-shift-v", PasteAndMatchStyle, None),
+        KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, None),
     ]);
     cx.on_action(|_: &OpenDocumentation, cx| {
         cx.open_url("https://developers.openai.com/codex/app")
@@ -34,12 +41,37 @@ pub(crate) fn init(cx: &mut App) {
         cx.open_url("https://developers.openai.com/codex/app/troubleshooting")
     });
     cx.on_action(|_: &OpenSystemStatus, cx| cx.open_url("https://status.openai.com"));
+    cx.on_action(|_: &BringAllToFront, cx| bring_all_to_front(cx));
+    cx.on_action(|_: &ToggleFullScreen, cx| {
+        if let Some(window) = cx.active_window() {
+            cx.defer(move |cx| {
+                window
+                    .update(cx, |_, window, _| window.toggle_fullscreen())
+                    .ok();
+            });
+        }
+    });
+}
+
+fn bring_all_to_front(cx: &mut App) {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use objc2::{class, msg_send, runtime::AnyObject};
+        let application: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+        let _: () = msg_send![application, arrangeInFront: std::ptr::null::<AnyObject>()];
+    }
+    #[cfg(not(target_os = "macos"))]
+    cx.activate(true);
+    #[cfg(target_os = "macos")]
+    let _ = cx;
 }
 
 /// Builds the native menu items backed by the app's registered actions.
 pub fn menus() -> Vec<Menu> {
     vec![
         Menu::new("Codex").items([
+            MenuItem::action("About Codex", ShowAbout),
+            MenuItem::separator(),
             MenuItem::action("Settings…", OpenSettings),
             MenuItem::action("Log Out", LogOut),
             MenuItem::separator(),
@@ -84,6 +116,8 @@ pub fn menus() -> Vec<Menu> {
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),
             MenuItem::action("Zoom", Zoom),
+            MenuItem::separator(),
+            MenuItem::action("Bring All to Front", BringAllToFront),
         ]),
         Menu::new("Help").items([
             MenuItem::action("Documentation", OpenDocumentation),
