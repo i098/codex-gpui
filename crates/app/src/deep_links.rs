@@ -95,7 +95,7 @@ pub(crate) fn parse(raw: &str) -> Option<Link> {
                 "connections/ssh/add" => ssh_add_route(&url),
                 "browser-use" | "chronicle" | "connections" | "connections/computer" | "connections/devices" | "connections/ssh" => path,
                 "personal-vault" => "local-environments?view=personal-vault".to_owned(),
-                _ if segments.first().is_some_and(|part| matches!(*part, "mcp-app" | "plugins" | "computer-use")) => return Some(Link::Family(raw.to_owned())),
+                _ if segments.first().is_some_and(|part| matches!(*part, "mcp-app" | "plugins" | "computer-use")) => return Some(Link::Family(url.into())),
                 _ => String::new(),
             };
             if !section.is_empty() && let Some(fragment) = url.fragment() {
@@ -121,18 +121,18 @@ pub(crate) fn parse(raw: &str) -> Option<Link> {
             }
             let parameters: Vec<_> = url.query_pairs().collect();
             if parameters.len() > 1 || parameters.iter().any(|(key, value)| key != "handoff_id" || !uuid(value)) { return None; }
-            Some(Link::Family(raw.to_owned()))
+            Some(Link::Family(url.into()))
         }
         "plugins" if segments.is_empty() => None,
         "plugins" if segments.len() == 1 => {
             let id = decode_segment(segments[0]).ok()?;
             if installed_plugin_id(&id) || local_plugin_link(&url) {
-                Some(Link::Family(raw.to_owned()))
+                Some(Link::Family(url.into()))
             } else {
                 None
             }
         }
-        "plugins" | "skills" | "space" | "sites" | "connector" | "cloud-environments" | "browser" | "chatgpt" | "teams" | "mcp-app" | "codex-app" | "pets" | "activate" | "orbit" | "dots" => Some(Link::Family(raw.to_owned())),
+        "plugins" | "skills" | "space" | "sites" | "connector" | "cloud-environments" | "browser" | "chatgpt" | "teams" | "mcp-app" | "codex-app" | "pets" | "activate" | "orbit" | "dots" => Some(Link::Family(url.into())),
         _ => None,
     }
 }
@@ -271,5 +271,13 @@ mod tests {
         assert_eq!(parse("codex://plugins"), None);
         assert_eq!(parse("codex://plugins/example"), None);
         assert!(matches!(parse("codex://plugins/example@openai-curated"), Some(Link::Family(_))));
+    }
+
+    #[test]
+    fn qa_callback_links_use_the_original_scheme_only_in_qa_builds() {
+        assert_eq!(
+            parse("codex-gpui-qa://connector/oauth_callback?state=pending"),
+            crate::qa::ENABLED.then(|| Link::Family("codex://connector/oauth_callback?state=pending".into())),
+        );
     }
 }

@@ -20,7 +20,7 @@ pub fn listen(receiver: async_channel::Receiver<Vec<String>>, cx: &mut App) {
         while let Ok(urls) = receiver.recv().await {
             cx.update(|cx| {
                 for url in urls {
-                    if parse(&url).is_some() {
+                    if parse(&url).is_some() || crate::oauth::CallbackRoute::from_url(&url).is_some() {
                         cx.global_mut::<PendingUrl>().0 = Some(url);
                     }
                 }
@@ -45,12 +45,25 @@ pub(crate) fn flush(cx: &mut App) {
 
 impl Root {
     pub fn receive_deep_link(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(link) = parse(url) else { return false };
+        let link = parse(url);
+        if link.is_none() && crate::oauth::CallbackRoute::from_url(url).is_none() {
+            return false;
+        }
         if !self.ready {
             if !cx.has_global::<PendingUrl>() { cx.set_global(PendingUrl::default()); }
             cx.global_mut::<PendingUrl>().0 = Some(url.to_owned());
             return true;
         }
+        if link.is_none() || matches!(&link, Some(Link::Family(_))) {
+            let callback = match &link {
+                Some(Link::Family(callback)) => callback.as_str(),
+                _ => url,
+            };
+            if self.receive_oauth_redirect(callback, window, cx) {
+                return true;
+            }
+        }
+        let Some(link) = link else { return false };
         self.deep_link.generation += 1;
         self.deep_link.review = None;
         match link {
