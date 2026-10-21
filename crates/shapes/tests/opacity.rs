@@ -352,6 +352,59 @@ fn nested_saved_device_stays_inside_parent() -> anyhow::Result<()> {
     Ok(())
 }
 
+struct NestedOpacityScene {
+    ancestor_layers: usize,
+}
+
+impl Render for NestedOpacityScene {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        let mut content = gpui::canvas(
+            |_, _, _| (),
+            |_, _, window, cx| {
+                let bounds = Bounds::new(point(px(4.), px(4.)), size(px(1.), px(1.)));
+                shapes::with_composited_opacity(128, bounds, window, cx, |window| {
+                    shapes::with_layer(191, bounds, window, |window| {
+                        mask(window, cx, 4., 4., 255, gpui::white());
+                    });
+                });
+            },
+        )
+        .size_full()
+        .into_any_element();
+        for _ in 0..self.ancestor_layers {
+            content = div().size_full().layer().child(content).into_any_element();
+        }
+        div().size_full().bg(gpui::rgb(0x2d2d2d)).child(content)
+    }
+}
+
+#[test]
+fn ancestor_layers_preserve_opacity_before_a_compositor_mask() -> anyhow::Result<()> {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
+    let mut cx = gpui::HeadlessAppContext::with_platform(
+        textsys::text_system(),
+        Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    for ancestor_layers in 0..=2 {
+        let window = cx.open_window(size(px(16.), px(16.)), |_, cx| {
+            cx.new(|_| NestedOpacityScene { ancestor_layers })
+        })?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        assert_eq!(
+            image.get_pixel(9, 9).0,
+            [124, 124, 124, 255],
+            "{ancestor_layers} ancestor layers"
+        );
+        cx.update_window(window.into(), |_, window, _| window.remove_window())?;
+    }
+    Ok(())
+}
+
 struct MovedIcon {
     source_x: f32,
     translation: f32,
