@@ -71,3 +71,26 @@ It does not require microphone, accessibility, screen recording, account access,
 No page painting code changes in this slice.
 The separate page owners still owe their original-versus-native appearance checks.
 
+## Popout and Spotlight controller
+
+`app::hotkey::open(owner, target, cx)` opens the local popout or Spotlight without changing the primary window's route or draft.
+The controller accepts `/hotkey-window`, `/hotkey-window/new-thread`, `/hotkey-window/thread/:id`, and `/spotlight`.
+The popout uses the existing composer, thread renderer, app-server connection, and window manager.
+Its settings menu selects a project, local or worktree execution, a branch, an environment, and permissions.
+Worktree execution uses the existing `create-worktree` and `set-worktree-owner-thread` host calls.
+The window expands for a thread and collapses for a new chat.
+Open in Main Window transfers navigation to the owning primary window.
+
+On macOS, the controller registers Spotlight `Alt+K` and screenshot selection `Control+Shift+4` and `Control+Alt+Shift+4`.
+`replace_global_bindings` applies the saved command map; an empty override disables its shortcut.
+`suspend_global_bindings` removes native registrations while the shortcut editor captures input.
+No popout shortcut is set by default.
+Screenshot selection attaches the captured image without sending the chat.
+Shortcut registration failures remain errors.
+Other platforms reject native shortcut registration.
+
+Run `cargo test -p app --lib hotkey -- --nocapture --test-threads=1` for the local regression checks.
+The checks exercise real temporary worktree creation, environment parsing, route boundaries, and separate primary and popout drafts.
+Set `CGX_HOTKEY_EVIDENCE` to save the native headless popout frame.
+These checks do not activate a microphone or screen capture.
+Strict original-versus-native appearance checks remain separate from these behavior checks.

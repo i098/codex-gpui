@@ -7,6 +7,7 @@ pub mod computer_use_requests;
 mod features;
 pub mod host;
 pub mod host_settings;
+pub mod hotkey;
 pub mod qa;
 mod search;
 mod section_actions;
@@ -141,6 +142,7 @@ pub fn init(cx: &mut App) {
     );
     ui::composer::bind_keys(cx);
     features::init(cx);
+    hotkey::init(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
@@ -422,6 +424,7 @@ pub struct Root {
     settings_page: Option<Entity<settings::SettingsPage>>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
+    popout: Option<hotkey::Popout>,
     dialog: Option<Entity<Dialog>>,
     /// The open dialog came from the composer: its close returns focus there.
     dialog_to_composer: bool,
@@ -707,6 +710,7 @@ impl Root {
             settings_section: None,
             settings_page: None,
             command_menu: None,
+            popout: None,
             dialog: None,
             dialog_to_composer: false,
             login: None,
@@ -1070,6 +1074,7 @@ impl Root {
         projects: Vec<ui::screens::sidebar::Project>,
         cx: &mut Context<Self>,
     ) {
+        hotkey::projects(self, &projects, cx);
         let choices = projects
             .iter()
             .filter(|project| !project.missing)
@@ -1982,6 +1987,10 @@ impl Root {
 
     fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
         self.threads = threads.to_vec();
+        if let Some(menu) = &self.command_menu {
+            let unread = self.sidebar.read(cx).unread.clone();
+            menu.update(cx, |menu, cx| menu.update_catalog(threads, &unread, cx));
+        }
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
     }
 
@@ -2476,7 +2485,7 @@ impl Root {
                 .with_cloud_search(cloud)
         });
         cx.subscribe_in(&menu, window, |this, _, event, window, cx| {
-            this.run_command(event, window, cx)
+            this.run_command(event, window, cx);
         })
         .detach();
         window.focus(&menu.focus_handle(cx), cx);
@@ -2798,18 +2807,24 @@ impl Root {
         event: &CommandMenuEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
+        if hotkey::command(self, event, window, cx) {
+            return true;
+        }
         match event {
             CommandMenuEvent::Search(request) => {
-                return self.search_threads(request.clone(), window, cx);
+                self.search_threads(request.clone(), window, cx);
+                return true;
             }
             CommandMenuEvent::RetryCloudSearch(request) => {
-                return self.search_cloud_threads(request.clone(), window, cx);
+                self.search_cloud_threads(request.clone(), window, cx);
+                return true;
             }
             _ => {}
         }
         if let CommandMenuEvent::SearchFiles(query) = event {
-            return self.search_command_files(query.clone(), cx);
+            self.search_command_files(query.clone(), cx);
+            return true;
         }
         self.command_menu = None;
         window.focus(&self.route_focus(cx), cx);
@@ -2861,11 +2876,14 @@ impl Root {
                 label => {
                     if let Some(section) = settings::section(label) {
                         self.open_settings_section(section, window, cx);
+                    } else {
+                        return false;
                     }
                 }
             },
         }
         cx.notify();
+        true
     }
 
     /// The command menu's content search: `thread/search` for `term` (the original's
@@ -3062,6 +3080,7 @@ impl Root {
         .detach();
         self.thread = Some(view);
         self.show_approval(cx);
+        hotkey::thread_shown(self, window, cx);
         self.refresh_git_actions(cx);
         if self.state.route == route {
             self.sync(window, cx);
@@ -3083,16 +3102,35 @@ impl Root {
             .clone();
         let section = self.new_chat_section.clone();
         let computer_use = computer_use_overrides(&self.config);
+        let hotkey_start =
+            hotkey::start_options(self, cx).map(|options| (self.host.clone(), options));
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let mut params = json!({ "cwd": cwd, "model": model(&s) });
+            let mut params = json!({ "model": model(&s) });
             apply_permissions(&mut params, s.permission);
             if let Some(config) = computer_use {
                 params["config"] = config;
             }
-            let mut thread = match bridge
-                .request::<_, ThreadStartResponse>("thread/start", params)
-                .await
-            {
+            let started = async {
+                let prepared = if let Some((host, options)) = hotkey_start {
+                    let prompt = s.text.clone();
+                    cx.background_spawn(
+                        async move { hotkey::prepare_start(host, options, &prompt) },
+                    )
+                    .await?
+                } else {
+                    hotkey::Prepared::local(cwd)
+                };
+                prepared.apply(&mut params);
+                let started: ThreadStartResponse = bridge.request("thread/start", params).await?;
+                if prepared.needs_recording() {
+                    let id = started.thread.id.clone();
+                    cx.background_spawn(async move { prepared.record(&id) })
+                        .await?;
+                }
+                Ok::<_, anyhow::Error>(started)
+            }
+            .await;
+            let mut thread = match started {
                 Ok(started) => started.thread,
                 Err(error) => {
                     // The draft, its attachments and the chosen project stay as they were.
@@ -5385,13 +5423,17 @@ impl Render for Root {
                 .children(self.dialog.clone())
                 .into_any_element();
         }
-        let content: AnyElement = match (&self.page, &self.split) {
-            (_, Some(split)) if self.sidebar_automation.is_some() => {
-                split.clone().into_any_element()
+        let content: AnyElement = if let Some(content) = hotkey::content(self, cx) {
+            content
+        } else {
+            match (&self.page, &self.split) {
+                (_, Some(split)) if self.sidebar_automation.is_some() => {
+                    split.clone().into_any_element()
+                }
+                (Some(page), _) => page.clone().into_any_element(),
+                (None, Some(split)) => split.clone().into_any_element(),
+                (None, None) => self.shell.clone().into_any_element(),
             }
-            (Some(page), _) => page.clone().into_any_element(),
-            (None, Some(split)) => split.clone().into_any_element(),
-            (None, None) => self.shell.clone().into_any_element(),
         };
         let root = div()
             .size_full()
@@ -5584,7 +5626,11 @@ impl Render for Root {
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
             .children(self.dialog.clone());
-        section_actions::actions(features::actions(root, cx), cx).into_any_element()
+        section_actions::actions(
+            features::actions(hotkey::actions(root, self.popout.is_some(), cx), cx),
+            cx,
+        )
+        .into_any_element()
     }
 }
 

@@ -1929,6 +1929,8 @@ pub struct CommandMenu {
     cloud_searching: bool,
     cloud_error: bool,
     file_search: Option<FileSearch>,
+    standalone: bool,
+    open_error: bool,
 }
 
 struct FileSearch {
@@ -2576,6 +2578,33 @@ impl CommandMenu {
             cloud_searching: false,
             cloud_error: false,
             file_search: None,
+            standalone: false,
+            open_error: false,
+        }
+    }
+
+    pub fn set_standalone(&mut self, cx: &mut Context<Self>) {
+        self.standalone = true;
+        cx.notify();
+    }
+
+    pub fn set_open_error(&mut self, failed: bool, cx: &mut Context<Self>) {
+        self.open_error = failed;
+        cx.notify();
+    }
+
+    pub fn update_catalog(
+        &mut self,
+        threads: &[Thread],
+        unread: &[String],
+        cx: &mut Context<Self>,
+    ) {
+        if self.query.is_empty() && self.file_search.is_none() {
+            self.groups[0].1 = threads
+                .iter()
+                .map(|thread| Item::chat(thread, None, unread.contains(&thread.id)))
+                .collect();
+            cx.notify();
         }
     }
 
@@ -3621,7 +3650,7 @@ impl Render for CommandMenu {
         div()
             .absolute()
             .inset_0()
-            .bg(rgba(OVERLAY))
+            .when(!self.standalone, |view| view.bg(rgba(OVERLAY)))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_, _, _, cx| cx.emit(CommandMenuEvent::Dismiss)),
@@ -3713,7 +3742,22 @@ impl Render for CommandMenu {
                                                 )
                                             }),
                                     ),
-                            ),
+                            )
+                            .when(self.open_error, |surface| {
+                                surface.child(
+                                    div()
+                                        .id("spotlight-open-error")
+                                        .role(gpui::Role::Alert)
+                                        .p(px(8.))
+                                        .child(text(
+                                            "Could not open this item. Try again",
+                                            13.,
+                                            18.,
+                                            400.,
+                                            t.text_error,
+                                        )),
+                                )
+                            }),
                     ),
             )
     }

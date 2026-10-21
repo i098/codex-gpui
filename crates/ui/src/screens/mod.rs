@@ -6,6 +6,7 @@ pub mod computer_use_native;
 pub use settings::computer_use;
 pub mod diff;
 pub mod home;
+pub mod hotkey;
 pub mod mobile;
 pub mod settings;
 pub mod sidebar;
