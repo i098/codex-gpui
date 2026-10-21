@@ -45,6 +45,7 @@ pub mod computer_use_native;
 mod git;
 mod projectless;
 pub(crate) mod run_now;
+pub mod voice;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
@@ -55,6 +56,10 @@ pub enum Request {
         body: String,
     },
     Http(Value),
+    HttpBytes {
+        request: Value,
+        body: Vec<u8>,
+    },
 }
 
 impl Request {
@@ -94,6 +99,10 @@ pub trait Host: Send + Sync {
     /// Returns the trusted native Settings service, never a model-callable tool.
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         bail!("Computer Use settings are unsupported by this host")
+    }
+
+    fn voice_settings(&self) -> Result<voice::Settings> {
+        bail!("Voice settings are unsupported by this host")
     }
 
     /// Finish the initial automation turn and settle its automatic archive before reading the inbox.
@@ -1002,6 +1011,13 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn voice_settings(&self) -> Result<voice::Settings> {
+        Ok(voice::Settings::new(
+            self.home.clone(),
+            self.host_settings_path.clone(),
+        ))
+    }
+
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.computer_use_settings
             .as_ref()
@@ -1332,9 +1348,9 @@ impl CloudHost {
     }
 
     /// The original's `fetchHttp`: wire problems become error responses, not `Err`.
-    fn http(&self, request: &Value) -> Result<Value> {
+    fn http(&self, request: &Value, body: Option<&[u8]>) -> Result<Value> {
         let url = request["url"].as_str().context("HTTP request has no url")?;
-        let value = match self.send(url, request) {
+        let value = match self.send(url, request, body) {
             Ok(value) => value,
             Err((status, error)) => json!({
                 "type": "fetch-response", "responseType": "error",
@@ -1345,12 +1361,17 @@ impl CloudHost {
     }
 
     /// The original's `performDesktopFetch` for one request, with its single 401 retry.
-    fn send(&self, url: &str, request: &Value) -> std::result::Result<Value, Refusal> {
+    fn send(
+        &self,
+        url: &str,
+        request: &Value,
+        body: Option<&[u8]>,
+    ) -> std::result::Result<Value, Refusal> {
         let method = request["method"]
             .as_str()
             .unwrap_or("GET")
             .to_ascii_uppercase();
-        let body = request["body"].as_str().map(str::to_owned);
+        let body = body.or_else(|| request["body"].as_str().map(str::as_bytes));
         let mut headers: Headers = request["headers"]
             .as_object()
             .map(|h| {
@@ -1401,8 +1422,8 @@ impl CloudHost {
         }
         if let Some(body) = &body
             && !has_header(&headers, "Content-Type")
-            && body.trim_start().starts_with(['{', '['])
-            && serde_json::from_str::<Value>(body).is_ok()
+            && std::str::from_utf8(body).is_ok_and(|text| text.trim_start().starts_with(['{', '[']))
+            && serde_json::from_slice::<Value>(body).is_ok()
         {
             set_header(&mut headers, "Content-Type", "application/json");
         }
@@ -1478,8 +1499,8 @@ impl CloudHost {
                 builder = builder.header(name.as_str(), value.as_str());
             }
             let bad = |e: ureq::http::Error| (400, e.to_string());
-            let response = match &body {
-                Some(body) => self.agent.run(builder.body(body.clone()).map_err(bad)?),
+            let response = match body {
+                Some(body) => self.agent.run(builder.body(body).map_err(bad)?),
                 None => self.agent.run(builder.body(()).map_err(bad)?),
             }
             .map_err(|e| (500, e.to_string()))?;
@@ -1520,6 +1541,10 @@ impl CloudHost {
 }
 
 impl Host for CloudHost {
+    fn voice_settings(&self) -> Result<voice::Settings> {
+        self.local.voice_settings()
+    }
+
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.local.computer_use_settings()
     }
@@ -1550,7 +1575,8 @@ impl Host for CloudHost {
 
     fn fetch(&self, request: &Request) -> Result<Value> {
         match request {
-            Request::Http(http) => self.http(http),
+            Request::Http(http) => self.http(http, None),
+            Request::HttpBytes { request, body } => self.http(request, Some(body)),
             Request::Fetch { .. } => self.local.fetch(request),
         }
     }

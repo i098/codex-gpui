@@ -10,6 +10,7 @@ pub mod host_settings;
 pub mod qa;
 mod search;
 mod section_actions;
+mod voice;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
@@ -2145,6 +2146,7 @@ impl Root {
         self.page = match self.state.route.clone() {
             Route::Settings => {
                 self.load_computer_use(cx);
+                self.load_voice(cx);
                 // The Appearance page shows the theme the app keeps.
                 let mut config = self.config.clone();
                 config["host"] = cx

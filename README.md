@@ -124,6 +124,15 @@ Branch prefix saves on blur or Enter; multiline instructions save after three id
 The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
 This page does not implement Git operations or active pull request watchers, and it does not complete other settings pages.
 
+Settings > Voice keeps microphone, sound, screen-context, and local dictionary preferences in the same host settings store.
+Its gate adapter accepts trusted original Statsig and capability values; missing inputs never enable Voice.
+Saved recording controls read `$CODEX_HOME/dictation-history` and the legacy `transcription-history.jsonl` file.
+Downloads stream audio bytes and never replace an existing file.
+Retry transcription buffers at most 128 MiB; larger saved recordings remain available for download.
+Account dictionaries, voice selection, language selection, and retry transcription use the existing authenticated host.
+The shared keyboard service owns global shortcut storage and registration.
+Run `cargo test -p app --test voice_settings` for recording, preference, gate, and binary HTTP checks.
+
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
