@@ -156,8 +156,18 @@ pub fn shell(
         shell.chat_chrome = false;
         shell.new_tab = false;
         shell.selected_rail = Some("security");
-        shell.main_backgrounds = 1;
+        shell.main_backgrounds = 0;
         shell
+    });
+    shell.update(cx, |_, cx| {
+        cx.observe(&page, |shell, page, cx| {
+            let backgrounds = u8::from(page.read(cx).gate == Gate::Ready);
+            if shell.main_backgrounds != backgrounds {
+                shell.main_backgrounds = backgrounds;
+                cx.notify();
+            }
+        })
+        .detach();
     });
     page.update(cx, |page, cx| page.load_gate(cx));
     (shell, page)

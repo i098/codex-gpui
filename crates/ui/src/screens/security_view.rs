@@ -13,7 +13,12 @@ impl SecurityPage {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = cx.theme().clone();
-        let mut page = div().relative().size_full().flex().flex_col().bg(t.surface);
+        let mut page = div()
+            .relative()
+            .size_full()
+            .flex()
+            .flex_col()
+            .when(self.gate == Gate::Ready, |page| page.bg(t.surface));
         if self.gate != Gate::Ready {
             let title = if self.gate == Gate::Loading {
                 "Codex Security"
