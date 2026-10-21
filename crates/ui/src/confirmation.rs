@@ -4,7 +4,7 @@ use gpui::{
     KeyDownEvent, MouseButton, ParentElement, Render, SharedString, StatefulInteractiveElement,
     Styled, Window, div, prelude::FluentBuilder as _, px, rgba,
 };
-use theme::{ActiveTheme as _, Theme};
+use theme::ActiveTheme as _;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -68,8 +68,16 @@ impl Confirmation {
         self
     }
 
-    pub fn with_opt_out(mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
-        self.opt_out = Some((label.into(), false, cx.focus_handle()));
+    /// Adds the `Don't ask me again` checkbox; keyboard focus starts on it, as in the original.
+    pub fn with_opt_out(
+        mut self,
+        label: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let focus = cx.focus_handle();
+        focus.focus(window, cx);
+        self.opt_out = Some((label.into(), false, focus));
         self
     }
 
@@ -154,78 +162,107 @@ impl Render for Confirmation {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let width = 420_f32.min(f32::from(window.viewport_size().width) - 32.);
+        // The dialog's pills: `rounded-[12.5px]` squircles with a 1 px border, 32 px tall.
+        let pill = |fill: gpui::Hsla, border: gpui::Hsla| {
+            shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(12.5)),
+                corner: shapes::Corner::Squircle,
+                fill: Some(fill),
+                border: Some((px(1.), border)),
+                ..Default::default()
+            })
+        };
         let checkbox = self.opt_out.as_ref().map(|(label, checked, focus)| {
-            div()
-                .id("confirmation-opt-out")
-                .role(gpui::Role::CheckBox)
-                .aria_label(label.clone())
-                .aria_toggled(if *checked {
-                    gpui::Toggled::True
+            let ringed = focus.is_focused(window) && window.last_input_was_keyboard();
+            let blue: gpui::Hsla = rgba(0x3a83f7ff).into();
+            let boxed = shapes::Decoration {
+                radius: Corners::all(px(5.)),
+                fill: Some(gpui::Hsla {
+                    a: 0.96,
+                    ..t.menu_background
+                }),
+                border: Some((px(1.), if ringed { blue } else { t.border_strong })),
+                shadows: if ringed {
+                    vec![shadow(blue, 0., 0., 2., false)]
                 } else {
-                    gpui::Toggled::False
-                })
-                .track_focus(focus)
-                .h(px(18.))
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .child(
-                    div()
-                        .size(px(14.))
-                        .rounded(px(5.))
-                        .border_1()
-                        .border_color(t.border)
-                        .when(*checked, |d| {
-                            d.bg(t.text)
-                                .child(text("✓", 12., 12., 600., t.menu_background))
-                        }),
-                )
-                .child(text(label.clone(), 13., 19., 430., t.text))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    if let Some((_, checked, focus)) = &mut this.opt_out {
-                        *checked = !*checked;
-                        focus.focus(window, cx);
-                        cx.notify();
-                    }
-                }))
+                    Vec::new()
+                },
+                ..Default::default()
+            };
+            div().pt(px(12.)).child(
+                div()
+                    .id("confirmation-opt-out")
+                    .role(gpui::Role::CheckBox)
+                    .aria_label(label.clone())
+                    .aria_toggled(if *checked {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .track_focus(focus)
+                    .h(px(21.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .relative()
+                            .size(px(14.))
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(shapes::decoration(boxed))
+                            .when(*checked, |d| {
+                                d.child(crate::icon::icon("menu-check", 12., t.text))
+                            }),
+                    )
+                    .child(text(label.clone(), 14., 21., 430., t.text))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if let Some((_, checked, focus)) = &mut this.opt_out {
+                            *checked = !*checked;
+                            focus.focus(window, cx);
+                            cx.notify();
+                        }
+                    })),
+            )
         });
         let buttons = [self.cancel_label.clone(), self.confirm_label.clone()]
             .into_iter()
             .enumerate()
             .map(|(index, label)| {
                 let destructive = index == 1 && self.destructive;
-                let fill = if destructive {
-                    t.text_error
+                let (fill, border, foreground) = if destructive {
+                    (t.text_error, t.border, t.text_inverse)
                 } else if index == 1 {
-                    t.button_primary_solid
+                    (t.button_primary_solid, t.border, t.text_inverse)
                 } else {
-                    t.button_secondary
+                    (t.text.opacity(0.05), gpui::transparent_black(), t.text)
                 };
-                let foreground = if index == 1 { t.text_inverse } else { t.text };
                 div()
                     .id(("confirmation-button", index))
                     .role(gpui::Role::Button)
                     .aria_label(label.clone())
                     .track_focus(&self.controls[index])
-                    .h(px(36.))
-                    .px(px(14.))
+                    .h(px(32.))
+                    .px(px(17.))
                     .relative()
                     .flex()
                     .items_center()
                     .justify_center()
-                    .rounded_full()
-                    .bg(fill)
+                    .child(pill(fill, border))
                     .when(
                         self.controls[index].is_focused(window) && window.last_input_was_keyboard(),
                         |d| {
                             d.child(shapes::decoration(shapes::Decoration {
-                                radius: Corners::all(Theme::RADIUS_FULL),
+                                radius: Corners::all(px(12.5)),
+                                corner: shapes::Corner::Squircle,
                                 border: Some((px(2.), t.focus_ring)),
                                 ..Default::default()
                             }))
                         },
                     )
-                    .child(text(label, 14., 20., 500., foreground))
+                    .child(text(label, 14., 18., 430., foreground))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.finish(
                             if index == 0 {
@@ -264,7 +301,8 @@ impl Render for Confirmation {
                         shapes::Fill::Color,
                         false,
                         shapes::Decoration {
-                            radius: Corners::all(px(24.)),
+                            radius: Corners::all(px(25.)),
+                            corner: shapes::Corner::Squircle,
                             fill: Some(gpui::Hsla {
                                 a: 0.9,
                                 ..t.menu_background
@@ -281,13 +319,12 @@ impl Render for Confirmation {
                             .p(px(20.))
                             .flex()
                             .flex_col()
-                            .gap(px(20.))
                             .child(
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .gap(px(12.))
-                                    .child(text(self.title.clone(), 20., 26., 500., t.text))
+                                    .gap(px(4.))
+                                    .child(text(self.title.clone(), 20., 28., 600., t.text))
                                     .child(
                                         text(
                                             self.description.clone(),
@@ -305,7 +342,28 @@ impl Render for Confirmation {
                                     .map(|error| text(error, 13., 18., 430., t.text_error)),
                             )
                             .children(checkbox)
-                            .child(div().flex().justify_end().gap(px(8.)).children(buttons)),
+                            .child(
+                                div().pt(px(12.)).child(
+                                    div().flex().justify_end().gap(px(12.)).children(buttons),
+                                ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("confirmation-close")
+                            .role(gpui::Role::Button)
+                            .aria_label("Close dialog")
+                            .absolute()
+                            .top(px(16.))
+                            .right(px(16.))
+                            .size(px(24.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(crate::icon::icon("close", 16., t.text.opacity(0.8)))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.finish(Outcome::Cancel, window, cx)
+                            })),
                     ),
             )
     }

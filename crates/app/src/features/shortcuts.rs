@@ -365,7 +365,7 @@ impl Root {
                 window,
                 cx,
             )
-            .with_opt_out("Don’t ask me again", cx)
+            .with_opt_out("Don’t ask me again", window, cx)
         });
         cx.subscribe(&confirmation, |this, modal, result, cx| {
             if *result == ConfirmationOutcome::Confirm {

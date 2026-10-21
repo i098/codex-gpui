@@ -18,7 +18,7 @@ fn clear_unreads_requires_confirmation_and_remembers_the_opt_out() -> Result<()>
     fx.keys("escape")?;
     ensure!(fx.read(|root, cx| root.sidebar().read(cx).unread == [GREETING]));
     clear_command(&mut fx)?;
-    fx.keys("tab tab space shift-tab enter")?;
+    fx.keys("space tab tab enter")?;
     fx.wait("confirmed unread clearing", |fx| {
         fx.read(|root, cx| root.sidebar().read(cx).unread.is_empty())
     })?;
@@ -42,5 +42,24 @@ fn attention_shortcut_skips_the_open_unread_chat() -> Result<()> {
     });
     fx.keys("alt-cmd-a")?;
     fx.wait_thread(SUBTRACT)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn shift_escape_opens_the_confirmation_over_home() -> Result<()> {
+    common::install_panic_hook();
+    let mut fx = Fx::new()?;
+    let sidebar = fx.read(|root, _| root.sidebar().clone());
+    sidebar.update(&mut fx.cx, |sidebar, cx| sidebar.set_unread(GREETING, cx));
+    fx.keys("shift-escape")?;
+    if let Some(out) = std::env::var_os("CGX_SHORTCUT_PROOF") {
+        std::fs::create_dir_all(&out)?;
+        // `shot`, not `reference_shot`: a pointer move would clear the keyboard focus ring.
+        fx.shot()?
+            .save(std::path::Path::new(&out).join("clear-unreads-modal.png"))?;
+    }
+    fx.keys("escape")?;
+    ensure!(fx.read(|root, cx| root.sidebar().read(cx).unread == [GREETING]));
     Ok(())
 }
