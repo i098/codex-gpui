@@ -316,7 +316,8 @@ Command text sent to an interactive terminal rejects control characters.
 ACP connections use built-in targets without requesting Codex-only configuration.
 
 On macOS, `textsys::show_definition(window, selection, baseline)` opens AppKit's native Look Up popover.
-The baseline uses window-local logical pixels from the top left; the adapter handles both view orientations.
+The baseline uses window-local logical pixels from the top left.
+The adapter applies window magnification and handles both view orientations.
 Call it on the main thread with the unchanged selection.
 Headless windows return their native-handle error; the adapter has no URL or clipboard fallback.
 
@@ -331,7 +332,7 @@ These hooks use `TestPlatform` without opening an OS dialog; normal app behavior
 
 `gpui` and `gpui_apple` come from Zed at a fixed revision and are vendored in `crates/textsys`.
 The workspace `[patch]` replaces the upstream crates with these copies.
-Stock GPUI cannot match Chromium's pixels, so the copies change three things:
+Stock GPUI cannot match Chromium's pixels. The local copies include these changes:
 
 - Blink snapping: layout in Blink `LayoutUnit`s (1/64 device px), device-pixel rounding half up, and text at fractional x positions.
 - Skia blends: glyph and sprite blending as Skia's 8-bit raster does it, and `SkPaint::setAlphaf` alpha rounded to a byte.
@@ -339,6 +340,9 @@ Stock GPUI cannot match Chromium's pixels, so the copies change three things:
 
 `Window::layout_origin_residual_y` returns the fractional vertical origin removed by layout rounding.
 Use it when placing multiline field glyphs to retain Blink's baseline positions.
+
+`Window::set_ui_scale` scales layout, painting, pointer input, and IME geometry without resizing the native window.
+Text layouts use each window's effective device scale and discard stale cached metrics when that scale changes.
 
 Inline-code backgrounds use both snapped label edges, so fractional text widths do not expand their right edge.
 
