@@ -399,6 +399,11 @@ pub struct ForkThread(pub String);
 #[action(namespace = thread, no_json)]
 pub struct RevertTurn(pub String);
 
+/// A press inside the conversation of thread `id`: the original marks the open thread read.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = thread, no_json)]
+pub struct ThreadPressed(pub String);
+
 /// Copy, Read aloud, Rate response, Fork chat from here: shown under the latest turn; earlier
 /// turns (group `group`) show them on hover.
 /// ponytail: Read aloud (ChatGPT voice playback) and Rate response (feedback menu) have no
