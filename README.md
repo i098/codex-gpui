@@ -267,6 +267,8 @@ Stock GPUI cannot match Chromium's pixels, so the copies change three things:
 `Window::layout_origin_residual_y` returns the fractional vertical origin removed by layout rounding.
 Use it when placing multiline field glyphs to retain Blink's baseline positions.
 
+Inline-code backgrounds use both snapped label edges, so fractional text widths do not expand their right edge.
+
 Monochrome glyphs and SVGs keep their paint alpha.
 Element opacity is applied once when the enclosing layer is restored.
 
