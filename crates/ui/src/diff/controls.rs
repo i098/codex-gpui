@@ -146,6 +146,7 @@ impl FileDiff {
             full_loading: false,
             original_hunks: None,
             pending_expansion: None,
+            preview: None,
         };
         syntax::apply(&file.name, &mut file.hunks);
         file
@@ -229,6 +230,7 @@ impl DiffPanel {
         let mut panel = Self::last_turn(workspace, workspace, &[]);
         panel.files = files(diff);
         panel.standalone = true;
+        panel.rich_preview = false;
         panel
     }
 

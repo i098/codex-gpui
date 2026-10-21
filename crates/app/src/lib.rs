@@ -5,6 +5,7 @@
 
 pub mod computer_use_requests;
 mod diff_content;
+mod diff_preview;
 pub use diff_content::bind_standalone_diff;
 mod diff_find;
 mod diff_watch;
@@ -1126,6 +1127,7 @@ impl Root {
             | DiffRequest::SourceChanged
             | DiffRequest::Notice(_)
             | DiffRequest::LoadFullFile(_)
+            | DiffRequest::LoadPreview(_)
             | DiffRequest::Preference(_, _) => return,
         };
         let creating = endpoint == "git-init-repo";
@@ -2795,6 +2797,9 @@ impl Root {
                     request.clone(),
                     cx,
                 ),
+                DiffRequest::LoadPreview(request) => {
+                    diff_preview::load(panel.clone(), this.host.clone(), request.clone(), cx)
+                }
                 DiffRequest::Preference(key, value) => this.write_setting(
                     &SettingChanged {
                         path: key,
