@@ -19,6 +19,63 @@ fn titles(fx: &Fx) -> Vec<&'static str> {
     fx.read(|root, cx| root.dialog().unwrap().read(cx).visible_titles())
 }
 
+/// The recorded original dialog rows (`refs/interactions/f3b.json`) whose command this app binds,
+/// in recorded order. The original shows a webview command only while a handler is registered;
+/// the five commands it leaves out of its Home and thread states (`temporaryChat`,
+/// `openReviewTab`, `toggleSidePanel`, `undoAppAction`, `redoAppAction`) are not in the catalog.
+fn expected_titles(fx: &mut Fx) -> Result<Vec<String>> {
+    let recording: serde_json::Value = serde_json::from_slice(&std::fs::read(format!(
+        "{}/refs/interactions/f3b.json",
+        env!("CARGO_MANIFEST_DIR").replace("/crates/app", "")
+    ))?)?;
+    let active = fx
+        .cx
+        .update(|cx| cx.global::<KeyboardState>().active_commands.clone());
+    let bound: Vec<&str> = ui::keyboard::commands()
+        .iter()
+        .filter(|c| active.contains(c.id))
+        .map(|c| c.title)
+        .collect();
+    Ok(recording["catalog"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|section| section["rows"].as_array().unwrap())
+        .filter_map(|row| row["title"].as_str())
+        .filter(|title| bound.contains(title))
+        .map(str::to_owned)
+        .collect())
+}
+
+#[test]
+fn the_dialog_shows_every_recorded_row_the_app_binds_and_nothing_else() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-/")?;
+    let expected = expected_titles(&mut fx)?;
+    ensure!(
+        expected.len() > 40,
+        "the recorded catalog must map to bound commands"
+    );
+    let shown: Vec<String> = titles(&fx).into_iter().map(str::to_owned).collect();
+    ensure!(
+        shown == expected,
+        "dialog {shown:?} != recorded-and-bound {expected:?}"
+    );
+    for hidden in [
+        "New Temporary Chat",
+        "Open Changes tab",
+        "Switch between Chat and tabs",
+        "Undo last action",
+        "Redo last action",
+    ] {
+        ensure!(
+            !shown.iter().any(|t| t == hidden),
+            "{hidden} is not in the original dialog"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn the_open_shortcuts_dialog_follows_live_bindings() -> Result<()> {
     let mut fx = Fx::new()?;

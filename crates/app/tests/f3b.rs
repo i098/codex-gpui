@@ -101,12 +101,20 @@ fn check(fx: &mut Fx, rec: &Value, after: &str) -> Result<()> {
                         .flat_map(|s| s["rows"].as_array().unwrap())
                         .map(|r| r["title"].as_str().unwrap())
                         .collect();
-                    // The dialog lists the shortcuts the app really binds: the recorded
-                    // catalog's titles in their recorded order, minus commands without a handler.
-                    let shown = dialog.visible_titles();
-                    let mut remaining = titles.iter();
+                    // Exactly the recorded rows whose command this app binds, in recorded order.
+                    let active = &cx.global::<ui::keyboard::KeyboardState>().active_commands;
+                    let bound: Vec<&str> = ui::keyboard::commands()
+                        .iter()
+                        .filter(|c| active.contains(c.id))
+                        .map(|c| c.title)
+                        .collect();
+                    let expected: Vec<&str> = titles
+                        .iter()
+                        .copied()
+                        .filter(|t| bound.contains(t))
+                        .collect();
                     ensure!(
-                        !shown.is_empty() && shown.iter().all(|t| remaining.any(|c| c == t)),
+                        dialog.visible_titles() == expected,
                         "active shortcut catalog differs"
                     );
                 }
