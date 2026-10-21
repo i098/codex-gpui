@@ -1403,6 +1403,11 @@ pub struct ActivateSideTab(pub usize);
 pub struct CloseSideTab(pub usize);
 
 impl SplitScreen {
+    pub fn panel_has_focus(&self, window: &Window, cx: &App) -> bool {
+        !self.tabs.is_empty() && (self.panel_focus.contains_focused(window, cx)
+            || self.tabs_focus.contains_focused(window, cx))
+    }
+
     /// Titlebar row over a side panel (`Task tabs`): every open tab in a 240 px slot (the
     /// selected one on its surface, the others `text-tertiary`, surface and `×` on hover),
     /// `New tab`, and the `Enter full view` / `Hide tabs` buttons. The caller places it from
@@ -1587,6 +1592,7 @@ impl SplitScreen {
         };
         // `_strip` is `[contain:layout_paint]`.
         div()
+            .track_focus(&self.tabs_focus)
             .relative()
             .snap_origin()
             .h(Theme::TITLEBAR_HEIGHT)
@@ -1646,14 +1652,17 @@ fn dispatch_action(action: impl Action) -> impl Fn(&ClickEvent, &mut Window, &mu
 struct SplitMain {
     thread: AnyView,
     panel: AnyView,
+    focus: FocusHandle,
     /// Width at press plus the pointer x at press, while the divider is dragged.
     drag_anchor: Option<Pixels>,
 }
 
 impl Render for SplitMain {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme();
         let width = panel_width(window, cx);
+        let resize_focus = crate::focus::handle("panel-resize", 0, window, cx);
+        let resize_handle = resize_focus.read(cx).handle.clone();
+        let t = cx.theme();
         div()
             .size_full()
             .relative()
@@ -1661,6 +1670,10 @@ impl Render for SplitMain {
             .child(div().flex_1().min_w_0().child(self.thread.clone()))
             .child(
                 div()
+                    .track_focus(&self.focus)
+                    .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+                        this.focus.focus(window, cx);
+                    }))
                     .w(width)
                     .flex_none()
                     .border_l_1()
@@ -1670,23 +1683,42 @@ impl Render for SplitMain {
                     .child(self.panel.clone()),
             )
             .child(
-                div()
-                    .id("panel-resize")
-                    .role(gpui::Role::Splitter)
-                    .absolute()
-                    .top_0()
-                    .bottom_0()
-                    .right(width - px(16.))
-                    .w(px(16.))
-                    .cursor(CursorStyle::ResizeLeftRight)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, e: &MouseDownEvent, _, cx| {
-                            this.drag_anchor = Some(width + e.position.x);
-                            cx.stop_propagation();
-                            cx.notify();
-                        }),
-                    ),
+                crate::focus::ring(
+                    div()
+                        .id("panel-resize")
+                        .role(gpui::Role::Splitter)
+                        .aria_label("Resize workspace panes")
+                        .aria_orientation(gpui::Orientation::Vertical)
+                        .aria_numeric_value(f32::from(width) as f64)
+                        .aria_min_numeric_value(MIN_CHAT as f64)
+                        .aria_max_numeric_value(f32::from(panel_max(window)) as f64)
+                        .aria_numeric_value_step(10.)
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .right(width - px(16.))
+                        .w(px(16.))
+                        .cursor(CursorStyle::ResizeLeftRight)
+                        .on_key_down(cx.listener(move |_, event: &KeyDownEvent, window, cx| {
+                            if let Some(width) = crate::window_shell::resized(
+                                &event.keystroke.key, panel_width(window, cx), px(MIN_CHAT), panel_max(window), true,
+                            ) {
+                                cx.set_global(PanelWidth(width));
+                                cx.stop_propagation();
+                                cx.notify();
+                            }
+                        }))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |this, e: &MouseDownEvent, window, cx| {
+                                resize_handle.focus(window, cx);
+                                this.drag_anchor = Some(width + e.position.x);
+                                cx.stop_propagation();
+                                cx.notify();
+                            }),
+                        ),
+                    &resize_focus, px(2.), px(-2.), cx,
+                ),
             )
             .when_some(self.drag_anchor, |d, anchor| {
                 let released = cx.entity().downgrade();
@@ -1714,6 +1746,8 @@ impl Render for SplitMain {
 pub struct SplitScreen {
     shell: Entity<Shell>,
     thread: Entity<ThreadView>,
+    panel_focus: FocusHandle,
+    tabs_focus: FocusHandle,
     /// The strip's tabs (empty: no panel) and the selected one, whose view the panel shows.
     tabs: Vec<Tab>,
     active: usize,
@@ -1846,11 +1880,14 @@ pub fn with_side_tabs(
     panel: Option<(AnyView, Vec<Tab>, usize)>,
     cx: &mut App,
 ) -> Entity<SplitScreen> {
+    let panel_focus = cx.focus_handle().tab_stop(false);
+    let tabs_focus = cx.focus_handle().tab_stop(false);
     let main = match &panel {
         Some((panel, ..)) => cx
             .new(|_| SplitMain {
                 thread: thread.clone().into(),
                 panel: panel.clone(),
+                focus: panel_focus.clone(),
                 drag_anchor: None,
             })
             .into(),
@@ -1878,6 +1915,8 @@ pub fn with_side_tabs(
         SplitScreen {
             shell,
             thread,
+            panel_focus,
+            tabs_focus,
             tabs,
             active,
             hovered: None,

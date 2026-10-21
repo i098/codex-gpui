@@ -94,11 +94,12 @@ fn normal_profile_keeps_existing_state_and_settings() -> Result<()> {
     std::fs::create_dir_all(&directory)?;
     std::fs::write(
         directory.join("state.json"),
-        br#"{"width":777,"height":666}"#,
+        br#"{"width":777,"height":666,"route":{"Thread":"stale-thread"}}"#,
     )?;
     let state = app::State::load();
     assert_eq!(state.width, 777.);
     assert_eq!(state.height, 666.);
+    assert_eq!(state.route, app::Route::Home);
     assert_eq!(state.path, Some(directory.join("state.json")));
     let settings_path = directory.join("host-settings.json");
     let mut settings = app::host_settings::Settings::load(settings_path.clone())?;

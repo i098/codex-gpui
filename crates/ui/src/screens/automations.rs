@@ -300,18 +300,8 @@ fn shell_with(
     Entity<ScheduledSidebar>,
     Option<Entity<AutomationsPage>>,
 ) {
-    let sidebar = cx.new(|cx| ScheduledSidebar {
-        tasks,
-        selected: selected.as_ref().map(|(task, _)| task.id.clone()),
-        utc_offset,
-        pending: HashSet::new(),
-        starting: HashSet::new(),
-        menu_item: None,
-        menu: None,
-        menu_button_hovered: false,
-        menu_focus: cx.focus_handle(),
-        return_focus: None,
-    });
+    let selected_id = selected.as_ref().map(|(task, _)| task.id.clone());
+    let sidebar = cx.new(|cx| ScheduledSidebar::new(tasks, selected_id, utc_offset, cx));
     let mut page = None;
     let main: AnyView = match selected {
         Some((task, composer)) => cx
@@ -359,6 +349,21 @@ pub struct ScheduledSidebar {
 }
 
 impl ScheduledSidebar {
+    pub fn new(tasks: Vec<Task>, selected: Option<String>, utc_offset: i64, cx: &mut Context<Self>) -> Self {
+        Self {
+            tasks,
+            selected,
+            utc_offset,
+            pending: HashSet::new(),
+            starting: HashSet::new(),
+            menu_item: None,
+            menu: None,
+            menu_button_hovered: false,
+            menu_focus: cx.focus_handle(),
+            return_focus: None,
+        }
+    }
+
     pub fn set_tasks(&mut self, tasks: Vec<Task>, cx: &mut Context<Self>) {
         self.tasks = tasks;
         cx.notify();

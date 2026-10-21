@@ -411,7 +411,7 @@ pub fn reopen(cx: &mut App) -> Result<()> {
     Ok(())
 }
 
-fn connect(cwd: &Path) -> Result<(Bridge, Receiver<Event>)> {
+pub(crate) fn connect(cwd: &Path) -> Result<(Bridge, Receiver<Event>)> {
     if let Some(mut command) = bridge::acp_command() {
         command.current_dir(cwd);
         Bridge::spawn_acp(command)
@@ -446,12 +446,11 @@ pub fn open_primary(state: State, cwd: String, cx: &mut App) -> Result<WindowHan
     })
 }
 
-fn primary_bounds(state: &State, cx: &App) -> WindowBounds {
+pub(crate) fn primary_bounds(state: &State, cx: &App) -> WindowBounds {
     let fallback = Bounds::centered(None, size(px(state.width), px(state.height)), cx);
     let stored = cx
-        .global::<host_settings::Settings>()
-        .read_all()
-        .get("electron-main-window-bounds")
+        .try_global::<host_settings::Settings>()
+        .and_then(|settings| settings.read_all().get("electron-main-window-bounds"))
         .unwrap_or(&serde_json::Value::Null);
     let parse = || {
         let x = stored["x"].as_f64()? as f32;
@@ -468,11 +467,7 @@ fn primary_bounds(state: &State, cx: &App) -> WindowBounds {
         ))
     };
     let bounds = parse()
-        .filter(|bounds| {
-            cx.displays()
-                .iter()
-                .any(|display| display.bounds().intersect(bounds) == *bounds)
-        })
+        .filter(|bounds| platform::work_area(Some(*bounds), cx).intersect(bounds) == *bounds)
         .unwrap_or(fallback);
     if stored["isMaximized"] == true {
         WindowBounds::Maximized(bounds)
@@ -497,11 +492,14 @@ fn remember_bounds(window: &Window, cx: &mut App) {
     {
         return;
     }
+    if window.is_fullscreen() {
+        return;
+    }
     let bounds = window.window_bounds().get_bounds();
     let value = serde_json::json!({
         "x": f32::from(bounds.origin.x), "y": f32::from(bounds.origin.y),
         "width": f32::from(bounds.size.width).max(480.), "height": f32::from(bounds.size.height).max(600.),
-        "isMaximized": matches!(window.window_bounds(), WindowBounds::Maximized(_)),
+        "isMaximized": platform::is_maximized(window),
     });
     if cx.has_global::<host_settings::Settings>() {
         let settings = cx.global_mut::<host_settings::Settings>();

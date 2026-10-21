@@ -33,6 +33,19 @@ pub(super) fn configure(window: &Window, kind: Kind) {
     let _ = (window, kind);
 }
 
+pub(super) fn is_maximized(window: &Window) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        native::with_window(window, |window| unsafe {
+            objc2::msg_send![window, isZoomed]
+        }).unwrap_or(false)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        matches!(window.window_bounds(), gpui::WindowBounds::Maximized(_))
+    }
+}
+
 pub(super) fn hide(window: &Window) -> bool {
     #[cfg(target_os = "macos")]
     return native::with_window(window, |window| unsafe {

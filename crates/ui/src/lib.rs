@@ -8,7 +8,7 @@
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, Bounds, ClickEvent, ContentMask, Context,
     Corners, CursorStyle, DispatchPhase, Div, FontWeight, Hsla, Image, ImageFormat,
-    InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful, StatefulInteractiveElement,
     Styled, Svg, Window, actions, canvas, div, fill, img, point, prelude::FluentBuilder as _, px,
     size, svg,
@@ -29,6 +29,8 @@ pub mod screens;
 pub mod settings_kit;
 pub mod toast;
 pub mod tooltip;
+mod window_shell;
+pub use window_shell::PreviewSidebar;
 
 actions!(
     shell,
@@ -120,6 +122,7 @@ pub struct Shell {
     /// Pointer over the avatar: its own click toggles the menu, so a press there must not
     /// also close it as a click outside.
     avatar_hovered: bool,
+    window_state: window_shell::WindowState,
     sidebar: AnyView,
     main: AnyView,
 }
@@ -163,6 +166,7 @@ impl Shell {
             attention: false,
             profile_menu: false,
             avatar_hovered: false,
+            window_state: window_shell::WindowState::default(),
             sidebar,
             main,
         }
@@ -174,6 +178,7 @@ impl Shell {
     }
 
     pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.close_peek(cx);
         self.sidebar_drag_offset = None;
         let now = cx.background_executor().now();
         let from = self.sidebar_progress(now);
@@ -729,7 +734,7 @@ impl Shell {
             )
         };
         let profile_focus = focus::handle("rail-profile", 0, window, cx);
-        let mut item = |name: &'static str| {
+        let item = |name: &'static str, window: &mut Window, cx: &mut Context<Self>| {
             let on = selected == Some(name);
             let fg = if on { t.text } else { t.text_tertiary };
             let id = SharedString::from(format!("rail-{name}"));
@@ -779,8 +784,13 @@ impl Shell {
                     move || list,
                 ))
         };
-        let rail_tip =
-            |item: Stateful<Div>, label: &'static str| tooltip(item, label, None, Side::Right);
+        let rail_tip = |item: Stateful<Div>, label: &'static str, destination: &'static str, cx: &Context<Self>| {
+            div().id(destination).size(px(36.))
+                .on_hover(cx.listener(move |this, entered, window, cx| {
+                    this.hover_rail(destination, *entered, window, cx);
+                }))
+                .child(tooltip(item, label, None, Side::Right))
+        };
         div()
             .tab_group()
             .tab_index(0)
@@ -806,7 +816,7 @@ impl Shell {
                     .gap(px(8.))
                     .layer()
                     .child(rail_tip(
-                        item("home")
+                        item("home", window, cx)
                             .when(self.attention, |d| d.child(dot(6.)))
                             .on_click(move |_, window, cx| {
                                 let focus = window.focused(cx).filter(|_| home);
@@ -818,18 +828,22 @@ impl Shell {
                                 });
                             }),
                         "Home",
+                        "home",
+                        cx,
                     ))
-                    .child(rail_tip(item("space"), "Space"))
+                    .child(rail_tip(item("space", window, cx), "Space", "space", cx))
                     .child(rail_tip(
-                        item("scheduled").on_click(dispatch::<OpenScheduled>),
+                        item("scheduled", window, cx).on_click(dispatch::<OpenScheduled>),
                         "Scheduled",
+                        "scheduled",
+                        cx,
                     ))
-                    .child(rail_tip(item("plugins"), "Plugins"))
+                    .child(rail_tip(item("plugins", window, cx), "Plugins", "plugins", cx))
                     // Explore with its unread dot; it shows no tooltip.
-                    .child(item("explore").child(dot(4.)))
+                    .child(item("explore", window, cx).child(dot(4.)))
                     .child(div().w(px(24.)).h(px(1.)).bg(t.border))
-                    .child(rail_tip(item("rail-code-review"), "Code Review"))
-                    .child(rail_tip(item("sites"), "Sites"))
+                    .child(rail_tip(item("rail-code-review", window, cx), "Code Review", "rail-code-review", cx))
+                    .child(rail_tip(item("sites", window, cx), "Sites", "sites", cx))
                     .child(shapes::top_fade(px(16.))),
             )
             .child(
@@ -1002,7 +1016,8 @@ impl Shell {
             })
     }
 
-    fn titlebar(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn titlebar(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>, new_tab: bool) -> Div {
+        let fullscreen_shift = if window.is_fullscreen() { px(84.) } else { px(0.) };
         // The header is the window drag region (`-webkit-app-region: drag`, macOS hiddenInset);
         // its buttons are `no-drag`: each stops the press before the move handler below.
         // Disabled history controls do not participate in keyboard navigation.
@@ -1057,13 +1072,13 @@ impl Shell {
                 }
             })
             .child(tooltip(
-                back.left(px(88.)).on_click(dispatch::<GoBack>),
+                back.left(px(88.) - fullscreen_shift).on_click(dispatch::<GoBack>),
                 "Back",
                 Some("⌘["),
                 Side::Bottom,
             ))
             .child(tooltip(
-                forward.left(px(122.)).on_click(dispatch::<GoForward>),
+                forward.left(px(122.) - fullscreen_shift).on_click(dispatch::<GoForward>),
                 "Forward",
                 Some("⌘]"),
                 Side::Bottom,
@@ -1088,7 +1103,7 @@ impl Shell {
                         "Show sidebar"
                     })
                     .absolute()
-                    .left(px(156.))
+                    .left(px(156.) - fullscreen_shift)
                     .top(px(8.))
                     .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                         sidebar_focus.read(cx).handle.clone().focus(window, cx);
@@ -1100,9 +1115,13 @@ impl Shell {
                     Side::Bottom,
                 ))
             })
-            .when(self.new_tab, |d| {
+            .when(new_tab, |d| {
                 d.child(
                     focus::ring(div().id("new-tab"), &new_tab_focus, px(8.), px(2.), cx)
+                        .role(gpui::Role::Button)
+                        .aria_label("New tab")
+                        .on_hover(cx.listener(|this, entered, window, cx| this.hover_new_tab(*entered, window, cx)))
+                        .on_key_down(cx.listener(Self::new_tab_key))
                         .absolute()
                         .top(px(8.))
                         .right(px(8.))
@@ -1212,7 +1231,9 @@ impl Render for Shell {
         {
             window.request_animation_frame();
         }
-        let progress = self.sidebar_progress(now);
+        let narrow = window.viewport_size().width < px(768.);
+        let floating_progress = self.sidebar_progress(now);
+        let progress = if narrow { 0. } else { floating_progress };
         // The original keeps the page-sidebar shape (`data-app-shell-page-sidebar`) above 0.1
         // of progress; its hairline fades out over 0.2 to 0.05 while closing.
         let open = progress > 0.1;
@@ -1419,12 +1440,16 @@ impl Render for Shell {
         )
         .absolute()
         .size_full();
+        let new_tab_menu = self.window_state.menu_open.then(|| self.new_tab_menu(window, cx));
+        let resize_focus = focus::handle("sidebar-resize", 0, window, cx);
+        let resize_handle = resize_focus.read(cx).handle.clone();
         // The rail and titlebar do not overlap the panels, so they paint after the frame.
         div()
             .size_full()
             .relative()
             .overflow_hidden()
             .on_key_down(focus::tab)
+            .on_key_down(cx.listener(Self::dismiss_window_overlay))
             .font_family(SANS)
             .bg(under)
             .child(page)
@@ -1433,26 +1458,41 @@ impl Render for Shell {
             .when(composited || self.main_backgrounds > 0, |d| {
                 d.child(corners)
             })
-            .when(self.sidebar_open, |d| {
-                d.child(
+            .when(self.sidebar_open && !narrow, |d| {
+                d.child(focus::ring(
                     div()
                         .id("sidebar-resize")
                         .role(gpui::Role::Splitter)
+                        .aria_label("Resize sidebar")
+                        .aria_orientation(gpui::Orientation::Vertical)
+                        .aria_numeric_value(f32::from(self.sidebar_width) as f64)
+                        .aria_min_numeric_value(290.)
+                        .aria_max_numeric_value(520.)
+                        .aria_numeric_value_step(10.)
                         .absolute()
                         .left(self.sidebar_width - px(8.))
                         .top(Theme::TITLEBAR_HEIGHT)
                         .bottom(PAGE_INSET)
                         .w(px(16.))
                         .cursor(CursorStyle::ResizeLeftRight)
+                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                            if let Some(width) = window_shell::resized(&event.keystroke.key, this.sidebar_width, px(290.), px(520.), false) {
+                                this.sidebar_width = width;
+                                cx.stop_propagation();
+                                cx.notify();
+                            }
+                        }))
                         .on_mouse_down(
                             MouseButton::Left,
-                            cx.listener(|this, e: &MouseDownEvent, _, cx| {
+                            cx.listener(move |this, e: &MouseDownEvent, window, cx| {
+                                resize_handle.focus(window, cx);
                                 this.sidebar_drag_offset = Some(e.position.x - this.sidebar_width);
                                 cx.stop_propagation();
                                 cx.notify();
                             }),
                         ),
-                )
+                    &resize_focus, px(2.), px(-2.), cx,
+                ))
             })
             .when_some(self.sidebar_drag_offset, |d, offset| {
                 let moved = cx.entity().downgrade();
@@ -1480,8 +1520,12 @@ impl Render for Shell {
                 ))
             })
             .child(self.rail(&t, window, cx))
-            .child(self.titlebar(&t, window, cx))
+            .child(self.titlebar(&t, window, cx, self.new_tab))
             .child(skip_link)
+            .when(self.is_peeking() || (narrow && floating_progress > 0.), |d| {
+                d.child(gpui::deferred(self.floating_sidebar(narrow, floating_progress, &t, window, cx)).with_priority(42))
+            })
+            .when_some(new_tab_menu, |d, menu| d.child(gpui::deferred(menu).with_priority(43)))
             .when(self.profile_menu, |d| d.child(self.profile_menu(&t, cx)))
     }
 }

@@ -10,6 +10,7 @@ pub mod host_settings;
 pub mod qa;
 mod search;
 mod section_actions;
+mod window_shell;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
@@ -141,7 +142,7 @@ pub fn init(cx: &mut App) {
     );
     ui::composer::bind_keys(cx);
     features::init(cx);
-    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &Quit, cx| window_shell::request_quit(cx));
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
@@ -252,7 +253,7 @@ impl ThemeSetting {
     }
 }
 
-/// Window layout, route, theme and close preference, persisted to `path` when set.
+/// Persists window layout, theme, project, and close preference; launch starts on Home.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct State {
@@ -260,6 +261,7 @@ pub struct State {
     pub height: f32,
     pub sidebar_open: bool,
     pub sidebar_width: f32,
+    #[serde(skip)]
     pub route: Route,
     pub theme: ThemeSetting,
     pub confirm_before_close: ConfirmBeforeClose,
@@ -377,7 +379,7 @@ struct DeletedQueuedMessage {
 }
 
 pub struct Root {
-    /// Window size, sidebar and route, saved back on every change.
+    /// Window preferences and the current route.
     state: State,
     back: Vec<(Route, Option<String>)>,
     forward: Vec<(Route, Option<String>)>,
@@ -2780,7 +2782,9 @@ impl Root {
         if self.dialog.is_some() {
             return;
         }
-        if let Some(side) = self.side.filter(|_| self.split.is_some()) {
+        if let Some(side) = self.side.filter(|_| self.split.as_ref().is_some_and(|split| {
+            split.read(cx).panel_has_focus(window, cx)
+        })) {
             return self.close_side(side, window, cx);
         }
         if self.state.confirm_before_close == ConfirmBeforeClose::Never {
@@ -5584,7 +5588,7 @@ impl Render for Root {
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
             .children(self.dialog.clone());
-        section_actions::actions(features::actions(root, cx), cx).into_any_element()
+        window_shell::actions(section_actions::actions(features::actions(root, cx), cx), cx).into_any_element()
     }
 }
 
