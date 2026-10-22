@@ -67,6 +67,30 @@ impl ContextMenu {
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
+        Self::build(items, subject, position, 220., window, cx)
+    }
+
+    pub fn dropdown(
+        items: Vec<Item>,
+        subject: String,
+        button: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let mut menu = Self::build(items, subject, button.bottom_right(), 0., window, cx);
+        menu.position.x -= px(menu.width);
+        menu.position.y += px(4.);
+        menu
+    }
+
+    fn build(
+        items: Vec<Item>,
+        subject: String,
+        position: Point<Pixels>,
+        minimum_width: f32,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
         let text_width = |value: &str| {
             f32::from(
                 window
@@ -97,7 +121,7 @@ impl ContextMenu {
                     + if item.icon.is_some() { 22. } else { 0. }
                     + 24.
             })
-            .fold(220., f32::max)
+            .fold(minimum_width, f32::max)
             .ceil();
         let return_focus = window.focused(cx);
         let focus = cx.focus_handle();
