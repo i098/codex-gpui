@@ -16,6 +16,7 @@ mod routes;
 pub use routes::Route;
 mod search;
 mod section_actions;
+mod settings_subtrees;
 pub mod updater;
 pub mod windows;
 
