@@ -1,6 +1,6 @@
 use super::*;
 use crate::composer::Composer;
-use gpui::{Focusable as _, ScrollStrategy, Task, UniformListScrollHandle, uniform_list};
+use gpui::{Focusable as _, Rgba, ScrollStrategy, Task, UniformListScrollHandle, uniform_list};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{
