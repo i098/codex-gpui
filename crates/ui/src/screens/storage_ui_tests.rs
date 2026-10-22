@@ -48,7 +48,7 @@ fn review_keyboard_selection_and_two_cancel_levels() {
     let window = cx
         .open_window(size(px(900.), px(700.)), |window, cx| {
             saved.focus(window, cx);
-            let settings = cx.new(|_| SettingsPage::new(&json!({}), &json!({})));
+            let settings = cx.new(|cx| SettingsPage::new(&json!({}), &json!({}), cx));
             cx.new(|cx| {
                 let mut page = StoragePage::new(settings, cx);
                 page.started = true;
@@ -224,7 +224,7 @@ fn refreshed_categories_keep_cached_values_until_complete() {
     let mut cx =
         HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
     cx.update(|cx| {
-        let settings = cx.new(|_| SettingsPage::new(&json!({}), &json!({})));
+        let settings = cx.new(|cx| SettingsPage::new(&json!({}), &json!({}), cx));
         let page = cx.new(|cx| StoragePage::new(settings, cx));
         page.update(cx, |page, cx| {
             page.measured = true;
