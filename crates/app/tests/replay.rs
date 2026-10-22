@@ -435,6 +435,7 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
                 Route::Mobile => "mobile".to_owned(),
                 Route::Archive => "archive".to_owned(),
                 Route::PullRequests(_) => "pull-requests".to_owned(),
+                Route::SelectWorkspace => "select-workspace".to_owned(),
             }
             .into(),
             "selectedRail" => fx.shell(|s| s.selected_rail).into(),
