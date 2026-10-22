@@ -5,6 +5,17 @@ on:
   pull_request:
     # ready_for_review starts the run that a draft skipped.
     types: [opened, synchronize, reopened, ready_for_review]
+    # A PR that changes only these documentation files starts no run; any other file starts it.
+    # No build reads them: the gpui crate doc includes crates/textsys/gpui/README.md, not the
+    # root README.md, and the vendored CHANGELOG.md is outside this list.
+    paths-ignore:
+      - README.md
+      - CHANGELOG.md
+      - CONTRIBUTING.md
+      - .github/SECURITY.md
+      - .github/PULL_REQUEST_TEMPLATE.md
+      - .github/ISSUE_TEMPLATE/**
+      - docs/*.md
 # A new push to a PR cancels its older run; each main push keeps its own group, so none is cancelled.
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.sha }}
