@@ -630,8 +630,14 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
 /// `New chat` and `Your dot` rows. With `unread` chats the bell carries the blue dot.
 pub fn home_sidebar_header(unread: bool, activity: bool, cx: &App) -> Div {
     let t = cx.theme();
-    // The original's --color-background-info-soft-alpha is #0285ff at 13% in both themes.
-    let activity_background = Hsla::from(gpui::rgb(0x0285ff)).opacity(0.13);
+    // The Oklab round-trip leaves blue above one; retain it for Skia's float layer blend.
+    let activity_background = gpui::Rgba {
+        r: 0.007_846_47,
+        g: 0.521_568_5,
+        b: 1.000_000_1,
+        a: 0.13,
+    }
+    .into();
     let activity_label = if activity {
         "Turn off activity view"
     } else if unread {

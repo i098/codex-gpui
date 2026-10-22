@@ -1030,6 +1030,8 @@ The options change Priority, Pinned, and Scheduled visibility, mark items read, 
 The native S003 checks cover those transitions and the initial-list recovery path.
 `priority_activity` checks keyboard navigation from a hidden sidebar and Settings without requiring a GPU.
 `ui`'s `screens::sidebar::priority::tests` checks the session snapshot and the seven-day boundary.
+The active bell preserves the Oklab color conversion's blue-channel overshoot and 13% alpha for the float rendering path.
+Its edges match the original in both themes; the shared sidebar corner still differs by seven dark and three light pixels.
 
 
 The original hides timestamps in every Home sidebar list, including project groups.
