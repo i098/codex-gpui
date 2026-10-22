@@ -5,7 +5,7 @@
 // state by clicking.
 import fs from "node:fs";
 import path from "node:path";
-import { openPage } from "./chrome.mjs";
+import { openPage, isCaptureRequest } from "./chrome.mjs";
 
 const SERVER = process.env.R1_SERVER || "http://127.0.0.1:4517";
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36";
@@ -174,7 +174,8 @@ export async function capture(screen, theme, w, h, outDir = new URL("../../refs/
   p.on((x) => {
     if (x.sessionId !== p.sessionId || !x.method?.startsWith("Network.")) return;
     net.last = Date.now();
-    if (x.method === "Network.requestWillBeSent" && x.params.type !== "EventSource" && x.params.loaderId && /^https?:/.test(x.params.request.url)) net.inflight.set(x.params.requestId, `${x.params.type} ${x.params.request.url}`);
+    if (x.method === "Network.requestWillBeSent" && isCaptureRequest(x.params))
+      net.inflight.set(x.params.requestId, `${x.params.type} ${x.params.request.url}`);
     if (x.method === "Network.loadingFinished" || x.method === "Network.loadingFailed") net.inflight.delete(x.params.requestId);
   });
   // Resolves once DOM and network have been quiet for `quiet` ms with fonts and images loaded.
@@ -214,7 +215,8 @@ export async function capture(screen, theme, w, h, outDir = new URL("../../refs/
       if (await p.evaluate(`!!(${byText(t)})`)) await d.click(byText(t));
     await STATES[screen](d).catch(async (e) => {
       const shot = await p.send("Page.captureScreenshot", { format: "png" });
-      fs.writeFileSync(`/tmp/r1-fail-${screen}-${theme}.png`, Buffer.from(shot.data, "base64"));
+      fs.mkdirSync(path.join(outDir, screen), { recursive: true });
+      fs.writeFileSync(path.join(outDir, screen, `${theme}@${w}x${h}.failed.png`), Buffer.from(shot.data, "base64"));
       throw e;
     });
     // The announcement modal can come back after navigation; close it again.

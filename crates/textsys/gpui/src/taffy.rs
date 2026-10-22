@@ -395,6 +395,12 @@ impl TaffyLayoutEngine {
         let x = self.absolute_outer_origins[&id].x;
         Pixels((x - round_half_up(x)) / scale_factor)
     }
+
+    pub fn layout_origin_residual_y(&mut self, id: LayoutId, scale_factor: f32) -> Pixels {
+        self.layout_bounds(id, scale_factor);
+        let y = self.absolute_outer_origins[&id].y;
+        Pixels((y - round_half_up(y)) / scale_factor)
+    }
 }
 
 /// A unique identifier for a layout node, generated when requesting a layout from Taffy
@@ -798,5 +804,59 @@ mod tests {
             taffy_border.left,
             taffy::style::LengthPercentage::length(2.0)
         );
+    }
+
+    #[test]
+    fn vertical_residual_restores_fractional_layout_origin() {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        for y in [10.5, 10.4, -0.5] {
+            let scale = 2.;
+            let mut engine = TaffyLayoutEngine::new();
+            let child = engine
+                .taffy
+                .new_leaf(taffy::style::Style {
+                    position: taffy::style::Position::Absolute,
+                    inset: TaffyRect {
+                        top: taffy::style_helpers::length(y),
+                        right: taffy::style_helpers::auto(),
+                        bottom: taffy::style_helpers::auto(),
+                        left: taffy::style_helpers::auto(),
+                    },
+                    ..Default::default()
+                })
+                .unwrap();
+            let root = engine
+                .taffy
+                .new_with_children(
+                    taffy::style::Style {
+                        size: TaffySize {
+                            width: taffy::style_helpers::length(100.),
+                            height: taffy::style_helpers::length(100.),
+                        },
+                        ..Default::default()
+                    },
+                    &[child],
+                )
+                .unwrap();
+            engine
+                .taffy
+                .compute_layout(
+                    root,
+                    TaffySize {
+                        width: TaffyAvailableSpace::MaxContent,
+                        height: TaffyAvailableSpace::MaxContent,
+                    },
+                )
+                .unwrap();
+            let child = LayoutId::from(child);
+            let bounds = engine.layout_bounds(child, scale);
+            assert_eq!(
+                bounds.origin.y + engine.layout_origin_residual_y(child, scale),
+                Pixels(y / scale)
+            );
+        }
     }
 }

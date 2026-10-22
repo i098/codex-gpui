@@ -139,7 +139,7 @@ impl ComputerUseSettings {
         }
         let result = std::process::Command::new("/usr/bin/defaults")
             .arg("read")
-            .arg(self.home.join(SOUND_DOMAIN))
+            .arg(self.home.canonicalize()?.join(SOUND_DOMAIN))
             .arg("computerUseSoundMode")
             .output()
             .context("read Computer Use sound mode")?;
@@ -164,7 +164,7 @@ impl ComputerUseSettings {
         );
         let result = std::process::Command::new("/usr/bin/defaults")
             .arg("write")
-            .arg(self.home.join(SOUND_DOMAIN))
+            .arg(self.home.canonicalize()?.join(SOUND_DOMAIN))
             .args(["computerUseSoundMode", "-string", mode.as_str()])
             .output()
             .context("write Computer Use sound mode")?;

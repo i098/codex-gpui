@@ -218,10 +218,15 @@ impl Fx {
             elapsed_since: Some(Instant::now()),
             ..CAPTURE_CLOCK
         };
+        // Linux checks need layout and input; macOS captures need the native renderer.
+        #[cfg(not(target_os = "linux"))]
+        let renderer = gpui_platform::current_headless_renderer;
+        #[cfg(target_os = "linux")]
+        let renderer = || Ok(None);
         let mut cx = HeadlessAppContext::with_platform(
             textsys::text_system(),
             Arc::new(theme::Assets),
-            gpui_platform::current_headless_renderer,
+            renderer,
         );
         cx.update(|cx| {
             theme::load_fonts(cx);
@@ -297,6 +302,13 @@ impl Fx {
 
     pub fn composer(&self) -> Entity<Composer> {
         self.read(|r, cx| r.composer(cx))
+    }
+
+    pub fn focus_composer(&mut self) -> Result<()> {
+        let composer = self.composer();
+        self.cx.update_window(self.window, |_, window, cx| {
+            composer.focus_handle(cx).focus(window, cx)
+        })
     }
 
     pub fn composer_text(&mut self) -> Result<String> {
@@ -526,12 +538,23 @@ impl Fx {
             Composer::set_caret_transparent(cx, true);
             window.refresh();
         })?;
-        let image = self.shot();
+        let image = self
+            .advance(Duration::ZERO)
+            .and_then(|()| parity::capture_frozen(&mut self.cx, self.window));
         self.cx.update_window(self.window, |_, window, cx| {
             Composer::set_caret_transparent(cx, false);
             window.refresh();
         })?;
         image
+    }
+
+    pub fn capture_evidence(&mut self, variable: &str, name: &str) -> Result<()> {
+        if let Some(dir) = env::var_os(variable) {
+            fs::create_dir_all(&dir)?;
+            self.reference_shot()?
+                .save(Path::new(&dir).join(name).with_extension("png"))?;
+        }
+        Ok(())
     }
 
     /// Center of the original's element: a node with this `aria-label`, else the first text
@@ -564,10 +587,13 @@ impl Fx {
     }
 }
 
-/// readback.jsonl, then `session` (under fixtures/), each recorded line rewritten by `edit`.
+/// Loads the baseline, optional scenario, and projected session settings; `edit` rewrites each line.
 pub fn script(session: Option<&str>, edit: fn(&mut Value)) -> Result<Vec<Value>> {
     let mut lines = Vec::new();
-    for file in std::iter::once("readback.jsonl").chain(session) {
+    for file in std::iter::once("readback.jsonl")
+        .chain(session)
+        .chain(std::iter::once("sessions/thread-settings.jsonl"))
+    {
         let path = format!("{ROOT}/fixtures/{file}");
         let text = fs::read_to_string(&path).with_context(|| path.clone())?;
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
@@ -599,6 +625,17 @@ pub fn recorded_thread(id: &str) -> Result<Value> {
             (thread["id"] == id && thread["turns"].is_array()).then_some(thread)
         })
         .with_context(|| format!("no thread/read of {id}"))
+}
+
+pub fn recorded_resume(id: &str) -> Result<Value> {
+    script(None, |_| {})?
+        .into_iter()
+        .find_map(|mut line| {
+            let result = line.pointer_mut("/msg/result")?.take();
+            (result["thread"]["id"] == id && result["collaborationMode"].is_object())
+                .then_some(result)
+        })
+        .with_context(|| format!("no thread/resume of {id}"))
 }
 
 /// Device pixels that differ inside the CSS-px `rect` (the window is 2x).
@@ -666,7 +703,8 @@ pub fn parity_flow(screen: &str, reach: fn(&mut Fx) -> Result<()>) -> Result<Str
     for theme in ["dark", "light"] {
         for size in [(1280., 832.), (1440., 900.)] {
             let result = (|| {
-                let mut fx = Fx::with(theme, size, None, |_| {})?;
+                let session = (screen == "sidebar").then_some("sessions/sidebar-math-search.jsonl");
+                let mut fx = Fx::with(theme, size, session, |_| {})?;
                 reach(&mut fx)?;
                 fx.cx.run_until_parked();
                 ensure!(
@@ -824,4 +862,79 @@ fn serve_proxy(script: &Path, log: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+pub struct SidebarSearchHost {
+    pub response: Mutex<Value>,
+    pub requests: Mutex<Vec<app::host::Request>>,
+    device_id: String,
+}
+
+impl SidebarSearchHost {
+    pub fn recorded() -> Result<Self> {
+        let recording: Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/sidebar-cloud-search.json"
+        ))?;
+        Ok(Self {
+            device_id: recording["request"]["headers"]["oai-did"]
+                .as_str()
+                .context("recorded search device")?
+                .to_owned(),
+            response: Mutex::new(recording["response"].clone()),
+            requests: Mutex::new(Vec::new()),
+        })
+    }
+}
+
+impl app::host::Host for SidebarSearchHost {
+    fn fetch(&self, request: &app::host::Request) -> Result<Value> {
+        ensure!(
+            matches!(request, app::host::Request::Http(http) if http["url"] == "/global/search"),
+            "unrecorded sidebar host request: {request:?}"
+        );
+        self.requests.lock().unwrap().push(request.clone());
+        Ok(self.response.lock().unwrap().clone())
+    }
+
+    fn supports_cloud_search(&self) -> bool {
+        true
+    }
+
+    fn identity(&self) -> Option<app::host::Identity> {
+        Some(app::host::Identity {
+            account_id: "00000000-0000-4000-8000-000000000000".into(),
+            user_id: "user-000000000000000000000000".into(),
+            device_id: self.device_id.clone(),
+        })
+    }
+
+    fn projects(&self) -> Result<Vec<ui::screens::sidebar::Project>> {
+        Ok(Vec::new())
+    }
+}
+
+pub fn open_recorded_sidebar_search(fx: &mut Fx) -> Result<Arc<SidebarSearchHost>> {
+    let host = Arc::new(SidebarSearchHost::recorded()?);
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+    fx.click(SEARCH)?;
+    fx.keys("m a t h")?;
+    fx.advance(ui::screens::sidebar::SEARCH_DEBOUNCE)?;
+    fx.wait(
+        "local content with the independent cloud search pending",
+        |fx| {
+            fx.read(|root, cx| {
+                root.command_menu().is_some_and(|menu| {
+                    let menu = menu.read(cx);
+                    menu.search_pending() == (false, true)
+                        && menu
+                            .describe()
+                            .iter()
+                            .flat_map(|(_, rows)| rows)
+                            .any(|(text, _)| text.contains(" || "))
+                })
+            })
+        },
+    )?;
+    Ok(host)
 }

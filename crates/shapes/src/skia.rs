@@ -1,8 +1,8 @@
 //! Chromium's own raster at runtime (macOS). Each decoration layer and icon path is drawn with
 //! the Skia build chrome-headless-shell uses (skia-safe linked against the archive from
-//! tools/shapes/skia.sh) through the same calls Blink makes, once per cc raster tile (512 px
-//! bitmaps at a 510 px stride, tile `k` owning layer px `510k+1 ..= 510k+510`). The tiles are
-//! read back as per-pixel coverage (white on black) and blitter (opaque red on white: the
+//! tools/shapes/skia.sh) through the same calls Blink makes, once per cc raster tile.
+//! Default 512 px tiles use a 510 px stride; sparse grids start at their recorded bounds.
+//! The tiles are read back as per-pixel coverage (white on black) and blitter (opaque red on white: the
 //! green channel tells `blitAntiH` from `blitAntiH2`), and painted as GPUI monochrome sprites
 //! whose hue carries the blend mode to the patched shader (crates/textsys/gpui_apple).
 
@@ -21,7 +21,7 @@ use skia_safe::{
 };
 use std::{
     cell::{Cell, RefCell},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     hash::{DefaultHasher, Hash as _, Hasher as _},
     sync::{Arc, LazyLock},
 };
@@ -42,6 +42,8 @@ pub(crate) const DST_IN: u8 = 5;
 /// What is under the enclosing GPUI layer drawn onto the layer's pixel through a clip whose
 /// coverage is 255 minus the sprite's (viz drawing a clipped layer's content over that layer).
 pub(crate) const CLIP: u8 = 7;
+/// A compositor opacity mask; coverage stores the inverse byte opacity.
+pub(crate) const OPACITY: u8 = 8;
 
 /// gfx::SizeF's clamp: dimensions at or below 8 epsilon are 0.
 fn clamp(v: f32) -> f32 {
@@ -512,6 +514,42 @@ fn fill_paint(col: Color4f) -> Paint {
 }
 
 impl Op {
+    pub(crate) fn moved(self, offset: [f32; 2]) -> Self {
+        match self {
+            Self::Fill(contour) => Self::Fill(contour.moved(offset)),
+            Self::ClipFill(contour) => Self::ClipFill(contour.moved(offset)),
+            Self::Border {
+                outer,
+                inner,
+                dashed,
+            } => Self::Border {
+                outer: outer.moved(offset),
+                inner: inner.moved(offset),
+                dashed,
+            },
+            Self::Shadow {
+                border,
+                opaque_bg,
+                has_radius,
+                s,
+            } => Self::Shadow {
+                border: border.moved(offset),
+                opaque_bg,
+                has_radius,
+                s,
+            },
+            Self::Inset { bounds, s } => Self::Inset {
+                bounds: bounds.moved(offset),
+                s,
+            },
+            Self::ClipLayer { outer, inner, fill } => Self::ClipLayer {
+                outer: outer.moved(offset),
+                inner: inner.moved(offset),
+                fill,
+            },
+        }
+    }
+
     /// Whether Chromium's raster does not blit the draw itself but restores a layer: Blink's
     /// slow (superellipse) or dashed border path paints a translucent border opaque inside a
     /// `saveLayerAlphaf` (whose draws the earlier AA clips do not cut), restored through those
@@ -825,15 +863,19 @@ struct Probe {
 /// page.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Layer {
-    /// Layer origin in the window; the tile grid starts here.
+    /// Coordinate origin in the window; sparse recordings may use local box geometry.
     pub(crate) origin: [i32; 2],
+    /// The tile grid's origin in recording coordinates.
+    tile_origin: [i32; 2],
     /// Window size (bounds the root layer's tiles).
     pub(crate) window: [i32; 2],
     /// cc tile size of the layer ([`cc_tile`]).
     pub(crate) tile: [i32; 2],
     pub(crate) composited: bool,
-    /// The device origin (layer px) of the enclosing [`with_layer`].
-    pub(crate) device: Option<[i32; 2]>,
+    /// The device bounds (layer px) of the enclosing [`with_layer`].
+    pub(crate) device: Option<[i32; 4]>,
+    /// Sparse recording's tiling rect, in these coordinates.
+    recorded: Option<[i32; 4]>,
 }
 
 impl Layer {
@@ -843,41 +885,117 @@ impl Layer {
     pub(crate) fn new(window: &Window, composited: Option<gpui::Point<Pixels>>) -> Self {
         let (vp, s) = (window.viewport_size(), window.scale_factor());
         let dev = |v: Pixels| (f32::from(v) * s).round() as i32;
-        let (origin, size) = match composited {
+        let (mut origin, size) = match composited {
             Some(o) => ([dev(o.x), dev(o.y)], None),
-            None => window.composited_layer().map_or(([0, 0], None), |(b, cc)| {
-                (
-                    [dev(b.origin.x), dev(b.origin.y)],
-                    cc.then(|| [dev(b.size.width), dev(b.size.height)]),
-                )
-            }),
+            None => match crate::backdrop::compositor_rect(window) {
+                Some([x0, y0, x1, y1]) => ([x0, y0], Some([x1 - x0, y1 - y0])),
+                None => window.composited_layer().map_or(([0, 0], None), |(b, cc)| {
+                    (
+                        [dev(b.origin.x), dev(b.origin.y)],
+                        cc.then(|| [dev(b.size.width), dev(b.size.height)]),
+                    )
+                }),
+            },
         };
+        let recorded_bounds = RECORDED_BOUNDS.get();
+        let tile_origin =
+            if composited.is_none() && window.window_space_recording() && recorded_bounds.is_none()
+            {
+                std::mem::take(&mut origin)
+            } else {
+                [0, 0]
+            };
         // The innermost `with_layer`, else a `saved_layer` div: Skia's layer device.
         let floor = |v: Pixels| (f32::from(v) * s).floor() as i32;
+        let ceil = |v: Pixels| (f32::from(v) * s).ceil() as i32;
         let device = DEVICE
             .get()
             .or_else(|| {
-                window
-                    .saved_layer()
-                    .map(|b| [floor(b.origin.x), floor(b.origin.y)])
+                window.saved_layer().map(|b| {
+                    [
+                        floor(b.left()),
+                        floor(b.top()),
+                        ceil(b.right()),
+                        ceil(b.bottom()),
+                    ]
+                })
             })
-            .map(|[x, y]| [x - origin[0], y - origin[1]]);
+            .map(|[l, t, r, b]| [l - origin[0], t - origin[1], r - origin[0], b - origin[1]]);
         let window = [dev(vp.width), dev(vp.height)];
+        let sparse = recorded_bounds.is_none_or(|recording| recording.sparse);
+        let recorded = recorded_bounds.map(|recording| {
+            if recording.sparse {
+                recording_rect(
+                    recording.bounds,
+                    origin,
+                    [window[0] - origin[0], window[1] - origin[1]],
+                )
+            } else {
+                let [x0, y0, x1, y1] = recording.bounds;
+                [
+                    x0 - origin[0],
+                    y0 - origin[1],
+                    x1 - origin[0],
+                    y1 - origin[1],
+                ]
+            }
+        });
         Self {
             origin,
+            tile_origin,
             window,
-            // ponytail: a layer of unknown rect (not `cc_tiles`) keeps the default tiles.
-            tile: size.map_or([TILE; 2], cc_tile),
+            tile: recorded.map_or_else(
+                || size.map_or([TILE; 2], cc_tile),
+                |r| {
+                    let size = [r[2] - r[0], r[3] - r[1]];
+                    if sparse {
+                        recorded_tile(size)
+                    } else {
+                        cc_tile(size)
+                    }
+                },
+            ),
             composited: composited.is_some(),
             device,
+            recorded,
         }
     }
 
-    /// `b` (window px) in layer space: Blink paints a layer's content in that space, and the
-    /// float geometry of curves and anti-aliasing depends on where the shape lies in it.
+    fn anchor(&self) -> [i32; 2] {
+        [
+            self.origin[0] + self.tile_origin[0],
+            self.origin[1] + self.tile_origin[1],
+        ]
+    }
+
+    /// `b` (window px) in recording coordinates. Curve geometry and anti-aliasing depend
+    /// on the recording origin, which can differ from the tile grid's origin.
     pub(crate) fn local(&self, b: Bounds<Pixels>, s: f32) -> Bounds<Pixels> {
         let o = point(px(self.origin[0] as f32 / s), px(self.origin[1] as f32 / s));
         Bounds::new(b.origin - o, b.size)
+    }
+
+    fn for_bounds(mut self, bounds: Bounds<Pixels>, scale: f32) -> Self {
+        if self.recorded.is_some() {
+            let origin = [
+                (f32::from(bounds.left()) * scale).round() as i32,
+                (f32::from(bounds.top()) * scale).round() as i32,
+            ];
+            let offset = [origin[0] - self.origin[0], origin[1] - self.origin[1]];
+            self.origin = origin;
+            self.recorded = self.recorded.map(|r| {
+                [
+                    r[0] - offset[0],
+                    r[1] - offset[1],
+                    r[2] - offset[0],
+                    r[3] - offset[1],
+                ]
+            });
+            self.device = self
+                .device
+                .map(|[l, t, r, b]| [l - offset[0], t - offset[1], r - offset[0], b - offset[1]]);
+        }
+        self
     }
 
     /// The layer's size: the window past its origin.
@@ -891,24 +1009,81 @@ impl Layer {
     /// The layer px a raster covers: the root layer ends at the window; a composited layer (a
     /// scroller's contents) runs on past it, so its tiles there keep their full height.
     fn clamp(&self) -> [i32; 2] {
+        if let Some(r) = self.recorded {
+            return [r[2], r[3]];
+        }
         let size = self.size();
-        if self.origin == [0, 0] {
+        if self.origin == [0, 0] && self.tile_origin == [0, 0] {
             size
         } else {
             [size[0], i32::MAX / 2]
         }
     }
 
-    /// What a raster in this layer depends on besides its layer-space ops: not the origin, so
-    /// a scroller's contents keep their sprites while they scroll.
-    fn key(&self) -> ([i32; 2], [i32; 2], bool, Option<[i32; 2]>) {
-        (self.tile, self.clamp(), self.composited, self.device)
+    fn clip_bounds(&self, [x0, y0, x1, y1]: [i32; 4]) -> [i32; 4] {
+        let mut min = self.recorded.map_or(self.tile_origin, |r| [r[0], r[1]]);
+        let mut max = self.clamp();
+        if let Some([l, t, r, b]) = self.device {
+            min = [min[0].max(l), min[1].max(t)];
+            max = [max[0].min(r), max[1].min(b)];
+        }
+        let [right, bottom] = self.size();
+        [
+            x0.max(min[0]).max(-self.origin[0]),
+            y0.max(min[1]).max(-self.origin[1]),
+            x1.min(max[0]).min(right),
+            y1.min(max[1]).min(bottom),
+        ]
+    }
+
+    pub(crate) fn tiles(
+        &self,
+        [x0, y0, x1, y1]: [i32; 4],
+        extent: [i32; 2],
+    ) -> impl Iterator<Item = ([i32; 2], (i32, i32), [i32; 4])> {
+        let offset = self.recorded.map_or(self.tile_origin, |r| [r[0], r[1]]);
+        let max = self.recorded.map_or(extent, |r| [r[2], r[3]]);
+        let raster_size = self.recorded.map(|_| (self.tile[0], self.tile[1]));
+        tiles(
+            [
+                x0 - offset[0],
+                y0 - offset[1],
+                x1 - offset[0],
+                y1 - offset[1],
+            ],
+            [max[0] - offset[0], max[1] - offset[1]],
+            self.tile,
+        )
+        .map(move |(o, size, r)| {
+            (
+                [o[0] + offset[0], o[1] + offset[1]],
+                raster_size.unwrap_or(size),
+                [
+                    r[0] + offset[0],
+                    r[1] + offset[1],
+                    r[2] + offset[0],
+                    r[3] + offset[1],
+                ],
+            )
+        })
+    }
+
+    /// Unclipped local drawings can reuse sprites while scrolling.
+    /// Clipped drawings include the visible rectangle in their cache key.
+    fn key(&self, bounds: [i32; 4]) -> impl std::fmt::Debug {
+        (
+            self.tile,
+            self.tile_origin,
+            self.clamp(),
+            self.composited,
+            self.device,
+            self.recorded,
+            self.clip_bounds(bounds),
+        )
     }
 }
 
-/// cc `TileSizeCalculator` for CPU raster at device scale 2 (512 px default tiles, 1024 px
-/// max untiled layer): a layer thin in one axis gets long tiles along the other, a small
-/// layer one tile, each clamped to the layer rounded up to 64 px.
+/// Existing explicit compositor rectangles keep their tile sizing.
 fn cc_tile([w, h]: [i32; 2]) -> [i32; 2] {
     const UNTILED: i32 = 2 * TILE;
     let mut d = [TILE; 2];
@@ -923,6 +1098,26 @@ fn cc_tile([w, h]: [i32; 2]) -> [i32; 2] {
     }
     let fit = |v: i32, d: i32| ((v.max(1) + 63) / 64 * 64).min(d);
     [fit(w, d[0]), fit(h, d[1])]
+}
+
+/// Sparse recordings use the pinned macOS 512 px untiled limit.
+fn recorded_tile(size: [i32; 2]) -> [i32; 2] {
+    size.map(|v| ((v.max(1) + 63) / 64 * 64).min(TILE))
+}
+
+fn recording_rect(r: [i32; 4], origin: [i32; 2], size: [i32; 2]) -> [i32; 4] {
+    let r = [
+        r[0] - origin[0],
+        r[1] - origin[1],
+        r[2] - origin[0],
+        r[3] - origin[1],
+    ];
+    [
+        r[0].div_euclid(128) * 128,
+        r[1].div_euclid(128) * 128,
+        if r[2] + 128 > size[0] { size[0] } else { r[2] },
+        if r[3] + 128 > size[1] { size[1] } else { r[3] },
+    ]
 }
 
 /// Chromium's cc tiles of size `tile` over `[x0, y0, x1, y1]` (layer px) of a layer of `size`:
@@ -973,9 +1168,7 @@ fn raster(
     clips: &[Contour],
     draw: &dyn Fn(&Canvas, Color4f),
 ) -> ([i32; 4], Vec<Blits>) {
-    let size = layer.clamp();
-    let (x0, y0) = (x0.max(0), y0.max(0));
-    let (x1, y1) = (x1.min(size[0]), y1.min(size[1]));
+    let [x0, y0, x1, y1] = layer.clip_bounds([x0, y0, x1, y1]);
     if x0 >= x1 || y0 >= y1 {
         return ([0; 4], Vec::new());
     }
@@ -1038,11 +1231,14 @@ fn raster(
             );
         })
     };
-    for (o, ts, [ox0, oy0, ox1, oy1]) in tiles([x0, y0, x1, y1], size, layer.tile) {
+    for (o, ts, [ox0, oy0, ox1, oy1]) in layer.tiles([x0, y0, x1, y1], layer.clamp()) {
         // A `with_layer` draws on a device of the layer's bounds within the tile, whose origin
         // moves the float geometry of curves.
         let lo = layer.device.map_or(o, |d| [o[0].max(d[0]), o[1].max(d[1])]);
-        let ls = (o[0] + ts.0 - lo[0], o[1] + ts.1 - lo[1]);
+        let hi = layer.device.map_or([o[0] + ts.0, o[1] + ts.1], |d| {
+            [(o[0] + ts.0).min(d[2]), (o[1] + ts.1).min(d[3])]
+        });
+        let ls = (hi[0] - lo[0], hi[1] - lo[1]);
         if ls.0 <= 0 || ls.1 <= 0 {
             continue;
         }
@@ -1106,6 +1302,73 @@ fn raster(
         }
     }
     ([x0, y0, w, h], out)
+}
+
+// Select a straight color that round-trips through the shader's div255.
+fn sprite_color(pixel: [u8; 4]) -> [u8; 4] {
+    let a = u32::from(pixel[3]);
+    let c = [0, 1, 2].map(|k| ((u32::from(pixel[k]) * 255 + a / 2) / a).min(255) as u8);
+    [c[0], c[1], c[2], pixel[3]]
+}
+
+// Blending SVG paths directly into the parent changes their overlap rounding.
+fn composited_sprites(
+    [x0, y0, x1, y1]: [i32; 4],
+    layer: Layer,
+    draw: &dyn Fn(&Canvas),
+) -> Vec<Sprite> {
+    let size = layer.clamp();
+    let [x0, y0, x1, y1] = layer.clip_bounds([x0, y0, x1, y1]);
+    if x0 >= x1 || y0 >= y1 {
+        return Vec::new();
+    }
+    let (w, h) = (x1 - x0, y1 - y0);
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
+    for (o, ts, [ox0, oy0, ox1, oy1]) in tiles([x0, y0, x1, y1], size, layer.tile) {
+        let lo = layer.device.map_or(o, |d| [o[0].max(d[0]), o[1].max(d[1])]);
+        let hi = layer.device.map_or([o[0] + ts.0, o[1] + ts.1], |d| {
+            [(o[0] + ts.0).min(d[2]), (o[1] + ts.1).min(d[3])]
+        });
+        let ls = (hi[0] - lo[0], hi[1] - lo[1]);
+        let rect = [ox0.max(lo[0]), oy0.max(lo[1]), ox1, oy1];
+        if ls.0 <= 0 || ls.1 <= 0 || rect[0] >= rect[2] || rect[1] >= rect[3] {
+            continue;
+        }
+        let (data, row) = rect_pixels(lo, ls, Color4f::new(0., 0., 0., 0.), rect, draw);
+        for y in rect[1]..rect[3] {
+            let src = (y - rect[1]) as usize * row;
+            let dst = ((y - y0) * w + rect[0] - x0) as usize * 4;
+            pixels[dst..dst + row].copy_from_slice(&data[src..src + row]);
+        }
+    }
+    let mut colors = HashSet::new();
+    for pixel in pixels.as_chunks_mut::<4>().0 {
+        if pixel[3] == 0 {
+            continue;
+        }
+        let color = sprite_color(*pixel);
+        pixel[..3].copy_from_slice(&color[..3]);
+        colors.insert([color[0], color[1], color[2]]);
+    }
+    let mut out = Vec::new();
+    for color in colors {
+        let value = |i: usize| {
+            if pixels[i * 4..i * 4 + 3] == color {
+                pixels[i * 4 + 3]
+            } else {
+                0
+            }
+        };
+        chunks(
+            &mut out,
+            [x0, y0, w, h],
+            &value,
+            PIPELINE,
+            Some([color[0], color[1], color[2], 255]),
+            false,
+        );
+    }
+    out
 }
 
 /// The RGBA bytes (macOS N32, premultiplied) and row bytes of the cc tile of `size` at layer
@@ -1204,11 +1467,8 @@ pub(crate) fn surface_pixels(
 /// edge. Skia's AA clip only turns into a plain rect when it starts at its device's top row
 /// (`SkAAClip::isRect` compares a row offset with the bounds).
 fn restore_sprites(op: &Op, col: Color4f, layer: Layer) -> Vec<Sprite> {
-    let size = layer.clamp();
     // `op` is in layer space.
-    let [x0, y0, x1, y1] = op.bbox();
-    let (x0, y0) = (x0.max(0), y0.max(0));
-    let (x1, y1) = (x1.min(size[0]), y1.min(size[1]));
+    let [x0, y0, x1, y1] = layer.clip_bounds(op.bbox());
     if x0 >= x1 || y0 >= y1 {
         return Vec::new();
     }
@@ -1225,7 +1485,7 @@ fn restore_sprites(op: &Op, col: Color4f, layer: Layer) -> Vec<Sprite> {
     let mut groups: Vec<([u8; 4], bool)> = Vec::new();
     let mut index = HashMap::new();
     let mut px = vec![(usize::MAX, 0u8); (w * h) as usize];
-    for (o, ts, [ox0, oy0, ox1, oy1]) in tiles([x0, y0, x1, y1], size, layer.tile) {
+    for (o, ts, [ox0, oy0, ox1, oy1]) in layer.tiles([x0, y0, x1, y1], layer.clamp()) {
         // The restore's clip coverage, and whether Skia made it a plain rect.
         let mut rect = false;
         let clip = tile_pixels(o, ts, black, |c| {
@@ -1289,14 +1549,7 @@ fn restore_sprites(op: &Op, col: Color4f, layer: Layer) -> Vec<Sprite> {
     }
     let mut out = Vec::new();
     for (g, &(l, edge)) in groups.iter().enumerate() {
-        // The 8-bit color whose premultiplied value (as the shader computes it) is `l`.
-        let a = u32::from(l[3]);
-        let c = [0, 1, 2].map(|k| {
-            (0..=255u32)
-                .find(|&c| div255(c * a) == u32::from(l[k]))
-                .unwrap_or(255) as u8
-        });
-        let color = [c[0], c[1], c[2], l[3]];
+        let color = sprite_color(l);
         let value = |i: usize| if px[i].0 == g { px[i].1 } else { 0 };
         // A composited layer's tile is transparent: the restore leaves the layer px scaled by
         // the clip coverage (both blitters), which the compositor blends onto the page.
@@ -1422,7 +1675,7 @@ pub(crate) fn sprites(
         let mut out = Vec::new();
         for (blit, mode) in [0, 2]
             .into_iter()
-            .flat_map(|b| [MASK, ARGB32, PIPELINE, LAYER, DST_IN].map(|m| (b, m)))
+            .flat_map(|b| [MASK, ARGB32, PIPELINE, LAYER, DST_IN, OPACITY].map(|m| (b, m)))
         {
             if !blits.iter().any(|b| b[blit + 1] == mode && b[blit] != 0) {
                 continue;
@@ -1495,13 +1748,31 @@ pub(crate) fn paint_sprites(
     window: &mut Window,
     cx: &App,
 ) {
+    paint_transformed_sprites(
+        sprites,
+        color,
+        origin,
+        TransformationMatrix::unit(),
+        window,
+        cx,
+    );
+}
+
+fn paint_transformed_sprites(
+    sprites: &[Sprite],
+    color: Hsla,
+    origin: [i32; 2],
+    transformation: TransformationMatrix,
+    window: &mut Window,
+    cx: &App,
+) {
     // An op's opaque-layer sprites cover disjoint px: one GPUI layer holds them all. A layer
     // per sprite burns layer ids, which wrap at 255, and a px whose last layer had the same id
     // would resume that unrelated layer.
-    paint_each(sprites, false, color, origin, window, cx);
+    paint_each(sprites, false, color, origin, transformation, window, cx);
     if sprites.iter().any(|s| s.opaque_layer) {
         window.with_skia_layer(255, |window| {
-            paint_each(sprites, true, color, origin, window, cx)
+            paint_each(sprites, true, color, origin, transformation, window, cx)
         });
     }
 }
@@ -1511,6 +1782,7 @@ fn paint_each(
     layered: bool,
     color: Hsla,
     [ox, oy]: [i32; 2],
+    transformation: TransformationMatrix,
     window: &mut Window,
     cx: &App,
 ) {
@@ -1525,7 +1797,7 @@ fn paint_each(
             ),
             size(px(sp.size[0] as f32 / s), px(sp.size[1] as f32 / s)),
         );
-        if !bounds.intersects(&mask) {
+        if transformation == TransformationMatrix::unit() && !bounds.intersects(&mask) {
             continue;
         }
         let color: Hsla = sp.color.map_or(color, |[r, g, b, a]| {
@@ -1547,7 +1819,7 @@ fn paint_each(
                 bounds,
                 sp.path.clone(),
                 Some(sp.svg.as_bytes()),
-                TransformationMatrix::unit(),
+                transformation,
                 color,
                 cx,
             )
@@ -1559,12 +1831,96 @@ pub(crate) fn alpha_byte(a: f32) -> u8 {
     (a.clamp(0., 1.) * 255.).round() as u8
 }
 
+#[derive(Clone, Copy)]
+struct RecordingBounds {
+    bounds: [i32; 4],
+    sparse: bool,
+}
+
 thread_local! {
     /// The anti-aliased clips of [`with_rounded_clip`], window device px, outermost first;
     /// with `layers: false`, the origin of the layer they apply in.
     static CLIPS: RefCell<Vec<(Contour, Option<[i32; 2]>)>> = const { RefCell::new(Vec::new()) };
-    /// The device origin of the innermost [`with_layer`], window device px.
-    static DEVICE: Cell<Option<[i32; 2]>> = const { Cell::new(None) };
+    /// The device bounds of the innermost [`with_layer`], window device px.
+    static DEVICE: Cell<Option<[i32; 4]>> = const { Cell::new(None) };
+    static COLLECTED_BOUNDS: Cell<(bool, Option<[i32; 4]>)> = const { Cell::new((false, None)) };
+    static RECORDED_BOUNDS: Cell<Option<RecordingBounds>> = const { Cell::new(None) };
+}
+
+fn extend_recorded_bounds(bounds: [i32; 4]) {
+    let (active, previous) = COLLECTED_BOUNDS.get();
+    if active {
+        let bounds = previous.map_or(bounds, |p| {
+            [
+                p[0].min(bounds[0]),
+                p[1].min(bounds[1]),
+                p[2].max(bounds[2]),
+                p[3].max(bounds[3]),
+            ]
+        });
+        COLLECTED_BOUNDS.set((true, Some(bounds)));
+    }
+}
+
+pub(crate) fn recorded_bounds(prepaint: impl FnOnce()) -> Option<[i32; 4]> {
+    let previous = COLLECTED_BOUNDS.replace((true, None));
+    prepaint();
+    let bounds = COLLECTED_BOUNDS.replace(previous).1;
+    if let Some(bounds) = bounds {
+        extend_recorded_bounds(bounds);
+    }
+    bounds
+}
+
+pub(crate) fn with_recorded_bounds<R>(bounds: Option<[i32; 4]>, paint: impl FnOnce() -> R) -> R {
+    with_recording(bounds, true, paint)
+}
+
+pub(crate) fn with_composited_bounds<R>(bounds: Option<[i32; 4]>, paint: impl FnOnce() -> R) -> R {
+    with_recording(bounds, false, paint)
+}
+
+fn with_recording<R>(bounds: Option<[i32; 4]>, sparse: bool, paint: impl FnOnce() -> R) -> R {
+    let previous = RECORDED_BOUNDS.replace(bounds.map(|bounds| RecordingBounds { bounds, sparse }));
+    let result = paint();
+    RECORDED_BOUNDS.set(previous);
+    result
+}
+
+pub(crate) fn record_decoration(d: &Decoration, bounds: Bounds<Pixels>, window: &Window) {
+    if !COLLECTED_BOUNDS.get().0 {
+        return;
+    }
+    let scale = window.scale_factor();
+    let dev = |v: Pixels| f32::from(v) * scale;
+    let base = [
+        dev(bounds.left()).round(),
+        dev(bounds.top()).round(),
+        dev(bounds.right()).round(),
+        dev(bounds.bottom()).round(),
+    ];
+    let mut rect = base;
+    for shadow in &d.shadows {
+        if shadow.inset || alpha_byte(shadow.color.a) == 0 {
+            continue;
+        }
+        let extent = (dev(shadow.blur) * 1.5).ceil() + dev(shadow.spread);
+        let (x, y) = (dev(shadow.offset.x), dev(shadow.offset.y));
+        rect[0] = rect[0].min(base[0] + x - extent);
+        rect[1] = rect[1].min(base[1] + y - extent);
+        rect[2] = rect[2].max(base[2] + x + extent);
+        rect[3] = rect[3].max(base[3] + y + extent);
+    }
+    let clip = window.content_mask().bounds;
+    let rect = [
+        rect[0].floor().max(dev(clip.left()).floor()) as i32,
+        rect[1].floor().max(dev(clip.top()).floor()) as i32,
+        rect[2].ceil().min(dev(clip.right()).ceil()) as i32,
+        rect[3].ceil().min(dev(clip.bottom()).ceil()) as i32,
+    ];
+    if rect[0] < rect[2] && rect[1] < rect[3] {
+        extend_recorded_bounds(rect);
+    }
 }
 
 /// `crate::with_rounded_clip` on macOS.
@@ -1582,7 +1938,7 @@ pub(crate) fn with_rounded_clip<R>(
         ..Default::default()
     };
     let (clip, _) = ops(&d, bounds, window.scale_factor());
-    let only = (!layers).then(|| Layer::new(window, None).origin);
+    let only = (!layers).then(|| Layer::new(window, None).anchor());
     CLIPS.with_borrow_mut(|c| c.push((clip, only)));
     let out = paint(window);
     CLIPS.with_borrow_mut(|c| c.pop());
@@ -1612,7 +1968,33 @@ pub(crate) fn with_layer<R>(
         c.retain(|(clip, _)| !corners.iter().all(|&p| clip.path().contains(p)));
         outer
     });
-    let device = DEVICE.replace(Some([l.floor() as i32, t.floor() as i32]));
+    let mut bounds = [
+        l.floor() as i32,
+        t.floor() as i32,
+        r.ceil() as i32,
+        b.ceil() as i32,
+    ];
+    let parent = DEVICE.get().or_else(|| {
+        window.saved_layer().map(|bounds| {
+            let [l, t, r, b] = [bounds.left(), bounds.top(), bounds.right(), bounds.bottom()]
+                .map(|value| f32::from(value) * s);
+            [
+                l.floor() as i32,
+                t.floor() as i32,
+                r.ceil() as i32,
+                b.ceil() as i32,
+            ]
+        })
+    });
+    if let Some([l, t, r, b]) = parent {
+        bounds = [
+            bounds[0].max(l),
+            bounds[1].max(t),
+            bounds[2].min(r),
+            bounds[3].min(b),
+        ];
+    }
+    let device = DEVICE.replace(Some(bounds));
     let out = window.with_skia_layer(alpha, paint);
     DEVICE.set(device);
     CLIPS.with_borrow_mut(|c| *c = outer);
@@ -1622,7 +2004,7 @@ pub(crate) fn with_layer<R>(
 /// The active [`CLIPS`] in `layer`'s space.
 fn clips(window: &Window, layer: Layer) -> Vec<Contour> {
     let [x, y] = layer.origin.map(|v| -v as f32);
-    let inner = Layer::new(window, None).origin;
+    let inner = Layer::new(window, None).anchor();
     CLIPS.with_borrow(|c| {
         c.iter()
             .filter(|(_, only)| only.is_none_or(|o| o == inner))
@@ -1631,22 +2013,20 @@ fn clips(window: &Window, layer: Layer) -> Vec<Contour> {
     })
 }
 
-/// Skia's `SK_ColorBLACK` paint (8-bit color at the folded alpha `a`): it takes
-/// `SkARGB32_Black_Blitter`.
+/// Skia's `SK_ColorBLACK` paint at its own 8-bit alpha.
+/// It takes `SkARGB32_Black_Blitter`.
 fn is_black(color: Hsla, a: u8) -> bool {
     let c = color4f(color);
     a == 255 && [c.r, c.g, c.b] == [0.; 3]
 }
 
 fn paint_op(op: Op, color: Hsla, layer: Layer, window: &mut Window, cx: &App) {
-    // GPUI folds an `opacity` into a lone sprite's color, as cc folds it into the paint: Skia
-    // picks its blitter by that alpha.
-    let a = alpha_byte(color.a * window.element_opacity());
+    // Element opacity is restored by GPUI's enclosing layer, not folded into this paint.
+    let a = alpha_byte(color.a);
     if matches!(op, Op::ClipLayer { .. }) || op.restored(a) {
         // ponytail: restored layers ignore the ancestors' AA clips.
-        let mut col = color4f(color);
-        col.a *= window.element_opacity();
-        let sprites = cached(format!("{op:?}{:?}{col:?}", layer.key()), || {
+        let col = color4f(color);
+        let sprites = cached(format!("{op:?}{:?}{col:?}", layer.key(op.bbox())), || {
             restore_sprites(&op, col, layer)
         });
         return paint_sprites(&sprites, color, layer.origin, window, cx);
@@ -1658,7 +2038,7 @@ fn paint_op(op: Op, color: Hsla, layer: Layer, window: &mut Window, cx: &App) {
     let clips = clips(window, layer);
     let black = is_black(color, a);
     let wide = wide(color);
-    let key = format!("{op:?}{:?}{a}{black}{wide}{clips:?}", layer.key());
+    let key = format!("{op:?}{:?}{a}{black}{wide}{clips:?}", layer.key(bbox));
     let sprites = sprites(key, || {
         raster(bbox, layer, a, black, wide, &clips, &|c, col| {
             op.draw(c, col)
@@ -1688,11 +2068,114 @@ pub(crate) fn paint(
     window: &mut Window,
     cx: &App,
 ) {
-    let layer = Layer::new(window, composited);
+    if window.element_opacity() <= 0. {
+        return;
+    }
     let s = window.scale_factor();
+    let layer = Layer::new(window, composited).for_bounds(bounds, s);
     for (op, color) in ops(d, layer.local(bounds, s), s).1 {
         paint_op(op, color, layer, window, cx);
     }
+}
+
+// Match Blink's padded stops and the fixed-scale tile used by generated images.
+fn stripe_paint(period: f32, colors: [Rgba; 2]) -> Paint {
+    use skia_safe::{PictureRecorder, TileMode, gradient, images};
+    let colors = colors.map(|color| Color4f::new(color.r, color.g, color.b, color.a));
+    let stops = [colors[0], colors[0], colors[1], colors[1]];
+    let gradient = gradient::Gradient::new(
+        gradient::Colors::new(
+            &stops,
+            Some(&[0., 0.5, 0.5, 1.]),
+            TileMode::Clamp,
+            ColorSpace::new_srgb(),
+        ),
+        gradient::Interpolation {
+            in_premul: gradient::interpolation::InPremul::Yes,
+            color_space: gradient::interpolation::ColorSpace::Lab,
+            ..Default::default()
+        },
+    );
+    let shader = gradient::shaders::linear_gradient(((0., period), (0., 0.)), &gradient, None)
+        .expect("positive stripe period");
+    let tile = Rect::from_wh(period, period);
+    let mut recorder = PictureRecorder::new();
+    let mut paint = Paint::default();
+    paint
+        .set_anti_alias(true)
+        .set_dither(true)
+        .set_shader(shader);
+    recorder
+        .begin_recording(tile, false)
+        .draw_rect(tile, &paint);
+    let picture = recorder
+        .finish_recording_as_picture(None)
+        .expect("stripe recording");
+    let side = period.ceil() as i32;
+    let image = images::deferred_from_picture(
+        picture,
+        (side, side),
+        Some(&Matrix::scale((side as f32 / period, side as f32 / period))),
+        None,
+        images::BitDepth::U8,
+        ColorSpace::new_srgb(),
+        None,
+    )
+    .expect("stripe tile");
+    let shader = image
+        .to_shader(
+            (TileMode::Repeat, TileMode::Repeat),
+            SamplingOptions::new(FilterMode::Linear, MipmapMode::Linear),
+            &Matrix::scale((period / side as f32, period / side as f32)),
+        )
+        .expect("stripe shader");
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true).set_shader(shader);
+    paint
+}
+
+pub(crate) fn paint_horizontal_stripes(
+    period: Pixels,
+    colors: [Rgba; 2],
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    let scale = window.scale_factor();
+    // Blink stores the used background tile in device-space LayoutUnits.
+    let period = (f32::from(period) * scale * 64.).floor() / 64.;
+    let layer = Layer::new(window, None).for_bounds(bounds, scale);
+    let (contour, _) = ops(&Decoration::default(), layer.local(bounds, scale), scale);
+    let bbox = Op::Fill(contour).bbox();
+    if !shown(bbox, layer, window) {
+        return;
+    }
+    let clips = clips(window, layer);
+    let sprites = cached(
+        format!(
+            "stripes{period:?}{colors:?}{bbox:?}{clips:?}{:?}",
+            layer.key(bbox)
+        ),
+        || {
+            let paint = stripe_paint(period, colors);
+            composited_sprites(bbox, layer, &|canvas| {
+                for clip in &clips {
+                    clip.clip(canvas, ClipOp::Intersect);
+                }
+                canvas.save();
+                canvas.translate((contour.rr.r[0], contour.rr.r[1]));
+                canvas.draw_rect(Rect::from_wh(contour.rr.r[2], contour.rr.r[3]), &paint);
+                canvas.restore();
+            })
+        },
+    );
+    paint_sprites(
+        &sprites,
+        gpui::rgb(0xffffff).into(),
+        layer.origin,
+        window,
+        cx,
+    );
 }
 
 // Chromium decodes to the smallest mip that still covers the rounded destination.
@@ -1719,9 +2202,20 @@ pub(crate) fn raster_images(
     composition: ImageComposition,
     window: &Window,
 ) -> gpui::RenderImage {
-    let (page, group_images) = match composition {
-        ImageComposition::Direct(page) => (page, false),
-        ImageComposition::Group(page) => (page, true),
+    let (page, group_images, composite_images) = match composition {
+        ImageComposition::Direct(page) => (page, false, false),
+        ImageComposition::Group(page) => (page, true, false),
+        ImageComposition::Composited(page) => (page, false, true),
+    };
+    let page = color4f(page);
+    let background = composite_images.then(|| {
+        assert_eq!(page.a, 1., "composited image background must be opaque");
+        [page.b, page.g, page.r].map(|v| (v * 255.).round() as u32)
+    });
+    let clear = if composite_images {
+        Color4f::new(0., 0., 0., 0.)
+    } else {
+        page
     };
     let (layer, s) = (Layer::new(window, None), window.scale_factor());
     let d = Decoration {
@@ -1783,8 +2277,8 @@ pub(crate) fn raster_images(
     let grouped = group_images && draws.len() > 1;
     let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
     let mut out = vec![0; (w * h * 4) as usize];
-    for (o, ts, [ox0, oy0, ox1, oy1]) in tiles([x0, y0, x0 + w, y0 + h], layer.size(), layer.tile) {
-        let (px, row) = tile_pixels(o, ts, color4f(page), |c| {
+    for (o, ts, [ox0, oy0, ox1, oy1]) in layer.tiles([x0, y0, x0 + w, y0 + h], layer.size()) {
+        let (px, row) = tile_pixels(o, ts, clear, |c| {
             contour.clip(c, ClipOp::Intersect);
             if grouped {
                 c.save_layer(&skia_safe::canvas::SaveLayerRec::default().bounds(&group));
@@ -1808,6 +2302,13 @@ pub(crate) fn raster_images(
                 let j = (((y - y0) * w + x - x0) * 4) as usize;
                 // BGRA, as GPUI's images hold it.
                 out[j..j + 4].copy_from_slice(&[px[i + 2], px[i + 1], px[i], px[i + 3]]);
+                if let Some(background) = &background {
+                    let inv = 255 - u32::from(out[j + 3]);
+                    for (channel, background) in out[j..j + 3].iter_mut().zip(background) {
+                        *channel = (u32::from(*channel) + div255(background * inv)) as u8;
+                    }
+                    out[j + 3] = 255;
+                }
             }
         }
     }
@@ -1953,16 +2454,80 @@ struct IconPath {
     layer: f32,
 }
 
+impl IconPath {
+    fn paint(&self, color: Color4f) -> Paint {
+        let mut paint = fill_paint(color);
+        if let Some((width, cap, join)) = self.stroke {
+            paint
+                .set_style(PaintStyle::Stroke)
+                .set_stroke_width(width)
+                .set_stroke_cap(cap)
+                .set_stroke_join(join);
+        }
+        paint
+    }
+}
+
 /// A parsed icon: viewBox and drawables, in document order.
 struct IconSvg {
     view_box: [f32; 4],
     paths: Vec<IconPath>,
+    paint_bounds: std::cell::OnceCell<Option<Rect>>,
 }
 
 thread_local! {
     /// Parsed icons by asset key (skia paths are not `Sync`; GPUI paints on one thread).
     static ICONS: std::cell::RefCell<HashMap<String, Option<std::rc::Rc<IconSvg>>>> =
         Default::default();
+}
+
+fn cached_icon(src: &[u8], key: &str) -> Option<std::rc::Rc<IconSvg>> {
+    ICONS.with_borrow_mut(|icons| {
+        if let Some(icon) = icons.get(key) {
+            return icon.clone();
+        }
+        let icon = std::str::from_utf8(src)
+            .ok()
+            .and_then(parse_icon)
+            .map(std::rc::Rc::new);
+        icons.insert(key.to_owned(), icon.clone());
+        icon
+    })
+}
+
+impl IconSvg {
+    fn paint_bounds(&self) -> Option<Rect> {
+        *self.paint_bounds.get_or_init(|| {
+            let mut bounds = Rect::new_empty();
+            for drawable in &self.paths {
+                if drawable.opacity <= 0. || drawable.layer <= 0. {
+                    continue;
+                }
+                let outlined = if drawable.stroke.is_some() {
+                    let stroke = skia_safe::StrokeRec::from_paint(
+                        &drawable.paint(Color4f::new(1., 1., 1., 1.)),
+                        None,
+                        None,
+                    );
+                    let mut path = PathBuilder::new();
+                    if !stroke.apply_to_path(&mut path, &drawable.path) {
+                        return None;
+                    }
+                    Some(path.detach())
+                } else {
+                    None
+                };
+                let path = outlined.as_ref().unwrap_or(&drawable.path);
+                bounds.join(if drawable.transform.is_identity() {
+                    path.compute_tight_bounds()
+                } else {
+                    path.with_transform(&drawable.transform)
+                        .compute_tight_bounds()
+                });
+            }
+            (!bounds.is_empty()).then_some(bounds)
+        })
+    }
 }
 
 fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
@@ -2112,7 +2677,54 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
     Some(IconSvg {
         view_box: [v[0], v[1], *v.get(2)?, *v.get(3)?],
         paths,
+        paint_bounds: Default::default(),
     })
+}
+
+pub(crate) fn icon_paint_bounds(
+    src: &[u8],
+    key: &str,
+    bounds: Bounds<Pixels>,
+    flip_x: bool,
+    window: &Window,
+) -> Option<Bounds<Pixels>> {
+    let icon = cached_icon(src, key)?;
+    let ink = icon.paint_bounds()?;
+    let s = window.scale_factor();
+    let snap = |value: Pixels| f64::from((f32::from(value) * s + 0.5).floor());
+    let (w, h) = (
+        f64::from(f32::from(bounds.size.width) * s),
+        f64::from(f32::from(bounds.size.height) * s),
+    );
+    let [vx, vy, vw, vh] = icon.view_box.map(f64::from);
+    if w <= 0. || h <= 0. || vw <= 0. || vh <= 0. {
+        return None;
+    }
+    let scale = (w / vw).min(h / vh);
+    let (tx, ty) = (
+        (w - vw * scale) / 2. - vx * scale,
+        (h - vh * scale) / 2. - vy * scale,
+    );
+    let mut left = f64::from(ink.left) * scale + tx;
+    let mut right = f64::from(ink.right) * scale + tx;
+    if flip_x {
+        (left, right) = (w - right, w - left);
+    }
+    let (x, y) = (snap(bounds.left()), snap(bounds.top()));
+    let left = (x + left).floor().max(x);
+    let top = (y + f64::from(ink.top) * scale + ty).floor().max(y);
+    let right = (x + right).ceil().min(snap(bounds.right()));
+    let bottom = (y + f64::from(ink.bottom) * scale + ty)
+        .ceil()
+        .min(snap(bounds.bottom()));
+    if left >= right || top >= bottom {
+        return None;
+    }
+    let css = |value: f64| px(value as f32 / s);
+    Some(Bounds::new(
+        point(css(left), css(top)),
+        size(css(right - left), css(bottom - top)),
+    ))
 }
 
 /// `crate::paint_icon` on macOS.
@@ -2124,30 +2736,50 @@ pub(crate) fn paint_icon(
     flip_x: bool,
     color: Hsla,
     composited: Option<gpui::Point<Pixels>>,
+    transformation: Option<TransformationMatrix>,
     window: &mut Window,
     cx: &App,
 ) -> bool {
-    let icon = ICONS.with_borrow_mut(|icons| {
-        icons
-            .entry(key.to_string())
-            .or_insert_with(|| parse_icon(std::str::from_utf8(src).ok()?).map(std::rc::Rc::new))
-            .clone()
-    });
+    if window.element_opacity() <= 0. {
+        return true;
+    }
+    let icon = cached_icon(src, key);
     let Some(icon) = icon else {
         return false;
     };
     let s = window.scale_factor();
-    let layer = Layer::new(window, composited);
-    // The svg root snaps to the nearest device px (half up); the viewBox maps onto its
-    // unsnapped CSS size (`xMidYMid meet`), in doubles like Blink's AffineTransform.
+    let transformed = transformation.is_some();
+    let transformation = transformation.unwrap_or_default();
     let snap = |v: Pixels| (f32::from(v) * s + 0.5).floor();
-    // In layer space, like the decorations.
-    let b = layer.local(bounds, s);
-    let origin = [snap(b.origin.x), snap(b.origin.y)];
     let (w, h) = (
         f64::from(f32::from(bounds.size.width) * s),
         f64::from(f32::from(bounds.size.height) * s),
     );
+    let layer = if transformed {
+        Layer {
+            origin: [0, 0],
+            tile_origin: [0, 0],
+            window: [w.ceil() as i32, h.ceil() as i32],
+            tile: [TILE; 2],
+            composited: true,
+            device: None,
+            recorded: None,
+        }
+    } else {
+        Layer::new(window, composited)
+    };
+    let paint_origin = if transformed {
+        [snap(bounds.left()) as i32, snap(bounds.top()) as i32]
+    } else {
+        layer.origin
+    };
+    // A transformed SVG is rasterized in its own viewport before scene clipping.
+    let b = if transformed {
+        Bounds::new(point(px(0.), px(0.)), bounds.size)
+    } else {
+        layer.local(bounds, s)
+    };
+    let origin = [snap(b.origin.x), snap(b.origin.y)];
     let [vx, vy, vw, vh] = icon.view_box.map(f64::from);
     let scale = (w / vw).min(h / vh);
     let (tx, ty) = (
@@ -2173,52 +2805,81 @@ pub(crate) fn paint_icon(
         snap(b.origin.x + bounds.size.width),
         snap(b.origin.y + bounds.size.height),
     );
-    let rgba = Rgba::from(color);
-    let clips = clips(window, layer);
+    let clips = if transformed {
+        Vec::new()
+    } else {
+        clips(window, layer)
+    };
+    let bbox = [
+        origin[0] as i32 - 2,
+        origin[1] as i32 - 2,
+        (origin[0] as f64 + w).ceil() as i32 + 2,
+        (origin[1] as f64 + h).ceil() as i32 + 2,
+    ];
+    if !transformed && !shown(bbox, layer, window) {
+        return true;
+    }
+    let prepare = |c: &Canvas| {
+        c.clip_rect(clip, ClipOp::Intersect, true);
+        c.translate((origin[0], origin[1]));
+        if flip_x {
+            c.translate(((w / 2.) as f32, 0.));
+            c.scale((-1., 1.));
+            c.translate((-(w / 2.) as f32, 0.));
+        }
+        c.concat(&view);
+    };
+    let draw_path = |c: &Canvas, p: &IconPath, col: Color4f| {
+        c.concat(&p.transform);
+        c.draw_path(&p.path, &p.paint(col));
+    };
+    if layer.composited && !wide(color) {
+        let rgba = Rgba::from(color);
+        let sprites = cached(
+            format!(
+                "{key}#composited{flip_x}{clip:?}{w}x{h}{rgba:?}{:?}{clips:?}",
+                layer.key(bbox)
+            ),
+            || {
+                composited_sprites(bbox, layer, &|c| {
+                    for clip in &clips {
+                        clip.clip(c, ClipOp::Intersect);
+                    }
+                    prepare(c);
+                    for p in &icon.paths {
+                        c.save();
+                        let color = p.color.unwrap_or(rgba);
+                        let a = if p.color.is_some() { 1. } else { rgba.a } * p.opacity * p.layer;
+                        draw_path(c, p, Color4f::new(color.r, color.g, color.b, a));
+                        c.restore();
+                    }
+                })
+            },
+        );
+        paint_transformed_sprites(&sprites, color, paint_origin, transformation, window, cx);
+        return true;
+    }
     for (n, p) in icon.paths.iter().enumerate() {
         let draw = |c: &Canvas, col: Color4f| {
-            c.clip_rect(clip, ClipOp::Intersect, true);
-            c.translate((origin[0], origin[1]));
-            if flip_x {
-                c.translate(((w / 2.) as f32, 0.));
-                c.scale((-1., 1.));
-                c.translate((-(w / 2.) as f32, 0.));
-            }
-            c.concat(&view);
-            c.concat(&p.transform);
-            let mut paint = fill_paint(col);
-            if let Some((width, cap, join)) = p.stroke {
-                paint
-                    .set_style(PaintStyle::Stroke)
-                    .set_stroke_width(width)
-                    .set_stroke_cap(cap)
-                    .set_stroke_join(join);
-            }
-            c.draw_path(&p.path, &paint);
+            prepare(c);
+            draw_path(c, p, col);
         };
-        let bbox = [
-            origin[0] as i32 - 2,
-            origin[1] as i32 - 2,
-            (origin[0] as f64 + w).ceil() as i32 + 2,
-            (origin[1] as f64 + h).ceil() as i32 + 2,
-        ];
-        if !shown(bbox, layer, window) {
-            continue;
-        }
-        let c = p.color.unwrap_or(rgba);
-        // ponytail: the svg's `opacity` (a layer in Chromium) is folded into the paint alpha.
-        let a = if p.color.is_some() { 1. } else { rgba.a } * p.opacity * p.layer;
-        let color = Rgba { a, ..c };
-        let a = alpha_byte(a * window.element_opacity());
-        let black = is_black(color.into(), a);
+        // Keep the CSS color outside the sRGB gamut; conversion to Rgba clamps its channels.
+        let c = p.color.map(Hsla::from).unwrap_or(color);
+        // Noncomposited paths fold the SVG opacity into their paint.
+        let a = if p.color.is_some() { 1. } else { color.a } * p.opacity * p.layer;
+        let color = c.alpha(a);
+        let a = alpha_byte(a);
+        let black = is_black(color, a);
+        let wide = p.color.is_none() && wide(color);
         let sprites = sprites(
             format!(
-                "{key}#{n}{flip_x}{clip:?}{w}x{h}{:?}{a}{black}{clips:?}",
-                layer.key()
+                "{key}#{n}{flip_x}{clip:?}{w}x{h}{:?}{a}{black}{wide}{clips:?}",
+                layer.key(bbox)
             ),
-            || raster(bbox, layer, a, black, false, &clips, &draw),
+            || raster(bbox, layer, a, black, wide, &clips, &draw),
         );
-        paint_sprites(&sprites, color.into(), layer.origin, window, cx);
+        paint_transformed_sprites(&sprites, color, paint_origin, transformation, window, cx);
     }
     true
 }
@@ -2226,6 +2887,275 @@ pub(crate) fn paint_icon(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate as shapes;
+    use gpui::{
+        AppContext, Corners, IntoElement, ParentElement, Render, Styled, Window, canvas, div,
+        prelude::FluentBuilder, px, size,
+    };
+    use std::sync::Arc;
+
+    #[test]
+    fn horizontal_stripes_keep_fractional_period_and_hard_stop() {
+        let colors = [
+            Rgba {
+                r: 0.232724,
+                g: 0.120283,
+                b: 0.103232,
+                a: 1.,
+            },
+            gpui::rgba(0xfa423eff),
+        ];
+        let paint = stripe_paint(251. / 64., colors);
+        let (pixels, row) = tile_pixels([0, 0], (8, 43), Color4f::new(0., 0., 0., 0.), |canvas| {
+            canvas.draw_rect(Rect::from_wh(8., 43.), &paint);
+        });
+        for (y, expected) in [
+            (0, [250, 66, 62, 255]),
+            (1, [244, 65, 61, 255]),
+            (3, [72, 33, 29, 255]),
+            (37, [108, 40, 36, 255]),
+            (38, [59, 31, 26, 255]),
+        ] {
+            assert_eq!(
+                &pixels[y * row + 4..y * row + 8],
+                &expected,
+                "stripe row {y}"
+            );
+        }
+    }
+
+    struct ImageLayers {
+        scope_backdrop: bool,
+    }
+
+    impl Render for ImageLayers {
+        fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            let mut root = div().size_full().relative().bg(gpui::rgb(0x2b2b2b));
+            for row in 0..3 {
+                let mut panel = div()
+                    .absolute()
+                    .left(px(10.))
+                    .top(px(10. + row as f32 * 40.))
+                    .w(px(30.))
+                    .h(px(30.))
+                    .when(row != 0, |d| d.top_layer());
+                if row == 2 {
+                    panel = panel.child(shapes::decoration(shapes::Decoration {
+                        fill: Some(gpui::rgb(0x2b2b2b).into()),
+                        ..Default::default()
+                    }));
+                } else {
+                    let image = Arc::new(gpui::RenderImage::new([image::Frame::new(
+                        image::RgbaImage::from_pixel(2, 2, image::Rgba([43, 43, 43, 255])),
+                    )]));
+                    panel = panel.child(
+                        canvas(
+                            |_, _, _| (),
+                            move |bounds, (), window, _| {
+                                window
+                                    .paint_image(
+                                        bounds,
+                                        bounds,
+                                        Corners::default(),
+                                        image,
+                                        0,
+                                        false,
+                                    )
+                                    .expect("opaque image");
+                            },
+                        )
+                        .absolute()
+                        .size_full(),
+                    );
+                }
+                panel = panel.child(shapes::decoration(shapes::Decoration {
+                    fill: Some(gpui::Hsla {
+                        a: 0.1,
+                        ..gpui::rgb(0xff6764).into()
+                    }),
+                    ..Default::default()
+                }));
+                root = root.child(panel);
+            }
+            let scope_box = || {
+                div()
+                    .absolute()
+                    .left(px(50.))
+                    .top(px(210.))
+                    .w(px(420.))
+                    .h(px(158.))
+            };
+            root.child(
+            div()
+                .absolute()
+                .left(px(10.))
+                .top(px(130.))
+                .size(px(30.))
+                .bg(gpui::rgb(0x151515))
+                .child(
+                    div()
+                        .size_full()
+                        .top_layer()
+                        .child(shapes::backdrop_blur(
+                            px(0.),
+                            shapes::Fill::Color,
+                            false,
+                            shapes::Decoration {
+                                fill: Some(gpui::Hsla {
+                                    a: 0.9,
+                                    ..gpui::rgb(0x2d2d2d).into()
+                                }),
+                                ..Default::default()
+                            },
+                        ))
+                        .child(shapes::decoration(shapes::Decoration {
+                            fill: Some(gpui::rgba(0xffffff06).into()),
+                            ..Default::default()
+                        })),
+                ),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(px(10.))
+                .top(px(170.))
+                .size(px(30.))
+                .bg(gpui::rgb(0x151515))
+                .child(
+                    canvas(
+                        |_, _, _| (),
+                        |bounds, (), window, cx| {
+                            shapes::paint_icon(
+                                br#"<svg viewBox="0 0 10 10"><path d="M0 0H10V10H0Z" fill="black"/></svg>"#,
+                                "wide-image-layer-test",
+                                bounds,
+                                false,
+                                gpui::Rgba { r: 1.2, g: 0.2, b: 0.3, a: 0.5 }.into(),
+                                None,
+                                window,
+                                cx,
+                            );
+                        },
+                    )
+                    .absolute()
+                    .size_full(),
+                ),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(px(10.))
+                .top(px(210.))
+                .size(px(30.))
+                .bg(gpui::rgb(0x151515))
+                .child(
+                    div()
+                        .size_full()
+                        .top_layer()
+                        .child(shapes::backdrop_blur(
+                            px(0.),
+                            shapes::Fill::Color,
+                            false,
+                            shapes::Decoration {
+                                fill: Some(gpui::rgb(0x2b2b2b).into()),
+                                ..Default::default()
+                            },
+                        ))
+                        .child(
+                            div()
+                                .size_full()
+                                .layer()
+                                .child(shapes::backdrop_blur(
+                                    px(0.),
+                                    shapes::Fill::Color,
+                                    false,
+                                    shapes::Decoration::default(),
+                                ))
+                                .child(shapes::decoration(shapes::Decoration {
+                                    fill: Some(gpui::rgba(0xffffff06).into()),
+                                    ..Default::default()
+                                })),
+                        ),
+                ),
+        )
+        .when(self.scope_backdrop, |root| {
+            root.child(scope_box().top_layer().child(shapes::backdrop_blur(
+                px(0.),
+                shapes::Fill::Color,
+                false,
+                shapes::Decoration {
+                    fill: Some(gpui::rgb(0x2d2d2d).into()),
+                    shadows: vec![shapes::Shadow {
+                        color: gpui::rgba(0x00000033).into(),
+                        offset: gpui::point(px(0.), px(4.)),
+                        blur: px(8.),
+                        spread: px(-2.),
+                        inset: false,
+                    }],
+                    ..Default::default()
+                },
+            )))
+        })
+        .child(
+            scope_box()
+                .bg(gpui::rgb(0x151515))
+                .child(
+                    div()
+                        .size_full()
+                        .top_layer()
+                        .child(shapes::decoration(shapes::Decoration {
+                            radius: Corners::all(px(25.)),
+                            corner: shapes::Corner::Squircle,
+                            fill: Some(gpui::rgba(0x2d2d2de6).into()),
+                            ..Default::default()
+                        })),
+                ),
+        )
+        }
+    }
+
+    #[test]
+    fn image_background_keeps_the_destination_for_following_masks() -> anyhow::Result<()> {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx.open_window(size(px(512.), px(400.)), |_, cx| {
+            cx.new(|_| ImageLayers {
+                scope_backdrop: true,
+            })
+        })?;
+        let view = cx.read_window(&window, |view, _| view)?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        for y in [40, 120, 200] {
+            assert_eq!(image.get_pixel(40, y).0, [64, 49, 48, 255]);
+        }
+        assert_eq!(image.get_pixel(40, 280).0, [48, 48, 48, 255]);
+        assert_eq!(image.get_pixel(40, 360).0, [164, 36, 49, 255]);
+        assert_eq!(image.get_pixel(40, 440).0, [48, 48, 48, 255]);
+        view.update(&mut cx, |view, cx| {
+            view.scope_backdrop = false;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let isolated = cx.capture_screenshot(window.into())?;
+        for y in 420..736 {
+            for x in 100..940 {
+                assert_eq!(
+                    image.get_pixel(x, y),
+                    isolated.get_pixel(x, y),
+                    "an unrelated layer must not change the raster at {x},{y}"
+                );
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn image_decode_keeps_the_larger_mip() {
@@ -2306,6 +3236,353 @@ mod tests {
         cx.run_until_parked();
         let image = cx.capture_screenshot(window.into())?;
         assert_eq!(image.get_pixel(8, 8).0, [90, 129, 191, 255]);
+        Ok(())
+    }
+
+    #[test]
+    fn composited_image_preserves_original_clip_edges() -> anyhow::Result<()> {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        struct ImageClip;
+        impl Render for ImageClip {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                let pixels = image::RgbaImage::from_fn(8, 8, |x, y| {
+                    image::Rgba([
+                        (20 + x * 5) as u8,
+                        (120 + y * 4) as u8,
+                        (200 + x * 2) as u8,
+                        255,
+                    ])
+                });
+                div().size_full().relative().bg(gpui::rgb(0x2d2d2d)).child(
+                    div()
+                        .absolute()
+                        .left(px(16.))
+                        .top(px(16.))
+                        .size(px(18.))
+                        .cc_tiles()
+                        .child(
+                            canvas(
+                                |_, _, _| (),
+                                move |bounds, (), window, _| {
+                                    let image = raster_images(
+                                        &[(&pixels, bounds)],
+                                        bounds,
+                                        Corners::all(px(3.)),
+                                        Corner::Round,
+                                        ImageComposition::Composited(gpui::rgb(0x2d2d2d).into()),
+                                        window,
+                                    );
+                                    window
+                                        .paint_image(
+                                            bounds,
+                                            bounds,
+                                            Corners::default(),
+                                            Arc::new(image),
+                                            0,
+                                            false,
+                                        )
+                                        .expect("paint compositor image");
+                                },
+                            )
+                            .size_full(),
+                        ),
+                )
+            }
+        }
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx.open_window(size(px(96.), px(64.)), |_, cx| cx.new(|_| ImageClip))?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        for (x, y, expected) in [
+            (35, 32, [36, 73, 102, 255]),
+            (36, 32, [28, 95, 150, 255]),
+            (33, 33, [42, 55, 65, 255]),
+            (32, 37, [22, 115, 186, 255]),
+        ] {
+            assert_eq!(image.get_pixel(x, y).0, expected, "image edge ({x}, {y})");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn recorded_tiles_keep_local_origins_and_window_edges() {
+        assert_eq!(recorded_tile([65, 513]), [128, 512]);
+        assert_eq!(
+            recording_rect([2001, 1501, 2530, 1650], [0, 0], [2560, 1664]),
+            [1920, 1408, 2560, 1664]
+        );
+        let recorded = recording_rect([877, 68, 1683, 266], [0, 0], [2560, 1664]);
+        let layer = Layer {
+            origin: [0, 0],
+            tile_origin: [0, 0],
+            window: [2560, 1664],
+            tile: recorded_tile([recorded[2] - recorded[0], recorded[3] - recorded[1]]),
+            composited: false,
+            device: None,
+            recorded: Some(recorded),
+        }
+        .for_bounds(
+            Bounds::new(
+                point(px(456. + 37. / 64.), px(48.)),
+                size(px(366.84375), px(63.)),
+            ),
+            2.,
+        );
+        let tiles: Vec<_> = layer
+            .tiles(layer.clip_bounds([-38, -30, 772, 172]), layer.clamp())
+            .map(|(origin, size, _)| {
+                (
+                    [origin[0] + layer.origin[0], origin[1] + layer.origin[1]],
+                    size,
+                )
+            })
+            .collect();
+        assert_eq!(tiles, vec![([768, 0], (512, 320)), ([1278, 0], (512, 320))]);
+    }
+
+    #[test]
+    fn sparse_recording_preserves_original_squircle_edges() -> anyhow::Result<()> {
+        use gpui::{AppContext, IntoElement, ParentElement, Render, Styled};
+
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        struct Recording;
+        impl Render for Recording {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                let decoration = Decoration {
+                    radius: gpui::Corners::all(px(15.)),
+                    corner: Corner::Squircle,
+                    fill: Some(gpui::rgba(0x280b0aff).into()),
+                    border: Some((px(1.), gpui::rgba(0xfa423e66).into())),
+                    shadows: vec![crate::Shadow {
+                        color: gpui::black().opacity(0.1),
+                        offset: point(px(0.), px(4.)),
+                        blur: px(12.),
+                        spread: px(0.),
+                        inset: false,
+                    }],
+                    ..Default::default()
+                };
+                gpui::div().size_full().bg(gpui::rgb(0x181818)).child(
+                    gpui::div().size_full().top_layer().child(
+                        gpui::canvas(
+                            move |bounds, window, _| {
+                                let recorded = recorded_bounds(|| {
+                                    record_decoration(&decoration, bounds, window);
+                                });
+                                (decoration, recorded)
+                            },
+                            |bounds, (decoration, recorded), window, cx| {
+                                with_recorded_bounds(recorded, || {
+                                    paint(&decoration, None, bounds, window, cx);
+                                });
+                            },
+                        )
+                        .absolute()
+                        .left(px(456. + 37. / 64.))
+                        .top(px(48.))
+                        .w(px(366.84375))
+                        .h(px(63.)),
+                    ),
+                )
+            }
+        }
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx.open_window(size(px(1280.), px(832.)), |_, cx| cx.new(|_| Recording))?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        for (x, y, expected) in [
+            (922, 102, [102, 27, 24, 255]),
+            (1638, 100, [49, 26, 25, 255]),
+            (918, 211, [119, 31, 28, 255]),
+            (1643, 211, [67, 27, 26, 255]),
+        ] {
+            assert_eq!(image.get_pixel(x, y).0, expected, "corner ({x}, {y})");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn composited_recording_preserves_original_shadow() -> anyhow::Result<()> {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        struct Recording;
+        impl Render for Recording {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                let decoration = Decoration {
+                    radius: Corners::all(px(20.)),
+                    corner: Corner::Squircle,
+                    fill: Some(gpui::rgb(0x2d2d2d).into()),
+                    border: Some((px(1.), gpui::white().opacity(0.05))),
+                    shadows: vec![crate::Shadow {
+                        color: gpui::rgba(0x0f172a33).into(),
+                        offset: point(px(0.), px(8.)),
+                        blur: px(18.),
+                        spread: px(0.),
+                        inset: false,
+                    }],
+                    ..Default::default()
+                };
+                div().size_full().bg(gpui::rgb(0x3a83f7)).child(
+                    div().size_full().top_layer().child(
+                        canvas(
+                            move |bounds, window, _| {
+                                let recorded = recorded_bounds(|| {
+                                    record_decoration(&decoration, bounds, window);
+                                });
+                                (decoration, recorded)
+                            },
+                            |bounds, (decoration, recorded), window, cx| {
+                                with_composited_bounds(recorded, || {
+                                    paint(&decoration, None, bounds, window, cx);
+                                });
+                            },
+                        )
+                        .absolute()
+                        .left(px(378.))
+                        .top(px(649.))
+                        .w(px(290.296_88))
+                        .h(px(30.)),
+                    ),
+                )
+            }
+        }
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx.open_window(size(px(1280.), px(832.)), |_, cx| cx.new(|_| Recording))?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        for (x, y, expected) in [
+            (1000, 1358, [51, 114, 213, 255]),
+            (1180, 1390, [56, 126, 239, 255]),
+        ] {
+            assert_eq!(image.get_pixel(x, y).0, expected, "shadow ({x}, {y})");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn window_recording_preserves_original_squircle_edges() -> anyhow::Result<()> {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        struct Recording;
+        impl Render for Recording {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                let probe = |expected| {
+                    canvas(
+                        |_, _, _| (),
+                        move |_, (), window, _| {
+                            assert_eq!(window.window_space_recording(), expected);
+                        },
+                    )
+                    .size(px(1.))
+                };
+                let subtree = div()
+                    .size_full()
+                    .relative()
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(340.5))
+                            .top(px(621.5))
+                            .w(px(935.5))
+                            .h(px(206.5))
+                            .cc_tiles()
+                            .window_space_recording()
+                            .child(probe(true))
+                            .child(div().size(px(1.)).layer().child(probe(false)))
+                            .child(div().size(px(1.)).saved_layer().child(probe(true)))
+                            .child(probe(true))
+                            .child(shapes::decoration(Decoration {
+                                fill: Some(gpui::rgb(0x181818).into()),
+                                ..Default::default()
+                            }))
+                            .child(
+                                div()
+                                    .absolute()
+                                    .left(px(99.75))
+                                    .top(px(0.))
+                                    .w(px(736.))
+                                    .h(px(190.5))
+                                    .child(shapes::decoration(Decoration {
+                                        radius: Corners::all(px(25.)),
+                                        corner: Corner::Squircle,
+                                        fill: Some(gpui::rgb(0x2d2d2d).into()),
+                                        border: Some((
+                                            px(1.),
+                                            gpui::Hsla {
+                                                a: 0.082,
+                                                ..gpui::white()
+                                            },
+                                        )),
+                                        ..Default::default()
+                                    })),
+                            ),
+                    )
+                    .child(probe(false))
+                    .into_any_element();
+                div().size_full().bg(gpui::rgb(0x181818)).child(
+                    canvas(
+                        move |bounds, window, cx| {
+                            let mut subtree = subtree;
+                            subtree.prepaint_as_root(
+                                bounds.origin,
+                                bounds.size.map(gpui::AvailableSpace::Definite),
+                                window,
+                                cx,
+                            );
+                            subtree
+                        },
+                        |_, mut subtree, window, cx| {
+                            with_rounded_clip(
+                                Corners::default(),
+                                Corner::Round,
+                                Bounds::new(point(px(0.), px(0.)), size(px(10.), px(10.))),
+                                false,
+                                window,
+                                |window| subtree.paint(window, cx),
+                            );
+                        },
+                    )
+                    .size_full(),
+                )
+            }
+        }
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx.open_window(size(px(1280.), px(832.)), |_, cx| cx.new(|_| Recording))?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        for (x, y, expected) in [
+            (2350, 1267, [30, 30, 30, 255]),
+            (2352, 1276, [28, 28, 28, 255]),
+            (2351, 1273, [47, 47, 47, 255]),
+        ] {
+            assert_eq!(image.get_pixel(x, y).0, expected, "corner ({x}, {y})");
+        }
         Ok(())
     }
 
