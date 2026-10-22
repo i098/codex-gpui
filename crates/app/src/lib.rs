@@ -17,6 +17,7 @@ pub use routes::Route;
 mod search;
 mod section_actions;
 pub mod updater;
+mod window_shell;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
@@ -149,7 +150,7 @@ pub fn init(cx: &mut App) {
     ui::composer::bind_keys(cx);
     features::init(cx);
     native_menus::init(cx);
-    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &Quit, cx| window_shell::request_quit(cx));
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
