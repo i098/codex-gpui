@@ -56,6 +56,7 @@ mod open_in;
 mod projectless;
 pub use projectless::Workspace;
 pub(crate) mod run_now;
+mod ssh_discovery;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
@@ -507,6 +508,7 @@ pub fn json_body(response: &Value) -> Result<Value> {
 
 pub struct LocalHost {
     home: PathBuf,
+    ssh_home: Option<PathBuf>,
     /// The `codex app-server` that `automation-run-now` starts runs on; the original's main
     /// process holds the same connection.
     bridge: Option<Arc<Bridge>>,
@@ -524,6 +526,7 @@ impl LocalHost {
             computer_use_settings: None,
             native_computer_use: Arc::new(computer_use_native::NativeComputerUse::new(&home)),
             home,
+            ssh_home: std::env::var_os("HOME").map(PathBuf::from),
             bridge: None,
             opener: "/usr/bin/open".into(),
             settings: None,
@@ -546,6 +549,11 @@ impl LocalHost {
         settings: computer_use::ComputerUseSettings,
     ) -> Self {
         self.computer_use_settings = Some(settings);
+        self
+    }
+
+    pub fn with_ssh_home(mut self, home: impl Into<PathBuf>) -> Self {
+        self.ssh_home = Some(home.into());
         self
     }
 
@@ -1192,6 +1200,13 @@ impl Host for LocalHost {
             "open-in" => self.open_in(&params)?,
             "add-context-file" => self.context_files.add(&params)?,
             "open-in-targets" => self.open_in_targets(&params)?,
+            "discover-remote-ssh-connections" => {
+                let home = self
+                    .ssh_home
+                    .as_deref()
+                    .context("Home directory is unavailable")?;
+                json!({"sshAliases": ssh_discovery::discover(home)?})
+            }
             "read-file" => diff_files::text(&params)?,
             "read-file-binary" => diff_files::binary(&params)?,
             "read-git-file-binary" => diff_files::git_binary(&params)?,
