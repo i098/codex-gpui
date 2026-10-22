@@ -3433,7 +3433,7 @@ mod tests {
                             },
                             |bounds, (decoration, recorded), window, cx| {
                                 with_recorded_bounds(recorded, || {
-                                    paint(&decoration, None, bounds, window, cx);
+                                    shapes::paint(&decoration, None, bounds, window, cx);
                                 });
                             },
                         )
@@ -3499,7 +3499,7 @@ mod tests {
                             },
                             |bounds, (decoration, recorded), window, cx| {
                                 with_composited_bounds(recorded, || {
-                                    paint(&decoration, None, bounds, window, cx);
+                                    shapes::paint(&decoration, None, bounds, window, cx);
                                 });
                             },
                         )
