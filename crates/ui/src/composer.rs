@@ -652,6 +652,7 @@ pub struct Composer {
     plain_field: Option<bool>,
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
+    dictation_recovery: Option<dictation::Recovery>,
 }
 
 impl Composer {
@@ -732,6 +733,7 @@ impl Composer {
             plain_field: None,
             dictation: None,
             dictation_error: None,
+            dictation_recovery: None,
         }
     }
 
@@ -2148,9 +2150,18 @@ impl Render for Composer {
             .when_some(self.approval.clone(), |d, a| {
                 d.child(self.approval_card(&a, &t, cx))
             })
-            .child(div().children(tray).child(card))
-            .when_some(self.dictation_error.clone(), |d, error| {
-                d.child(text(error, 12., 16., 400., t.text))
+            .child(
+                div()
+                    .children(tray)
+                    .when(self.dictation_recovery.is_some(), |d| {
+                        d.child(self.recovery_card(&t, cx))
+                    })
+                    .child(card),
+            )
+            .when(self.dictation_recovery.is_none(), |d| {
+                d.when_some(self.dictation_error.clone(), |d, error| {
+                    d.child(text(error, 12., 16., 400., t.text))
+                })
             })
             .when_some(self.context_menu.as_ref(), |d, menu| {
                 d.child(menu.overlay(

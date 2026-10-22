@@ -55,6 +55,9 @@ mod native {
         let directory = tempfile::tempdir()?;
         let path = directory.path().join("dictation.wav");
         let recorder = Recorder::new(&path)?;
+        unsafe {
+            let _: () = msg_send![&*recorder.0, setMeteringEnabled: Bool::YES];
+        }
         let started: Bool =
             unsafe { msg_send![&*recorder.0, recordForDuration: LIMIT.as_secs_f64()] };
         ensure!(
@@ -64,8 +67,9 @@ mod native {
         let _ = events.try_send(Event::Recording);
         let start = Instant::now();
         loop {
-            match commands.recv_timeout(Duration::from_millis(100)) {
+            match commands.recv_timeout(Duration::from_millis(200)) {
                 Ok(Command::Finish) => break,
+                Ok(Command::Retry) => continue,
                 Ok(Command::Cancel) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                     anyhow::bail!("Dictation cancelled")
                 }
@@ -79,6 +83,11 @@ mod native {
                 recording.as_bool(),
                 "Unable to start dictation: the microphone stopped"
             );
+            let power: f32 = unsafe {
+                let _: () = msg_send![&*recorder.0, updateMeters];
+                msg_send![&*recorder.0, averagePowerForChannel: 0_usize]
+            };
+            let _ = events.try_send(Event::Level(10_f32.powf(power / 20.)));
         }
         drop(recorder);
         ensure!(
@@ -203,13 +212,40 @@ fn session(
     std::thread::Builder::new()
         .name("codex-dictation".into())
         .spawn(move || {
-            let result = capture(&receiver, &events).and_then(|audio| {
-                ensure!(!cancelled(&receiver), "Dictation cancelled");
+            let audio = match capture(&receiver, &events) {
+                Ok(audio) => audio,
+                Err(error) => {
+                    if !cancelled(&receiver) {
+                        let _ = events.try_send(Event::Finished(Err(error.to_string())));
+                    }
+                    return;
+                }
+            };
+            if cancelled(&receiver) {
+                return;
+            }
+            let path = host
+                .save_dictation(&audio)
+                .ok()
+                .and_then(|path| url::Url::from_file_path(path).ok())
+                .map(String::from);
+            if events.try_send(Event::Captured(path)).is_err() {
+                return;
+            }
+            loop {
                 let _ = events.try_send(Event::Transcribing);
-                transcribe(&*host, audio, timeout)
-            });
-            if !cancelled(&receiver) {
-                let _ = events.try_send(Event::Finished(result.map_err(|error| error.to_string())));
+                let result = transcribe(&*host, &audio, timeout).map_err(|error| error.to_string());
+                let succeeded = result.is_ok();
+                if cancelled(&receiver) {
+                    return;
+                }
+                if events.try_send(Event::Finished(result)).is_err() || succeeded {
+                    return;
+                }
+                match receiver.recv() {
+                    Ok(Command::Retry) => {}
+                    _ => return,
+                }
             }
         })
         .map_err(|_| "Unable to start dictation".to_owned())?;
@@ -225,7 +261,7 @@ fn cancelled(commands: &mpsc::Receiver<Command>) -> bool {
 }
 
 #[cfg(any(target_os = "macos", test, feature = "test-support"))]
-fn transcribe(host: &dyn Host, audio: Vec<u8>, timeout: Duration) -> Result<String> {
+fn transcribe(host: &dyn Host, audio: &[u8], timeout: Duration) -> Result<String> {
     ensure!(
         audio.len() > 44 && audio.len() <= 16 * 1024 * 1024,
         "Unable to transcribe audio: invalid recording size"
@@ -240,8 +276,7 @@ fn transcribe(host: &dyn Host, audio: Vec<u8>, timeout: Duration) -> Result<Stri
         body,
         "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"codex.wav\"\r\nContent-Type: audio/wav\r\n\r\n"
     )?;
-    body.extend_from_slice(&audio);
-    drop(audio);
+    body.extend_from_slice(audio);
     write!(body, "\r\n--{boundary}--\r\n")?;
     let request = Request::Http(json!({
         "url": "/transcribe", "method": "POST",
@@ -273,9 +308,30 @@ pub fn audio_dispatcher(audio: Vec<u8>, timeout: Duration) -> Dispatcher {
             window_host(window, cx)?,
             move |commands, events| {
                 let _ = events.try_send(Event::Recording);
-                match commands.recv()? {
-                    Command::Finish => Ok(audio),
-                    Command::Cancel => anyhow::bail!("Dictation cancelled"),
+                let samples = audio.get(44..).unwrap_or_default();
+                let count = samples.len() / 2;
+                let rms = (samples
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|sample| {
+                        let value = i16::from_le_bytes([sample[0], sample[1]]) as f32 / 32768.;
+                        value * value
+                    })
+                    .sum::<f32>()
+                    / count.max(1) as f32)
+                    .sqrt();
+                loop {
+                    match commands.recv_timeout(Duration::from_millis(200)) {
+                        Ok(Command::Finish) => break Ok(audio),
+                        Ok(Command::Retry) => continue,
+                        Ok(Command::Cancel) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                            anyhow::bail!("Dictation cancelled")
+                        }
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            let _ = events.try_send(Event::Level(rms));
+                        }
+                    }
                 }
             },
             timeout,

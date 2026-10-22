@@ -84,6 +84,10 @@ pub trait Host: Send + Sync {
     /// Derive `cwd` from the active workspace, never from model-provided input.
     fn fetch(&self, request: &Request) -> Result<Value>;
 
+    fn save_dictation(&self, _audio: &[u8]) -> Result<PathBuf> {
+        bail!("Recording storage is not available for this host")
+    }
+
     /// Binds context-file events to this host's view, replacing any prior binding.
     fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
         None
@@ -1050,6 +1054,18 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn save_dictation(&self, audio: &[u8]) -> Result<PathBuf> {
+        let directory = self.home.join("codex-gpui-dictation");
+        fs::create_dir_all(&directory)?;
+        let mut file = tempfile::Builder::new()
+            .prefix("recording-")
+            .suffix(".wav")
+            .tempfile_in(directory)?;
+        file.write_all(audio)?;
+        file.as_file().sync_all()?;
+        Ok(file.into_temp_path().keep()?)
+    }
+
     fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
         Some(self.context_files.bind())
     }
@@ -1580,6 +1596,10 @@ impl CloudHost {
 }
 
 impl Host for CloudHost {
+    fn save_dictation(&self, audio: &[u8]) -> Result<PathBuf> {
+        self.local.save_dictation(audio)
+    }
+
     fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
         self.local.bind_context_files()
     }

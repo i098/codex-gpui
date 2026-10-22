@@ -377,6 +377,13 @@ The `app` integration test uses generated WAV bytes and a loopback HTTP response
 Run `cargo test -p app --features test-support --test dictation -- --test-threads=1` for that controlled path.
 Set `CGX_DICTATION_EVIDENCE` to an output directory on macOS to capture the recording, transcription error, and inserted transcript.
 These offscreen frames do not prove original/native pixel parity.
+The recording footer exposes Cancel, the input waveform, Stop, and Transcribe and send.
+The app derives waveform levels from microphone metering; controlled tests derive them from their generated PCM samples.
+Transcribe and send submits only after successful transcript insertion.
+The app saves WAV recordings under the initiating host's `codex-gpui-dictation` directory with private file permissions.
+Failed transcription retains its audio for Retry.
+Recovery does not replace the draft; Add to message inserts recovered text only after an explicit action.
+Dismiss removes the recovery notice but does not delete the saved recording.
 
 ## 14.4 Thread view
 
