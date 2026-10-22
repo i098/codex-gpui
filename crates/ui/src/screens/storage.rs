@@ -673,7 +673,9 @@ impl StoragePage {
                 })
                 .into_any_element()
         } else if matches!(action, Control::Dismiss) {
-            icon("close", 16., gpui::Hsla { a: 0.8, ..t.text }).into_any_element()
+            // The original's default dialog close draws its own 21-unit X (`xMi`), not
+            // `xmark-md-light-20`: `diff-tab-close` holds that path.
+            icon("diff-tab-close", 16., gpui::Hsla { a: 0.8, ..t.text }).into_any_element()
         } else {
             text(
                 label,
