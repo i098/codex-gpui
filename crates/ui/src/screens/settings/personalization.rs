@@ -936,7 +936,7 @@ impl Personalization {
     }
 
     /// The override notice above an open personal instructions file.
-    fn override_notice(&self, t: &theme::Theme) -> Option<Div> {
+    fn override_notice(&self, t: &theme::Theme) -> Option<Stateful<Div>> {
         if !self.has_override {
             return None;
         }
