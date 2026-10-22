@@ -2402,7 +2402,13 @@ impl Interactivity {
 
                             let scroll_offset =
                                 self.clamp_scroll_position(bounds, &style, window, cx);
-                            let result = f(&style, scroll_offset, hitbox, window, cx);
+                            let recording_layer = (style.layer && !style.saved_layer).then_some((
+                                Bounds::new(bounds.origin + scroll_offset, bounds.size),
+                                style.cc_tiles,
+                            ));
+                            let result = window.with_recording_layer(recording_layer, |window| {
+                                f(&style, scroll_offset, hitbox, window, cx)
+                            });
                             (result, element_state)
                         },
                     )
