@@ -37,6 +37,7 @@ use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
+use ui::screens::diff::panel::ReviewRepository;
 use ui::screens::sidebar::Project;
 use url::Url;
 
@@ -45,6 +46,7 @@ pub mod computer_use;
 pub mod computer_use_native;
 mod context_files;
 mod diff_files;
+mod diff_repositories;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod directories;
 mod git;
@@ -114,6 +116,10 @@ pub trait Host: Send + Sync {
     /// Reads the original sidebar project state off the UI thread.
     fn projects(&self) -> Result<Vec<Project>> {
         bail!("sidebar project state is unsupported by this host")
+    }
+
+    fn review_repositories(&self, _thread: &str, _cwd: &str) -> Result<Vec<ReviewRepository>> {
+        bail!("review repositories are unsupported by this host")
     }
 
     fn add_project(&self, _root: &Path) -> Result<String> {
@@ -1084,6 +1090,10 @@ impl Host for LocalHost {
         })
     }
 
+    fn review_repositories(&self, thread: &str, cwd: &str) -> Result<Vec<ReviewRepository>> {
+        diff_repositories::discover(&self.home, thread, cwd)
+    }
+
     fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {
         self.finish_run(thread_id, turn)
     }
@@ -1591,6 +1601,10 @@ impl Host for CloudHost {
 
     fn projects(&self) -> Result<Vec<Project>> {
         self.local.projects()
+    }
+
+    fn review_repositories(&self, thread: &str, cwd: &str) -> Result<Vec<ReviewRepository>> {
+        self.local.review_repositories(thread, cwd)
     }
 
     fn add_project(&self, root: &Path) -> Result<String> {

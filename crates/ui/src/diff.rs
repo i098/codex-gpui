@@ -187,6 +187,13 @@ pub struct RevertChanges {
     pub hunk: Option<usize>,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ReviewRepository {
+    pub root: String,
+    pub cwd: String,
+    pub name: String,
+}
+
 #[derive(serde::Deserialize)]
 pub struct RepositoryChanges {
     pub root: String,
