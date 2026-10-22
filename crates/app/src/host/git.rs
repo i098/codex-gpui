@@ -1304,7 +1304,7 @@ const MARKER: &str = ".codex-worktree-name";
 const OWNER: &str = "codex-thread.json";
 const SHELL_ENVIRONMENT: &str = "codex-shell-environment.json";
 const OVERRIDE: &str = "AGENTS.override.md";
-const NO_ENVIRONMENT: &str = "__none__";
+pub(super) const NO_ENVIRONMENT: &str = "__none__";
 /// Variables a setup script never hands on (`Ewe`).
 const UNSHARED: [&str; 9] = [
     "CODEX_SOURCE_TREE_PATH",

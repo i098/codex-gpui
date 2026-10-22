@@ -715,7 +715,7 @@ impl LocalHost {
             .as_str()
             .is_some_and(|root| !root.trim().is_empty())
         {
-            self.refresh_worktree_upstream(cwd)?;
+            self.refresh_worktree_upstream(cwd);
             git::create_worktree(&root, cwd, start["branchName"].as_str(), environment)?
         } else {
             self.managed_worktree(cwd, start["branchName"].as_str(), environment)?

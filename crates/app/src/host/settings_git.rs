@@ -25,7 +25,7 @@ impl LocalHost {
         Ok(roots)
     }
 
-    pub(super) fn refresh_worktree_upstream(&self, cwd: &Path) -> Result<()> {
+    pub(super) fn refresh_worktree_upstream(&self, cwd: &Path) {
         let refresh = self.settings.as_ref().is_some_and(|settings| {
             settings
                 .read_all()
@@ -36,7 +36,6 @@ impl LocalHost {
         if refresh && let Err(error) = git::refresh_upstream(cwd) {
             eprintln!("codex-gpui: upstream refresh: {error:#}");
         }
-        Ok(())
     }
 
     pub(super) fn managed_worktree(
@@ -45,7 +44,7 @@ impl LocalHost {
         start: Option<&str>,
         environment: Option<&Path>,
     ) -> Result<Option<git::Worktree>> {
-        self.refresh_worktree_upstream(cwd)?;
+        self.refresh_worktree_upstream(cwd);
         let key = format!("local:{}", cwd.to_string_lossy().trim_end_matches('/'));
         let state_path = self.home.join(".codex-global-state.json");
         let state: Value = match fs::read(state_path) {
@@ -56,7 +55,7 @@ impl LocalHost {
         let selected = state["electron-persisted-atom-state"]["local-env-selections-by-workspace"]
             [&key]
             .as_str()
-            .filter(|path| *path != "__none__")
+            .filter(|path| *path != git::NO_ENVIRONMENT)
             .map(Path::new);
         git::create_worktree(
             &self.worktree_roots()?[0],

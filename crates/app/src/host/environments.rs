@@ -16,12 +16,8 @@ fn parse(path: &Path, bytes: &[u8]) -> Result<Value> {
             .is_some_and(|name| !name.trim().is_empty()),
         "Enter an environment name"
     );
-    ensure!(
-        value["setup"]["script"].is_string(),
-        "Environment requires a setup script"
-    );
     for lifecycle in ["setup", "cleanup"] {
-        if value[lifecycle].is_null() {
+        if lifecycle == "cleanup" && value[lifecycle].is_null() {
             continue;
         }
         ensure!(

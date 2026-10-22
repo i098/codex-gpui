@@ -45,7 +45,7 @@ fn append_reservation(
             continue;
         }
         let git_dir = answer(&path, &["rev-parse", "--absolute-git-dir"])?;
-        if !legacy && modern && (git_dir.is_none() || !path.join(".git").is_file()) {
+        if modern && (git_dir.is_none() || !path.join(".git").is_file()) {
             continue;
         }
         let common = answer(
@@ -213,7 +213,10 @@ pub(in crate::host) fn remove_managed_worktree(root: &Path, roots: &[PathBuf]) -
     )?)?;
     let reservation = root.parent().context("Worktree has no parent")?;
     let marker = reservation.join(MARKER);
-    if marker.is_file() {
+    if marker.is_file()
+        && fs::read_dir(reservation)?
+            .all(|entry| entry.is_ok_and(|entry| entry.file_name() == MARKER))
+    {
         fs::remove_file(marker)?;
     }
     match fs::remove_dir(reservation) {
@@ -226,4 +229,24 @@ pub(in crate::host) fn remove_managed_worktree(root: &Path, roots: &[PathBuf]) -
         Err(error) => return Err(error.into()),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reservation_names_exclude_legacy_and_reserved_paths() {
+        for name in [
+            "con", "nul", "com1", "lpt9", "abcd", "-one", "one-", "a--b", "A", "",
+        ] {
+            assert!(!valid_name(name), "{name}");
+        }
+        for name in ["one", "worktree-two", "012g"] {
+            assert!(valid_name(name), "{name}");
+        }
+        assert!(legacy_directory("250101-1200-abcdef12"));
+        assert!(!legacy_directory("250101-1200-abcdef1g"));
+        assert!(!legacy_directory("250101-1200-abcdef12-more"));
+    }
 }

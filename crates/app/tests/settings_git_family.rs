@@ -178,10 +178,22 @@ fn watcher_preferences_update_only_active_pr_heartbeats() -> Result<()> {
     for (id, status, prompt) in [
         ("active", "ACTIVE", prompt),
         ("paused", "PAUSED", prompt),
+        ("owned", "ACTIVE", prompt),
         ("unrelated", "ACTIVE", unrelated),
     ] {
         host.write_automation(id, &format!("version = 1\nid = {id:?}\nname = 'Monitor'\nprompt = {prompt:?}\nstatus = {status:?}\nkind = 'heartbeat'\ntarget_thread_id = 'fixture-thread'\nrrule = 'FREQ=MINUTELY;INTERVAL=10'\ncreated_at = 1\nupdated_at = 1\n"))?;
     }
+    fs::create_dir(dir.path().join("sqlite"))?;
+    let database = rusqlite::Connection::open(dir.path().join("sqlite/codex.db"))?;
+    database.execute_batch(
+        "CREATE TABLE automations (
+        id TEXT PRIMARY KEY, name TEXT, prompt TEXT, next_run_at INTEGER, next_run_nominal_at INTEGER,
+        last_run_at INTEGER, rrule TEXT, status TEXT, account_id TEXT, user_id TEXT, installation_id TEXT);
+        INSERT INTO automations VALUES ('active', 'Monitor', '', NULL, NULL, NULL, 'FREQ=MINUTELY;INTERVAL=10', 'ACTIVE', NULL, NULL, NULL);
+        INSERT INTO automations VALUES ('owned', 'Monitor', '', NULL, NULL, NULL, 'FREQ=MINUTELY;INTERVAL=10', 'ACTIVE', 'account', 'user', 'installation');",
+    )?;
+    let owned_path = dir.path().join("automations/owned/automation.toml");
+    let owned_before = fs::read(&owned_path)?;
     let paused_path = dir.path().join("automations/paused/automation.toml");
     let paused_before = fs::read(&paused_path)?;
     let unrelated_path = dir.path().join("automations/unrelated/automation.toml");
@@ -204,5 +216,50 @@ fn watcher_preferences_update_only_active_pr_heartbeats() -> Result<()> {
     ensure!(!result.contains("Old instructions"));
     ensure!(fs::read(paused_path)? == paused_before);
     ensure!(fs::read(unrelated_path)? == unrelated_before);
+    ensure!(fs::read(owned_path)? == owned_before);
+    Ok(())
+}
+
+#[test]
+fn deleting_one_worktree_keeps_sibling_reservations_visible() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    common::install_panic_hook();
+    let directory = tempfile::tempdir()?;
+    let project = directory.path().join("project");
+    fs::create_dir(&project)?;
+    git(&project, &["init", "-q"])?;
+    git(&project, &["config", "user.name", "Fixture"])?;
+    git(
+        &project,
+        &["config", "user.email", "fixture@example.invalid"],
+    )?;
+    git(&project, &["commit", "--allow-empty", "-qm", "initial"])?;
+    let managed = directory.path().join("worktrees");
+    let reservation = managed.join("shared-reservation");
+    fs::create_dir_all(&reservation)?;
+    let marker = reservation.join(".codex-worktree-name");
+    fs::write(&marker, "")?;
+    let first = reservation.join("first");
+    let second = reservation.join("second");
+    for path in [&first, &second] {
+        git(
+            &project,
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                path.to_str().context("worktree path")?,
+                "HEAD",
+            ],
+        )?;
+    }
+    let mut settings = Settings::default();
+    settings.write("git-worktree-root", json!(managed))?;
+    let host = LocalHost::new(directory.path().join("home")).with_settings(Some(settings));
+    call(&host, "worktree-delete", json!({"worktree": first}))?;
+    let catalog = call(&host, "codex-worktrees", json!({}))?;
+    ensure!(catalog["worktrees"][0]["dir"] == json!(second));
+    call(&host, "worktree-delete", json!({"worktree": second}))?;
+    ensure!(!reservation.exists());
     Ok(())
 }
