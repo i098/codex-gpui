@@ -45,7 +45,7 @@ pub(crate) fn paint_top_fade(fade: Pixels, bounds: Bounds<Pixels>, window: &mut 
         // fade are opaque and need no sprite.
         let blits = (0..h)
             .flat_map(|y| {
-                let alpha = ((y as f32 + 0.5) / fade * 255.).min(255.).round() as u8;
+                let alpha = ((y as f32 + 0.5) / fade * 255.).round() as u8;
                 std::iter::repeat_n([alpha, DST_IN, 0, MASK] as Blits, w as usize)
             })
             .collect();
