@@ -782,7 +782,7 @@ impl Page {
         body
     }
 
-    fn request_list(&self, rows: &[Vec<&model::Item>], cx: &Context<Self>) -> Div {
+    fn request_list(&self, rows: &[Vec<&model::Item>], cx: &Context<Self>) -> Stateful<Div> {
         let t = cx.theme();
         let mut list = div()
             .id("pull-request-list")
