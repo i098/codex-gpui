@@ -156,6 +156,7 @@ dependencies = [
  "bridge",
  "chrono",
  "chrono-tz",
+ "glob",
  "gpui",
  "gpui_platform",
  "iana-time-zone",
@@ -651,6 +652,7 @@ dependencies = [
  "anyhow",
  "async-channel",
  "async-lock",
+ "chrono",
  "futures-lite",
  "log",
  "parking_lot",
@@ -660,6 +662,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tungstenite",
+ "uuid",
  "webpki-roots",
 ]
 

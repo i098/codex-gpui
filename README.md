@@ -5,6 +5,8 @@ The original is the Codex section of the macOS ChatGPT app.
 The goal is pixel parity with the original: the same layout, text, colors and icons, device pixel for device pixel.
 The app drives the real `codex app-server` over stdio, the same JSON-RPC transport that the original uses.
 
+[Build and run](#build-and-run) · [Architecture](#architecture) · [Parity method](#parity-method) · [Contributing](CONTRIBUTING.md) · [Security](.github/SECURITY.md) · [Changelog](CHANGELOG.md)
+
 ## Requirements
 
 - macOS on Apple silicon (arm64).
@@ -15,6 +17,9 @@ The app drives the real `codex app-server` over stdio, the same JSON-RPC transpo
   3. `codex` on `PATH`.
 
 The workspace also builds on Linux, with GPUI's no-op text system, for CI (fmt, clippy, tests).
+The self-hosted CI job disables dev/test debug information and incremental compilation.
+It uses only its own workspace's `target` directory and removes that directory after success or failure.
+CI skips draft pull requests: marking a PR ready for review starts its run. A newer push to a PR cancels that PR's older run; pushes to `main` always run. A pull request that changes only the listed documentation files (`paths-ignore` in `.github/workflows/ci.yml`) starts no run.
 
 ## Computer use runtime
 
@@ -55,6 +60,15 @@ An in-flight JavaScript call can delay Interrupt cleanup; the original hook can 
 
 Run `cargo test -p app --test computer_use_lifecycle` on macOS for native Stop and thread-projection regression checks.
 
+## SSH connection discovery
+
+The host service supports `discover-remote-ssh-connections` and returns an `sshAliases` list.
+It reads `$HOME/.ssh/config` and its top-level `Include` files without running SSH or changing connection settings.
+Discovery follows the original literal-host, quote, and include rules.
+The Connections page and protected pairing flows remain separate work.
+
+Run `cargo test -p app --lib --test host ssh_discovery` for the parser and host-service checks.
+
 ## Background terminal output
 
 Background command output displays ANSI colors and supports text selection.
@@ -64,6 +78,17 @@ The terminal fixture in `fixtures/terminal-depth.json` contains recorded `thread
 
 Run `cargo test -p ui --lib terminal` for parser and command-label checks.
 Run `cargo test -p app --test terminal_states background_ansi_output_supports_selection_and_copy` on macOS for the native selection check.
+
+## Recommended skills
+
+The local host supports `recommended-skills` and `install-recommended-skill`.
+The catalog uses `CODEX_HOME/vendor_imports/skills` and a ten-minute cache in `skills-curated-cache.json`.
+Installation writes to `CODEX_HOME/skills`, or `<installRoot>/.codex/skills` for a selected workspace.
+Existing skills remain unchanged unless the request explicitly replaces them or supplies a Markdown override.
+The host rejects remote host IDs and paths that leave the source or installation root.
+This service does not enable the Plugin or Skill directory UI.
+
+Run `cargo test -p app --lib host::skills::tests` for the catalog and installation checks.
 
 ## ACP backend
 
@@ -111,6 +136,14 @@ Closing the socket fails pending requests, and dropping the bridge closes its co
 TLS uses an explicit Ring provider with standard and system trust roots.
 The vendored Tungstenite 0.28 package omits raw handshake-request trace output because it contains the authentication token.
 
+`Bridge::start_cloud_environment_onboarding(account_id, config_id, params)` starts a thread bound to a saved cloud environment.
+It rejects local connections and a different account before sending the request.
+It replaces local paths with the original deferred onboarding environment, service-tier rules, and plugin metadata.
+Cloud thread start/resume and turn start/add requests follow the original tier and personality rules.
+The onboarding API returns the server JSON without requiring local-thread fields.
+This API does not send the first model turn or finish setup.
+The environment UI and host-aware thread routing remain separate work.
+
 Run `cargo test -p bridge` for real loopback WebSocket exchanges, disconnect handling, and credential checks.
 
 ## Native Computer Use service
@@ -131,6 +164,22 @@ Model-driven computer use stays on the LCU relay and original native sockets.
 Do not grant SSH Automation access to test the separate Appshots Apple Event path.
 These native operations require macOS; Linux checks cover policy, capture-file boundaries, and request state only.
 
+## Security provider API
+
+`bridge::security::Client` uses the installed `codex-security` MCP provider through the existing app-server connection.
+It opens an ephemeral, read-only host thread and preserves its identity on tool calls.
+The bridge does not embed the Security SDK or install the provider.
+
+The API reads scans, repositories, findings, and target metadata.
+It also handles scan setup, continuation delivery, cancellation, and finding remediation.
+Failed or unconfirmed delivery keeps the ownership claim when another turn might still be active.
+Rejected or mismatched handoff claims never cancel a scan owned by another client.
+Gate resolution requires the rollout gate and an enabled, available `codex-security@` plugin.
+
+Run `cargo test -p bridge --lib security::tests` for gate, response-validation, pagination, and delivery-ownership checks.
+These tests use a local protocol peer and do not start a model turn.
+This increment does not add a native Security route or claim visual parity.
+
 ## Build and run
 
 ```sh
@@ -141,6 +190,12 @@ The app keeps its window state in `~/Library/Application Support/codex-gpui/stat
 Host settings use the local `settings.write(key, value)` service and persist beside that file in `host-settings.json`.
 Theme and window-close preferences remain in `state.json`.
 The S034 replay checks the menu-bar switch, its saved values, and Back navigation against `refs/interactions/s034.json`.
+
+The local `get-global-state` host request reads a named value from `.codex-global-state.json` without changing the profile.
+Missing files and keys return `{"value": null}`; malformed files and invalid requests return errors.
+Thread replies retain the optional rollout `path` for archived-chat search.
+Run `cargo test -p app --test host global_state` for the filesystem and request checks.
+This support increment does not change the Archived chats page.
 
 Settings > Git stores branch, merge, push, draft, diff, and pull request instruction preferences in `host-settings.json`.
 Review delivery uses the existing app-server config store.
@@ -374,7 +429,8 @@ Command text sent to an interactive terminal rejects control characters.
 ACP connections use built-in targets without requesting Codex-only configuration.
 
 On macOS, `textsys::show_definition(window, selection, baseline)` opens AppKit's native Look Up popover.
-The baseline uses window-local logical pixels from the top left; the adapter handles both view orientations.
+The baseline uses window-local logical pixels from the top left.
+The adapter applies window magnification and handles both view orientations.
 Call it on the main thread with the unchanged selection.
 Headless windows return their native-handle error; the adapter has no URL or clipboard fallback.
 
@@ -389,7 +445,7 @@ These hooks use `TestPlatform` without opening an OS dialog; normal app behavior
 
 `gpui` and `gpui_apple` come from Zed at a fixed revision and are vendored in `crates/textsys`.
 The workspace `[patch]` replaces the upstream crates with these copies.
-Stock GPUI cannot match Chromium's pixels, so the copies change three things:
+Stock GPUI cannot match Chromium's pixels. The local copies include these changes:
 
 - Blink snapping: layout in Blink `LayoutUnit`s (1/64 device px), device-pixel rounding half up, and text at fractional x positions.
 - Skia blends: glyph and sprite blending as Skia's 8-bit raster does it, and `SkPaint::setAlphaf` alpha rounded to a byte.
@@ -397,6 +453,9 @@ Stock GPUI cannot match Chromium's pixels, so the copies change three things:
 
 `Window::layout_origin_residual_y` returns the fractional vertical origin removed by layout rounding.
 Use it when placing multiline field glyphs to retain Blink's baseline positions.
+
+`Window::set_ui_scale` scales layout, painting, pointer input, and IME geometry without resizing the native window.
+Text layouts use each window's effective device scale and discard stale cached metrics when that scale changes.
 
 Inline-code backgrounds use both snapped label edges, so fractional text widths do not expand their right edge.
 

@@ -58,6 +58,8 @@ mod projectless;
 pub use projectless::Workspace;
 pub(crate) mod run_now;
 mod settings_git;
+mod skills;
+mod ssh_discovery;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
@@ -160,29 +162,6 @@ pub struct Identity {
     pub account_id: String,
     pub user_id: String,
     pub device_id: String,
-}
-
-/// The webview client's models read that starts a suggested task's guided conversation
-/// (`conversation-actions` `J`: `query.getOrFetch` of the TPP models before the conversation
-/// is prepared), as recorded in `refs/interactions/s035b.json`.
-pub fn tpp_models(identity: &Identity) -> Request {
-    Request::Http(json!({
-        "url": "/tpp/models/?iim=false&include_icons=false",
-        "method": "GET",
-        "headers": {
-            "x-openai-web-frontend": "codex_webview",
-            "x-oai-mcp-form-version": "2",
-            "x-openai-codex-window-type": "electron",
-            "OAI-Language": "en-US",
-            "oai-did": identity.device_id,
-            "X-OpenAI-Attach-Auth": "1",
-            "X-OpenAI-Attach-Desktop-Surface": "1",
-            "X-OpenAI-Attach-Integrity-State": "1",
-            "ChatGPT-Account-ID": identity.account_id,
-        },
-        "expectedIdentity": {"accountId": identity.account_id, "userId": identity.user_id},
-        "returnErrorResponse": true,
-    }))
 }
 
 /// The Scheduled page's read-only suggestion request.
@@ -509,6 +488,7 @@ pub fn json_body(response: &Value) -> Result<Value> {
 
 pub struct LocalHost {
     home: PathBuf,
+    ssh_home: Option<PathBuf>,
     /// The `codex app-server` that `automation-run-now` starts runs on; the original's main
     /// process holds the same connection.
     bridge: Option<Arc<Bridge>>,
@@ -526,6 +506,7 @@ impl LocalHost {
             computer_use_settings: None,
             native_computer_use: Arc::new(computer_use_native::NativeComputerUse::new(&home)),
             home,
+            ssh_home: std::env::var_os("HOME").map(PathBuf::from),
             bridge: None,
             opener: "/usr/bin/open".into(),
             settings: None,
@@ -551,6 +532,11 @@ impl LocalHost {
         self
     }
 
+    pub fn with_ssh_home(mut self, home: impl Into<PathBuf>) -> Self {
+        self.ssh_home = Some(home.into());
+        self
+    }
+
     /// Uses an alternate OS application opener with macOS `open` arguments.
     pub fn with_opener(mut self, opener: impl Into<PathBuf>) -> Self {
         self.opener = opener.into();
@@ -571,6 +557,22 @@ impl LocalHost {
             .filter(|home| home.is_absolute())
             .map(|home| computer_use::ComputerUseSettings::new(home, &host.home));
         host
+    }
+
+    fn read_global_state(&self) -> Result<Value> {
+        let path = self.home.join(".codex-global-state.json");
+        let contents = match fs::read(&path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(json!({})),
+            Err(error) => return Err(error).context("read original sidebar project state"),
+        };
+        let state: Value =
+            serde_json::from_slice(&contents).context("decode original sidebar project state")?;
+        ensure!(
+            state.is_object(),
+            "original sidebar project state must be an object"
+        );
+        Ok(state)
     }
 
     fn update_global_state(&self, update: impl FnOnce(&mut Value) -> Result<bool>) -> Result<()> {
@@ -1083,18 +1085,7 @@ impl Host for LocalHost {
     }
 
     fn projects(&self) -> Result<Vec<Project>> {
-        let path = self.home.join(".codex-global-state.json");
-        let contents = match fs::read(&path) {
-            Ok(contents) => contents,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error).context("read original sidebar project state"),
-        };
-        let state: Value =
-            serde_json::from_slice(&contents).context("decode original sidebar project state")?;
-        ensure!(
-            state.is_object(),
-            "original sidebar project state must be an object"
-        );
+        let state = self.read_global_state()?;
         project_rows(&state, &self.home, |path, _| {
             Ok(Some(Path::new(path).exists()))
         })
@@ -1178,6 +1169,15 @@ impl Host for LocalHost {
             "remote host is unsupported by LocalHost"
         );
         let body = match endpoint {
+            "get-global-state" => {
+                let key = params["key"].as_str().context("missing global state key")?;
+                let value = self
+                    .read_global_state()?
+                    .get_mut(key)
+                    .map(Value::take)
+                    .unwrap_or(Value::Null);
+                Value::Object(serde_json::Map::from_iter([("value".into(), value)]))
+            }
             "list-automations" => self.automations()?,
             "create-automation" => self.create_automation(&params)?,
             "automation-update" => self.update_automation(&params)?,
@@ -1226,9 +1226,18 @@ impl Host for LocalHost {
             "open-in" => self.open_in(&params)?,
             "add-context-file" => self.context_files.add(&params)?,
             "open-in-targets" => self.open_in_targets(&params)?,
+            "discover-remote-ssh-connections" => {
+                let home = self
+                    .ssh_home
+                    .as_deref()
+                    .context("Home directory is unavailable")?;
+                json!({"sshAliases": ssh_discovery::discover(home)?})
+            }
             "read-file" => diff_files::text(&params)?,
             "read-file-binary" => diff_files::binary(&params)?,
             "read-git-file-binary" => diff_files::git_binary(&params)?,
+            "recommended-skills" => skills::recommended(&self.home, &params),
+            "install-recommended-skill" => skills::install(&self.home, &params),
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             "workspace-directory-entries" => directories::read(&params)?,
             "native-desktop-apps" => json!({"apps": native_apps::list(&params)?}),
