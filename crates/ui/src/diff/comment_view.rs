@@ -214,6 +214,8 @@ impl DiffPanel {
             return None;
         }
         let t = cx.theme();
+        let fill = t.text;
+        let hover_fill = t.surface_secondary.blend(t.text.opacity(0.88));
         let drafting = self.annotations.draft.as_ref().is_some_and(|draft| {
             let shown = &self.files[file];
             draft.position.side == side
@@ -273,8 +275,32 @@ impl DiffPanel {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded(px(4.))
-                        .bg(t.text)
+                        .child(
+                            gpui::canvas(
+                                |bounds, window, _| {
+                                    window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal)
+                                },
+                                move |bounds, hitbox, window, cx| {
+                                    shapes::paint(
+                                        &Decoration {
+                                            radius: Corners::all(px(4.)),
+                                            fill: Some(if hitbox.is_hovered(window) {
+                                                hover_fill
+                                            } else {
+                                                fill
+                                            }),
+                                            ..Default::default()
+                                        },
+                                        None,
+                                        bounds,
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            )
+                            .absolute()
+                            .inset_0(),
+                        )
                         .child(icon("diff-comment-add", 16., t.surface_secondary))
                         .id(SharedString::from(format!(
                             "comment-gutter-{file}-{side:?}-{line}"
@@ -290,7 +316,7 @@ impl DiffPanel {
                         .aria_label("Add a comment")
                         .tab_index(0)
                         .cursor_pointer()
-                        .hover(|style| style.bg(over(t.text.opacity(0.88), t.surface_secondary)))
+                        .on_hover(|_, window, _| window.refresh())
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.open_comment(file, side, line, None, window, cx)
