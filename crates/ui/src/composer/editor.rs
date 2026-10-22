@@ -671,7 +671,7 @@ impl Composer {
                     .when(self.content.is_empty() && !self.compact_field, |d| {
                         d.opacity(0.5)
                     })
-                    .layer()
+                    .when(!self.compact_field, |d| d.layer())
                     .child(Editor(cx.entity())),
             )
     }
