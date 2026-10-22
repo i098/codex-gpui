@@ -83,7 +83,10 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             thread.update(cx, |thread, cx| thread.next_find(true, cx));
         }
     }))
-    .on_action(cx.listener(|this, _: &ui::composer::Stop, _, cx| this.stop(cx)))
+    .on_action(cx.listener(|this, _: &ui::composer::Stop, window, cx| {
+        let side = this.focused_side(window, cx);
+        this.stop(side, cx)
+    }))
     .on_action(
         cx.listener(|this, _: &ui::composer::RequestFullAccess, window, cx| {
             this.open_dialog(DialogKind::FullAccess, window, cx);

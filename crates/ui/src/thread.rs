@@ -651,7 +651,7 @@ impl ThreadView {
     /// The selected answer text (TH-127), as Chrome's `Selection.toString` joins it.
     pub fn selected_text(&self, window: &Window, cx: &App) -> Option<String> {
         self.carets.range()?;
-        Some(cx.global::<Selection>().text(window)).filter(|s| !s.is_empty())
+        Some(self.carets.text(window, cx)).filter(|s| !s.is_empty())
     }
 
     /// `Copy` (⌘C) with a transcript selection: writes it as plain text (SH-132, TH-128).
@@ -1918,7 +1918,6 @@ impl Render for ThreadView {
         // ponytail: full layout while a selection exists; keep stand-ins outside the range if
         // long selected threads lag.
         let selecting = self.carets.range().is_some();
-        self.carets.publish(cx);
         let key = (window.viewport_size(), self.clip_right);
         let (view, offset) = (self.scroll.bounds().size.height, self.scroll.offset().y);
         let laid_out = self.laid_out.borrow();
@@ -2187,7 +2186,11 @@ impl Render for ThreadView {
                     // The scroller's contents are a composited layer (transparent tile).
                     .layer()
                     .pt(px(32.))
-                    .child(frame_start(self.scroll.clone()).absolute().size_0())
+                    .child(
+                        frame_start(&self.carets, self.scroll.clone())
+                            .absolute()
+                            .size_0(),
+                    )
                     .children(tracker)
                     .child(
                         div()

@@ -42,8 +42,13 @@ impl Root {
         });
     }
 
-    pub(crate) fn restore_failed_send(&mut self, submission: &Submission, cx: &mut Context<Self>) {
-        self.thread_composer.update(cx, |composer, cx| {
+    pub(crate) fn restore_failed_send(
+        &mut self,
+        composer: &Entity<Composer>,
+        submission: &Submission,
+        cx: &mut Context<Self>,
+    ) {
+        composer.update(cx, |composer, cx| {
             composer.restore_text(&submission.text, cx);
             composer.drop_files(&submission.attachments, cx);
             for file in &submission.context_files {
