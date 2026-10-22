@@ -1134,9 +1134,12 @@ impl CloudPage {
         };
         let font_id = cx.text_system().resolve_font(&font);
         // CSS vertical-align: middle uses the paragraph baseline and half its x-height.
-        let ascent = cx.text_system().ascent(font_id, px(12.));
-        let descent = px(f32::from(cx.text_system().descent(font_id, px(12.))).abs());
-        let middle_offset = (ascent - descent - cx.text_system().x_height(font_id, px(12.))) / 2.;
+        let ascent = f32::from(cx.text_system().ascent(font_id, px(12.))).round();
+        let descent = f32::from(cx.text_system().descent(font_id, px(12.)))
+            .abs()
+            .round();
+        let middle_offset =
+            (px(ascent - descent) - cx.text_system().x_height(font_id, px(12.))) / 2.;
         div()
             .flex()
             .flex_col()

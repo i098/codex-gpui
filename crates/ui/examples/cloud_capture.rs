@@ -29,6 +29,19 @@ fn main() -> anyhow::Result<()> {
         cx.set_global(theme::Theme::dark());
         theme::load_fonts(cx);
         ui::composer::bind_keys(cx);
+        if legacy {
+            let font = gpui::Font {
+                weight: gpui::FontWeight(430.),
+                ..gpui::font(ui::SANS)
+            };
+            let id = cx.text_system().resolve_font(&font);
+            eprintln!(
+                "Inline font metrics: ascent={} descent={} x_height={}",
+                f32::from(cx.text_system().ascent(id, px(12.))),
+                f32::from(cx.text_system().descent(id, px(12.))),
+                f32::from(cx.text_system().x_height(id, px(12.))),
+            );
+        }
     });
     let window = cx.open_window(size(px(1280.), px(832.)), move |_, cx| {
         let config: bridge::types::ConfigReadResponse =
