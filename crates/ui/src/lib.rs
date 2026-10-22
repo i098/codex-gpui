@@ -89,6 +89,12 @@ pub const RAIL_WIDTH: Pixels = px(52.);
 const PAGE_INSET: Pixels = px(4.);
 /// `--border-width-hairline` of `_MainContentLeftBorder`.
 const MAIN_HAIRLINE: Pixels = px(0.5);
+
+/// An authored length `v` in Blink's LayoutUnits (1/64 device px, truncated) at scale `s`.
+fn layout_unit(v: Pixels, s: f32) -> Pixels {
+    px((f32::from(v) * s * 64.).trunc() / 64. / s)
+}
+
 /// `--button-radius` of the 36 px (`xl`) and 28 px `_Button` sizes.
 const RADIUS_BUTTON_XL: Pixels = px(12.5);
 const RADIUS_BUTTON_MD: Pixels = px(9.375);
@@ -1098,15 +1104,14 @@ impl Shell {
                 canvas(
                     |_, _, _| {},
                     move |bounds, (), window, cx| {
-                        // The `clip-path` box keeps a zoomed left edge's fraction, in
-                        // `#app-shell-sidebar`'s space: its left is the inset in LayoutUnits
-                        // (1/64 device px, truncated), its top is rounded to device px, and its
-                        // bottom stays at the layout edge.
+                        // The `clip-path` box keeps a zoomed edge's fraction, in
+                        // `#app-shell-sidebar`'s space: its left and bottom are insets in
+                        // LayoutUnits, and its top is rounded to device px.
                         let s = window.scale_factor();
-                        let left = px((f32::from(RAIL_WIDTH) * s * 64.).trunc() / 64. / s);
+                        let left = layout_unit(RAIL_WIDTH, s);
                         let top = Theme::TITLEBAR_HEIGHT;
                         let shift = px((f32::from(top) * s).round() / s) - top;
-                        let bottom = window.viewport_size().height - PAGE_INSET;
+                        let bottom = window.viewport_size().height - layout_unit(PAGE_INSET, s);
                         let clip = Bounds::from_corners(
                             point(left, top + shift),
                             point(bounds.right() + r, bottom),
@@ -1450,12 +1455,18 @@ impl Render for Shell {
             // The compositor rounds a composited (`square`) main surface; otherwise the clip does.
             // Under an open sidebar the clip's left corners lie under it, so they stay square.
             let clip_radius = if square { Corners::default() } else { radius };
+            // Blink resolves the insets in LayoutUnits: a zoomed clip edge keeps that fraction.
+            let s = window.scale_factor();
+            let (top, inset) = (
+                layout_unit(Theme::TITLEBAR_HEIGHT, s),
+                layout_unit(PAGE_INSET, s),
+            );
             let page_surface = Bounds::from_corners(
-                bounds.origin + point(RAIL_WIDTH, Theme::TITLEBAR_HEIGHT),
-                bounds.bottom_right() - point(PAGE_INSET, PAGE_INSET),
+                bounds.origin + point(layout_unit(RAIL_WIDTH, s), top),
+                bounds.bottom_right() - point(inset, inset),
             );
             let mut main = Bounds::from_corners(
-                bounds.origin + point(main_left, Theme::TITLEBAR_HEIGHT),
+                bounds.origin + point(layout_unit(main_left, s), top),
                 page_surface.bottom_right(),
             );
             // Its `clip-path` box (`inset(0 0 0 -r)` under an open sidebar) keeps the fraction
