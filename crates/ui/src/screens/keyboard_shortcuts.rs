@@ -1050,7 +1050,7 @@ impl Render for KeyboardPage {
                         d.child(on_card(12.5, Squircle, t.text.opacity(0.05), None))
                     })
                     .child(icon(
-                        "settings-keyboard-shortcuts",
+                        "shortcut-keystrokes",
                         18.,
                         if self.search_by_key {
                             t.text
@@ -1096,7 +1096,7 @@ impl Render for KeyboardPage {
                 t.control_background,
                 Some(t.border_strong),
             ))
-            .child(icon("search", 18., t.text_secondary))
+            .child(icon("shortcut-search", 18., t.text_secondary))
             .child(if self.search_by_key {
                 div()
                     .id("shortcut-keystroke-input")
