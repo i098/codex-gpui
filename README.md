@@ -182,6 +182,10 @@ The local host lists managed worktrees and saves tracked and untracked files in 
 It rejects deletion of initialized nested Git repositories.
 Worktree creation uses the saved root, upstream refresh preference, and selected local environment.
 Local environment files support inherited listing, validated atomic writes, and revision conflict checks.
+All environment callers share one parser and the `sha256:<hex>` revision format.
+Identical saves succeed without replacing the file; stale saves preserve external edits, symlinks, and file permissions.
+Workspace selection preserves unrelated state and distinguishes a disabled selection from an unset selection.
+These trusted native operations accept explicit absolute config paths; they are not model-callable tools.
 The `git-pr-watch-update` host operation changes only active PR heartbeat instructions.
 Run `cargo test -p app --test settings_git_family` for these file and Git operations.
 

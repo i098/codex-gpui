@@ -188,7 +188,7 @@ pub(in crate::host) fn remove_managed_worktree(root: &Path, roots: &[PathBuf]) -
     if let Some(config) = selected
         .filter(|path| path != NO_ENVIRONMENT)
         .map(PathBuf::from)
-        && let Ok(environment) = environment(&config)
+        && let Ok(environment) = environments::config(&config)
         && let Some(script) = environment
             .cleanup
             .as_ref()

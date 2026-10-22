@@ -116,7 +116,7 @@ fn environment_conflicts_inheritance_selection_and_worktree_snapshots() -> Resul
     )?;
     ensure!(conflict["type"] == "conflict");
     ensure!(fs::read_to_string(&config)? == changed);
-    ensure!(call(&host, "local-environment-config-save", json!({"configPath": config, "expectedRevision": saved["revision"], "raw": "version = 1\nname = 'bad'\n[setup]\nscript = ''\n[[actions]]\nname = 'Run'\ncommand = ''\n"})).is_err());
+    ensure!(call(&host, "local-environment-config-save", json!({"configPath": config, "expectedRevision": saved["revision"], "raw": "version = 1\nname = 'bad'\n[setup]\nscript = ''\n[[actions]]\nname = 'Run'\ncommand = 'run'\nplatform = 'macos'\n"})).is_err());
     call(
         &host,
         "local-environment-select",

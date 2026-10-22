@@ -1199,8 +1199,8 @@ impl Host for LocalHost {
                 params["workspaceRoot"]
                     .as_str()
                     .context("missing workspace root")?,
-                params["configPath"]
-                    .as_str()
+                params
+                    .get("configPath")
                     .context("missing environment path")?,
             )?,
             "codex-worktrees" => self.worktrees()?,
