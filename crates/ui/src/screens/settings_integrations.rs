@@ -2154,7 +2154,7 @@ impl Render for Manager {
                     .items_center()
                     .justify_center()
                     .when(disabled, |d| d.opacity(0.4))
-                    .child(icon("diff-refresh", 16., t.text_secondary))
+                    .child(icon("settings-hooks-reload", 16., t.text_secondary))
                     .on_activate(window, cx, move |_, _, cx| {
                         if !disabled {
                             dispatch(Action::ReloadHooks, cx);
