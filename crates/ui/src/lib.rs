@@ -95,6 +95,16 @@ fn layout_unit(v: Pixels, s: f32) -> Pixels {
     px((f32::from(v) * s * 64.).trunc() / 64. / s)
 }
 
+/// `_MainContentSurface`'s box in `root` at `left`, unsnapped: Blink resolves its insets in
+/// LayoutUnits.
+fn main_box(root: Bounds<Pixels>, left: Pixels, s: f32) -> Bounds<Pixels> {
+    let inset = layout_unit(PAGE_INSET, s);
+    Bounds::from_corners(
+        root.origin + point(layout_unit(left, s), layout_unit(Theme::TITLEBAR_HEIGHT, s)),
+        root.bottom_right() - point(inset, inset),
+    )
+}
+
 /// `--button-radius` of the 36 px (`xl`) and 28 px `_Button` sizes.
 const RADIUS_BUTTON_XL: Pixels = px(12.5);
 const RADIUS_BUTTON_MD: Pixels = px(9.375);
@@ -368,8 +378,7 @@ pub fn rounded_clip(
         radius,
         corner,
         child: child.into_any_element(),
-        layers: true,
-        outset_left: px(0.),
+        unsnapped: None,
     }
 }
 
@@ -377,11 +386,9 @@ pub struct RoundedClip {
     radius: Pixels,
     corner: shapes::Corner,
     child: AnyElement,
-    /// How far the clip reaches left of the child's bounds (a `clip-path: inset()` with a
-    /// negative left inset); layout is unchanged.
-    outset_left: Pixels,
-    /// See `shapes::with_rounded_clip`.
-    layers: bool,
+    /// A `clip-path: inset(.. round radius)` box at its unsnapped geometry, in place of the
+    /// child's bounds (`shapes::with_unsnapped_clip`): nested layers raster without it.
+    unsnapped: Option<Bounds<Pixels>>,
 }
 
 impl gpui::Element for RoundedClip {
@@ -429,18 +436,12 @@ impl gpui::Element for RoundedClip {
         cx: &mut App,
     ) {
         let child = &mut self.child;
-        let bounds = Bounds::from_corners(
-            point(bounds.left() - self.outset_left, bounds.top()),
-            bounds.bottom_right(),
-        );
-        shapes::with_rounded_clip(
-            Corners::all(self.radius),
-            self.corner,
-            bounds,
-            self.layers,
-            window,
-            |window| child.paint(window, cx),
-        );
+        let radius = Corners::all(self.radius);
+        let paint = |window: &mut Window| child.paint(window, cx);
+        match self.unsnapped {
+            Some(clip) => shapes::with_unsnapped_clip(clip, radius, window, paint),
+            None => shapes::with_rounded_clip(radius, self.corner, bounds, true, window, paint),
+        }
     }
 }
 
@@ -1135,7 +1136,13 @@ impl Shell {
     /// (`background-clip: padding-box`) paint with the page in `render`: with the sidebar open
     /// the left edge is square and the right corners are rounded by its `clip-path`; with it
     /// closed it is a plain 12 px rounded box. `left` is its edge, `open` its shape.
-    fn main_panel(&self, left: Pixels, open: bool, focus: &gpui::FocusHandle) -> Div {
+    fn main_panel(
+        &self,
+        left: Pixels,
+        open: bool,
+        focus: &gpui::FocusHandle,
+        window: &Window,
+    ) -> Div {
         let r = Theme::RADIUS_XL_BASE;
         let panel = div()
             .tab_group()
@@ -1151,14 +1158,19 @@ impl Shell {
         if self.main_composited {
             return panel.left(if open { left + MAIN_HAIRLINE } else { left });
         }
-        // The `clip-path` box (its left corners under the open sidebar): Skia rasters main's
-        // draws under that anti-aliased clip, but not its composited layers. The panel lays out
-        // at `left` as in Blink; the clip reaches r under the sidebar at paint time.
+        // The `clip-path` box (its left corners under the open sidebar), unsnapped as for the
+        // fill in `render`: Skia rasters main's draws under that anti-aliased clip, but not its
+        // composited layers. The panel lays out at `left` as in Blink; the clip reaches r under
+        // the sidebar at paint time.
         let (outset, inset) = if open {
             (r, MAIN_HAIRLINE)
         } else {
             (px(0.), px(0.))
         };
+        let root = Bounds::new(Point::default(), window.viewport_size());
+        let main = main_box(root, left, window.scale_factor());
+        let clip =
+            Bounds::from_corners(point(main.left() - outset, main.top()), main.bottom_right());
         div()
             .absolute()
             .left(left)
@@ -1168,13 +1180,12 @@ impl Shell {
             .child(RoundedClip {
                 radius: r,
                 corner: shapes::Corner::Round,
-                outset_left: outset,
+                unsnapped: Some(clip),
                 child: div()
                     .size_full()
                     .relative()
                     .child(panel.left(inset).top_0().right_0().bottom_0())
                     .into_any_element(),
-                layers: false,
             })
     }
 
@@ -1460,10 +1471,7 @@ impl Render for Shell {
                 bounds.origin + point(layout_unit(RAIL_WIDTH, s), top),
                 bounds.bottom_right() - point(inset, inset),
             );
-            let mut main = Bounds::from_corners(
-                bounds.origin + point(layout_unit(main_left, s), top),
-                page_surface.bottom_right(),
-            );
+            let mut main = main_box(bounds, main_left, s);
             // Its `clip-path` box (`inset(0 0 0 -r)` under an open sidebar) keeps the fraction
             // of a zoomed edge.
             let clip_left = if open { main.left() - r } else { main.left() };
@@ -1638,7 +1646,7 @@ impl Render for Shell {
                         .child(self.sidebar_panel(&t, progress)),
                 )
             })
-            .child(self.main_panel(main_left, open, &main_focus))
+            .child(self.main_panel(main_left, open, &main_focus, window))
             .when(composited || self.main_backgrounds > 0, |d| {
                 d.child(corners)
             })
