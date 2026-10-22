@@ -148,14 +148,25 @@ fn full_view_keeps_the_chat_draft_and_restores_content() -> Result<()> {
     fx.keys("cmd-shift-f")?;
     fx.click((650., 790.))?;
     fx.type_text("Retain this draft")?;
-    ensure!(fx.composer_text()? == "Retain this draft", "Floating composer input: {:?}, focused: {}", fx.composer_text()?, fx.composer_focused()?);
+    ensure!(
+        fx.composer_text()? == "Retain this draft",
+        "Floating composer input: {:?}, focused: {}",
+        fx.composer_text()?,
+        fx.composer_focused()?
+    );
     fx.click((450., 22.))?;
     ensure!(fx.read(|root, _| root.workspace_layout() == WorkspaceLayout::FullChat));
     ensure!(fx.composer_focused()?);
-    ensure!(fx.composer_text()? == "Retain this draft", "Chat selection changed the draft");
+    ensure!(
+        fx.composer_text()? == "Retain this draft",
+        "Chat selection changed the draft"
+    );
     fx.click((700., 22.))?;
     ensure!(fx.read(|root, _| root.workspace_layout() == WorkspaceLayout::Full));
-    ensure!(fx.composer_text()? == "Retain this draft", "Content selection changed the draft");
+    ensure!(
+        fx.composer_text()? == "Retain this draft",
+        "Content selection changed the draft"
+    );
     ensure!(fx.read(|root, _| root.side_tabs() == [SidePanel::Changes]));
     Ok(())
 }
