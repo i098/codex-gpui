@@ -20,12 +20,9 @@ fn main() {
         return;
     }
     let mut state = State::load();
-    if let Some(route) = std::env::args()
-        .nth(1)
-        .and_then(|path| {
-            app::Route::remote_path(&path).or_else(|| app::Route::pull_request_path(&path))
-        })
-    {
+    if let Some(route) = std::env::args().nth(1).and_then(|path| {
+        app::Route::remote_path(&path).or_else(|| app::Route::pull_request_path(&path))
+    }) {
         state.route = route;
     }
     if std::env::args().nth(1).as_deref() == Some("/diff") {
