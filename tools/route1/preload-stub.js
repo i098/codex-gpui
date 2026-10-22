@@ -77,6 +77,31 @@
     // register*/subscribe* calls expect a handle back (orbPicker.registerSource -> {update},
     // browserTabs.subscribeInvalidations -> {unsubscribe}); undefined makes a jotai watch throw.
     const out = fn ? () => {} : dec(value);
+    if (svc === "threadReadState" && method === "open" && out?.status === "ready") {
+      // Replay the recorded session locally; read markers never reach an account.
+      let active = true;
+      out.session = new (class extends rpcTarget {
+        set(change) {
+          if (!active) return { status: "retired" };
+          const ids = out.unreadThreadIdsByHostId[change.hostId];
+          if (!ids) return { status: "unavailable" };
+          const index = ids.indexOf(change.threadId);
+          if ((index !== -1) !== change.hasUnreadTurn) {
+            if (change.hasUnreadTurn) ids.push(change.threadId);
+            else ids.splice(index, 1);
+            fns.get(0)?.({ ...change, type: "changed", origin: "self" });
+          }
+          return { status: "ok" };
+        }
+        clearForLogout() {
+          if (!active) return { status: "retired" };
+          active = false;
+          fns.get(0)?.({ type: "retired", reason: "identity" });
+          return { status: "ok" };
+        }
+        unsubscribe() { active = false; }
+      })();
+    }
     if (out == null && rpcTarget && /^(register|subscribe|watch|observe)/.test(method)) return new (class extends rpcTarget { update() {} unsubscribe() {} dispose() {} })();
     return out;
   };

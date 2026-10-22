@@ -206,28 +206,27 @@ fn creates_the_automation_worktree_at_the_remote_default_without_touching_the_so
     assert!(exported["set"].get("CODEX_WORKTREE_PATH").is_none());
     assert!(exported["set"].get("PWD").is_none());
 
-    let owned = call(
-        &host,
-        "set-worktree-owner-thread",
-        json!({"worktree": root, "conversationId": "thread-1"}),
-    )?;
-    assert_eq!(owned, json!({"success": true}));
-    let owner = root.join(git(
-        &root,
-        &["rev-parse", "--git-path", "codex-thread.json"],
-    )?);
-    assert_eq!(
-        fs::read_to_string(owner)?,
-        "{\n  \"version\": 1,\n  \"ownerThreadId\": \"thread-1\"\n}\n"
-    );
-    // The main checkout is never marked as a worktree owned by a thread.
-    let refused = call(
-        &host,
-        "set-worktree-owner-thread",
-        json!({"worktree": source, "conversationId": "thread-1"}),
-    );
-    assert!(refused.is_err());
-    assert!(!source.join(".git/codex-thread.json").exists());
+    for endpoint in ["set-worktree-owner-thread", "worktree-set-owner-thread"] {
+        let owned = call(
+            &host,
+            endpoint,
+            json!({"worktree": root, "conversationId": "thread-1"}),
+        )?;
+        assert_eq!(owned, json!({"success": true}));
+        let owner = root.join(git(
+            &root,
+            &["rev-parse", "--git-path", "codex-thread.json"],
+        )?);
+        let owner: Value = serde_json::from_slice(&fs::read(owner)?)?;
+        assert_eq!(owner, json!({"version": 1, "ownerThreadId": "thread-1"}));
+        let refused = call(
+            &host,
+            endpoint,
+            json!({"worktree": source, "conversationId": "thread-1"}),
+        );
+        assert!(refused.is_err());
+        assert!(!source.join(".git/codex-thread.json").exists());
+    }
 
     // Without a local `main`, the remote-tracking start gets a local branch that tracks it.
     git(&source, &["branch", "-q", "-D", "main"])?;

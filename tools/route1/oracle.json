@@ -18946,5 +18946,44 @@
   },
   "fn": false,
   "calls": []
+ },
+ "svc threadReadState.open [\"__fn\",null]": {
+  "value": {
+   "status": "ready",
+   "identity": {
+    "kind": "execution-storage",
+    "authMode": "none"
+   },
+   "executionHostKeysByHostId": {
+    "local": "local:092af2cb59bdd804c6f7f1cd1d85464b682974e43cd517397d25510024034d1c",
+    "durable": "durable:431f7bacbefc3bb3ae5521a8778241260749d66b8e0a8a691eb9172015f55929"
+   },
+   "unreadThreadIdsByHostId": {
+    "local": [],
+    "durable": []
+   }
+  },
+  "fn": false,
+  "calls": []
+ },
+ "svc startup.whenReady []": {
+  "value": {
+   "processStartedAtMs": 1792545255527.063,
+   "phaseDurationsMs": {
+    "bootstrap handoff complete": 121,
+    "main app.whenReady resolved": 0,
+    "registered app protocol": 0,
+    "shell environment hydrated": 0,
+    "local data migrations completed": 22,
+    "registered deep link protocol": 1,
+    "startup window revealed": 279,
+    "local app-server sqlite initialized": 109,
+    "window context initialized": 110,
+    "application menu refreshed": 4,
+    "bundled plugins reconcile checked": 0
+   }
+  },
+  "fn": false,
+  "calls": []
  }
 }

@@ -9,12 +9,17 @@ mod settings;
 mod thread;
 
 pub(crate) use settings::request_quit;
+pub(crate) use thread::load_thread;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Route {
     #[default]
     Home,
     Thread(String),
+    Remote {
+        task_id: String,
+        hotkey: bool,
+    },
     Settings,
     /// Rail `Scheduled` (`/scheduled`): the Automations page.
     Scheduled,
@@ -113,13 +118,19 @@ impl Root {
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     pub(crate) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.remember_recent_chat();
         self.flush_settings(cx);
         self.settings_page = None;
         self.suggestion_load = None;
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
         self.mobile_page = None;
+        self.cloud = None;
         self.page = match self.state.route.clone() {
+            Route::Remote { task_id, hotkey } => {
+                self.load_cloud_task(task_id, hotkey, window, cx);
+                None
+            }
             Route::Settings => Some(settings::page(self, window, cx)),
             Route::Scheduled => Some(automations::scheduled(self, cx)),
             Route::Automation(id) => Some(automations::automation(self, id, window, cx)),
@@ -148,16 +159,21 @@ impl Root {
             Route::Thread(id) => Some(id.clone()),
             _ => None,
         };
+        if self
+            .history
+            .as_ref()
+            .is_some_and(|(id, _)| Some(id) != thread_id.as_ref())
+        {
+            self.history = None;
+        }
         let view = self
             .thread
             .clone()
             .filter(|v| Some(v.read(cx).id()) == thread_id.as_deref());
         let main: AnyView = match (&thread_id, &view) {
+            _ if self.cloud.is_some() => self.cloud.as_ref().unwrap().page.clone().into(),
             (Some(_), Some(view)) => view.clone().into(),
-            (Some(id), None) => {
-                self.load_thread(id.clone(), window, cx);
-                cx.new(|_| ui::EmptyMain).into()
-            }
+            (Some(id), None) => self.load_thread(id.clone(), window, cx).into(),
             (None, _) => self.home.clone().into(),
         };
         let shell = if self.sidebar_automation.is_some() {
@@ -166,7 +182,10 @@ impl Root {
             self.shell.clone()
         };
         window.focus(&self.route_focus(cx), cx);
-        let home = matches!(self.state.route, Route::Home | Route::Thread(_));
+        let home = matches!(
+            self.state.route,
+            Route::Home | Route::Thread(_) | Route::Remote { .. }
+        );
         shell.update(cx, |shell, cx| {
             shell.selected_rail = if self.sidebar_automation.is_some() {
                 Some("scheduled")
@@ -202,6 +221,18 @@ impl Root {
         let open = |id: &str| self.thread.as_ref().is_some_and(|v| v.read(cx).id() == id);
         match &self.state.route {
             _ if self.login.is_some() => self.focus.clone(),
+            Route::Remote { .. } => self
+                .cloud
+                .as_ref()
+                .map(|session| {
+                    let page = session.page.read(cx);
+                    if page.has_composer() {
+                        page.composer.focus_handle(cx)
+                    } else {
+                        page.focus_handle(cx)
+                    }
+                })
+                .unwrap_or_else(|| self.focus.clone()),
             Route::Thread(id) if open(id) => self.thread_composer.focus_handle(cx),
             _ if self.page.is_some() => self.focus.clone(),
             Route::Thread(_) => self.focus.clone(),
