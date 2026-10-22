@@ -116,3 +116,48 @@ fn control_command_f_dispatches_the_full_screen_action() -> Result<()> {
     assert_eq!(calls.get(), 1);
     Ok(())
 }
+
+#[test]
+fn summary_menu_tracks_the_active_thread_and_toggles_from_composer_focus() -> Result<()> {
+    let mut fx = Fx::new()?;
+    let target = fx.at("home", "Add a subtract")?;
+    fx.click(target)?;
+    fx.wait_thread("01a13de9-6fff-78e1-84fc-ebb3a2dc873f")?;
+    let thread = fx
+        .read(|root, _| root.thread().cloned())
+        .expect("open thread");
+    fx.focus_composer()?;
+    let available = |fx: &mut Fx| {
+        fx.cx.update_window(fx.window, |_, window, cx| {
+            window.is_action_available(&app::native_menus::TogglePinnedSummary, cx)
+        })
+    };
+
+    assert!(available(&mut fx)?);
+    fx.menu("View", "Toggle Pinned Summary")?;
+    assert!(fx.cx.update(|cx| thread.read(cx).summary_open));
+    fx.menu("View", "Toggle Pinned Summary")?;
+    assert!(!fx.cx.update(|cx| thread.read(cx).summary_open));
+
+    let previous_route = fx.route();
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        window.dispatch_action(Box::new(app::NextChat), cx);
+    })?;
+    assert_ne!(fx.route(), previous_route);
+    assert_eq!(
+        fx.thread_id().as_deref(),
+        Some("01a13de9-6fff-78e1-84fc-ebb3a2dc873f")
+    );
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        window.dispatch_action(Box::new(app::native_menus::TogglePinnedSummary), cx);
+        window.draw(cx).clear(cx);
+    })?;
+    assert!(!fx.cx.update(|cx| thread.read(cx).summary_open));
+    assert!(!available(&mut fx)?);
+
+    fx.keys("cmd-n")?;
+    assert!(!available(&mut fx)?);
+    fx.menu("View", "Toggle Pinned Summary")?;
+    assert!(!fx.cx.update(|cx| thread.read(cx).summary_open));
+    Ok(())
+}

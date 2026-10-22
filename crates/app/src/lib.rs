@@ -3,7 +3,10 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+mod cloud_task;
+pub use cloud_task::parse_task_response;
 pub mod computer_use_requests;
+pub mod diff_content;
 mod features;
 pub mod host;
 pub mod host_settings;
@@ -57,7 +60,8 @@ use ui::screens::sidebar::{
 };
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
-    Clock, EditMessage, ForkThread, GitAction, RevertTurn, ThreadView,
+    Clock, EditMessage, ForkThread, GitAction, History, RetryHistory, RevertTurn, ThreadView,
+    UsageLimitNotice,
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
@@ -339,6 +343,7 @@ pub struct Root {
     sidebar: Entity<HomeSidebar>,
     /// Recents in sidebar order, for `⌘1`…`⌘9`, Previous/Next Chat and the command menu.
     threads: Vec<Thread>,
+    recent_chats: Vec<String>,
     new_chat_section: Option<String>,
     /// `thread/list` cursor of the page after `threads`, while the sidebar's end asks for it.
     next_cursor: Option<String>,
@@ -354,6 +359,7 @@ pub struct Root {
     /// The queued submission `Edit message` took back into the composer, until it is sent.
     queue_edit: Option<QueueEdit>,
     thread: Option<Entity<ThreadView>>,
+    history: Option<(String, Entity<History>)>,
     diff: Option<Entity<DiffPanel>>,
     /// The file viewer of [`SidePanel::File`]; cleared with the thread.
     file: Option<Entity<FileView>>,
@@ -368,6 +374,7 @@ pub struct Root {
     archive_page: Option<Entity<ArchivedChats>>,
     /// The Mobile route's setup page.
     mobile_page: Option<Entity<mobile::MobileSetupPage>>,
+    cloud: Option<cloud_task::Session>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
@@ -384,6 +391,7 @@ pub struct Root {
     /// The signed-in ChatGPT account's email (`account/read`), shown in the logout dialog.
     account_email: Option<String>,
     chatgpt_account: bool,
+    usage_limit_notice: UsageLimitNotice,
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
     project_load: Option<Task<()>>,
@@ -428,6 +436,8 @@ pub struct Root {
     /// The `Notifications` region over the window.
     toaster: Entity<Toaster>,
     _events: Task<()>,
+    context_window: gpui::AnyWindowHandle,
+    context_files: Option<Task<()>>,
     _update_policy: Option<Task<()>>,
 }
 
@@ -638,6 +648,7 @@ impl Root {
             shell,
             sidebar,
             threads: Vec::new(),
+            recent_chats: Vec::new(),
             new_chat_section: None,
             next_cursor: None,
             loading_more: false,
@@ -650,6 +661,7 @@ impl Root {
             thread_composer,
             queue_edit: None,
             thread: None,
+            history: None,
             diff: None,
             file: None,
             split: None,
@@ -658,6 +670,7 @@ impl Root {
             page: None,
             archive_page: None,
             mobile_page: None,
+            cloud: None,
             settings_section: None,
             settings_page: None,
             pending_settings_leave: None,
@@ -669,9 +682,11 @@ impl Root {
             logout_pending: false,
             account_email: None,
             chatgpt_account: false,
+            usage_limit_notice: UsageLimitNotice::RetryLater,
             host: Arc::new(
                 host::CloudHost::from_env(host::app_server_credentials(bridge.clone()))
-                    .with_bridge(bridge.clone()),
+                    .with_bridge(bridge.clone())
+                    .with_settings(cx.try_global::<host_settings::Settings>().cloned()),
             ),
             bridge,
             automations: None,
@@ -704,6 +719,8 @@ impl Root {
             generation: None,
             toaster: cx.new(|_| Toaster::new()),
             _events,
+            context_window: window.window_handle(),
+            context_files: None,
             _update_policy: None,
             state,
         };
@@ -743,6 +760,7 @@ impl Root {
         // node leaves the tree), the root takes focus so the key bindings keep working.
         cx.on_focus_lost(window, |this, window, cx| window.focus(&this.focus, cx))
             .detach();
+        root.bind_context_files(cx);
         root.connect(window, cx);
         root.load_projects(cx);
         windows::bind_root(window, cx);
@@ -806,10 +824,7 @@ impl Root {
             };
             this.update_in(cx, |this, window, cx| {
                 this._update_policy = updater::poll_policy(bridge.clone(), cx);
-                this.account_email = account.as_ref().and_then(chatgpt_email);
-                this.chatgpt_account = account.as_ref().is_some_and(|account| {
-                    matches!(account.account, Some(Account::Chatgpt { .. }))
-                });
+                this.set_account(account.as_ref(), cx);
                 if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
                     this.show_login(config.config["forced_login_method"].clone(), cx);
                 }
@@ -838,11 +853,12 @@ impl Root {
                 }
                 let announcement = announcements_allowed
                     .then(|| {
+                        let seen = Self::model_announcement_history(cx);
                         catalog.data.iter().position(|entry| {
                             entry.availability_nux.is_some()
                                 && Some(entry.model.model.as_str()) != current_model
                                 && !LEGACY_MODEL_ANNOUNCEMENTS.contains(&entry.model.model.as_str())
-                                && !Self::model_announcement_history(cx)
+                                && !seen
                                     .iter()
                                     .any(|seen| seen.as_str() == Some(entry.model.model.as_str()))
                         })
@@ -869,6 +885,7 @@ impl Root {
                     });
                 }
                 this.config = config.config;
+                this.refresh_enter_behavior(cx);
                 this.config["host"]["confirm-before-close"] =
                     serde_json::to_value(this.state.confirm_before_close)
                         .expect("close preference");
@@ -927,6 +944,10 @@ impl Root {
         self.thread.as_ref()
     }
 
+    pub fn history(&self) -> Option<&Entity<History>> {
+        self.history.as_ref().map(|(_, view)| view)
+    }
+
     /// No account: the sign-in view replaces the window.
     pub fn signed_out(&self) -> bool {
         self.login.is_some()
@@ -981,6 +1002,11 @@ impl Root {
     /// The composer of the route: Home's, or the one docked under the open thread.
     pub fn composer(&self, cx: &App) -> Entity<Composer> {
         match self.state.route {
+            Route::Remote { .. } => self
+                .cloud
+                .as_ref()
+                .map(|session| session.page.read(cx).composer.clone())
+                .unwrap_or_else(|| self.home.read(cx).composer.clone()),
             Route::Thread(_) => self.thread_composer.clone(),
             _ => self.home.read(cx).composer.clone(),
         }
@@ -998,6 +1024,7 @@ impl Root {
 
     /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
+        self.cloud = None;
         self.automation_load = None;
         self.project_load = None;
         self.suggestion_load = None;
@@ -1012,6 +1039,7 @@ impl Root {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
         self.host = host;
+        self.bind_context_files(cx);
         self.automations = None;
         self.load_projects(cx);
         if self.scheduled_route() {
@@ -1265,22 +1293,17 @@ impl Root {
     /// The header icon and `Open in editor`: the host opens the file in the editor chosen by the
     /// original's `open-in-target-preferences` (`perPath` for the project, else `global`).
     fn open_in_editor(&mut self, cwd: &str, path: &str, cx: &mut Context<Self>) {
-        let target = cx
-            .try_global::<host_settings::Settings>()
-            .and_then(|settings| settings.read_all().get("open-in-target-preferences"))
-            .and_then(|preferences| {
-                preferences["perPath"][cwd]
-                    .as_str()
-                    .or(preferences["global"].as_str())
-            })
-            .map(str::to_owned);
         let request = host::Request::post(
-            "open-file",
-            Some(json!({"hostId": "local", "cwd": cwd, "path": path, "target": target})),
+            "open-in",
+            Some(json!({"hostId": "local", "cwd": cwd, "path": path})),
         );
         let host = self.host.clone();
         let path = path.to_owned();
-        let opened = cx.background_spawn(async move { host.fetch(&request) });
+        let opened = cx.background_spawn(async move {
+            let response = host::json_body(&host.fetch(&request)?)?;
+            anyhow::ensure!(response["success"] == true, "open target failed");
+            Ok::<_, anyhow::Error>(())
+        });
         cx.spawn(async move |this, cx| {
             if let Err(error) = opened.await {
                 eprintln!("codex-gpui: cannot open {path} in the editor: {error:#}");
@@ -1653,8 +1676,12 @@ impl Root {
         let request = request.clone();
         if cx
             .try_global::<host_settings::Settings>()
-            .and_then(|settings| settings.read_all().get("skip-revert-confirmation"))
-            .and_then(Value::as_bool)
+            .and_then(|settings| {
+                settings
+                    .read_all()
+                    .get("skip-revert-confirmation")
+                    .and_then(Value::as_bool)
+            })
             == Some(true)
         {
             self.repository_request(panel, cwd, &request, cx);
@@ -1801,7 +1828,6 @@ impl Root {
             return;
         };
         page.update(cx, |page, cx| {
-            page.set_pending(None, cx);
             page.set_suggestions(Vec::new(), cx);
         });
         let host = self.host.clone();
@@ -1942,37 +1968,6 @@ impl Root {
         self.suggestions.as_ref()
     }
 
-    /// A suggestion card click (`refs/interactions/s035b.json`): the card is already
-    /// `Starting…` and every card disabled. The original's guided start first reads the TPP
-    /// models through the desktop host, then prepares and streams the conversation and
-    /// navigates into it; when any step fails it shows `Couldn’t start this suggested task`
-    /// and re-enables the cards.
-    fn start_suggested_task(&mut self, cx: &mut Context<Self>) {
-        let host = self.host.clone();
-        let read = cx.background_spawn(async move {
-            let identity = host.identity().context("no ChatGPT sign-in")?;
-            host.fetch(&host::tpp_models(&identity))
-                .and_then(|response| host::json_body(&response))
-        });
-        cx.spawn(async move |this, cx| {
-            let result = read.await;
-            this.update(cx, |this, cx| {
-                if let Some(page) = &this.suggestions {
-                    page.update(cx, |page, cx| page.set_pending(None, cx));
-                }
-                // ponytail: with the models in hand the original prepares the ChatGPT
-                // conversation (`/f/conversation/prepare`) and streams it; neither is recorded
-                // (the oracle refuses the start), so the port stops here and reports it.
-                if result.is_ok() {
-                    eprintln!("codex-gpui: suggested task: the conversation stream is not wired");
-                }
-                this.toast(Toast::danger("Couldn’t start this suggested task"), cx);
-            })
-            .ok();
-        })
-        .detach();
-    }
-
     /// Mobile `Get started` (`codex-mobile-setup-flow` `P`, `XNn`): the initial step shows its
     /// loading button while the host reads the account's MFA requirement. A non-`required`
     /// answer opens the allow-host step (whose `Allow` is disabled); `required` also reads
@@ -2071,15 +2066,6 @@ impl Root {
         self.threads.retain(|t| t.id != thread.id);
         self.threads.insert(0, thread.clone());
         self.sidebar.update(cx, |s, cx| s.add_thread(thread, cx));
-    }
-
-    /// `⌘N`, the `New chat` row and rail Home: Home with an empty, focused composer.
-    fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.new_chat_section = None;
-        self.navigate(Route::Home, window, cx);
-        let composer = self.home.read(cx).composer.clone();
-        composer.update(cx, |c, cx| c.set_text("", cx));
-        window.focus(&composer.focus_handle(cx), cx);
     }
 
     /// Opens the Recents row `delta` rows from the open thread; from any other route,
@@ -2314,20 +2300,23 @@ impl Root {
             .map(|page| &page.read(cx).personalization)
     }
 
-    fn model_announcement_history(cx: &App) -> &[Value] {
+    fn model_announcement_history(cx: &App) -> Vec<Value> {
         cx.try_global::<host_settings::Settings>()
-            .and_then(|settings| settings.read_all().get("seen-model-upgrade-list"))
-            .and_then(Value::as_array)
-            .map(Vec::as_slice)
+            .and_then(|settings| {
+                settings
+                    .read_all()
+                    .get("seen-model-upgrade-list")
+                    .and_then(Value::as_array)
+                    .cloned()
+            })
             .unwrap_or_default()
     }
 
     fn remember_model_announcement(&mut self, model: &str, cx: &mut Context<Self>) {
-        let seen = Self::model_announcement_history(cx);
+        let mut seen = Self::model_announcement_history(cx);
         if seen.iter().any(|seen| seen.as_str() == Some(model)) {
             return;
         }
-        let mut seen = seen.to_vec();
         seen.push(json!(model));
         self.write_setting(
             &SettingChanged {
@@ -2554,8 +2543,7 @@ impl Root {
                 match result {
                     Ok(_) => {
                         this.show_login(this.config["forced_login_method"].clone(), cx);
-                        this.account_email = None;
-                        this.chatgpt_account = false;
+                        this.set_account(None, cx);
                         let host = this.host.clone();
                         cx.background_spawn(async move { host.invalidate_identity() })
                             .detach();
@@ -2810,24 +2798,69 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// `thread/read` with turns, then shows it if the route still points at it.
-    fn load_thread(&self, id: String, window: &Window, cx: &mut Context<Self>) {
+    /// Loads history and resumes its settings before showing the selected thread.
+    fn load_thread(
+        &mut self,
+        id: String,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<History> {
+        if let Some((loading, view)) = &self.history
+            && loading == &id
+        {
+            return view.clone();
+        }
+        let view = cx.new(|_| History::loading());
+        self.history = Some((id.clone(), view.clone()));
+        cx.subscribe_in(&view, window, |this, _, _: &RetryHistory, window, cx| {
+            this.history = None;
+            this.sync(window, cx);
+        })
+        .detach();
         let bridge = self.bridge.clone();
+        let resume = (!self.loaded.contains(&id)).then(|| {
+            let mut params = json!({"threadId": id, "excludeTurns": true});
+            if let Some(config) = computer_use_overrides(&self.config) {
+                params["config"] = config;
+            }
+            params
+        });
+        let loading_view = view.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let read = bridge.thread_read(&id, true).await?;
+            let result = routes::load_thread(&bridge, &id, resume).await;
             this.update_in(cx, |this, window, cx| {
-                if this.state.route == Route::Thread(id) {
-                    this.show_thread(read.thread, window, cx);
+                if !matches!(&this.state.route, Route::Thread(current) if current == &id)
+                    || !this
+                        .history
+                        .as_ref()
+                        .is_some_and(|(_, current)| current == &loading_view)
+                {
+                    return;
+                }
+                match result {
+                    Ok((thread, settings)) => {
+                        if let Some(settings) = settings {
+                            this.loaded.insert(id.clone());
+                            this.thread_run_settings.entry(id).or_insert(settings);
+                        }
+                        this.show_thread(thread, window, cx);
+                    }
+                    Err(error) => {
+                        eprintln!("codex-gpui: thread/load: {error:#}");
+                        loading_view.update(cx, |view, cx| view.fail(format!("{error:#}"), cx));
+                    }
                 }
             })
         });
         log_err(task, cx);
+        view
     }
 
     fn show_thread(&mut self, thread: Thread, window: &mut Window, cx: &mut Context<Self>) {
         if self.signed_out() {
             return;
         }
+        self.history = None;
         let running = thread
             .turns
             .iter()
@@ -2885,7 +2918,10 @@ impl Root {
         self.diff = Some(diff);
         self.file = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
-        view.update(cx, |view, cx| view.set_git_phase(self.git_busy, cx));
+        view.update(cx, |view, cx| {
+            view.set_git_phase(self.git_busy, cx);
+            view.set_usage_limit_notice(self.usage_limit_notice, cx);
+        });
         cx.subscribe_in(
             &view,
             window,
@@ -2982,7 +3018,11 @@ impl Root {
                 }
                 this.show_thread(thread, window, cx);
             })?;
-            turn_start(&bridge, &id, &s, user_input(&s)).await
+            let result = turn_start(&bridge, &id, &s, user_input(&s)).await;
+            if result.is_err() {
+                this.update(cx, |this, cx| this.restore_failed_send(&s, cx))?;
+            }
+            result
         });
         log_err(task, cx);
     }
@@ -3009,42 +3049,43 @@ impl Root {
         let queue = self.config["desktop"]["followUpQueueMode"] == "queue";
         let edit = self.queue_edit.take().filter(|edit| edit.thread_id == id);
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            resume_if(resume, &bridge, &this, &id, cx).await?;
-            let mut input = user_input(&s);
-            input.extend(edit.iter().flat_map(|edit| edit.extra.clone()));
-            let Some(turn_id) = running else {
-                return turn_start(&bridge, &id, &s, input).await;
-            };
-            let (method, params) = if queue {
-                let params = json!({
-                    "threadId": id, "input": input, "clientUserMessageId": uuid_v4(),
-                });
-                ("thread/queue/add", params)
-            } else {
-                let params = json!({ "threadId": id, "input": input, "expectedTurnId": turn_id });
-                ("turn/steer", params)
-            };
-            let result = bridge.request::<_, Value>(method, params).await;
-            if queue
-                && let (Ok(added), Some(edit)) = (&result, &edit)
-                && let Some(added) = added["queuedSubmission"]["id"].as_str()
-                && let Err(error) = restore_place(&bridge, &id, added, edit).await
-            {
-                eprintln!("codex-gpui: thread/queue/reorder: {error:#}");
+            let result = async {
+                resume_if(resume, &bridge, &this, &id, cx).await?;
+                let mut input = user_input(&s);
+                input.extend(edit.iter().flat_map(|edit| edit.extra.clone()));
+                let Some(turn_id) = running.as_ref() else {
+                    return turn_start(&bridge, &id, &s, input).await;
+                };
+                let (method, params) = if queue {
+                    let params = json!({
+                        "threadId": id, "input": input, "clientUserMessageId": uuid_v4(),
+                    });
+                    ("thread/queue/add", params)
+                } else {
+                    let params =
+                        json!({ "threadId": id, "input": input, "expectedTurnId": turn_id });
+                    ("turn/steer", params)
+                };
+                let result = bridge.request::<_, Value>(method, params).await;
+                if queue
+                    && let (Ok(added), Some(edit)) = (&result, &edit)
+                    && let Some(added) = added["queuedSubmission"]["id"].as_str()
+                    && let Err(error) = restore_place(&bridge, &id, added, edit).await
+                {
+                    eprintln!("codex-gpui: thread/queue/reorder: {error:#}");
+                }
+                result.map(drop)
             }
+            .await;
             this.update(cx, |this, cx| match &result {
-                Ok(_) if queue => this.list_queue(id, cx),
+                Ok(_) if queue && running.is_some() => this.list_queue(id, cx),
                 Ok(_) => {}
                 Err(_) => {
                     this.queue_edit = edit;
-                    this.thread_composer.update(cx, |c, cx| {
-                        c.restore_text(&s.text, cx);
-                        c.drop_files(&s.attachments, cx);
-                    });
-                    this.toast(Toast::danger("Error submitting message"), cx);
+                    this.restore_failed_send(&s, cx);
                 }
             })?;
-            result.map(drop)
+            result
         });
         log_err(task, cx);
     }
@@ -3250,7 +3291,8 @@ impl Root {
         };
         let (previous, next) = (neighbour(index.checked_sub(1)), neighbour(Some(index + 1)));
         let (text, images, extra) = split_input(&rows[index].submission.input);
-        if text.is_empty() && images.is_empty() {
+        let (text, context_files) = native_menus::context_files::restore_prompt(text);
+        if text.is_empty() && images.is_empty() && context_files.is_empty() {
             self.toast(Toast::danger("Couldn’t edit this queued message"), cx);
             return;
         }
@@ -3270,8 +3312,12 @@ impl Root {
                             next,
                             extra,
                         });
-                        this.thread_composer
-                            .update(cx, |c, cx| c.load_queued(&text, &images, window, cx));
+                        this.thread_composer.update(cx, |c, cx| {
+                            c.load_queued(&text, &images, window, cx);
+                            for file in context_files {
+                                c.add_context_file(file, cx);
+                            }
+                        });
                     }
                     Ok(_) => {}
                     Err(_) => this.toast(Toast::danger("Couldn’t edit this queued message"), cx),
@@ -3899,6 +3945,7 @@ impl Root {
                 });
                 if let Ok(Some(config)) = result {
                     this.config = config;
+                    this.refresh_enter_behavior(cx);
                 }
                 if success {
                     this.load_computer_use(cx);
@@ -4273,9 +4320,20 @@ impl Root {
                 })?;
                 return Err(error);
             }
-            this.update(cx, |this, _| apply(&mut this.config))
+            this.update(cx, |this, cx| {
+                apply(&mut this.config);
+                this.refresh_enter_behavior(cx);
+            })
         });
         log_err(task, cx);
+    }
+
+    fn refresh_enter_behavior(&self, cx: &mut Context<Self>) {
+        cx.set_global(ui::composer::EnterBehavior::from_setting(
+            self.config["desktop"]["composerEnterBehavior"]
+                .as_str()
+                .unwrap_or("enter"),
+        ));
     }
 
     /// Settles only the request whose card produced the answer.
@@ -4459,7 +4517,7 @@ impl Root {
                     && params["threadId"].as_str() == Some(view.id())
                 {
                     panel.update(cx, |panel, cx| {
-                        panel.apply(&event, &self.cwd, view.turns(), cx);
+                        panel.apply(&event, view.cwd(), view.turns(), cx);
                     });
                 }
             });
@@ -4602,16 +4660,30 @@ impl Root {
 
     fn finish_sign_in(&mut self, cx: &mut Context<Self>) {
         self.login = None;
-        self.read_account_email(cx);
+        self.read_account(cx);
         self.refresh_threads(cx);
         self.load_projects(cx);
         self.load_sections(cx);
         cx.notify();
     }
 
-    /// Reads the first `thread/list` page again; threads of later loaded pages stay after it.
-    /// Reads the email of the account that just signed in; a failure leaves the dialog without it.
-    fn read_account_email(&self, cx: &mut Context<Self>) {
+    fn set_account(&mut self, account: Option<&AccountReadResponse>, cx: &mut Context<Self>) {
+        self.account_email = account.and_then(chatgpt_email);
+        self.chatgpt_account =
+            account.is_some_and(|account| matches!(account.account, Some(Account::Chatgpt { .. })));
+        let plan = account.and_then(|account| match &account.account {
+            Some(Account::Chatgpt { plan_type, .. }) => Some(plan_type.as_str()),
+            _ => None,
+        });
+        self.usage_limit_notice = UsageLimitNotice::for_plan(plan);
+        if let Some(view) = &self.thread {
+            view.update(cx, |view, cx| {
+                view.set_usage_limit_notice(self.usage_limit_notice, cx)
+            });
+        }
+    }
+
+    fn read_account(&self, cx: &mut Context<Self>) {
         let bridge = self.bridge.clone();
         let host = self.host.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
@@ -4619,8 +4691,7 @@ impl Root {
                 .await;
             let account = bridge.account_read().await?;
             this.update(cx, |this, cx| {
-                this.account_email = chatgpt_email(&account);
-                this.chatgpt_account = matches!(account.account, Some(Account::Chatgpt { .. }));
+                this.set_account(Some(&account), cx);
                 if this.chatgpt_account
                     && this.host.supports_cloud_search()
                     && let Some(menu) = &this.command_menu
@@ -4849,6 +4920,7 @@ fn user_input(s: &Submission) -> Vec<Value> {
     let text = files
         .iter()
         .fold(s.text.clone(), |text, p| format!("{text}\n{}", p.display()));
+    let text = native_menus::context_files::prompt(text, &s.context_files);
     let mut input = vec![json!({ "type": "text", "text": text, "text_elements": [] })];
     input.extend(
         images
@@ -5400,6 +5472,7 @@ impl Render for Root {
                     .on_action(|_: &Zoom, window, _| window.zoom_window())
                     .child(login.clone())
                     .children(self.dialog.clone()),
+                self,
                 cx,
             )
             .into_any_element();
@@ -5468,12 +5541,22 @@ impl Render for Root {
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &Zoom, window, _| window.zoom_window())
             .child(content)
+            .children(self.cloud.as_ref().map(|session| {
+                div()
+                    .absolute()
+                    .top(px(8.))
+                    .right(px(44.))
+                    .h(px(28.))
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(session.header.clone())
+            }))
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
             .children(self.dialog.clone());
         let root = routes::actions(root, cx);
         native_menus::actions(
             section_actions::actions(features::actions(root, cx), cx),
+            self,
             cx,
         )
         .into_any_element()

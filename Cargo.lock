@@ -156,6 +156,7 @@ dependencies = [
  "bridge",
  "chrono",
  "chrono-tz",
+ "glob",
  "gpui",
  "gpui_platform",
  "iana-time-zone",
@@ -169,9 +170,11 @@ dependencies = [
  "raw-window-handle",
  "rrule",
  "rusqlite",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "shlex 2.0.1",
  "tempfile",
  "textsys",
  "theme",
@@ -648,6 +651,7 @@ dependencies = [
  "anyhow",
  "async-channel",
  "async-lock",
+ "chrono",
  "futures-lite",
  "log",
  "parking_lot",
@@ -657,6 +661,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tungstenite",
+ "uuid",
  "webpki-roots",
 ]
 
@@ -5955,6 +5960,7 @@ name = "ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-channel",
  "base64 0.22.1",
  "bridge",
  "chrono",
@@ -5976,6 +5982,7 @@ dependencies = [
  "theme",
  "unicode-width",
  "uuid",
+ "vt100",
 ]
 
 [[package]]
@@ -6196,6 +6203,27 @@ checksum = "fb067e4cbd1ff067d1df46c9194b5de0e98efd2810bbc95c5d5e5f25a3231150"
 dependencies = [
  "cc",
  "libc",
+]
+
+[[package]]
+name = "vt100"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb05cdd19ae8707bf6a0a269972c07e6358103a7079faec749dec318a5b3dc23"
+dependencies = [
+ "itoa",
+ "unicode-width",
+ "vte",
+]
+
+[[package]]
+name = "vte"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5924018406ce0063cd67f8e008104968b74b563ee1b85dde3ed1f7cb87d3dbd"
+dependencies = [
+ "arrayvec",
+ "memchr",
 ]
 
 [[package]]

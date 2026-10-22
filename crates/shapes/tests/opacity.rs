@@ -221,3 +221,277 @@ fn svg_opacity_uses_one_layer_restore() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+struct SavedDeviceScene;
+
+impl Render for SavedDeviceScene {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        div().size_full().bg(gpui::rgb(0x2d2d2d)).child(
+            gpui::canvas(
+                |_, _, _| (),
+                |_, _, window, cx| {
+                    let bounds = Bounds::new(point(px(987.), px(179.99)), size(px(16.), px(16.)));
+                    let source = include_bytes!("../../../assets/icons/diff-load-full-files.svg");
+                    let device = shapes::icon_paint_bounds(
+                        source,
+                        "saved-device-icon",
+                        bounds,
+                        false,
+                        window,
+                    )
+                    .expect("painted SVG bounds");
+                    shapes::with_layer(191, device, window, |window| {
+                        assert!(shapes::paint_icon(
+                            source,
+                            "saved-device-icon",
+                            bounds,
+                            false,
+                            gpui::white(),
+                            Some(bounds.origin),
+                            window,
+                            cx,
+                        ));
+                    });
+                },
+            )
+            .size_full(),
+        )
+    }
+}
+
+#[test]
+fn svg_opacity_respects_saved_device_edges() -> anyhow::Result<()> {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
+    let mut cx = gpui::HeadlessAppContext::with_platform(
+        textsys::text_system(),
+        Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    let window = cx.open_window(size(px(1280.), px(832.)), |_, cx| {
+        cx.new(|_| SavedDeviceScene)
+    })?;
+    cx.run_until_parked();
+    let image = cx.capture_screenshot(window.into())?;
+    if let Some(path) = std::env::var_os("CGX_SAVED_DEVICE_PROOF") {
+        image.save(path)?;
+    }
+    let points = [
+        (1977, 381),
+        (1980, 381),
+        (1984, 381),
+        (1986, 381),
+        (1987, 381),
+        (1977, 382),
+        (1980, 382),
+        (1986, 382),
+        (1987, 382),
+    ];
+    let actual = points.map(|(x, y)| image.get_pixel(x, y).0);
+    let expected =
+        [85, 106, 162, 183, 46, 84, 202, 184, 46].map(|value| [value, value, value, 255]);
+    assert_eq!(
+        actual, expected,
+        "the saved device must end at its painted bounds"
+    );
+    Ok(())
+}
+
+struct NestedSavedDeviceScene;
+
+impl Render for NestedSavedDeviceScene {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        div().size_full().bg(gpui::black()).child(
+            gpui::canvas(
+                |_, _, _| (),
+                |_, _, window, cx| {
+                    let parent = Bounds::new(point(px(10.), px(10.)), size(px(20.), px(20.)));
+                    let child = Bounds::new(point(px(15.), px(15.)), size(px(25.), px(25.)));
+                    shapes::with_layer(255, parent, window, |window| {
+                        shapes::with_layer(255, child, window, |window| {
+                            shapes::paint(
+                                &shapes::Decoration {
+                                    fill: Some(gpui::white()),
+                                    ..Default::default()
+                                },
+                                None,
+                                child,
+                                window,
+                                cx,
+                            );
+                        });
+                    });
+                },
+            )
+            .size_full(),
+        )
+    }
+}
+
+#[test]
+fn nested_saved_device_stays_inside_parent() -> anyhow::Result<()> {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
+    let mut cx = gpui::HeadlessAppContext::with_platform(
+        textsys::text_system(),
+        Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    let window = cx.open_window(size(px(50.), px(50.)), |_, cx| {
+        cx.new(|_| NestedSavedDeviceScene)
+    })?;
+    cx.run_until_parked();
+    let image = cx.capture_screenshot(window.into())?;
+    assert_eq!(image.get_pixel(45, 45).0, [255, 255, 255, 255]);
+    assert_eq!(image.get_pixel(65, 45).0, [0, 0, 0, 255]);
+    assert_eq!(image.get_pixel(45, 65).0, [0, 0, 0, 255]);
+    Ok(())
+}
+
+struct NestedOpacityScene {
+    ancestor_layers: usize,
+}
+
+impl Render for NestedOpacityScene {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        let mut content = gpui::canvas(
+            |_, _, _| (),
+            |_, _, window, cx| {
+                let bounds = Bounds::new(point(px(4.), px(4.)), size(px(1.), px(1.)));
+                shapes::with_composited_opacity(128, bounds, window, cx, |window| {
+                    shapes::with_layer(191, bounds, window, |window| {
+                        mask(window, cx, 4., 4., 255, gpui::white());
+                    });
+                });
+            },
+        )
+        .size_full()
+        .into_any_element();
+        for _ in 0..self.ancestor_layers {
+            content = div().size_full().layer().child(content).into_any_element();
+        }
+        div().size_full().bg(gpui::rgb(0x2d2d2d)).child(content)
+    }
+}
+
+#[test]
+fn ancestor_layers_preserve_opacity_before_a_compositor_mask() -> anyhow::Result<()> {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
+    let mut cx = gpui::HeadlessAppContext::with_platform(
+        textsys::text_system(),
+        Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    for ancestor_layers in 0..=2 {
+        let window = cx.open_window(size(px(16.), px(16.)), |_, cx| {
+            cx.new(|_| NestedOpacityScene { ancestor_layers })
+        })?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        assert_eq!(
+            image.get_pixel(9, 9).0,
+            [124, 124, 124, 255],
+            "{ancestor_layers} ancestor layers"
+        );
+        cx.update_window(window.into(), |_, window, _| window.remove_window())?;
+    }
+    Ok(())
+}
+
+struct MovedIcon {
+    source_x: f32,
+    translation: f32,
+    clipped: bool,
+}
+
+impl Render for MovedIcon {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        let (source_x, translation, clipped) = (self.source_x, self.translation, self.clipped);
+        div().size_full().bg(gpui::black()).child(
+            gpui::canvas(
+                |_, _, _| (),
+                move |_, _, window, cx| {
+                    let bounds = Bounds::new(point(px(source_x), px(4.)), size(px(16.), px(16.)));
+                    let matrix = gpui::Transformation::translate(point(px(translation), px(0.)))
+                        .into_matrix(bounds.center(), window.scale_factor());
+                    let paint = |window: &mut Window| {
+                        assert!(shapes::paint_icon_transformed(
+                            b"<svg viewBox='0 0 1 1'><path d='M0 0H1V1H0Z'/></svg>",
+                            "moved-icon",
+                            bounds,
+                            false,
+                            gpui::white(),
+                            None,
+                            matrix,
+                            window,
+                            cx,
+                        ));
+                    };
+                    if clipped {
+                        window.with_content_mask(
+                            Some(gpui::ContentMask {
+                                bounds: Bounds::new(point(px(20.), px(4.)), size(px(16.), px(16.))),
+                            }),
+                            paint,
+                        );
+                    } else {
+                        paint(window);
+                    }
+                },
+            )
+            .size_full(),
+        )
+    }
+}
+
+#[test]
+fn transformed_icons_enter_the_window_and_parent_clip() -> anyhow::Result<()> {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
+    let mut cx = gpui::HeadlessAppContext::with_platform(
+        textsys::text_system(),
+        Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    let mut images = Vec::new();
+    for (source_x, translation, clipped) in [
+        (-12., 32., false),
+        (-32., 52., false),
+        (2., 18., true),
+        (20., 0., false),
+    ] {
+        let window = cx.open_window(size(px(64.), px(24.)), |_, cx| {
+            cx.new(|_| MovedIcon {
+                source_x,
+                translation,
+                clipped,
+            })
+        })?;
+        cx.run_until_parked();
+        images.push(cx.capture_screenshot(window.into())?);
+        cx.update_window(window.into(), |_, window, _| window.remove_window())?;
+    }
+    let expected = images.last().unwrap();
+    assert_eq!(expected.get_pixel(40, 8).0, [255, 255, 255, 255]);
+    assert_eq!(expected.get_pixel(39, 8).0, [0, 0, 0, 255]);
+    assert_eq!(
+        expected
+            .pixels()
+            .filter(|p| p.0 == [255, 255, 255, 255])
+            .count(),
+        1024
+    );
+    for actual in &images[..3] {
+        assert_eq!(actual, expected);
+    }
+    Ok(())
+}
