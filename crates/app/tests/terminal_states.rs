@@ -386,7 +386,12 @@ fn workspace_warning_and_reload_keep_the_terminal_session_scoped() -> Result<()>
     );
     ensure!(fx.read(|_, cx| panel.read(cx).error().is_some()));
     shot(&mut fx, "interactive-error")?;
-    fx.click((409., 738.))?;
+    let reload = fx
+        .cx
+        .debug_bounds(fx.window, "terminal-reload")?
+        .context("terminal Reload button")?
+        .center();
+    fx.click((reload.x.into(), reload.y.into()))?;
     fx.wait("replacement terminal after Reload", |fx| {
         fx.read(|_, cx| {
             let panel = panel.read(cx);

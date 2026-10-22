@@ -910,6 +910,7 @@ impl Render for TerminalPanel {
                     .child(
                         control("reload-terminal", "", PanelAction::Reload, window, cx)
                             .aria_label("Reload")
+                            .debug_selector(|| "terminal-reload".into())
                             .h(px(24.))
                             .rounded_full()
                             .border_1()
