@@ -103,12 +103,14 @@ fn capture_live_terminal() -> Result<()> {
                 root.terminal_panel()
                     .and_then(|p| p.read(cx).surface())
                     .is_some_and(|surface| {
-                        surface
-                            .read(cx)
-                            .buffer
-                            .rows
-                            .iter()
-                            .any(|row| row.text(0, row.cells.len()).contains("/var/tmp"))
+                        let rows: Vec<String> = (surface.read(cx).buffer.rows.iter())
+                            .map(|row| row.text(0, row.cells.len()))
+                            .collect();
+                        // `pwd`'s output and the prompt after it: the echoed
+                        // `cd -- '/var/tmp'` holds the path before `pwd` has run.
+                        rows.windows(2).any(|pair| {
+                            pair[0].trim_end() == "/var/tmp" && pair[1].starts_with("fixture$")
+                        })
                     })
             })
         })?;
