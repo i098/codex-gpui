@@ -220,7 +220,7 @@ impl Render for History {
                                 move |bounds, window, _| {
                                     super::gradient_image(
                                         &[(t.surface, 0.), (gpui::transparent_black(), 1.)],
-                                        t.surface,
+                                        Some(t.surface),
                                         (
                                             f32::from(bounds.size.width),
                                             f32::from(bounds.size.height),

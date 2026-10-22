@@ -175,6 +175,9 @@ Changes uses it for aggregate patches, preserving quoted names and metadata-only
 File headers collapse display whitespace and show rename sources. Copy path keeps the decoded path unchanged.
 Metadata-only files show notices instead of raw Git headers.
 Unified deletions use source-sized striped markers. Split deletions keep solid markers.
+View changes selects Last Turn and opens only the matching requested path.
+File expansion follows exact response paths; collapsed rows retain their file contents.
+Expand all resets the path overrides.
 Run `cargo test -p ui --lib screens::diff::panel::patch` for its boundary checks.
 
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
@@ -384,6 +387,8 @@ Stock GPUI cannot match Chromium's pixels, so the copies change three things:
 Use it when placing multiline field glyphs to retain Blink's baseline positions.
 
 Inline-code backgrounds use both snapped label edges, so fractional text widths do not expand their right edge.
+Their height and position follow the active code font's metrics.
+The thread's top fade preserves content that scrolls below it.
 
 Monochrome glyphs and SVGs keep their paint alpha.
 Element opacity is applied once when the enclosing layer is restored.

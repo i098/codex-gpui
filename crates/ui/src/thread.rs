@@ -2073,7 +2073,13 @@ impl Render for ThreadView {
             (fade(0.12), 0.6),
             (clear, 1.),
         ];
-        let top_fade = skia_gradient(&fade_stops, t.surface, (width, 40.), (0., 0.), false, scale);
+        let top_fade = skia_gradient(
+            &fade_stops,
+            (width, 40.),
+            scale,
+            self.scroll.clone(),
+            !self.clip_right,
+        );
         // The px the main surface's rounded clip covers in part at its right corners: the top
         // fade's and the composer band's surface fill, drawn onto the page after the shell's
         // corners (`Shell::main_clips_right`), in a deferred draw. cc draws a band tile that
@@ -2130,7 +2136,7 @@ impl Render for ThreadView {
             move |bounds, window, _| {
                 gradient_image(
                     &[(surface_color, 0.), (clear, 1.)],
-                    surface_color,
+                    Some(surface_color),
                     (f32::from(bounds.size.width), f32::from(bounds.size.height)),
                     (0., f32::from(bounds.top()) - 44.),
                     true,
@@ -2249,9 +2255,9 @@ impl Render for ThreadView {
                             .on_children_prepainted(measure),
                     )
                     // Room for the docked composer.
-                    .child(div().h(px(114.))),
+                    .child(div().h(px(114.)))
+                    .child(top_fade),
             )
-            .child(top_fade.absolute().top_0().left_0())
             .when(self.clip_right, |d| d.child(gpui::deferred(corners)))
             // A portal in the original: its shadow spills over the titlebar and the sidebar.
             .when(self.summary_open, |d| {
@@ -2406,41 +2412,65 @@ fn measured(
     })
 }
 
-/// A vertical CSS `linear-gradient` over the opaque `under`, painted the way Chromium's Skia
-/// raster pipeline does it in the refs, as one opaque image at device resolution:
+/// A vertical CSS `linear-gradient` over the top of the `.layer()` scroller of `scroll`, the
+/// way Chromium's Skia raster pipeline and compositor draw it in the refs, as one image at
+/// device resolution:
 ///
 /// - colors interpolate premultiplied in sRGB at pixel centers;
 /// - the gradient is rasterized into its composited layer: Skia's 8x8 ordered dither on the
 ///   premultiplied color (clamped to alpha), then color and alpha are stored as 8 bits;
-/// - the layer is blended over `under` (`src + dst * (1 - src_alpha)`).
+/// - the compositor blends that layer over what is below (`src + dst * (1 - src_alpha)` in
+///   8 bits). With `nested` (a thread beside a side panel) it blends onto the scroller's
+///   transparent tile first and the result onto the surface: over the scrolled user bubble
+///   (`rgba(50, 50, 50, 0.85)`) and its text every px of the compact-open ref fits that order.
+///   Otherwise (a lone thread, also over a docked bottom panel) it blends onto the pixels
+///   painted so far, which the timestamp under it in the interactive refs fits.
 ///
-/// The dither phase comes from the pixel's position in the layer's raster tiles (cc tiles step
-/// 510 device px; a tile owns its far edge pixel). `origin` is the image's top-left in css px
-/// relative to that layer (for the thread view: the main panel's top-left). Stops are
-/// `(color, position 0..=1)`; `to_top` flips the direction. `size` is in css px.
-/// The baked image uses a separate layer so later paints do not use it as their layer destination.
+/// Put it last in the scroller: it stays at the scroller's top-left and paints into a GPUI
+/// layer nested in the scroller's, or outside the enclosing layers.
+///
+/// The dither phase comes from the pixel's position in the scroller's raster tiles (cc tiles
+/// step 510 device px; a tile owns its far edge pixel), which start at the main panel's
+/// top-left. Stops are `(color, position 0..=1)`; `size` is in css px.
 pub fn skia_gradient(
     stops: &[(Hsla, f32)],
-    under: Hsla,
     size: (f32, f32),
-    origin: (f32, f32),
-    to_top: bool,
     scale: f32,
-) -> gpui::Img {
-    gpui::img(gradient_image(
-        stops, under, size, origin, to_top, true, scale,
-    ))
-    .w(px(size.0))
-    .h(px(size.1))
-    .top_layer()
-    .object_fit(gpui::ObjectFit::Fill)
+    scroll: ScrollHandle,
+    nested: bool,
+) -> impl IntoElement {
+    let image = gradient_image(stops, None, size, (0., 0.), false, true, scale);
+    canvas(
+        |_, _, _| {},
+        move |_, (), window, _| {
+            let bounds = Bounds::new(scroll.bounds().origin, gpui::size(px(size.0), px(size.1)));
+            let paint = |window: &mut Window| {
+                window.with_skia_layer(255, |window| {
+                    window
+                        .paint_image(bounds, bounds, Corners::default(), image, 0, false)
+                        .ok();
+                })
+            };
+            if nested {
+                paint(window)
+            } else {
+                window.with_unlayered_paint(paint)
+            }
+        },
+    )
+    .absolute()
+    .size_0()
 }
 
 const MAX_GRADIENT_IMAGES: usize = 16;
 
+/// The [`skia_gradient`] px: baked over the opaque `under`, or (`None`) translucent, as straight
+/// 8-bit color whose premultiplied value in a GPUI layer (`round(c * a / 255)`) is the px.
+/// `origin` is the image's top-left in css px relative to its layer's tiles; `to_top` flips
+/// the direction.
 fn gradient_image(
     stops: &[(Hsla, f32)],
-    under: Hsla,
+    under: Option<Hsla>,
     size: (f32, f32),
     origin: (f32, f32),
     to_top: bool,
@@ -2458,11 +2488,11 @@ fn gradient_image(
             v.to_bits().hash(&mut key);
         }
     }
-    let u = Rgba::from(under);
-    for v in [u.r, u.g, u.b] {
-        v.to_bits().hash(&mut key);
-    }
-    (w, h, ox, oy, to_top, tiled).hash(&mut key);
+    let under = under.map(|u| {
+        let u = Rgba::from(u);
+        [u.r, u.g, u.b].map(|v| (v * 255.).round() as u32)
+    });
+    (under, w, h, ox, oy, to_top, tiled).hash(&mut key);
     let key = key.finish();
     let mut cache = CACHE.lock().unwrap_or_else(|error| error.into_inner());
     if let Some(image) = cache.get(&key) {
@@ -2473,13 +2503,24 @@ fn gradient_image(
         cache.clear();
     }
     let stops = premul_stops(stops);
-    let under = [u.r, u.g, u.b].map(|v| (v * 255.).round() as u32);
     let image = image::RgbaImage::from_fn(w, h, |i, j| {
         let [r, g, b, a] = gradient_px(&stops, h, (ox, oy), to_top, tiled, i, j);
-        let [r, g, b] = [(r, under[0]), (g, under[1]), (b, under[2])].map(|(c, under)| {
-            (u32::from(c) + (under * (255 - u32::from(a)) + 127) / 255).min(255) as u8
-        });
-        image::Rgba([b, g, r, 255])
+        let ([r, g, b], a) = match under {
+            Some(under) => (
+                [(r, under[0]), (g, under[1]), (b, under[2])].map(|(c, under)| {
+                    (u32::from(c) + (under * (255 - u32::from(a)) + 127) / 255).min(255) as u8
+                }),
+                255,
+            ),
+            // `p <= a`, so the color fits a byte; any `c` within half of `p * 255 / a` rounds
+            // back to `p` (no ties: `c * a / 255` is never an odd half). `a` 0 has `p` 0.
+            None => (
+                [r, g, b]
+                    .map(|p| ((u32::from(p) * 255 + u32::from(a) / 2) / u32::from(a.max(1))) as u8),
+                a,
+            ),
+        };
+        image::Rgba([b, g, r, a])
     });
     let image = Arc::new(gpui::RenderImage::new([image::Frame::new(image)]));
     cache.insert(key, image.clone());
@@ -2669,7 +2710,7 @@ mod tests {
             (fade(0.12), 0.6),
             (gpui::transparent_black(), 1.),
         ];
-        let image = gradient_image(&stops, s, (1871., 80.), (0., 0.), false, true, 1.);
+        let image = gradient_image(&stops, Some(s), (1871., 80.), (0., 0.), false, true, 1.);
         let pixels = image.as_bytes(0).unwrap();
         let px = |x: usize, y: usize| pixels[(y * 1871 + x) * 4 + 2];
         let rows: Vec<String> = [96, 116, 131]
@@ -2691,12 +2732,55 @@ mod tests {
         );
     }
 
+    /// The translucent fade, as the GPUI layer shader takes it (straight color times alpha,
+    /// rounded, then the compositor's 8-bit srcover), equals the fade baked over any opaque
+    /// color: over the surface the old opaque image, over scrolled content that content faded.
+    #[test]
+    fn translucent_gradient_composites_like_the_baked_one() {
+        let s: Hsla = rgb(0x181818).into();
+        let fade = |a: f32| Hsla { a, ..s };
+        let stops = [
+            (s, 0.),
+            (fade(0.82), 0.1),
+            (fade(0.48), 0.3),
+            (fade(0.12), 0.6),
+            (gpui::transparent_black(), 1.),
+        ];
+        let layer = gradient_image(&stops, None, (1871., 80.), (0., 0.), false, true, 1.);
+        let layer = layer.as_bytes(0).unwrap();
+        for under in [
+            s,
+            rgb(0x000000).into(),
+            rgb(0xffffff).into(),
+            rgb(0x3b8eea).into(),
+        ] {
+            let baked =
+                gradient_image(&stops, Some(under), (1871., 80.), (0., 0.), false, true, 1.);
+            let u = Rgba::from(under);
+            let u = [u.b, u.g, u.r].map(|v| (v * 255.).round() as u32);
+            let composited: Vec<u8> = layer
+                .chunks(4)
+                .flat_map(|p| {
+                    let a = u32::from(p[3]);
+                    let f = |v: u8| f32::from(v) / 255.;
+                    let rgb: [u32; 3] = std::array::from_fn(|k| {
+                        let l = (f(p[k]) * f(p[3]) * 255.).round_ties_even() as u32;
+                        let t = u[k] * (255 - a);
+                        (l + ((t + ((t + 128) >> 8) + 128) >> 8)).min(255)
+                    });
+                    [rgb[0] as u8, rgb[1] as u8, rgb[2] as u8, 255]
+                })
+                .collect();
+            assert!(composited == baked.as_bytes(0).unwrap(), "under {under:?}");
+        }
+    }
+
     #[test]
     fn transparent_gradient_preserves_background_color_channels() {
         let clear = gpui::transparent_black();
         let image = gradient_image(
             &[(clear, 0.), (clear, 1.)],
-            rgb(0x123456).into(),
+            Some(rgb(0x123456).into()),
             (1., 1.),
             (0., 0.),
             false,
@@ -2710,13 +2794,13 @@ mod tests {
     fn changing_fade_origins_releases_old_images() {
         let color = gpui::rgb(0x102030).into();
         let stops = [(color, 0.), (gpui::transparent_black(), 1.)];
-        let first = gradient_image(&stops, color, (2., 2.), (0., 0.), false, true, 1.);
+        let first = gradient_image(&stops, Some(color), (2., 2.), (0., 0.), false, true, 1.);
         let weak = Arc::downgrade(&first);
         drop(first);
         for offset in 1..=MAX_GRADIENT_IMAGES {
             drop(gradient_image(
                 &stops,
-                color,
+                Some(color),
                 (2., 2.),
                 (0., offset as f32),
                 false,
@@ -2760,7 +2844,7 @@ mod tests {
         let s: Hsla = rgb(0x181818).into();
         let image = gradient_image(
             &[(s, 0.), (gpui::transparent_black(), 1.)],
-            s,
+            Some(s),
             (935.5, 32.),
             (0., 358.),
             true,

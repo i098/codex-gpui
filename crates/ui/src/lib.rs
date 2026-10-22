@@ -52,7 +52,7 @@ actions!(
         OpenMobileSetup,
         /// `⌥⌘B`: show or hide the Changes side panel.
         ToggleChangesPanel,
-        /// A file change card's `View changes`, the thread summary's `Changes` row.
+        /// The thread summary's `Changes` row and generic Changes navigation.
         OpenChangesPanel,
         /// Thread summary ▸ `Background processes` row: the command's terminal tab.
         OpenBackgroundTerminal,
@@ -65,6 +65,11 @@ actions!(
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = shell, no_json)]
 pub struct SetTheme(pub &'static str);
+
+/// A change card opens review with an override for this exact requested path.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = shell, no_json)]
+pub struct ViewChanges(pub String);
 
 // Edit menu commands; text inputs handle them.
 actions!(
@@ -634,6 +639,7 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
     // Chromium squashes the search button's `_ButtonInner` and the rows below into one
     // transparent overlap layer, from the rows' left edge and the button's top.
     let overlap = point(RAIL_WIDTH + px(8.), Theme::TITLEBAR_HEIGHT + px(12.));
+    let mode_switch = point(RAIL_WIDTH + px(16.), Theme::TITLEBAR_HEIGHT + px(10.));
     let row = |id: &'static str, leading: AnyElement, label: &'static str| {
         let hover_bg = t.list_hover;
         div()
@@ -679,13 +685,14 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                         .items_center()
                         .gap(px(6.))
                         .rounded(RADIUS_BUTTON_XL)
-                        .child(icon::icon_sized(
-                            "codex-wordmark",
-                            53.22,
-                            18.,
-                            t.text_default_nav,
-                        ))
-                        .child(icon::icon("chevron-down-medium", 14., t.text_tertiary)),
+                        .child(
+                            icon::icon_sized("codex-wordmark", 53.22, 18., t.text_default_nav)
+                                .own_layer(Some(mode_switch)),
+                        )
+                        .child(
+                            icon::icon("chevron-down-medium", 14., t.text_tertiary)
+                                .own_layer(Some(mode_switch)),
+                        ),
                 )
                 .child(div().flex_1())
                 .child(tooltip(
@@ -695,7 +702,8 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                             if unread { "bell-unread" } else { "bell" },
                             16.,
                             t.text_tertiary,
-                        ),
+                        )
+                        .own_layer(None),
                         t,
                     )
                     .tab_index(0)
@@ -733,7 +741,9 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                     shapes::Corner::Squircle,
                     row(
                         "new-chat",
-                        icon::icon("new-chat", 16., t.text_default_nav).into_any_element(),
+                        icon::icon("new-chat", 16., t.text_default_nav)
+                            .own_layer(Some(overlap))
+                            .into_any_element(),
                         "New chat",
                     )
                     .on_click(dispatch::<NewChat>),

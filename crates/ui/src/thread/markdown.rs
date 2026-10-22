@@ -733,6 +733,7 @@ impl Markdown<'_> {
     }
 
     fn code(&self, code: &str, at: usize) -> Vec<Div> {
+        let (growth, shift, pill) = self.code_metrics();
         // The 6 px padding of the first piece comes off the line.
         let limit = LINE_WIDTH.with(|w| w.get()) - 6.;
         let chunks: Vec<&str> = code
@@ -759,14 +760,14 @@ impl Markdown<'_> {
                         if bounds.size.height == px(0.) {
                             continue;
                         }
-                        let top = bounds.top() - px(1.);
+                        let top = bounds.top() - px(1. + pill);
                         let right = bounds.right() - *trailing_space + px(6.);
                         if let Some(rect) = line.as_mut().filter(|rect| rect.top() == top) {
                             rect.size.width = right - rect.left();
                         } else {
                             let next = Bounds::new(
                                 point(bounds.left() - px(6.), top),
-                                gpui::size(right - bounds.left() + px(6.), px(17.)),
+                                gpui::size(right - bounds.left() + px(6.), px(17. + pill)),
                             );
                             if let Some(rect) = line.replace(next) {
                                 shapes::paint(&decoration, None, rect, window, cx);
@@ -781,7 +782,6 @@ impl Markdown<'_> {
             .absolute()
             .size_full(),
         );
-        let (growth, shift, pill) = self.code_metrics();
         let space = width(self.window, " ", 12.88, 430., Some(code_font()));
         let mut offset = at;
         let mut parts = Vec::with_capacity(count);
