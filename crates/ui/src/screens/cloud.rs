@@ -615,7 +615,10 @@ impl CloudPage {
                 Some(t.border),
             ))
             .child(text(label.clone(), 13., 18., 430., t.text))
-            .child(crate::icon::icon("chevron-down", 14., t.text_tertiary).own_layer(None));
+            .child(
+                crate::icon::icon("chevron-down", 14., t.text_tertiary)
+                    .own_layer(Some(gpui::Point::default())),
+            );
         self.wire_button(id.into(), label, content, cx, action)
     }
 
@@ -660,7 +663,7 @@ impl CloudPage {
                 d.child(super::settings::on_card(
                     9999.,
                     shapes::Corner::Round,
-                    crate::over(t.text_alpha_5, t.background_panel),
+                    t.text_alpha_5,
                     None,
                 ))
             })
