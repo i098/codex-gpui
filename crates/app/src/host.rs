@@ -49,6 +49,7 @@ mod diff_files;
 mod diff_repositories;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod directories;
+mod environments;
 mod git;
 pub mod git_pr;
 mod native_apps;
@@ -56,6 +57,7 @@ mod open_in;
 mod projectless;
 pub use projectless::Workspace;
 pub(crate) mod run_now;
+mod settings_git;
 mod skills;
 mod ssh_discovery;
 
@@ -711,8 +713,16 @@ impl LocalHost {
             "unsupported worktree starting state"
         );
         let environment = params["localEnvironmentConfigPath"].as_str().map(Path::new);
-        let worktree = git::create_worktree(&root, cwd, start["branchName"].as_str(), environment)?
-            .context("Not a git repository")?;
+        let worktree = if params["worktreesRoot"]
+            .as_str()
+            .is_some_and(|root| !root.trim().is_empty())
+        {
+            self.refresh_worktree_upstream(cwd);
+            git::create_worktree(&root, cwd, start["branchName"].as_str(), environment)?
+        } else {
+            self.managed_worktree(cwd, start["branchName"].as_str(), environment)?
+        }
+        .context("Not a git repository")?;
         Ok(json!({"worktreeGitRoot": worktree.git_root,
             "worktreeWorkspaceRoot": worktree.workspace_root, "setupError": null}))
     }
@@ -1174,6 +1184,30 @@ impl Host for LocalHost {
             "automation-run-now" => self.automation_run_now(&params)?,
             "inbox-items" => self.inbox(&params)?,
             "apply-patch" => git::apply_cloud_patch(&params)?,
+            "local-environments" => environments::list(Path::new(
+                params["workspaceRoot"]
+                    .as_str()
+                    .context("missing workspace root")?,
+            ))?,
+            "local-environment-config" => environments::read(Path::new(
+                params["configPath"]
+                    .as_str()
+                    .context("missing environment path")?,
+            ))?,
+            "local-environment-config-save" => environments::save(&params)?,
+            "local-environment-select" => self.select_environment(
+                params["workspaceRoot"]
+                    .as_str()
+                    .context("missing workspace root")?,
+                params["configPath"]
+                    .as_str()
+                    .context("missing environment path")?,
+            )?,
+            "codex-worktrees" => self.worktrees()?,
+            "worktree-delete" => {
+                self.delete_worktree(params["worktree"].as_str().context("missing worktree")?)?
+            }
+            "git-pr-watch-update" => self.update_pr_watchers(&params)?,
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-init-repo"
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
             | "git-checkout" | "git-cat-file" | "git-review-patch" | "git-file-url" => {
