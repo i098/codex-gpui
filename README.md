@@ -301,6 +301,8 @@ It assembles `Codex GPUI.app` (bundle id `dev.codexgpui.app`, version from `crat
 It signs the bundle ad hoc, checks it with `plutil -lint` and `codesign --verify --strict`, and zips it with `ditto`.
 The zip goes to `/tmp/cgx/release/codex-gpui-<version>-macos-arm64.zip`.
 The script does not open the app.
+Bundle assembly requires Python 3.
+It generates `THIRD_PARTY_NOTICES.txt` from production Rust dependencies and their available license files, then includes the file in Resources.
 
 The app icon is the original icon from `ChatGPT.app/Contents/Resources/Assets.car`.
 To make `assets/app/AppIcon.icns` again, run this on the Mac:
