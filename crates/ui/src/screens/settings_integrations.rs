@@ -2149,12 +2149,12 @@ impl Render for Manager {
                     .role(gpui::Role::Button)
                     .aria_label("Reload hooks")
                     .aria_disabled(disabled)
-                    .size(px(28.))
+                    .size(px(26.))
                     .flex()
                     .items_center()
                     .justify_center()
                     .when(disabled, |d| d.opacity(0.4))
-                    .child(icon("settings-hooks-reload", 16., t.text_secondary))
+                    .child(icon("settings-hooks-reload", 16., t.text_tertiary))
                     .on_activate(window, cx, move |_, _, cx| {
                         if !disabled {
                             dispatch(Action::ReloadHooks, cx);
