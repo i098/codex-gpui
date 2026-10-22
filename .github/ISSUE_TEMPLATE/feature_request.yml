@@ -1,0 +1,23 @@
+name: Feature request
+description: Ask for a part of the original Codex app that codex-gpui does not have yet, or another change.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What do you want to do that codex-gpui does not let you do now?
+    validations:
+      required: true
+  - type: textarea
+    id: original
+    attributes:
+      label: Original behavior
+      description: How the original Codex app does it, with screenshots when they help. Leave it empty when the original app does not have it.
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The change that you want, and how you will use it.
+    validations:
+      required: true
