@@ -259,6 +259,7 @@ impl FileDiff {
         Self {
             dir,
             name,
+            path_key: path.to_owned(),
             display_dir,
             display_name,
             added,
@@ -297,7 +298,7 @@ pub(super) fn files(diff: &str) -> Vec<FileDiff> {
 impl DiffPanel {
     pub fn from_patch(workspace: &str, diff: &str) -> Self {
         let mut panel = Self::last_turn(workspace, workspace, &[]);
-        panel.files = files(diff);
+        panel.replace_files(files(diff));
         panel.standalone = true;
         panel
     }
@@ -450,7 +451,7 @@ impl DiffPanel {
             .pr(px(16.))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    this.files[index].open = !this.files[index].open;
+                    this.set_file_open(index, !this.files[index].open);
                     cx.stop_propagation();
                     cx.notify();
                 }
@@ -552,14 +553,14 @@ impl DiffPanel {
                     .hover(|d| d.bg(t.list_hover))
                     .when(self.active_file == i, |d| d.bg(t.list_hover))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.files[i].open = true;
+                        this.set_file_open(i, true);
                         this.active_file = i;
                         this.scroll.scroll_to_top_of_item(i);
                         cx.notify();
                     }))
                     .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
                         if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                            this.files[i].open = true;
+                            this.set_file_open(i, true);
                             this.active_file = i;
                             this.scroll.scroll_to_top_of_item(i);
                             cx.stop_propagation();

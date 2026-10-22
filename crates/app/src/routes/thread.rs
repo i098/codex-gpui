@@ -29,11 +29,23 @@ fn resumed_settings(mut response: Value, id: &str) -> Result<RendererState> {
     let approval = response
         .get("approvalPolicy")
         .context("missing resumed approval policy")?;
-    let permission = Permission::from_config(&json!({
-        "approval_policy": approval,
-        "approvals_reviewer": response["approvalsReviewer"],
-        "sandbox_mode": sandbox,
-    }));
+    let policy = &response["sandbox"];
+    let standard_workspace = policy.as_object().is_some_and(|policy| policy.len() == 5)
+        && policy["networkAccess"] == false
+        && policy["excludeTmpdirEnvVar"] == false
+        && policy["excludeSlashTmp"] == false
+        && policy["writableRoots"]
+            .as_array()
+            .is_some_and(Vec::is_empty);
+    let permission = if sandbox == "workspace-write" && !standard_workspace {
+        Permission::Custom
+    } else {
+        Permission::from_config(&json!({
+            "approval_policy": approval,
+            "approvals_reviewer": response["approvalsReviewer"],
+            "sandbox_mode": sandbox,
+        }))
+    };
     let collaboration_mode = response["collaborationMode"].take();
     ensure!(
         collaboration_mode["mode"].is_string()
@@ -86,6 +98,16 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     }))
     .on_action(cx.listener(|this, _: &OpenChangesPanel, window, cx| {
         this.set_side(SidePanel::Changes, window, cx)
+    }))
+    .on_action(cx.listener(|this, action: &ui::ViewChanges, window, cx| {
+        let focused = window.focused(cx);
+        if let Some(panel) = &this.diff {
+            panel.update(cx, |panel, cx| panel.view_changes(&action.0, cx));
+        }
+        this.set_side(SidePanel::Changes, window, cx);
+        if let Some(focused) = focused {
+            window.defer(cx, move |window, cx| window.focus(&focused, cx));
+        }
     }))
     .on_action(cx.listener(Root::open_file))
     .on_action(cx.listener(|this, _: &OpenBackgroundTerminal, window, cx| {
@@ -147,7 +169,13 @@ mod tests {
             "thread": {"id": "thread-a"},
             "approvalPolicy": "on-request",
             "approvalsReviewer": "user",
-            "sandbox": {"type": "workspaceWrite"},
+            "sandbox": {
+                "type": "workspaceWrite",
+                "writableRoots": [],
+                "networkAccess": false,
+                "excludeTmpdirEnvVar": false,
+                "excludeSlashTmp": false
+            },
             "collaborationMode": {
                 "mode": "default",
                 "settings": {"model": "gpt-6.1-sol", "reasoning_effort": null}
@@ -161,6 +189,25 @@ mod tests {
         assert_eq!(state.permission, Permission::Ask);
         assert_eq!(state.collaboration_mode["settings"]["model"], "gpt-6.1-sol");
         assert!(state.collaboration_mode["settings"]["reasoning_effort"].is_null());
+    }
+
+    #[test]
+    fn resumed_custom_workspace_policy_keeps_the_custom_label() {
+        for (field, value) in [
+            ("networkAccess", json!(true)),
+            ("writableRoots", json!(["/extra"])),
+            ("excludeTmpdirEnvVar", json!(true)),
+            ("excludeSlashTmp", json!(true)),
+            ("unknownPolicyField", json!(true)),
+        ] {
+            let mut response = response();
+            response["sandbox"][field] = value;
+            assert_eq!(
+                resumed_settings(response, "thread-a").unwrap().permission,
+                Permission::Custom,
+                "{field}"
+            );
+        }
     }
 
     #[test]

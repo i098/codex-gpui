@@ -1,0 +1,145 @@
+{
+  "provenance": "Real thread/shellCommand output; thread identity remapped into the standard subtract fixture. Turn-complete/command-running projection follows route1 replayRunningCommand.",
+  "start": [
+    {
+      "method": "thread/status/changed",
+      "params": {
+        "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+        "status": { "type": "active", "activeFlags": [] }
+      },
+      "emittedAtMs": 1792547444037
+    },
+    {
+      "method": "turn/started",
+      "params": {
+        "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+        "turn": {
+          "id": "01a15c27-5544-73f0-962d-8f43c83b6bf7",
+          "rootTurnId": "01a15c27-5544-73f0-962d-8f43c83b6bf7",
+          "items": [],
+          "itemsView": "notLoaded",
+          "status": "inProgress",
+          "error": null,
+          "startedAt": 1792547444,
+          "completedAt": null,
+          "durationMs": null
+        }
+      },
+      "emittedAtMs": 1792547444037
+    },
+    {
+      "method": "item/started",
+      "params": {
+        "item": {
+          "type": "commandExecution",
+          "id": "0f166e0f-3e42-4c24-a26c-279b1c6a005a",
+          "pluginId": null,
+          "scriptPath": null,
+          "command": "/bin/zsh -lc \"printf '\\\\033[31mANSI red\\\\033[0m\\\\n\\\\033[38;5;45mANSI indexed\\\\033[0m\\\\n\\\\033[38;2;170;100;220mANSI RGB\\\\033[0m\\\\n'; i=1; while [ \"'$i -le 120 ]; do printf '\"'terminal row %03d\\\\n' \"'$i; i=$((i+1)); done; printf '\"'https://example.com/terminal\\\\n'\"",
+          "cwd": "/tmp/cgx-fam-terminal-proof-rpc",
+          "processId": null,
+          "source": "userShell",
+          "status": "inProgress",
+          "commandActions": [
+            {
+              "type": "unknown",
+              "command": "printf '\\033[31mANSI red\\033[0m\\n\\033[38;5;45mANSI indexed\\033[0m\\n\\033[38;2;170;100;220mANSI RGB\\033[0m\\n'; i=1; while [ $i -le 120 ]; do printf 'terminal row %03d\\n' $i; i=$((i+1)); done; printf 'https://example.com/terminal\\n'"
+            }
+          ],
+          "aggregatedOutput": null,
+          "exitCode": null,
+          "durationMs": null
+        },
+        "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+        "turnId": "01a15c27-5544-73f0-962d-8f43c83b6bf7",
+        "startedAtMs": 1792547444037
+      },
+      "emittedAtMs": 1792547444040
+    }
+  ],
+  "turnComplete": {
+    "method": "turn/completed",
+    "params": {
+      "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+      "turn": {
+        "id": "01a15c27-5544-73f0-962d-8f43c83b6bf7",
+        "rootTurnId": "01a15c27-5544-73f0-962d-8f43c83b6bf7",
+        "items": [
+          {
+            "type": "commandExecution",
+            "id": "0f166e0f-3e42-4c24-a26c-279b1c6a005a",
+            "pluginId": null,
+            "scriptPath": null,
+            "command": "/bin/zsh -lc \"printf '\\\\033[31mANSI red\\\\033[0m\\\\n\\\\033[38;5;45mANSI indexed\\\\033[0m\\\\n\\\\033[38;2;170;100;220mANSI RGB\\\\033[0m\\\\n'; i=1; while [ \"'$i -le 120 ]; do printf '\"'terminal row %03d\\\\n' \"'$i; i=$((i+1)); done; printf '\"'https://example.com/terminal\\\\n'\"",
+            "cwd": "/tmp/cgx-fam-terminal-proof-rpc",
+            "processId": null,
+            "source": "userShell",
+            "status": "inProgress",
+            "commandActions": [
+              {
+                "type": "unknown",
+                "command": "printf '\\033[31mANSI red\\033[0m\\n\\033[38;5;45mANSI indexed\\033[0m\\n\\033[38;2;170;100;220mANSI RGB\\033[0m\\n'; i=1; while [ $i -le 120 ]; do printf 'terminal row %03d\\n' $i; i=$((i+1)); done; printf 'https://example.com/terminal\\n'"
+              }
+            ],
+            "aggregatedOutput": null,
+            "exitCode": null,
+            "durationMs": null
+          }
+        ],
+        "itemsView": "notLoaded",
+        "status": "completed",
+        "error": null,
+        "startedAt": 1792547444,
+        "completedAt": 1792547444,
+        "durationMs": 7
+      }
+    },
+    "emittedAtMs": 1792547444045
+  },
+  "threadIdle": {
+    "method": "thread/status/changed",
+    "params": {
+      "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+      "status": { "type": "idle" }
+    },
+    "emittedAtMs": 1792547444045
+  },
+  "itemComplete": {
+    "method": "item/completed",
+    "params": {
+      "item": {
+        "type": "commandExecution",
+        "id": "0f166e0f-3e42-4c24-a26c-279b1c6a005a",
+        "pluginId": null,
+        "scriptPath": null,
+        "command": "/bin/zsh -lc \"printf '\\\\033[31mANSI red\\\\033[0m\\\\n\\\\033[38;5;45mANSI indexed\\\\033[0m\\\\n\\\\033[38;2;170;100;220mANSI RGB\\\\033[0m\\\\n'; i=1; while [ \"'$i -le 120 ]; do printf '\"'terminal row %03d\\\\n' \"'$i; i=$((i+1)); done; printf '\"'https://example.com/terminal\\\\n'\"",
+        "cwd": "/tmp/cgx-fam-terminal-proof-rpc",
+        "processId": null,
+        "source": "userShell",
+        "status": "completed",
+        "commandActions": [
+          {
+            "type": "unknown",
+            "command": "printf '\\033[31mANSI red\\033[0m\\n\\033[38;5;45mANSI indexed\\033[0m\\n\\033[38;2;170;100;220mANSI RGB\\033[0m\\n'; i=1; while [ $i -le 120 ]; do printf 'terminal row %03d\\n' $i; i=$((i+1)); done; printf 'https://example.com/terminal\\n'"
+          }
+        ],
+        "aggregatedOutput": "\u001b[31mANSI red\u001b[0m\n\u001b[38;5;45mANSI indexed\u001b[0m\n\u001b[38;2;170;100;220mANSI RGB\u001b[0m\nterminal row 001\nterminal row 002\nterminal row 003\nterminal row 004\nterminal row 005\nterminal row 006\nterminal row 007\nterminal row 008\nterminal row 009\nterminal row 010\nterminal row 011\nterminal row 012\nterminal row 013\nterminal row 014\nterminal row 015\nterminal row 016\nterminal row 017\nterminal row 018\nterminal row 019\nterminal row 020\nterminal row 021\nterminal row 022\nterminal row 023\nterminal row 024\nterminal row 025\nterminal row 026\nterminal row 027\nterminal row 028\nterminal row 029\nterminal row 030\nterminal row 031\nterminal row 032\nterminal row 033\nterminal row 034\nterminal row 035\nterminal row 036\nterminal row 037\nterminal row 038\nterminal row 039\nterminal row 040\nterminal row 041\nterminal row 042\nterminal row 043\nterminal row 044\nterminal row 045\nterminal row 046\nterminal row 047\nterminal row 048\nterminal row 049\nterminal row 050\nterminal row 051\nterminal row 052\nterminal row 053\nterminal row 054\nterminal row 055\nterminal row 056\nterminal row 057\nterminal row 058\nterminal row 059\nterminal row 060\nterminal row 061\nterminal row 062\nterminal row 063\nterminal row 064\nterminal row 065\nterminal row 066\nterminal row 067\nterminal row 068\nterminal row 069\nterminal row 070\nterminal row 071\nterminal row 072\nterminal row 073\nterminal row 074\nterminal row 075\nterminal row 076\nterminal row 077\nterminal row 078\nterminal row 079\nterminal row 080\nterminal row 081\nterminal row 082\nterminal row 083\nterminal row 084\nterminal row 085\nterminal row 086\nterminal row 087\nterminal row 088\nterminal row 089\nterminal row 090\nterminal row 091\nterminal row 092\nterminal row 093\nterminal row 094\nterminal row 095\nterminal row 096\nterminal row 097\nterminal row 098\nterminal row 099\nterminal row 100\nterminal row 101\nterminal row 102\nterminal row 103\nterminal row 104\nterminal row 105\nterminal row 106\nterminal row 107\nterminal row 108\nterminal row 109\nterminal row 110\nterminal row 111\nterminal row 112\nterminal row 113\nterminal row 114\nterminal row 115\nterminal row 116\nterminal row 117\nterminal row 118\nterminal row 119\nterminal row 120\nhttps://example.com/terminal\n",
+        "exitCode": 0,
+        "durationMs": 7
+      },
+      "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+      "turnId": "01a15c27-5544-73f0-962d-8f43c83b6bf7",
+      "completedAtMs": 1792547444045
+    },
+    "emittedAtMs": 1792547444045
+  },
+  "threadId": "01a13de9-6fff-78e1-84fc-ebb3a2dc873f",
+  "turnId": "01a15c27-5544-73f0-962d-8f43c83b6bf7",
+  "itemId": "0f166e0f-3e42-4c24-a26c-279b1c6a005a",
+  "parts": [
+    "\u001b[31mANSI red\u001b[0m\n\u001b[38;5;45mANSI indexed\u001b[0m\n\u001b[38;2;170;100;220mANSI RGB\u001b[0m\n",
+    "terminal row 001\nterminal row 002\nterminal row 003\nterminal row 004\nterminal row 005\nterminal row 006\nterminal row 007\nterminal row 008\nterminal row 009\nterminal row 010\nterminal row 011\nterminal row 012\nterminal row 013\nterminal row 014\nterminal row 015\nterminal row 016\nterminal row 017\nterminal row 018\nterminal row 019\nterminal row 020\nterminal row 021\nterminal row 022\nterminal row 023\nterminal row 024\nterminal row 025\nterminal row 026\nterminal row 027\nterminal row 028\nterminal row 029\nterminal row 030\nterminal row 031\nterminal row 032\nterminal row 033\nterminal row 034\nterminal row 035\nterminal row 036\nterminal row 037\nterminal row 038\nterminal row 039\nterminal row 040\nterminal row 041\nterminal row 042\nterminal row 043\nterminal row 044\nterminal row 045\nterminal row 046\nterminal row 047\nterminal row 048\nterminal row 049\nterminal row 050\nterminal row 051\nterminal row 052\nterminal row 053\nterminal row 054\nterminal row 055\nterminal row 056\nterminal row 057\nterminal row 058\nterminal row 059\nterminal row 060\nterminal row 061\nterminal row 062\nterminal row 063\nterminal row 064\nterminal row 065\nterminal row 066\nterminal row 067\nterminal row 068\nterminal row 069\nterminal row 070\nterminal row 071\nterminal row 072\nterminal row 073\nterminal row 074\nterminal row 075\nterminal row 076\nterminal row 077\nterminal row 078\nterminal row 079\nterminal row 080\n",
+    "terminal row 081\nterminal row 082\nterminal row 083\nterminal row 084\nterminal row 085\nterminal row 086\nterminal row 087\nterminal row 088\nterminal row 089\nterminal row 090\nterminal row 091\nterminal row 092\nterminal row 093\nterminal row 094\nterminal row 095\nterminal row 096\nterminal row 097\nterminal row 098\nterminal row 099\nterminal row 100\nterminal row 101\nterminal row 102\nterminal row 103\nterminal row 104\nterminal row 105\nterminal row 106\nterminal row 107\nterminal row 108\nterminal row 109\nterminal row 110\nterminal row 111\nterminal row 112\nterminal row 113\nterminal row 114\nterminal row 115\nterminal row 116\nterminal row 117\nterminal row 118\nterminal row 119\nterminal row 120\nhttps://example.com/terminal\n"
+  ],
+  "command": "printf '\\033[31mANSI red\\033[0m\\n\\033[38;5;45mANSI indexed\\033[0m\\n\\033[38;2;170;100;220mANSI RGB\\033[0m\\n'; i=1; while [ $i -le 120 ]; do printf 'terminal row %03d\\n' $i; i=$((i+1)); done; printf 'https://example.com/terminal\\n'"
+}

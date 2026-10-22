@@ -298,7 +298,7 @@ impl DiffPanel {
         };
         let header =
             file_header(index, file, self, t, cx).on_click(cx.listener(move |this, _, _, cx| {
-                this.files[index].open ^= true;
+                this.set_file_open(index, !this.files[index].open);
                 this.active_file = index;
                 this.selection = None;
                 cx.notify();

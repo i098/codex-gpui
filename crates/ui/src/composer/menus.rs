@@ -7,7 +7,10 @@ impl Composer {
             return div();
         };
         let efforts = model.efforts.clone();
-        let selected = efforts.iter().position(|e| *e == self.effort).unwrap_or(0);
+        let selected = efforts
+            .iter()
+            .position(|e| e == self.displayed_effort())
+            .unwrap_or(0);
         let corner = |id: &'static str, name: &'static str, color: Hsla| {
             let hover = t.ghost_hover;
             div()
@@ -80,7 +83,7 @@ impl Composer {
                             .flex_col()
                             .items_center()
                             .child(text(
-                                effort_label(&self.effort).to_string(),
+                                effort_label(self.displayed_effort()).to_string(),
                                 14.,
                                 20.,
                                 500.,
@@ -216,7 +219,7 @@ impl Composer {
                                 .w(px(step))
                                 .h_full()
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.effort = effort.clone();
+                                    this.effort = Some(effort.clone());
                                     this.picked(cx);
                                     cx.notify();
                                 }))

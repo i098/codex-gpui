@@ -96,8 +96,11 @@ impl Composer {
             )
             .when(model.is_some(), |d| {
                 d.child(
-                    label(effort_label(&self.effort).to_string(), t.text_tertiary)
-                        .when(open, |d| d.invisible()),
+                    label(
+                        effort_label(self.displayed_effort()).to_string(),
+                        t.text_tertiary,
+                    )
+                    .when(open, |d| d.invisible()),
                 )
             })
             .when(open, |d| {
@@ -137,7 +140,11 @@ impl Composer {
             pill("model-picker", t)
                 .w(px(28.))
                 .justify_center()
-                .child(icon(effort_icon(&self.effort), 16., t.text_tertiary))
+                .child(icon(
+                    effort_icon(self.displayed_effort()),
+                    16.,
+                    t.text_tertiary,
+                ))
         } else {
             pill("model-picker", t)
                 .px(px(8.))
