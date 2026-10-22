@@ -677,13 +677,13 @@ impl Composer {
             // Chromium's: blitted into a transparent layer (`_ComposerLayoutInput`'s
             // `overflow-y: auto` contents), then composited onto the card. The sign-in
             // `input` has neither: its text blends where the field paints.
-            .child(match self.field_text {
-                Some(_) => div().child(Editor(cx.entity())),
-                None => div()
-                    .when(self.content.is_empty(), |d| d.opacity(0.5))
-                    .layer()
+            .child(
+                div()
+                    .when(self.field_text.is_none(), |d| {
+                        d.when(self.content.is_empty(), |d| d.opacity(0.5)).layer()
+                    })
                     .child(Editor(cx.entity())),
-            })
+            )
     }
 }
 
