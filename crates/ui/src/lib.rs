@@ -1592,19 +1592,12 @@ fn culled_corner_edge(
     (x, y): (f32, f32),
     rd: f32,
 ) -> Option<f32> {
+    let o = Bounds::new(occluder.origin - origin, occluder.size);
     let dev = |v: Pixels| f32::from(v) * scale;
-    let (left, top) = (
-        dev(occluder.left() - origin.x),
-        dev(occluder.top() - origin.y),
-    );
-    let (right, bottom) = (
-        dev(occluder.right() - origin.x),
-        dev(occluder.bottom() - origin.y),
-    );
-    let spans = left <= tile_start(x - rd)
-        && top <= tile_start(y - rd)
-        && right >= x - 0.5
-        && bottom >= y - 0.5;
+    let spans = dev(o.left()) <= tile_start(x - rd)
+        && dev(o.top()) <= tile_start(y - rd)
+        && dev(o.right()) >= x - 0.5
+        && dev(o.bottom()) >= y - 0.5;
     spans.then(|| tile_start(x))
 }
 
