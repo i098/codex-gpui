@@ -129,15 +129,19 @@ pub(crate) fn find_scope_buttons(query: &str, diffs: bool, t: &Theme) -> Div {
                 .items_center()
                 .justify_center()
                 .rounded(px(10.))
-                .child(crate::icon(
-                    icon,
-                    16.,
-                    if diff == diffs {
-                        t.text
-                    } else {
-                        t.text_tertiary
-                    },
-                ))
+                // The fitted header icon has a different raster position.
+                .child(
+                    crate::icon::icon(
+                        icon,
+                        16.,
+                        if diff == diffs {
+                            t.text
+                        } else {
+                            t.text_tertiary
+                        },
+                    )
+                    .runtime(),
+                )
                 .id(label)
                 .role(gpui::Role::Button)
                 .aria_label(label)
