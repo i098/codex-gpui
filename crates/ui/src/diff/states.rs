@@ -257,11 +257,18 @@ fn notice(
 ) -> Stateful<Div> {
     let compact = matches!(style, Notice::Compact);
     let warning = matches!(style, Notice::Warning);
-    div()
-        .id(id)
-        .role(gpui::Role::Status)
+    let overlay = if warning {
+        Hsla::from(rgb(if t.appearance == Appearance::Dark {
+            0x281105
+        } else {
+            0xfff5f0
+        }))
+        .opacity(0.15)
+    } else {
+        t.control_background.opacity(0.96)
+    };
+    let content = div()
         .relative()
-        .flex_none()
         .flex()
         .items_start()
         .when(wide, |d| d.items_center())
@@ -270,41 +277,7 @@ fn notice(
         .pr(px(if compact { 8. } else { 12. }))
         .py(px(if compact { 8. } else { 16. }))
         .child(shapes::decoration(Decoration {
-            radius: Corners::all(px(25.)),
-            corner: shapes::Corner::Squircle,
-            fill: Some(if warning {
-                Hsla::from(rgb(if t.appearance == Appearance::Dark {
-                    0x281105
-                } else {
-                    0xfff5f0
-                }))
-                .opacity(0.15)
-            } else {
-                t.control_background.opacity(0.96)
-            }),
-            shadows: vec![
-                shapes::Shadow {
-                    color: t.border_strong,
-                    offset: gpui::point(px(0.), px(0.)),
-                    blur: px(0.),
-                    spread: px(0.5),
-                    inset: false,
-                },
-                shapes::Shadow {
-                    color: gpui::black().opacity(0.05),
-                    offset: gpui::point(px(0.), px(0.)),
-                    blur: px(2.),
-                    spread: px(0.),
-                    inset: false,
-                },
-                shapes::Shadow {
-                    color: gpui::black().opacity(0.02),
-                    offset: gpui::point(px(0.), px(4.)),
-                    blur: px(6.),
-                    spread: px(0.),
-                    inset: false,
-                },
-            ],
+            fill: Some(overlay),
             ..Default::default()
         }))
         .when(!compact, |d| {
@@ -331,7 +304,46 @@ fn notice(
                 .when(!wide, |d| d.flex_col())
                 .child(body.flex_1().min_w_0())
                 .child(actions),
-        )
+        );
+    div()
+        .id(id)
+        .role(gpui::Role::Status)
+        .relative()
+        .flex_none()
+        .child(shapes::decoration(Decoration {
+            radius: Corners::all(px(25.)),
+            corner: shapes::Corner::Squircle,
+            fill: Some(t.surface),
+            shadows: vec![
+                shapes::Shadow {
+                    color: t.border_strong,
+                    offset: gpui::point(px(0.), px(0.)),
+                    blur: px(0.),
+                    spread: px(0.5),
+                    inset: false,
+                },
+                shapes::Shadow {
+                    color: gpui::black().opacity(0.05),
+                    offset: gpui::point(px(0.), px(0.)),
+                    blur: px(2.),
+                    spread: px(0.),
+                    inset: false,
+                },
+                shapes::Shadow {
+                    color: gpui::black().opacity(0.02),
+                    offset: gpui::point(px(0.), px(4.)),
+                    blur: px(6.),
+                    spread: px(0.),
+                    inset: false,
+                },
+            ],
+            ..Default::default()
+        }))
+        .child(crate::rounded_clip(
+            px(25.),
+            shapes::Corner::Squircle,
+            content,
+        ))
 }
 
 #[cfg(test)]
