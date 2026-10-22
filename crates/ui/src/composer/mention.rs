@@ -361,6 +361,8 @@ impl Composer {
     /// Replaces `range` of `content` with `text`: a chip the range touches goes whole, the
     /// chips after it shift. Returns the range replaced.
     pub(super) fn splice(&mut self, mut range: Range<usize>, text: &str) -> Range<usize> {
+        self.dictation = None;
+        self.dictation_error = None;
         self.mentions.retain(|m| {
             let hit = m.range.start < range.end && m.range.end > range.start;
             if hit {

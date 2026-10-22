@@ -720,12 +720,12 @@ impl Markdown<'_> {
                 |_, _, _| {},
                 move |_, (), window, cx| {
                     let mut line: Option<Bounds<Pixels>> = None;
-                    for (bounds, ink_width) in painted.borrow().iter() {
+                    for (bounds, trailing_space) in painted.borrow().iter() {
                         if bounds.size.height == px(0.) {
                             continue;
                         }
                         let top = bounds.top() - px(1.);
-                        let right = bounds.left() + *ink_width + px(6.);
+                        let right = bounds.right() - *trailing_space + px(6.);
                         if let Some(rect) = line.as_mut().filter(|rect| rect.top() == top) {
                             rect.size.width = right - rect.left();
                         } else {
@@ -768,8 +768,7 @@ impl Markdown<'_> {
                 ),
             };
             let measured = positions.clone();
-            let ink_width =
-                word_width - space * (word.len() - word.trim_end_matches(' ').len()) as f32;
+            let trailing_space = space * (word.len() - word.trim_end_matches(' ').len()) as f32;
             parts.push(
                 div()
                     .pt(px(3.5))
@@ -794,7 +793,7 @@ impl Markdown<'_> {
                             .child(label)
                             .on_children_prepainted(move |bounds, _, _| {
                                 if let Some(bounds) = bounds.last() {
-                                    measured.borrow_mut()[index] = (*bounds, ink_width);
+                                    measured.borrow_mut()[index] = (*bounds, trailing_space);
                                 }
                             }),
                     ),
@@ -1156,4 +1155,48 @@ fn code_symbol(color: Hsla, checked: bool) -> impl IntoElement {
         },
     )
     .size(px(if checked { 16. } else { 20. }))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    use gpui::{AppContext, HeadlessAppContext, Render, size};
+    use std::sync::Arc;
+
+    struct InlineCode;
+
+    impl Render for InlineCode {
+        fn render(&mut self, window: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            // This original box origin exposes the extra pixel from rebuilding its right edge after rounding its left edge.
+            div().size_full().relative().bg(rgb(0x181818)).child(
+                markdown("`2`.", window, &Theme::dark(), &[])
+                    .absolute()
+                    .left(px(1_081.765_6))
+                    .top(px(282.796_88)),
+            )
+        }
+    }
+
+    #[test]
+    fn inline_code_background_ends_at_the_snapped_label_edge() -> anyhow::Result<()> {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut cx = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        cx.update(|cx| {
+            cx.set_global(Theme::dark());
+            theme::load_fonts(cx);
+        });
+        let window = cx.open_window(size(px(1280.), px(832.)), |_, cx| cx.new(|_| InlineCode))?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        assert_eq!(image.get_pixel(2203, 590).0, [24, 24, 24, 255]);
+        assert_eq!(image.get_pixel(2202, 590).0, [48, 48, 48, 255]);
+        Ok(())
+    }
 }

@@ -5,7 +5,7 @@ default-members = ["crates/*"]
 # Vendored gpui (Blink pixel snapping) and gpui_apple (Skia glyph blend); used through
 # [patch], not members. Vendored rrule 0.14.0 (original recurrence limits) is a path dependency.
 # The macOS platform is a member so its native payload tests can run.
-exclude = ["crates/textsys/gpui", "crates/textsys/gpui_apple", "vendor/rrule"]
+exclude = ["crates/textsys/gpui", "crates/textsys/gpui_apple", "vendor/rrule", "vendor/tungstenite"]
 
 [workspace.package]
 edition = "2024"
