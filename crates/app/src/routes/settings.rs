@@ -77,6 +77,7 @@ pub(super) fn page(root: &mut Root, window: &mut Window, cx: &mut Context<Root>)
     .detach();
     shell
 }
+/// Quit asks about an unsaved instructions draft first, then runs the shell's guarded quit.
 pub(crate) fn request_quit(cx: &mut App) {
     for window in cx.windows() {
         let Some(window) = window.downcast::<Root>() else {
@@ -95,5 +96,5 @@ pub(crate) fn request_quit(cx: &mut App) {
             return;
         }
     }
-    cx.quit();
+    crate::window_shell::request_quit(cx);
 }

@@ -18,6 +18,7 @@ mod search;
 mod section_actions;
 mod settings_subtrees;
 pub mod updater;
+mod window_shell;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
