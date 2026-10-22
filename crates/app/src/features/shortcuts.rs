@@ -61,10 +61,6 @@ pub(crate) enum AppEdit {
     },
 }
 
-pub(super) fn init(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("ctrl-`", OpenBackgroundTerminal, None)]);
-}
-
 pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> gpui::Div {
     root.on_action(cx.listener(|this, _: &NextRecentChat, window, cx| {
         this.cycle_recent_chat(1, window, cx);

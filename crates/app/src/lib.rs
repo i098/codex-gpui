@@ -121,7 +121,6 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-m", Minimize, None),
     ]);
     ui::composer::bind_keys(cx);
-    features::init(cx);
     native_menus::init(cx);
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &Hide, cx| cx.hide());
