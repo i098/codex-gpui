@@ -19,7 +19,7 @@ use gpui::{
     deferred, div, font, prelude::FluentBuilder as _, px, rgb,
 };
 use shapes::Decoration;
-use std::{cell::Cell, ops::Range, rc::Rc, sync::Arc};
+use std::{cell::Cell, collections::HashMap, ops::Range, rc::Rc, sync::Arc};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
 #[path = "diff/menu.rs"]
@@ -116,6 +116,7 @@ pub struct FileDiff {
     /// Workspace-relative directory part (tertiary) and file name of the header path.
     pub dir: SharedString,
     pub name: SharedString,
+    path_key: String,
     display_dir: SharedString,
     display_name: SharedString,
     pub added: usize,
@@ -186,6 +187,13 @@ pub struct RevertChanges {
     pub hunk: Option<usize>,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ReviewRepository {
+    pub root: String,
+    pub cwd: String,
+    pub name: String,
+}
+
 #[derive(serde::Deserialize)]
 pub struct RepositoryChanges {
     pub root: String,
@@ -231,6 +239,8 @@ pub struct DiffPanel {
     selecting: bool,
     menu: Option<menu::Menu>,
     workspace: String,
+    files_expanded: bool,
+    file_expansion: HashMap<String, bool>,
     wrap: bool,
     source: DiffSource,
     turn_files: Vec<FileDiff>,
@@ -310,6 +320,7 @@ impl DiffPanel {
                     files.push(FileDiff {
                         dir,
                         name,
+                        path_key: path,
                         display_dir,
                         display_name,
                         added,
@@ -333,6 +344,8 @@ impl DiffPanel {
             selecting: false,
             menu: None,
             workspace: workspace_root.to_owned(),
+            files_expanded: true,
+            file_expansion: HashMap::new(),
             wrap: false,
             source: DiffSource::LastTurn,
             turn_files: Vec::new(),
@@ -361,6 +374,41 @@ impl DiffPanel {
 
     pub fn review_params(&self) -> serde_json::Value {
         serde_json::json!({"reviewSource": self.source.key(), "baseBranch": self.base_branch, "commit": self.commit})
+    }
+
+    pub fn view_changes(&mut self, path: &str, cx: &mut Context<Self>) {
+        if let Some(query) = &mut self.query {
+            query.clear();
+        }
+        self.filter = Default::default();
+        self.select_source(DiffSource::LastTurn, cx);
+        self.search_changed();
+        self.set_all_files_open(false);
+        self.file_expansion.insert(path.to_owned(), true);
+        if let Some(index) = self.files.iter().position(|file| file.path_key == path) {
+            self.files[index].open = true;
+            self.active_file = index;
+            self.scroll.scroll_to_top_of_item(index);
+        }
+        cx.notify();
+    }
+
+    fn set_all_files_open(&mut self, open: bool) {
+        self.files_expanded = open;
+        self.file_expansion.clear();
+        for file in &mut self.files {
+            file.open = open;
+        }
+    }
+
+    fn set_file_open(&mut self, index: usize, open: bool) {
+        let file = &mut self.files[index];
+        file.open = open;
+        if let Some(value) = self.file_expansion.get_mut(&file.path_key) {
+            *value = open;
+        } else {
+            self.file_expansion.insert(file.path_key.clone(), open);
+        }
     }
 
     fn actionable_files(&self) -> &[RepositoryFile] {
@@ -562,13 +610,7 @@ impl DiffPanel {
         true
     }
 
-    pub fn apply(
-        &mut self,
-        event: &Event,
-        workspace: &str,
-        turns: &[Turn],
-        cx: &mut Context<Self>,
-    ) {
+    pub fn apply(&mut self, event: &Event, cwd: &str, turns: &[Turn], cx: &mut Context<Self>) {
         let Event::Notification { method, params } = event else {
             return;
         };
@@ -588,10 +630,16 @@ impl DiffPanel {
                 if params["item"]["type"] == "fileChange"
                     && self.aggregated_turn.as_deref() != Some(&turn.id) =>
             {
-                Self::last_turn(workspace, workspace, turns).files
+                Self::last_turn(&self.workspace, cwd, turns).files
             }
             _ => return,
         };
+        let mut files = files;
+        for file in &mut files {
+            if !file.path_key.starts_with('/') {
+                file.path_key = menu::absolute_path(cwd, &file.path_key);
+            }
+        }
         if self.source == DiffSource::LastTurn {
             self.replace_files(files);
         } else {
@@ -601,23 +649,22 @@ impl DiffPanel {
     }
 
     fn replace_files(&mut self, mut files: Vec<FileDiff>) {
+        for file in &mut files {
+            if !file.path_key.starts_with('/') {
+                file.path_key = menu::absolute_path(self.file_root(), &file.path_key);
+            }
+        }
         self.active_file = self
             .files
             .get(self.active_file)
-            .and_then(|old| {
-                files
-                    .iter()
-                    .position(|file| file.dir == old.dir && file.name == old.name)
-            })
+            .and_then(|old| files.iter().position(|file| file.path_key == old.path_key))
             .unwrap_or(0);
         for file in &mut files {
-            if let Some(old) = self
-                .files
-                .iter()
-                .find(|old| old.dir == file.dir && old.name == file.name)
-            {
-                file.open = old.open;
-            }
+            file.open = self
+                .file_expansion
+                .get(&file.path_key)
+                .copied()
+                .unwrap_or(self.files_expanded);
         }
         self.files = files;
         self.selection = None;
@@ -658,6 +705,11 @@ impl DiffPanel {
             }
             if self.matches > before {
                 file.open = true;
+                if let Some(value) = self.file_expansion.get_mut(&file.path_key) {
+                    *value = true;
+                } else {
+                    self.file_expansion.insert(file.path_key.clone(), true);
+                }
             }
         }
         self.active_match = self.active_match.min(self.matches.saturating_sub(1));
@@ -1102,7 +1154,7 @@ impl Render for DiffPanel {
                 )
                 .child(file_header(i, file, self, &t, cx).on_click(cx.listener(
                     move |this, _, _, cx| {
-                        this.files[i].open ^= true;
+                        this.set_file_open(i, !this.files[i].open);
                         this.active_file = i;
                         this.selection = None;
                         cx.notify();
@@ -1876,7 +1928,7 @@ impl Render for SplitScreen {
             .child(self.shell.clone())
             .child(
                 self.thread
-                    .update(cx, |view, cx| view.titlebar_header(cx))
+                    .update(cx, |view, cx| view.titlebar_header(left.is_some(), cx))
                     .left(header_left)
                     .when_some(left, |h, left| h.w(left - header_left))
                     .when(hidden_tabs, |h| {
@@ -3163,6 +3215,75 @@ mod tests {
         let lines = &file.hunks[0].lines;
         assert_eq!((lines[0].kind, lines[0].number), (Kind::Context, 2));
         assert_eq!((lines[4].kind, lines[4].number), (Kind::Added, 6));
+    }
+
+    #[test]
+    fn view_changes_preserves_exact_path_identity_across_refresh() {
+        use gpui::{AppContext as _, HeadlessAppContext};
+        let start: ThreadStartResponse =
+            fixture::response("sessions/subtract.jsonl", "thread/start", 0);
+        let read: ThreadReadResponse = fixture::response("readback.jsonl", "thread/read", 1);
+        let requested = read
+            .thread
+            .turns
+            .iter()
+            .flat_map(|turn| &turn.items)
+            .find_map(|item| match item {
+                ThreadItem::FileChange { changes, .. } => changes.first(),
+                _ => None,
+            })
+            .unwrap()
+            .path
+            .clone();
+        let mut app = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            let panel =
+                cx.new(|_| DiffPanel::last_turn(&start.cwd, &start.cwd, &read.thread.turns));
+            panel.update(cx, |panel, cx| {
+                panel.select_source(DiffSource::Uncommitted, cx);
+                panel.query = Some("subtract".into());
+                panel.filter.text = "unrelated".into();
+                panel.view_changes(&requested, cx);
+                assert_eq!(panel.source, DiffSource::LastTurn);
+                assert_eq!(panel.query.as_deref(), Some(""));
+                assert!(panel.filter.text.is_empty());
+                assert!(panel.files[0].open);
+                panel.apply(
+                    &Event::Notification {
+                        method: "item/completed".into(),
+                        params: serde_json::json!({
+                            "threadId": read.thread.id,
+                            "turnId": read.thread.turns.last().unwrap().id,
+                            "item": {"type": "fileChange"}
+                        }),
+                    },
+                    &read.thread.cwd,
+                    &read.thread.turns,
+                    cx,
+                );
+                assert_ne!(panel.files[0].path_key, requested);
+                assert!(!panel.files[0].open);
+                assert_eq!((panel.files[0].added, panel.files[0].removed), (4, 0));
+                assert_eq!(panel.files[0].hunks.len(), 1);
+                let canonical = panel.files[0].path_key.clone();
+                panel.view_changes(&canonical, cx);
+                assert!(panel.files[0].open);
+                panel.set_file_open(0, false);
+                panel.replace_files(
+                    DiffPanel::last_turn(&start.cwd, &read.thread.cwd, &read.thread.turns).files,
+                );
+                assert!(!panel.files[0].open);
+                panel.set_all_files_open(true);
+                panel.replace_files(
+                    DiffPanel::last_turn(&start.cwd, &read.thread.cwd, &read.thread.turns).files,
+                );
+                assert!(panel.files[0].open);
+            });
+        });
     }
 
     #[test]

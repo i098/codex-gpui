@@ -8,6 +8,8 @@ mod mobile;
 mod settings;
 mod thread;
 
+pub(crate) use thread::load_thread;
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Route {
     #[default]
@@ -92,6 +94,7 @@ impl Root {
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     pub(crate) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.remember_recent_chat();
         self.flush_settings(cx);
         self.settings_page = None;
         self.suggestion_load = None;

@@ -1,0 +1,44 @@
+name: Bug report
+description: codex-gpui does not work or look like the original Codex app.
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Tell what you saw, and what the original Codex app does in the same state.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The commands that you ran and the actions in the app, in order.
+      placeholder: |
+        1. cargo run -p app --release
+        2. Open Settings > Git
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: The commit SHA of your checkout (`git rev-parse HEAD`).
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Host
+      description: The macOS version and Mac model, and the output of `codex --version` for the `codex` binary that the app uses.
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: For a visual difference, attach the original app and codex-gpui in the same state and at the same window size.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The output of the failed command or test. Remove tokens and other secrets first.
+      render: text
