@@ -823,6 +823,346 @@ impl Personalization {
                 toggle_control, &t)], &t))
             .children(error))
     }
+
+    /// The editor's Back, mode, Cancel and Save controls; an empty bar until it opens.
+    fn toolbar(&self, document: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        if !self.opened {
+            return div().h(px(46.)).flex_none();
+        }
+        let t = cx.theme().clone();
+        div()
+            .h(px(if document { 48. } else { 46. }))
+            .flex_none()
+            .px(px(if document { 8. } else { 20. }))
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(
+                        control(
+                            ("instructions-back", "Back"),
+                            gpui::transparent_black(),
+                            t.text,
+                            !self.saving,
+                            window,
+                            cx,
+                        )
+                        .when(!self.saving, |d| {
+                            d.on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Leave)))
+                        }),
+                    )
+                    .when(document, |d| {
+                        d.child(text("AGENTS.md", 13., 130. / 7., 500., t.text))
+                    }),
+            )
+            .child(self.editor_actions(document, window, cx))
+    }
+
+    /// The Markdown file's View source / View preview switch.
+    fn mode_control(&self, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
+        let label = if self.show_source {
+            "View preview"
+        } else {
+            "View source"
+        };
+        document_control(("instructions-mode", label), !self.saving, window, cx).when(
+            !self.saving,
+            |d| {
+                d.on_click(cx.listener(|this, _, window, cx| {
+                    this.show_source = !this.show_source;
+                    if this.show_source
+                        && let Some(editor) = &this.editor
+                    {
+                        window.focus(&editor.focus_handle(cx), cx);
+                    }
+                    cx.notify();
+                }))
+            },
+        )
+    }
+
+    /// The open editor's mode switch, Cancel and Save.
+    fn editor_actions(&self, document: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        let button_text = match t.appearance {
+            theme::Appearance::Dark => gpui::rgb(0x2d2d2d).into(),
+            theme::Appearance::Light => t.text_inverse,
+        };
+        let save = self.editor.is_some() && !self.loading && !self.saving && self.dirty(cx);
+        div()
+            .flex()
+            .gap(px(if document { 6. } else { 8. }))
+            .when(self.unified_instructions, |d| {
+                d.child(self.mode_control(window, cx))
+            })
+            .child(
+                if document {
+                    document_control(("instructions-cancel", "Cancel"), !self.saving, window, cx)
+                } else {
+                    control(
+                        ("instructions-cancel", "Cancel"),
+                        t.text_alpha_5,
+                        t.text,
+                        !self.saving,
+                        window,
+                        cx,
+                    )
+                }
+                .when(!self.saving, |d| {
+                    d.on_click(cx.listener(|this, _, _, cx| this.discard(cx)))
+                }),
+            )
+            .child(
+                if document {
+                    document_control(("instructions-save", "Save"), save, window, cx)
+                } else {
+                    control(
+                        ("instructions-save", "Save"),
+                        t.button_primary_solid,
+                        button_text,
+                        save,
+                        window,
+                        cx,
+                    )
+                }
+                .when(save, |d| {
+                    d.on_click(cx.listener(|this, _, _, cx| this.save(cx)))
+                }),
+            )
+    }
+
+    /// The override notice above an open personal instructions file.
+    fn override_notice(&self, t: &theme::Theme) -> Option<Div> {
+        if !self.has_override {
+            return None;
+        }
+        let warning_surface: Hsla = match t.appearance {
+            theme::Appearance::Dark => gpui::rgb(0x281105).into(),
+            theme::Appearance::Light => gpui::rgb(0xfff5f0).into(),
+        };
+        Some(
+            div()
+                .id("instructions-override")
+                .relative()
+                .py(px(16.))
+                .pl(px(20.))
+                .pr(px(12.))
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .child(shapes::decoration(shapes::Decoration {
+                    radius: gpui::Corners::all(px(25.)),
+                    corner: shapes::Corner::Squircle,
+                    fill: Some(t.surface),
+                    shadows: vec![
+                        crate::composer::shadow(t.border_strong, 0., 0., 0.5, false),
+                        crate::composer::shadow(gpui::black().opacity(0.05), 0., 2., 0., false),
+                        crate::composer::shadow(gpui::black().opacity(0.02), 4., 6., 0., false),
+                    ],
+                    ..Default::default()
+                }))
+                .child(shapes::decoration(shapes::Decoration {
+                    radius: gpui::Corners::all(px(25.)),
+                    corner: shapes::Corner::Squircle,
+                    fill: Some(warning_surface.opacity(0.3)),
+                    ..Default::default()
+                }))
+                .child(
+                    div()
+                        .pt(px(2.))
+                        .child(icon("instructions-warning", 18., t.text_warning)),
+                )
+                .child(
+                    text(
+                        "These instructions are overridden by AGENTS.override.md",
+                        13.,
+                        21.125,
+                        430.,
+                        t.text,
+                    )
+                    .flex_1()
+                    .min_w_0()
+                    .whitespace_normal(),
+                ),
+        )
+    }
+
+    /// The closed page: Memory, the custom instructions entry and Writing.
+    fn entry_page(
+        &mut self,
+        description: Div,
+        instructions_title: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let t = cx.theme().clone();
+        let focus = focus::handle("Edit Codex custom instructions", 0, window, cx);
+        let row = focus::ring(
+            div()
+                .id("instructions-entry")
+                .role(gpui::Role::Button)
+                .aria_label("Edit Codex custom instructions")
+                .relative()
+                .flex()
+                .items_center()
+                .gap(px(24.))
+                .px(px(17.))
+                .py(px(13.))
+                .child(super::on_card(
+                    20.,
+                    shapes::Corner::Squircle,
+                    t.background_panel,
+                    Some(t.border),
+                ))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.))
+                        .child(text(instructions_title, 13., 130. / 7., 500., t.text))
+                        .child(description),
+                )
+                .child(icon("chevron-right", 16., t.text)),
+            &focus,
+            px(20.),
+            px(0.),
+            cx,
+        )
+        .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(focus))
+        .on_click(cx.listener(|this, _, _, cx| this.load(cx)));
+        let memory = self.memory_section(window, cx);
+        let writing = self.writing_section(window, cx);
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(33.))
+            .child(div().h(px(36.)).flex().items_center().child(text(
+                "Personalization",
+                28.,
+                33.6,
+                500.,
+                t.text,
+            )))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(40.))
+                    .child(memory)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                div()
+                                    .h(px(46.))
+                                    .pb(px(6.))
+                                    .flex()
+                                    .items_center()
+                                    .child(text("Custom instructions", 14., 21., 500., t.text)),
+                            )
+                            .child(row),
+                    )
+                    .children(writing),
+            )
+    }
+
+    /// The open editor's page: its heading over the override notice and the loading state,
+    /// load error or editor.
+    fn editor_page(
+        &self,
+        description: Div,
+        instructions_title: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let t = cx.theme().clone();
+        let document = self.unified_instructions;
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(33.))
+            .when(document, |d| d.h_full())
+            .when(!document, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.))
+                        .child(text(instructions_title, 28., 33.6, 500., t.text))
+                        .child(description),
+                )
+            });
+        let mut editor_body = div()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .when(document, |d| d.h_full())
+            .children(self.override_notice(&t));
+        if self.loading {
+            editor_body = editor_body.child(
+                div()
+                    .id("instructions-loading")
+                    .role(gpui::Role::Status)
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(icon("sidebar-cmd-spinner", 16., t.text_secondary))
+                    .child(text(
+                        "Loading instructions…",
+                        14.,
+                        20.,
+                        430.,
+                        t.text_secondary,
+                    )),
+            );
+        } else if self.load_error {
+            editor_body = editor_body.child(
+                div()
+                    .id("instructions-load-error")
+                    .role(gpui::Role::Alert)
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(text(
+                        "Unable to load instructions",
+                        14.,
+                        20.,
+                        430.,
+                        t.text_secondary,
+                    ))
+                    .child(
+                        control(
+                            ("instructions-retry", "Retry"),
+                            t.list_hover,
+                            t.text,
+                            true,
+                            window,
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
+                    ),
+            );
+        } else if let Some(editor) = self.editor.clone() {
+            editor_body = editor_body.child(if self.unified_instructions && !self.show_source {
+                let source = editor.read(cx).field_text();
+                crate::screens::thread::view::markdown_preview(source, window, &t)
+                    .into_any_element()
+            } else {
+                div()
+                    .when(document, |d| d.h_full())
+                    .child(editor)
+                    .into_any_element()
+            });
+        }
+        body.child(editor_body)
+    }
 }
 
 impl Render for Personalization {
@@ -837,10 +1177,6 @@ impl Render for Personalization {
             "AGENTS.md"
         } else {
             "Codex instructions"
-        };
-        let button_text = match t.appearance {
-            theme::Appearance::Dark => gpui::rgb(0x2d2d2d).into(),
-            theme::Appearance::Light => t.text_inverse,
         };
         let (description_size, description_line_height) =
             if self.opened { (13., 24.) } else { (12., 16.) };
@@ -857,325 +1193,18 @@ impl Render for Personalization {
                     cx.open_url("https://developers.openai.com/codex/guides/agents-md/#create-global-guidance");
                 }));
         let document = self.opened && self.unified_instructions;
-        let toolbar = if self.opened {
-            let save = self.editor.is_some() && !self.loading && !self.saving && self.dirty(cx);
-            div()
-                .h(px(if document { 48. } else { 46. }))
-                .flex_none()
-                .px(px(if document { 8. } else { 20. }))
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.))
-                        .child(
-                            control(
-                                ("instructions-back", "Back"),
-                                gpui::transparent_black(),
-                                t.text,
-                                !self.saving,
-                                window,
-                                cx,
-                            )
-                            .when(!self.saving, |d| {
-                                d.on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Leave)))
-                            }),
-                        )
-                        .when(document, |d| {
-                            d.child(text("AGENTS.md", 13., 130. / 7., 500., t.text))
-                        }),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap(px(if document { 6. } else { 8. }))
-                        .when(self.unified_instructions, |d| {
-                            d.child(
-                                document_control(
-                                    (
-                                        "instructions-mode",
-                                        if self.show_source {
-                                            "View preview"
-                                        } else {
-                                            "View source"
-                                        },
-                                    ),
-                                    !self.saving,
-                                    window,
-                                    cx,
-                                )
-                                .when(!self.saving, |d| {
-                                    d.on_click(cx.listener(|this, _, window, cx| {
-                                        this.show_source = !this.show_source;
-                                        if this.show_source
-                                            && let Some(editor) = &this.editor
-                                        {
-                                            window.focus(&editor.focus_handle(cx), cx);
-                                        }
-                                        cx.notify();
-                                    }))
-                                }),
-                            )
-                        })
-                        .child(
-                            if document {
-                                document_control(
-                                    ("instructions-cancel", "Cancel"),
-                                    !self.saving,
-                                    window,
-                                    cx,
-                                )
-                            } else {
-                                control(
-                                    ("instructions-cancel", "Cancel"),
-                                    t.text_alpha_5,
-                                    t.text,
-                                    !self.saving,
-                                    window,
-                                    cx,
-                                )
-                            }
-                            .when(!self.saving, |d| {
-                                d.on_click(cx.listener(|this, _, _, cx| this.discard(cx)))
-                            }),
-                        )
-                        .child(
-                            if document {
-                                document_control(("instructions-save", "Save"), save, window, cx)
-                            } else {
-                                control(
-                                    ("instructions-save", "Save"),
-                                    t.button_primary_solid,
-                                    button_text,
-                                    save,
-                                    window,
-                                    cx,
-                                )
-                            }
-                            .when(save, |d| {
-                                d.on_click(cx.listener(|this, _, _, cx| this.save(cx)))
-                            }),
-                        ),
-                )
+        let toolbar = self.toolbar(document, window, cx);
+        // The open document fills a wider column without side padding.
+        let (top, side, width) = if document {
+            (40., 0., 768.)
         } else {
-            div().h(px(46.)).flex_none()
+            (28., 20., 728.)
         };
-        let content =
-            if !self.opened {
-                let focus = focus::handle("Edit Codex custom instructions", 0, window, cx);
-                let row = focus::ring(
-                    div()
-                        .id("instructions-entry")
-                        .role(gpui::Role::Button)
-                        .aria_label("Edit Codex custom instructions")
-                        .relative()
-                        .flex()
-                        .items_center()
-                        .gap(px(24.))
-                        .px(px(17.))
-                        .py(px(13.))
-                        .child(super::on_card(
-                            20.,
-                            shapes::Corner::Squircle,
-                            t.background_panel,
-                            Some(t.border),
-                        ))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .gap(px(2.))
-                                .child(text(instructions_title, 13., 130. / 7., 500., t.text))
-                                .child(description),
-                        )
-                        .child(icon("chevron-right", 16., t.text)),
-                    &focus,
-                    px(20.),
-                    px(0.),
-                    cx,
-                )
-                .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(focus))
-                .on_click(cx.listener(|this, _, _, cx| this.load(cx)));
-                let memory = self.memory_section(window, cx);
-                let writing = self.writing_section(window, cx);
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(33.))
-                    .child(div().h(px(36.)).flex().items_center().child(text(
-                        "Personalization",
-                        28.,
-                        33.6,
-                        500.,
-                        t.text,
-                    )))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(40.))
-                            .child(memory)
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .child(
-                                        div().h(px(46.)).pb(px(6.)).flex().items_center().child(
-                                            text("Custom instructions", 14., 21., 500., t.text),
-                                        ),
-                                    )
-                                    .child(row),
-                            )
-                            .children(writing),
-                    )
-            } else {
-                let body = div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(33.))
-                    .when(document, |d| d.h_full())
-                    .when(!document, |d| {
-                        d.child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(px(4.))
-                                .child(text(instructions_title, 28., 33.6, 500., t.text))
-                                .child(description),
-                        )
-                    });
-                let mut editor_body = div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(6.))
-                    .when(document, |d| d.h_full());
-                if self.has_override {
-                    let warning_surface: Hsla = match t.appearance {
-                        theme::Appearance::Dark => gpui::rgb(0x281105).into(),
-                        theme::Appearance::Light => gpui::rgb(0xfff5f0).into(),
-                    };
-                    editor_body = editor_body.child(
-                        div()
-                            .id("instructions-override")
-                            .relative()
-                            .py(px(16.))
-                            .pl(px(20.))
-                            .pr(px(12.))
-                            .flex()
-                            .items_center()
-                            .gap(px(12.))
-                            .child(shapes::decoration(shapes::Decoration {
-                                radius: gpui::Corners::all(px(25.)),
-                                corner: shapes::Corner::Squircle,
-                                fill: Some(t.surface),
-                                shadows: vec![
-                                    crate::composer::shadow(t.border_strong, 0., 0., 0.5, false),
-                                    crate::composer::shadow(
-                                        gpui::black().opacity(0.05),
-                                        0.,
-                                        2.,
-                                        0.,
-                                        false,
-                                    ),
-                                    crate::composer::shadow(
-                                        gpui::black().opacity(0.02),
-                                        4.,
-                                        6.,
-                                        0.,
-                                        false,
-                                    ),
-                                ],
-                                ..Default::default()
-                            }))
-                            .child(shapes::decoration(shapes::Decoration {
-                                radius: gpui::Corners::all(px(25.)),
-                                corner: shapes::Corner::Squircle,
-                                fill: Some(warning_surface.opacity(0.3)),
-                                ..Default::default()
-                            }))
-                            .child(div().pt(px(2.)).child(icon(
-                                "instructions-warning",
-                                18.,
-                                t.text_warning,
-                            )))
-                            .child(
-                                text(
-                                    "These instructions are overridden by AGENTS.override.md",
-                                    13.,
-                                    21.125,
-                                    430.,
-                                    t.text,
-                                )
-                                .flex_1()
-                                .min_w_0()
-                                .whitespace_normal(),
-                            ),
-                    );
-                }
-                if self.loading {
-                    editor_body = editor_body.child(
-                        div()
-                            .id("instructions-loading")
-                            .role(gpui::Role::Status)
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(icon("sidebar-cmd-spinner", 16., t.text_secondary))
-                            .child(text(
-                                "Loading instructions…",
-                                14.,
-                                20.,
-                                430.,
-                                t.text_secondary,
-                            )),
-                    );
-                } else if self.load_error {
-                    editor_body = editor_body.child(
-                        div()
-                            .id("instructions-load-error")
-                            .role(gpui::Role::Alert)
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .child(text(
-                                "Unable to load instructions",
-                                14.,
-                                20.,
-                                430.,
-                                t.text_secondary,
-                            ))
-                            .child(
-                                control(
-                                    ("instructions-retry", "Retry"),
-                                    t.list_hover,
-                                    t.text,
-                                    true,
-                                    window,
-                                    cx,
-                                )
-                                .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
-                            ),
-                    );
-                } else if let Some(editor) = self.editor.clone() {
-                    editor_body =
-                        editor_body.child(if self.unified_instructions && !self.show_source {
-                            let source = editor.read(cx).field_text();
-                            crate::screens::thread::view::markdown_preview(source, window, &t)
-                                .into_any_element()
-                        } else {
-                            div()
-                                .when(document, |d| d.h_full())
-                                .child(editor)
-                                .into_any_element()
-                        });
-                }
-                body.child(editor_body)
-            };
+        let content = if !self.opened {
+            self.entry_page(description, instructions_title, window, cx)
+        } else {
+            self.editor_page(description, instructions_title, window, cx)
+        };
         div()
             .size_full()
             .font_family(SANS)
@@ -1194,13 +1223,13 @@ impl Render for Personalization {
                     .id("personalization-page")
                     .overflow_y_scroll()
                     .flex_1()
-                    .pt(px(if document { 40. } else { 28. }))
-                    .px(px(if document { 0. } else { 20. }))
+                    .pt(px(top))
+                    .px(px(side))
                     .child(
                         div()
                             .mx_auto()
                             .w_full()
-                            .max_w(px(if document { 768. } else { 728. }))
+                            .max_w(px(width))
                             .when(document, |d| d.h_full())
                             .child(content),
                     ),

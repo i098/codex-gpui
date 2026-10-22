@@ -591,6 +591,158 @@ impl Dialog {
         } else {
             "Set up writing style"
         };
+        let body = self.writing_body(busy, t, cx);
+        div()
+            .size_full()
+            .relative()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w_full()
+                    .h(px(217.))
+                    .child(draw_artwork(
+                        writing.artwork.clone(),
+                        if t.appearance == theme::Appearance::Dark {
+                            &WRITING_ARTWORK_DARK
+                        } else {
+                            &WRITING_ARTWORK_LIGHT
+                        },
+                        px(20.),
+                        shapes::Corner::Squircle,
+                    )),
+            )
+            .child(
+                div()
+                    .relative()
+                    .flex_none()
+                    .pt(px(32.))
+                    .flex()
+                    .justify_center()
+                    .child(
+                        div()
+                            .size(px(72.))
+                            .relative()
+                            .child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(px(20.)),
+                                corner: shapes::Corner::Squircle,
+                                fill: Some(t.surface),
+                                border: Some((px(1.), t.border)),
+                                shadows: vec![crate::composer::shadow(
+                                    t.shadow_sm,
+                                    1.,
+                                    2.,
+                                    -1.,
+                                    false,
+                                )],
+                                ..Default::default()
+                            }))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(icon("writing-style", 32., t.text)),
+                    ),
+            )
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(16.))
+                    .px(px(32.))
+                    .pt(px(24.))
+                    .pb(px(16.))
+                    .child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(text(heading, 24., 28.8, 600., t.text))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    .gap(px(1.3))
+                                    .child(text(
+                                        "ChatGPT uses your chats and Library files to write in your style.",
+                                        14.,
+                                        21.,
+                                        430.,
+                                        t.text_secondary,
+                                    ))
+                                    .child(
+                                        self.writing_control(
+                                            "writing-manage",
+                                            "Manage".into(),
+                                            !busy,
+                                            WritingAction::Manage,
+                                            cx,
+                                        )
+                                        .bg(gpui::transparent_black())
+                                        .text_color(t.text_secondary)
+                                        .px(px(0.))
+                                        .h(px(21.))
+                                        .line_height(px(21.))
+                                        .underline(),
+                                    ),
+                            ),
+                    )
+                    .child(body)
+                    .child(
+                        self.writing_control(
+                            "writing-show-me",
+                            "Show me".into(),
+                            !busy,
+                            WritingAction::Sample,
+                            cx,
+                        )
+                        .flex_none()
+                        .w_full()
+                        .h(px(44.))
+                        .border_1()
+                        .border_color(t.border)
+                        .rounded(px(9999.))
+                        .bg(t.button_primary_solid)
+                        .text_size(px(13.))
+                        .line_height(px(18.5714))
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(if t.appearance == theme::Appearance::Dark {
+                            gpui::rgb(0x2d2d2d).into()
+                        } else {
+                            t.text_inverse
+                        }),
+                    ),
+            )
+            .child(
+                div()
+                    .id("writing-close")
+                    .role(gpui::Role::Button)
+                    .aria_label("Close dialog")
+                    .track_focus(&self.controls[0])
+                    .absolute()
+                    .right(px(12.))
+                    .top(px(12.))
+                    .size(px(32.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("close", 20., t.text.opacity(0.8)))
+                    .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
+            )
+    }
+
+    /// The Writing style dialog's scrolling body: the category list, one category's apps,
+    /// the loading state and the retry.
+    fn writing_body(&self, busy: bool, t: &Theme, cx: &Context<Self>) -> Stateful<Div> {
+        let writing = self.writing.as_ref().expect("Writing dialog state");
         let mut body = div()
             .id("writing-setup-body")
             .flex_1()
@@ -763,152 +915,9 @@ impl Dialog {
                     )),
             );
         }
-        div()
-            .size_full()
-            .relative()
-            .flex()
-            .flex_col()
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .w_full()
-                    .h(px(217.))
-                    .child(draw_artwork(
-                        writing.artwork.clone(),
-                        if t.appearance == theme::Appearance::Dark {
-                            &WRITING_ARTWORK_DARK
-                        } else {
-                            &WRITING_ARTWORK_LIGHT
-                        },
-                        px(20.),
-                        shapes::Corner::Squircle,
-                    )),
-            )
-            .child(
-                div()
-                    .relative()
-                    .flex_none()
-                    .pt(px(32.))
-                    .flex()
-                    .justify_center()
-                    .child(
-                        div()
-                            .size(px(72.))
-                            .relative()
-                            .child(shapes::decoration(shapes::Decoration {
-                                radius: Corners::all(px(20.)),
-                                corner: shapes::Corner::Squircle,
-                                fill: Some(t.surface),
-                                border: Some((px(1.), t.border)),
-                                shadows: vec![crate::composer::shadow(
-                                    t.shadow_sm,
-                                    1.,
-                                    2.,
-                                    -1.,
-                                    false,
-                                )],
-                                ..Default::default()
-                            }))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(icon("writing-style", 32., t.text)),
-                    ),
-            )
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(16.))
-                    .px(px(32.))
-                    .pt(px(24.))
-                    .pb(px(16.))
-                    .child(
-                        div()
-                            .flex_none()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(text(heading, 24., 28.8, 600., t.text))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .items_center()
-                                    .gap(px(1.3))
-                                    .child(text(
-                                        "ChatGPT uses your chats and Library files to write in your style.",
-                                        14.,
-                                        21.,
-                                        430.,
-                                        t.text_secondary,
-                                    ))
-                                    .child(
-                                        self.writing_control(
-                                            "writing-manage",
-                                            "Manage".into(),
-                                            !busy,
-                                            WritingAction::Manage,
-                                            cx,
-                                        )
-                                        .bg(gpui::transparent_black())
-                                        .text_color(t.text_secondary)
-                                        .px(px(0.))
-                                        .h(px(21.))
-                                        .line_height(px(21.))
-                                        .underline(),
-                                    ),
-                            ),
-                    )
-                    .child(body)
-                    .child(
-                        self.writing_control(
-                            "writing-show-me",
-                            "Show me".into(),
-                            !busy,
-                            WritingAction::Sample,
-                            cx,
-                        )
-                        .flex_none()
-                        .w_full()
-                        .h(px(44.))
-                        .border_1()
-                        .border_color(t.border)
-                        .rounded(px(9999.))
-                        .bg(t.button_primary_solid)
-                        .text_size(px(13.))
-                        .line_height(px(18.5714))
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(if t.appearance == theme::Appearance::Dark {
-                            gpui::rgb(0x2d2d2d).into()
-                        } else {
-                            t.text_inverse
-                        }),
-                    ),
-            )
-            .child(
-                div()
-                    .id("writing-close")
-                    .role(gpui::Role::Button)
-                    .aria_label("Close dialog")
-                    .track_focus(&self.controls[0])
-                    .absolute()
-                    .right(px(12.))
-                    .top(px(12.))
-                    .size(px(32.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(icon("close", 20., t.text.opacity(0.8)))
-                    .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
-            )
+        body
     }
+
     /// `Log out?` for the signed-in account `email`.
     pub fn logout(email: Option<String>, cx: &mut Context<Self>) -> Self {
         Self {

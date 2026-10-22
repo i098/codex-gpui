@@ -4134,6 +4134,84 @@ impl Root {
         }
     }
 
+    /// Reads the personal instructions for `view`'s load `generation`.
+    fn load_instructions(
+        &mut self,
+        view: Entity<settings::personalization::Personalization>,
+        generation: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            host.fetch(&host::Request::post(
+                "codex-agents-md",
+                Some(json!({"hostId": "local"})),
+            ))
+            .and_then(|response| host::json_body(&response))
+            .map_err(|error| error.to_string())
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = read.await;
+            this.update_in(cx, |this, window, cx| {
+                if this
+                    .settings_page
+                    .as_ref()
+                    .is_some_and(|page| page.read(cx).personalization == view)
+                    && view.read(cx).opened()
+                {
+                    view.update(cx, |view, cx| view.loaded(generation, result, window, cx));
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Writes the personal instructions and reports the result on `view`.
+    fn save_instructions(
+        &mut self,
+        view: Entity<settings::personalization::Personalization>,
+        contents: String,
+        cx: &mut Context<Self>,
+    ) {
+        let host = self.host.clone();
+        let params = json!({"hostId": "local", "contents": contents});
+        let write = cx.background_spawn(async move {
+            host.fetch(&host::Request::post("codex-agents-md-save", Some(params)))
+                .and_then(|response| host::json_body(&response))
+                .and_then(|value| {
+                    anyhow::ensure!(value["path"].is_string(), "saved instructions have no path");
+                    Ok(())
+                })
+        });
+        cx.spawn(async move |this, cx| {
+            let result = write.await;
+            this.update(cx, |this, cx| {
+                if !this
+                    .settings_page
+                    .as_ref()
+                    .is_some_and(|page| page.read(cx).personalization == view)
+                {
+                    return;
+                }
+                match result {
+                    Ok(()) => {
+                        view.update(cx, |view, cx| view.saved(contents, cx));
+                        this.toast(Toast::success("Instructions updated"), cx);
+                    }
+                    Err(error) => {
+                        eprintln!("codex-gpui: save personal instructions: {error:#}");
+                        view.update(cx, |view, cx| view.save_failed(cx));
+                        this.toast(Toast::danger("Unable to save instructions"), cx);
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn instructions_event(
         &mut self,
         event: &settings::personalization::Event,
@@ -4146,72 +4224,10 @@ impl Root {
         let view = page.read(cx).personalization.clone();
         match event {
             settings::personalization::Event::Load(generation) => {
-                let generation = *generation;
-                let host = self.host.clone();
-                let read = cx.background_spawn(async move {
-                    host.fetch(&host::Request::post(
-                        "codex-agents-md",
-                        Some(json!({"hostId": "local"})),
-                    ))
-                    .and_then(|response| host::json_body(&response))
-                    .map_err(|error| error.to_string())
-                });
-                cx.spawn_in(window, async move |this, cx| {
-                    let result = read.await;
-                    this.update_in(cx, |this, window, cx| {
-                        if this
-                            .settings_page
-                            .as_ref()
-                            .is_some_and(|page| page.read(cx).personalization == view)
-                            && view.read(cx).opened()
-                        {
-                            view.update(cx, |view, cx| view.loaded(generation, result, window, cx));
-                        }
-                    })
-                    .ok();
-                })
-                .detach();
+                self.load_instructions(view, *generation, window, cx)
             }
             settings::personalization::Event::Save(contents) => {
-                let contents = contents.clone();
-                let host = self.host.clone();
-                let params = json!({"hostId": "local", "contents": contents});
-                let write = cx.background_spawn(async move {
-                    host.fetch(&host::Request::post("codex-agents-md-save", Some(params)))
-                        .and_then(|response| host::json_body(&response))
-                        .and_then(|value| {
-                            anyhow::ensure!(
-                                value["path"].is_string(),
-                                "saved instructions have no path"
-                            );
-                            Ok(())
-                        })
-                });
-                cx.spawn(async move |this, cx| {
-                    let result = write.await;
-                    this.update(cx, |this, cx| {
-                        if !this
-                            .settings_page
-                            .as_ref()
-                            .is_some_and(|page| page.read(cx).personalization == view)
-                        {
-                            return;
-                        }
-                        match result {
-                            Ok(()) => {
-                                view.update(cx, |view, cx| view.saved(contents, cx));
-                                this.toast(Toast::success("Instructions updated"), cx);
-                            }
-                            Err(error) => {
-                                eprintln!("codex-gpui: save personal instructions: {error:#}");
-                                view.update(cx, |view, cx| view.save_failed(cx));
-                                this.toast(Toast::danger("Unable to save instructions"), cx);
-                            }
-                        }
-                    })
-                    .ok();
-                })
-                .detach();
+                self.save_instructions(view, contents.clone(), cx)
             }
             settings::personalization::Event::Leave => {
                 if self.instructions_changed(cx) {

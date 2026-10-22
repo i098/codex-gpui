@@ -313,6 +313,25 @@ fn installed_writing(
     Ok(found.map(|index| plugins.swap_remove(index)))
 }
 
+/// The index of the first required authorization whose app is not accessible yet.
+fn missing_writing_authorization(
+    host: &dyn Host,
+    bridge: &Bridge,
+    preference: &WritingPreference,
+    authorization: &[WritingAuthorization],
+) -> Result<Option<usize>> {
+    current_writing_account(host, preference)?;
+    let apps = available_apps(bridge)?;
+    Ok(authorization.iter().position(|required| {
+        !apps.iter().any(|app| {
+            app["id"]
+                .as_str()
+                .is_some_and(|id| same_app(id, &required.app_id))
+                && app["isAccessible"] == true
+        })
+    }))
+}
+
 fn read_writing_for(host: &dyn Host, identity: Identity) -> Result<WritingPreference> {
     let canonical = authenticated(
         host,
@@ -518,6 +537,82 @@ fn app_key(id: &str) -> impl Iterator<Item = u8> + '_ {
         .map(|byte| byte.to_ascii_lowercase())
 }
 
+/// The original's connection state of one writing source: its plugin, the installed entry,
+/// the app list and the connector links.
+fn writing_connection(
+    plugin: &Value,
+    installed: Option<&Value>,
+    app_ids: &[String],
+    apps: &[Value],
+    links: &[Value],
+) -> WritingConnection {
+    let (accessible, disabled_app) = app_state(app_ids, apps);
+    let (active_links, reauth) = link_state(app_ids, links);
+    if app_ids.is_empty()
+        || plugin["status"] != "ENABLED"
+        || plugin["installation_policy"] == "NOT_AVAILABLE"
+    {
+        return WritingConnection::Unavailable;
+    }
+    if installed.is_some_and(|plugin| plugin["enabled"] == false) || disabled_app {
+        return WritingConnection::Disabled;
+    }
+    let installed = installed.is_some();
+    if installed && active_links && accessible {
+        return WritingConnection::Connected;
+    }
+    if reauth {
+        return WritingConnection::Reconnect;
+    }
+    match (installed, active_links) {
+        (true, true) => WritingConnection::Refresh,
+        (true, false) => WritingConnection::Connect,
+        (false, _) => WritingConnection::Install,
+    }
+}
+
+/// Whether every app is accessible and enabled, and whether any matching app is disabled.
+fn app_state(app_ids: &[String], apps: &[Value]) -> (bool, bool) {
+    let accessible = app_ids.iter().all(|id| {
+        apps.iter().any(|app| {
+            app["id"].as_str().is_some_and(|key| same_app(key, id))
+                && app["isAccessible"] == true
+                && app["isEnabled"] == true
+        })
+    });
+    let disabled = apps.iter().any(|app| {
+        app["isEnabled"] == false
+            && app["id"]
+                .as_str()
+                .is_some_and(|id| app_ids.iter().any(|key| same_app(key, id)))
+    });
+    (accessible, disabled)
+}
+
+/// Whether every app has an active, visible, explicit link, and whether any of its links
+/// needs reauthorization.
+fn link_state(app_ids: &[String], links: &[Value]) -> (bool, bool) {
+    let active = app_ids.iter().all(|id| {
+        links.iter().any(|link| {
+            link["visibility"] != "HIDDEN"
+                && !link["id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("implicit_link::"))
+                && link["connector_id"]
+                    .as_str()
+                    .is_some_and(|key| same_app(key, id))
+                && link["auth_status"].as_str().unwrap_or("ACTIVE") == "ACTIVE"
+        })
+    });
+    let reauth = links.iter().any(|link| {
+        link["auth_status"] == "REAUTH_REQUIRED"
+            && link["connector_id"]
+                .as_str()
+                .is_some_and(|key| app_ids.iter().any(|id| same_app(id, key)))
+    });
+    (active, reauth)
+}
+
 fn same_app(left: &str, right: &str) -> bool {
     app_key(left).eq(app_key(right))
 }
@@ -639,53 +734,7 @@ pub fn read_writing_apps(
             .iter()
             .copied()
             .find(|entry| entry["remotePluginId"] == id || entry["id"] == id);
-        let accessible = app_ids.iter().all(|id| {
-            apps.iter().any(|app| {
-                app["id"].as_str().is_some_and(|key| same_app(key, id))
-                    && app["isAccessible"] == true
-                    && app["isEnabled"] == true
-            })
-        });
-        let active_links = app_ids.iter().all(|id| {
-            links.iter().any(|link| {
-                link["visibility"] != "HIDDEN"
-                    && !link["id"]
-                        .as_str()
-                        .is_some_and(|id| id.starts_with("implicit_link::"))
-                    && link["connector_id"]
-                        .as_str()
-                        .is_some_and(|key| same_app(key, id))
-                    && link["auth_status"].as_str().unwrap_or("ACTIVE") == "ACTIVE"
-            })
-        });
-        let reauth = links.iter().any(|link| {
-            link["auth_status"] == "REAUTH_REQUIRED"
-                && link["connector_id"]
-                    .as_str()
-                    .is_some_and(|key| app_ids.iter().any(|id| same_app(id, key)))
-        });
-        let disabled_app = apps
-            .iter()
-            .filter(matching)
-            .any(|app| app["isEnabled"] == false);
-        let connection = if app_ids.is_empty()
-            || plugin["status"] != "ENABLED"
-            || plugin["installation_policy"] == "NOT_AVAILABLE"
-        {
-            WritingConnection::Unavailable
-        } else if installed.is_some_and(|plugin| plugin["enabled"] == false) || disabled_app {
-            WritingConnection::Disabled
-        } else if installed.is_some() && active_links && accessible {
-            WritingConnection::Connected
-        } else if reauth {
-            WritingConnection::Reconnect
-        } else if installed.is_some() && active_links {
-            WritingConnection::Refresh
-        } else if installed.is_some() {
-            WritingConnection::Connect
-        } else {
-            WritingConnection::Install
-        };
+        let connection = writing_connection(&plugin, installed, &app_ids, &apps, links);
         sources.push(WritingApp {
             plugin_id: id,
             name: plugin["release"]["display_name"]
@@ -830,16 +879,12 @@ impl Root {
                     let preference = preference.clone();
                     let authorization = authorization.clone();
                     executor.spawn(async move {
-                        current_writing_account(host.as_ref(), &preference)?;
-                        let apps = available_apps(&bridge)?;
-                        Ok::<_, anyhow::Error>(authorization.iter().position(|required| {
-                            !apps.iter().any(|app| {
-                                app["id"]
-                                    .as_str()
-                                    .is_some_and(|id| same_app(id, &required.app_id))
-                                    && app["isAccessible"] == true
-                            })
-                        }))
+                        missing_writing_authorization(
+                            host.as_ref(),
+                            &bridge,
+                            &preference,
+                            &authorization,
+                        )
                     })
                 }
                 .await;
@@ -893,45 +938,55 @@ impl Root {
                 })
                 .await;
             this.update_in(cx, |this, window, cx| {
-                if this.dialog.as_ref() != Some(&dialog) {
-                    return;
-                }
-                match result {
-                    Ok(result)
-                        if result.error.is_none()
-                            && result.authorization.is_none()
-                            && result
-                                .preference
-                                .as_ref()
-                                .is_ok_and(|preference| preference.enabled) =>
-                    {
-                        if let Some(skills) = result.skills {
-                            this.skills = skills;
-                        }
-                        view.update(cx, |view, cx| {
-                            view.writing_changed(
-                                result
-                                    .preference
-                                    .map(Some)
-                                    .map_err(|error| error.to_string()),
-                                None,
-                                cx,
-                            )
-                        });
-                        this.dialog = None;
-                        this.open_writing_setup(window, cx);
-                    }
-                    _ => dialog.update(cx, |dialog, cx| {
-                        dialog.writing_failed(
-                            "Couldn't finish Writing style setup. Try again.".into(),
-                            cx,
-                        )
-                    }),
-                }
+                this.finish_writing_authorization(&dialog, &view, result, window, cx)
             })
             .ok();
         })
         .detach();
+    }
+
+    /// Applies the Writing style write after every app is authorized, or reports the
+    /// failure in `dialog`.
+    fn finish_writing_authorization(
+        &mut self,
+        dialog: &gpui::Entity<Dialog>,
+        view: &gpui::Entity<ui::screens::settings::personalization::Personalization>,
+        result: Result<WritingWrite>,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.dialog.as_ref() != Some(dialog) {
+            return;
+        }
+        match result {
+            Ok(result)
+                if result.error.is_none()
+                    && result.authorization.is_none()
+                    && result
+                        .preference
+                        .as_ref()
+                        .is_ok_and(|preference| preference.enabled) =>
+            {
+                if let Some(skills) = result.skills {
+                    self.skills = skills;
+                }
+                view.update(cx, |view, cx| {
+                    view.writing_changed(
+                        result
+                            .preference
+                            .map(Some)
+                            .map_err(|error| error.to_string()),
+                        None,
+                        cx,
+                    )
+                });
+                self.dialog = None;
+                self.open_writing_setup(window, cx);
+            }
+            _ => dialog.update(cx, |dialog, cx| {
+                dialog.writing_failed("Couldn't finish Writing style setup. Try again.".into(), cx)
+            }),
+        }
     }
 
     pub(super) fn open_writing_setup(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
@@ -1021,23 +1076,7 @@ impl Root {
             let operation = operation.await;
             let poll = this
                 .update_in(cx, |this, _, cx| {
-                    if this.dialog.as_ref() != Some(&dialog) {
-                        return None;
-                    }
-                    match operation {
-                        Ok(url) => {
-                            if let Some(url) = &url {
-                                cx.open_url(url);
-                            }
-                            Some(url.is_some())
-                        }
-                        Err(error) => {
-                            dialog.update(cx, |dialog, cx| {
-                                dialog.writing_failed(error.to_string(), cx)
-                            });
-                            None
-                        }
-                    }
+                    this.start_writing_connection(&dialog, operation, cx)
                 })
                 .ok()
                 .flatten();
@@ -1088,6 +1127,33 @@ impl Root {
             }
         })
         .detach();
+    }
+
+    /// Opens the connection URL that the operation returned, if any. Returns whether to poll
+    /// for the connection, or `None` when the dialog closed or the operation failed.
+    fn start_writing_connection(
+        &self,
+        dialog: &gpui::Entity<Dialog>,
+        operation: Result<Option<String>>,
+        cx: &mut Context<Self>,
+    ) -> Option<bool> {
+        if self.dialog.as_ref() != Some(dialog) {
+            return None;
+        }
+        match operation {
+            Ok(url) => {
+                if let Some(url) = &url {
+                    cx.open_url(url);
+                }
+                Some(url.is_some())
+            }
+            Err(error) => {
+                dialog.update(cx, |dialog, cx| {
+                    dialog.writing_failed(error.to_string(), cx)
+                });
+                None
+            }
+        }
     }
 
     pub(super) fn start_writing_sample(
@@ -1209,64 +1275,86 @@ impl Root {
         cx.spawn_in(window, async move |this, cx| {
             let result = write.await;
             this.update_in(cx, |this, window, cx| {
-                if !this
-                    .settings_page
-                    .as_ref()
-                    .is_some_and(|page| page.read(cx).personalization == view)
-                {
-                    return;
-                }
-                let show_setup = enabled
-                    && result.error.is_none()
-                    && result.authorization.is_none()
-                    && result
-                        .preference
-                        .as_ref()
-                        .is_ok_and(|preference| preference.enabled);
-                let authorization = if result.error.is_none() && result.preference.is_ok() {
-                    result.authorization
-                } else {
-                    None
-                };
-                let mut error = result.error;
-                if authorization.is_some() && this.dialog.is_some() {
-                    error = Some("Close the open dialog and retry Writing setup".into());
-                }
-                if let Some(error) = &error {
-                    eprintln!("codex-gpui: update Writing style: {error}");
-                }
-                if let Some(skills) = result.skills {
-                    this.skills = skills;
-                }
-                view.update(cx, |view, cx| {
-                    view.writing_changed(
-                        result
-                            .preference
-                            .map(Some)
-                            .map_err(|error| error.to_string()),
-                        error,
-                        cx,
-                    )
-                });
-                if let Some(authorization) = authorization {
-                    if this.dialog.is_some() {
-                        return;
-                    }
-                    let dialog = cx.new(|cx| Dialog::writing_authorization(authorization, cx));
-                    this.show_dialog(dialog.clone(), window, cx);
-                    if this.dialog.as_ref() == Some(&dialog) {
-                        view.update(cx, |view, cx| view.writing_awaiting_authorization(cx));
-                        this.authorize_writing(dialog, window, cx);
-                    }
-                    return;
-                }
-                if show_setup {
-                    this.open_writing_setup(window, cx);
-                }
+                this.apply_writing_write(&view, enabled, result, window, cx)
             })
             .ok();
         })
         .detach();
+    }
+
+    /// Shows a Writing style write on `view`, then opens the authorization dialog or the
+    /// setup that it needs.
+    fn apply_writing_write(
+        &mut self,
+        view: &gpui::Entity<ui::screens::settings::personalization::Personalization>,
+        enabled: bool,
+        result: WritingWrite,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self
+            .settings_page
+            .as_ref()
+            .is_some_and(|page| page.read(cx).personalization == *view)
+        {
+            return;
+        }
+        let show_setup = enabled
+            && result.error.is_none()
+            && result.authorization.is_none()
+            && result
+                .preference
+                .as_ref()
+                .is_ok_and(|preference| preference.enabled);
+        let authorization = if result.error.is_none() && result.preference.is_ok() {
+            result.authorization
+        } else {
+            None
+        };
+        let mut error = result.error;
+        if authorization.is_some() && self.dialog.is_some() {
+            error = Some("Close the open dialog and retry Writing setup".into());
+        }
+        if let Some(error) = &error {
+            eprintln!("codex-gpui: update Writing style: {error}");
+        }
+        if let Some(skills) = result.skills {
+            self.skills = skills;
+        }
+        view.update(cx, |view, cx| {
+            view.writing_changed(
+                result
+                    .preference
+                    .map(Some)
+                    .map_err(|error| error.to_string()),
+                error,
+                cx,
+            )
+        });
+        if let Some(authorization) = authorization {
+            self.open_writing_authorization(view, authorization, window, cx);
+        } else if show_setup {
+            self.open_writing_setup(window, cx);
+        }
+    }
+
+    /// Opens the authorization dialog unless another dialog is open, then waits for it.
+    fn open_writing_authorization(
+        &mut self,
+        view: &gpui::Entity<ui::screens::settings::personalization::Personalization>,
+        authorization: Arc<Vec<WritingAuthorization>>,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.dialog.is_some() {
+            return;
+        }
+        let dialog = cx.new(|cx| Dialog::writing_authorization(authorization, cx));
+        self.show_dialog(dialog.clone(), window, cx);
+        if self.dialog.as_ref() == Some(&dialog) {
+            view.update(cx, |view, cx| view.writing_awaiting_authorization(cx));
+            self.authorize_writing(dialog, window, cx);
+        }
     }
 
     pub(super) fn refresh_memory(&mut self, cx: &mut Context<Self>) {
