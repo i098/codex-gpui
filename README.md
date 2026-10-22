@@ -113,6 +113,14 @@ Closing the socket fails pending requests, and dropping the bridge closes its co
 TLS uses an explicit Ring provider with standard and system trust roots.
 The vendored Tungstenite 0.28 package omits raw handshake-request trace output because it contains the authentication token.
 
+`Bridge::start_cloud_environment_onboarding(account_id, config_id, params)` starts a thread bound to a saved cloud environment.
+It rejects local connections and a different account before sending the request.
+It replaces local paths with the original deferred onboarding environment, service-tier rules, and plugin metadata.
+Cloud thread start/resume and turn start/add requests follow the original tier and personality rules.
+The onboarding API returns the server JSON without requiring local-thread fields.
+This API does not send the first model turn or finish setup.
+The environment UI and host-aware thread routing remain separate work.
+
 Run `cargo test -p bridge` for real loopback WebSocket exchanges, disconnect handling, and credential checks.
 
 ## Native Computer Use service

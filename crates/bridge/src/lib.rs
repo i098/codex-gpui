@@ -90,15 +90,15 @@ impl Drop for PendingRequest<'_> {
 
 /// Where a [`Bridge`] sends the client's requests, notifications and answers.
 trait Backend: Send {
-    fn send(&mut self, msg: &Value) -> Result<()>;
+    fn send(&mut self, msg: Value) -> Result<()>;
 }
 
 /// Newline-delimited JSON as is: the `codex app-server` transport.
 struct Lines(Box<dyn Write + Send>);
 
 impl Backend for Lines {
-    fn send(&mut self, msg: &Value) -> Result<()> {
-        let mut line = serde_json::to_string(msg)?;
+    fn send(&mut self, msg: Value) -> Result<()> {
+        let mut line = serde_json::to_string(&msg)?;
         line.push('\n');
         self.0.write_all(line.as_bytes())?;
         self.0.flush()?;
@@ -188,6 +188,7 @@ pub struct Bridge {
     initialized: async_lock::Mutex<Option<InitializeResponse>>,
     child: Option<Child>,
     acp: bool,
+    cloud_account_id: Option<String>,
     automation_turns: Mutex<HashMap<String, Arc<AutomationTurn>>>,
     subscribers: Subscribers,
 }
@@ -288,6 +289,7 @@ impl Bridge {
             next_id: AtomicI64::new(1),
             child,
             acp,
+            cloud_account_id: None,
             automation_turns: Mutex::new(HashMap::new()),
             subscribers: sink.subscribers,
         }
@@ -350,7 +352,7 @@ impl Bridge {
             id,
             pending: &self.pending,
         };
-        self.write(&msg)?;
+        self.write(msg)?;
         let result = rx
             .recv()
             .await
@@ -359,15 +361,15 @@ impl Bridge {
     }
 
     pub fn notify(&self, method: &str, params: impl Serialize) -> Result<()> {
-        self.write(&message(method, params)?)
+        self.write(message(method, params)?)
     }
 
     /// Answers a server [`Event::Request`].
     pub fn respond(&self, id: Value, result: impl Serialize) -> Result<()> {
-        self.write(&json!({ "id": id, "result": serde_json::to_value(result)? }))
+        self.write(json!({ "id": id, "result": serde_json::to_value(result)? }))
     }
 
-    fn write(&self, msg: &Value) -> Result<()> {
+    fn write(&self, msg: Value) -> Result<()> {
         self.backend.lock().send(msg)
     }
 
