@@ -1970,12 +1970,12 @@ pub fn with_side_tabs(
     shell.update(cx, |shell, cx| {
         // A panel's tab strip brings its own `New tab`.
         shell.new_tab = panel.is_none();
-        // The thread route's main surface is a composited layer; with the Changes panel,
-        // Chromium composites the surface itself too.
+        // File and Changes panels also composite the surface itself.
         shell.main_composited = true;
-        shell.main_layer = panel
-            .as_ref()
-            .is_some_and(|(view, ..)| view.clone().downcast::<DiffPanel>().is_ok());
+        shell.main_layer = panel.as_ref().is_some_and(|(view, ..)| {
+            view.clone().downcast::<DiffPanel>().is_ok()
+                || view.clone().downcast::<FileView>().is_ok()
+        });
         // A lone thread draws its own px at the surface's right corners.
         shell.main_clips_right = panel.is_none();
         shell.set_main(main, cx);
