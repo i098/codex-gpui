@@ -16,6 +16,7 @@ pub mod qa;
 mod routes;
 pub use routes::Route;
 mod plugins;
+pub mod screenshot;
 mod search;
 mod section_actions;
 mod settings_subtrees;
@@ -156,6 +157,7 @@ pub fn init(cx: &mut App) {
     ui::composer::bind_keys(cx);
     features::init(cx);
     native_menus::init(cx);
+    screenshot::init(cx);
     cx.on_action(|_: &Quit, cx| cx.defer(routes::request_quit));
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
@@ -2095,6 +2097,14 @@ impl Root {
         self.sidebar.update(cx, |s, cx| s.add_thread(thread, cx));
     }
 
+    /// `⌘N`, the `New chat` row and rail Home: Home with an empty, focused composer.
+    fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.new_chat_section = None;
+        self.navigate(Route::Home, window, cx);
+        let composer = self.home.read(cx).composer.clone();
+        composer.update(cx, |c, cx| c.clear_session(cx));
+        window.focus(&composer.focus_handle(cx), cx);
+    }
     /// Opens the Recents row `delta` rows from the open thread; from any other route,
     /// the first row.
     fn step_chat(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
