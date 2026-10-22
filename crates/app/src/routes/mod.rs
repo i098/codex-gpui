@@ -8,6 +8,7 @@ mod mobile;
 mod settings;
 mod thread;
 
+pub(crate) use settings::request_quit;
 pub(crate) use thread::load_thread;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -20,6 +21,7 @@ pub enum Route {
         hotkey: bool,
     },
     Settings,
+    SettingsSubtree(String),
     /// Rail `Scheduled` (`/scheduled`): the Automations page.
     Scheduled,
     /// A sidebar task row (`/scheduled?automationId=<id>`): the task's thread.
@@ -27,6 +29,7 @@ pub enum Route {
     /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
     Mobile,
     Archive,
+    SelectWorkspace,
 }
 
 pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
@@ -52,6 +55,14 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         if route != self.state.route || automation != self.sidebar_automation {
+            if self.instructions_changed(cx) {
+                self.confirm_instructions_leave(
+                    SettingsLeave::Route(route, automation),
+                    window,
+                    cx,
+                );
+                return;
+            }
             self.remember_thread_settings(cx);
             self.back.push((
                 std::mem::replace(&mut self.state.route, route),
@@ -65,6 +76,21 @@ impl Root {
     }
 
     pub(crate) fn step(&mut self, back: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if back && let Some(page) = &self.settings_page {
+            let editor = page.read(cx).personalization.clone();
+            if editor.read(cx).opened() {
+                if self.instructions_changed(cx) {
+                    self.confirm_instructions_leave(SettingsLeave::Editor, window, cx);
+                } else {
+                    editor.update(cx, |editor, cx| editor.discard(cx));
+                }
+                return;
+            }
+        }
+        if self.instructions_changed(cx) {
+            self.confirm_instructions_leave(SettingsLeave::History(back), window, cx);
+            return;
+        }
         self.remember_thread_settings(cx);
         let (from, to) = if back {
             (&mut self.back, &mut self.forward)
@@ -110,7 +136,7 @@ impl Root {
                 self.load_cloud_task(task_id, hotkey, window, cx);
                 None
             }
-            Route::Settings => Some(settings::page(self, cx)),
+            Route::Settings | Route::SettingsSubtree(_) => Some(settings::page(self, window, cx)),
             Route::Scheduled => Some(automations::scheduled(self, cx)),
             Route::Automation(id) => Some(automations::automation(self, id, window, cx)),
             Route::Archive => Some(archive::page(self, cx)),
@@ -118,7 +144,7 @@ impl Root {
                 Some(automations::thread(self, cx))
             }
             Route::Mobile => Some(mobile::page(self, cx)),
-            Route::Home | Route::Thread(_) => None,
+            Route::Home | Route::Thread(_) | Route::SelectWorkspace => None,
         };
         if let Some(sidebar) = &self.scheduled {
             for id in self.automation_updates.keys() {

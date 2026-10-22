@@ -100,6 +100,45 @@ impl AppEdit {
     }
 }
 
+impl AppEdit {
+    fn request(&self, undo: bool) -> (&'static str, Value) {
+        match self {
+            Self::Rename { id, before, after } => (
+                "thread/name/set",
+                json!({"threadId": id, "name": if undo { before } else { after }}),
+            ),
+            Self::Section { id, before, after } => (
+                "thread/section/move",
+                json!({"threadId": id, "sectionId": if undo { before } else { after }, "beforeThreadId": null}),
+            ),
+            Self::Archive { thread, .. } => (
+                if undo {
+                    "thread/unarchive"
+                } else {
+                    "thread/archive"
+                },
+                json!({"threadId": thread.id}),
+            ),
+        }
+    }
+
+    fn completion_message(&self, undo: bool) -> &'static str {
+        match (self, undo) {
+            (Self::Archive { .. }, true) => "Chat restored",
+            (
+                Self::Section {
+                    before: None,
+                    after: Some(_),
+                    ..
+                },
+                true,
+            ) => "Chat unpinned",
+            (_, true) => "Action undone",
+            (_, false) => "Action redone",
+        }
+    }
+}
+
 pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> gpui::Div {
     root.on_action(cx.listener(|this, _: &NextRecentChat, window, cx| {
         this.cycle_recent_chat(1, window, cx);
