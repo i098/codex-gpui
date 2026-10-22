@@ -1,4 +1,4 @@
-use super::super::{HomeSidebar, ListState, PAGE, RetryThreads, load_error};
+use super::super::{HomeSidebar, ListState, PAGE, RetryActivity, RetryThreads, load_error};
 use super::local_date;
 use crate::{focus, icon::icon, sidebar_empty, text};
 use chrono::Days;
@@ -9,11 +9,46 @@ use gpui::{
 use theme::ActiveTheme as _;
 
 impl HomeSidebar {
+    fn pending_activity(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let notice = match self.activity_sources_state {
+            ListState::Ready => return None,
+            ListState::Loading => sidebar_empty("Checking unread chats…", cx).into_any_element(),
+            ListState::Failed => load_error::<RetryActivity>(
+                "Unread chats couldn't be loaded",
+                "retry-activity-sources",
+                window,
+                cx,
+            ),
+        };
+        Some(
+            div()
+                .px(px(8.))
+                .flex()
+                .flex_col()
+                .top_layer()
+                .child(self.activity_heading(
+                    if self.activity_priority {
+                        "Priority"
+                    } else {
+                        "Today"
+                    },
+                    true,
+                    window,
+                    cx,
+                ))
+                .child(notice)
+                .into_any_element(),
+        )
+    }
+
     pub(in crate::screens::sidebar) fn activity_list(
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if let Some(pending) = self.pending_activity(window, cx) {
+            return pending;
+        }
         let pinned_visible = self.activity_pinned
             && self
                 .threads

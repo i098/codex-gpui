@@ -219,7 +219,7 @@ pub enum ListState {
     Failed,
 }
 
-gpui::actions!(sidebar, [RetryThreads, RetryProjects]);
+gpui::actions!(sidebar, [RetryThreads, RetryProjects, RetryActivity]);
 
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -292,6 +292,7 @@ pub struct HomeSidebar {
     activity_archive_supported: bool,
     activity_items: HashSet<String>,
     activity_scheduled_ids: HashSet<String>,
+    pub activity_sources_state: ListState,
     activity_menu: Option<priority::OptionsMenu>,
     activity_button: Bounds<Pixels>,
     worktree_tip: bool,
@@ -388,6 +389,7 @@ impl HomeSidebar {
             activity_archive_supported: true,
             activity_items: HashSet::new(),
             activity_scheduled_ids: HashSet::new(),
+            activity_sources_state: ListState::Ready,
             activity_menu: None,
             activity_button: Bounds::default(),
             worktree_tip: false,

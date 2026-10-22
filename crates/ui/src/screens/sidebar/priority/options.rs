@@ -1,4 +1,4 @@
-use super::super::HomeSidebar;
+use super::super::{HomeSidebar, ListState};
 use super::{ArchiveActivity, OptionsMenu};
 use crate::{icon::icon, text};
 use gpui::{
@@ -31,15 +31,20 @@ impl HomeSidebar {
 
     fn activity_option_enabled(&self, item: usize) -> bool {
         match item {
-            3 => self
-                .unread
-                .iter()
-                .any(|id| self.activity_items.contains(id)),
+            3 => {
+                self.activity_sources_state == ListState::Ready
+                    && self
+                        .unread
+                        .iter()
+                        .any(|id| self.in_priority(id) && self.activity_visible(id))
+            }
             4 => {
                 self.activity_archive_supported
-                    && self.threads.iter().any(|(id, _, _)| {
-                        self.activity_items.contains(id) && self.activity_visible(id)
-                    })
+                    && self.activity_sources_state == ListState::Ready
+                    && self
+                        .threads
+                        .iter()
+                        .any(|(id, _, _)| self.in_priority(id) && self.activity_visible(id))
             }
             _ => true,
         }
@@ -53,14 +58,17 @@ impl HomeSidebar {
             0 => self.activity_priority = !self.activity_priority,
             1 => self.activity_pinned = !self.activity_pinned,
             2 => self.activity_scheduled = !self.activity_scheduled,
-            3 => self.unread.retain(|id| !self.activity_items.contains(id)),
+            3 => {
+                self.unread = std::mem::take(&mut self.unread)
+                    .into_iter()
+                    .filter(|id| !self.in_priority(id) || !self.activity_visible(id))
+                    .collect();
+            }
             4 => {
                 let ids = self
                     .threads
                     .iter()
-                    .filter(|(id, _, _)| {
-                        self.activity_items.contains(id) && self.activity_visible(id)
-                    })
+                    .filter(|(id, _, _)| self.in_priority(id) && self.activity_visible(id))
                     .map(|(id, _, _)| id.clone())
                     .collect();
                 window.dispatch_action(Box::new(ArchiveActivity(ids)), cx);
@@ -205,5 +213,54 @@ impl HomeSidebar {
             .with_priority(4)
             .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::screens::thread::view::Clock;
+    use bridge::types::ThreadListResponse;
+    use gpui::AppContext as _;
+    use std::collections::HashSet;
+
+    #[gpui::test]
+    fn bulk_actions_follow_visible_priority_and_source_readiness(cx: &mut gpui::TestAppContext) {
+        let list: ThreadListResponse = crate::fixture::response("readback.jsonl", "thread/list", 0);
+        let id = list.data[0].id.clone();
+        let sidebar = cx.new(|_| HomeSidebar::new(&list.data, None));
+        sidebar.update(cx, |sidebar, cx| {
+            sidebar.set_unread(&id, cx);
+            sidebar.toggle_activity(
+                Clock {
+                    utc_offset: 0,
+                    pinned_now: Some(list.data[0].updated_at),
+                    elapsed_since: None,
+                },
+                cx,
+            );
+            assert!(!sidebar.activity_option_enabled(3));
+            assert!(!sidebar.activity_option_enabled(4));
+            sidebar.set_scheduled_threads(HashSet::new(), cx);
+            assert!(sidebar.activity_option_enabled(3));
+            assert!(sidebar.activity_option_enabled(4));
+            sidebar.activity_priority = false;
+            assert!(!sidebar.activity_option_enabled(3));
+            assert!(!sidebar.activity_option_enabled(4));
+            sidebar.activity_priority = true;
+            sidebar.pinned.insert(id.clone());
+            sidebar.activity_pinned = true;
+            assert!(!sidebar.activity_option_enabled(4));
+            sidebar.activity_pinned = false;
+            assert!(sidebar.activity_option_enabled(4));
+            sidebar.set_scheduled_threads(HashSet::from([id.clone()]), cx);
+            assert!(!sidebar.activity_option_enabled(4));
+            sidebar.activity_scheduled = true;
+            sidebar.set_running(&id, true, cx);
+            assert!(sidebar.activity_option_enabled(4));
+            sidebar.activity_sources_state = ListState::Failed;
+            assert!(!sidebar.activity_option_enabled(3));
+            assert!(!sidebar.activity_option_enabled(4));
+        });
     }
 }

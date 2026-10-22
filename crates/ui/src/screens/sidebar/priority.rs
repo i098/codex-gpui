@@ -1,4 +1,4 @@
-use super::{HomeSidebar, PAGE};
+use super::{HomeSidebar, ListState, PAGE};
 use crate::screens::thread::view::Clock;
 use chrono::{DateTime, Days, NaiveDate};
 use gpui::{Action, Context, EventEmitter, FocusHandle, point, px};
@@ -29,11 +29,14 @@ impl HomeSidebar {
         };
         self.activity_items.clear();
         self.activity_recency.clear();
+        self.activity_scheduled_ids.clear();
+        self.activity_sources_state = ListState::Ready;
         self.activity_menu = None;
         self.menu = None;
         self.limit = PAGE;
         self.scroll.set_offset(point(px(0.), px(0.)));
         if self.activity_clock.is_some() {
+            self.activity_sources_state = ListState::Loading;
             self.activity_started_at = clock.now();
             for (id, _, _) in &self.threads {
                 if self.unread.contains(id) || self.running.contains_key(id) {
@@ -52,6 +55,7 @@ impl HomeSidebar {
 
     pub fn set_scheduled_threads(&mut self, ids: HashSet<String>, cx: &mut Context<Self>) {
         self.activity_scheduled_ids = ids;
+        self.activity_sources_state = ListState::Ready;
         cx.notify();
     }
 

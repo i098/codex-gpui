@@ -561,6 +561,10 @@ fn project_load_failure_retries_the_owned_state_file() -> Result<()> {
 fn activity_opens_running_chats_and_shortcut_restores_the_sidebar() -> Result<()> {
     let mut fx = Fx::new()?;
     fx.click((282., 70.))?;
+    fx.wait("activity sources", |fx| {
+        fx.read(|r, cx| r.sidebar().read(cx).activity_sources_state)
+            == ui::screens::sidebar::ListState::Ready
+    })?;
     for theme in ["dark", "light"] {
         fx.action(Box::new(ui::SetTheme(theme)))?;
         fx.theme = theme;
@@ -600,6 +604,10 @@ fn activity_opens_running_chats_and_shortcut_restores_the_sidebar() -> Result<()
 fn activity_options_change_the_visible_list_without_navigation() -> Result<()> {
     let mut fx = Fx::new()?;
     fx.click((282., 70.))?;
+    fx.wait("activity sources", |fx| {
+        fx.read(|r, cx| r.sidebar().read(cx).activity_sources_state)
+            == ui::screens::sidebar::ListState::Ready
+    })?;
     fx.click((314., 184.))?;
     fx.keys("enter")?;
     assert_eq!(fx.route(), app::Route::Home);
@@ -615,6 +623,10 @@ fn activity_mark_read_keeps_the_snapshot_until_clear_read() -> Result<()> {
         r.sidebar().update(cx, |s, cx| s.set_unread(SUBTRACT, cx))
     });
     fx.click((282., 70.))?;
+    fx.wait("activity sources", |fx| {
+        fx.read(|r, cx| r.sidebar().read(cx).activity_sources_state)
+            == ui::screens::sidebar::ListState::Ready
+    })?;
     fx.click((314., 184.))?;
     fx.keys("down down down enter")?;
     assert!(!fx.read(|r, cx| r.sidebar().read(cx).unread.iter().any(|id| id == SUBTRACT)));
@@ -648,7 +660,7 @@ impl gpui::Render for ArchivePrompt {
 }
 
 #[test]
-fn activity_archive_requires_confirmation_and_keeps_recent_chats() -> Result<()> {
+fn activity_archive_confirms_running_chats_and_keeps_recent_chats() -> Result<()> {
     use gpui::AppContext as _;
     use std::{cell::RefCell, rc::Rc};
     let mut lines = script(None, |_| {})?;
@@ -666,9 +678,17 @@ fn activity_archive_requires_confirmation_and_keeps_recent_chats() -> Result<()>
         });
     });
     fx.root.update(&mut fx.cx, |r, cx| {
+        r.on_event(Event::Notification {
+            method: "thread/status/changed".into(),
+            params: json!({"threadId": SUBTRACT, "status": {"type": "active", "activeFlags": []}}),
+        }, cx);
         r.sidebar().update(cx, |s, cx| s.set_unread(SUBTRACT, cx))
     });
     fx.click((282., 70.))?;
+    fx.wait("activity sources", |fx| {
+        fx.read(|r, cx| r.sidebar().read(cx).activity_sources_state)
+            == ui::screens::sidebar::ListState::Ready
+    })?;
     for choice in [0, 1] {
         fx.click((314., 184.))?;
         fx.keys("down down down down enter")?;
@@ -678,6 +698,7 @@ fn activity_archive_requires_confirmation_and_keeps_recent_chats() -> Result<()>
         if choice == 0 {
             fx.advance(Duration::from_millis(100))?;
             assert!(fx.read(|r, _| r.recents().iter().any(|id| id == SUBTRACT)));
+            assert!(fx.read(|r, cx| r.sidebar().read(cx).is_running(SUBTRACT)));
             assert!(
                 !fx.sent()?
                     .iter()

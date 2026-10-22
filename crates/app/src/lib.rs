@@ -62,8 +62,8 @@ use ui::screens::settings::{self, AppServer, SettingChanged, workspace};
 use ui::screens::sidebar::{
     ActivityOpened, ArchiveActivity, ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent,
     HomeSidebar, ListState, LoadMore, OpenThread, PINNED_SECTION_ID, PinThread, RenameThread,
-    RetryProjects, RetryThreads, SEARCH_LIMIT, SearchHit, SearchRequest, SelectProject,
-    title as thread_title,
+    RetryActivity, RetryProjects, RetryThreads, SEARCH_LIMIT, SearchHit, SearchRequest,
+    SelectProject, title as thread_title,
 };
 use ui::screens::signin::Login;
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
@@ -1117,28 +1117,46 @@ impl Root {
     }
 
     fn load_activity_threads(&self, cx: &mut Context<Self>) {
+        if self.signed_out() || self.sidebar.read(cx).activity_clock.is_none() {
+            return;
+        }
+        self.sidebar.update(cx, |sidebar, cx| {
+            sidebar.activity_sources_state = ListState::Loading;
+            cx.notify();
+        });
         let host = self.host.clone();
         let source = host.clone();
         let read = cx
             .background_spawn(async move { host.fetch(&host::Request::post("inbox-items", None)) });
         cx.spawn(async move |this, cx| {
-            let result = read.await;
+            let result = read.await.and_then(|inbox| {
+                let inbox = host::json_body(&inbox)?;
+                let items = inbox["items"]
+                    .as_array()
+                    .context("missing activity items")?;
+                Ok(items
+                    .iter()
+                    .filter_map(|item| item["threadId"].as_str().map(str::to_owned))
+                    .collect())
+            });
             this.update(cx, |this, cx| {
-                if !Arc::ptr_eq(&this.host, &source) {
+                if this.signed_out()
+                    || !Arc::ptr_eq(&this.host, &source)
+                    || this.sidebar.read(cx).activity_clock.is_none()
+                {
                     return;
                 }
                 match result {
-                    Ok(inbox) => {
-                        let ids = inbox["items"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .filter_map(|item| item["threadId"].as_str().map(str::to_owned))
-                            .collect();
-                        this.sidebar
-                            .update(cx, |s, cx| s.set_scheduled_threads(ids, cx));
+                    Ok(ids) => this
+                        .sidebar
+                        .update(cx, |s, cx| s.set_scheduled_threads(ids, cx)),
+                    Err(error) => {
+                        eprintln!("codex-gpui: cannot read activity runs: {error:#}");
+                        this.sidebar.update(cx, |sidebar, cx| {
+                            sidebar.activity_sources_state = ListState::Failed;
+                            cx.notify();
+                        });
                     }
-                    Err(error) => eprintln!("codex-gpui: cannot read activity runs: {error:#}"),
                 }
             })
             .ok();
@@ -1167,15 +1185,26 @@ impl Root {
             return;
         }
         let ids = ids.to_vec();
-        let title = format!(
-            "Archive {} priority thread{}?",
-            ids.len(),
-            if ids.len() == 1 { "" } else { "s" }
-        );
+        let running = ids.iter().any(|id| self.sidebar.read(cx).is_running(id));
+        let plural = if ids.len() == 1 { "" } else { "s" };
+        let title = if running {
+            format!("Stop and archive {} chat{plural}?", ids.len())
+        } else {
+            format!("Archive {} priority thread{plural}?", ids.len())
+        };
+        let description = match (running, ids.len() == 1) {
+            (true, true) => {
+                "Archiving will stop any ongoing work. You can restore the chat later in settings."
+            }
+            (true, false) => {
+                "Archiving will stop any ongoing work. You can restore the chats later in settings."
+            }
+            _ => "Recent threads won’t be archived",
+        };
         let answer = window.prompt(
             gpui::PromptLevel::Warning,
             &title,
-            Some("Recent threads won’t be archived"),
+            Some(description),
             &["Cancel", "Archive"],
             cx,
         );
@@ -5661,6 +5690,7 @@ impl Render for Root {
                 this.archive_activity(&action.0, window, cx);
             }))
             .on_action(cx.listener(|this, _: &RetryThreads, _, cx| this.refresh_threads(cx)))
+            .on_action(cx.listener(|this, _: &RetryActivity, _, cx| this.load_activity_threads(cx)))
             .on_action(cx.listener(|this, _: &RetryProjects, _, cx| {
                 if this.sidebar.read(cx).projects_state != ListState::Loading {
                     this.load_projects(cx);
