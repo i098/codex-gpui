@@ -571,6 +571,22 @@ impl LocalHost {
         host
     }
 
+    fn read_global_state(&self) -> Result<Value> {
+        let path = self.home.join(".codex-global-state.json");
+        let contents = match fs::read(&path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(json!({})),
+            Err(error) => return Err(error).context("read original sidebar project state"),
+        };
+        let state: Value =
+            serde_json::from_slice(&contents).context("decode original sidebar project state")?;
+        ensure!(
+            state.is_object(),
+            "original sidebar project state must be an object"
+        );
+        Ok(state)
+    }
+
     fn update_global_state(&self, update: impl FnOnce(&mut Value) -> Result<bool>) -> Result<()> {
         fs::create_dir_all(&self.home)?;
         // ponytail: native-writer lock only; coordinate with the original app for cross-app isolation.
@@ -1073,18 +1089,7 @@ impl Host for LocalHost {
     }
 
     fn projects(&self) -> Result<Vec<Project>> {
-        let path = self.home.join(".codex-global-state.json");
-        let contents = match fs::read(&path) {
-            Ok(contents) => contents,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error).context("read original sidebar project state"),
-        };
-        let state: Value =
-            serde_json::from_slice(&contents).context("decode original sidebar project state")?;
-        ensure!(
-            state.is_object(),
-            "original sidebar project state must be an object"
-        );
+        let state = self.read_global_state()?;
         project_rows(&state, &self.home, |path, _| {
             Ok(Some(Path::new(path).exists()))
         })
@@ -1168,6 +1173,15 @@ impl Host for LocalHost {
             "remote host is unsupported by LocalHost"
         );
         let body = match endpoint {
+            "get-global-state" => {
+                let key = params["key"].as_str().context("missing global state key")?;
+                let value = self
+                    .read_global_state()?
+                    .get_mut(key)
+                    .map(Value::take)
+                    .unwrap_or(Value::Null);
+                Value::Object(serde_json::Map::from_iter([("value".into(), value)]))
+            }
             "list-automations" => self.automations()?,
             "create-automation" => self.create_automation(&params)?,
             "automation-update" => self.update_automation(&params)?,
