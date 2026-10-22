@@ -8,3 +8,21 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.select_project(a.0.clone(), window, cx)
         }))
 }
+
+impl Root {
+    /// `⌘N`, the `New chat` row and rail Home: Home with an empty, focused composer.
+    pub(crate) fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.new_chat_section = None;
+        if self.state.route == Route::Home {
+            self.back
+                .push((Route::Home, self.sidebar_automation.take()));
+            self.forward.clear();
+            self.navigation_epoch += 1;
+            self.sync(window, cx);
+        }
+        self.navigate(Route::Home, window, cx);
+        let composer = self.home.read(cx).composer.clone();
+        composer.update(cx, |c, cx| c.set_text("", cx));
+        window.focus(&composer.focus_handle(cx), cx);
+    }
+}
