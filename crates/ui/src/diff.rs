@@ -187,6 +187,13 @@ pub struct RevertChanges {
     pub hunk: Option<usize>,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ReviewRepository {
+    pub root: String,
+    pub cwd: String,
+    pub name: String,
+}
+
 #[derive(serde::Deserialize)]
 pub struct RepositoryChanges {
     pub root: String,
@@ -1921,7 +1928,7 @@ impl Render for SplitScreen {
             .child(self.shell.clone())
             .child(
                 self.thread
-                    .update(cx, |view, cx| view.titlebar_header(cx))
+                    .update(cx, |view, cx| view.titlebar_header(left.is_some(), cx))
                     .left(header_left)
                     .when_some(left, |h, left| h.w(left - header_left))
                     .when(hidden_tabs, |h| {

@@ -1976,8 +1976,16 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
         );
         add(
             "thread/resume",
-            json!({"threadId": "heartbeat-thread", "cwd": project, "path": null}),
+            json!({"threadId": "heartbeat-thread", "cwd": project, "path": thread["path"]}),
             json!({"thread": thread}),
+        );
+        let mut resumed = common::recorded_resume(common::GREETING)?;
+        resumed["thread"] = thread.clone();
+        resumed["collaborationMode"]["settings"]["reasoning_effort"] = json!("low");
+        add(
+            "thread/resume",
+            json!({"threadId": "heartbeat-thread", "excludeTurns": true}),
+            resumed,
         );
         let turn = json!({"id": "heartbeat-turn", "status": "inProgress", "items": []});
         let mut started = exchange("turn/start", json!({"turn": turn}));
@@ -2085,7 +2093,9 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
             .collect();
         ensure!(
             turns.len() == 1,
-            "duplicate Run now must not start another heartbeat"
+            "expected one heartbeat start, got {}; toasts: {:?}; requests: {sent:?}",
+            turns.len(),
+            fx.read(|root, cx| root.toasts(cx)),
         );
         ensure!(
             !sent
