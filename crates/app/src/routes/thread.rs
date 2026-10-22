@@ -99,6 +99,16 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     .on_action(cx.listener(|this, _: &OpenChangesPanel, window, cx| {
         this.set_side(SidePanel::Changes, window, cx)
     }))
+    .on_action(cx.listener(|this, action: &ui::ViewChanges, window, cx| {
+        let focused = window.focused(cx);
+        if let Some(panel) = &this.diff {
+            panel.update(cx, |panel, cx| panel.view_changes(&action.0, cx));
+        }
+        this.set_side(SidePanel::Changes, window, cx);
+        if let Some(focused) = focused {
+            window.defer(cx, move |window, cx| window.focus(&focused, cx));
+        }
+    }))
     .on_action(cx.listener(Root::open_file))
     .on_action(cx.listener(|this, _: &OpenBackgroundTerminal, window, cx| {
         this.set_side(SidePanel::Terminal, window, cx)

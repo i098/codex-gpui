@@ -4277,7 +4277,7 @@ impl Root {
                     && params["threadId"].as_str() == Some(view.id())
                 {
                     panel.update(cx, |panel, cx| {
-                        panel.apply(&event, &self.cwd, view.turns(), cx);
+                        panel.apply(&event, view.cwd(), view.turns(), cx);
                     });
                 }
             });

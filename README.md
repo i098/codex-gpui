@@ -169,6 +169,9 @@ Changes uses it for aggregate patches, preserving quoted names and metadata-only
 File headers collapse display whitespace and show rename sources. Copy path keeps the decoded path unchanged.
 Metadata-only files show notices instead of raw Git headers.
 Unified deletions use source-sized striped markers. Split deletions keep solid markers.
+View changes selects Last Turn and opens only the matching requested path.
+File expansion follows exact response paths; collapsed rows retain their file contents.
+Expand all resets the path overrides.
 Run `cargo test -p ui --lib screens::diff::panel::patch` for its boundary checks.
 
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
