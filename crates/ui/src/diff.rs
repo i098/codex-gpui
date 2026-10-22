@@ -1839,12 +1839,7 @@ impl Render for SplitScreen {
         let hidden_tabs = !self.tabs.is_empty() && !visible;
         let open = self.shell.read(cx).sidebar_open;
         self.thread.update(cx, |view, cx| {
-            let top_left = !visible && !open;
-            if view.clip_right != !visible || view.clip_top_left != top_left {
-                view.clip_right = !visible;
-                view.clip_top_left = top_left;
-                cx.notify();
-            }
+            view.set_clips(!visible, !visible && !open, cx)
         });
         self.shell.update(cx, |shell, cx| {
             if shell.main_clips_right != !visible

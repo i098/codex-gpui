@@ -123,7 +123,7 @@ pub struct ThreadView {
     pub clip_right: bool,
     /// With `clip_right`, the sidebar is closed: the surface's top-left corner is rounded too,
     /// and the view draws its top fade's px there as well (`Shell::sidebar_open`).
-    pub clip_top_left: bool,
+    clip_top_left: bool,
     /// A bottom panel (the terminal) shares the main surface below the view, so the page's
     /// composited layer is one tile tall.
     pub docked_below: bool,
@@ -291,6 +291,15 @@ impl ThreadView {
     ) {
         self.git_repository = repository;
         cx.notify();
+    }
+
+    /// The main surface's rounded corners the view draws (`clip_right`, `clip_top_left`).
+    pub fn set_clips(&mut self, right: bool, top_left: bool, cx: &mut Context<Self>) {
+        if (self.clip_right, self.clip_top_left) != (right, top_left) {
+            self.clip_right = right;
+            self.clip_top_left = top_left;
+            cx.notify();
+        }
     }
 
     pub fn set_git_phase(&mut self, phase: Option<&'static str>, cx: &mut Context<Self>) {
