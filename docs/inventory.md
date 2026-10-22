@@ -175,6 +175,9 @@ Chunks: local-conversation-page-a83a1af2c24b.js, local-conversation-thread-c8c5e
 
 - `LocalConversationPage` → thread layout with chat column and optional side panel tabs (`Changes`, `Files`, `Browser`, `Terminal`, `Side chat`; `thread.sidePanel.*`) and bottom panel (`⌘J`).
 - Chat titlebar (`Chat toolbar`): chat title (fallback `Chat`), tab strip `Task tabs`, `New tab`, open-tab count.
+- Header row TH-026 copies the working directory, not the conversation rollout file.
+  The pinned original's `Gda` handler uses `cwd` and prefers a hosted thread's loaded `latestWorktree.workspaceRoot`.
+  `copyConversationPath` is a separate menu command and shortcut.
 - Virtualized turn list; each turn has: user message (copy, edit with `Send` / `Cancel`, show more/less), collapsed work disclosure `Worked for {time}`, item list, assistant message (copy response, fork `Fork chat from here`, `Branch in new chat`).
 - Item renderers by `ThreadItem.type`: `userMessage`, `agentMessage`, `reasoning` (`Thinking`, `Thought for {elapsed}`), `commandExecution` (`Running {command}`, `Ran {command} in {elapsed}`, `Stopped …`; copy command/output), `fileChange` (`Edited {filename}`, `Edited # files`, `View changes`, `Undo`, `Reapply`), `mcpToolCall`, `dynamicToolCall`, `collabAgentToolCall`, `webSearch` (`Searched the web`), `imageView`, `imageGeneration`, `contextCompaction`, `plan`, `hookPrompt`.
 - Live activity label above the composer: `Running command`, `Reading {target}`, `Searching for {query}`.
@@ -309,9 +312,18 @@ Section registry: `gWa` (order) and `lQa` (lazy pages) in app-initial-6350d04672
 | `cloud-computer` | — | `ChatGptCloudBrowserSettings` | settings-65381b73a1a2.js |
 | `passwords` | — | `PasswordsSettings` | settings-156aaa691e7d.js |
 | `teams` | — | `TeamSettingsPage` | team-settings-page-9276d495b863.js |
+| `open-source-licenses` | General > View | `OpenSourceLicensesPage` | open-source-licenses-page-aa8c2e98f58d.js |
 
 - General settings (general-settings-65e65871cdcd.js): `Theme` `Light` / `Dark` / `System`, light and dark chrome themes (accent, background, foreground, UI/code fonts, contrast, translucent sidebar, import/copy theme), `UI font size`, `Code font size`, `Diff markers` (`Color` / `+/-`), `Use pointer cursors`, `Font smoothing`, `Reduce motion`, `Dock icon`, `Send shortcut`, `Follow-up behavior`.
 - Keyboard shortcuts (keyboard-shortcuts-settings-e5d452e7d34c.js) lists and rebinds the commands of section 11; `⌘/` opens `KeyboardShortcutsDialog` (keyboard-shortcuts-dialog-a55e88bf0464.js).
+- Native `/settings/open-source-licenses` reads `THIRD_PARTY_NOTICES.txt` from the app bundle, then the working directory's asset paths.
+  Bundle assembly generates the file from production dependency metadata and available package license files.
+  It retains loading and missing-file states.
+  Back replaces the subtree with General; selecting another settings section leaves the subtree.
+  A virtual list keeps painted rows bounded for large notices files.
+  The card uses its full wrapped height in the scroll layer; the Back arrow uses the main rounded clip.
+  The retained original/native pair passes with zero outside-text differences and 0.0690411% inside-text differences.
+  Measuring all wrapped lines remains costly during initial load and resize.
 
 ### 9.2 Login and onboarding
 

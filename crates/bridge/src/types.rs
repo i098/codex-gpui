@@ -1,5 +1,5 @@
 //! v2 app-server types at `rust-v0.162.0-alpha.17.2`, only the fields the UI reads.
-//! Unknown fields are ignored; unknown enum tags land in `Other`.
+//! MCP calls retain unknown metadata; other unknown fields are ignored and unknown enum tags land in `Other`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -34,8 +34,10 @@ pub struct Thread {
     pub preview: String,
     pub name: Option<String>,
     pub model: Option<String>,
+    pub reasoning_effort: Option<String>,
     pub model_provider: String,
     pub cwd: String,
+    pub path: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     pub section: Option<ThreadSection>,
@@ -140,6 +142,15 @@ pub enum ThreadItem {
         server: String,
         tool: String,
         status: String,
+        #[serde(default)]
+        arguments: Box<Value>,
+        result: Option<Value>,
+        error: Option<Value>,
+        duration_ms: Option<i64>,
+        #[serde(default)]
+        progress: Vec<Value>,
+        #[serde(flatten)]
+        metadata: serde_json::Map<String, Value>,
     },
     ContextCompaction {
         id: String,
@@ -329,6 +340,17 @@ pub struct FileChangeApprovalRequest {
     pub item_id: String,
     pub reason: Option<String>,
     pub grant_root: Option<String>,
+}
+
+/// `item/permissions/requestApproval`
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionsApprovalRequest {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub item_id: String,
+    pub reason: Option<String>,
+    pub permissions: Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

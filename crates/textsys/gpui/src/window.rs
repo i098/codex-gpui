@@ -68,6 +68,7 @@ use uuid::Uuid;
 
 pub(crate) mod a11y;
 mod prompts;
+mod ui_scale;
 
 pub use a11y::A11ySubtreeBuilder;
 
@@ -1252,12 +1253,13 @@ pub struct Window {
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
-    /// The Chromium layers enclosing the element being painted, outermost first: (id, alpha,
-    /// whether non-text sprites blend through it too).
-    element_layers: Vec<(u8, u8, bool)>,
+    /// The enclosing Chromium layers, outermost first: (id, alpha).
+    element_layers: Vec<(u8, u8)>,
     /// The bounds of the innermost `Styled::layer` element being painted, and whether they
     /// set its cc tile size (`Styled::cc_tiles`).
     composited_layer: Option<(Bounds<Pixels>, bool)>,
+    composited_layer_id: Option<u8>,
+    window_space_recording: bool,
     /// The bounds of the innermost `Styled::saved_layer` element being painted.
     saved_layer: Option<Bounds<Pixels>>,
     next_layer_id: u8,
@@ -1285,6 +1287,8 @@ pub struct Window {
     modifiers: Modifiers,
     capslock: Capslock,
     scale_factor: f32,
+    device_scale_factor: f32,
+    ui_scale: f32,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
@@ -1664,6 +1668,7 @@ impl Window {
         let scale_factor = platform_window.scale_factor();
         let appearance = platform_window.appearance();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
+        text_system.set_scale_factor(scale_factor);
         let invalidator = WindowInvalidator::new(handle.window_id());
         let active = Rc::new(Cell::new(platform_window.is_active()));
         let visibility = platform_window.visibility();
@@ -2172,6 +2177,8 @@ impl Window {
             element_opacity: 1.0,
             element_layers: Vec::new(),
             composited_layer: None,
+            composited_layer_id: None,
+            window_space_recording: false,
             saved_layer: None,
             next_layer_id: 0,
             requested_autoscroll: None,
@@ -2193,6 +2200,8 @@ impl Window {
             modifiers,
             capslock,
             scale_factor,
+            device_scale_factor: scale_factor,
+            ui_scale: 1.,
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
@@ -2819,9 +2828,17 @@ impl Window {
     /// the platform window, then notifies observers. Normally called automatically
     /// by the platform's resize callback, but exposed publicly for test infrastructure.
     pub fn bounds_changed(&mut self, cx: &mut App) {
-        self.scale_factor = self.platform_window.scale_factor();
-        self.viewport_size = self.platform_window.content_size();
-        self.mouse_position = self.platform_window.mouse_position();
+        self.device_scale_factor = self.platform_window.scale_factor();
+        self.scale_factor = self.device_scale_factor * self.ui_scale;
+        self.text_system.set_scale_factor(self.scale_factor);
+        self.viewport_size = self
+            .platform_window
+            .content_size()
+            .map(|value| value / self.ui_scale);
+        self.mouse_position = self
+            .platform_window
+            .mouse_position()
+            .map(|value| value / self.ui_scale);
 
         self.refresh();
 
@@ -3165,9 +3182,7 @@ impl Window {
         self.platform_window.show_character_palette();
     }
 
-    /// The scale factor of the display associated with the window. For example, it could
-    /// return 2.0 for a "retina" display, indicating that each logical pixel should actually
-    /// be rendered as two pixels on screen.
+    /// Returns display pixels per logical UI pixel, including the current UI magnification.
     pub fn scale_factor(&self) -> f32 {
         self.scale_factor
     }
@@ -3175,7 +3190,9 @@ impl Window {
     /// Overrides the display scale factor for tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_scale_factor(&mut self, scale_factor: f32) {
-        self.scale_factor = scale_factor;
+        self.device_scale_factor = scale_factor;
+        self.scale_factor = scale_factor * self.ui_scale;
+        self.text_system.set_scale_factor(self.scale_factor);
         self.refresh();
     }
 
@@ -4291,10 +4308,8 @@ impl Window {
         result
     }
 
-    /// Paints `f` at `opacity`. Like Chromium, text inside an opacity below 1 or a composited
-    /// `layer` (a `Styled::layer` element's bounds and style) is blitted into that
-    /// transparent layer, which is then blended onto what is below it; other primitives fold
-    /// the opacity into their color (see `sprite_color_and_layers`).
+    /// Paints `f` at `opacity`. Monochrome sprites keep their paint color and blend
+    /// through the enclosing layers; other primitives fold opacity into their color.
     pub(crate) fn with_element_opacity<R>(
         &mut self,
         opacity: Option<f32>,
@@ -4308,12 +4323,18 @@ impl Window {
             return f(self);
         }
         let previous_opacity = self.element_opacity;
-        let (previous_layer, previous_saved) = (self.composited_layer, self.saved_layer);
+        let (previous_layer, previous_saved, previous_layer_id, previous_recording) = (
+            self.composited_layer,
+            self.saved_layer,
+            self.composited_layer_id,
+            self.window_space_recording,
+        );
         self.element_opacity = previous_opacity * opacity;
         match layer {
             Some((b, s)) if s.saved_layer => self.saved_layer = Some(b),
             Some((b, s)) => {
                 self.composited_layer = Some((b, s.cc_tiles));
+                self.window_space_recording = s.window_space_recording;
                 // A composited layer's content draws on its own tiles, not in an outer saved
                 // layer.
                 self.saved_layer = None;
@@ -4326,13 +4347,20 @@ impl Window {
             .then(|| std::mem::take(&mut self.element_layers));
         // Skia's `SkPaint::setAlphaf`: rounded to a byte.
         let alpha = (opacity.clamp(0., 1.) * 255.).round() as u8;
-        let result = self.push_layer(alpha, alpha == 255, f);
+        let result = self.push_layer(alpha, |window| {
+            if layer.is_some_and(|(_, style)| !style.saved_layer) {
+                window.composited_layer_id = window.element_layers.last().map(|&(id, _)| id);
+            }
+            f(window)
+        });
         if let Some(outer) = outer {
             self.element_layers = outer;
         }
         self.element_opacity = previous_opacity;
         self.composited_layer = previous_layer;
         self.saved_layer = previous_saved;
+        self.composited_layer_id = previous_layer_id;
+        self.window_space_recording = previous_recording;
         result
     }
 
@@ -4341,6 +4369,16 @@ impl Window {
     /// and whether they are Chromium's layer rect, whose size sets the tile size.
     pub fn composited_layer(&self) -> Option<(Bounds<Pixels>, bool)> {
         self.composited_layer
+    }
+
+    /// The innermost composited layer's identifier in the current frame.
+    pub fn composited_layer_id(&self) -> Option<u8> {
+        self.composited_layer_id
+    }
+
+    /// Whether the innermost composited layer records Skia paths in window coordinates.
+    pub fn window_space_recording(&self) -> bool {
+        self.window_space_recording
     }
 
     /// The window bounds of the innermost `Styled::saved_layer` element being painted: Skia
@@ -4352,49 +4390,51 @@ impl Window {
     /// Paints `f` into a Chromium `saveLayerAlpha(alpha)` that every monochrome sprite (svgs
     /// and masks too) blends through; the element opacity is unchanged.
     pub fn with_skia_layer<R>(&mut self, alpha: u8, f: impl FnOnce(&mut Self) -> R) -> R {
-        self.push_layer(alpha, true, f)
+        self.push_layer(alpha, f)
     }
 
-    fn push_layer<R>(&mut self, alpha: u8, all: bool, f: impl FnOnce(&mut Self) -> R) -> R {
+    /// Paints directly on the compositor target, outside the active sprite layers.
+    pub fn with_unlayered_paint<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let layers = std::mem::take(&mut self.element_layers);
+        let result = f(self);
+        self.element_layers = layers;
+        result
+    }
+
+    fn push_layer<R>(&mut self, alpha: u8, f: impl FnOnce(&mut Self) -> R) -> R {
         // Ids only tell overlapping layers apart within a frame.
         self.next_layer_id = self.next_layer_id % 255 + 1;
-        self.element_layers.push((self.next_layer_id, alpha, all));
+        self.element_layers.push((self.next_layer_id, alpha));
         let result = f(self);
         self.element_layers.pop();
         result
     }
 
-    /// A monochrome sprite's color and `MonochromeSprite::layers` for the current element. Text
-    /// keeps its color and blends through every layer at the layer's alpha. Chromium folds an
-    /// opacity into a lone non-text draw (cc `PlaybackFoldingIterator`), so svgs and masks take
-    /// the opacity in their color and blend through the opaque (composited) layers only.
-    /// ponytail: several non-text draws under one opacity are folded each, not layered.
+    /// A sprite's enclosing layer alphas.
     /// None under an opacity of 0: Chromium paints nothing there, and a sprite outside the
     /// layers would reset the layer state of the pixels it covers (a hidden hover fill would
     /// detach the text painted over it from its composited layer).
-    fn sprite_color_and_layers(&self, color: Hsla, text: bool) -> Option<(Hsla, u32)> {
+    fn sprite_layers(&self) -> Option<[u16; 4]> {
         if self.element_opacity <= 0. {
             return None;
         }
-        let folded = color.opacity(self.element_opacity);
-        let mut layers = self
-            .element_layers
-            .iter()
-            .filter(|&&(_, _, all)| text || all);
-        Some(match layers.next() {
-            Some(&(id, alpha, _)) => {
-                // ponytail: two layers; deeper ones multiply their alpha into the second.
-                let inner = layers.next().map_or(0, |&(id, alpha, _)| {
-                    let alpha = layers.fold(u32::from(alpha), |a, &(_, b, _)| {
-                        (a * u32::from(b) + 127) / 255
-                    });
-                    u32::from(id) << 8 | alpha
-                });
-                let color = if text { color } else { folded };
-                (color, u32::from(id) << 8 | u32::from(alpha) | inner << 16)
+        let mut ancestors = self.element_layers.iter();
+        let mut layers = [0u16; 4];
+        for layer in &mut layers {
+            if let Some(&(id, alpha)) = ancestors.next() {
+                *layer = u16::from(id) << 8 | u16::from(alpha);
             }
-            _ => (folded, 0),
-        })
+        }
+        // ponytail: four layer pixels fill Metal's color targets. Deeper alpha folds until a separate pass is needed.
+        for &(_, alpha) in ancestors {
+            let alpha = (u32::from(layers[3] & 255) * u32::from(alpha) + 127) / 255;
+            layers[3] = layers[3] & 0xff00 | alpha as u16;
+        }
+        Some(layers)
+    }
+
+    fn sprite_color_and_layers(&self, color: Hsla) -> Option<(Hsla, [u16; 4])> {
+        self.sprite_layers().map(|layers| (color, layers))
     }
 
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
@@ -5052,7 +5092,7 @@ impl Window {
                     transformation: TransformationMatrix::unit(),
                 });
             } else {
-                let Some((color, layers)) = self.sprite_color_and_layers(color, true) else {
+                let Some((color, layers)) = self.sprite_color_and_layers(color) else {
                     return Ok(());
                 };
                 self.next_frame.scene.insert_primitive(MonochromeSprite {
@@ -5104,6 +5144,10 @@ impl Window {
         font_size: Pixels,
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
+        #[cfg(target_vendor = "apple")]
+        if self.element_opacity() <= 0. {
+            return Ok(());
+        }
 
         let scale_factor = self.scale_factor();
         let glyph_origin = origin.scale(scale_factor);
@@ -5140,6 +5184,8 @@ impl Window {
             self.next_frame.scene.insert_primitive(PolychromeSprite {
                 order: 0,
                 skia: 1,
+                #[cfg(target_vendor = "apple")]
+                layers: [0; 4],
                 grayscale: false.into(),
                 bounds,
                 corner_radii: Default::default(),
@@ -5202,7 +5248,7 @@ impl Window {
             .map_origin(|value| ScaledPixels(round_half_up(value.0)))
             .map_size(|size| size.ceil());
 
-        let Some((color, layers)) = self.sprite_color_and_layers(color, false) else {
+        let Some((color, layers)) = self.sprite_color_and_layers(color) else {
             return Ok(());
         };
         self.next_frame.scene.insert_primitive(MonochromeSprite {
@@ -5236,6 +5282,10 @@ impl Window {
         grayscale: bool,
     ) -> Result<()> {
         self.invalidator.debug_assert_paint();
+        #[cfg(target_vendor = "apple")]
+        let Some(layers) = self.sprite_layers() else {
+            return Ok(());
+        };
 
         let visible_bounds = bounds.intersect(&image_bounds);
         if visible_bounds.size.width <= Pixels::ZERO || visible_bounds.size.height <= Pixels::ZERO {
@@ -5310,10 +5360,14 @@ impl Window {
             .clamp_radii_for_quad_size(visible_bounds.size)
             .scale(self.scale_factor());
         let opacity = self.element_opacity();
+        #[cfg(target_vendor = "apple")]
+        let opacity = if layers == [0; 4] { opacity } else { 1. };
 
         self.next_frame.scene.insert_primitive(PolychromeSprite {
             order: 0,
             skia: 0,
+            #[cfg(target_vendor = "apple")]
+            layers,
             grayscale: grayscale.into(),
             bounds: visible_bounds_snapped,
             content_mask,
@@ -5500,6 +5554,15 @@ impl Window {
             .as_mut()
             .unwrap()
             .layout_origin_residual_x(layout_id, scale_factor)
+    }
+
+    /// Return the fractional y offset removed by `layout_bounds`.
+    pub fn layout_origin_residual_y(&mut self, layout_id: LayoutId) -> Pixels {
+        let scale_factor = self.scale_factor();
+        self.layout_engine
+            .as_mut()
+            .unwrap()
+            .layout_origin_residual_y(layout_id, scale_factor)
     }
 
     /// This method should be called during `prepaint`. You can use
@@ -5828,6 +5891,10 @@ impl Window {
     /// Dispatch a mouse, keyboard, or touch event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
+        self.dispatch_ui_event(ui_scale::input(event, self.ui_scale), cx)
+    }
+
+    fn dispatch_ui_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
         #[cfg(feature = "profiler")]
         self.window_profiler.begin_input(event.kind_name());
         let update_count_before = self.invalidator.update_count();
@@ -7306,8 +7373,8 @@ impl Window {
                         modifiers: Modifiers::default(),
                         click_count: 1,
                     });
-                    self.dispatch_event(mouse_down, cx);
-                    self.dispatch_event(mouse_up, cx);
+                    self.dispatch_ui_event(mouse_down, cx);
+                    self.dispatch_ui_event(mouse_up, cx);
                 }
             }
             accesskit::Action::Focus => {

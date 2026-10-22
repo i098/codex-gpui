@@ -2,10 +2,29 @@
 //! mask layer's alpha (`DstIn`) before it composites the layer, which the shader does to the
 //! GPUI layer's pixel with [`DST_IN`] sprites.
 
-use crate::skia::{ARGB32, Blits, CLIP, DST_IN, MASK, paint_sprites, sprites, tile_pixels};
+use crate::skia::{
+    ARGB32, Blits, CLIP, DST_IN, MASK, OPACITY, paint_sprites, sprites, tile_pixels,
+};
 use gpui::{App, Bounds, Corners, Hsla, Pixels, Rgba, Window};
 use skia_safe::{Color4f, Paint, RRect, Rect, Vector};
 use std::collections::BTreeMap;
+
+pub(crate) fn paint_opacity(alpha: u8, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) {
+    let scale = window.scale_factor();
+    let dev = |value: Pixels| (f32::from(value) * scale).round() as i32;
+    let (x, y) = (dev(bounds.left()), dev(bounds.top()));
+    let (w, h) = (dev(bounds.right()) - x, dev(bounds.bottom()) - y);
+    if alpha == 255 || w <= 0 || h <= 0 {
+        return;
+    }
+    let sprites = sprites(format!("opacity {x} {y} {w} {h} {alpha}"), || {
+        (
+            [x, y, w, h],
+            vec![[255 - alpha, OPACITY, 0, MASK] as Blits; w as usize * h as usize],
+        )
+    });
+    paint_sprites(&sprites, Hsla::default(), [0, 0], window, cx);
+}
 
 /// `crate::top_fade` on macOS.
 pub(crate) fn paint_top_fade(fade: Pixels, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) {

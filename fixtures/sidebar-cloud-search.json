@@ -1,0 +1,35 @@
+{
+  "request": {
+    "url": "/global/search",
+    "method": "POST",
+    "body": "{\"entrypoint\":\"global_search\",\"limit\":9,\"query\":\"math\",\"source_requests\":[{\"type\":\"conversation\"},{\"type\":\"dot_messages\"}],\"cursor\":null,\"query_id\":\"2c87a038-4b9a-44fa-9e0b-cfea84d0addf\"}",
+    "headers": {
+      "x-openai-web-frontend": "codex_webview",
+      "x-oai-mcp-form-version": "2",
+      "x-openai-codex-window-type": "electron",
+      "OAI-Language": "en-US",
+      "oai-did": "27e59b98-5ac3-4533-ad5e-5979fd07c633",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Desktop-Surface": "1",
+      "X-OpenAI-Attach-Integrity-State": "1"
+    },
+    "returnErrorResponse": true
+  },
+  "response": {
+    "value": {
+      "response": {
+        "__response": {
+          "status": 200,
+          "statusText": "",
+          "headers": [
+            [
+              "content-type",
+              "application/json"
+            ]
+          ],
+          "body": "{}"
+        }
+      }
+    }
+  }
+}

@@ -1,5 +1,8 @@
 #![cfg(target_os = "macos")]
 
+#[path = "common/mod.rs"]
+mod common;
+
 use anyhow::{Context as _, Result, ensure};
 use app::host::{Host as _, LocalHost, Request, json_body};
 use serde_json::{Value, json};
@@ -13,6 +16,7 @@ struct Repo {
 
 impl Repo {
     fn new() -> Result<Self> {
+        common::install_panic_hook();
         let home = tempfile::tempdir()?;
         let repo = Self {
             dir: tempfile::tempdir()?,

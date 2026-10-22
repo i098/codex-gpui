@@ -36,6 +36,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("cmd_digit_goes_to_chat", cmd_digit_goes_to_chat),
     ("previous_next_chat", previous_next_chat),
     ("new_chat_row", new_chat_row),
+    ("new_chat_same_route_history", new_chat_same_route_history),
     ("sidebar_empty_lists", sidebar_empty_lists),
     ("cmd_n_new_chat", cmd_n_new_chat),
     ("editor_click_focuses", editor_click_focuses),
@@ -111,8 +112,8 @@ const FLOWS: &[(&str, Flow)] = &[
     ("settings_select_menu", settings_select_menu),
     ("parity_sidebar", || {
         parity_flow("sidebar", |fx| {
-            fx.click(SEARCH)?;
-            fx.keys("m a t h")
+            open_recorded_sidebar_search(fx)?;
+            Ok(())
         })
     }),
     ("worked_for_expands", worked_for_expands),
@@ -367,6 +368,24 @@ fn new_chat_row() -> Result<String> {
     ensure!(fx.route() == Route::Home);
     ensure!(fx.composer_focused()?);
     ensure!(fx.composer_text()?.is_empty());
+    Ok(String::new())
+}
+
+fn new_chat_same_route_history() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.type_text("Discard this draft")?;
+    fx.click(fx.at("home", "New chat")?)?;
+    ensure!(fx.route() == Route::Home);
+    ensure!(fx.composer_focused()?);
+    ensure!(fx.composer_text()?.is_empty());
+    ensure!(fx.shell(|shell| shell.can_go_back && !shell.can_go_forward));
+    fx.capture_evidence("CGX_HISTORY_PROOF", "new-chat")?;
+    fx.keys("cmd-[")?;
+    ensure!(fx.route() == Route::Home);
+    ensure!(fx.shell(|shell| !shell.can_go_back && shell.can_go_forward));
+    fx.keys("cmd-]")?;
+    ensure!(fx.route() == Route::Home);
+    ensure!(fx.shell(|shell| shell.can_go_back && !shell.can_go_forward));
     Ok(String::new())
 }
 

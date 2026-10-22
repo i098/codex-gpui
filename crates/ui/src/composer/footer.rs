@@ -1,20 +1,106 @@
 use super::*;
 
+const SPINNER: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../assets/icons/sidebar-cmd-spinner.svg"
+));
+
+fn paint_spinner(bounds: Bounds<Pixels>, color: Hsla, window: &mut Window, cx: &App) {
+    if !shapes::paint_icon(
+        SPINNER,
+        "composer-loading-spinner",
+        bounds,
+        false,
+        color,
+        Some(bounds.origin),
+        window,
+        cx,
+    ) {
+        window
+            .paint_svg(
+                bounds,
+                "composer-loading-spinner".into(),
+                Some(SPINNER),
+                gpui::TransformationMatrix::default(),
+                color,
+                cx,
+            )
+            .ok();
+    }
+}
+
+fn loading_send(background: Hsla, foreground: Hsla) -> impl IntoElement {
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, (), window, cx| {
+            shapes::with_composited_opacity(127, bounds, window, cx, |window| {
+                shapes::paint(
+                    &deco(9999., background, vec![]),
+                    Some(bounds.origin),
+                    bounds,
+                    window,
+                    cx,
+                );
+                let icon_bounds = Bounds::new(
+                    bounds.center() - point(px(8.), px(8.)),
+                    size(px(16.), px(16.)),
+                );
+                paint_spinner(icon_bounds, foreground, window, cx);
+            });
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
+fn loading_model(color: Hsla) -> impl IntoElement {
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, (), window, cx| {
+            shapes::with_composited_opacity(102, bounds, window, cx, |window| {
+                paint_spinner(bounds, color, window, cx);
+            });
+        },
+    )
+    .size(px(12.))
+    .flex_none()
+}
+
+fn effort_icon(effort: &str) -> &'static str {
+    match effort {
+        "none" | "minimal" => "composer-model-none",
+        "low" => "composer-model",
+        "high" => "composer-model-high",
+        "xhigh" | "max" | "ultra" | "persistent" => "composer-model-extra-high",
+        _ => "composer-model-medium",
+    }
+}
+
 impl Composer {
-    pub(super) fn footer(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
+    pub(super) fn footer(&self, window: &Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let open = matches!(self.menu, Some(Menu::Effort | Menu::Models));
         let model = self.current_model();
+        let loading = model.is_none();
         let model_label = model.map_or("Loading model…".into(), |m| m.label.clone());
         let labels = div()
             .relative()
             .flex()
             .items_center()
             .gap(px(4.))
-            .child(tabular(label(model_label, t.text)).when(open, |d| d.invisible()))
+            .child(
+                tabular(text(model_label, 13., 18., 400., t.text))
+                    .when(self.docked, |d| d.top_layer())
+                    .when(open, |d| d.invisible()),
+            )
             .when(model.is_some(), |d| {
                 d.child(
-                    label(effort_label(&self.effort).to_string(), t.text_tertiary)
-                        .when(open, |d| d.invisible()),
+                    label(
+                        effort_label(self.displayed_effort()).to_string(),
+                        t.text_tertiary,
+                    )
+                    .when(open, |d| d.invisible()),
                 )
             })
             .when(open, |d| {
@@ -24,15 +110,41 @@ impl Composer {
                         .inset_0()
                         .flex()
                         .justify_center()
-                        // Over the open pill: blitted directly, unlike the footer labels.
                         .child(text("Select effort", 13., 18., 400., t.text_tertiary)),
                 )
             });
-        let trigger = if self.footer_width <= XS_WIDTH {
+        let trigger = if loading {
+            let value = "Loading model…";
+            let width = window
+                .text_system()
+                .layout_line(
+                    value,
+                    px(13.),
+                    &[TextRun {
+                        len: value.len(),
+                        font: gpui::font(crate::SANS),
+                        color: t.text_tertiary,
+                        ..Default::default()
+                    }],
+                    None,
+                )
+                .width;
+            pill("model-picker", t)
+                .aria_label(value)
+                .aria_disabled(true)
+                .px(px(8.))
+                .gap(px(4.))
+                .child(loading_model(t.text_tertiary))
+                .child(label(value, t.text_tertiary.opacity(0.4)).w(width))
+        } else if self.footer_width <= XS_WIDTH {
             pill("model-picker", t)
                 .w(px(28.))
                 .justify_center()
-                .child(icon("composer-model", 16., t.text_tertiary))
+                .child(icon(
+                    effort_icon(self.displayed_effort()),
+                    16.,
+                    t.text_tertiary,
+                ))
         } else {
             pill("model-picker", t)
                 .px(px(8.))
@@ -61,15 +173,17 @@ impl Composer {
                 trigger
                     .track_focus(&self.model_focus)
                     .focus_visible(menu::trigger_focus)
-                    .on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                        this.menu_trigger_hovered = *hovered
-                    }))
-                    .on_key_down(cx.listener(|this, event, window, cx| {
-                        this.trigger_key(Menu::Effort, event, window, cx)
-                    }))
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.toggle_menu(Menu::Effort, window, cx)
-                    })),
+                    .when(!loading, |d| {
+                        d.on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                            this.menu_trigger_hovered = *hovered
+                        }))
+                        .on_key_down(cx.listener(|this, event, window, cx| {
+                            this.trigger_key(Menu::Effort, event, window, cx)
+                        }))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.toggle_menu(Menu::Effort, window, cx)
+                        }))
+                    }),
             )
             .when(self.menu == Some(Menu::Effort), |d| {
                 d.child(self.anchored_menu(self.effort_menu(t, cx), Some(EFFORT_MENU_SLOT), cx))
@@ -79,6 +193,7 @@ impl Composer {
             });
         let has_input = !self.content.is_empty() || !self.attachments.is_empty();
         let stopping = self.running && !has_input;
+        let waiting_for_model = loading && !self.running;
         let armed = stopping && self.stop_armed.is_some();
         // The docked body is a cc layer: its icons blend onto its transparent tile, not onto
         // the card as the home composer's do (whose fitted pixels those are).
@@ -135,9 +250,25 @@ impl Composer {
                             }))
                             .px(px(6.))
                             .gap(px(4.))
-                            .child(footer_icon("permissions", t.text_tertiary))
+                            .child(footer_icon(
+                                if self.permission == Permission::Ask {
+                                    "composer-permission-ask"
+                                } else {
+                                    "permissions"
+                                },
+                                t.text_tertiary,
+                            ))
                             .when(self.footer_width > SM_WIDTH, |d| {
-                                d.child(label(self.permission.short_label(), t.text_tertiary))
+                                d.child(
+                                    text(
+                                        self.permission.short_label(),
+                                        13.,
+                                        18.,
+                                        400.,
+                                        t.text_tertiary,
+                                    )
+                                    .when(self.docked, |d| d.top_layer()),
+                                )
                             })
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.toggle_menu(Menu::Permissions, window, cx)
@@ -151,6 +282,7 @@ impl Composer {
             .id("send")
             .role(gpui::Role::Button)
             .aria_label(self.send_label())
+            .aria_disabled(waiting_for_model)
             .tab_index(0)
             .rounded(Theme::RADIUS_FULL)
             .focus_visible(move |style| {
@@ -169,7 +301,11 @@ impl Composer {
             .items_center()
             .justify_center()
             .relative()
-            .child(shapes::decoration(deco(9999., t.composer_primary, vec![])))
+            .child(if waiting_for_model {
+                loading_send(t.composer_primary, t.text_composer_primary).into_any_element()
+            } else {
+                shapes::decoration(deco(9999., t.composer_primary, vec![])).into_any_element()
+            })
             .when(armed, |d| {
                 // `keyboardShortcutLabel`: a 12 px `Esc` replaces the square while armed.
                 d.child(text("Esc", 12., 16., 400., t.text_composer_primary))
@@ -182,7 +318,7 @@ impl Composer {
                         .bg(t.text_composer_primary),
                 )
             })
-            .when(!stopping, |d| {
+            .when(!stopping && !waiting_for_model, |d| {
                 d.child(
                     icon(
                         if has_input {
@@ -197,6 +333,10 @@ impl Composer {
                 )
             })
             .on_click(cx.listener(move |this, _, window, cx| {
+                if waiting_for_model {
+                    cx.stop_propagation();
+                    return;
+                }
                 if stopping {
                     this.stop_armed = None;
                     this.focus_handle.focus(window, cx);

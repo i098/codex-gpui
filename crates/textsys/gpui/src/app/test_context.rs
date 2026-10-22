@@ -1360,6 +1360,7 @@ mod tests {
                 title: "Task started".into(),
                 body: "Running tests".into(),
                 actions: Vec::new(),
+                reply_placeholder: None,
             });
         });
         assert!(cx.shown_system_notifications().is_empty());
@@ -1372,6 +1373,7 @@ mod tests {
                 title: "Task started".into(),
                 body: "Running tests".into(),
                 actions: Vec::new(),
+                reply_placeholder: None,
             });
             cx.show_system_notification(SystemNotification {
                 tag: "thread-1".into(),
@@ -1381,6 +1383,7 @@ mod tests {
                     id: "open".into(),
                     label: "Open".into(),
                 }],
+                reply_placeholder: None,
             });
         });
 
@@ -1399,6 +1402,7 @@ mod tests {
                     id: "open".into(),
                     label: "Open".into(),
                 }],
+                reply_placeholder: None,
             }]
         );
 
@@ -1475,6 +1479,7 @@ mod tests {
                 title: "Task finished".into(),
                 body: "All tests passed".into(),
                 actions: Vec::new(),
+                reply_placeholder: None,
             });
             cx.on_system_notification_response(|response, cx| {
                 cx.dismiss_system_notification(&response.tag);

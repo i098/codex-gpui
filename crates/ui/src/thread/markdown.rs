@@ -403,7 +403,11 @@ impl Markdown<'_> {
                 Event::HardBreak => row.push(block_end(1).w_full().h_0().into_any_element()),
                 Event::Code(code) => {
                     let at = self.events.start;
-                    row.push(self.code(&code, at).into_any_element());
+                    row.extend(
+                        self.code(&code, at)
+                            .into_iter()
+                            .map(|part| part.into_any_element()),
+                    );
                 }
                 Event::Start(tag) => {
                     let next = match tag {
@@ -638,57 +642,104 @@ impl Markdown<'_> {
             .unwrap_or_default()
     }
 
-    fn code(&self, code: &str, at: usize) -> Div {
-        let fades = self.fades(code);
-        let label = match self.find {
-            Some(find) => div()
-                .flex_none()
-                .w(width(self.window, code, 12.88, 430., Some(MONO)))
-                .child(
-                    run_style(12.88, 15., 430., self.theme.text)
-                        .font_family(MONO)
-                        .child(find.text(code, at)),
-                ),
-            None if !fades.is_empty() => div()
-                .flex_none()
-                .w(width(self.window, code, 12.88, 430., Some(MONO)))
-                .child(
-                    run_style(12.88, 15., 430., self.theme.text)
-                        .font_family(MONO)
-                        .child(StyledText::new(code.to_owned()).with_highlights(fades)),
-                ),
-            None => measured(
-                self.window,
-                code.to_owned(),
-                12.88,
-                15.,
-                430.,
-                self.theme.text,
-                Some(MONO),
-            ),
+    fn code(&self, code: &str, at: usize) -> Vec<Div> {
+        let count = code.split_inclusive(' ').count();
+        let positions = Rc::new(RefCell::new(vec![
+            (Bounds::<Pixels>::default(), px(0.));
+            count
+        ]));
+        let painted = positions.clone();
+        let decoration = shapes::Decoration {
+            radius: Corners::all(px(6.)),
+            fill: Some(tones(self.theme).inline_code),
+            ..Default::default()
         };
-        div().pt(px(3.5)).pb(px(3.25)).child(
-            div()
-                .relative()
-                .h(px(17.))
-                .py(px(1.))
-                .px(px(6.))
-                .child(shapes::decoration(shapes::Decoration {
-                    radius: Corners::all(px(6.)),
-                    fill: Some(tones(self.theme).inline_code),
-                    ..Default::default()
-                }))
-                // Over the chip's fill, under its glyphs, the height of the line box.
-                .child(
-                    highlight(code.to_owned().into(), 12.88, 430., Some(MONO), 6.)
-                        .absolute()
-                        .left_0()
-                        .right_0()
-                        .top(px(-3.5))
-                        .bottom(px(-3.25)),
-                )
-                .child(label),
-        )
+        let mut background = Some(
+            canvas(
+                |_, _, _| {},
+                move |_, (), window, cx| {
+                    let mut line: Option<Bounds<Pixels>> = None;
+                    for (bounds, trailing_space) in painted.borrow().iter() {
+                        if bounds.size.height == px(0.) {
+                            continue;
+                        }
+                        let top = bounds.top() - px(1.);
+                        let right = bounds.right() - *trailing_space + px(6.);
+                        if let Some(rect) = line.as_mut().filter(|rect| rect.top() == top) {
+                            rect.size.width = right - rect.left();
+                        } else {
+                            let next = Bounds::new(
+                                point(bounds.left() - px(6.), top),
+                                gpui::size(right - bounds.left() + px(6.), px(17.)),
+                            );
+                            if let Some(rect) = line.replace(next) {
+                                shapes::paint(&decoration, None, rect, window, cx);
+                            }
+                        }
+                    }
+                    if let Some(rect) = line {
+                        shapes::paint(&decoration, None, rect, window, cx);
+                    }
+                },
+            )
+            .absolute()
+            .size_full(),
+        );
+        let space = width(self.window, " ", 12.88, 430., Some(MONO));
+        let mut offset = at;
+        let mut parts = Vec::with_capacity(count);
+        for (index, word) in code.split_inclusive(' ').enumerate() {
+            let fades = self.fades(word);
+            let word_width = width(self.window, word, 12.88, 430., Some(MONO));
+            let label = match self.find {
+                Some(find) => div().flex_none().w(word_width).child(
+                    run_style(12.88, 15., 430., self.theme.text)
+                        .font_family(MONO)
+                        .child(find.text(word, offset)),
+                ),
+                None if !fades.is_empty() => div().flex_none().w(word_width).child(
+                    run_style(12.88, 15., 430., self.theme.text)
+                        .font_family(MONO)
+                        .child(StyledText::new(word.to_owned()).with_highlights(fades)),
+                ),
+                None => div().flex_none().w(word_width).child(
+                    text(word.to_owned(), 12.88, 15., 430., self.theme.text).font_family(MONO),
+                ),
+            };
+            let measured = positions.clone();
+            let trailing_space = space * (word.len() - word.trim_end_matches(' ').len()) as f32;
+            parts.push(
+                div()
+                    .pt(px(3.5))
+                    .pb(px(3.25))
+                    // ponytail: shared padding can overhang a line by 12 px; use inline layout for exact edge fits.
+                    .mr(px(if index + 1 == count { 0. } else { -12. }))
+                    .child(
+                        div()
+                            .relative()
+                            .h(px(17.))
+                            .py(px(1.))
+                            .px(px(6.))
+                            .children(background.take())
+                            .child(
+                                highlight(word.to_owned().into(), 12.88, 430., Some(MONO), 6.)
+                                    .absolute()
+                                    .left_0()
+                                    .right_0()
+                                    .top(px(-3.5))
+                                    .bottom(px(-3.25)),
+                            )
+                            .child(label)
+                            .on_children_prepainted(move |bounds, _, _| {
+                                if let Some(bounds) = bounds.last() {
+                                    measured.borrow_mut()[index] = (*bounds, trailing_space);
+                                }
+                            }),
+                    ),
+            );
+            offset += word.len();
+        }
+        parts
     }
 }
 
@@ -1043,4 +1094,48 @@ fn code_symbol(color: Hsla, checked: bool) -> impl IntoElement {
         },
     )
     .size(px(if checked { 16. } else { 20. }))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    use gpui::{AppContext, HeadlessAppContext, Render, size};
+    use std::sync::Arc;
+
+    struct InlineCode;
+
+    impl Render for InlineCode {
+        fn render(&mut self, window: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            // This original box origin exposes the extra pixel from rebuilding its right edge after rounding its left edge.
+            div().size_full().relative().bg(rgb(0x181818)).child(
+                markdown("`2`.", window, &Theme::dark(), &[])
+                    .absolute()
+                    .left(px(1_081.765_6))
+                    .top(px(282.796_88)),
+            )
+        }
+    }
+
+    #[test]
+    fn inline_code_background_ends_at_the_snapped_label_edge() -> anyhow::Result<()> {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut cx = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        cx.update(|cx| {
+            cx.set_global(Theme::dark());
+            theme::load_fonts(cx);
+        });
+        let window = cx.open_window(size(px(1280.), px(832.)), |_, cx| cx.new(|_| InlineCode))?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        assert_eq!(image.get_pixel(2203, 590).0, [24, 24, 24, 255]);
+        assert_eq!(image.get_pixel(2202, 590).0, [48, 48, 48, 255]);
+        Ok(())
+    }
 }

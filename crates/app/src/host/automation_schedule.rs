@@ -61,7 +61,7 @@ pub(super) fn next_run_after(
     Some((now.max(nominal.checked_add(jitter)?), nominal))
 }
 
-struct Schedule<'a> {
+pub(super) struct Schedule<'a> {
     text: String,
     set: RRuleSet,
     keys: HashSet<&'a str>,
@@ -70,7 +70,7 @@ struct Schedule<'a> {
 }
 
 impl<'a> Schedule<'a> {
-    fn parse(text: &'a str, now: i64) -> Option<Self> {
+    pub(super) fn parse(text: &'a str, now: i64) -> Option<Self> {
         let text = text.trim();
         let explicit_start = text.lines().any(|line| line.starts_with("DTSTART"));
         let keys = text
@@ -134,7 +134,7 @@ impl<'a> Schedule<'a> {
         self.keys.iter().all(|key| keys.contains(key))
     }
 
-    fn heartbeat_interval(&self) -> Option<i64> {
+    pub(super) fn heartbeat_interval(&self) -> Option<i64> {
         if !self.single() || self.explicit_start {
             return None;
         }

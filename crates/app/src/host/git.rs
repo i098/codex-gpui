@@ -1,3 +1,287 @@
+mod cloud_patch {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    pub(crate) fn apply_cloud_patch(params: &Value) -> Result<Value> {
+        let cwd = Path::new(params["cwd"].as_str().context("missing Git cwd")?);
+        ensure!(cwd.is_absolute(), "Git cwd must be absolute");
+        let diff = params["diff"].as_str().context("missing Git diff")?;
+        let found = run(cwd, &["rev-parse", "--show-toplevel"])?;
+        if !found.status.success() {
+            return Ok(
+                json!({"status":"error", "errorCode":"not-git-repo", "appliedPaths":[], "skippedPaths":[], "conflictedPaths":[]}),
+            );
+        }
+        let root = PathBuf::from(String::from_utf8(found.stdout)?.trim_end());
+        let scratch = tempfile::tempdir()?;
+        let index = git_path(&root, "index")?;
+        let temp_index = scratch.path().join("index");
+        if index.exists() {
+            fs::copy(&index, &temp_index)?;
+        }
+        if let Some(shared) = answer(&root, &["rev-parse", "--shared-index-path"])? {
+            let shared = PathBuf::from(shared);
+            let shared = if shared.is_absolute() {
+                shared
+            } else {
+                root.join(shared)
+            };
+            if shared.is_file() {
+                fs::copy(
+                    &shared,
+                    scratch
+                        .path()
+                        .join(shared.file_name().context("shared index filename")?),
+                )?;
+            }
+        }
+        let patch = scratch.path().join("patch.diff");
+        fs::write(&patch, diff)?;
+        let stat = run(
+            &root,
+            &[
+                "apply",
+                "--numstat",
+                "-z",
+                patch.to_str().context("patch path must be UTF-8")?,
+            ],
+        )?;
+        let paths = patch_paths(&checked(stat)?)?;
+        let existing: Vec<_> = paths
+            .iter()
+            .filter(|path| root.join(path).symlink_metadata().is_ok())
+            .collect();
+        if !existing.is_empty() {
+            let mut add = command(&root, &["add", "--"]);
+            add.env("GIT_INDEX_FILE", &temp_index).args(existing);
+            checked(add.output()?)?;
+        }
+        let mut apply = command(&root, &["apply"]);
+        apply.env("GIT_INDEX_FILE", &temp_index).arg("--3way");
+        if params["revert"] == true {
+            apply.arg("--reverse");
+        }
+        let output = apply.arg(&patch).output()?;
+        let status = match output.status.code() {
+            Some(0) => "success",
+            Some(1) => "partial-success",
+            _ => "error",
+        };
+        let text = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let (mut applied, mut skipped, conflicted) = parse_results(&text, &paths);
+        if status == "success" && applied.is_empty() {
+            applied.extend(paths);
+        }
+        for path in &conflicted {
+            applied.remove(path);
+            skipped.remove(path);
+        }
+        for path in &applied {
+            skipped.remove(path);
+        }
+        Ok(
+            json!({"status":status,"appliedPaths":applied,"skippedPaths":skipped,"conflictedPaths":conflicted,"execOutput":text}),
+        )
+    }
+
+    fn patch_paths(bytes: &[u8]) -> Result<BTreeSet<String>> {
+        let text = std::str::from_utf8(bytes).context("Git paths must be UTF-8")?;
+        let mut records = text.split('\0').filter(|part| !part.is_empty());
+        let mut paths = BTreeSet::new();
+        while let Some(record) = records.next() {
+            let mut columns = record.splitn(3, '\t');
+            columns.next().context("missing patch additions")?;
+            columns.next().context("missing patch deletions")?;
+            let path = columns.next().context("missing patch path")?;
+            if path.is_empty() {
+                paths.insert(valid_path(
+                    records.next().context("missing rename source")?,
+                )?);
+                paths.insert(valid_path(
+                    records.next().context("missing rename target")?,
+                )?);
+            } else {
+                paths.insert(valid_path(path)?);
+            }
+        }
+        ensure!(!paths.is_empty(), "patch has no files");
+        Ok(paths)
+    }
+
+    fn valid_path(path: &str) -> Result<String> {
+        ensure!(
+            Path::new(path)
+                .components()
+                .all(|part| matches!(part, Component::Normal(_))),
+            "patch paths must be repository-relative"
+        );
+        Ok(path.to_owned())
+    }
+
+    fn parse_results(
+        text: &str,
+        paths: &BTreeSet<String>,
+    ) -> (BTreeSet<String>, BTreeSet<String>, BTreeSet<String>) {
+        let (mut applied, mut skipped, mut conflicted) =
+            (BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
+        for line in text.lines().map(str::trim) {
+            for path in paths {
+                let quoted = format!("'{path}'");
+                if line.starts_with("U ") && line[2..].trim() == path
+                    || line.starts_with("Applied patch")
+                        && line.contains(&quoted)
+                        && line.ends_with("with conflicts.")
+                {
+                    conflicted.insert(path.clone());
+                } else if line.starts_with("Applied patch")
+                    && line.contains(&quoted)
+                    && line.ends_with("cleanly.")
+                {
+                    applied.insert(path.clone());
+                } else if line.starts_with("error:") && line.contains(path.as_str()) {
+                    skipped.insert(path.clone());
+                }
+            }
+        }
+        (applied, skipped, conflicted)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn apply_and_revert_preserve_the_real_index_and_unrelated_edits() {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path();
+            checked(run(root, &["init"]).unwrap()).unwrap();
+            fs::write(root.join("a.txt"), "before\n").unwrap();
+            fs::write(root.join("b.txt"), "keep\n").unwrap();
+            checked(run(root, &["add", "."]).unwrap()).unwrap();
+            checked(
+                run(
+                    root,
+                    &[
+                        "-c",
+                        "user.name=Test",
+                        "-c",
+                        "user.email=test@example.com",
+                        "commit",
+                        "-m",
+                        "base",
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            let index = fs::read(git_path(root, "index").unwrap()).unwrap();
+            fs::write(root.join("b.txt"), "unrelated\n").unwrap();
+            let diff = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-before\n+after\n";
+            for (revert, expected) in [(false, "after\n"), (true, "before\n")] {
+                let result =
+                    apply_cloud_patch(&json!({"cwd":root,"diff":diff,"revert":revert})).unwrap();
+                assert_eq!(result["status"], "success", "{result}");
+                assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), expected);
+                assert_eq!(
+                    fs::read_to_string(root.join("b.txt")).unwrap(),
+                    "unrelated\n"
+                );
+                assert_eq!(fs::read(git_path(root, "index").unwrap()).unwrap(), index);
+            }
+        }
+
+        #[test]
+        fn missing_repository_is_not_reported_as_success() {
+            let dir = tempfile::tempdir().unwrap();
+            let result = apply_cloud_patch(&json!({"cwd":dir.path(),"diff":""})).unwrap();
+            assert_eq!(result["errorCode"], "not-git-repo");
+            assert_eq!(result["status"], "error");
+        }
+
+        fn repository() -> tempfile::TempDir {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path();
+            checked(run(root, &["init"]).unwrap()).unwrap();
+            fs::write(root.join("a.txt"), "before\n").unwrap();
+            checked(run(root, &["add", "."]).unwrap()).unwrap();
+            checked(
+                run(
+                    root,
+                    &[
+                        "-c",
+                        "user.name=Test",
+                        "-c",
+                        "user.email=test@example.com",
+                        "commit",
+                        "-m",
+                        "base",
+                    ],
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            directory
+        }
+
+        #[test]
+        fn rejected_hunks_preserve_the_file_and_the_original_partial_status() {
+            let directory = repository();
+            let root = directory.path();
+            fs::write(root.join("a.txt"), "local\n").unwrap();
+            let result = apply_cloud_patch(&json!({
+            "cwd":root,
+            "diff":"diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-before\n+remote\n"
+        })).unwrap();
+            assert_eq!(result["status"], "partial-success");
+            assert_eq!(result["appliedPaths"], json!([]));
+            assert_eq!(result["skippedPaths"], json!(["a.txt"]));
+            assert_eq!(fs::read_to_string(root.join("a.txt")).unwrap(), "local\n");
+        }
+
+        #[test]
+        fn three_way_conflicts_are_reported_without_changing_the_real_index() {
+            let directory = repository();
+            let root = directory.path();
+            fs::write(root.join("a.txt"), "remote\n").unwrap();
+            let patch =
+                String::from_utf8(checked(run(root, &["diff", "--full-index"]).unwrap()).unwrap())
+                    .unwrap();
+            fs::write(root.join("a.txt"), "local\n").unwrap();
+            let index = fs::read(git_path(root, "index").unwrap()).unwrap();
+            let result = apply_cloud_patch(&json!({"cwd":root,"diff":patch})).unwrap();
+            assert_eq!(result["status"], "partial-success");
+            assert_eq!(result["conflictedPaths"], json!(["a.txt"]));
+            let text = fs::read_to_string(root.join("a.txt")).unwrap();
+            assert!(text.contains("<<<<<<<") && text.contains("local") && text.contains("remote"));
+            assert_eq!(fs::read(git_path(root, "index").unwrap()).unwrap(), index);
+        }
+
+        #[test]
+        fn rename_patches_preserve_repository_relative_paths() {
+            let directory = repository();
+            let root = directory.path();
+            checked(run(root, &["mv", "a.txt", "renamed.txt"]).unwrap()).unwrap();
+            let patch = String::from_utf8(
+                checked(run(root, &["diff", "--cached", "--full-index"]).unwrap()).unwrap(),
+            )
+            .unwrap();
+            checked(run(root, &["reset", "--hard", "HEAD"]).unwrap()).unwrap();
+            let result = apply_cloud_patch(&json!({"cwd":root,"diff":patch})).unwrap();
+            assert_eq!(result["status"], "success", "{result}");
+            assert!(!root.join("a.txt").exists());
+            assert_eq!(
+                fs::read_to_string(root.join("renamed.txt")).unwrap(),
+                "before\n"
+            );
+        }
+    }
+}
+pub(super) use cloud_patch::apply_cloud_patch;
+
 use anyhow::{Context as _, Result, anyhow, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -8,6 +292,30 @@ use std::io::{ErrorKind, Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
+
+#[path = "git/contents.rs"]
+mod contents;
+pub(super) use contents::read_file_version;
+#[path = "git/file_url.rs"]
+mod file_url;
+#[path = "git/review_patch.rs"]
+mod review_patch;
+#[path = "worktrees.rs"]
+mod worktrees;
+pub(super) use worktrees::{managed_worktrees, remove_managed_worktree};
+
+pub(super) fn refresh_upstream(root: &Path) -> Result<()> {
+    checked(run(root, &["fetch", "--all", "--prune"])?)?;
+    Ok(())
+}
+
+pub(super) fn select_worktree_environment(root: &Path, path: &str) -> Result<bool> {
+    if !linked_root(root)? {
+        return Ok(false);
+    }
+    store_environment(root, path)?;
+    Ok(true)
+}
 
 /// Git in `root` without pathspec options: `check-ignore` rejects `--literal-pathspecs`, and
 /// the original's `ls-files` calls use pathspec magic.
@@ -21,7 +329,7 @@ fn plain_command(root: &Path) -> Command {
     command
 }
 
-fn command(root: &Path, args: &[&str]) -> Command {
+pub(super) fn command(root: &Path, args: &[&str]) -> Command {
     let mut command = plain_command(root);
     command.arg("--literal-pathspecs").args(args);
     command
@@ -71,13 +379,60 @@ fn paths(root: &Path, staged: bool) -> Result<Vec<String>> {
     Ok(paths)
 }
 
-/// `binary` adds the data a reverse patch needs to restore a binary file. Both forms carry
-/// the full `index` line (`--binary` fills it for binary files only), so `head` compares one
-/// binary capture with the text Changes shows.
-fn diffs(root: &Path, staged: bool, binary: bool) -> Result<Vec<Value>> {
+#[derive(Serialize)]
+struct CapturedDiff {
+    path: String,
+    #[serde(serialize_with = "serialize_diff")]
+    diff: Vec<u8>,
+}
+
+fn serialize_diff<S: serde::Serializer>(
+    diff: &[u8],
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    serializer.serialize_str(&String::from_utf8_lossy(diff))
+}
+
+const MAX_REVIEW_UNTRACKED_FILES: usize = 256;
+
+fn untracked_paths(root: &Path) -> Result<Vec<String>> {
+    let paths = String::from_utf8(checked(run(
+        root,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )?)?)
+    .context("Git paths must be UTF-8")?;
+    Ok(paths
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
+fn diffs(root: &Path, staged: bool, ignore_whitespace: bool) -> Result<Vec<CapturedDiff>> {
+    let untracked = if staged {
+        Vec::new()
+    } else {
+        untracked_paths(root)?
+    };
+    review_diffs(
+        root,
+        if staged { &["--cached"] } else { &[] },
+        true,
+        &untracked,
+        ignore_whitespace,
+    )
+}
+
+fn review_diffs(
+    root: &Path,
+    revisions: &[&str],
+    binary: bool,
+    untracked: &[String],
+    ignore_whitespace: bool,
+) -> Result<Vec<CapturedDiff>> {
     let mut args = vec![
         "diff",
-        "--raw",
+        "--numstat",
         "--patch",
         "-z",
         "--no-ext-diff",
@@ -87,8 +442,9 @@ fn diffs(root: &Path, staged: bool, binary: bool) -> Result<Vec<Value>> {
         "--submodule=short",
         "--full-index",
     ];
-    if staged {
-        args.push("--cached");
+    args.extend_from_slice(revisions);
+    if ignore_whitespace {
+        args.push("--ignore-all-space");
     }
     if binary {
         args.push("--binary");
@@ -96,7 +452,7 @@ fn diffs(root: &Path, staged: bool, binary: bool) -> Result<Vec<Value>> {
     args.push("--");
     let output = checked(run(root, &args)?)?;
     let mut files = Vec::new();
-    if !output.is_empty() {
+    if !output.is_empty() && output.as_slice() != b"\0" {
         let separator = output
             .windows(2)
             .position(|bytes| bytes == b"\0\0")
@@ -104,55 +460,66 @@ fn diffs(root: &Path, staged: bool, binary: bool) -> Result<Vec<Value>> {
         let mut records = std::str::from_utf8(&output[..separator])
             .context("Git paths must be UTF-8")?
             .split('\0');
-        let patch = String::from_utf8_lossy(&output[separator + 2..]);
-        let patches = patch
-            .strip_prefix("diff --git ")
-            .context("unsupported Git diff format")?
-            .split("\ndiff --git ");
-        for patch in patches {
-            records.next().context("missing Git diff metadata")?;
-            let path = records.next().context("missing Git diff path")?;
-            let mut diff = format!("diff --git {patch}");
-            if !diff.ends_with('\n') {
-                diff.push('\n');
+        let patch = &output[separator + 2..];
+        ensure!(
+            patch.starts_with(b"diff --git "),
+            "unsupported Git diff format"
+        );
+        let delimiter = b"\ndiff --git ";
+        let starts = std::iter::once(0)
+            .chain(
+                patch
+                    .windows(delimiter.len())
+                    .enumerate()
+                    .filter_map(|(i, bytes)| (bytes == delimiter).then_some(i + 1)),
+            )
+            .chain(std::iter::once(patch.len()))
+            .collect::<Vec<_>>();
+        for range in starts.windows(2) {
+            let path = records
+                .next()
+                .and_then(|record| record.splitn(3, '\t').nth(2))
+                .context("missing Git diff path")?;
+            let mut diff = patch[range[0]..range[1]].to_vec();
+            if !diff.ends_with(b"\n") {
+                diff.push(b'\n');
             }
-            files.push(json!({"path": path, "diff": diff}));
+            files.push(CapturedDiff {
+                path: path.to_owned(),
+                diff,
+            });
         }
         ensure!(
             records.next().is_none(),
             "Git diff paths and patches differ"
         );
     }
-    if !staged {
-        let untracked = checked(run(
-            root,
-            &["ls-files", "--others", "--exclude-standard", "-z"],
-        )?)?;
-        for path in std::str::from_utf8(&untracked)
-            .context("Git paths must be UTF-8")?
-            .split('\0')
-            .filter(|path| !path.is_empty())
-        {
-            let mut args = vec![
-                "diff",
-                "--no-index",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--no-color",
-                "--full-index",
-            ];
-            if binary {
-                args.push("--binary");
-            }
-            args.extend(["--", "/dev/null", path]);
-            let output = run(root, &args)?;
-            ensure!(
-                output.status.success() || output.status.code() == Some(1),
-                "Git: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-            files.push(json!({"path": path, "diff": String::from_utf8_lossy(&output.stdout)}));
+    for path in untracked {
+        let mut args = vec![
+            "diff",
+            "--no-index",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--full-index",
+        ];
+        if binary {
+            args.push("--binary");
         }
+        if ignore_whitespace {
+            args.push("--ignore-all-space");
+        }
+        args.extend(["--", "/dev/null", path]);
+        let output = run(root, &args)?;
+        ensure!(
+            output.status.success() || output.status.code() == Some(1),
+            "Git: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+        files.push(CapturedDiff {
+            path: path.to_owned(),
+            diff: output.stdout,
+        });
     }
     Ok(files)
 }
@@ -166,10 +533,22 @@ fn head(diff: &str) -> &str {
         .map_or(diff, |(head, _)| head)
 }
 
-/// Reverse-applies the diff the caller displayed, to the index (`cached`) or the working tree.
+/// Applies the reviewed patch to the index (`cached`) or the working tree.
 /// Git applies a patch atomically, and refuses it when the target no longer matches.
-fn apply(root: &Path, patch: &str, cached: bool) -> Result<()> {
-    let mut args = vec!["apply", "--reverse"];
+fn apply(
+    root: &Path,
+    patch: &[u8],
+    cached: bool,
+    reverse: bool,
+    ignore_whitespace: bool,
+) -> Result<()> {
+    let mut args = vec!["apply"];
+    if ignore_whitespace {
+        args.push("--ignore-whitespace");
+    }
+    if reverse {
+        args.push("--reverse");
+    }
     if cached {
         args.push("--cached");
     }
@@ -179,21 +558,19 @@ fn apply(root: &Path, patch: &str, cached: bool) -> Result<()> {
         .stderr(Stdio::piped())
         .spawn()
         .context("run local Git")?;
-    let sent = child
-        .stdin
-        .take()
-        .context("Git stdin")?
-        .write_all(patch.as_bytes());
+    let sent = child.stdin.take().context("Git stdin")?.write_all(patch);
     checked(child.wait_with_output().context("run local Git")?)?;
     sent.context("send patch to Git")
 }
 
 /// The header of `diff`, without mode changes, with only its `index`th hunk: a hunk revert
 /// must not change the file's permissions.
-fn hunk(diff: &str, index: usize) -> Result<String> {
-    let lines = diff.split_inclusive('\n').collect::<Vec<_>>();
+fn hunk(diff: &[u8], index: usize) -> Result<Vec<u8>> {
+    let lines = diff
+        .split_inclusive(|byte| *byte == b'\n')
+        .collect::<Vec<_>>();
     let starts = (0..lines.len())
-        .filter(|&i| lines[i].starts_with("@@ "))
+        .filter(|&i| lines[i].starts_with(b"@@ "))
         .collect::<Vec<_>>();
     let start = *starts
         .get(index)
@@ -201,8 +578,11 @@ fn hunk(diff: &str, index: usize) -> Result<String> {
     let end = starts.get(index + 1).copied().unwrap_or(lines.len());
     let header = lines[..starts[0]]
         .iter()
-        .filter(|line| !line.starts_with("old mode ") && !line.starts_with("new mode "));
-    Ok(header.chain(&lines[start..end]).copied().collect())
+        .filter(|line| !line.starts_with(b"old mode ") && !line.starts_with(b"new mode "));
+    Ok(header
+        .chain(&lines[start..end])
+        .flat_map(|line| line.iter().copied())
+        .collect())
 }
 
 /// Reverts one file, or one hunk of it, in the `source` the caller displayed. One capture
@@ -218,13 +598,14 @@ fn revert(root: &Path, path: &str, params: &Value) -> Result<&'static str> {
         _ => bail!("Git revert source must be staged or unstaged"),
     };
     let displayed = params["diff"].as_str().context("missing Git diff")?;
-    let current = diffs(root, staged, true)?
+    let ignore_whitespace = params["hideWhitespace"].as_bool().unwrap_or(false);
+    let current = diffs(root, staged, ignore_whitespace)?
         .into_iter()
-        .find(|file| file["path"] == path)
-        .and_then(|file| file["diff"].as_str().map(str::to_owned))
+        .find(|file| file.path == path)
+        .map(|file| file.diff)
         .context("file is no longer in the selected changes")?;
     ensure!(
-        head(&current) == head(displayed),
+        head(&String::from_utf8_lossy(&current)) == head(displayed),
         "file changed since its diff was shown; refresh and try again"
     );
     let patch = match params.get("hunk") {
@@ -241,29 +622,255 @@ fn revert(root: &Path, path: &str, params: &Value) -> Result<&'static str> {
             "Git: {}",
             String::from_utf8_lossy(&differs.stderr).trim()
         );
-        apply(root, &patch, true)?;
+        apply(root, &patch, true, true, ignore_whitespace)?;
         if !differs.status.success() {
             return Ok("partial-success");
         }
     }
-    match apply(root, &patch, false) {
+    match apply(root, &patch, false, true, ignore_whitespace) {
         Ok(()) => Ok("success"),
         Err(_) if staged => Ok("partial-success"),
         Err(error) => Err(error),
     }
 }
 
+fn selected_patch(root: &Path, params: &Value) -> Result<(Vec<u8>, bool, Vec<String>)> {
+    let staged = match params["source"].as_str() {
+        Some("staged") => true,
+        Some("unstaged") => false,
+        _ => bail!("Git patch source must be staged or unstaged"),
+    };
+    let current = diffs(
+        root,
+        staged,
+        params["hideWhitespace"].as_bool().unwrap_or(false),
+    )?;
+    let files = params["files"]
+        .as_array()
+        .context("missing reviewed Git files")?;
+    ensure!(!files.is_empty(), "no reviewed files");
+    let mut patch = Vec::new();
+    let mut paths = Vec::new();
+    for file in files {
+        let path = file["path"].as_str().context("missing Git path")?;
+        ensure!(
+            !path.is_empty()
+                && Path::new(path)
+                    .components()
+                    .all(|c| matches!(c, Component::Normal(_)))
+                && !paths.iter().any(|p| p == path),
+            "Git paths must be unique and repository-relative"
+        );
+        let displayed = file["diff"].as_str().context("missing Git diff")?;
+        let captured = current
+            .iter()
+            .find(|f| f.path == path)
+            .map(|f| f.diff.as_slice())
+            .context("file is no longer in the selected changes")?;
+        ensure!(
+            head(&String::from_utf8_lossy(captured)) == head(displayed),
+            "file changed since its diff was shown; refresh and try again"
+        );
+        if let Some(index) = file.get("hunk").filter(|v| !v.is_null()) {
+            patch.extend_from_slice(&hunk(
+                captured,
+                index.as_u64().context("Git hunk must be an index")? as usize,
+            )?);
+        } else {
+            patch.extend_from_slice(captured);
+        }
+        paths.push(path.to_owned());
+    }
+    Ok((patch, staged, paths))
+}
+
+fn patch_changes(root: &Path, endpoint: &str, params: &Value) -> Result<&'static str> {
+    let (patch, staged, paths) = selected_patch(root, params)?;
+    let ignore_whitespace = params["hideWhitespace"].as_bool().unwrap_or(false);
+    match endpoint {
+        "git-stage" => {
+            ensure!(!staged, "stage requires unstaged changes");
+            apply(root, &patch, true, false, ignore_whitespace)?;
+        }
+        "git-unstage" => {
+            ensure!(staged, "unstage requires staged changes");
+            apply(root, &patch, true, true, ignore_whitespace)?;
+        }
+        "git-revert" => {
+            if staged {
+                let mut args = vec!["diff", "--quiet", "--no-ext-diff", "--"];
+                args.extend(paths.iter().map(String::as_str));
+                let differs = run(root, &args)?;
+                ensure!(
+                    differs.status.success() || differs.status.code() == Some(1),
+                    "Git diff failed"
+                );
+                apply(root, &patch, true, true, ignore_whitespace)?;
+                if !differs.status.success() {
+                    return Ok("partial-success");
+                }
+            }
+            match apply(root, &patch, false, true, ignore_whitespace) {
+                Ok(()) => {}
+                Err(_) if staged => return Ok("partial-success"),
+                Err(error) => return Err(error),
+            }
+        }
+        _ => bail!("unsupported Git patch operation"),
+    }
+    Ok("success")
+}
+
+fn changes(root: &Path, params: &Value) -> Result<Value> {
+    let ignore_whitespace = params["hideWhitespace"].as_bool().unwrap_or(false);
+    let untracked = untracked_paths(root)?;
+    let mut body = json!({
+        "root": root,
+        "hideWhitespace": ignore_whitespace,
+        "unstaged": review_diffs(root, &[], false, &untracked, ignore_whitespace)?,
+        "staged": review_diffs(root, &["--cached"], false, &[], ignore_whitespace)?,
+    });
+    let head = commit_id(root, "HEAD")?;
+    let branches = checked(run(
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads",
+            "refs/remotes",
+        ],
+    )?)?;
+    let branches = String::from_utf8(branches)?;
+    body["branches"] = branches
+        .lines()
+        .map(|s| Value::from(s.to_owned()))
+        .collect();
+    let commits = if head.is_some() {
+        String::from_utf8(checked(run(
+            root,
+            &["log", "-100", "--format=%H %s", "HEAD", "--"],
+        )?)?)?
+    } else {
+        String::new()
+    };
+    body["commits"] = commits
+        .lines()
+        .filter_map(|line| {
+            let (id, subject) = line.split_once(' ')?;
+            Some(json!({"id": id, "label": format!("{} {subject}", &id[..8])}))
+        })
+        .collect();
+    let empty = String::from_utf8(checked(run(
+        root,
+        &["hash-object", "-t", "tree", "/dev/null"],
+    )?)?)?;
+    let base = head.as_deref().unwrap_or(empty.trim());
+    let source = params["reviewSource"].as_str().unwrap_or("unstaged");
+    body["review"] = match source {
+        "uncommitted" => json!(review_diffs(
+            root,
+            &[base],
+            false,
+            &untracked,
+            ignore_whitespace
+        )?),
+        "branch" | "commits" if head.is_none() => json!([]),
+        "branch" => {
+            let branch = params["baseBranch"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .or_else(|| branches.lines().find(|s| *s == "main" || *s == "master"))
+                .or_else(|| branches.lines().next())
+                .context("select a base branch")?;
+            ensure!(
+                branches.lines().any(|s| s == branch),
+                "base branch no longer exists"
+            );
+            let target = commit_id(root, branch)?.context("base branch has no commit")?;
+            let merge = answer(root, &["merge-base", &target, "HEAD"])?
+                .context("branches have no common ancestor")?;
+            body["base_branch"] = branch.into();
+            body["before_ref"] = merge.clone().into();
+            body["after_ref"] = head.clone().into();
+            json!(review_diffs(
+                root,
+                &[&merge, "HEAD"],
+                false,
+                &[],
+                ignore_whitespace
+            )?)
+        }
+        "commits" => {
+            let id = params["commit"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(base);
+            ensure!(id.bytes().all(|b| b.is_ascii_hexdigit()), "invalid commit");
+            let id = commit_id(root, id)?.context("commit no longer exists")?;
+            let parent = commit_id(root, &format!("{id}^"))?;
+            body["commit"] = id.clone().into();
+            body["before_ref"] = parent.clone().into();
+            body["after_ref"] = id.clone().into();
+            json!(review_diffs(
+                root,
+                &[parent.as_deref().unwrap_or(empty.trim()), &id],
+                false,
+                &[],
+                ignore_whitespace,
+            )?)
+        }
+        _ => json!([]),
+    };
+    Ok(body)
+}
+
 pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
     let cwd = params["cwd"].as_str().context("missing Git cwd")?;
     ensure!(Path::new(cwd).is_absolute(), "Git cwd must be absolute");
-    let root = checked(run(Path::new(cwd), &["rev-parse", "--show-toplevel"])?)?;
+    let cwd = Path::new(cwd);
+    let found = run(cwd, &["rev-parse", "--show-toplevel"])?;
+    if !found.status.success() {
+        let error = String::from_utf8_lossy(&found.stderr);
+        if endpoint == "git-init-repo" {
+            ensure!(
+                error.contains("not a git repository"),
+                "Git: {}",
+                error.trim()
+            );
+            ensure!(cwd.is_dir(), "Git cwd must be a directory");
+            checked(run(cwd, &["init"])?)?;
+        } else if endpoint == "git-changes" {
+            ensure!(
+                error.contains("not a git repository"),
+                "Git: {}",
+                error.trim()
+            );
+            return Ok(json!({"root": cwd, "unstaged": [], "staged": [], "not_repository": true}));
+        } else {
+            checked(found)?;
+        }
+    } else if endpoint == "git-init-repo" {
+        bail!("folder is already in a Git repository");
+    }
+    let root = checked(run(cwd, &["rev-parse", "--show-toplevel"])?)?;
     let root = String::from_utf8(root).context("Git root must be UTF-8")?;
     let root = Path::new(root.strip_suffix('\n').unwrap_or(&root));
+    if endpoint == "git-cat-file" {
+        return contents::cat_file(root, params);
+    }
+    if endpoint == "git-review-patch" {
+        return review_patch::read(root, params);
+    }
+    if endpoint == "git-file-url" {
+        return file_url::read(root, params);
+    }
     if let Some(result) = commit_flow(endpoint, root, params) {
         return result;
     }
     let mut status = None;
-    if endpoint != "git-changes" {
+    if params.get("files").is_some() {
+        status = Some(patch_changes(root, endpoint, params)?);
+    } else if !matches!(endpoint, "git-changes" | "git-init-repo") {
         let path = params["path"].as_str().context("missing Git path")?;
         ensure!(
             !path.is_empty()
@@ -288,7 +895,7 @@ pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
             checked(run(root, &args)?)?;
         }
     }
-    let mut body = json!({"root": root, "unstaged": diffs(root, false, false)?, "staged": diffs(root, true, false)?});
+    let mut body = changes(root, params)?;
     if let Some(status) = status {
         body["status"] = status.into();
     }
@@ -697,7 +1304,7 @@ const MARKER: &str = ".codex-worktree-name";
 const OWNER: &str = "codex-thread.json";
 const SHELL_ENVIRONMENT: &str = "codex-shell-environment.json";
 const OVERRIDE: &str = "AGENTS.override.md";
-const NO_ENVIRONMENT: &str = "__none__";
+pub(super) const NO_ENVIRONMENT: &str = "__none__";
 /// Variables a setup script never hands on (`Ewe`).
 const UNSHARED: [&str; 9] = [
     "CODEX_SOURCE_TREE_PATH",

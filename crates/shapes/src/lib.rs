@@ -28,22 +28,24 @@
 //! # How
 //!
 //! On macOS every layer is rasterized at runtime by the Skia build Chromium uses, through the
-//! calls Blink makes, once per cc raster tile of the window (`src/skia.rs`). The result is
+//! calls Blink makes, once per cc raster tile of the layer's recording (`src/skia.rs`). The result is
 //! read back as per-pixel coverage and blend mode and painted as GPUI monochrome sprites
 //! (`Window::paint_svg` with an SVG wrapping the mask as a nearest-neighbor PNG); the vendored
 //! gpui_apple shader blends each with Skia's integer formula for that mode. Elsewhere it
 //! falls back to GPUI's quad and shadow primitives, which are not Skia-exact.
 //!
 //! Composited layers: put the content in a GPUI `.layer()` div whose origin is Chromium's
-//! layer origin (its ink start: shadows included) and paint with `layer: None`. Every op is
+//! layer origin and paint with `layer: None`. Every op is
 //! rasterized in that layer's space (Blink's float geometry depends on it) and blitted into
 //! the layer, which is composited once, as cc does. Keep GPUI quads (`.bg()`) out of such a
 //! layer: they bypass it. Without a GPUI layer, [`paint`]'s `layer` gives the origin and each
 //! op is composited on its own.
+//! Sparse viewport layers keep their window origin and record their decoration bounds with
+//! [`recorded_bounds`] during prepaint and [`with_recorded_bounds`] during paint.
 //!
 //! Colors outside [0, 1] (out-of-gamut oklab/color-mix results) are drawn as Skia draws them,
 //! with its float raster pipeline. Limits: inset shadows paint apart from Blink's clip layer.
-//! A fill under a CSS `opacity` rounds 1 level darker on its anti-aliased edge.
+//! Use [`with_composited_opacity`] for compositor opacity; [`with_layer`] retains Skia's save-layer rounding.
 
 use gpui::{App, Bounds, Corners, Hsla, IntoElement, Pixels, Point, Styled as _, Window, canvas};
 
@@ -89,19 +91,28 @@ pub struct Decoration {
 
 /// An element covering its parent's box that paints `d`.
 pub fn decoration(d: Decoration) -> impl IntoElement {
-    cover(move |bounds, window, cx| paint(&d, None, bounds, window, cx))
+    cover(
+        move |bounds, window, _| {
+            #[cfg(target_os = "macos")]
+            skia::record_decoration(&d, bounds, window);
+            #[cfg(not(target_os = "macos"))]
+            let _ = (bounds, window);
+            d
+        },
+        |bounds, d, window, cx| paint(&d, None, bounds, window, cx),
+    )
 }
 
 /// An element covering its parent's box, painted by `paint`.
-fn cover(paint: impl FnOnce(Bounds<Pixels>, &mut Window, &mut App) + 'static) -> impl IntoElement {
-    canvas(
-        |_, _, _| {},
-        move |bounds, (), window, cx| paint(bounds, window, cx),
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
+fn cover<T: 'static>(
+    prepaint: impl FnOnce(Bounds<Pixels>, &mut Window, &mut App) -> T + 'static,
+    paint: impl FnOnce(Bounds<Pixels>, T, &mut Window, &mut App) + 'static,
+) -> impl IntoElement {
+    canvas(prepaint, paint)
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
 }
 
 /// Paints `d` for the border box `bounds`. `layer`: for a box that Chromium paints into a
@@ -125,13 +136,48 @@ pub fn paint(
     }
 }
 
+/// Paints a repeating two-color Lab gradient with a hard stop halfway through each CSS-pixel period.
+/// Colors retain their unrounded sRGB channels. The period must be finite and positive.
+pub fn paint_horizontal_stripes(
+    period: Pixels,
+    colors: [gpui::Rgba; 2],
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    assert!(f32::from(period).is_finite() && period > gpui::px(0.));
+    #[cfg(target_os = "macos")]
+    skia::paint_horizontal_stripes(period, colors, bounds, window, cx);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = cx;
+        let half = f32::from(period) / 2.;
+        let mut top = f32::from(bounds.top());
+        let bottom = f32::from(bounds.bottom());
+        let mut index = 1;
+        while top < bottom {
+            window.paint_quad(gpui::fill(
+                Bounds::new(
+                    gpui::point(bounds.left(), gpui::px(top)),
+                    gpui::size(bounds.size.width, gpui::px(half.min(bottom - top))),
+                ),
+                colors[index],
+            ));
+            index ^= 1;
+            top += half;
+        }
+    }
+}
+
 /// How image pixels compose over their background.
 #[derive(Clone, Copy, Debug)]
 pub enum ImageComposition {
     /// Draw each image directly over the background.
     Direct(Hsla),
-    /// Restore the images as one layer over the background.
+    /// Restore the images as one Skia saveLayer over the background.
     Group(Hsla),
+    /// Restore a transparent compositor tile over an opaque background.
+    Composited(Hsla),
 }
 
 /// `images` (premultiplied RGBA, see [`premultiply`], each drawn into its `dst` rect in
@@ -194,15 +240,18 @@ pub enum Fill {
 /// below the box (measured on the diff capsules where the main surface's rounded clip owns a
 /// render surface, `screens::diff::panel::panel_clamped`; its source is not found).
 pub fn backdrop_blur(blur: Pixels, fill: Fill, gap_row: bool, d: Decoration) -> impl IntoElement {
-    cover(move |bounds, window, _| {
-        #[cfg(target_os = "macos")]
-        backdrop::paint(blur, fill, gap_row, &d, bounds, window);
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = (blur, fill, gap_row);
-            quads(&d, bounds, window);
-        }
-    })
+    cover(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            #[cfg(target_os = "macos")]
+            backdrop::paint(blur, fill, gap_row, &d, bounds, window);
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = (blur, fill, gap_row);
+                quads(&d, bounds, window);
+            }
+        },
+    )
 }
 
 /// CSS `mask-image: linear-gradient(to bottom, transparent, black <fade>)` over its parent,
@@ -211,12 +260,15 @@ pub fn backdrop_blur(blur: Pixels, fill: Fill, gap_row: bool, d: Decoration) -> 
 /// layer is composited. The rows past `fade` are left as they are. macOS only: elsewhere GPUI
 /// has no layer pixels to mask and nothing is painted.
 pub fn top_fade(fade: Pixels) -> impl IntoElement {
-    cover(move |bounds, window, cx| {
-        #[cfg(target_os = "macos")]
-        mask::paint_top_fade(fade, bounds, window, cx);
-        #[cfg(not(target_os = "macos"))]
-        let _ = (fade, bounds, window, cx);
-    })
+    cover(
+        |_, _, _| {},
+        move |bounds, (), window, cx| {
+            #[cfg(target_os = "macos")]
+            mask::paint_top_fade(fade, bounds, window, cx);
+            #[cfg(not(target_os = "macos"))]
+            let _ = (fade, bounds, window, cx);
+        },
+    )
 }
 
 /// CSS `mask-image: linear-gradient(to right, transparent, black <left>, black calc(100% -
@@ -232,15 +284,18 @@ pub fn x_fade(left: Pixels, right: Pixels) -> impl IntoElement {
 /// element is built: read it inside `edges`, never before. `edges` is not called where nothing
 /// is painted (not macOS).
 pub fn x_fade_with(edges: impl FnOnce() -> (Pixels, Pixels) + 'static) -> impl IntoElement {
-    cover(move |bounds, window, cx| {
-        #[cfg(target_os = "macos")]
-        {
-            let (left, right) = edges();
-            mask::paint_x_fade(left, right, bounds, window, cx);
-        }
-        #[cfg(not(target_os = "macos"))]
-        let _ = (edges, bounds, window, cx);
-    })
+    cover(
+        |_, _, _| {},
+        move |bounds, (), window, cx| {
+            #[cfg(target_os = "macos")]
+            {
+                let (left, right) = edges();
+                mask::paint_x_fade(left, right, bounds, window, cx);
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (edges, bounds, window, cx);
+        },
+    )
 }
 
 /// A rounded `clip-path` (or `border-radius` with `overflow: clip`) on a composited element:
@@ -313,6 +368,7 @@ pub fn with_rounded_clip<R>(
 /// px; a CSS `opacity` on a box): Skia draws into the layer's own device, where an ancestor's
 /// anti-aliased clip ([`with_rounded_clip`]) that covers `bounds` is a plain rect clip, so the
 /// shapes painted in it raster without that clip.
+/// The bounds round outward to the full device rectangle, including its right and bottom edges.
 pub fn with_layer<R>(
     alpha: u8,
     bounds: Bounds<Pixels>,
@@ -328,8 +384,87 @@ pub fn with_layer<R>(
     }
 }
 
+/// Runs a subtree's prepaint and returns its decoration bounds in device pixels.
+pub fn recorded_bounds(prepaint: impl FnOnce()) -> Option<[i32; 4]> {
+    #[cfg(target_os = "macos")]
+    return skia::recorded_bounds(prepaint);
+    #[cfg(not(target_os = "macos"))]
+    {
+        prepaint();
+        None
+    }
+}
+
+/// Paints a subtree on its recorded compositor tile grid without adding a layer.
+pub fn with_recorded_bounds<R>(bounds: Option<[i32; 4]>, paint: impl FnOnce() -> R) -> R {
+    #[cfg(target_os = "macos")]
+    return skia::with_recorded_bounds(bounds, paint);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = bounds;
+        paint()
+    }
+}
+
+/// Paints a group and applies byte opacity with the compositor's integer alpha scaling.
+/// Returns the closure's result without changing it.
+/// The bounds must include all of the group's drawn pixels.
+pub fn with_composited_opacity<R>(
+    alpha: u8,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+    paint: impl FnOnce(&mut Window) -> R,
+) -> R {
+    #[cfg(target_os = "macos")]
+    {
+        with_layer(255, bounds, window, |window| {
+            let result = paint(window);
+            mask::paint_opacity(alpha, bounds, window, cx);
+            result
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = cx;
+        with_layer(alpha, bounds, window, paint)
+    }
+}
+
+/// Paints a tightly bounded compositor recording, including its shadow overflow.
+/// Take `bounds` from [`recorded_bounds`], which clips them to the current content mask.
+pub fn with_composited_bounds<R>(bounds: Option<[i32; 4]>, paint: impl FnOnce() -> R) -> R {
+    #[cfg(target_os = "macos")]
+    return skia::with_composited_bounds(bounds, paint);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = bounds;
+        paint()
+    }
+}
+
+/// Returns the icon's painted bounds in window coordinates, including its strokes.
+/// Bounds round outward to device pixels and remain inside the SVG viewport.
+/// Returns `None` for an unsupported or empty SVG, or on other platforms.
+pub fn icon_paint_bounds(
+    src: &[u8],
+    key: &str,
+    bounds: Bounds<Pixels>,
+    flip_x: bool,
+    window: &Window,
+) -> Option<Bounds<Pixels>> {
+    #[cfg(target_os = "macos")]
+    return skia::icon_paint_bounds(src, key, bounds, flip_x, window);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (src, key, bounds, flip_x, window);
+        None
+    }
+}
+
 /// Paints the svg icon `src` (asset bytes; `key` names it for the cache) into `bounds`,
 /// mirrored horizontally if `flip_x`, in `color`; `layer` as in [`paint`].
+/// An explicit layer origin composites the complete SVG, including overlapping paths.
 /// False if this platform or svg is not supported: paint it another way then.
 #[allow(clippy::too_many_arguments)]
 pub fn paint_icon(
@@ -343,10 +478,53 @@ pub fn paint_icon(
     cx: &App,
 ) -> bool {
     #[cfg(target_os = "macos")]
-    return skia::paint_icon(src, key, bounds, flip_x, color, layer, window, cx);
+    return skia::paint_icon(src, key, bounds, flip_x, color, layer, None, window, cx);
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (src, key, bounds, flip_x, color, layer, window, cx);
+        false
+    }
+}
+
+/// Paints an icon as [`paint_icon`] does, then transforms its cached raster in device pixels.
+/// The transform does not change layout, hitboxes, or the raster cache key.
+#[allow(clippy::too_many_arguments)]
+pub fn paint_icon_transformed(
+    src: &[u8],
+    key: &str,
+    bounds: Bounds<Pixels>,
+    flip_x: bool,
+    color: Hsla,
+    layer: Option<Point<Pixels>>,
+    transformation: gpui::TransformationMatrix,
+    window: &mut Window,
+    cx: &App,
+) -> bool {
+    #[cfg(target_os = "macos")]
+    return skia::paint_icon(
+        src,
+        key,
+        bounds,
+        flip_x,
+        color,
+        layer,
+        Some(transformation),
+        window,
+        cx,
+    );
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (
+            src,
+            key,
+            bounds,
+            flip_x,
+            color,
+            layer,
+            transformation,
+            window,
+            cx,
+        );
         false
     }
 }

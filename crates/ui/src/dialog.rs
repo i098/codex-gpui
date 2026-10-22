@@ -40,6 +40,12 @@ struct ModelAnnouncement {
     artwork: AnnouncementArtworkCache,
 }
 
+struct ArchiveSection {
+    title: String,
+    description: String,
+    running: bool,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Kind {
     Shortcuts,
@@ -53,6 +59,9 @@ pub enum Kind {
     /// `Rename chat` from a Recents row's menu (RS-091, refs/interactions/s002.json): the
     /// `Chat title` input, prefilled and selected, `Cancel`, `Save` and `Close dialog`.
     Rename,
+    NewSection,
+    EditSection,
+    ArchiveSection,
     /// `Commit or push` (DT-139): the original's commit form for the open thread's repository.
     Commit,
     Branches,
@@ -80,6 +89,11 @@ pub enum Outcome {
         thread: String,
         name: String,
     },
+    SectionName {
+        section: Option<String>,
+        name: String,
+    },
+    ArchiveSection(String),
     ScheduleTask {
         prompt: String,
         rrule: String,
@@ -164,6 +178,7 @@ pub struct Dialog {
     repeat: usize,
     repeat_open: bool,
     saving: bool,
+    archive_section: Option<ArchiveSection>,
     error: Option<String>,
     announcement: Option<ModelAnnouncement>,
     commit: Option<CommitForm>,
@@ -195,6 +210,7 @@ impl Dialog {
             saving: false,
             error: None,
             announcement: None,
+            archive_section: None,
             commit: None,
             branch: None,
         }
@@ -214,6 +230,111 @@ impl Dialog {
             thread,
             ..Self::new(Kind::Rename, cx)
         }
+    }
+    pub fn section(id: Option<String>, name: String, cx: &mut Context<Self>) -> Self {
+        Self {
+            kind: if id.is_some() {
+                Kind::EditSection
+            } else {
+                Kind::NewSection
+            },
+            thread: id.unwrap_or_default(),
+            ..Self::rename(String::new(), name, cx)
+        }
+    }
+
+    fn name_title(&self) -> &'static str {
+        match self.kind {
+            Kind::NewSection => "New section",
+            Kind::EditSection => "Edit section",
+            _ => "Rename chat",
+        }
+    }
+
+    fn name_label(&self) -> &'static str {
+        if self.kind == Kind::Rename {
+            "Chat title"
+        } else {
+            "Section name"
+        }
+    }
+
+    fn name_submit(&self) -> &'static str {
+        if self.kind == Kind::NewSection {
+            "Create section"
+        } else {
+            "Save"
+        }
+    }
+
+    pub fn archive_section(
+        id: String,
+        name: String,
+        count: usize,
+        running: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let noun = if count == 1 { "chat" } else { "chats" };
+        let title = format!(
+            "{}{count} {noun}?",
+            if running {
+                "Stop and archive "
+            } else {
+                "Archive "
+            }
+        );
+        let description = if running {
+            format!(
+                "Archiving will stop any ongoing work. You can restore {} later in settings.",
+                if count == 1 { "the chat" } else { "the chats" }
+            )
+        } else {
+            format!(
+                "This will archive the chats in {name}. You can find them later in your archived chats"
+            )
+        };
+        Self {
+            thread: id,
+            archive_section: Some(ArchiveSection {
+                title,
+                description,
+                running,
+            }),
+            ..Self::new(Kind::ArchiveSection, cx)
+        }
+    }
+
+    fn archive_section_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let form = self.archive_section.as_ref().expect("archive section");
+        div()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .child(text(form.title.clone(), 20., 28., 600., t.text))
+            .child(
+                text(form.description.clone(), 14., 21., 430., t.text_secondary)
+                    .whitespace_normal()
+                    .mt(px(4.)),
+            )
+            .child(
+                div()
+                    .mt(px(20.))
+                    .flex()
+                    .justify_end()
+                    .gap(px(12.))
+                    .child(self.button(0, "Cancel", 80., t, cx))
+                    .child(self.button(
+                        1,
+                        if form.running {
+                            "Stop and archive"
+                        } else {
+                            "Archive all"
+                        },
+                        if form.running { 151. } else { 102. },
+                        t,
+                        cx,
+                    )),
+            )
     }
     /// `Commit or push` for the repository `repo` describes.
     pub fn commit(repo: CommitRepository, cx: &mut Context<Self>) -> Self {
@@ -634,6 +755,14 @@ impl Dialog {
             (Kind::FullAccess, _) => "Confirm",
             (Kind::LogOut, 0) => "Cancel",
             (Kind::LogOut, _) => "Log out",
+            (Kind::ArchiveSection, 0) => "Cancel",
+            (Kind::ArchiveSection, _) => {
+                if self.archive_section.as_ref().is_some_and(|f| f.running) {
+                    "Stop and archive"
+                } else {
+                    "Archive all"
+                }
+            }
             (Kind::ModelAnnouncement, 0) => "Close",
             (Kind::ModelAnnouncement, 1) => "Continue with current model",
             (Kind::ModelAnnouncement, _) => {
@@ -649,9 +778,9 @@ impl Dialog {
             (Kind::ScheduleTask, 3) => "Repeat",
             (Kind::ScheduleTask, 4) => "Time",
             (Kind::ScheduleTask, _) => "Create",
-            (Kind::Rename, 0) => "Chat title",
-            (Kind::Rename, 1) => "Save",
-            (Kind::Rename, _) => "Cancel",
+            (Kind::Rename | Kind::NewSection | Kind::EditSection, 0) => self.name_label(),
+            (Kind::Rename | Kind::NewSection | Kind::EditSection, 1) => self.name_submit(),
+            (Kind::Rename | Kind::NewSection | Kind::EditSection, _) => "Cancel",
             (Kind::Commit, 0) => "Commit message",
             (Kind::Commit, 1) => "Include unstaged changes",
             (Kind::Commit, 2) => "Commit to",
@@ -677,6 +806,8 @@ impl Dialog {
             self.kind,
             Kind::Shortcuts
                 | Kind::Rename
+                | Kind::NewSection
+                | Kind::EditSection
                 | Kind::ScheduleTask
                 | Kind::Commit
                 | Kind::Branches
@@ -790,6 +921,7 @@ impl Dialog {
             (Kind::ScheduleTask, 0 | 4) => {}
             (Kind::FullAccess, 1) => cx.emit(Outcome::FullAccess),
             (Kind::LogOut, 1) => cx.emit(Outcome::LogOut),
+            (Kind::ArchiveSection, 1) => cx.emit(Outcome::ArchiveSection(self.thread.clone())),
             (Kind::ModelAnnouncement, 2) => {
                 let announcement = self.announcement.as_ref().expect("model announcement");
                 cx.emit(Outcome::UseAnnouncedModel {
@@ -811,6 +943,20 @@ impl Dialog {
                 thread: self.thread.clone(),
                 name: self.query.clone(),
             }),
+            (Kind::NewSection | Kind::EditSection, 0 | 1) => {
+                let name = self.query.trim();
+                if self.kind == Kind::EditSection && name.is_empty() {
+                    return;
+                }
+                cx.emit(Outcome::SectionName {
+                    section: (self.kind == Kind::EditSection).then(|| self.thread.clone()),
+                    name: if name.is_empty() {
+                        "New section".to_owned()
+                    } else {
+                        name.to_owned()
+                    },
+                });
+            }
             (Kind::Commit, 1) => {
                 let form = self.form_mut();
                 form.include_unstaged = !form.include_unstaged;
@@ -987,7 +1133,9 @@ impl Dialog {
             "escape" => self.dismiss(cx),
             "tab" => {
                 let order: Vec<usize> = match self.kind {
-                    Kind::Shortcuts | Kind::FullAccess | Kind::LogOut => vec![0, 1],
+                    Kind::Shortcuts | Kind::FullAccess | Kind::LogOut | Kind::ArchiveSection => {
+                        vec![0, 1]
+                    }
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
                     Kind::Branches => vec![0, 1],
                     Kind::BranchConflict => vec![1, 2],
@@ -1015,7 +1163,10 @@ impl Dialog {
             }
             // Enter in the title input submits the form; Space types.
             "enter"
-                if matches!(self.kind, Kind::Rename | Kind::CreateBranch) && self.selected == 0 =>
+                if matches!(
+                    self.kind,
+                    Kind::Rename | Kind::NewSection | Kind::EditSection | Kind::CreateBranch
+                ) && self.selected == 0 =>
             {
                 self.activate(cx)
             }
@@ -1026,6 +1177,7 @@ impl Dialog {
                     Kind::CloseWindow
                         | Kind::FullAccess
                         | Kind::LogOut
+                        | Kind::ArchiveSection
                         | Kind::ModelAnnouncement
                         | Kind::RevertChanges
                 ) || (self.selected != 0 && !self.editing()) =>
@@ -1076,7 +1228,10 @@ impl Dialog {
             .rounded(px(12.5))
             .bg(if primary { t.text } else { t.list_hover })
             .when(
-                matches!(self.kind, Kind::FullAccess | Kind::RevertChanges),
+                matches!(
+                    self.kind,
+                    Kind::FullAccess | Kind::RevertChanges | Kind::ArchiveSection
+                ),
                 |d| {
                     d.h(px(36.)).rounded(px(18.)).bg(if primary {
                         t.text_error.opacity(0.1)
@@ -1091,13 +1246,35 @@ impl Dialog {
             } else {
                 rgba(0)
             })
+            .when(
+                matches!(self.kind, Kind::NewSection | Kind::EditSection),
+                |d| {
+                    d.w_auto()
+                        .px(px(16.))
+                        .border_1()
+                        .border_color(if self.selected == index {
+                            rgba(0x3a83f7ff).into()
+                        } else {
+                            t.border
+                        })
+                        .bg(if primary {
+                            t.text
+                        } else {
+                            t.text.opacity(0.032)
+                        })
+                },
+            )
             .hover(|s| s.opacity(0.85))
             .child(text(
                 label,
                 14.,
                 18.,
                 430.,
-                if matches!(self.kind, Kind::FullAccess | Kind::RevertChanges) && primary {
+                if matches!(
+                    self.kind,
+                    Kind::FullAccess | Kind::RevertChanges | Kind::ArchiveSection
+                ) && primary
+                {
                     t.text_error
                 } else if primary {
                     t.menu_background
@@ -1873,10 +2050,14 @@ impl Dialog {
             .p(px(20.))
             .flex()
             .flex_col()
-            .child(text("Rename chat", 20., 28., 600., t.text))
+            .child(text(self.name_title(), 20., 28., 600., t.text))
             .child(
                 text(
-                    "Keep it short and recognizable",
+                    if self.kind == Kind::Rename {
+                        "Keep it short and recognizable"
+                    } else {
+                        "Group chats and projects however you like"
+                    },
                     14.,
                     21.,
                     430.,
@@ -1888,9 +2069,13 @@ impl Dialog {
                 div()
                     .id("rename-title")
                     .role(gpui::Role::TextInput)
-                    .aria_label("Chat title")
+                    .aria_label(self.name_label())
                     .aria_value(self.query.clone())
-                    .aria_placeholder("Add a title…")
+                    .aria_placeholder(if self.kind == Kind::Rename {
+                        "Add a title…"
+                    } else {
+                        "Section name"
+                    })
                     .track_focus(&self.controls[0])
                     .mt(px(12.))
                     .h(px(36.))
@@ -1910,7 +2095,12 @@ impl Dialog {
                     .child(
                         text(
                             if self.query.is_empty() {
-                                "Add a title…".into()
+                                if self.kind == Kind::Rename {
+                                    "Add a title…"
+                                } else {
+                                    "Section name"
+                                }
+                                .into()
                             } else {
                                 self.query.clone()
                             },
@@ -1923,9 +2113,16 @@ impl Dialog {
                                 t.text
                             },
                         )
-                        .when(self.select_all && !self.query.is_empty(), |d| {
-                            d.bg(rgba(0x3a83f766))
-                        }),
+                        .when(
+                            self.select_all && !self.query.is_empty(),
+                            |d| {
+                                d.bg(if self.kind == Kind::Rename {
+                                    rgba(0x3a83f766).into()
+                                } else {
+                                    t.text_selection
+                                })
+                            },
+                        ),
                     )
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.selected = 0;
@@ -1940,7 +2137,17 @@ impl Dialog {
                     .justify_end()
                     .gap(px(12.))
                     .child(self.button(2, "Cancel", 80., t, cx))
-                    .child(self.button(1, "Save", 66., t, cx)),
+                    .child(self.button(
+                        1,
+                        self.name_submit(),
+                        if self.kind == Kind::NewSection {
+                            126.
+                        } else {
+                            66.
+                        },
+                        t,
+                        cx,
+                    )),
             )
             .child(
                 div()
@@ -2706,7 +2913,8 @@ impl Render for Dialog {
             Kind::CloseWindow => (420., 171.),
             Kind::RevertChanges => (420., 199.),
             Kind::ScheduleTask => (680., 422.),
-            Kind::Rename => (420., 185.),
+            Kind::Rename | Kind::NewSection | Kind::EditSection => (420., 185.),
+            Kind::ArchiveSection => (420., 181.),
             Kind::FullAccess => (520., 420.),
             Kind::LogOut => (380., 145. + if self.email.is_some() { 25. } else { 0. }),
             Kind::ModelAnnouncement => (480., 432.),
@@ -2728,7 +2936,8 @@ impl Render for Dialog {
             Kind::Shortcuts => self.shortcuts_content(&visible, t, cx),
             Kind::CloseWindow | Kind::RevertChanges => self.close_content(t, cx),
             Kind::ScheduleTask => self.schedule_content(t, cx),
-            Kind::Rename => self.rename_content(t, cx),
+            Kind::Rename | Kind::NewSection | Kind::EditSection => self.rename_content(t, cx),
+            Kind::ArchiveSection => self.archive_section_content(t, cx),
             Kind::FullAccess => self.full_access_content(t, cx),
             Kind::LogOut => self.logout_content(t, cx),
             Kind::ModelAnnouncement => self.announcement_content(t, cx),
@@ -2770,7 +2979,16 @@ impl Render for Dialog {
                         Kind::CloseWindow => "Are you sure you want to close the window?".into(),
                         Kind::RevertChanges => "Revert changes?".into(),
                         Kind::ScheduleTask => "Schedule a task".into(),
-                        Kind::Rename => "Rename chat".into(),
+                        Kind::Rename | Kind::NewSection | Kind::EditSection => {
+                            self.name_title().into()
+                        }
+                        Kind::ArchiveSection => self
+                            .archive_section
+                            .as_ref()
+                            .expect("archive section")
+                            .title
+                            .clone()
+                            .into(),
                         Kind::FullAccess => "Turn on Full Access?".into(),
                         Kind::LogOut => "Log out?".into(),
                         Kind::Commit => "Commit or push".into(),
