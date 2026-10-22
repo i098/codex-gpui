@@ -815,7 +815,58 @@ impl LocalHost {
             }
             cached = owner.is_some();
         }
-        let present = match fs::symlink_metadata(directory) {
+        let present = self.automation_directory_present(directory)?;
+        let existed = present && directory.join("automation.toml").exists() || cached;
+        let transaction = db
+            .as_ref()
+            .map(Connection::unchecked_transaction)
+            .transpose()?;
+        if let Some(transaction) = &transaction
+            && transaction
+                .execute("DELETE FROM automations WHERE id = ?", [id])
+                .is_err()
+        {
+            return Ok("state_cleanup_failed");
+        }
+        let staged = if present {
+            let temporary = tempfile::Builder::new()
+                .prefix(".deleted-automation-")
+                .tempdir_in(&self.home)?;
+            let destination = temporary.path().join("task");
+            if fs::rename(directory, &destination).is_err() {
+                return Ok("remove_failed");
+            }
+            Some((temporary.keep(), destination))
+        } else {
+            None
+        };
+        if let Some(transaction) = transaction {
+            transaction
+                .execute("DELETE FROM automation_runs WHERE automation_id = ?", [id])
+                .ok();
+            if let Err(error) = transaction.commit() {
+                if let Some((temporary, destination)) = &staged {
+                    fs::rename(destination, directory).with_context(|| {
+                        format!("restore automation from {}", destination.display())
+                    })?;
+                    fs::remove_dir(temporary).ok();
+                }
+                return Err(error.into());
+            }
+        }
+        if let Some((temporary, _)) = staged
+            && let Err(error) = fs::remove_dir_all(&temporary)
+        {
+            eprintln!(
+                "codex-gpui: deleted automation retained at {}: {error}",
+                temporary.display()
+            );
+        }
+        Ok(if existed { "deleted" } else { "not_found" })
+    }
+
+    fn automation_directory_present(&self, directory: &Path) -> Result<bool> {
+        match fs::symlink_metadata(directory) {
             Ok(_) => {
                 let root = self.home.join("automations").canonicalize()?;
                 ensure!(
@@ -823,28 +874,11 @@ impl LocalHost {
                         && root.starts_with(self.home.canonicalize()?),
                     "automation directory escapes CODEX_HOME"
                 );
-                true
+                Ok(true)
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
-            Err(e) => return Err(e.into()),
-        };
-        let existed = present && directory.join("automation.toml").exists() || cached;
-        if let Some(db) = &db
-            && db
-                .execute("DELETE FROM automations WHERE id = ?", [id])
-                .is_err()
-        {
-            return Ok("state_cleanup_failed");
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
         }
-        if present && fs::remove_dir_all(directory).is_err() && directory.exists() {
-            return Ok("remove_failed");
-        }
-        if let Some(db) = &db {
-            // The original clears the runs of a removed definition and ignores failure.
-            db.execute("DELETE FROM automation_runs WHERE automation_id = ?", [id])
-                .ok();
-        }
-        Ok(if existed { "deleted" } else { "not_found" })
     }
 
     /// Saves a validated original-format definition, not an automation scheduling command.

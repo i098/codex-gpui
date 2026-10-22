@@ -1830,14 +1830,14 @@ impl Root {
         cx.spawn_in(window, async move |this, cx| {
             let result = run.await;
             this.update_in(cx, |this, window, cx| {
-                this.running_automations.remove(&id);
+                let still_running = this.running_automations.remove(&id);
                 this.sync_starting(cx);
                 let title = "Could not start scheduled task";
                 match result {
                     Ok(body) if body["success"] == true => {
                         if let Some(target) = target {
                             this.loaded.insert(target.clone());
-                            if this.navigation_epoch == epoch {
+                            if this.navigation_epoch == epoch && still_running {
                                 let reload = this
                                     .thread
                                     .as_ref()
@@ -2322,8 +2322,8 @@ impl Root {
         self.show_dialog(dialog, window, cx);
     }
 
-    /// `Delete scheduled task`: `automation-delete` for the confirmed task. Like the
-    /// original, the dialog closes either way; a failure toasts and the task stays listed.
+    /// `Delete scheduled task`: `automation-delete` for the confirmed task.
+    /// A failure keeps the confirmation open so the user can retry or cancel.
     fn delete_task(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         let host = self.host.clone();
         let params = json!({"id": id});
@@ -2334,32 +2334,34 @@ impl Root {
         cx.spawn_in(window, async move |this, cx| {
             let result = write.await;
             this.update_in(cx, |this, window, cx| {
-                this.dialog = None;
                 match result {
-                    Ok(body) if body["success"] == true => this.task_deleted(&id, window, cx),
+                    Ok(body) if body["success"] == true => {
+                        this.dialog = None;
+                        this.task_deleted(&id, window, cx);
+                    }
                     failure => {
+                        if let Some(dialog) = &this.dialog {
+                            dialog.update(cx, |dialog, cx| dialog.delete_failed(cx));
+                        }
                         let (detail, description) = match failure {
                             Ok(body) => (
                                 format!(
                                     "automation-delete: {}",
                                     body["status"].as_str().unwrap_or("no status")
                                 ),
-                                "Try again".to_owned(),
+                                None,
                             ),
-                            Err(error) => (format!("{error:#}"), error.to_string()),
+                            Err(error) => (format!("{error:#}"), Some(error.to_string())),
                         };
                         eprintln!("codex-gpui: could not delete scheduled task: {detail}");
+                        let toast = Toast::danger("Could not delete scheduled task");
                         this.toast(
-                            Toast::danger("Could not delete scheduled task")
-                                .description(description)
-                                .action("Copy error", move |_, cx| {
-                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
-                                        detail.clone(),
-                                    ))
-                                }),
+                            match description {
+                                Some(description) => toast.description(description),
+                                None => toast,
+                            },
                             cx,
                         );
-                        this.focus_task_trigger(&id, window, cx);
                     }
                 }
                 cx.notify();
@@ -2372,6 +2374,7 @@ impl Root {
     /// The list drops the deleted task at once (the original filters its cached list), then
     /// the host is read again; a deleted task's page closes to the Scheduled page.
     fn task_deleted(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.running_automations.remove(id);
         if let Some(Ok(list)) = &mut self.automations
             && let Some(items) = list["items"].as_array_mut()
         {
@@ -2391,6 +2394,9 @@ impl Root {
             });
         }
         let had_sidebar = self.sidebar_automation.as_deref() == Some(id);
+        if had_sidebar || self.state.route == route {
+            self.navigation_epoch = self.navigation_epoch.wrapping_add(1);
+        }
         if had_sidebar {
             self.sidebar_automation = None;
         }

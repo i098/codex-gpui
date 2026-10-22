@@ -848,9 +848,13 @@ The dialog `Delete {name}?` names the task the host lists, starts on `Cancel`, a
 Escape and `Cancel` close it without a request and return focus to the row's button; both are ignored while the delete runs.
 Confirm sends `automation-delete` through `LocalHost`, which removes the definition directory, its cached `automations` row and its `automation_runs` like the original `aI`.
 The answer is `{item, success, status}`; `deleted` and `not_found` succeed, and account-owned rows are never touched.
+Deletion first moves the definition into a temporary directory outside the automation list, then commits the cached-row removal.
+A failed move rolls back the database change; a failed commit restores the definition.
+Cleanup failure after commit leaves the inactive directory for recovery and reports its path.
 Success drops the row at once, reads the list again, and closes the deleted task's page to `Scheduled`.
-Failure closes the dialog like the original, shows the toast `Could not delete scheduled task` with `Copy error` for the host status, and keeps the task for another try.
-The failure toast shows `Try again` for an unsuccessful host response and the error message for a failed host request.
+Failure keeps the dialog open and shows `Could not delete scheduled task`.
+The user can retry from the same confirmation or cancel without losing the task.
+The failure toast has no description for an unsuccessful host response and shows the error message for a failed host request.
 The page-list row's inline delete icon and tooltip (AM-029) belong to the original page list, which the native route does not draw.
 `crates/app/tests/task_delete.rs` proves the host contract in disposable stores and, on macOS, the native Escape, Cancel, confirm, failed removal and retry path.
 The `Scheduled task actions` menu opens under the row button like the original (right edge 1 px inside the button, 220 px wide); its first item is `Pause` or `Resume`.

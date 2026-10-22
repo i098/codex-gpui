@@ -121,6 +121,42 @@ fn delete_works_without_the_original_database() -> Result<()> {
 }
 
 #[cfg(target_os = "macos")]
+#[test]
+fn failed_directory_move_preserves_the_definition_and_database() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let home = tempfile::tempdir()?;
+    fs::create_dir_all(home.path().join("sqlite"))?;
+    let db = Connection::open(home.path().join("sqlite/codex.db"))?;
+    db.execute_batch(
+        "CREATE TABLE automations (id TEXT PRIMARY KEY, account_id TEXT, user_id TEXT, installation_id TEXT);
+         CREATE TABLE automation_runs (thread_id TEXT PRIMARY KEY, automation_id TEXT);
+         INSERT INTO automations VALUES ('only', NULL, NULL, NULL);
+         INSERT INTO automation_runs VALUES ('run-only', 'only');",
+    )?;
+    let host = LocalHost::new(home.path());
+    host.write_automation("only", &definition("only", "Only", 20))?;
+    let parent = home.path().join("automations");
+    let before = fs::read(parent.join("only/automation.toml"))?;
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o555))?;
+    let result = delete(&host, "only");
+    fs::set_permissions(&parent, fs::Permissions::from_mode(0o755))?;
+    ensure!(result?["status"] == "remove_failed");
+    ensure!(fs::read(parent.join("only/automation.toml"))? == before);
+    ensure!(
+        db.query_row("SELECT COUNT(*) FROM automations", [], |r| r
+            .get::<_, i64>(0))?
+            == 1
+    );
+    ensure!(
+        db.query_row("SELECT COUNT(*) FROM automation_runs", [], |r| r
+            .get::<_, i64>(0))?
+            == 1
+    );
+    ensure!(delete(&host, "only")?["success"] == true);
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
 #[path = "common/mod.rs"]
 mod common;
 
@@ -253,21 +289,23 @@ fn confirmed_delete_removes_the_task_and_cancel_keeps_it() -> Result<()> {
     fx.wait("reopened task page", |fx| {
         fx.route() == app::Route::Automation("beta".into())
     })?;
-    fs::set_permissions(&beta, fs::Permissions::from_mode(0o555))?;
+    fs::set_permissions(beta.parent().unwrap(), fs::Permissions::from_mode(0o555))?;
     open_dialog(&mut fx, 0)?;
     fx.keys("tab enter")?;
     fx.wait("failure toast", |fx| {
         fx.read(|r, cx| r.toasts(cx) == ["Could not delete scheduled task"])
     })?;
-    ensure!(fx.read(|r, _| r.dialog().is_none()));
+    ensure!(fx.read(|r, cx| {
+        r.dialog()
+            .is_some_and(|d| d.read(cx).task() == "beta" && !d.read(cx).saving())
+    }));
     ensure!(beta.join("automation.toml").exists());
     ensure!(fx.route() == app::Route::Automation("beta".into()));
     if let Ok(output) = std::env::var("CGX_TASK_DELETE_SHOTS") {
         fx.shot()?.save(format!("{output}/failure.png"))?;
     }
-    fs::set_permissions(&beta, fs::Permissions::from_mode(0o755))?;
-    open_dialog(&mut fx, 0)?;
-    fx.keys("tab enter")?;
+    fs::set_permissions(beta.parent().unwrap(), fs::Permissions::from_mode(0o755))?;
+    fx.keys("enter")?;
     fx.wait("retry deletes", |fx| fx.route() == app::Route::Scheduled)?;
     listed(&mut fx, 0)?;
     ensure!(!beta.exists());
@@ -280,5 +318,84 @@ fn confirmed_delete_removes_the_task_and_cancel_keeps_it() -> Result<()> {
     println!(
         "Native task delete: Escape and Cancel kept the task, confirm deleted only the named task, a failed removal toasted and kept it, the retry deleted it and closed its page."
     );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn failed_delete_keeps_confirmation_for_retry() -> Result<()> {
+    use app::host::ReplayHost;
+    use common::{Fx, RAIL_SCHEDULED};
+    use std::sync::Arc;
+
+    for (name, response) in [
+        (
+            "response",
+            json!({
+                "responseType": "success", "status": 200,
+                "bodyJsonString": r#"{"item":null,"success":false,"status":"failed"}"#
+            }),
+        ),
+        (
+            "error",
+            json!({"responseType": "error", "status": 500, "error": "Deletion failed"}),
+        ),
+    ] {
+        let home = tempfile::tempdir()?;
+        let local = LocalHost::new(home.path());
+        local.write_automation("alpha", &definition("alpha", "Alpha task", 30))?;
+        local.write_automation("beta", &definition("beta", "Beta task", 20))?;
+        let list = Request::post("list-automations", None);
+        let host = ReplayHost::from_recording(
+            &json!({"exchanges": [
+                {"request": list, "response": local.fetch(&list)?},
+                {"request": Request::post("automation-delete", Some(json!({"id": "alpha"}))),
+                 "response": response}
+            ]})
+            .to_string(),
+        )?;
+        let mut fx = Fx::new()?;
+        fx.cx.update(|cx| {
+            fx.root
+                .update(cx, |root, cx| root.set_host(Arc::new(host), cx))
+        });
+        fx.click(RAIL_SCHEDULED)?;
+        fx.wait("task list", |fx| {
+            fx.read(|r, _| {
+                r.automations().is_some_and(|list| {
+                    list.as_ref()
+                        .is_ok_and(|list| list["items"][0]["id"] == "alpha")
+                })
+            })
+        })?;
+        open_dialog(&mut fx, 0)?;
+        fx.keys("tab enter")?;
+        fx.wait("failure toast", |fx| {
+            fx.read(|r, cx| r.toasts(cx) == ["Could not delete scheduled task"])
+        })?;
+        ensure!(fx.read(|r, cx| {
+            r.dialog().is_some_and(|d| {
+                let dialog = d.read(cx);
+                dialog.task() == "alpha" && !dialog.saving()
+            })
+        }));
+        ensure!(ids(&local)? == ["alpha", "beta"]);
+        if let Ok(output) = std::env::var("CGX_TASK_DELETE_SHOTS") {
+            fx.shot()?.save(format!("{output}/failure-{name}.png"))?;
+        }
+        fx.cx.update(|cx| {
+            fx.root
+                .update(cx, |root, cx| root.set_host(Arc::new(local), cx))
+        });
+        fx.keys("enter")?;
+        fx.wait("retry deletes confirmed task", |fx| {
+            fx.read(|r, _| r.dialog().is_none()) && !home.path().join("automations/alpha").exists()
+        })?;
+        ensure!(
+            home.path()
+                .join("automations/beta/automation.toml")
+                .exists()
+        );
+    }
     Ok(())
 }

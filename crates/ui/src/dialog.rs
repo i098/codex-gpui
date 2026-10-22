@@ -351,6 +351,11 @@ impl Dialog {
             ..Self::new(Kind::DeleteTask, cx)
         }
     }
+    pub fn delete_failed(&mut self, cx: &mut Context<Self>) {
+        self.saving = false;
+        cx.notify();
+    }
+
     /// The id of the Scheduled task a `DeleteTask` dialog asks about.
     pub fn task(&self) -> &str {
         &self.thread
@@ -1282,6 +1287,20 @@ impl Dialog {
             } else {
                 rgba(0)
             })
+            .when(self.kind == Kind::DeleteTask, |d| {
+                d.h(px(32.))
+                    .w_auto()
+                    .px(px(16.))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(if self.selected == index {
+                        rgba(0x3a83f7ff).into()
+                    } else if primary {
+                        gpui::transparent_black()
+                    } else {
+                        t.border
+                    })
+            })
             .when(
                 matches!(self.kind, Kind::NewSection | Kind::EditSection),
                 |d| {
@@ -1665,22 +1684,41 @@ impl Dialog {
                 text(
                     "This will permanently delete the scheduled task and stop future runs",
                     14.,
-                    20.,
-                    400.,
-                    t.text_secondary,
+                    21.,
+                    430.,
+                    t.text.opacity(0.498),
                 )
-                .mt(px(8.))
+                .mt(px(4.))
                 .whitespace_normal(),
             )
             .child(
                 div()
-                    .mt(px(20.))
+                    .mt(px(12.))
                     .flex()
                     .justify_end()
                     .gap(px(12.))
                     .child(self.button(0, "Cancel", 80., t, cx))
                     .child(self.button(1, "Delete scheduled task", 178., t, cx)),
             )
+            .when(!self.saving, |d| {
+                d.child(
+                    div()
+                        .id("delete-close")
+                        .role(gpui::Role::Button)
+                        .aria_label("Close dialog")
+                        .absolute()
+                        .right(px(16.))
+                        .top(px(16.))
+                        .size(px(24.))
+                        .rounded(px(4.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .hover(|s| s.bg(t.ghost_hover))
+                        .child(icon("close", 16., t.text.opacity(0.8)))
+                        .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
+                )
+            })
     }
 
     fn close_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
@@ -2982,11 +3020,7 @@ impl Render for Dialog {
             Kind::Shortcuts => (600., shortcuts_height),
             Kind::CloseWindow => (420., 171.),
             Kind::RevertChanges => (420., 199.),
-            // ponytail: the title wraps by character count (about 32 per 380 px line, 3 lines).
-            Kind::DeleteTask => (
-                420.,
-                144. + 28. * (self.query.chars().count() + 8).div_ceil(32).clamp(1, 3) as f32,
-            ),
+            Kind::DeleteTask => (520., 137.),
             Kind::ScheduleTask => (680., 422.),
             Kind::Rename | Kind::NewSection | Kind::EditSection => (420., 185.),
             Kind::ArchiveSection => (420., 181.),
@@ -3035,6 +3069,9 @@ impl Render for Dialog {
             .absolute()
             .inset_0()
             .occlude()
+            .when(self.kind == Kind::DeleteTask, |d| {
+                d.flex().items_center().justify_center()
+            })
             .bg(if self.kind == Kind::Branches {
                 gpui::transparent_black()
             } else if schedule {
@@ -3134,13 +3171,16 @@ impl Render for Dialog {
                     .top(px(top))
                     .w(px(width))
                     .h(px(height))
+                    .when(self.kind == Kind::DeleteTask, |d| {
+                        d.relative().left_0().top_0().h_auto()
+                    })
                     .rounded(px(if announcement {
                         16.
                     } else if commit {
                         20.
                     } else if schedule {
                         30.
-                    } else if self.kind == Kind::LogOut {
+                    } else if matches!(self.kind, Kind::LogOut | Kind::DeleteTask) {
                         25.
                     } else {
                         24.
@@ -3190,12 +3230,15 @@ impl Render for Dialog {
                                 shapes::Fill::Color,
                                 false,
                                 shapes::Decoration {
-                                    radius: Corners::all(px(if self.kind == Kind::LogOut {
-                                        25.
-                                    } else {
-                                        24.
-                                    })),
-                                    corner: if self.kind == Kind::LogOut {
+                                    radius: Corners::all(px(
+                                        if matches!(self.kind, Kind::LogOut | Kind::DeleteTask) {
+                                            25.
+                                        } else {
+                                            24.
+                                        },
+                                    )),
+                                    corner: if matches!(self.kind, Kind::LogOut | Kind::DeleteTask)
+                                    {
                                         shapes::Corner::Squircle
                                     } else {
                                         shapes::Corner::default()
