@@ -2058,10 +2058,12 @@ fn shown([x0, y0, x1, y1]: [i32; 4], layer: Layer, window: &Window) -> bool {
         && ((y1 + ly) as f32) > dev(m.top())
 }
 
-/// `crate::paint` on macOS: Blink's box decoration painting, op by op.
+/// `crate::paint` on macOS: Blink's box decoration painting, op by op, moved by `offset`
+/// (CSS px) after snapping.
 pub(crate) fn paint(
     d: &Decoration,
     composited: Option<gpui::Point<Pixels>>,
+    offset: gpui::Point<Pixels>,
     bounds: Bounds<Pixels>,
     window: &mut Window,
     cx: &App,
@@ -2071,8 +2073,9 @@ pub(crate) fn paint(
     }
     let s = window.scale_factor();
     let layer = Layer::new(window, composited).for_bounds(bounds, s);
+    let offset = [f32::from(offset.x) * s, f32::from(offset.y) * s];
     for (op, color) in ops(d, layer.local(bounds, s), s).1 {
-        paint_op(op, color, layer, window, cx);
+        paint_op(op.moved(offset), color, layer, window, cx);
     }
 }
 
@@ -2494,6 +2497,32 @@ fn cached_icon(src: &[u8], key: &str) -> Option<std::rc::Rc<IconSvg>> {
 }
 
 impl IconSvg {
+    /// The viewBox fitted into `w` x `h` device px (`xMidYMid meet`): scale and translation.
+    fn fit(&self, w: f64, h: f64) -> (f64, f64, f64) {
+        let [vx, vy, vw, vh] = self.view_box.map(f64::from);
+        let scale = (w / vw).min(h / vh);
+        (
+            scale,
+            (w - vw * scale) / 2. - vx * scale,
+            (h - vh * scale) / 2. - vy * scale,
+        )
+    }
+
+    fn view(&self, w: f64, h: f64) -> Matrix {
+        let (scale, tx, ty) = self.fit(w, h);
+        Matrix::new_all(
+            scale as f32,
+            0.,
+            tx as f32,
+            0.,
+            scale as f32,
+            ty as f32,
+            0.,
+            0.,
+            1.,
+        )
+    }
+
     fn paint_bounds(&self) -> Option<Rect> {
         *self.paint_bounds.get_or_init(|| {
             let mut bounds = Rect::new_empty();
@@ -2694,15 +2723,10 @@ pub(crate) fn icon_paint_bounds(
         f64::from(f32::from(bounds.size.width) * s),
         f64::from(f32::from(bounds.size.height) * s),
     );
-    let [vx, vy, vw, vh] = icon.view_box.map(f64::from);
-    if w <= 0. || h <= 0. || vw <= 0. || vh <= 0. {
+    if w <= 0. || h <= 0. || icon.view_box[2] <= 0. || icon.view_box[3] <= 0. {
         return None;
     }
-    let scale = (w / vw).min(h / vh);
-    let (tx, ty) = (
-        (w - vw * scale) / 2. - vx * scale,
-        (h - vh * scale) / 2. - vy * scale,
-    );
+    let (scale, tx, ty) = icon.fit(w, h);
     let mut left = f64::from(ink.left) * scale + tx;
     let mut right = f64::from(ink.right) * scale + tx;
     if flip_x {
@@ -2778,23 +2802,7 @@ pub(crate) fn paint_icon(
         layer.local(bounds, s)
     };
     let origin = [snap(b.origin.x), snap(b.origin.y)];
-    let [vx, vy, vw, vh] = icon.view_box.map(f64::from);
-    let scale = (w / vw).min(h / vh);
-    let (tx, ty) = (
-        (w - vw * scale) / 2. - vx * scale,
-        (h - vh * scale) / 2. - vy * scale,
-    );
-    let view = Matrix::new_all(
-        scale as f32,
-        0.,
-        tx as f32,
-        0.,
-        scale as f32,
-        ty as f32,
-        0.,
-        0.,
-        1.,
-    );
+    let view = icon.view(w, h);
     // Blink clips the svg (or `<img>`) to its pixel-snapped box; at a path extreme on the
     // box edge that clip changes AAA's edge px.
     let clip = Rect::new(
@@ -2879,6 +2887,49 @@ pub(crate) fn paint_icon(
         );
         paint_transformed_sprites(&sprites, color, paint_origin, transformation, window, cx);
     }
+    true
+}
+
+/// Draws the svg icon `src` on `c` (window device px) with [`paint_icon`]'s geometry: the box
+/// `bounds` snaps like Blink's svg root and clips the paths. False if the svg is unsupported.
+pub(crate) fn draw_icon(
+    c: &Canvas,
+    src: &[u8],
+    key: &str,
+    bounds: Bounds<Pixels>,
+    color: Hsla,
+    s: f32,
+) -> bool {
+    let Some(icon) = cached_icon(src, key) else {
+        return false;
+    };
+    let snap = |v: Pixels| (f32::from(v) * s + 0.5).floor();
+    let (w, h) = (
+        f64::from(f32::from(bounds.size.width) * s),
+        f64::from(f32::from(bounds.size.height) * s),
+    );
+    let (x, y) = (snap(bounds.left()), snap(bounds.top()));
+    c.save();
+    c.clip_rect(
+        Rect::new(x, y, snap(bounds.right()), snap(bounds.bottom())),
+        ClipOp::Intersect,
+        true,
+    );
+    c.translate((x, y));
+    c.concat(&icon.view(w, h));
+    let rgba = Rgba::from(color);
+    for p in &icon.paths {
+        let color = p.color.unwrap_or(rgba);
+        let a = if p.color.is_some() { 1. } else { rgba.a } * p.opacity * p.layer;
+        c.save();
+        c.concat(&p.transform);
+        c.draw_path(
+            &p.path,
+            &p.paint(Color4f::new(color.r, color.g, color.b, a)),
+        );
+        c.restore();
+    }
+    c.restore();
     true
 }
 
