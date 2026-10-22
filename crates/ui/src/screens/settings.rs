@@ -1422,7 +1422,6 @@ pub(super) fn switch(id: &'static str, on: bool, disabled: bool, t: &Theme) -> S
                 progress
             },
             move |b, progress, window, cx| {
-                eprintln!("Cloud switch paint bounds: {b:?}; progress={progress}");
                 let fill = match progress {
                     p if p <= 0. => track_off,
                     p if p >= 1. => track_on,

@@ -615,7 +615,13 @@ impl CloudPage {
                 Some(t.border),
             ))
             .child(text(label.clone(), 13., 18., 430., t.text))
-            .child(crate::icon("chevron-down", 14., t.text_tertiary));
+            .child(
+                div()
+                    .w(px(14.))
+                    .h(px(14.))
+                    .layer()
+                    .child(crate::icon::icon("chevron-down", 14., t.text_tertiary).runtime()),
+            );
         self.wire_button(id.into(), label, content, cx, action)
     }
 
@@ -631,6 +637,7 @@ impl CloudPage {
         let content = div()
             .w(px(32.))
             .h(px(20.))
+            .layer()
             .child(super::settings::switch(id, on, false, &t));
         self.wire_button(
             id.into(),
@@ -1299,7 +1306,6 @@ impl CloudPage {
                     .max_w_full()
                     .overflow_x_scroll()
                     .overflow_y_hidden()
-                    .layer()
                     .flex()
                     .gap(px(2.))
                     .children([(true, "Automatic"), (false, "Manual")].into_iter().map(
