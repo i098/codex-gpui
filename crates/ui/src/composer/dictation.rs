@@ -405,4 +405,55 @@ mod tests {
             .unwrap();
         assert!(matches!(receiver.try_recv(), Ok(Command::Cancel)));
     }
+
+    #[test]
+    fn completion_observers_see_inserted_text_and_terminal_outcomes() {
+        use std::{cell::RefCell, rc::Rc};
+        let mut cx = gpui::TestAppContext::single();
+        let commands = cx.update(install);
+        let window = cx.add_window(Composer::home);
+        let editor = window.update(&mut cx, |_, _, cx| cx.entity()).unwrap();
+        let results = Rc::new(RefCell::new(Vec::new()));
+        let observed = results.clone();
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&editor, move |editor, completion: &Completion, cx| {
+                observed
+                    .borrow_mut()
+                    .push((*completion, editor.read(cx).field_text().to_owned()));
+            })
+        });
+        window
+            .update(&mut cx, |editor, window, cx| {
+                editor.set_text("before ", cx);
+                editor.dictate(window, cx);
+                editor.finish_dictation(window, cx);
+                editor.dictation_event(Event::Finished(Ok("after".into())), window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert!(matches!(commands.try_recv(), Ok(Command::Finish)));
+        window
+            .update(&mut cx, |editor, window, cx| {
+                editor.dictate(window, cx);
+                editor.cancel_dictation(cx);
+                editor.dictation_event(Event::Finished(Ok("late".into())), window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |editor, window, cx| {
+                editor.dictate(window, cx);
+                editor.dictation_event(Event::Finished(Err("failure".into())), window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            *results.borrow(),
+            vec![
+                (Completion::Succeeded, "before after".to_owned()),
+                (Completion::Cancelled, "before after".to_owned()),
+                (Completion::Failed, "before after".to_owned()),
+            ]
+        );
+    }
 }

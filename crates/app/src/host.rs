@@ -44,8 +44,11 @@ use url::Url;
 mod automation_schedule;
 pub mod computer_use;
 pub mod computer_use_native;
+mod context_files;
 mod diff_files;
 mod diff_repositories;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod directories;
 mod git;
 pub mod git_pr;
 mod native_apps;
@@ -80,6 +83,11 @@ pub trait Host: Send + Sync {
     /// Only trusted native UI code calls this service.
     /// Derive `cwd` from the active workspace, never from model-provided input.
     fn fetch(&self, request: &Request) -> Result<Value>;
+
+    /// Binds context-file events to this host's view, replacing any prior binding.
+    fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
+        None
+    }
 
     fn stream(
         &self,
@@ -506,6 +514,7 @@ pub struct LocalHost {
     settings: Option<crate::host_settings::Settings>,
     computer_use_settings: Option<computer_use::ComputerUseSettings>,
     native_computer_use: Arc<computer_use_native::NativeComputerUse>,
+    context_files: context_files::ContextFiles,
 }
 
 impl LocalHost {
@@ -518,6 +527,7 @@ impl LocalHost {
             bridge: None,
             opener: "/usr/bin/open".into(),
             settings: None,
+            context_files: context_files::ContextFiles::default(),
         }
     }
 
@@ -1040,6 +1050,10 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
+        Some(self.context_files.bind())
+    }
+
     fn prepare_projectless(&self, prompt: &str) -> Result<Workspace> {
         self.create_projectless_workspace(prompt)
     }
@@ -1176,10 +1190,13 @@ impl Host for LocalHost {
                 json!({"success": true})
             }
             "open-in" => self.open_in(&params)?,
+            "add-context-file" => self.context_files.add(&params)?,
+            "open-in-targets" => self.open_in_targets(&params)?,
             "read-file" => diff_files::text(&params)?,
             "read-file-binary" => diff_files::binary(&params)?,
             "read-git-file-binary" => diff_files::git_binary(&params)?,
-            "open-in-targets" => self.open_in_targets(&params)?,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            "workspace-directory-entries" => directories::read(&params)?,
             "native-desktop-apps" => json!({"apps": native_apps::list(&params)?}),
             "native-desktop-app-by-bundle-id" => {
                 json!({"app": native_apps::by_bundle_id(&params)?})
@@ -1554,6 +1571,10 @@ impl CloudHost {
 }
 
 impl Host for CloudHost {
+    fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
+        self.local.bind_context_files()
+    }
+
     fn prepare_projectless(&self, prompt: &str) -> Result<Workspace> {
         self.local.prepare_projectless(prompt)
     }

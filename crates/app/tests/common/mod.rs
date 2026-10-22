@@ -218,10 +218,15 @@ impl Fx {
             elapsed_since: Some(Instant::now()),
             ..CAPTURE_CLOCK
         };
+        // Linux checks need layout and input; macOS captures need the native renderer.
+        #[cfg(not(target_os = "linux"))]
+        let renderer = gpui_platform::current_headless_renderer;
+        #[cfg(target_os = "linux")]
+        let renderer = || Ok(None);
         let mut cx = HeadlessAppContext::with_platform(
             textsys::text_system(),
             Arc::new(theme::Assets),
-            gpui_platform::current_headless_renderer,
+            renderer,
         );
         cx.update(|cx| {
             theme::load_fonts(cx);
@@ -583,10 +588,13 @@ impl Fx {
     }
 }
 
-/// readback.jsonl, then `session` (under fixtures/), each recorded line rewritten by `edit`.
+/// Loads the baseline, optional scenario, and projected session settings; `edit` rewrites each line.
 pub fn script(session: Option<&str>, edit: fn(&mut Value)) -> Result<Vec<Value>> {
     let mut lines = Vec::new();
-    for file in std::iter::once("readback.jsonl").chain(session) {
+    for file in std::iter::once("readback.jsonl")
+        .chain(session)
+        .chain(std::iter::once("sessions/thread-settings.jsonl"))
+    {
         let path = format!("{ROOT}/fixtures/{file}");
         let text = fs::read_to_string(&path).with_context(|| path.clone())?;
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
@@ -618,6 +626,17 @@ pub fn recorded_thread(id: &str) -> Result<Value> {
             (thread["id"] == id && thread["turns"].is_array()).then_some(thread)
         })
         .with_context(|| format!("no thread/read of {id}"))
+}
+
+pub fn recorded_resume(id: &str) -> Result<Value> {
+    script(None, |_| {})?
+        .into_iter()
+        .find_map(|mut line| {
+            let result = line.pointer_mut("/msg/result")?.take();
+            (result["thread"]["id"] == id && result["collaborationMode"].is_object())
+                .then_some(result)
+        })
+        .with_context(|| format!("no thread/resume of {id}"))
 }
 
 /// Device pixels that differ inside the CSS-px `rect` (the window is 2x).

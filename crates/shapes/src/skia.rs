@@ -2064,6 +2064,106 @@ pub(crate) fn paint(
     }
 }
 
+// Match Blink's padded stops and the fixed-scale tile used by generated images.
+fn stripe_paint(period: f32, colors: [Rgba; 2]) -> Paint {
+    use skia_safe::{PictureRecorder, TileMode, gradient, images};
+    let colors = colors.map(|color| Color4f::new(color.r, color.g, color.b, color.a));
+    let stops = [colors[0], colors[0], colors[1], colors[1]];
+    let gradient = gradient::Gradient::new(
+        gradient::Colors::new(
+            &stops,
+            Some(&[0., 0.5, 0.5, 1.]),
+            TileMode::Clamp,
+            ColorSpace::new_srgb(),
+        ),
+        gradient::Interpolation {
+            in_premul: gradient::interpolation::InPremul::Yes,
+            color_space: gradient::interpolation::ColorSpace::Lab,
+            ..Default::default()
+        },
+    );
+    let shader = gradient::shaders::linear_gradient(((0., period), (0., 0.)), &gradient, None)
+        .expect("positive stripe period");
+    let tile = Rect::from_wh(period, period);
+    let mut recorder = PictureRecorder::new();
+    let mut paint = Paint::default();
+    paint
+        .set_anti_alias(true)
+        .set_dither(true)
+        .set_shader(shader);
+    recorder
+        .begin_recording(tile, false)
+        .draw_rect(tile, &paint);
+    let picture = recorder
+        .finish_recording_as_picture(None)
+        .expect("stripe recording");
+    let side = period.ceil() as i32;
+    let image = images::deferred_from_picture(
+        picture,
+        (side, side),
+        Some(&Matrix::scale((side as f32 / period, side as f32 / period))),
+        None,
+        images::BitDepth::U8,
+        ColorSpace::new_srgb(),
+        None,
+    )
+    .expect("stripe tile");
+    let shader = image
+        .to_shader(
+            (TileMode::Repeat, TileMode::Repeat),
+            SamplingOptions::new(FilterMode::Linear, MipmapMode::Linear),
+            &Matrix::scale((period / side as f32, period / side as f32)),
+        )
+        .expect("stripe shader");
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true).set_shader(shader);
+    paint
+}
+
+pub(crate) fn paint_horizontal_stripes(
+    period: Pixels,
+    colors: [Rgba; 2],
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    let scale = window.scale_factor();
+    // Blink stores the used background tile in device-space LayoutUnits.
+    let period = (f32::from(period) * scale * 64.).floor() / 64.;
+    let layer = Layer::new(window, None).for_bounds(bounds, scale);
+    let (contour, _) = ops(&Decoration::default(), layer.local(bounds, scale), scale);
+    let bbox = Op::Fill(contour).bbox();
+    if !shown(bbox, layer, window) {
+        return;
+    }
+    let clips = clips(window, layer);
+    let sprites = cached(
+        format!(
+            "stripes{period:?}{colors:?}{bbox:?}{clips:?}{:?}",
+            layer.key(bbox)
+        ),
+        || {
+            let paint = stripe_paint(period, colors);
+            composited_sprites(bbox, layer, &|canvas| {
+                for clip in &clips {
+                    clip.clip(canvas, ClipOp::Intersect);
+                }
+                canvas.save();
+                canvas.translate((contour.rr.r[0], contour.rr.r[1]));
+                canvas.draw_rect(Rect::from_wh(contour.rr.r[2], contour.rr.r[3]), &paint);
+                canvas.restore();
+            })
+        },
+    );
+    paint_sprites(
+        &sprites,
+        gpui::rgb(0xffffff).into(),
+        layer.origin,
+        window,
+        cx,
+    );
+}
+
 // Chromium decodes to the smallest mip that still covers the rounded destination.
 fn image_decode_size(mut source: [i32; 2], target: [f32; 2]) -> Option<[i32; 2]> {
     let target = target.map(|side| side.abs().round() as i32);
@@ -2779,6 +2879,36 @@ mod tests {
         prelude::FluentBuilder, px, size,
     };
     use std::sync::Arc;
+
+    #[test]
+    fn horizontal_stripes_keep_fractional_period_and_hard_stop() {
+        let colors = [
+            Rgba {
+                r: 0.232724,
+                g: 0.120283,
+                b: 0.103232,
+                a: 1.,
+            },
+            gpui::rgba(0xfa423eff),
+        ];
+        let paint = stripe_paint(251. / 64., colors);
+        let (pixels, row) = tile_pixels([0, 0], (8, 43), Color4f::new(0., 0., 0., 0.), |canvas| {
+            canvas.draw_rect(Rect::from_wh(8., 43.), &paint);
+        });
+        for (y, expected) in [
+            (0, [250, 66, 62, 255]),
+            (1, [244, 65, 61, 255]),
+            (3, [72, 33, 29, 255]),
+            (37, [108, 40, 36, 255]),
+            (38, [59, 31, 26, 255]),
+        ] {
+            assert_eq!(
+                &pixels[y * row + 4..y * row + 8],
+                &expected,
+                "stripe row {y}"
+            );
+        }
+    }
 
     struct ImageLayers {
         scope_backdrop: bool,

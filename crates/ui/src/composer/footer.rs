@@ -68,6 +68,16 @@ fn loading_model(color: Hsla) -> impl IntoElement {
     .flex_none()
 }
 
+fn effort_icon(effort: &str) -> &'static str {
+    match effort {
+        "none" | "minimal" => "composer-model-none",
+        "low" => "composer-model",
+        "high" => "composer-model-high",
+        "xhigh" | "max" | "ultra" | "persistent" => "composer-model-extra-high",
+        _ => "composer-model-medium",
+    }
+}
+
 impl Composer {
     pub(super) fn dictation_button(&self, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
         let label = self.dictation_label();
@@ -115,8 +125,11 @@ impl Composer {
             )
             .when(model.is_some(), |d| {
                 d.child(
-                    label(effort_label(&self.effort).to_string(), t.text_tertiary)
-                        .when(open, |d| d.invisible()),
+                    label(
+                        effort_label(self.displayed_effort()).to_string(),
+                        t.text_tertiary,
+                    )
+                    .when(open, |d| d.invisible()),
                 )
             })
             .when(open, |d| {
@@ -156,7 +169,11 @@ impl Composer {
             pill("model-picker", t)
                 .w(px(28.))
                 .justify_center()
-                .child(icon("composer-model", 16., t.text_tertiary))
+                .child(icon(
+                    effort_icon(self.displayed_effort()),
+                    16.,
+                    t.text_tertiary,
+                ))
         } else {
             pill("model-picker", t)
                 .px(px(8.))
@@ -264,7 +281,14 @@ impl Composer {
                             }))
                             .px(px(6.))
                             .gap(px(4.))
-                            .child(footer_icon("permissions", t.text_tertiary))
+                            .child(footer_icon(
+                                if self.permission == Permission::Ask {
+                                    "composer-permission-ask"
+                                } else {
+                                    "permissions"
+                                },
+                                t.text_tertiary,
+                            ))
                             .when(self.footer_width > SM_WIDTH, |d| {
                                 d.child(
                                     text(

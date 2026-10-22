@@ -19,7 +19,13 @@ use gpui::{
     deferred, div, font, prelude::FluentBuilder as _, px, rgb,
 };
 use shapes::Decoration;
-use std::{cell::Cell, ops::Range, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    ops::Range,
+    rc::Rc,
+    sync::Arc,
+};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
 #[path = "diff/menu.rs"]
@@ -28,14 +34,8 @@ mod menu;
 #[path = "diff/controls.rs"]
 mod controls;
 
-#[path = "diff/word.rs"]
-mod word;
-
 #[path = "diff/syntax.rs"]
 mod syntax;
-
-#[path = "diff/patch.rs"]
-mod patch;
 
 #[path = "diff/navigation.rs"]
 mod navigation;
@@ -49,10 +49,6 @@ pub use find::{FindInChat, FindInDiff};
 #[path = "diff/states.rs"]
 mod states;
 pub use states::{LastTurnState, OmittedFiles};
-
-#[path = "diff/content.rs"]
-mod content;
-pub use content::{BlobReply, BlobRequest, FullError, FullFileRequest, FullText};
 
 #[path = "diff/preview.rs"]
 mod preview;
@@ -78,6 +74,18 @@ mod imports;
 mod options;
 pub use context::{ContextRequest, OpenTargetRequest, OpenTargets};
 
+#[path = "diff/content.rs"]
+mod content;
+pub use content::{
+    BlobError, BlobReply, BlobRequest, FullError, FullFileLoad, FullFileRequest, FullText,
+};
+
+#[path = "diff/word.rs"]
+pub mod word;
+
+#[path = "diff/patch.rs"]
+pub mod patch;
+
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
 const STORED_WIDTH: f32 = 664.17;
 /// Room the chat keeps beside the panel (`unified` layout), also the panel's minimum.
@@ -87,6 +95,9 @@ const CODE_SIZE: f32 = 12.;
 const CODE_LINE: f32 = 21.6;
 /// Menlo advance at 12 px (0.602em); `--diffs-min-number-column-width` is 4ch.
 const CH: f32 = 7.224_609_4;
+const MAX_DIFF_LINES: usize = 15_000;
+const MAX_DIFF_UNITS: usize = 3_145_728;
+const MAX_DIFF_LINE_UNITS: usize = 1_048_576;
 
 /// The panel width the user last dragged the divider to (DT-056); `STORED_WIDTH` until then.
 struct PanelWidth(Pixels);
@@ -149,6 +160,7 @@ struct Line {
 
 #[derive(Clone)]
 struct Hunk {
+    layout: Rc<RefCell<content::ContextLayout>>,
     /// `N unmodified lines` bar for the old-file lines the diff skips before this hunk.
     separator: Option<SharedString>,
     lines: Vec<Line>,
@@ -160,6 +172,9 @@ pub struct FileDiff {
     /// Workspace-relative directory part (tertiary) and file name of the header path.
     pub dir: SharedString,
     pub name: SharedString,
+    path_key: String,
+    display_dir: SharedString,
+    display_name: SharedString,
     pub added: usize,
     pub removed: usize,
     changed_bytes: usize,
@@ -214,7 +229,7 @@ impl DiffSource {
     }
 
     fn mutable(self) -> bool {
-        matches!(self, Self::Uncommitted | Self::Unstaged | Self::Staged)
+        matches!(self, Self::Unstaged | Self::Staged)
     }
 }
 
@@ -238,7 +253,7 @@ pub enum DiffRequest {
     CopyGitApply,
     ContextMenu(ContextRequest),
     OpenTarget(OpenTargetRequest),
-    LoadFullFile(FullFileRequest),
+    LoadFullFile(FullFileLoad),
     LoadPreview(PreviewRequest),
     Preference(&'static str, serde_json::Value),
     CommentsChanged(Vec<comments::Comment>),
@@ -313,6 +328,8 @@ pub struct DiffPanel {
     menu: Option<menu::Menu>,
     workspace: String,
     cwd: String,
+    files_expanded: bool,
+    file_expansion: HashMap<String, bool>,
     wrap: bool,
     source: DiffSource,
     turn_files: Vec<FileDiff>,
@@ -404,25 +421,33 @@ impl DiffPanel {
                     f.hunks.extend(hunks);
                     f.raw = format!("{}\n{}", f.raw, change.diff).into();
                 }
-                None => files.push(FileDiff {
-                    dir: dir.to_string().into(),
-                    name: name.to_string().into(),
-                    added,
-                    removed,
-                    changed_bytes: change.diff.len(),
-                    hunks,
-                    open: true,
-                    problem,
-                    raw: change.diff.as_str().into(),
-                    raw_kind: raw,
-                    full: None,
-                    full_error: None,
-                    full_loading: false,
-                    original_hunks: None,
-                    imports: None,
-                    pending_expansion: None,
-                    preview: None,
-                }),
+                None => {
+                    let dir: SharedString = dir.to_owned().into();
+                    let name: SharedString = name.to_owned().into();
+                    let (display_dir, display_name) = controls::display_parts(&shown, &dir, &name);
+                    files.push(FileDiff {
+                        dir,
+                        name,
+                        path_key: path,
+                        display_dir,
+                        display_name,
+                        added,
+                        removed,
+                        changed_bytes: change.diff.len(),
+                        hunks,
+                        open: true,
+                        problem,
+                        raw: change.diff.as_str().into(),
+                        raw_kind: raw,
+                        full: None,
+                        full_error: None,
+                        full_loading: false,
+                        original_hunks: None,
+                        imports: None,
+                        pending_expansion: None,
+                        preview: None,
+                    });
+                }
             }
         }
         for file in &mut files {
@@ -443,6 +468,8 @@ impl DiffPanel {
             menu: None,
             workspace: workspace_root.to_owned(),
             cwd: cwd.to_owned(),
+            files_expanded: true,
+            file_expansion: HashMap::new(),
             wrap: false,
             source: DiffSource::LastTurn,
             turn_files: Vec::new(),
@@ -488,6 +515,41 @@ impl DiffPanel {
 
     pub fn review_params(&self) -> serde_json::Value {
         serde_json::json!({"cwd": self.working_directory(), "reviewSource": self.source.key(), "baseBranch": self.base_branch, "commit": self.commit, "hideWhitespace": self.hide_whitespace})
+    }
+
+    pub fn view_changes(&mut self, path: &str, cx: &mut Context<Self>) {
+        if let Some(query) = &mut self.query {
+            query.clear();
+        }
+        self.filter = Default::default();
+        self.select_source(DiffSource::LastTurn, cx);
+        self.search_changed();
+        self.set_all_files_open(false);
+        self.file_expansion.insert(path.to_owned(), true);
+        if let Some(index) = self.files.iter().position(|file| file.path_key == path) {
+            self.files[index].open = true;
+            self.active_file = index;
+            self.scroll.scroll_to_top_of_item(index);
+        }
+        cx.notify();
+    }
+
+    fn set_all_files_open(&mut self, open: bool) {
+        self.files_expanded = open;
+        self.file_expansion.clear();
+        for file in &mut self.files {
+            file.open = open;
+        }
+    }
+
+    fn set_file_open(&mut self, index: usize, open: bool) {
+        let file = &mut self.files[index];
+        file.open = open;
+        if let Some(value) = self.file_expansion.get_mut(&file.path_key) {
+            *value = open;
+        } else {
+            self.file_expansion.insert(file.path_key.clone(), open);
+        }
     }
 
     fn actionable_files(&self) -> &[RepositoryFile] {
@@ -697,13 +759,7 @@ impl DiffPanel {
         true
     }
 
-    pub fn apply(
-        &mut self,
-        event: &Event,
-        workspace: &str,
-        turns: &[Turn],
-        cx: &mut Context<Self>,
-    ) {
+    pub fn apply(&mut self, event: &Event, cwd: &str, turns: &[Turn], cx: &mut Context<Self>) {
         let Event::Notification { method, params } = event else {
             return;
         };
@@ -711,8 +767,8 @@ impl DiffPanel {
         if method == "turn/completed" {
             self.annotations.models(
                 std::slice::from_ref(turn),
-                &self.cwd,
-                &[workspace.to_owned()],
+                cwd,
+                std::slice::from_ref(&self.workspace),
             );
             cx.notify();
             return;
@@ -739,7 +795,7 @@ impl DiffPanel {
                     && self.aggregated_turn.as_deref() != Some(&turn.id) =>
             {
                 self.aggregated_turn = None;
-                Self::last_turn(workspace, &self.cwd, turns).files
+                Self::last_turn(&self.workspace, cwd, turns).files
             }
             _ => return,
         };
@@ -749,6 +805,12 @@ impl DiffPanel {
         } else {
             None
         };
+        let mut files = files;
+        for file in &mut files {
+            if !file.path_key.starts_with('/') {
+                file.path_key = menu::absolute_path(cwd, &file.path_key);
+            }
+        }
         if self.source == DiffSource::LastTurn {
             self.replace_files(files);
         } else {
@@ -760,22 +822,22 @@ impl DiffPanel {
     fn replace_files(&mut self, mut files: Vec<FileDiff>) {
         self.content_generation = self.content_generation.wrapping_add(1);
         self.cancel_context_request();
+        for file in &mut files {
+            if !file.path_key.starts_with('/') {
+                file.path_key = menu::absolute_path(self.file_root(), &file.path_key);
+            }
+        }
         self.active_file = self
             .files
             .get(self.active_file)
-            .and_then(|old| {
-                files
-                    .iter()
-                    .position(|file| file.dir == old.dir && file.name == old.name)
-            })
+            .and_then(|old| files.iter().position(|file| file.path_key == old.path_key))
             .unwrap_or(0);
         for file in &mut files {
             if let Some(old) = self
                 .files
                 .iter_mut()
-                .find(|old| old.dir == file.dir && old.name == file.name)
+                .find(|old| old.path_key == file.path_key)
             {
-                file.open = old.open;
                 if file.raw == old.raw {
                     file.full = old.full.take();
                     file.imports = old.imports.take();
@@ -789,6 +851,11 @@ impl DiffPanel {
                     }
                 }
             }
+            file.open = self
+                .file_expansion
+                .get(&file.path_key)
+                .copied()
+                .unwrap_or(self.files_expanded);
         }
         self.files = files;
         self.refresh_jump();
@@ -834,6 +901,11 @@ impl DiffPanel {
             }
             if self.matches > before {
                 file.open = true;
+                if let Some(value) = self.file_expansion.get_mut(&file.path_key) {
+                    *value = true;
+                } else {
+                    self.file_expansion.insert(file.path_key.clone(), true);
+                }
             }
         }
         self.active_match = self.active_match.min(self.matches.saturating_sub(1));
@@ -1422,16 +1494,17 @@ impl Render for DiffPanel {
             .filter(|(index, _)| !capped || *index == self.active_file)
             .map(|(i, file)| {
                 div()
+                    .relative()
+                    .pt(px(if self.standalone { 36. } else { 39. }))
                     .flex()
                     .flex_col()
                     .flex_none()
+                    .pb(px(2.))
                     .when(self.standalone, |d| {
-                        d.relative()
-                            .overflow_hidden()
-                            .child(shapes::decoration(Decoration {
-                                fill: Some(t.surface),
-                                ..Default::default()
-                            }))
+                        d.overflow_hidden().child(shapes::decoration(Decoration {
+                            fill: Some(t.surface),
+                            ..Default::default()
+                        }))
                     })
                     .on_mouse_down(
                         MouseButton::Right,
@@ -1439,7 +1512,6 @@ impl Render for DiffPanel {
                             this.request_context_menu(i, None, event.position, window, cx);
                         }),
                     )
-                    .child(self.scrolling_file_header(i, file, scroll_top, &t, cx))
                     .when(file.open, |d| d.children(self.full_error_notice(i, cx)))
                     .map(|d| {
                         if file.open
@@ -1449,14 +1521,25 @@ impl Render for DiffPanel {
                         } else if file.open && file.problem.is_some() {
                             d.child(self.file_placeholder(i, file, &t, cx))
                         } else if file.open {
-                            d.children(file.visible_hunks().map(|(index, h)| {
-                                let controls = matches!(
-                                    self.source,
-                                    DiffSource::Unstaged | DiffSource::Staged
-                                ) && h.lines.iter().any(|l| l.kind != Kind::Context);
+                            d.child(
                                 div()
-                                    .when(controls, |d| {
-                                        d.child(
+                                    .relative()
+                                    .flex()
+                                    .flex_col()
+                                    .layer()
+                                    .child(shapes::decoration(Decoration {
+                                        fill: Some(t.surface),
+                                        ..Default::default()
+                                    }))
+                                    .children(file.visible_hunks().map(|(index, h)| {
+                                        let controls =
+                                            matches!(
+                                                self.source,
+                                                DiffSource::Unstaged | DiffSource::Staged
+                                            ) && h.lines.iter().any(|l| l.kind != Kind::Context);
+                                        div()
+                                            .when(controls, |d| {
+                                                d.child(
                                         div()
                                             .flex()
                                             .justify_end()
@@ -1520,17 +1603,18 @@ impl Render for DiffPanel {
                                                     .child(text("Revert", 12., 20., 430., t.text)),
                                             ),
                                     )
-                                    })
-                                    .child(hunk(
-                                        h,
-                                        (i, index),
-                                        &line_index,
-                                        self,
-                                        code_width,
-                                        window,
-                                        cx,
-                                    ))
-                            }))
+                                            })
+                                            .child(hunk(
+                                                h,
+                                                (i, index),
+                                                &line_index,
+                                                self,
+                                                code_width,
+                                                window,
+                                                cx,
+                                            ))
+                                    })),
+                            )
                         } else {
                             line_index.set(
                                 line_index.get()
@@ -1542,6 +1626,7 @@ impl Render for DiffPanel {
                             d
                         }
                     })
+                    .child(self.scrolling_file_header(i, file, scroll_top, &t, cx))
                     .map(|d| {
                         if self.standalone {
                             crate::rounded_clip(px(12.5), shapes::Corner::Squircle, d)
@@ -2082,8 +2167,8 @@ impl Render for SplitMain {
                     .absolute()
                     .top_0()
                     .bottom_0()
-                    .right(width - px(6.))
-                    .w(px(12.))
+                    .right(width - px(8.))
+                    .w(px(16.))
                     .cursor(CursorStyle::ResizeLeftRight)
                     .on_mouse_down(
                         MouseButton::Left,
@@ -2145,7 +2230,7 @@ impl Render for SplitScreen {
             .when(open, |d| {
                 d.child(
                     self.thread
-                        .update(cx, |view, cx| view.titlebar_header(cx))
+                        .update(cx, |view, cx| view.titlebar_header(left.is_some(), cx))
                         .left(sidebar_width)
                         .when_some(left, |h, left| h.w(left - sidebar_width)),
                 )
@@ -2186,9 +2271,11 @@ impl Render for SplitScreen {
             })
             .when_some(
                 self.hovered.filter(|ix| {
-                    self.tabs
-                        .get(*ix)
-                        .is_some_and(|tab| tab.0 == "thread-terminal")
+                    *ix != self.active
+                        && self
+                            .tabs
+                            .get(*ix)
+                            .is_some_and(|tab| tab.0 == "thread-terminal")
                 }),
                 |d, ix| {
                     let left = (left.unwrap_or_default() + px(8. + ix as f32 * 240.))
@@ -2628,10 +2715,6 @@ fn file_header(
         return panel.standalone_file_header(i, file, t, cx);
     }
     let small = |name| round_icon(name, 20., t);
-    let python = match t.appearance {
-        Appearance::Dark => rgb(0x69b1ff),
-        Appearance::Light => rgb(0x1a85d4),
-    };
     div()
         .id(("diff-file", i))
         .flex_none()
@@ -2652,16 +2735,19 @@ fn file_header(
                 .items_center()
                 .pl(px(4.))
                 .gap(px(8.))
-                .when(file.name.ends_with(".py"), |d| {
-                    // `#file-tree-builtin-python` sprite.
-                    d.child(icon("diff-file-python", 16., python.into()))
-                })
+                .child(controls::file_icon(&file.name, t))
                 .child(
                     div()
                         .flex()
                         .overflow_hidden()
-                        .child(text(file.dir.clone(), 14., 21., 430., t.text_tertiary))
-                        .child(text(file.name.clone(), 14., 21., 430., t.text)),
+                        .child(text(
+                            file.display_dir.clone(),
+                            14.,
+                            21.,
+                            430.,
+                            t.text_tertiary,
+                        ))
+                        .child(text(file.display_name.clone(), 14., 21., 430., t.text)),
                 ),
         )
         .child(
@@ -2834,6 +2920,41 @@ fn range_mark(
     .into_any_element()
 }
 
+fn change_marker(kind: Kind, split: bool, t: &Theme) -> Div {
+    let color = if kind == Kind::Added {
+        t.git_added
+    } else {
+        t.git_deleted
+    };
+    let marker = div().absolute().left_0().top_0().w(px(4.)).h_full();
+    if kind != Kind::Removed || split {
+        return marker.child(shapes::decoration(Decoration {
+            fill: Some(color),
+            ..Default::default()
+        }));
+    }
+    // Keep the original Lab background mix unrounded for the gradient raster.
+    let [r, g, b] = if t.appearance == Appearance::Dark {
+        [0.232724, 0.120283, 0.103232]
+    } else {
+        [0.986266, 0.90291, 0.885396]
+    };
+    let colors = [gpui::Rgba { r, g, b, a: 1. }, color.into()];
+    marker.child(
+        gpui::canvas(
+            |_, _, _| (),
+            move |bounds, (), window, cx| {
+                let scale = window.scale_factor();
+                let line = (CODE_LINE * scale * 64.).floor() / (scale * 64.);
+                let period = px(line / (line / 2.).round());
+                shapes::paint_horizontal_stripes(period, colors, bounds, window, cx);
+            },
+        )
+        .absolute()
+        .size_full(),
+    )
+}
+
 fn hunk(
     h: &Hunk,
     location: (usize, usize),
@@ -2845,6 +2966,14 @@ fn hunk(
 ) -> Div {
     let t = cx.theme();
     let split = panel.layout.split(&panel.files[location.0], width);
+    let plain_text = panel.files[location.0].name.ends_with(".txt");
+    let foreground: Hsla = rgb(match (t.appearance, plain_text) {
+        (Appearance::Dark, false) => 0xfcfcfc,
+        (Appearance::Dark, true) => 0xffffff,
+        (_, false) => 0x0d0d0d,
+        (_, true) => 0x1a1c1f,
+    })
+    .into();
     let digits = h
         .lines
         .iter()
@@ -2872,7 +3001,7 @@ fn hunk(
                bg: Hsla,
                content: StyledText,
                mark: Vec<gpui::AnyElement>,
-               bar: Option<Hsla>,
+               bar: Option<Kind>,
                utility: Option<gpui::AnyElement>| {
         div()
             .h(px(CODE_LINE))
@@ -2896,14 +3025,7 @@ fn hunk(
                             fill: Some(number_bg),
                             ..Default::default()
                         }))
-                        .when_some(bar, |d, color| {
-                            d.child(div().absolute().left_0().top_0().w(px(4.)).h_full().child(
-                                shapes::decoration(Decoration {
-                                    fill: Some(color),
-                                    ..Default::default()
-                                }),
-                            ))
-                        })
+                        .when_some(bar, |d, kind| d.child(change_marker(kind, split, t)))
                         .text_color(number_fg)
                         .when_some(number, |d, n| d.child(n.to_string()))
                         .children(utility),
@@ -2932,7 +3054,7 @@ fn hunk(
     };
     let render_line = |l: &Line, index: usize, number: u32, side: comments::Side| {
         let (mut number_bg, mut bg, mut number_fg) = line_colors(l.kind, t);
-        let bar = (l.kind != Kind::Context).then_some(number_fg);
+        let bar = (l.kind != Kind::Context).then_some(l.kind);
         let selected = panel.comment_selection_contains(location.0, side, number)
             || !split
                 && l.kind == Kind::Context
@@ -3133,13 +3255,9 @@ fn hunk(
         .font_weight(FontWeight(430.))
         .text_size(px(CODE_SIZE))
         .line_height(px(CODE_LINE))
-        .text_color(rgb(if t.appearance == Appearance::Dark {
-            0xfcfcfc
-        } else {
-            0x0d0d0d
-        }))
+        .text_color(foreground)
         .when_some(h.separator.clone(), |d, label| {
-            d.child(panel.context_row(label, location, cx))
+            d.child(panel.context_row(label, gutter, location, cx))
         })
         .map(|d| {
             if split {
@@ -3194,6 +3312,22 @@ fn hunk(
                 }))
             }
         })
+        .map(|body| panel.track_hunk_layout(h, body, cx))
+}
+
+fn exceeds_diff_limits<'a>(lines: impl Iterator<Item = &'a str>) -> bool {
+    let mut total = 0;
+    for (index, line) in lines.enumerate() {
+        let units = line.encode_utf16().count() + 1;
+        if index >= MAX_DIFF_LINES || units > MAX_DIFF_LINE_UNITS {
+            return true;
+        }
+        total += units;
+        if total > MAX_DIFF_UNITS {
+            return true;
+        }
+    }
+    false
 }
 
 /// Hunks of a unified diff; file headers (`diff --git`, `---`, `+++`) before the first `@@`
@@ -3230,12 +3364,16 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
         let units = text.encode_utf16().count() - usize::from(missing_newline);
         changed_lines += 1;
         changed_units += units;
-        if changed_lines > 15_000 || changed_units > 3_145_728 || units > 1_048_576 {
+        if changed_lines > MAX_DIFF_LINES
+            || changed_units > MAX_DIFF_UNITS
+            || units > MAX_DIFF_LINE_UNITS
+        {
             return Err(TOO_LARGE);
         }
     }
     if let Some(kind) = raw {
         return Ok(vec![Hunk {
+            layout: Default::default(),
             old_start: if kind == Kind::Added { 0 } else { 1 },
             new_start: if kind == Kind::Removed { 0 } else { 1 },
             separator: None,
@@ -3260,10 +3398,13 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
     for line in diff.lines() {
         if let Some(rest) = line.strip_prefix("@@ -") {
             let start = |s: &str| {
-                s.split(',')
-                    .next()
-                    .and_then(|n| n.parse::<u32>().ok())
-                    .ok_or(INVALID)
+                let (line, count) = s.split_once(',').unwrap_or((s, "1"));
+                let line = line.parse::<u32>().map_err(|_| INVALID)?;
+                if count.parse::<u32>().map_err(|_| INVALID)? == 0 {
+                    line.checked_add(1).ok_or(INVALID)
+                } else {
+                    Ok(line)
+                }
             };
             let mut ranges = rest.split(' ');
             let old_start = start(ranges.next().ok_or(INVALID)?)?;
@@ -3279,6 +3420,7 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
                 return Err(INVALID);
             }
             hunks.push(Hunk {
+                layout: Default::default(),
                 old_start,
                 new_start: new,
                 separator: (skipped > 0).then(|| {
@@ -3378,6 +3520,75 @@ mod tests {
         let lines = &file.hunks[0].lines;
         assert_eq!((lines[0].kind, lines[0].number), (Kind::Context, 2));
         assert_eq!((lines[4].kind, lines[4].number), (Kind::Added, 6));
+    }
+
+    #[test]
+    fn view_changes_preserves_exact_path_identity_across_refresh() {
+        use gpui::{AppContext as _, HeadlessAppContext};
+        let start: ThreadStartResponse =
+            fixture::response("sessions/subtract.jsonl", "thread/start", 0);
+        let read: ThreadReadResponse = fixture::response("readback.jsonl", "thread/read", 1);
+        let requested = read
+            .thread
+            .turns
+            .iter()
+            .flat_map(|turn| &turn.items)
+            .find_map(|item| match item {
+                ThreadItem::FileChange { changes, .. } => changes.first(),
+                _ => None,
+            })
+            .unwrap()
+            .path
+            .clone();
+        let mut app = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            let panel =
+                cx.new(|_| DiffPanel::last_turn(&start.cwd, &start.cwd, &read.thread.turns));
+            panel.update(cx, |panel, cx| {
+                panel.select_source(DiffSource::Uncommitted, cx);
+                panel.query = Some("subtract".into());
+                panel.filter.text = "unrelated".into();
+                panel.view_changes(&requested, cx);
+                assert_eq!(panel.source, DiffSource::LastTurn);
+                assert_eq!(panel.query.as_deref(), Some(""));
+                assert!(panel.filter.text.is_empty());
+                assert!(panel.files[0].open);
+                panel.apply(
+                    &Event::Notification {
+                        method: "item/completed".into(),
+                        params: serde_json::json!({
+                            "threadId": read.thread.id,
+                            "turnId": read.thread.turns.last().unwrap().id,
+                            "item": {"type": "fileChange"}
+                        }),
+                    },
+                    &read.thread.cwd,
+                    &read.thread.turns,
+                    cx,
+                );
+                assert_ne!(panel.files[0].path_key, requested);
+                assert!(!panel.files[0].open);
+                assert_eq!((panel.files[0].added, panel.files[0].removed), (4, 0));
+                assert_eq!(panel.files[0].hunks.len(), 1);
+                let canonical = panel.files[0].path_key.clone();
+                panel.view_changes(&canonical, cx);
+                assert!(panel.files[0].open);
+                panel.set_file_open(0, false);
+                panel.replace_files(
+                    DiffPanel::last_turn(&start.cwd, &read.thread.cwd, &read.thread.turns).files,
+                );
+                assert!(!panel.files[0].open);
+                panel.set_all_files_open(true);
+                panel.replace_files(
+                    DiffPanel::last_turn(&start.cwd, &read.thread.cwd, &read.thread.turns).files,
+                );
+                assert!(panel.files[0].open);
+            });
+        });
     }
 
     #[test]
