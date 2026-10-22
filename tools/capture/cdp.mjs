@@ -7,13 +7,16 @@ export async function connect() {
   const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
   const page = list.find((t) => t.type === "page" && t.url === "app://-/index.html");
   if (!page) throw new Error("main app page not found");
-  const ws = new WebSocket(page.webSocketDebuggerUrl.replace(/localhost:\d+/, `127.0.0.1:${port}`));
+  const ws = new WebSocket(page.webSocketDebuggerUrl.replace(/^ws:\/\/[^/]+/, `ws://127.0.0.1:${port}`));
   await new Promise((r, e) => ((ws.onopen = r), (ws.onerror = e)));
   let id = 0;
   const pending = new Map();
   ws.onmessage = (m) => {
     const x = JSON.parse(m.data);
-    if (x.id && pending.has(x.id)) pending.get(x.id)(x);
+    if (x.id && pending.has(x.id)) {
+      pending.get(x.id)(x);
+      pending.delete(x.id);
+    }
   };
   const send = (method, params = {}) => {
     const i = ++id;

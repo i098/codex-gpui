@@ -27,11 +27,36 @@ use serde_json::{Value, json};
 use std::{ops::Range, path::PathBuf, rc::Rc, time::Duration};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub enum EnterBehavior {
+    #[default]
+    Enter,
+    CmdIfMultiline,
+    CmdAlways,
+}
+
+impl EnterBehavior {
+    pub fn from_setting(value: &str) -> Self {
+        match value {
+            "cmdIfMultiline" => Self::CmdIfMultiline,
+            "cmdAlways" => Self::CmdAlways,
+            _ => Self::Enter,
+        }
+    }
+
+    fn inserts_newline(self, content: &str) -> bool {
+        self == Self::CmdAlways || self == Self::CmdIfMultiline && content.contains('\n')
+    }
+}
+
+impl gpui::Global for EnterBehavior {}
+
 actions!(
     composer,
     [
         /// Send the prompt (Enter).
         Submit,
+        ModifiedSubmit,
         Stop,
         RequestFullAccess,
         /// Insert a line break (Shift+Enter).
@@ -67,6 +92,7 @@ actions!(
 
 mod attach;
 pub mod computer_use;
+pub mod dictation;
 mod editor;
 mod footer;
 mod requests;
@@ -190,6 +216,7 @@ pub fn bind_keys(cx: &mut App) {
     let c = Some(KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("enter", Submit, c),
+        KeyBinding::new("cmd-enter", ModifiedSubmit, c),
         KeyBinding::new("escape", Dismiss, Some(REQUEST_CONTEXT)),
         KeyBinding::new("cmd-enter", Submit, Some(REQUEST_FORM_CONTEXT)),
         KeyBinding::new("ctrl-enter", Submit, Some(REQUEST_FORM_CONTEXT)),
@@ -325,7 +352,7 @@ impl Permission {
     ];
 
     /// The preset `config/read` matches; anything else is `Custom (config.toml)`.
-    fn from_config(config: &Value) -> Self {
+    pub fn from_config(config: &Value) -> Self {
         match (
             config["approval_policy"].as_str(),
             config["sandbox_mode"].as_str(),
@@ -371,8 +398,10 @@ impl Permission {
 pub struct Submission {
     pub text: String,
     pub attachments: Vec<PathBuf>,
+    /// File references added as context, not image uploads.
+    pub context_files: Vec<PathBuf>,
     pub model: String,
-    pub effort: String,
+    pub effort: Option<String>,
     pub permission: Permission,
     /// Fast mode (bolt toggle in the model picker).
     pub fast: bool,
@@ -587,6 +616,8 @@ pub struct Composer {
     history: editor::History,
     /// The right-click menu (Electron's native editable-field menu).
     context_menu: Option<crate::screens::thread::view::menu::ContextMenu>,
+    context_spelling: Option<(Range<usize>, String)>,
+    context_image: Option<crate::image_context::ImageContext>,
     is_selecting: bool,
     /// Shaped lines and editor bounds of the last paint, for hit testing.
     lines: Vec<WrappedLine>,
@@ -602,8 +633,8 @@ pub struct Composer {
     drag_active: bool,
     models: Vec<ModelOption>,
     model: usize,
-    effort: String,
-    default_selection: (usize, String),
+    effort: Option<String>,
+    default_selection: (usize, Option<String>),
     fast: bool,
     permission: Permission,
     menu: Option<Menu>,
@@ -645,6 +676,8 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    dictation: Option<dictation::Active>,
+    dictation_error: Option<String>,
 }
 
 impl Composer {
@@ -675,6 +708,8 @@ impl Composer {
             marked_range: None,
             history: editor::History::default(),
             context_menu: None,
+            context_spelling: None,
+            context_image: None,
             is_selecting: false,
             lines: Vec::new(),
             bounds: None,
@@ -686,8 +721,8 @@ impl Composer {
             drag_active: false,
             models: Vec::new(),
             model: 0,
-            effort: "medium".into(),
-            default_selection: (0, "medium".into()),
+            effort: Some("medium".into()),
+            default_selection: (0, Some("medium".into())),
             fast: false,
             permission: Permission::Custom,
             menu: None,
@@ -721,6 +756,8 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            dictation: None,
+            dictation_error: None,
         }
     }
 
@@ -799,8 +836,7 @@ impl Composer {
                 let id = &self.models.get(self.model)?.id;
                 let m = models.iter().find(|m| &m.id == id)?;
                 Some(m.default_reasoning_effort.clone())
-            })
-            .unwrap_or_else(|| "medium".into());
+            });
         self.default_selection = (self.model, self.effort.clone());
         self.permission = Permission::from_config(config);
         self.queue_mode = config["desktop"]["followUpQueueMode"] == "queue";
@@ -813,9 +849,13 @@ impl Composer {
     pub fn set_model_and_effort(&mut self, model: &str, effort: &str, cx: &mut Context<Self>) {
         if let Some(index) = self.models.iter().position(|option| option.id == model) {
             self.model = index;
-            self.effort = effort.into();
+            self.effort = Some(effort.into());
             cx.notify();
         }
+    }
+
+    fn displayed_effort(&self) -> &str {
+        self.effort.as_deref().unwrap_or("medium")
     }
 
     pub fn on_submit(&mut self, f: impl Fn(&Submission, &mut Window, &mut App) + 'static) {
@@ -874,6 +914,9 @@ impl Composer {
             .as_ref()
             .map(|approval| approval.identity.as_ref())
             == approval.as_ref().map(|approval| approval.identity.as_ref());
+        if !same_request {
+            self.cancel_dictation(cx);
+        }
         if !same_request
             && let Some(old) = &self.approval
             && old.form.is_some()
@@ -1129,11 +1172,15 @@ impl Composer {
     }
 
     pub fn set_text(&mut self, s: &str, cx: &mut Context<Self>) {
+        self.cancel_dictation(cx);
+        self.dictation_error = None;
         self.content = s.into();
         self.mentions.clear();
         self.selected_range = s.len()..s.len();
         self.marked_range = None;
         self.history = editor::History::default();
+        self.context_spelling = None;
+        self.context_image = None;
         self.slash.reset();
         self.end_search(cx);
         cx.notify();
@@ -1187,17 +1234,18 @@ impl Composer {
     fn select_model(&mut self, index: usize) {
         self.model = index;
         let efforts = &self.models[index].efforts;
-        if !efforts.contains(&self.effort)
+        let effort = self.effort.get_or_insert_with(|| "medium".into());
+        if !efforts.contains(effort)
             && let Some(first) = efforts.first()
         {
-            self.effort = first.clone();
+            *effort = first.clone();
         }
     }
 
     /// Reports the picked model and effort to [`Self::on_model`].
     fn picked(&self, cx: &mut App) {
         if let (Some(f), Some(model)) = (self.on_model.clone(), self.current_model()) {
-            f(&model.id, &self.effort, cx);
+            f(&model.id, self.displayed_effort(), cx);
         }
     }
 
@@ -1225,7 +1273,22 @@ impl Composer {
                 return;
             }
         }
-        self.submit(&Submit, window, cx);
+        let newline = cx
+            .try_global::<EnterBehavior>()
+            .is_some_and(|behavior| behavior.inserts_newline(&self.content));
+        if newline && !self.slash.open {
+            self.newline(&Newline, window, cx);
+        } else {
+            self.submit(&Submit, window, cx);
+        }
+    }
+
+    fn modified_enter(&mut self, _: &ModifiedSubmit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.plain_field.is_some() {
+            self.enter(&Submit, window, cx);
+        } else {
+            self.submit(&Submit, window, cx);
+        }
     }
 
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
@@ -1240,16 +1303,25 @@ impl Composer {
         {
             return;
         }
+        self.cancel_dictation(cx);
+        self.submitted = std::mem::take(&mut self.attachments);
+        let mut attachments = Vec::new();
+        let mut context_files = Vec::new();
+        for attachment in &self.submitted {
+            if attachment.is_context_file() {
+                context_files.push(attachment.path.clone());
+            } else {
+                attachments.push(attachment.path.clone());
+            }
+        }
         let submission = Submission {
             text: if self.mentions.is_empty() && self.on_cancel_edit.is_none() {
                 std::mem::take(&mut self.content)
             } else {
                 self.prompt()
             },
-            attachments: {
-                self.submitted = std::mem::take(&mut self.attachments);
-                self.submitted.iter().map(|a| a.path.clone()).collect()
-            },
+            attachments,
+            context_files,
             model: self
                 .current_model()
                 .map(|m| m.id.clone())
@@ -1276,6 +1348,7 @@ impl Composer {
     }
 
     fn decide(&mut self, decision: ApprovalDecision, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_dictation(cx);
         if self.approval.is_none() {
             return;
         }
@@ -1339,6 +1412,10 @@ impl Composer {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dictation.is_some() {
+            self.cancel_dictation(cx);
+            return;
+        }
         if self.marked_range.is_some() {
             return;
         }
@@ -1604,14 +1681,13 @@ impl Composer {
         permission: Permission,
         cx: &mut Context<Self>,
     ) {
-        if let Some(model) = mode["settings"]["model"].as_str() {
-            self.set_model_and_effort(
-                model,
-                mode["settings"]["reasoning_effort"]
-                    .as_str()
-                    .unwrap_or("medium"),
-                cx,
-            );
+        if let Some(model) = mode["settings"]["model"].as_str()
+            && let Some(index) = self.models.iter().position(|option| option.id == model)
+        {
+            self.model = index;
+            self.effort = mode["settings"]["reasoning_effort"]
+                .as_str()
+                .map(str::to_owned);
         }
         self.permission = permission;
         cx.notify();
@@ -1864,6 +1940,7 @@ impl Render for Composer {
             })
             .track_focus(&self.focus_handle)
             .on_action(self.request_listener(cx, Self::enter))
+            .on_action(self.request_listener(cx, Self::modified_enter))
             .on_action(cx.listener(Self::newline))
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
@@ -1890,6 +1967,20 @@ impl Render for Composer {
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(|this, _: &crate::Paste, window, cx| this.paste(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &crate::PasteAndMatchStyle, window, cx| {
+                    this.paste_and_match_style(window, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &crate::DeleteSelection, window, cx| {
+                if !this.selected_range.is_empty() {
+                    this.insert("", window, cx);
+                }
+            }))
+            .when(
+                cfg!(target_os = "macos") && !self.secret && !self.content.is_empty(),
+                |card| card.on_action(cx.listener(Self::speak_selection)),
+            )
             .on_action(self.request_listener(cx, Self::dismiss))
             .on_action(cx.listener(Self::complete_command))
             .on_action(cx.listener(Self::next_command))
@@ -2100,6 +2191,8 @@ impl Render for Composer {
                     "composer-menu",
                     if menu.items.first().is_some_and(|item| item.id == QUEUE_EDIT) {
                         QUEUE_ACTIONS
+                    } else if self.context_image.is_some() {
+                        "Image actions"
                     } else {
                         "Edit actions"
                     },
@@ -2115,6 +2208,84 @@ impl Render for Composer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn send_shortcut_controls_enter_without_changing_shift_enter() {
+        use gpui::{AppContext as _, HeadlessAppContext, Keystroke};
+        use std::{cell::RefCell, sync::Arc};
+
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+
+        let mut app =
+            HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
+        app.update(|cx| {
+            cx.set_global(Theme::dark());
+            theme::load_fonts(cx);
+            bind_keys(cx);
+        });
+        let sent = Rc::new(RefCell::new(Vec::new()));
+        let received = sent.clone();
+        let window = app
+            .open_window(size(px(600.), px(400.)), |window, cx| {
+                let composer = cx.new(|cx| {
+                    let mut composer = Composer::home(window, cx);
+                    composer.models.push(ModelOption {
+                        id: "gpt-6.1-sol".into(),
+                        label: "GPT-6.1 Sol".into(),
+                        efforts: vec!["medium".into()],
+                    });
+                    composer.on_submit(move |submission, _, _| {
+                        received.borrow_mut().push(submission.text.clone());
+                    });
+                    composer
+                });
+                composer.read(cx).focus_handle(cx).focus(window, cx);
+                composer
+            })
+            .unwrap();
+        for (setting, draft, key, sends) in [
+            ("enter", "one", "enter", true),
+            ("enter", "one\ntwo", "cmd-enter", true),
+            ("cmdIfMultiline", "one", "enter", true),
+            ("cmdIfMultiline", "one\ntwo", "enter", false),
+            ("cmdIfMultiline", "one\ntwo", "cmd-enter", true),
+            ("cmdAlways", "one", "enter", false),
+            ("cmdAlways", "one", "cmd-enter", true),
+            ("cmdAlways", "one", "shift-enter", false),
+            ("unknown", "one", "enter", true),
+        ] {
+            sent.borrow_mut().clear();
+            app.update(|cx| {
+                cx.set_global(EnterBehavior::from_setting(setting));
+                window
+                    .update(cx, |composer, _, cx| composer.set_text(draft, cx))
+                    .unwrap();
+            });
+            app.run_until_parked();
+            app.update_window(window.into(), |_, window, cx| {
+                window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx);
+            })
+            .unwrap();
+            app.run_until_parked();
+            app.update(|cx| {
+                window
+                    .update(cx, |composer, _, _| {
+                        if sends {
+                            assert_eq!(*sent.borrow(), [draft], "{setting}: {key}");
+                            assert!(composer.content.is_empty());
+                        } else {
+                            assert!(sent.borrow().is_empty(), "{setting}: {key}");
+                            assert_eq!(composer.content, format!("{draft}\n"));
+                        }
+                    })
+                    .unwrap();
+            });
+        }
+    }
 
     #[test]
     fn model_selection_preserves_other_composer_choices() {
@@ -2139,14 +2310,42 @@ mod tests {
                 composer.set_text("Keep this draft", cx);
                 composer.set_model_and_effort("announced", "high", cx);
                 assert_eq!(composer.current_model().unwrap().id, "announced");
-                assert_eq!(composer.effort, "high");
+                assert_eq!(composer.effort.as_deref(), Some("high"));
                 composer.set_model_and_effort("missing", "low", cx);
                 assert_eq!(composer.current_model().unwrap().id, "announced");
-                assert_eq!(composer.effort, "high");
+                assert_eq!(composer.effort.as_deref(), Some("high"));
                 assert_eq!(composer.permission, Permission::FullAccess);
                 assert!(composer.queue_mode);
-                assert_eq!(composer.default_selection, (0, "medium".into()));
+                assert_eq!(composer.default_selection, (0, Some("medium".into())));
                 assert_eq!(composer.content, "Keep this draft");
+            });
+        });
+    }
+
+    #[test]
+    fn restored_effort_stays_unset_while_displaying_medium() {
+        use gpui::{AppContext as _, HeadlessAppContext};
+        let mut app = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            let composer = cx.new(|cx| Composer::new("Do anything", false, cx));
+            composer.update(cx, |composer, cx| {
+                composer.models = vec![ModelOption {
+                    id: "gpt-6.1-sol".into(),
+                    label: "GPT-6.1 Sol".into(),
+                    efforts: vec!["low".into(), "medium".into()],
+                }];
+                composer.restore_run_settings(
+                    &json!({"settings":{"model":"gpt-6.1-sol","reasoning_effort":null}}),
+                    Permission::Ask,
+                    cx,
+                );
+                assert!(composer.effort.is_none());
+                assert_eq!(composer.displayed_effort(), "medium");
+                assert!(composer.run_settings().0["settings"]["reasoning_effort"].is_null());
             });
         });
     }

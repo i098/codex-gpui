@@ -22,8 +22,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bridge::Event;
 use bridge::types::{
-    AgentMessageDeltaNotification, FileUpdateChange, ItemNotification, Thread, ThreadItem, Turn,
-    TurnNotification, TurnStatus, UserInput,
+    AgentMessageDeltaNotification, CommandAction, FileUpdateChange, ItemNotification, Thread,
+    ThreadItem, Turn, TurnNotification, TurnStatus, UserInput,
 };
 use gpui::{
     Action, AnyView, App, Bounds, ClipboardItem, Context, Corners, Div, FontWeight, Hsla,
@@ -51,8 +51,12 @@ mod items;
 mod markdown;
 #[path = "thread/menu.rs"]
 pub(crate) mod menu;
+#[path = "thread/recovery.rs"]
+mod recovery;
 #[path = "thread/select.rs"]
 mod select;
+
+pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
 use actions::action_row;
 pub use actions::{EditMessage, ForkThread, RevertTurn};
@@ -137,8 +141,12 @@ pub struct ThreadView {
     terminal_item: Option<String>,
     pub terminals_stopping: bool,
     turns: Vec<Turn>,
+    render_errors: RefCell<HashMap<String, String>>,
+    stream_errors: HashMap<String, Vec<(bridge::types::TurnError, bool)>>,
+    usage_limit_notice: UsageLimitNotice,
     clock: Clock,
     composer: AnyView,
+    embedded: bool,
     _tick: Option<Task<()>>,
     stream_fades: HashMap<String, Vec<StreamSegment>>,
     mcp_images: items::McpImages,
@@ -158,6 +166,7 @@ pub struct ThreadView {
     find: Option<FindState>,
     /// The link menu (`menu.rs`): `subject` is the right-clicked link.
     menu: Option<menu::ContextMenu>,
+    context_image: Option<crate::image_context::ImageContext>,
 }
 
 struct StreamSegment {
@@ -590,8 +599,12 @@ impl ThreadView {
             summary_open: false,
             clip_right: false,
             turns: thread.turns,
+            render_errors: RefCell::default(),
+            stream_errors: HashMap::new(),
+            usage_limit_notice: UsageLimitNotice::RetryLater,
             clock,
             composer,
+            embedded: false,
             _tick: None,
             stream_fades: HashMap::new(),
             mcp_images: RefCell::default(),
@@ -604,6 +617,7 @@ impl ThreadView {
             press_focus: None,
             find: None,
             menu: None,
+            context_image: None,
         }
     }
 
@@ -630,6 +644,18 @@ impl ThreadView {
                 return;
             }
         }
+    }
+
+    pub fn embedded(thread: Thread, clock: Clock, cx: &mut Context<Self>) -> Self {
+        let empty = cx.new(|_| crate::EmptyMain).into();
+        let mut view = Self::new(thread, clock, empty);
+        view.embedded = true;
+        view
+    }
+
+    pub fn set_embedded_turns(&mut self, turns: Vec<Turn>, cx: &mut Context<Self>) {
+        self.turns = turns;
+        cx.notify();
     }
 
     pub fn id(&self) -> &str {
@@ -669,6 +695,21 @@ impl ThreadView {
     fn copy_selection(&mut self, _: &crate::Copy, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.selected_text(window, cx) {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
+        } else {
+            cx.propagate();
+        }
+    }
+
+    fn speak_selection(
+        &mut self,
+        _: &crate::StartSpeaking,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(text) = self.selected_text(window, cx) {
+            if let Err(error) = crate::native_text::speak(&text, cx) {
+                eprintln!("codex-gpui: cannot speak selection: {error:#}");
+            }
         } else {
             cx.propagate();
         }
@@ -1048,6 +1089,9 @@ impl ThreadView {
     /// Only the last user message is editable, and only when its later turns have stopped.
     /// Non-text content stays read-only because `UserInput::Other` cannot retain attachments.
     pub fn can_edit(&self, turn_id: &str) -> bool {
+        if self.embedded {
+            return false;
+        }
         for turn in self.turns.iter().rev() {
             if turn.status == TurnStatus::InProgress {
                 return false;
@@ -1077,10 +1121,11 @@ impl ThreadView {
             .filter_map(|item| match item {
                 ThreadItem::CommandExecution {
                     command,
+                    command_actions,
                     aggregated_output,
                     ..
                 } => Some((
-                    shell_command(command).to_owned(),
+                    shell_command(command, command_actions).to_owned(),
                     aggregated_output.as_deref().unwrap_or_default(),
                 )),
                 _ => None,
@@ -1101,11 +1146,12 @@ impl ThreadView {
             ThreadItem::CommandExecution {
                 id,
                 command,
+                command_actions,
                 aggregated_output,
                 ..
             } => Some((
                 id,
-                shell_command(command),
+                shell_command(command, command_actions),
                 aggregated_output.as_deref().unwrap_or_default(),
             )),
             _ => None,
@@ -1247,7 +1293,13 @@ impl ThreadView {
                     .child(header("Background processes".into()))
                     .children(self.background_terminal_items().enumerate().filter_map(
                         |(ix, item)| {
-                            let ThreadItem::CommandExecution { id, command, .. } = item else {
+                            let ThreadItem::CommandExecution {
+                                id,
+                                command,
+                                command_actions,
+                                ..
+                            } = item
+                            else {
                                 return None;
                             };
                             let id = id.clone();
@@ -1295,7 +1347,7 @@ impl ThreadView {
                                 .child(div().size(px(8.8)).rounded(px(1.)).bg(t.text_tertiary));
                             let control = row(
                                 "thread-summary-terminal",
-                                shell_command(command).to_owned(),
+                                shell_command(command, command_actions).to_owned(),
                                 22.,
                                 ix,
                                 window,
@@ -1422,6 +1474,7 @@ impl ThreadView {
                 match self.turns.iter_mut().find(|t| t.id == n.turn.id) {
                     Some(turn) => {
                         turn.status = n.turn.status;
+                        turn.started_at = n.turn.started_at.or(turn.started_at);
                         turn.completed_at = n.turn.completed_at;
                         turn.duration_ms = n.turn.duration_ms;
                         turn.error = n.turn.error;
@@ -1552,6 +1605,18 @@ impl ThreadView {
                         aggregated_output, ..
                     }) => aggregated_output.get_or_insert_default().push_str(&n.delta),
                     _ => {}
+                }
+            }
+            "error" => {
+                let Ok(error) =
+                    serde_json::from_value::<bridge::types::ErrorNotification>(params.clone())
+                else {
+                    return;
+                };
+                let errors = self.stream_errors.entry(error.turn_id).or_default();
+                match errors.last_mut() {
+                    Some((last, true)) if error.will_retry => *last = error.error,
+                    _ => errors.push((error.error, error.will_retry)),
                 }
             }
             _ => return,
@@ -1719,6 +1784,9 @@ impl ThreadView {
             });
         }
         let (work, final_answer) = work(turn);
+        let has_work = work
+            .iter()
+            .any(|item| !matches!(item, ThreadItem::UserMessage { .. }));
         if self.pending_question.as_deref() == Some(turn.id.as_str()) {
             col = col
                 .child(div().h(px(16.)))
@@ -1757,6 +1825,15 @@ impl ThreadView {
             return col;
         }
         if let Some((item, answer)) = final_answer {
+            if self.embedded && !has_work {
+                return col.child(div().h(px(16.))).child(markdown::with_find(
+                    answer,
+                    window,
+                    t,
+                    self.find_paint(item).as_ref(),
+                    self.fades(item),
+                ));
+            }
             let secs = turn.duration_ms.unwrap_or(0) / 1000;
             let open = self.expanded.contains(&turn.id)
                 || self.find.as_ref().is_some_and(|find| {
@@ -1850,9 +1927,11 @@ impl ThreadView {
             if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
             }
-            return col.child(action_row(last, &group, &turn.id, answer, t));
+            return col.when(!self.embedded, |col| {
+                col.child(action_row(last, &group, &turn.id, answer, t))
+            });
         }
-        if turn.status == TurnStatus::InProgress {
+        if turn.status == TurnStatus::InProgress && (!self.embedded || has_work) {
             let secs = self.clock.now() - turn.started_at.unwrap_or(self.clock.now());
             col = col
                 .child(div().h(px(16.)))
@@ -2044,11 +2123,43 @@ impl Render for ThreadView {
                     .filter(|&&(top, h)| far(top + offset, h, view));
                 match stand_in {
                     Some(&(_, h)) => div().h(h),
-                    None => self.turn(turn, i + 1 == n, window, &t, cx),
+                    None => {
+                        let errors = self.render_errors.borrow();
+                        if let Some(error) = errors.get(&turn.id) {
+                            self.render_failure(&turn.id, error, window, cx)
+                        } else {
+                            drop(errors);
+                            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                self.turn(turn, i + 1 == n, window, &t, cx)
+                            })) {
+                                Ok(body) => body.children(self.turn_errors(turn, window, cx)),
+                                Err(error) => {
+                                    let error = error
+                                        .downcast_ref::<String>()
+                                        .cloned()
+                                        .or_else(|| {
+                                            error.downcast_ref::<&str>().map(|s| (*s).to_owned())
+                                        })
+                                        .unwrap_or_else(|| "Unknown render error".to_owned());
+                                    eprintln!(
+                                        "codex-gpui: thread {} turn {}: {error}",
+                                        self.thread_id, turn.id
+                                    );
+                                    self.render_errors
+                                        .borrow_mut()
+                                        .insert(turn.id.clone(), error.clone());
+                                    self.render_failure(&turn.id, &error, window, cx)
+                                }
+                            }
+                        }
+                    }
                 }
             })
             .collect();
         drop(laid_out);
+        if self.embedded {
+            return div().w_full().children(turns);
+        }
         let ids: Vec<String> = self.turns.iter().map(|t| t.id.clone()).collect();
         let (laid_out, scroll) = (self.laid_out.clone(), self.scroll.clone());
         let find_scroll = self
@@ -2235,6 +2346,10 @@ impl Render for ThreadView {
                     .track_scroll(&self.scroll)
                     .track_focus(&focus)
                     .on_action(cx.listener(Self::copy_selection))
+                    .when(
+                        cfg!(target_os = "macos") && self.carets.range().is_some(),
+                        |view| view.on_action(cx.listener(Self::speak_selection)),
+                    )
                     // A press on the transcript collapses the selection to a caret, takes the
                     // focus from the editor, and starts a drag (TH-127). Buttons stop it; a
                     // control that took the focus during the press (the inline editor) keeps it.
@@ -2354,8 +2469,11 @@ fn work(turn: &Turn) -> (&[ThreadItem], Option<(&str, &str)>) {
     }
 }
 
-/// The command inside the `<shell> -lc "<command>"` wrapper the server reports.
-fn shell_command(command: &str) -> &str {
+/// Uses the server's parsed command when it reports one, otherwise removes the shell wrapper.
+fn shell_command<'a>(command: &'a str, actions: &'a [CommandAction]) -> &'a str {
+    if let [action] = actions {
+        return &action.command;
+    }
     let Some((_, inner)) = command.split_once(" -lc ") else {
         return command;
     };
@@ -2749,8 +2867,19 @@ mod tests {
         );
         assert_eq!(day_and_time(at, at + 3 * 86_400, -25_200).0, "Oct 14");
         assert_eq!(duration(17), "17s");
+    }
+
+    #[test]
+    fn terminal_labels_preserve_parsed_shell_escapes() {
+        let command = r#"/bin/zsh -lc "printf '\\033[31mred\\033[0m'""#;
+        let actions = [CommandAction {
+            kind: "unknown".into(),
+            command: r"printf '\033[31mred\033[0m'".into(),
+            name: None,
+        }];
+        assert_eq!(shell_command(command, &actions), actions[0].command);
         assert_eq!(
-            shell_command(r#"/bin/zsh -lc "python3 -c 'print(2)'""#),
+            shell_command(r#"/bin/zsh -lc "python3 -c 'print(2)'""#, &[]),
             "python3 -c 'print(2)'"
         );
     }

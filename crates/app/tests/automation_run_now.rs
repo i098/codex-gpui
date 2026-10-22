@@ -23,7 +23,7 @@ while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9]*\).*/\1/p')
   case "$line" in
     *'"model/list"'*) printf '{"id":%s,"result":{"data":%s}}\n' "$id" "$MODELS" ;;
-    *'"config/read"'*) printf '{"id":%s,"result":{"config":%s}}\n' "$id" "$CONFIG" ;;
+    *'"config/read"'*) config=$CONFIG; [ ! -f "$CONFIG_FILE" ] || config=$(cat "$CONFIG_FILE"); printf '{"id":%s,"result":{"config":%s}}\n' "$id" "$config" ;;
     *'"configRequirements/read"'*) [ -z "$FAIL_REQUIREMENTS" ] || { printf '{"id":%s,"error":{"code":-32000,"message":"requirements unavailable"}}\n' "$id"; continue; }; printf '{"id":%s,"result":{"requirements":%s}}\n' "$id" "$REQUIREMENTS" ;;
     *'"thread/read"'*)
       if [ -n "$FAIL_READ" ]; then printf '{"id":%s,"error":{"code":-32000,"message":"missing fixture thread"}}\n' "$id"; continue; fi
@@ -84,9 +84,7 @@ fn host(home: &Path, log: &Path, slow: bool) -> Result<LocalHost> {
 
 /// `env` sets the stub's `CONFIG`, `MODELS` and `REQUIREMENTS` answers (JSON).
 fn host_with(home: &Path, log: &Path, slow: bool, env: &[(&str, &str)]) -> Result<LocalHost> {
-    Ok(LocalHost::new(home)
-        .with_host_settings_path(home.join("host-settings.json"))
-        .with_bridge(app_server_peer(home, log, slow, env)?))
+    Ok(LocalHost::new(home).with_bridge(app_server_peer(home, log, slow, env)?))
 }
 
 fn app_server_peer(
@@ -95,12 +93,21 @@ fn app_server_peer(
     slow: bool,
     env: &[(&str, &str)],
 ) -> Result<Arc<Bridge>> {
+    fs::create_dir_all(home)?;
+    let config_file = home.join("config-read.json");
+    fs::write(
+        &config_file,
+        env.iter()
+            .find(|(key, _)| *key == "CONFIG")
+            .map_or("{}", |(_, value)| value),
+    )?;
     let mut server = Command::new("sh");
     server.envs(env.iter().copied());
     server
         .arg("-c")
         .arg(SERVER)
         .env("LOG", log)
+        .env("CONFIG_FILE", config_file)
         .env("STATE", home.join(".codex-global-state.json"))
         .env("SLOW", if slow { "1" } else { "" });
     let (bridge, _events) = Bridge::spawn(server)?;
@@ -1949,13 +1956,18 @@ fn projectless_task(host: &LocalHost, home: &Path, root: &Path, prompt: &str) ->
     let db = rusqlite::Connection::open(home.join("sqlite/codex.db"))?;
     db.execute(RUNS, [])?;
     db.execute(AUTOMATIONS, [])?;
-    fs::write(
-        home.join("host-settings.json"),
-        json!({"projectlessWorkspaceRoot": root}).to_string(),
-    )?;
+    projectless_root(home, root)?;
     host.write_automation("free", &format!(
         "version = 1\nid = \"free\"\nname = \"Free\"\nprompt = {prompt:?}\nstatus = \"ACTIVE\"\ncwds = []\ncreated_at = 1\nupdated_at = 1\n[target]\ntype = \"projectless\"\n"
     ))
+}
+
+fn projectless_root(home: &Path, root: &Path) -> Result<()> {
+    let path = home.join("config-read.json");
+    let mut config: Value = serde_json::from_slice(&fs::read(&path)?)?;
+    config["desktop"]["projectlessWorkspaceRoot"] = json!(root);
+    fs::write(path, config.to_string())?;
+    Ok(())
 }
 
 #[test]
@@ -2099,20 +2111,14 @@ fn projectless_refuses_relative_and_symlink_roots_before_starting_a_thread() -> 
     let link = dir.path().join("link");
     fs::create_dir(&real)?;
     std::os::unix::fs::symlink(&real, &link)?;
-    fs::write(
-        home.join("host-settings.json"),
-        json!({"projectlessWorkspaceRoot": link}).to_string(),
-    )?;
+    projectless_root(&home, &link)?;
     ensure!(
         run(&host, "free")
             .unwrap_err()
             .to_string()
             .contains("real directory")
     );
-    fs::write(
-        home.join("host-settings.json"),
-        json!({"projectlessWorkspaceRoot": real}).to_string(),
-    )?;
+    projectless_root(&home, &real)?;
     let date = real.join(chrono::Local::now().format("%Y-%m-%d").to_string());
     let outside = dir.path().join("outside");
     fs::create_dir(&outside)?;
@@ -2917,8 +2923,16 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
         );
         add(
             "thread/resume",
-            json!({"threadId": "heartbeat-thread", "cwd": project, "path": null}),
+            json!({"threadId": "heartbeat-thread", "cwd": project, "path": thread["path"]}),
             json!({"thread": thread}),
+        );
+        let mut resumed = common::recorded_resume(common::GREETING)?;
+        resumed["thread"] = thread.clone();
+        resumed["collaborationMode"]["settings"]["reasoning_effort"] = json!("low");
+        add(
+            "thread/resume",
+            json!({"threadId": "heartbeat-thread", "excludeTurns": true}),
+            resumed,
         );
         let turn = json!({"id": "heartbeat-turn", "status": "inProgress", "items": []});
         let mut started = exchange("turn/start", json!({"turn": turn}));
@@ -3026,7 +3040,9 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
             .collect();
         ensure!(
             turns.len() == 1,
-            "duplicate Run now must not start another heartbeat"
+            "expected one heartbeat start, got {}; toasts: {:?}; requests: {sent:?}",
+            turns.len(),
+            fx.read(|root, cx| root.toasts(cx)),
         );
         ensure!(
             !sent

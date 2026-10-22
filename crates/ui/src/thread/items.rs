@@ -132,6 +132,7 @@ pub(super) fn diff_card(
         })
         .collect();
     let first = changes.first()?;
+    let review_path = first.path.clone();
     let (added, removed) = diff_counts(changes.iter().copied());
     let mut files: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
     files.dedup();
@@ -246,7 +247,12 @@ pub(super) fn diff_card(
                                     ),
                                 )
                                 .id("view-changes")
-                                .on_click(crate::dispatch::<crate::OpenChangesPanel>),
+                                .on_click(move |_, window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(crate::ViewChanges(review_path.clone())),
+                                        cx,
+                                    )
+                                }),
                             ),
                     ),
             ),
@@ -408,7 +414,7 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                 // command line without one. ponytail: `search` and `list_files` rows also read
                 // as `Ran <command>`; the original words them per action (`Searched for …`).
                 let parsed = match command_actions.as_slice() {
-                    [] => shell_command(command).to_owned(),
+                    [] => shell_command(command, command_actions).to_owned(),
                     actions => actions
                         .iter()
                         .map(|a| a.command.as_str())
@@ -430,7 +436,7 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                         stats: None,
                         shell: Some(Shell {
                             key: format!("shell-{id}"),
-                            command: shell_command(command).to_owned(),
+                            command: shell_command(command, command_actions).to_owned(),
                             output: aggregated_output
                                 .as_deref()
                                 .unwrap_or_default()
@@ -637,8 +643,19 @@ pub(super) fn activity(
                                     if let Some((_, image)) =
                                         decoded.iter().find(|(at, _)| *at == index)
                                     {
-                                        output =
-                                            output.child(gpui::img(image.clone()).max_w_full());
+                                        let context = crate::image_context::ImageContext {
+                                            image: image.clone(),
+                                            path: None,
+                                        };
+                                        output = output.child(
+                                            gpui::img(image.clone()).max_w_full()
+                                                .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                                    this.menu = Some(context.menu(event.position, window, cx));
+                                                    this.context_image = Some(context.clone());
+                                                    cx.stop_propagation();
+                                                    cx.notify();
+                                                })),
+                                        );
                                     } else {
                                         output = output.child(text(
                                             "Could not display tool image",

@@ -1,6 +1,74 @@
+use crate::host::run_now::heartbeat::RendererState;
 use crate::*;
+use anyhow::{Context as _, bail, ensure};
 use gpui::Div;
 
+pub(crate) async fn load_thread(
+    bridge: &Bridge,
+    this: &WeakEntity<Root>,
+    id: &str,
+    resume: bool,
+    cx: &mut AsyncWindowContext,
+) -> Result<(Thread, Option<RendererState>)> {
+    let response: Value = bridge
+        .request("thread/read", json!({"threadId": id, "includeTurns": true}))
+        .await?;
+    if response["thread"]["threadSource"] == "automation" {
+        this.update(cx, |this, _| this.automation_threads.insert(id.to_owned()))?;
+    }
+    let thread = serde_json::from_value::<ThreadReadResponse>(response)?.thread;
+    let settings = if resume {
+        let mut params = resume_params(this, id, cx).await?;
+        params["excludeTurns"] = json!(true);
+        let response = bridge.request::<_, Value>("thread/resume", params).await?;
+        Some(resumed_settings(response, id)?)
+    } else {
+        None
+    };
+    Ok((thread, settings))
+}
+
+fn resumed_settings(mut response: Value, id: &str) -> Result<RendererState> {
+    ensure!(response["thread"]["id"] == id, "resumed a different thread");
+    let sandbox = match response["sandbox"]["type"].as_str() {
+        Some("readOnly") => "read-only",
+        Some("workspaceWrite") => "workspace-write",
+        Some("dangerFullAccess") => "danger-full-access",
+        _ => bail!("missing or unsupported resumed sandbox"),
+    };
+    let approval = response
+        .get("approvalPolicy")
+        .context("missing resumed approval policy")?;
+    let policy = &response["sandbox"];
+    let standard_workspace = policy.as_object().is_some_and(|policy| policy.len() == 5)
+        && policy["networkAccess"] == false
+        && policy["excludeTmpdirEnvVar"] == false
+        && policy["excludeSlashTmp"] == false
+        && policy["writableRoots"]
+            .as_array()
+            .is_some_and(Vec::is_empty);
+    let permission = if sandbox == "workspace-write" && !standard_workspace {
+        Permission::Custom
+    } else {
+        Permission::from_config(&json!({
+            "approval_policy": approval,
+            "approvals_reviewer": response["approvalsReviewer"],
+            "sandbox_mode": sandbox,
+        }))
+    };
+    let collaboration_mode = response["collaborationMode"].take();
+    ensure!(
+        collaboration_mode["mode"].is_string()
+            && collaboration_mode["settings"]["model"]
+                .as_str()
+                .is_some_and(|model| !model.is_empty()),
+        "missing resumed model settings"
+    );
+    Ok(RendererState {
+        collaboration_mode,
+        permission,
+    })
+}
 pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     root.on_action(cx.listener(|this, _: &FindInThread, window, cx| {
         if matches!(this.state.route, Route::Thread(_)) {
@@ -40,6 +108,16 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     }))
     .on_action(cx.listener(|this, _: &OpenChangesPanel, window, cx| {
         this.set_side(SidePanel::Changes, window, cx)
+    }))
+    .on_action(cx.listener(|this, action: &ui::ViewChanges, window, cx| {
+        let focused = window.focused(cx);
+        if let Some(panel) = &this.diff {
+            panel.update(cx, |panel, cx| panel.view_changes(&action.0, cx));
+        }
+        this.set_side(SidePanel::Changes, window, cx);
+        if let Some(focused) = focused {
+            window.defer(cx, move |window, cx| window.focus(&focused, cx));
+        }
     }))
     .on_action(cx.listener(Root::open_file))
     .on_action(cx.listener(|this, _: &OpenBackgroundTerminal, window, cx| {
@@ -90,4 +168,60 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     }))
     .on_action(cx.listener(|this, a: &RevertTurn, window, cx| this.revert(a.0.clone(), window, cx)))
     .on_action(cx.listener(|this, a: &GoToChat, window, cx| this.go_to_chat(Some(a.0), window, cx)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn response() -> Value {
+        json!({
+            "thread": {"id": "thread-a"},
+            "approvalPolicy": "on-request",
+            "approvalsReviewer": "user",
+            "sandbox": {
+                "type": "workspaceWrite",
+                "writableRoots": [],
+                "networkAccess": false,
+                "excludeTmpdirEnvVar": false,
+                "excludeSlashTmp": false
+            },
+            "collaborationMode": {
+                "mode": "default",
+                "settings": {"model": "gpt-6.1-sol", "reasoning_effort": null}
+            }
+        })
+    }
+
+    #[test]
+    fn resumed_state_preserves_the_server_model_and_permission() {
+        let state = resumed_settings(response(), "thread-a").unwrap();
+        assert_eq!(state.permission, Permission::Ask);
+        assert_eq!(state.collaboration_mode["settings"]["model"], "gpt-6.1-sol");
+        assert!(state.collaboration_mode["settings"]["reasoning_effort"].is_null());
+    }
+
+    #[test]
+    fn resumed_custom_workspace_policy_keeps_the_custom_label() {
+        for (field, value) in [
+            ("networkAccess", json!(true)),
+            ("writableRoots", json!(["/extra"])),
+            ("excludeTmpdirEnvVar", json!(true)),
+            ("excludeSlashTmp", json!(true)),
+            ("unknownPolicyField", json!(true)),
+        ] {
+            let mut response = response();
+            response["sandbox"][field] = value;
+            assert_eq!(
+                resumed_settings(response, "thread-a").unwrap().permission,
+                Permission::Custom,
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn resumed_state_rejects_a_different_thread() {
+        assert!(resumed_settings(response(), "thread-b").is_err());
+    }
 }
