@@ -209,6 +209,9 @@ const SM_WIDTH: f32 = 440.;
 const XS_WIDTH: f32 = 300.;
 const FONT_SIZE: Pixels = px(14.);
 const LINE_HEIGHT: Pixels = px(20.);
+/// Smallest content height the textarea grip resizes to: the original's `min-h-24` (96 px)
+/// border box less its 1 px borders and 8 px vertical padding.
+const MIN_TEXTAREA_HEIGHT: Pixels = px(78.);
 
 /// Composer keys (inventory §7.2): Enter sends, Shift+Enter inserts a newline. Edit menu
 /// commands (`crate::Cut`, `Copy`, `Paste`, `SelectAll`) are bound by the app.
@@ -677,6 +680,8 @@ pub struct Composer {
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
     field_min_height: Pixels,
+    /// The grip drag of a plain multiline field: pointer y and field height at its start.
+    field_resize: Option<(Pixels, Pixels)>,
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
 }
@@ -758,6 +763,7 @@ impl Composer {
             on_model: None,
             plain_field: None,
             field_min_height: px(48.),
+            field_resize: None,
             dictation: None,
             dictation_error: None,
         }
@@ -2069,8 +2075,8 @@ impl Render for Composer {
                         .when(!self.secret, |d| d.aria_value(self.content.clone()))
                     })
             };
-            return div().w_full().child(
-                card.child(
+            let card = card
+                .child(
                     self.editor(cx)
                         .when(self.request_parent.is_none(), |editor| {
                             editor.min_h(self.field_min_height)
@@ -2079,8 +2085,55 @@ impl Render for Composer {
                 )
                 .when(self.request_number, |d| {
                     d.child(self.request_number_stepper(&t, cx))
-                }),
-            );
+                });
+            if self.plain_field != Some(true) {
+                return div().w_full().child(card);
+            }
+            // The textarea's `resize: vertical` grip, in its border box's corner.
+            let grip = div()
+                .id("textarea-resize")
+                .absolute()
+                .right_0()
+                .bottom_0()
+                .size(px(16.))
+                .cursor(CursorStyle::ResizeUpDown)
+                .child(icon("textarea-resize", 16., t.text))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                        this.field_resize = Some((event.position.y, this.field_min_height));
+                        this.focus_handle.focus(window, cx);
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                );
+            let drag = self.field_resize.map(|(start, height)| {
+                let moved = cx.entity().downgrade();
+                let released = moved.clone();
+                crate::drag_layer(
+                    move |_, window, cx| {
+                        let next =
+                            (height + window.mouse_position().y - start).max(MIN_TEXTAREA_HEIGHT);
+                        moved
+                            .update(cx, |this, cx| {
+                                if this.field_min_height != next {
+                                    this.field_min_height = next;
+                                    cx.notify();
+                                }
+                            })
+                            .ok();
+                    },
+                    move |cx| {
+                        released
+                            .update(cx, |this, cx| {
+                                this.field_resize = None;
+                                cx.notify();
+                            })
+                            .ok();
+                    },
+                )
+            });
+            return div().w_full().child(card.child(grip).children(drag));
         }
         let card = card
             .flex()

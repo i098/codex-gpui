@@ -52,13 +52,7 @@ fn drain(fx: &mut Fx) -> Result<()> {
 }
 
 fn evidence(fx: &mut Fx, name: &str) -> Result<()> {
-    let Some(out) = std::env::var_os("CGX_SETTINGS_ACTIONS_EVIDENCE") else {
-        return Ok(());
-    };
-    let out = std::path::PathBuf::from(out);
-    std::fs::create_dir_all(&out)?;
-    fx.reference_shot()?.save(out.join(format!("{name}.png")))?;
-    Ok(())
+    fx.capture_evidence("CGX_SETTINGS_ACTIONS_EVIDENCE", name)
 }
 
 #[test]

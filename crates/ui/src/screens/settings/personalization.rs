@@ -1,8 +1,9 @@
 use crate::{SANS, composer::Composer, focus, icon::icon, text};
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, EventEmitter, Focusable as _, Hsla,
+    AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter, Focusable as _, Hsla,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, Stateful,
-    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, Window, canvas, div, prelude::FluentBuilder as _,
+    px,
 };
 use serde_json::Value;
 use theme::ActiveTheme as _;
@@ -150,6 +151,30 @@ fn control(
     let focus = focus::handle(label, 0, window, cx);
     focus.update(cx, |focus, _| focus.handle.tab_stop = enabled);
     let handle = focus.read(cx).handle.clone();
+    let surface = super::surface(
+        12.5,
+        shapes::Corner::Squircle,
+        fill,
+        (label == "Save").then_some(cx.theme().border),
+    );
+    // `disabled:opacity-40`: the compositor blends the surface's fill and border as one
+    // group at 102/255 with its integer alpha scaling, not each paint at 40%.
+    let surface: AnyElement = if enabled {
+        shapes::decoration(surface).into_any_element()
+    } else {
+        canvas(
+            |_, _, _| {},
+            move |b, (), window, cx| {
+                shapes::with_composited_opacity(102, b, window, cx, |window| {
+                    shapes::paint(&surface, None, b, window, cx)
+                })
+            },
+        )
+        .absolute()
+        .size_full()
+        .into_any_element()
+    };
+    let opacity = if enabled { 1. } else { 0.4 };
     let button = div()
         .id(label)
         .role(gpui::Role::Button)
@@ -162,18 +187,13 @@ fn control(
         .items_center()
         .justify_center()
         .relative()
-        .child(super::on_card(
-            12.5,
-            shapes::Corner::Squircle,
-            fill,
-            (label == "Save").then_some(cx.theme().border),
-        ))
+        .child(surface)
         .when(label == "Back", |d| {
-            d.child(icon("instructions-back", 16., color))
+            d.child(icon("instructions-back", 16., color.opacity(opacity)))
         })
-        .child(text(label, 13., 18., 430., color));
+        .child(text(label, 13., 18., 430., color).opacity(opacity));
     if !enabled {
-        return button.opacity(0.4);
+        return button;
     }
     focus::ring(button.relative(), &focus, px(12.5), px(2.), cx)
         .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(focus))
