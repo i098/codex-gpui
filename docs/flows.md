@@ -465,6 +465,8 @@ Queued side chats restore the fork response's model, effort, and permission sett
 Their tab shows activity while a turn runs.
 Turns without a server start time measure elapsed time from their first notification without adding a message timestamp.
 The queue replay matches the retained running state at one second.
+The queue dropdown sizes itself to its icon labels and opens below the measured button, including keyboard activation.
+Editor context menus keep their existing minimum width.
 The original/native pixel comparison still fails for transcript geometry, queue controls, and surface colors.
 
 S018 records CP-039 and CP-040 in `refs/interactions/s018.json`.
