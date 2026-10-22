@@ -1102,12 +1102,14 @@ impl Shell {
                         // The `clip-path` box keeps a zoomed edge's fraction, in
                         // `#app-shell-sidebar`'s space: its left is the content-sized rail
                         // (`px-2` around 36 px items, each in LayoutUnits), its bottom an inset
-                        // in LayoutUnits, and its top is rounded to device px.
+                        // in LayoutUnits. Blink rounds that paint-containment box's LayoutUnit
+                        // top to device px and drops the fraction, so the whole box moves with it.
                         let s = window.scale_factor();
                         let left = layout_unit(px(8.), s) * 2. + layout_unit(px(36.), s);
-                        let top = Theme::TITLEBAR_HEIGHT;
+                        let top = layout_unit(Theme::TITLEBAR_HEIGHT, s);
                         let shift = px((f32::from(top) * s).round() / s) - top;
-                        let bottom = window.viewport_size().height - layout_unit(PAGE_INSET, s);
+                        let bottom =
+                            window.viewport_size().height - layout_unit(PAGE_INSET, s) + shift;
                         let clip = Bounds::from_corners(
                             point(left, top + shift),
                             point(bounds.right() + r, bottom),
