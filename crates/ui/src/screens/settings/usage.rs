@@ -514,23 +514,19 @@ impl Usage {
         if state.access.enterprise {
             content = content.child(self.enterprise(state, window, cx));
         }
-        let origin = self.layer.clone();
-        let panel = crate::in_layer(
-            shapes::Decoration {
-                radius: gpui::Corners::all(px(20.)),
-                corner: shapes::Corner::Squircle,
-                fill: Some(t.background_panel),
-                shadows: vec![shapes::Shadow {
-                    color: t.border_subtle,
-                    offset: gpui::point(px(0.), px(0.)),
-                    blur: px(0.),
-                    spread: px(1.),
-                    inset: true,
-                }],
-                ..Default::default()
-            },
-            move || origin.get(),
-        );
+        let panel = shapes::decoration(shapes::Decoration {
+            radius: gpui::Corners::all(px(20.)),
+            corner: shapes::Corner::Squircle,
+            fill: Some(t.background_panel),
+            shadows: vec![shapes::Shadow {
+                color: t.border_subtle,
+                offset: gpui::point(px(0.), px(0.)),
+                blur: px(0.),
+                spread: px(1.),
+                inset: true,
+            }],
+            ..Default::default()
+        });
         div().flex().flex_col()
             .child(heading("Plan limits", Some(text("Shared across Codex, Work, Workspace Agents, and ChatGPT for Excel. Chat conversations are not included.", 13., 18., 400., t.text_secondary).into_any_element()), 16., &t))
             .child(div().relative().child(panel).child(content))
@@ -1732,7 +1728,8 @@ impl Render for Usage {
             let tabs = div()
                 .relative()
                 .top(shift)
-                .bg(t.surface)
+                .top_layer()
+                .child(on_card(0., shapes::Corner::Round, t.surface, None))
                 .pt(px(20.))
                 .pb(px(8.))
                 .flex()

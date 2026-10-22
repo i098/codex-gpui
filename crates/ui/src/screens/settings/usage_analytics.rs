@@ -258,7 +258,7 @@ impl Analytics {
             .p(px(2.))
             .child(super::super::on_card(
                 10.,
-                shapes::Corner::Squircle,
+                shapes::Corner::Round,
                 cx.theme().surface_secondary.opacity(0.92),
                 None,
             ))
