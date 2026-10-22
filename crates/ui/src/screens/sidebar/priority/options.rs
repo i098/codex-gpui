@@ -2,16 +2,16 @@ use super::super::HomeSidebar;
 use super::{ArchiveActivity, OptionsMenu};
 use crate::{icon::icon, text};
 use gpui::{
-    AnyElement, AppContext as _, Context, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, ParentElement, StatefulInteractiveElement, Styled, Window, anchored, deferred,
-    div, point, prelude::FluentBuilder as _, px,
+    AnyElement, Context, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement,
+    StatefulInteractiveElement, Styled, Window, anchored, deferred, div, point,
+    prelude::FluentBuilder as _, px,
 };
 use theme::ActiveTheme as _;
 
 impl HomeSidebar {
     pub(super) fn open_activity_options(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let focus = cx.focus_handle();
-        self.activity.menu = Some(OptionsMenu {
+        self.activity_menu = Some(OptionsMenu {
             previous: window.focused(cx),
             focus: focus.clone(),
             selected: 0,
@@ -21,7 +21,7 @@ impl HomeSidebar {
     }
 
     fn close_activity_options(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(menu) = self.activity.menu.take()
+        if let Some(menu) = self.activity_menu.take()
             && let Some(previous) = menu.previous
         {
             window.focus(&previous, cx);
@@ -34,11 +34,11 @@ impl HomeSidebar {
             3 => self
                 .unread
                 .iter()
-                .any(|id| self.activity.items.contains(id)),
+                .any(|id| self.activity_items.contains(id)),
             4 => {
-                self.activity.archive_supported
+                self.activity_archive_supported
                     && self.threads.iter().any(|(id, _, _)| {
-                        self.activity.items.contains(id) && self.activity_visible(id)
+                        self.activity_items.contains(id) && self.activity_visible(id)
                     })
             }
             _ => true,
@@ -50,16 +50,16 @@ impl HomeSidebar {
             return;
         }
         match item {
-            0 => self.activity.priority = !self.activity.priority,
-            1 => self.activity.pinned = !self.activity.pinned,
-            2 => self.activity.scheduled = !self.activity.scheduled,
-            3 => self.unread.retain(|id| !self.activity.items.contains(id)),
+            0 => self.activity_priority = !self.activity_priority,
+            1 => self.activity_pinned = !self.activity_pinned,
+            2 => self.activity_scheduled = !self.activity_scheduled,
+            3 => self.unread.retain(|id| !self.activity_items.contains(id)),
             4 => {
                 let ids = self
                     .threads
                     .iter()
                     .filter(|(id, _, _)| {
-                        self.activity.items.contains(id) && self.activity_visible(id)
+                        self.activity_items.contains(id) && self.activity_visible(id)
                     })
                     .map(|(id, _, _)| id.clone())
                     .collect();
@@ -75,11 +75,11 @@ impl HomeSidebar {
         window: &Window,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        let menu = self.activity.menu.as_ref()?;
+        let menu = self.activity_menu.as_ref()?;
         let checked = [
-            self.activity.priority,
-            self.activity.pinned,
-            self.activity.scheduled,
+            self.activity_priority,
+            self.activity_pinned,
+            self.activity_scheduled,
         ];
         let rows =
             [
@@ -136,7 +136,7 @@ impl HomeSidebar {
                             .child(text(label, 14., 20., 430., cx.theme().text_default_nav))
                             .on_hover(cx.listener(move |s, hovered: &bool, _, cx| {
                                 if *hovered && enabled {
-                                    if let Some(menu) = &mut s.activity.menu {
+                                    if let Some(menu) = &mut s.activity_menu {
                                         menu.selected = i;
                                     }
                                     cx.notify();
@@ -159,7 +159,7 @@ impl HomeSidebar {
         .track_focus(&menu.focus)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_key_down(cx.listener(|s, e: &KeyDownEvent, window, cx| {
-            let Some(menu) = &mut s.activity.menu else {
+            let Some(menu) = &mut s.activity_menu else {
                 return;
             };
             match e.keystroke.key.as_str() {
@@ -193,8 +193,8 @@ impl HomeSidebar {
                         .child(
                             anchored()
                                 .position(point(
-                                    self.activity.button.origin.x,
-                                    self.activity.button.bottom() + px(4.),
+                                    self.activity_button.origin.x,
+                                    self.activity_button.bottom() + px(4.),
                                 ))
                                 .anchor(gpui::Anchor::TopLeft)
                                 .snap_to_window_with_margin(px(8.))

@@ -2655,7 +2655,12 @@ impl Root {
                         this.loaded.clear();
                         this.approvals.clear();
                         this.new_chat_section = None;
-                        this.sidebar.update(cx, |s, cx| s.clear_sections(cx));
+                        this.sidebar.update(cx, |s, cx| {
+                            if let Some(clock) = s.activity_clock {
+                                s.toggle_activity(clock, cx);
+                            }
+                            s.clear_sections(cx);
+                        });
                         this.show_approval(cx);
                         this.set_threads(&[], cx);
                         this.set_next_cursor(None, cx);

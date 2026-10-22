@@ -1,11 +1,10 @@
 use super::super::{HomeSidebar, ListState, PAGE, RetryThreads, load_error};
-use super::day;
+use super::local_date;
 use crate::{focus, icon::icon, sidebar_empty, text};
 use chrono::Days;
 use gpui::{
-    AnyElement, AppContext as _, Context, Div, InteractiveElement, IntoElement, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, Window, canvas, div,
-    prelude::FluentBuilder as _, px,
+    AnyElement, Context, Div, InteractiveElement, IntoElement, ParentElement, SharedString,
+    StatefulInteractiveElement, Styled, Window, canvas, div, prelude::FluentBuilder as _, px,
 };
 use theme::ActiveTheme as _;
 
@@ -15,14 +14,14 @@ impl HomeSidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let pinned_visible = self.activity.pinned
+        let pinned_visible = self.activity_pinned
             && self
                 .threads
                 .iter()
                 .any(|(id, _, _)| self.pinned.contains(id) && self.activity_visible(id));
         // Sticky activity contents have their own transform layer in the original.
         let mut list = div().px(px(8.)).flex().flex_col().top_layer();
-        if self.activity.priority {
+        if self.activity_priority {
             list = list.child(self.activity_heading("Priority", true, window, cx));
             let priority: Vec<_> = self
                 .threads
@@ -57,7 +56,7 @@ impl HomeSidebar {
         if pinned_visible {
             list = list
                 .child(div().h(px(16.)))
-                .child(self.activity_heading("Pinned", !self.activity.priority, window, cx))
+                .child(self.activity_heading("Pinned", !self.activity_priority, window, cx))
                 .child(
                     div().flex().flex_col().gap(px(1.)).children(
                         self.threads
@@ -82,17 +81,17 @@ impl HomeSidebar {
         cx: &mut Context<Self>,
     ) -> Div {
         let clock = self.activity_clock.expect("activity view");
-        let today = day(clock.now(), clock.utc_offset);
-        let oldest = today - Days::new(6);
+        let today = local_date(clock.now(), clock.utc_offset);
+        let oldest = local_date(self.activity_started_at, clock.utc_offset) - Days::new(6);
         let mut recent: Vec<_> = self
             .threads
             .iter()
             .filter(|(id, _, at)| self.in_recent(id, *at, oldest, clock.utc_offset))
             .collect();
-        recent.sort_by_key(|(_, _, at)| std::cmp::Reverse(*at));
+        recent.sort_by_key(|(id, _, at)| std::cmp::Reverse(self.activity_updated_at(id, *at)));
         let mut previous = None;
         for (id, label, at) in recent.into_iter().take(self.limit) {
-            let date = day(*at, clock.utc_offset);
+            let date = local_date(self.activity_updated_at(id, *at), clock.utc_offset);
             if previous != Some(date) {
                 let title = if date == today {
                     "Today".to_owned()
@@ -101,12 +100,12 @@ impl HomeSidebar {
                 } else {
                     date.format("%A").to_string()
                 };
-                if self.activity.priority || pinned_visible || previous.is_some() {
+                if self.activity_priority || pinned_visible || previous.is_some() {
                     list = list.child(div().h(px(16.)));
                 }
                 list = list.child(self.activity_heading(
                     title,
-                    !self.activity.priority && !pinned_visible && previous.is_none(),
+                    !self.activity_priority && !pinned_visible && previous.is_none(),
                     window,
                     cx,
                 ));
@@ -114,7 +113,7 @@ impl HomeSidebar {
             }
             list = list.child(self.chat_row(id, label.clone(), window, cx).mb(px(1.)));
         }
-        if !self.activity.priority && previous.is_none() && !pinned_visible {
+        if !self.activity_priority && previous.is_none() && !pinned_visible {
             list = list.child(self.activity_heading("Today", true, window, cx));
         }
         list
@@ -157,7 +156,7 @@ impl HomeSidebar {
                             canvas(
                                 |_, _, _| {},
                                 move |bounds, (), _, cx| {
-                                    owner.update(cx, |s, _| s.activity.button = bounds).ok();
+                                    owner.update(cx, |s, _| s.activity_button = bounds).ok();
                                 },
                             )
                             .absolute()
@@ -175,8 +174,7 @@ impl HomeSidebar {
             .when(
                 options
                     && self
-                        .activity
-                        .items
+                        .activity_items
                         .iter()
                         .any(|id| !self.needs_attention(id)),
                 |d| {
@@ -196,8 +194,7 @@ impl HomeSidebar {
                             .on_click(cx.listener(|s, _, _, cx| {
                                 let unread = &s.unread;
                                 let running = &s.running;
-                                s.activity
-                                    .items
+                                s.activity_items
                                     .retain(|id| unread.contains(id) || running.contains_key(id));
                                 s.limit = PAGE;
                                 cx.notify();

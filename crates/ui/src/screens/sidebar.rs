@@ -30,8 +30,8 @@ use theme::{ActiveTheme as _, Appearance, Theme};
 #[path = "sidebar/menu.rs"]
 mod menu;
 use menu::ThreadMenu;
-mod activity;
-pub use activity::{ActivityOpened, ArchiveActivity};
+mod priority;
+pub use priority::{ActivityOpened, ArchiveActivity};
 
 pub mod sections;
 
@@ -284,7 +284,16 @@ pub struct HomeSidebar {
     pub threads_state: ListState,
     pub projects_state: ListState,
     pub activity_clock: Option<crate::screens::thread::view::Clock>,
-    activity: activity::State,
+    activity_started_at: i64,
+    activity_recency: HashMap<String, i64>,
+    activity_priority: bool,
+    activity_pinned: bool,
+    activity_scheduled: bool,
+    activity_archive_supported: bool,
+    activity_items: HashSet<String>,
+    activity_scheduled_ids: HashSet<String>,
+    activity_menu: Option<priority::OptionsMenu>,
+    activity_button: Bounds<Pixels>,
     worktree_tip: bool,
     worktree_tip_epoch: u64,
     worktree_tip_bounds: Bounds<Pixels>,
@@ -371,7 +380,16 @@ impl HomeSidebar {
             threads_state: ListState::Ready,
             projects_state: ListState::Ready,
             activity_clock: None,
-            activity: activity::State::default(),
+            activity_started_at: 0,
+            activity_recency: HashMap::new(),
+            activity_priority: true,
+            activity_pinned: false,
+            activity_scheduled: false,
+            activity_archive_supported: true,
+            activity_items: HashSet::new(),
+            activity_scheduled_ids: HashSet::new(),
+            activity_menu: None,
+            activity_button: Bounds::default(),
             worktree_tip: false,
             worktree_tip_epoch: 0,
             worktree_tip_bounds: Bounds::default(),
@@ -666,6 +684,7 @@ impl HomeSidebar {
             }
         }
         self.reindex_sections();
+        self.remember_activity_recency();
         cx.notify();
     }
 
@@ -687,6 +706,10 @@ impl HomeSidebar {
             .insert(0, (thread.id.clone(), label, thread.updated_at));
         self.reindex_sections();
         self.set_running(&thread.id, thread.status == ThreadStatus::Active, cx);
+        if self.activity_clock.is_some() && thread.created_at >= self.activity_started_at {
+            self.activity_items.insert(thread.id.clone());
+        }
+        self.remember_activity_recency();
         cx.notify();
     }
 

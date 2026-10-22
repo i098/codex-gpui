@@ -265,8 +265,8 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 | 1 | Sidebar visible | entry | Rail 52 px plus panel 288 px at 1280 px. | Open at launch; parity: see `parity_home`. | PASS (`launch_home`, `parity_home`) |
 | 2 | `Codex ⌄` mode switch | click | Menu: ChatGPT, Codex, Work. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `mode-switch`) |
 | 3 | `⌃1` `⌃2` `⌃3` | shortcut | Switch mode. | — | NOT WIRED (`crates/ui/src/lib.rs`: no modes; then bind in `crates/app/src/lib.rs` `init`) |
-| 4 | Bell `View activity` | click | Toggles the activity view. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `activity`) |
-| 5 | `⌘⌥U` | shortcut | Toggles the activity view. | — | NOT WIRED (`crates/ui/src/screens/sidebar.rs`: no activity view) |
+| 4 | Bell `View activity` | click | Toggles the activity view. | `ToggleActivity` selects the existing Home sidebar's priority view. | Behavior passes S003; pixel and availability gates remain open. |
+| 5 | `⌘⌥U` | shortcut | Toggles the activity view. | Keeps a Thread route, returns other routes to Home, and opens a hidden sidebar. | Behavior passes `priority_activity`; availability gate remains open. |
 | 6 | Search | click | Opens the command menu in chat-search mode. | `OpenCommandMenu`: the command menu over live Recents. | PASS (`command_menu_search_click`, `parity_sidebar`) |
 | 7 | `⌘K` | shortcut | Opens the command menu. | Same as shell row 14. | PASS (`command_menu_keys`) |
 | 8 | `Your dot` row | click | Opens the dot (orbit) thread. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `your-dot`) |
@@ -280,11 +280,16 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 | 16 | `⌘⇧S` / `⌘B` | shortcut | Toggle sidebar. | Toggles. | PASS (`sidebar_toggle_keys`) |
 | 17 | Titlebar `Hide sidebar` | click | Collapses the left panel over a 300 ms spring (main surface slides, sidebar rows fade and shift 16 px); label changes to `Show sidebar`; instant under reduced motion. | The main surface and the sidebar content follow `motion::spring_300` from the toggle's progress; the recorded tooltip stays `Toggle sidebar ⇧⌘S` in both states. | PASS (`sidebar_toggle_titlebar`; `crates/app/tests/s004.rs`; spring frames: `crates/app/tests/ms2.rs` against `refs/interactions/ms2.json`) |
 | 18 | Row focus | focus ring | 2 px ring, offset -2 px. | Tab moves through rows and their Pin and Archive actions; focus reveals the actions. | PASS (`crates/app/tests/f1b.rs`) |
-| 19 | Empty lists | empty | `No projects`, `No chats`; activity `Nothing needs attention`. | Empty `thread/list` gives no Recents (`No chats` branch); `No projects` always. No activity view. | PASS (`sidebar_empty_lists`) |
-| 20 | Lists loading | loading | Activity: `Checking unread chats…`. | — | NOT WIRED (`crates/ui/src/screens/sidebar.rs`: no activity view or loading state) |
-| 21 | Load error | error | `Projects couldn't be loaded` + `Retry`; `Could not load chats`. | A `thread/list` error stops `Root::connect`, so no route shows. | FAIL (`crates/app/src/lib.rs` `connect` treats it as fatal; `crates/ui/src/screens/sidebar.rs` has no error state) |
+| 19 | Empty lists | empty | `No projects`, `No chats`; activity `Nothing needs attention`. | Keeps the normal empty labels and renders the priority empty state. | Behavior passes S003; original-pixel comparison remains open. |
+| 20 | Lists loading | loading | Activity: `Checking unread chats…`. | Shared `ListState` renders the priority loading message. | Implemented; loading-state capture remains open. |
+| 21 | Load error | error | `Projects couldn't be loaded` + `Retry`; `Could not load chats`. | Keeps Home available after a failed initial list read; Retry restores the list. | PASS (`startup_chat_failure_keeps_home_available_and_retry_restores_chats`, `project_load_failure_retries_the_owned_state_file`) |
 | 22 | Sidebar drag-resize | resize | The recorded edge clamps to 290…520 px; dragging below 145 px collapses it. | The 16 px handle resizes the sidebar and main surface, retains the width on toggle, and saves it on release. | PASS (`crates/app/tests/s004.rs`, `refs/interactions/s004.json`) |
 | 23 | Resize | resize | Below 768 px the panel is hidden; it opens as an overlay. | Hidden at 767 and 600 px, shown at 1280 px; the user's choice is kept. `⌘B` opens it docked, not as an overlay. | FAIL (overlay: `crates/ui/src/lib.rs` `Shell`; hide/show checked by `resize_three_widths`) |
+
+The original `isPriorityFilterEnabled` requires feature `4039078146` and access status `allowed` or `loading`.
+The retained Statsig response enables the feature, but the native shared access provider remains unavailable.
+The activity action is not complete until it uses that provider.
+
 
 S001 replays `refs/interactions/s001.json` with `cargo test -p app --test s001` on macOS.
 The recording uses the original renderer with isolated host and app-server fixtures.
@@ -1018,6 +1023,14 @@ The original's default Recents section uses infinite paging, with ten more rows 
 The recording shows 20 rows after initial layout and 40 after scrolling.
 The port loads cursor pages and shows `Could not load more chats` after a failed page; a click retries that cursor.
 The test checks both the paging requests and the retry transition.
+
+Activity uses `HomeSidebar` for selection, unread state, running state, rows, and paging.
+Its session keeps priority items after reading or completion and retains the original recent timestamps until the next activation.
+The options change Priority, Pinned, and Scheduled visibility, mark items read, and confirm archive requests.
+The native S003 checks cover those transitions and the initial-list recovery path.
+`priority_activity` checks keyboard navigation from a hidden sidebar and Settings without requiring a GPU.
+`ui`'s `screens::sidebar::priority::tests` checks the session snapshot and the seven-day boundary.
+
 
 The original hides timestamps in every Home sidebar list, including project groups.
 It shows an unread dot after a failed background turn, rather than an error icon.
