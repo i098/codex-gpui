@@ -39,6 +39,7 @@ pub fn icon_sized(name: &str, width: f32, height: f32, color: Hsla) -> Icon {
         width,
         height,
         authored: false,
+        aspect: None,
         flip_x: false,
         composited: None,
         own_layer: false,
@@ -61,6 +62,10 @@ pub struct Icon {
     /// An authored CSS size (`size-4`), which Blink's LayoutUnit truncates: 16 px at 110% is
     /// a 35.1875 device px box, and the svg scales to it.
     authored: bool,
+    /// `width: auto` (`h-[1em] w-auto`): Blink takes the width from the height in LayoutUnits
+    /// times the viewBox's aspect, truncated to a LayoutUnit: 95.765625 device px for the
+    /// wordmark at 90%, not the authored 53.22 px's 95.78125.
+    aspect: Option<f32>,
     flip_x: bool,
     composited: Option<Point<Pixels>>,
     own_layer: bool,
@@ -72,14 +77,26 @@ pub struct Icon {
 }
 
 impl Icon {
-    /// The CSS box: an authored size truncated to LayoutUnit (`authored`).
+    /// The CSS box: an authored size truncated to LayoutUnit (`authored`), or the `aspect`
+    /// box of `width: auto`.
     fn css_size(&self, scale: f32) -> Size<Pixels> {
         let css = size(px(self.width), px(self.height));
+        let unit = scale * 64.;
+        let layout_unit = |v: f32| (v * unit).trunc() / unit;
+        if let Some(aspect) = self.aspect {
+            let height = layout_unit(self.height);
+            return size(px(layout_unit(height * aspect)), px(height));
+        }
         if !self.authored {
             return css;
         }
-        let unit = scale * 64.;
-        css.map(|v| px((f32::from(v) * unit).trunc() / unit))
+        css.map(|v| px(layout_unit(f32::from(v))))
+    }
+
+    /// `width: auto` from the height and the viewBox's `aspect` (width / height), as above.
+    pub fn auto_width(mut self, aspect: f32) -> Self {
+        self.aspect = Some(aspect);
+        self
     }
 
     /// Mirrored horizontally, like the original's `-scale-x-100` (Forward = Back mirrored).

@@ -721,6 +721,8 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                                 18.,
                                 t.text_default_nav,
                             )
+                            // `h-[1em] w-auto` on the svg's viewBox (53.225983 x 18).
+                            .auto_width(53.225983 / 18.)
                             .own_layer(Some(mode_switch)),
                         )
                         .child(
