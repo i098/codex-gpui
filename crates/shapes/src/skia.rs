@@ -1974,7 +1974,8 @@ pub(crate) fn with_unsnapped_clip<R>(
     paint: impl FnOnce(&mut Window) -> R,
 ) -> R {
     let clip = unsnapped_clip(bounds, radius, window.scale_factor());
-    CLIPS.with_borrow_mut(|c| c.push((clip, None)));
+    let only = Layer::new(window, None).anchor();
+    CLIPS.with_borrow_mut(|c| c.push((clip, Some(only))));
     let out = paint(window);
     CLIPS.with_borrow_mut(|c| c.pop());
     out
