@@ -934,6 +934,7 @@ fn attribution<'a>(item: &'a Value, metric: Metric, group: &str) -> Option<(&'a 
         },
         Metric::Plugins | Metric::Skills => item["display_name"].as_str(),
         Metric::Messages if group != "model" => item["client_id"].as_str(),
+        Metric::Credits if group == "speed" => Some(item["speed"].as_str().unwrap_or("unknown")),
         _ => item["model"].as_str(),
     }
     .unwrap_or("Other");
@@ -1021,5 +1022,25 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn credit_speed_keeps_two_speeds_of_one_model_separate() {
+        let data = json!({"data":[{"date":"2026-10-15","models":[
+            {"model":"a","speed":"fast","on_demand_credits":3},
+            {"model":"a","speed":"standard","on_demand_credits":5},
+            {"model":"a","on_demand_credits":2}
+        ]}]});
+        let speeds = series(&data, Metric::Credits, "speed").unwrap();
+        assert_eq!(
+            speeds[0].1,
+            BTreeMap::from([
+                ("fast".into(), 3.),
+                ("standard".into(), 5.),
+                ("unknown".into(), 2.)
+            ])
+        );
+        let models = series(&data, Metric::Credits, "model").unwrap();
+        assert_eq!(models[0].1, BTreeMap::from([("a".into(), 10.)]));
     }
 }

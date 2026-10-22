@@ -42,12 +42,15 @@ pub struct State {
     pub access: Access,
     pub plan: String,
     pub limits: Load<Arc<Limits>>,
+    pub pending_reset_limits: Option<Arc<Limits>>,
+    pub pending_reset_credit_id: Option<String>,
     pub reload: Load<Arc<Reload>>,
     pub reload_pricing: Load<Arc<Value>>,
     pub has_saved_payment_method: bool,
     pub reset_history: Load<Arc<Value>>,
     pub history: Load<Option<Arc<BalanceHistory>>>,
     pub analytics: analytics::Snapshot,
+    pub analytics_queries: Vec<analytics::Query>,
     pub initial_analytics: bool,
     pub monthly: Load<Arc<Value>>,
     pub request_policy: Load<Arc<Value>>,
@@ -63,6 +66,7 @@ pub struct State {
     pub error: Option<String>,
     pub notice: Option<String>,
     pub revision: u64,
+    pub account_revision: u64,
     pub dispatch: Option<Dispatch>,
 }
 impl Global for State {}
@@ -88,8 +92,11 @@ enum Control {
 pub fn render(window: &mut AppWindow, cx: &mut App) -> AnyElement {
     window
         .use_keyed_state("usage-settings", cx, |_, cx| {
-            cx.observe_global::<State>(|_: &mut Usage, cx| cx.notify())
-                .detach();
+            cx.observe_global::<State>(|this: &mut Usage, cx| {
+                this.sync_account(cx);
+                cx.notify();
+            })
+            .detach();
             cx.default_global::<State>().page_open = true;
             cx.on_release(|_: &mut Usage, cx| {
                 if cx.has_global::<State>() {
@@ -129,6 +136,7 @@ pub fn render(window: &mut AppWindow, cx: &mut App) -> AnyElement {
                 reset_history: false,
                 field_error: None,
                 seen_revision: 0,
+                seen_account_revision: cx.global::<State>().account_revision,
                 app_limit_values: BTreeMap::new(),
                 app_limit_menu: None,
                 number_features: gpui::FontFeatures(Arc::new(vec![("tnum".into(), 1)])),
@@ -150,12 +158,32 @@ struct Usage {
     reset_history: bool,
     field_error: Option<String>,
     seen_revision: u64,
+    seen_account_revision: u64,
     app_limit_values: BTreeMap<String, (u8, u8)>,
     app_limit_menu: Option<String>,
     number_features: gpui::FontFeatures,
 }
 
 impl Usage {
+    fn sync_account(&mut self, cx: &mut Context<Self>) {
+        let revision = cx.global::<State>().account_revision;
+        if revision == self.seen_account_revision {
+            return;
+        }
+        self.seen_account_revision = revision;
+        self.reload_open = false;
+        self.disable_confirmation = false;
+        self.request_open = false;
+        self.confirm_reset = None;
+        self.reset_history = false;
+        self.field_error = None;
+        self.app_limit_values.clear();
+        self.app_limit_menu = None;
+        for field in &self.fields {
+            field.update(cx, |field, cx| field.set_text("", cx));
+        }
+    }
+
     fn dispatch(&self, action: Action, cx: &mut App) {
         if let Some(dispatch) = cx.try_global::<State>().and_then(|s| s.dispatch.clone()) {
             dispatch(action, cx);
@@ -163,6 +191,7 @@ impl Usage {
     }
 
     fn control(&mut self, control: Control, cx: &mut Context<Self>) {
+        self.sync_account(cx);
         match control {
             Control::Action(action) => self.dispatch(action, cx),
             Control::Tab(analytics) => self.analytics = analytics,
@@ -191,6 +220,7 @@ impl Usage {
             }
             Control::Reset(id) => {
                 if self.confirm_reset.as_ref() == Some(&id) {
+                    self.confirm_reset = None;
                     self.dispatch(Action::Reset(id), cx);
                 } else {
                     self.confirm_reset = Some(id);
@@ -1184,15 +1214,15 @@ impl Usage {
 
     fn resets(&self, state: &State, window: &mut AppWindow, cx: &mut Context<Self>) -> Div {
         let mut content = div().flex().flex_col();
-        match &state.limits {
-            Load::Loading => {
+        match (state.pending_reset_limits.as_ref(), &state.limits) {
+            (None, Load::Loading) => {
                 content =
                     content.child(self.status("Loading usage limit resets…", None, window, cx))
             }
-            Load::Failed(_) => {
+            (None, Load::Failed(_)) => {
                 content = content.child(self.reset_failure(window, cx));
             }
-            Load::Ready(limits) => {
+            (Some(limits), _) | (None, Load::Ready(limits)) => {
                 let Some(resets) = &limits.rate_limit_reset_credits else {
                     let error = self.reset_failure(window, cx);
                     return self.group(
@@ -1305,7 +1335,9 @@ impl Usage {
                     "Use reset"
                 },
                 Control::Reset(None),
-                state.busy,
+                state.busy
+                    || (state.pending_reset_limits.is_some()
+                        && state.pending_reset_credit_id.is_some()),
                 window,
                 cx,
             );
@@ -1322,7 +1354,9 @@ impl Usage {
                 format!("usage-reset-{}", credit.id),
                 label,
                 Control::Reset(id),
-                state.busy,
+                state.busy
+                    || (state.pending_reset_limits.is_some()
+                        && state.pending_reset_credit_id.as_deref() != Some(credit.id.as_str())),
                 window,
                 cx,
             );
@@ -1693,6 +1727,7 @@ impl Usage {
 impl Render for Usage {
     fn render(&mut self, window: &mut AppWindow, cx: &mut Context<Self>) -> impl IntoElement {
         let state = cx.try_global::<State>().cloned().unwrap_or_default();
+        self.sync_account(cx);
         if state.revision != self.seen_revision {
             self.seen_revision = state.revision;
             if state.notice.is_some() {

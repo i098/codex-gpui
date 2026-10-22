@@ -254,6 +254,9 @@ Run `cargo test -p app --test diff_content` for real Git object and repository-b
 Settings > Usage & billing reads plan limits and reset credits from the app-server.
 It keeps the original account gates for credit controls, enterprise usage requests, analytics, and balance history.
 Reset retries keep the same idempotency key; billing changes keep their confirmed state when a request fails.
+An uncertain reset keeps its original credit list until the server confirms the result.
+Account changes clear drafts and reset confirmations before the next control action.
+Analytics refreshes keep the selected period; credit speed groups use the recorded speed.
 The input fields reuse `Composer::settings_field`, including selection, clipboard access, and input methods.
 The renderer paints each limit card within the scroll layer and paints the sticky tabs in a separate layer.
 Run `cargo test -p ui -p app --lib usage` for the protocol and validation checks.
@@ -261,6 +264,7 @@ Run `cargo run -p ui --example usage -- /path/to/usage.png` for the recorded nat
 Add `confirm-reset` after the output path to capture the confirmation state without redeeming a reset.
 Add `analytics` or `reset-error` to capture the recorded error states.
 Add `links` to check plan, credit, and billing destinations without opening a browser.
+Add `account-switch` to check that an account change discards the previous reset confirmation.
 
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
 Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.

@@ -230,11 +230,24 @@ pub(super) async fn query(
     snapshot
 }
 
+fn refresh_query(metric: Metric, queries: &[Query]) -> Query {
+    queries
+        .iter()
+        .find(|query| query.metric == metric)
+        .copied()
+        .unwrap_or(Query {
+            metric,
+            days: if metric == Metric::Chats { 30 } else { 7 },
+            offset_days: 0,
+        })
+}
+
 pub(super) async fn snapshot(
     bridge: &Bridge,
     host: &dyn Host,
     identity: &Identity,
     now: Option<i64>,
+    queries: &[Query],
 ) -> Snapshot {
     let mut snapshot = Snapshot {
         token_usage: load(
@@ -256,11 +269,7 @@ pub(super) async fn snapshot(
             bridge,
             host,
             identity,
-            Query {
-                metric,
-                days: 7,
-                offset_days: 0,
-            },
+            refresh_query(metric, queries),
             now,
             snapshot,
         )
@@ -286,6 +295,24 @@ mod tests {
         );
         assert!(dates(Some(now), 0, 0).is_err());
         assert!(dates(Some(now), 7, -1).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn refresh_preserves_the_selected_period_and_previous_window() -> Result<()> {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-01-31T12:00:00Z")?.timestamp();
+        let selected = [Query {
+            metric: Metric::Usage,
+            days: 30,
+            offset_days: 30,
+        }];
+        let query = refresh_query(Metric::Usage, &selected);
+        assert_eq!(
+            dates(Some(now), query.days, query.offset_days)?,
+            ("2025-12-03".into(), "2026-01-01".into())
+        );
+        assert_eq!(refresh_query(Metric::Chats, &selected).days, 30);
+        assert_eq!(refresh_query(Metric::Credits, &selected).offset_days, 0);
         Ok(())
     }
 }

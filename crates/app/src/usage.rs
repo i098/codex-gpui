@@ -27,10 +27,15 @@ impl Global for Runtime {}
 struct ResetAttempt {
     credit_id: Option<String>,
     request_id: String,
+    limits: Option<Arc<Limits>>,
 }
 
 impl Runtime {
-    fn begin_reset(&mut self, credit_id: Option<String>) -> Result<ResetAttempt> {
+    fn begin_reset(
+        &mut self,
+        credit_id: Option<String>,
+        limits: Option<Arc<Limits>>,
+    ) -> Result<ResetAttempt> {
         if let Some(attempt) = &self.reset
             && attempt.credit_id != credit_id
         {
@@ -41,8 +46,20 @@ impl Runtime {
             .get_or_insert_with(|| ResetAttempt {
                 credit_id,
                 request_id: host::device_id(),
+                limits,
             })
             .clone())
+    }
+
+    fn retain_reset_credits(&self, state: &mut State) {
+        state.pending_reset_limits = self
+            .reset
+            .as_ref()
+            .and_then(|attempt| attempt.limits.clone());
+        state.pending_reset_credit_id = self
+            .reset
+            .as_ref()
+            .and_then(|attempt| attempt.credit_id.clone());
     }
 }
 
@@ -77,10 +94,12 @@ pub fn invalidate(cx: &mut App) {
     let dispatch = current.dispatch.clone();
     let page_open = current.page_open;
     let agent_reset_enabled = current.agent_reset_enabled;
+    let account_revision = current.account_revision + 1;
     cx.set_global(State {
         dispatch: dispatch.clone(),
         page_open,
         agent_reset_enabled,
+        account_revision,
         ..Default::default()
     });
     if page_open && let Some(dispatch) = dispatch {
@@ -301,11 +320,18 @@ fn payload_gates(value: Value) -> Result<Value> {
     }
 }
 
-async fn snapshot(bridge: Arc<Bridge>, host: Arc<dyn Host>) -> (State, Option<Identity>) {
+async fn snapshot(
+    bridge: Arc<Bridge>,
+    host: Arc<dyn Host>,
+    queries: Vec<view::analytics::Query>,
+) -> (State, Option<Identity>) {
     let account = bridge
         .request::<_, Value>("account/read", json!({"refreshToken": false}))
         .await;
-    let mut state = State::default();
+    let mut state = State {
+        analytics_queries: queries,
+        ..Default::default()
+    };
     let account = match account {
         Ok(account) if account["account"]["type"] == "chatgpt" => account,
         Ok(_) => {
@@ -485,6 +511,7 @@ async fn load_account_details(
             host.as_ref(),
             identity,
             state.reference_time,
+            &state.analytics_queries,
         )
         .await;
     }
@@ -811,6 +838,10 @@ fn apply_reset_response(state: &mut State, value: &Value) -> bool {
             false
         }
     };
+    if completed {
+        state.pending_reset_limits = None;
+        state.pending_reset_credit_id = None;
+    }
     if !value["limits"].is_null() {
         state.limits = load(serde_json::from_value(value["limits"].clone()).map_err(Into::into));
     } else if let Some(error) = value["refreshError"].as_str() {
@@ -911,6 +942,10 @@ impl Root {
         let generation = cx.global::<Runtime>().generation;
         cx.update_global::<State, _>(|state, _| {
             state.busy = true;
+            state
+                .analytics_queries
+                .retain(|query| query.metric != request.metric);
+            state.analytics_queries.push(request);
             state.analytics.set(request.metric, Load::Loading);
         });
         let bridge = self.bridge.clone();
@@ -952,7 +987,10 @@ impl Root {
         });
         let bridge = self.bridge.clone();
         let host = self.host.clone();
-        let task = cx.background_executor().spawn(snapshot(bridge, host));
+        let queries = cx.global::<State>().analytics_queries.clone();
+        let task = cx
+            .background_executor()
+            .spawn(snapshot(bridge, host, queries));
         cx.spawn(async move |_, cx| {
             let (mut state, identity) = task.await;
             cx.update(|cx| {
@@ -971,11 +1009,14 @@ impl Root {
                     })
                     .unwrap_or(false);
                 state.revision = cx.global::<State>().revision + 1;
+                state.account_revision = cx.global::<State>().account_revision;
                 cx.update_global::<Runtime, _>(|runtime, _| {
                     if runtime.identity != identity {
                         runtime.reset = None;
+                        state.account_revision += 1;
                     }
                     runtime.identity = identity;
+                    runtime.retain_reset_credits(&mut state);
                 });
                 cx.set_global(state);
             });
@@ -992,7 +1033,14 @@ impl Root {
         };
         let snapshot = cx.global::<State>().clone();
         let attempt = if let Action::Reset(credit_id) = &action {
-            match cx.global_mut::<Runtime>().begin_reset(credit_id.clone()) {
+            let limits = match &snapshot.limits {
+                Load::Ready(limits) => Some(limits.clone()),
+                _ => None,
+            };
+            match cx
+                .global_mut::<Runtime>()
+                .begin_reset(credit_id.clone(), limits)
+            {
                 Ok(attempt) => Some(attempt),
                 Err(error) => {
                     cx.update_global::<State, _>(|state, _| state.error = Some(error.to_string()));
@@ -1006,6 +1054,10 @@ impl Root {
             state.busy = true;
             state.error = None;
             state.notice = None;
+            if let Some(attempt) = &attempt {
+                state.pending_reset_limits = attempt.limits.clone();
+                state.pending_reset_credit_id = attempt.credit_id.clone();
+            }
         });
         let host = self.host.clone();
         let bridge = self.bridge.clone();
@@ -1082,6 +1134,7 @@ mod tests {
         let (state, identity) = pollster::block_on(snapshot(
             Arc::new(bridge),
             Arc::new(host::LocalHost::new(home.path())),
+            Vec::new(),
         ));
         assert!(identity.is_none());
         assert!(state.access.visible);
@@ -1111,14 +1164,66 @@ mod tests {
     #[test]
     fn an_uncertain_reset_keeps_its_key_and_explains_a_different_choice() -> Result<()> {
         let mut runtime = Runtime::default();
-        let first = runtime.begin_reset(Some("credit-a".into()))?;
-        let retry = runtime.begin_reset(Some("credit-a".into()))?;
+        let first = runtime.begin_reset(Some("credit-a".into()), None)?;
+        let retry = runtime.begin_reset(Some("credit-a".into()), None)?;
         assert_eq!(retry.request_id, first.request_id);
-        let other = runtime.begin_reset(Some("credit-b".into()));
+        let other = runtime.begin_reset(Some("credit-b".into()), None);
         assert_eq!(
             other.err().map(|error| error.to_string()).as_deref(),
             Some("Retry the previous reset first")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn refresh_keeps_the_uncertain_reset_available_for_the_same_request() -> Result<()> {
+        let mut runtime = Runtime::default();
+        let original: Limits = serde_json::from_value(json!({
+            "rateLimits": {},
+            "rateLimitResetCredits": {"availableCount": 2, "credits": [
+                {"id":"a","status":"available"}, {"id":"b","status":"available"}
+            ]}
+        }))?;
+        let first = runtime.begin_reset(Some("a".into()), Some(Arc::new(original)))?;
+        let refreshed: Limits = serde_json::from_value(json!({
+            "rateLimits": {},
+            "rateLimitResetCredits": {"availableCount": 1, "credits": [
+                {"id":"b","status":"available"}
+            ]}
+        }))?;
+        let mut state = State {
+            limits: Load::Ready(Arc::new(refreshed)),
+            ..Default::default()
+        };
+        runtime.retain_reset_credits(&mut state);
+        let limits = state.pending_reset_limits.as_ref().unwrap();
+        let credits = limits.rate_limit_reset_credits.as_ref().unwrap();
+        assert_eq!(credits.available_count, 2);
+        assert_eq!(credits.credits[0].id, "a");
+        let retry = runtime.begin_reset(Some("a".into()), Some(limits.clone()))?;
+        assert_eq!(retry.request_id, first.request_id);
+        assert!(runtime.begin_reset(Some("b".into()), None).is_err());
+        state.limits = Load::Failed("Temporary refresh failure".into());
+        runtime.retain_reset_credits(&mut state);
+        assert_eq!(
+            state
+                .pending_reset_limits
+                .as_ref()
+                .unwrap()
+                .rate_limit_reset_credits
+                .as_ref()
+                .unwrap()
+                .credits[0]
+                .id,
+            "a"
+        );
+        assert_eq!(state.pending_reset_credit_id.as_deref(), Some("a"));
+        assert!(apply_reset_response(
+            &mut state,
+            &json!({"outcome":"alreadyRedeemed"})
+        ));
+        assert!(state.pending_reset_limits.is_none());
+        assert!(state.pending_reset_credit_id.is_none());
         Ok(())
     }
 

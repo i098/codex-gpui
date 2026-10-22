@@ -1,4 +1,7 @@
-use gpui::{AnyView, AppContext as _, HeadlessAppContext, IntoElement, Render, Window, px, size};
+use gpui::{
+    AnyView, AppContext as _, BorrowAppContext as _, HeadlessAppContext, IntoElement, Render,
+    Window, px, size,
+};
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -28,7 +31,8 @@ fn main() -> anyhow::Result<()> {
         .nth(1)
         .ok_or_else(|| anyhow::anyhow!("Pass the output PNG path"))?;
     let mode = std::env::args().nth(2);
-    let confirm_reset = mode.as_deref() == Some("confirm-reset");
+    let account_switch = mode.as_deref() == Some("account-switch");
+    let confirm_reset = mode.as_deref() == Some("confirm-reset") || account_switch;
     let analytics = mode.as_deref() == Some("analytics");
     let reset_error = mode.as_deref() == Some("reset-error");
     let mut limits: Limits = ui::fixture::response("readback.jsonl", "account/rateLimits/read", 0);
@@ -172,6 +176,17 @@ fn main() -> anyhow::Result<()> {
             "The first click must only confirm"
         );
         cx.capture_screenshot(window.into())?.save(&output)?;
+        if account_switch {
+            cx.update(|cx| {
+                cx.update_global::<State, _>(|state, _| state.account_revision += 1);
+            });
+            cx.run_until_parked();
+            click(&mut cx, 1124., 776.)?;
+            anyhow::ensure!(
+                reset_requests.load(Ordering::SeqCst) == 0,
+                "An account change must discard the old reset confirmation"
+            );
+        }
         click(&mut cx, 1124., 776.)?;
         anyhow::ensure!(
             reset_requests.load(Ordering::SeqCst) == 1,
