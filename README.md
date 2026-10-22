@@ -191,6 +191,12 @@ Host settings use the local `settings.write(key, value)` service and persist bes
 Theme and window-close preferences remain in `state.json`.
 The S034 replay checks the menu-bar switch, its saved values, and Back navigation against `refs/interactions/s034.json`.
 
+The local `get-global-state` host request reads a named value from `.codex-global-state.json` without changing the profile.
+Missing files and keys return `{"value": null}`; malformed files and invalid requests return errors.
+Thread replies retain the optional rollout `path` for archived-chat search.
+Run `cargo test -p app --test host global_state` for the filesystem and request checks.
+This support increment does not change the Archived chats page.
+
 Settings > Git stores branch, merge, push, draft, diff, and pull request instruction preferences in `host-settings.json`.
 Review delivery uses the existing app-server config store.
 Branch prefix saves on blur or Enter; multiline instructions save after three idle seconds or when the page closes.

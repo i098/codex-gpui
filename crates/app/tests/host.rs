@@ -11,6 +11,54 @@ const RECORDING: &str = include_str!("../../../refs/interactions/host.json");
 const ORACLE: &str = include_str!("../../../tools/route1/oracle.json");
 
 #[test]
+fn global_state_reads_preserve_the_profile() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    let path = home.path().join(".codex-global-state.json");
+    let request = Request::post("get-global-state", Some(json!({"key": "project-order"})));
+    assert_eq!(json_body(&host.fetch(&request)?)?, json!({"value": null}));
+    assert!(!path.exists());
+
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../../refs/interactions/f1d_projects.json"))?;
+    let state = &fixture["project_snapshot"]["state"];
+    let contents = serde_json::to_vec(state)?;
+    fs::write(&path, &contents)?;
+    assert_eq!(
+        json_body(&host.fetch(&request)?)?,
+        json!({"value": state["project-order"]})
+    );
+    let missing = Request::post("get-global-state", Some(json!({"key": "missing"})));
+    assert_eq!(json_body(&host.fetch(&missing)?)?, json!({"value": null}));
+    assert_eq!(fs::read(path)?, contents);
+    Ok(())
+}
+
+#[test]
+fn global_state_rejects_invalid_requests_and_profile_data() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    for params in [
+        json!({}),
+        json!({"key": 7}),
+        json!({"key": "project-order", "hostId": "remote"}),
+    ] {
+        assert!(
+            host.fetch(&Request::post("get-global-state", Some(params)))
+                .is_err()
+        );
+    }
+    let path = home.path().join(".codex-global-state.json");
+    let request = Request::post("get-global-state", Some(json!({"key": "project-order"})));
+    for contents in ["{", "[]", "null"] {
+        fs::write(&path, contents)?;
+        assert!(host.fetch(&request).is_err());
+        assert_eq!(fs::read_to_string(&path)?, contents);
+    }
+    Ok(())
+}
+
+#[test]
 fn all_original_host_and_http_responses_replay_exactly() -> Result<()> {
     let recorded = ReplayHost::from_recording(RECORDING)?;
     let oracle = ReplayHost::from_oracle(ORACLE)?;
