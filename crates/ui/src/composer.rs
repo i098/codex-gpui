@@ -27,6 +27,25 @@ use serde_json::{Value, json};
 use std::{ops::Range, path::PathBuf, rc::Rc, time::Duration};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
+pub(crate) fn normalize_newlines(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains('\r') {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut normalized = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\r' {
+            normalized.push('\n');
+            if chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+        } else {
+            normalized.push(ch);
+        }
+    }
+    std::borrow::Cow::Owned(normalized)
+}
+
 actions!(
     composer,
     [
@@ -758,6 +777,9 @@ impl Composer {
 
     pub fn set_document_style(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.document_field = enabled;
+        if enabled {
+            self.normalize_document();
+        }
         cx.notify();
     }
 
@@ -1174,9 +1196,13 @@ impl Composer {
     }
 
     pub fn set_text(&mut self, s: &str, cx: &mut Context<Self>) {
-        self.content = s.into();
+        self.content = if self.document_field {
+            normalize_newlines(s).into_owned()
+        } else {
+            s.into()
+        };
         self.mentions.clear();
-        self.selected_range = s.len()..s.len();
+        self.selected_range = self.content.len()..self.content.len();
         self.marked_range = None;
         self.history = editor::History::default();
         self.slash.reset();

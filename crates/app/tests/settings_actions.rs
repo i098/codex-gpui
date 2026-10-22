@@ -423,6 +423,28 @@ fn source_and_preview_keep_the_same_unsaved_instructions() -> Result<()> {
         std::fs::read_to_string(&path).ok().as_deref()
             == Some("# Updated rules\n\nKeep this **draft**.")
     })?;
+    fx.wait("Markdown editor closed", |fx| {
+        fx.read(|root, cx| {
+            root.personal_instructions(cx)
+                .is_some_and(|view| !view.read(cx).opened())
+        })
+    })?;
+    std::fs::write(&path, "# Project rules\r\n\r\nUse spaces.\r\n")?;
+    fx.click((800., 540.))?;
+    fx.wait("CRLF instructions loaded", |fx| {
+        fx.read(|root, cx| {
+            root.personal_instructions(cx)
+                .is_some_and(|view| view.read(cx).opened() && !view.read(cx).loading())
+        })
+    })?;
+    fx.click((1080., 67.))?;
+    fx.keys("cmd-a")?;
+    fx.type_text("# Updated rules\n\nKeep this **draft**.\n")?;
+    fx.click((1230., 67.))?;
+    fx.wait("CRLF instructions saved", |_| {
+        std::fs::read_to_string(&path).ok().as_deref()
+            == Some("# Updated rules\r\n\r\nKeep this **draft**.\r\n")
+    })?;
     Ok(())
 }
 
