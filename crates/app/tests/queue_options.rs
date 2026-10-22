@@ -1,15 +1,19 @@
 //! CP-115: the `Queued message actions` menu of a queued row. `Edit message` takes the
 //! submission out of the app-server's queue (`thread/queue/delete`), moves its text and images
 //! into the composer and, when sent, queues it again where it stood (`thread/queue/add`, then
-//! `thread/queue/reorder`). `Turn off queueing` / `Turn on queueing` writes
-//! `desktop.followUpQueueMode`, which the next submit follows.
+//! `thread/queue/reorder`). `Open in side chat` moves it into an ephemeral fork of the chat
+//! (`thread/fork`) with its own tab, transcript and composer, and puts it back in place when
+//! that fails. `Turn off queueing` / `Turn on queueing` writes `desktop.followUpQueueMode`,
+//! which the next submit follows.
 
 mod common;
 
 use anyhow::Result;
+use app::SidePanel;
 use bridge::{Event, types::TurnStatus};
-use common::{Fx, SUBTRACT, exchange, proxy_child, script};
+use common::{Fx, SUBTRACT, exchange, proxy_child, recorded_thread, script};
 use serde_json::{Value, json};
+use ui::screens::diff::panel::CloseSideTab;
 
 #[test]
 fn proxy() {
@@ -157,6 +161,7 @@ fn edit_moves_the_exact_draft_back_and_queues_it_in_place() -> Result<()> {
         menu(&mut fx),
         [
             ("queuedEdit".to_owned(), "Edit message".to_owned()),
+            ("queuedSideChat".to_owned(), "Open in side chat".to_owned()),
             ("queuedQueueing".to_owned(), "Turn off queueing".to_owned())
         ]
     );
@@ -236,7 +241,7 @@ fn queueing_switch_decides_what_the_next_submit_does() -> Result<()> {
     fx.wait("one row", |fx| queued(fx) == ["queued"])?;
 
     fx.click(actions_button(1, 0))?;
-    fx.keys("down down enter")?;
+    fx.keys("down down down enter")?;
     fx.wait("steer mode written", |fx| {
         fx.read(|root, _| root.config()["desktop"]["followUpQueueMode"] == "steer")
     })?;
@@ -246,7 +251,7 @@ fn queueing_switch_decides_what_the_next_submit_does() -> Result<()> {
     assert_eq!(written[0]["params"]["value"], "steer");
 
     fx.click(actions_button(1, 0))?;
-    assert_eq!(menu(&mut fx)[1].1, "Turn on queueing");
+    assert_eq!(menu(&mut fx)[2].1, "Turn on queueing");
     fx.keys("escape")?;
     fx.click((809., 750.))?;
     fx.type_text("now")?;
@@ -276,7 +281,7 @@ fn a_refused_queueing_switch_leaves_the_behavior_that_applies() -> Result<()> {
     fx.wait("one row", |fx| queued(fx) == ["queued"])?;
 
     fx.click(actions_button(1, 0))?;
-    fx.keys("down down enter")?;
+    fx.keys("down down down enter")?;
     fx.wait("refusal toast", |fx| {
         fx.read(|root, cx| {
             root.toasts(cx)
@@ -294,5 +299,278 @@ fn a_refused_queueing_switch_leaves_the_behavior_that_applies() -> Result<()> {
         fx.read(|root, cx| root.composer(cx).read(cx).send_label()),
         "Queue"
     );
+    Ok(())
+}
+
+/// The ephemeral fork `Open in side chat` makes of the subtract thread.
+const SIDE: &str = "01a13de9-51de-7c4a-8000-51de0c4a7000";
+
+/// The selected side chat tab's `(turn ids and statuses, composer label)`.
+fn side_chat(fx: &mut Fx) -> Option<(Vec<(String, TurnStatus)>, &'static str)> {
+    fx.read(|root, cx| {
+        let Some(SidePanel::SideChat(key)) = root.side_panel() else {
+            return None;
+        };
+        let (view, composer) = root.conversation(Some(key))?;
+        let turns = view.read(cx).turns().iter();
+        Some((
+            turns.map(|turn| (turn.id.clone(), turn.status)).collect(),
+            composer.read(cx).send_label(),
+        ))
+    })
+}
+
+/// The open chat's turn ids and the label of its composer's submit button.
+fn primary(fx: &mut Fx) -> (Vec<String>, &'static str) {
+    fx.read(|root, cx| {
+        let turns = root.thread().unwrap().read(cx).turns().iter();
+        (
+            turns.map(|turn| turn.id.clone()).collect(),
+            root.composer(cx).read(cx).send_label(),
+        )
+    })
+}
+
+fn turn(id: &str, status: &str, items: Value) -> Value {
+    json!({ "id": id, "items": items, "status": status, "error": null })
+}
+
+/// Opens the subtract thread running with `rows` queued, types `draft` into its composer and
+/// picks `Open in side chat` on row `index`.
+fn open_side_chat(fx: &mut Fx, rows: &[&str], index: usize, draft: &str) -> Result<()> {
+    open_running(fx)?;
+    fx.wait("queued rows", |fx| queued(fx) == rows)?;
+    fx.click((809., 750.))?;
+    fx.type_text(draft)?;
+    fx.click(actions_button(rows.len(), index))?;
+    fx.keys("down down enter")
+}
+
+#[test]
+fn open_in_side_chat_runs_the_queued_message_in_its_own_conversation() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    let first = submission("a", json!([text("first")]));
+    let second = submission("b", json!([text("What does subtract return?")]));
+    let third = submission("c", json!([text("third")]));
+    let later = submission("s1", json!([text("And for negatives?")]));
+    let mut fork = recorded_thread(SUBTRACT)?;
+    fork["id"] = SIDE.into();
+    fork["turns"] = json!([]);
+    let mut side_list = list(&[&later]);
+    side_list[0]["msg"]["params"]["threadId"] = SIDE.into();
+
+    let mut lines = script(None, queue_mode)?;
+    lines.extend(exchange("thread/resume", json!({})));
+    lines.extend(list(&[&first, &second, &third]));
+    lines.extend(exchange("thread/queue/delete", json!({ "deleted": true })));
+    lines.extend(exchange("thread/fork", json!({ "thread": fork })));
+    lines.extend(exchange("thread/inject_items", json!({})));
+    lines.extend(exchange(
+        "turn/start",
+        json!({ "turn": turn("side-turn", "inProgress", json!([])) }),
+    ));
+    lines.extend(list(&[&first, &third]));
+    lines.extend(exchange(
+        "thread/queue/add",
+        json!({ "queuedSubmission": later }),
+    ));
+    lines.extend(side_list);
+    lines.extend(exchange("turn/interrupt", json!({})));
+    lines.extend(exchange(
+        "thread/unsubscribe",
+        json!({ "status": "unsubscribed" }),
+    ));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    let rows = ["first", "What does subtract return?", "third"];
+    open_side_chat(&mut fx, &rows, 1, "keep me")?;
+
+    // The submission leaves the queue and starts the first turn of an ephemeral fork, shown
+    // in a side chat tab whose composer takes the focus; the chat's draft stays.
+    fx.wait("side chat tab", |fx| side_chat(fx).is_some())?;
+    fx.wait("first side turn sent", |fx| {
+        sent(fx, "turn/start").is_ok_and(|started| started.len() == 1)
+    })?;
+    fx.wait("row left the tray", |fx| queued(fx) == ["first", "third"])?;
+    assert_eq!(
+        sent(&mut fx, "thread/queue/delete")?[0]["params"],
+        json!({ "threadId": SUBTRACT, "queuedSubmissionId": "b" })
+    );
+    let forked = sent(&mut fx, "thread/fork")?;
+    assert_eq!(forked.len(), 1, "{forked:?}");
+    let params = &forked[0]["params"];
+    assert_eq!(
+        [
+            &params["threadId"],
+            &params["ephemeral"],
+            &params["threadSource"],
+            &params["excludeTurns"]
+        ],
+        [&json!(SUBTRACT), &json!(true), &json!("user"), &json!(true)]
+    );
+    assert!(
+        params["developerInstructions"]
+            .as_str()
+            .is_some_and(|text| {
+                text.starts_with("You are in a side conversation, not the main thread.")
+            })
+    );
+    let injected = sent(&mut fx, "thread/inject_items")?;
+    assert_eq!(injected[0]["params"]["threadId"], SIDE);
+    assert!(
+        injected[0]["params"]["items"][0]["content"][0]["text"]
+            .as_str()
+            .is_some_and(|text| text.starts_with("Side conversation boundary."))
+    );
+    assert_eq!(
+        sent(&mut fx, "turn/start")?[0]["params"],
+        json!({
+            "threadId": SIDE,
+            "input": second["input"],
+            "clientUserMessageId": "b-client",
+            "turnTrigger": "queued_side_chat",
+        })
+    );
+    assert_eq!(fx.composer_text()?, "keep me");
+    assert!(!fx.composer_focused()?);
+
+    // Each conversation takes only its own thread's events.
+    let answer = json!([
+        {"type": "userMessage", "id": "side-user", "content": second["input"]},
+        {"type": "agentMessage", "id": "side-answer", "text": "It returns a - b."},
+    ]);
+    notify(
+        &mut fx,
+        "turn/started",
+        json!({"threadId": SIDE, "turn": turn("side-turn", "inProgress", answer)}),
+    );
+    notify(
+        &mut fx,
+        "turn/completed",
+        json!({"threadId": SUBTRACT, "turn": turn("queue-options-turn", "completed", json!([]))}),
+    );
+    save(&mut fx, "side-chat")?;
+    let (side_turns, side_label) = side_chat(&mut fx).unwrap();
+    assert_eq!(
+        side_turns,
+        [("side-turn".to_owned(), TurnStatus::InProgress)]
+    );
+    assert_eq!(side_label, "Stop");
+    let (primary_turns, primary_label) = primary(&mut fx);
+    assert!(!primary_turns.iter().any(|id| id == "side-turn"));
+    assert_eq!(primary_label, "Send");
+
+    // The side composer queues into the side chat and stops the side chat's turn.
+    fx.type_text("And for negatives?")?;
+    fx.keys("enter")?;
+    fx.wait("side queue", |fx| {
+        fx.read(|root, cx| {
+            let Some(SidePanel::SideChat(key)) = root.side_panel() else {
+                return false;
+            };
+            root.conversation(Some(key))
+                .is_some_and(|(_, composer)| composer.read(cx).queued().len() == 1)
+        })
+    })?;
+    assert_eq!(
+        sent(&mut fx, "thread/queue/add")?[0]["params"]["threadId"],
+        SIDE
+    );
+    assert_eq!(queued(&mut fx), ["first", "third"]);
+    fx.keys("escape escape")?;
+    fx.wait("side turn interrupted", |fx| {
+        sent(fx, "turn/interrupt").is_ok_and(|stopped| stopped.len() == 1)
+    })?;
+    assert_eq!(
+        sent(&mut fx, "turn/interrupt")?[0]["params"],
+        json!({ "threadId": SIDE, "turnId": "side-turn" })
+    );
+    notify(
+        &mut fx,
+        "turn/completed",
+        json!({"threadId": SIDE, "turn": turn("side-turn", "interrupted", json!([]))}),
+    );
+
+    // Closing the tab unloads the fork; the chat and its draft stay as they were.
+    fx.action(Box::new(CloseSideTab(0)))?;
+    fx.wait("fork unloaded", |fx| {
+        sent(fx, "thread/unsubscribe").is_ok_and(|gone| gone.len() == 1)
+    })?;
+    assert_eq!(
+        sent(&mut fx, "thread/unsubscribe")?[0]["params"],
+        json!({ "threadId": SIDE })
+    );
+    assert!(fx.read(|root, _| root.side_tabs().is_empty()));
+    assert_eq!(fx.thread_id().as_deref(), Some(SUBTRACT));
+    assert_eq!(fx.composer_text()?, "keep me");
+    let allowed = [
+        "thread/read",
+        "thread/queue/list",
+        "thread/queue/delete",
+        "thread/fork",
+    ];
+    let on_chat: Vec<Value> = fx
+        .sent()?
+        .into_iter()
+        .filter(|m| m["params"]["threadId"] == SUBTRACT)
+        .map(|m| m["method"].clone())
+        .collect();
+    assert!(
+        on_chat
+            .iter()
+            .all(|m| allowed.contains(&m.as_str().unwrap_or_default())),
+        "{on_chat:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_side_chat_that_fails_to_open_puts_the_message_back_in_place() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    let first = submission("a", json!([text("first")]));
+    let second = submission("b", json!([text("second")]));
+    let third = submission("c", json!([text("third")]));
+    let again = submission("b2", json!([text("second")]));
+    // No `thread/fork` in the script: the server refuses it.
+    let mut lines = script(None, queue_mode)?;
+    lines.extend(exchange("thread/resume", json!({})));
+    lines.extend(list(&[&first, &second, &third]));
+    lines.extend(exchange("thread/queue/delete", json!({ "deleted": true })));
+    lines.extend(exchange(
+        "thread/queue/add",
+        json!({ "queuedSubmission": again }),
+    ));
+    lines.extend(list(&[&first, &third, &again]));
+    lines.extend(exchange("thread/queue/reorder", json!({})));
+    lines.extend(list(&[&first, &again, &third]));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    open_side_chat(&mut fx, &["first", "second", "third"], 1, "keep me")?;
+
+    fx.wait("failure toast", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|t| t.as_ref() == "Failed to open side chat")
+        })
+    })?;
+    fx.wait("back in place", |fx| {
+        queued(fx) == ["first", "second", "third"]
+    })?;
+    save(&mut fx, "side-chat-failed")?;
+    assert_eq!(sent(&mut fx, "thread/fork")?.len(), 1);
+    assert_eq!(
+        sent(&mut fx, "thread/queue/add")?[0]["params"],
+        json!({ "threadId": SUBTRACT, "input": second["input"], "clientUserMessageId": "b-client" })
+    );
+    assert_eq!(
+        sent(&mut fx, "thread/queue/reorder")?[0]["params"],
+        json!({ "threadId": SUBTRACT, "queuedSubmissionIds": ["a", "b2", "c"] })
+    );
+    assert!(sent(&mut fx, "turn/start")?.is_empty());
+    assert!(fx.read(|root, _| root.side_tabs().is_empty()));
+    assert_eq!(fx.composer_text()?, "keep me");
     Ok(())
 }

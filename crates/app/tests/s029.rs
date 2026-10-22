@@ -44,6 +44,7 @@ fn port_tabs(fx: &Fx) -> Vec<(String, bool)> {
                         "python3 -c 'from src.math import subtract; print(subtract(5, 3))'"
                     }
                     SidePanel::File => "math.py",
+                    SidePanel::SideChat(_) => "Side chat",
                 };
                 (label.to_owned(), root.side_panel() == Some(*side))
             })
