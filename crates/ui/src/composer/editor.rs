@@ -943,11 +943,7 @@ pub(super) fn shape(
             s.into(),
             size,
             &runs,
-            if composer.content.is_empty() {
-                None
-            } else {
-                width
-            },
+            width.filter(|_| !composer.content.is_empty()),
             None,
         )
         .map(|lines| lines.into_iter().collect())
