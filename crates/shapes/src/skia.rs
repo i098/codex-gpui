@@ -2561,8 +2561,8 @@ fn paint_color(v: &str) -> Option<Option<Rgba>> {
     }
 }
 
-/// The subset of SVG the icon assets use: nested `<g transform>`, `<path>` with fill/stroke
-/// attributes inherited from `<svg>`/`<g>`. `None` for anything else (masks).
+/// The subset of SVG the icon assets use: nested `<g transform>`, `<path>` and `<rect>` with
+/// fill/stroke attributes inherited from `<svg>`/`<g>`. `None` for anything else (masks).
 fn parse_icon(src: &str) -> Option<IconSvg> {
     let mut view_box = None;
     let mut paths = Vec::new();
@@ -2606,11 +2606,15 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
         match name {
             "svg" => view_box = Some(numbers(attr(tag, "viewBox")?)),
             "g" => {}
-            "path" => {
+            "path" | "rect" => {
                 if attr(tag, "mask").is_some() || attr(tag, "clip-path").is_some() {
                     return None;
                 }
-                let mut path = Path::from_svg(attr(tag, "d")?)?;
+                let mut path = if name == "rect" {
+                    rect_path(tag)?
+                } else {
+                    Path::from_svg(attr(tag, "d")?)?
+                };
                 if attr(tag, "fill-rule") == Some("evenodd") {
                     path.set_fill_type(PathFillType::EvenOdd);
                 }
@@ -2651,8 +2655,8 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
                 }
                 continue;
             }
-            "mask" | "clipPath" | "circle" | "rect" | "ellipse" | "line" | "polyline"
-            | "polygon" | "use" => return None,
+            "mask" | "clipPath" | "circle" | "ellipse" | "line" | "polyline" | "polygon"
+            | "use" => return None,
             _ => continue,
         }
         if !tag.ends_with('/') {
@@ -2665,6 +2669,24 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
         paths,
         paint_bounds: Default::default(),
     })
+}
+
+/// A `<rect>` as Blink paths it: `SkPath::addRRect`, a missing `rx`/`ry` taking the other.
+fn rect_path(tag: &str) -> Option<Path> {
+    let number = |name: &str| attr(tag, name).map_or(Some(0.), |v| v.parse().ok());
+    let rect = Rect::from_xywh(
+        number("x")?,
+        number("y")?,
+        number("width")?,
+        number("height")?,
+    );
+    let rx = attr(tag, "rx")
+        .or(attr(tag, "ry"))
+        .map_or(Some(0.), |v| v.parse().ok())?;
+    let ry = attr(tag, "ry")
+        .or(attr(tag, "rx"))
+        .map_or(Some(0.), |v| v.parse().ok())?;
+    Some(Path::rrect(RRect::new_rect_xy(rect, rx, ry), None))
 }
 
 pub(crate) fn icon_paint_bounds(

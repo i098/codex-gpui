@@ -2398,6 +2398,31 @@ fn gradient_image(
     to_top: bool,
     scale: f32,
 ) -> Arc<gpui::RenderImage> {
+    gradient_raster(stops, Some(under), size, origin, to_top, scale)
+}
+
+/// [`skia_gradient`]'s layer pixels left translucent for an element inside a `.layer()`:
+/// Chromium blends the stored 8-bit premultiplied pixels over whatever lies below. The image
+/// holds them as straight alpha, which the layer's sprite blit premultiplies back exactly.
+/// `origin` is relative to that composited layer's tiles.
+pub(crate) fn layer_gradient_image(
+    stops: &[(Hsla, f32)],
+    size: (f32, f32),
+    origin: (f32, f32),
+    to_top: bool,
+    scale: f32,
+) -> Arc<gpui::RenderImage> {
+    gradient_raster(stops, None, size, origin, to_top, scale)
+}
+
+fn gradient_raster(
+    stops: &[(Hsla, f32)],
+    under: Option<Hsla>,
+    size: (f32, f32),
+    origin: (f32, f32),
+    to_top: bool,
+    scale: f32,
+) -> Arc<gpui::RenderImage> {
     static CACHE: LazyLock<Mutex<HashMap<u64, Arc<gpui::RenderImage>>>> =
         LazyLock::new(Default::default);
     let dev = |v: f32| (v * scale).round().max(0.) as u32;
@@ -2409,10 +2434,10 @@ fn gradient_image(
             v.to_bits().hash(&mut key);
         }
     }
-    let u = Rgba::from(under);
-    for v in [u.r, u.g, u.b] {
-        v.to_bits().hash(&mut key);
-    }
+    let under = under.map(Rgba::from);
+    under
+        .map(|u| [u.r, u.g, u.b].map(f32::to_bits))
+        .hash(&mut key);
     (w, h, ox, oy, to_top).hash(&mut key);
     let key = key.finish();
     let mut cache = CACHE.lock().unwrap_or_else(|error| error.into_inner());
@@ -2424,9 +2449,17 @@ fn gradient_image(
         cache.clear();
     }
     let stops = premul_stops(stops);
-    let under = [u.r, u.g, u.b].map(|v| (v * 255.).round() as u32);
+    let under = under.map(|u| [u.r, u.g, u.b].map(|v| (v * 255.).round() as u32));
     let image = image::RgbaImage::from_fn(w, h, |i, j| {
         let [r, g, b, a] = gradient_px(&stops, h, (ox, oy), to_top, i, j);
+        let Some(under) = under else {
+            // Straight alpha whose premultiplication rounds back to the stored bytes.
+            let straight = |c: u8| match a {
+                0 => 0,
+                a => ((u32::from(c) * 255 + u32::from(a) / 2) / u32::from(a)) as u8,
+            };
+            return image::Rgba([straight(b), straight(g), straight(r), a]);
+        };
         let [r, g, b] = [(r, under[0]), (g, under[1]), (b, under[2])].map(|(c, under)| {
             (u32::from(c) + (under * (255 - u32::from(a)) + 127) / 255).min(255) as u8
         });

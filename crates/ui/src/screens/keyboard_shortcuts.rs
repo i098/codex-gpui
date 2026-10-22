@@ -1035,7 +1035,8 @@ impl KeyboardPage {
                     .gap(px(4.))
                     .child(keycap)
                     .child(edit)
-                    .child(div().flex_1());
+                    // End-aligned dictation rows have no slack: a spacer would add a gap.
+                    .when(!allows_bare(command.id), |row| row.child(div().flex_1()));
                 if key.is_some() {
                     row = row.child(self.icon_control(
                         command,
@@ -1165,10 +1166,10 @@ impl KeyboardPage {
             && cx.global::<KeyboardState>().error.is_some();
         // The number select is a bordered button at the row's end; the link select is a bare
         // chip that starts the 384 px control column.
-        let (chip_text, chip_icon, pad) = if number {
-            (t.text, 14., 13.)
+        let (chip_text, chevron, chip_icon, pad) = if number {
+            (t.text, "chevron-down", 14., 13.)
         } else {
-            (t.text_secondary, 12., 9.)
+            (t.text_secondary, "diff-chevron-down", 12., 9.)
         };
         let trigger = self
             .control(
@@ -1179,7 +1180,7 @@ impl KeyboardPage {
                     .items_center()
                     .gap(px(4.))
                     .child(text(label, 13., 18., 430., chip_text))
-                    .child(icon("chevron-down", chip_icon, t.text_tertiary))
+                    .child(icon(chevron, chip_icon, t.text_tertiary))
                     .into_any_element(),
                 action,
                 window,
@@ -1471,10 +1472,16 @@ impl Render for KeyboardPage {
                     .items_center()
                     .justify_center()
                     .when(self.search_by_key, |d| {
-                        d.child(on_card(12.5, Squircle, t.text.opacity(0.05), None))
+                        // `bg-text/5` under the button's transparent 1 px border.
+                        d.child(on_card(
+                            12.5,
+                            Squircle,
+                            t.text.opacity(0.05),
+                            Some(gpui::transparent_black()),
+                        ))
                     })
                     .child(icon(
-                        "settings-keyboard-shortcuts",
+                        "shortcut-keystrokes",
                         18.,
                         if self.search_by_key {
                             t.text
@@ -1520,7 +1527,7 @@ impl Render for KeyboardPage {
                 t.control_background,
                 Some(t.border_strong),
             ))
-            .child(icon("search", 18., t.text_secondary))
+            .child(icon("shortcut-search", 18., t.text_secondary))
             .child(if self.search_by_key {
                 div()
                     .id("shortcut-keystroke-input")
@@ -1557,6 +1564,48 @@ impl Render for KeyboardPage {
             })
             .children(clear)
             .child(toggle);
+        // Chromium composites a scroller only while its content overflows.
+        let scrolls =
+            self.scroll.bounds().size.height <= px(0.) || self.scroll.max_offset().y > px(0.);
+        let surface = t.surface;
+        let fade = if scrolls {
+            // The sticky header is then a composited layer: Skia stores its fade as dithered
+            // 8-bit pixels, blended over the rows scrolling beneath.
+            gpui::canvas(
+                move |bounds, window, _| {
+                    let layer = window
+                        .composited_layer()
+                        .map_or(bounds.origin, |(layer, _)| layer.origin);
+                    crate::screens::thread::view::layer_gradient_image(
+                        &[(surface, 0.), (surface.opacity(0.), 1.)],
+                        (f32::from(bounds.size.width), f32::from(bounds.size.height)),
+                        // cc snaps the layer to whole css px.
+                        (
+                            f32::from(bounds.left() - layer.x.floor()),
+                            f32::from(bounds.top() - layer.y.floor()),
+                        ),
+                        false,
+                        window.scale_factor(),
+                    )
+                },
+                |bounds, image, window, _| {
+                    window
+                        .paint_image(bounds, bounds, gpui::Corners::default(), image, 0, false)
+                        .ok();
+                },
+            )
+            .size_full()
+            .into_any_element()
+        } else {
+            div()
+                .size_full()
+                .bg(gpui::linear_gradient(
+                    180.,
+                    gpui::linear_color_stop(surface, 0.),
+                    gpui::linear_color_stop(surface.opacity(0.), 1.),
+                ))
+                .into_any_element()
+        };
         let search_bar = loaded.then(|| {
             div()
                 .tab_group()
@@ -1584,11 +1633,7 @@ impl Render for KeyboardPage {
                                     .right_0()
                                     .top(px(60.))
                                     .h(px(32.))
-                                    .bg(gpui::linear_gradient(
-                                        180.,
-                                        gpui::linear_color_stop(t.surface, 0.),
-                                        gpui::linear_color_stop(t.surface.opacity(0.), 1.),
-                                    )),
+                                    .child(fade),
                             ),
                     ),
                 )
@@ -1611,8 +1656,6 @@ impl Render for KeyboardPage {
                 .py(px(5.)),
             )
         };
-        let scrolls =
-            self.scroll.bounds().size.height <= px(0.) || self.scroll.max_offset().y > px(0.);
         div()
             .size_full()
             .relative()
@@ -1635,7 +1678,6 @@ impl Render for KeyboardPage {
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
                     .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
-                    // Chromium composites a scroller only while its content overflows.
                     .when(scrolls, |d| d.layer())
                     .child(probe(&self.layer))
                     .child(
