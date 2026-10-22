@@ -44,6 +44,8 @@ pub(crate) const DST_IN: u8 = 5;
 pub(crate) const CLIP: u8 = 7;
 /// A compositor opacity mask; coverage stores the inverse byte opacity.
 pub(crate) const OPACITY: u8 = 8;
+/// AAA's `SkBlendARGB32` blit at run alpha 0 (scale 1); the coverage only marks the px.
+const ARGB32_ZERO: u8 = 9;
 
 /// gfx::SizeF's clamp: dimensions at or below 8 epsilon are 0.
 fn clamp(v: f32) -> f32 {
@@ -1263,6 +1265,17 @@ fn raster(
                 // inverse black on white.
                 let m = if black { 255 - px[0][1] } else { px[0][1] };
                 if m == 0 {
+                    // AAA's run blitter also blits alpha 0: `SkBlendARGB32` at scale 1 still
+                    // drops each channel's `>> 8` remainder, which the probes show.
+                    let zero = |(p, v): (&Probe, &[u8; 3])| {
+                        (0..3).all(|k| blend(ARGB32, p.fg[k], p.a, p.bg[k], 0) == v[k])
+                    };
+                    if fixed.is_none()
+                        && probes.iter().zip(px).all(zero)
+                        && probes.iter().zip(px).any(|(p, v)| p.bg != *v)
+                    {
+                        out[((y - y0) * w + x - x0) as usize] = [255, ARGB32_ZERO, 0, MASK];
+                    }
                     continue;
                 }
                 let blits = match (fixed, last) {
@@ -1659,10 +1672,9 @@ pub(crate) fn sprites(
     cached(key, || {
         let (rect, blits) = make();
         let mut out = Vec::new();
-        for (blit, mode) in [0, 2]
-            .into_iter()
-            .flat_map(|b| [MASK, ARGB32, PIPELINE, LAYER, DST_IN, OPACITY].map(|m| (b, m)))
-        {
+        for (blit, mode) in [0, 2].into_iter().flat_map(|b| {
+            [MASK, ARGB32, PIPELINE, LAYER, DST_IN, OPACITY, ARGB32_ZERO].map(|m| (b, m))
+        }) {
             if !blits.iter().any(|b| b[blit + 1] == mode && b[blit] != 0) {
                 continue;
             }
