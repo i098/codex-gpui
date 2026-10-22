@@ -252,12 +252,11 @@ fn access(result: Result<(Result<Value>, Result<Value>)>) -> Availability {
         Ok(result) => result,
         Err(error) => return Availability::Unavailable(format!("{error:#}")),
     };
-    if let Ok(user) = &user {
-        if user["status"] == "success" {
-            if let Ok(account) = serde_json::from_value::<Account>(user["account"].clone()) {
-                return Availability::Ready(account);
-            }
-        }
+    if let Ok(user) = &user
+        && user["status"] == "success"
+        && let Ok(account) = serde_json::from_value::<Account>(user["account"].clone())
+    {
+        return Availability::Ready(account);
     }
     if cfg!(target_os = "macos")
         && status
