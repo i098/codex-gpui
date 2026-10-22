@@ -318,6 +318,9 @@ pub struct Style {
     /// (`Window::composited_layer`).
     pub cc_tiles: bool,
 
+    /// Construct this layer's Skia paths in window coordinates while retaining its tile grid.
+    pub window_space_recording: bool,
+
     /// The element and its content start at its origin rounded to device pixels
     /// (`Styled::snap_origin`).
     pub snap_origin: bool,
@@ -834,6 +837,7 @@ impl Default for Style {
             top_layer: false,
             saved_layer: false,
             cc_tiles: false,
+            window_space_recording: false,
             snap_origin: false,
             grid_rows: None,
             grid_cols: None,
@@ -1360,9 +1364,7 @@ mod tests {
 
     use super::*;
 
-    use util_macros::perf;
-
-    #[perf]
+    #[test]
     fn test_basic_highlight_style_combination() {
         let style_a = HighlightStyle::default();
         let style_b = HighlightStyle::default();
@@ -1447,7 +1449,7 @@ mod tests {
         );
     }
 
-    #[perf]
+    #[test]
     fn test_combine_highlights() {
         assert_eq!(
             combine_highlights(
@@ -1536,7 +1538,7 @@ mod tests {
         );
     }
 
-    #[perf]
+    #[test]
     fn test_text_style_refinement() {
         let mut style = Style::default();
         style.refine(&StyleRefinement::default().text_size(px(20.0)));

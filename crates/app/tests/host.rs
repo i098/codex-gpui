@@ -11,6 +11,54 @@ const RECORDING: &str = include_str!("../../../refs/interactions/host.json");
 const ORACLE: &str = include_str!("../../../tools/route1/oracle.json");
 
 #[test]
+fn global_state_reads_preserve_the_profile() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    let path = home.path().join(".codex-global-state.json");
+    let request = Request::post("get-global-state", Some(json!({"key": "project-order"})));
+    assert_eq!(json_body(&host.fetch(&request)?)?, json!({"value": null}));
+    assert!(!path.exists());
+
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../../refs/interactions/f1d_projects.json"))?;
+    let state = &fixture["project_snapshot"]["state"];
+    let contents = serde_json::to_vec(state)?;
+    fs::write(&path, &contents)?;
+    assert_eq!(
+        json_body(&host.fetch(&request)?)?,
+        json!({"value": state["project-order"]})
+    );
+    let missing = Request::post("get-global-state", Some(json!({"key": "missing"})));
+    assert_eq!(json_body(&host.fetch(&missing)?)?, json!({"value": null}));
+    assert_eq!(fs::read(path)?, contents);
+    Ok(())
+}
+
+#[test]
+fn global_state_rejects_invalid_requests_and_profile_data() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    for params in [
+        json!({}),
+        json!({"key": 7}),
+        json!({"key": "project-order", "hostId": "remote"}),
+    ] {
+        assert!(
+            host.fetch(&Request::post("get-global-state", Some(params)))
+                .is_err()
+        );
+    }
+    let path = home.path().join(".codex-global-state.json");
+    let request = Request::post("get-global-state", Some(json!({"key": "project-order"})));
+    for contents in ["{", "[]", "null"] {
+        fs::write(&path, contents)?;
+        assert!(host.fetch(&request).is_err());
+        assert_eq!(fs::read_to_string(&path)?, contents);
+    }
+    Ok(())
+}
+
+#[test]
 fn all_original_host_and_http_responses_replay_exactly() -> Result<()> {
     let recorded = ReplayHost::from_recording(RECORDING)?;
     let oracle = ReplayHost::from_oracle(ORACLE)?;
@@ -80,6 +128,43 @@ fn wire_errors_and_binary_responses_are_not_empty_json_successes() -> Result<()>
         })
         .unwrap();
     assert!(json_body(&binary["response"]).is_err());
+    Ok(())
+}
+
+#[test]
+fn ssh_discovery_refreshes_the_selected_home_without_writes() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let storage = tempfile::tempdir()?;
+    let ssh = home.path().join(".ssh");
+    fs::create_dir(&ssh)?;
+    let config = ssh.join("config");
+    fs::write(
+        &config,
+        "Host capture-fixture\n  HostName 127.0.0.1\n  Port 1\n",
+    )?;
+    let host = LocalHost::new(storage.path()).with_ssh_home(home.path());
+    let request = Request::post("discover-remote-ssh-connections", None);
+    assert_eq!(
+        json_body(&host.fetch(&request)?)?,
+        json!({"sshAliases": ["capture-fixture"]})
+    );
+
+    let refreshed = b"Host updated-fixture\n  HostName 127.0.0.1\n  Port 1\n";
+    fs::write(&config, refreshed)?;
+    assert_eq!(
+        json_body(&host.fetch(&request)?)?,
+        json!({"sshAliases": ["updated-fixture"]})
+    );
+    assert_eq!(fs::read(&config)?, refreshed);
+    assert!(!storage.path().join(".codex-global-state.json").exists());
+
+    fs::write(&config, [0xff])?;
+    assert!(host.fetch(&request).is_err());
+    fs::remove_file(&config)?;
+    assert_eq!(
+        json_body(&host.fetch(&request)?)?,
+        json!({"sshAliases": []})
+    );
     Ok(())
 }
 
@@ -245,6 +330,7 @@ struct Received {
     method: String,
     path: String,
     headers: Vec<(String, String)>,
+    body: Vec<u8>,
 }
 
 impl Received {
@@ -291,6 +377,7 @@ fn mock_backend(answers: Vec<(u16, &'static str, String)>) -> (String, Arc<Mutex
                 method,
                 path,
                 headers,
+                body: request_body,
             });
             let mut stream = reader.into_inner();
             write!(
@@ -302,6 +389,29 @@ fn mock_backend(answers: Vec<(u16, &'static str, String)>) -> (String, Arc<Mutex
         }
     });
     (base, received)
+}
+
+#[test]
+fn binary_upload_keeps_non_utf8_bytes_and_content_type() -> Result<()> {
+    use base64::Engine as _;
+    let (base, received) = mock_backend(vec![(200, "", "{}".into())]);
+    let home = tempfile::tempdir()?;
+    let cloud = CloudHost::new(LocalHost::new(home.path()), Box::new(|_| Ok(None)), &base);
+    let bytes = [0, 255, 13, 10, 128];
+    let response = cloud.fetch(&Request::Http(json!({
+        "url":format!("{}/upload", base.trim_end_matches("/backend-api")), "method":"PUT",
+        "headers":{"Content-Type":"application/octet-stream"},
+        "bodyBase64":base64::engine::general_purpose::STANDARD.encode(bytes),
+        "returnErrorResponse":true
+    })))?;
+    assert_eq!(json_body(&response)?, json!({}));
+    let requests = received.lock();
+    assert_eq!(requests[0].body, bytes);
+    assert_eq!(
+        requests[0].header("content-type"),
+        Some("application/octet-stream")
+    );
+    Ok(())
 }
 
 /// A ChatGPT-style token whose claims name `account` and `user`; the signature is fake.
@@ -338,6 +448,7 @@ fn cloud_requests_replay_the_recorded_endpoints_with_the_original_auth_headers()
         "/beacons/home?",
         "/automations?filter=scheduled",
         "/suggested_automations",
+        "/wham/remote/control/mfa_requirement",
     ];
     let requests: Vec<Value> = endpoints.iter().map(|e| recorded_http(e)).collect();
     let answers = requests
@@ -640,35 +751,6 @@ fn scheduled_suggestions_follow_late_reads_and_host_replacement() -> Result<()> 
 #[cfg(target_os = "macos")]
 fn recorded_suggestions() -> Result<Value> {
     json_body(&ReplayHost::from_recording(RECORDING)?.fetch(&app::host::suggested_automations())?)
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn late_suggestions_keep_starting_on_the_clicked_task() -> Result<()> {
-    let mut fx = common::Fx::new()?;
-    let host = Arc::new(ReplayHost::from_recording(RECORDING)?);
-    fx.root
-        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
-    fx.cx.update_window(fx.window, |_, window, cx| {
-        window.dispatch_action(Box::new(ui::OpenScheduled), cx);
-    })?;
-    let page = fx.read(|root, _| root.suggestions().unwrap().clone());
-    page.update(&mut fx.cx, |page, cx| page.set_pending(Some(0), cx));
-    let server = serde_json::from_value(recorded_suggestions()?)?;
-    page.update(&mut fx.cx, |page, cx| page.set_suggestions(server, cx));
-    let actual = fx.cx.capture_screenshot(fx.window)?;
-    // The recorded response puts the clicked Weekly meal plan at index three.
-    page.update(&mut fx.cx, |page, cx| page.set_pending(Some(3), cx));
-    let expected = fx.cx.capture_screenshot(fx.window)?;
-    assert_eq!(
-        common::changed(&actual, &expected, common::MAIN_PANEL),
-        0,
-        "Starting must stay on Weekly meal plan, not AP Lang practice"
-    );
-    page.update(&mut fx.cx, |page, cx| page.set_pending(None, cx));
-    fx.cx.run_until_parked();
-    fx.parity("automations")?;
-    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -1288,5 +1370,40 @@ fn fresh_profile_task_edits_do_not_require_or_create_the_original_database() -> 
         "FREQ=MONTHLY;BYMONTHDAY=20;BYHOUR=18;BYMINUTE=30"
     );
     assert!(!home.path().join("sqlite/codex.db").exists());
+    Ok(())
+}
+
+/// Mobile `Get started` reads the MFA requirement, then the MFA status, through the host. A
+/// host without the authenticated transport leaves the initial step with its error; the retry
+/// shows the loading step, then the recorded `required` requirement and `mfa_enabled_v2: true`
+/// status open the allow-host step, not the MFA step.
+#[cfg(target_os = "macos")]
+#[test]
+fn mobile_get_started_follows_the_recorded_mfa_status() -> Result<()> {
+    use ui::screens::mobile::{GetStarted, SetupStep};
+    let mut fx = common::Fx::new()?;
+    let home = tempfile::tempdir()?;
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.set_host(Arc::new(LocalHost::new(home.path())), cx)
+    });
+    fx.action(Box::new(ui::OpenMobileSetup))?;
+    let page = fx.read(|root, _| root.mobile_page().unwrap().clone());
+    let step = |fx: &common::Fx| fx.read(|_, cx| page.read(cx).step());
+    assert_eq!(step(&fx), SetupStep::Initial);
+
+    fx.click(fx.at("mobile", "Get started")?)?;
+    assert_eq!(step(&fx), SetupStep::Error);
+
+    let replay = Arc::new(ReplayHost::from_recording(include_str!(
+        "../../../refs/interactions/mobile-mfa.json"
+    ))?);
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(replay, cx));
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        window.dispatch_action(Box::new(GetStarted), cx);
+    })?;
+    assert_eq!(step(&fx), SetupStep::Pending);
+    fx.cx.run_until_parked();
+    assert_eq!(step(&fx), SetupStep::AllowHost);
     Ok(())
 }

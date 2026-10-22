@@ -1,11 +1,13 @@
-//! `mobile` parity screen: `/codex-mobile` (`CodexMobilePage`), initial setup step, from
-//! `refs/mobile/*.spec.json`. Sidebar closed, no rail item current.
+//! `mobile` parity screen: `/codex-mobile` (`CodexMobilePage`), from `refs/mobile/*.spec.json`
+//! (initial step) and `codex-mobile-setup-dialog` (the allow-host and MFA steps). Sidebar
+//! closed, no rail item current.
 
 use crate::{EmptySidebar, Shell, icon, text};
 use gpui::{
     AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity, Hsla,
-    InteractiveElement as _, IntoElement, ParentElement, Pixels, Render, RenderImage,
-    StatefulInteractiveElement as _, Styled, Window, actions, canvas, div, point, px, rgb, size,
+    InteractiveElement as _, IntoElement, ParentElement, Pixels, Render, RenderImage, Stateful,
+    StatefulInteractiveElement as _, Styled, Transformation, Window, actions, canvas, div, point,
+    prelude::FluentBuilder as _, px, radians, rgb, size,
 };
 use image::{Frame, Rgba, RgbaImage};
 use shapes::Corner::Squircle;
@@ -19,23 +21,40 @@ use theme::{ActiveTheme as _, Appearance, Theme};
 actions!(
     codex_mobile,
     [
-        /// `Get started`: moves to the allow-host step.
+        /// `Get started`: checks the account's MFA requirement, then moves to the allow-host
+        /// or MFA step.
         GetStarted,
     ]
 );
 
+/// `Continue on chatgpt.com` on the MFA step.
+const MFA_SETTINGS: &str = "https://chatgpt.com/#settings/Security?mfa_source=codex_remote";
+
+/// The setup step on screen (`codex-mobile-setup-flow` `Pe`): `Pending` and `Error` are the
+/// initial step while the MFA requirement read runs (`setupInProgress`) and after it failed
+/// (`showStartSetupError`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SetupStep {
+    #[default]
+    Initial,
+    Pending,
+    Error,
+    AllowHost,
+    MfaRequired,
+}
+
 pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
-    let shell = shell(cx);
+    let (shell, _) = shell(cx);
     shell.update(cx, |shell, _| shell.can_go_back = true);
     shell.into()
 }
 
 /// `/codex-mobile`: sidebar closed, no rail item current.
-pub fn shell(cx: &mut App) -> Entity<Shell> {
+pub fn shell(cx: &mut App) -> (Entity<Shell>, Entity<MobileSetupPage>) {
     let sidebar = cx.new(|_| EmptySidebar).into();
-    let main = cx.new(|_| MobileSetupPage::default()).into();
-    cx.new(|_| {
-        let mut shell = Shell::new(sidebar, main);
+    let page = cx.new(|_| MobileSetupPage::default());
+    let shell = cx.new(|_| {
+        let mut shell = Shell::new(sidebar, page.clone().into());
         shell.sidebar_open = false;
         shell.selected_rail = None;
         shell.chat_chrome = false;
@@ -43,7 +62,8 @@ pub fn shell(cx: &mut App) -> Entity<Shell> {
         // The page's own `bg-token-main-surface-primary` under `<main>`'s rounded clip.
         shell.main_backgrounds = 1;
         shell
-    })
+    });
+    (shell, page)
 }
 
 /// One `codexMobile.setupDialog.initial` feature row: 32 px icon slot, title and description.
@@ -79,8 +99,26 @@ fn feature(glyph: &'static str, title: &'static str, body: &'static str, t: &The
 pub struct MobileSetupPage {
     /// The artwork as last drawn: its box (the tile grid matters) and page color.
     artwork: ArtworkCache,
-    /// Pointer over `Get started`.
+    /// Pointer over the step's primary button.
     hovered: bool,
+    step: SetupStep,
+    /// When `Pending` began: the loading spinner's `animate-spin` phase.
+    pending_since: Option<std::time::Instant>,
+}
+
+impl MobileSetupPage {
+    pub fn step(&self) -> SetupStep {
+        self.step
+    }
+
+    pub fn set_step(&mut self, step: SetupStep, cx: &mut Context<Self>) {
+        if step == SetupStep::Pending && self.step != step {
+            self.pending_since = Some(cx.background_executor().now());
+        }
+        self.step = step;
+        self.hovered = false;
+        cx.notify();
+    }
 }
 
 type ArtworkCache = Rc<RefCell<Option<(Bounds<Pixels>, Hsla, Arc<RenderImage>, bool)>>>;
@@ -257,21 +295,175 @@ fn compose(w: u32, h: u32) -> RenderImage {
 }
 
 impl Render for MobileSetupPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
+        let step = self.step;
+        let pending = step == SetupStep::Pending;
+        // `animate-spin`: one turn per second, linear, while the read runs.
+        let spin = pending.then(|| {
+            window.request_animation_frame();
+            let now = cx.background_executor().now();
+            let turn = now - self.pending_since.unwrap_or(now);
+            (turn.as_secs_f32() % 1.) * std::f32::consts::TAU
+        });
         // Primary solid button; dark mode text is `#2d2d2d`, not `--color-text-inverse`.
         let button_fg = if t.appearance == Appearance::Dark {
             rgb(0x2d2d2d).into()
         } else {
             t.text_inverse
         };
-        let button_bg = if self.hovered {
+        // `loading` and the unwired `Allow` disable the button (`disabled: disabled || loading`):
+        // no hover fill, and the shared Button's `dimmed` look, `disabled:opacity-40`.
+        let disabled = matches!(step, SetupStep::Pending | SetupStep::AllowHost);
+        let button_bg = if self.hovered && !disabled {
             t.button_primary_solid_hover
         } else {
             t.button_primary_solid
         };
+        // A `size="large"` primary button: 36 px pill, 14/18 label after the loading spinner.
+        let button = |id: &'static str, label: &'static str| -> Stateful<Div> {
+            div()
+                .id(id)
+                .h(px(36.))
+                .relative()
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap(px(4.))
+                .child(shapes::decoration(shapes::Decoration {
+                    radius: Corners::all(px(9999.)),
+                    fill: Some(button_bg),
+                    border: Some((px(1.), t.border)),
+                    ..Default::default()
+                }))
+                .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                    this.hovered = *hovered;
+                    cx.notify();
+                }))
+                .when_some(spin, |b, angle| {
+                    b.child(
+                        crate::icon("sidebar-cmd-spinner", 12., button_fg)
+                            .with_transformation(Transformation::rotate(radians(angle))),
+                    )
+                })
+                .child(text(label, 14., 18., 430., button_fg))
+                .when(disabled, |b| b.opacity(0.4))
+        };
+        let (heading, description) = match step {
+            SetupStep::AllowHost => (
+                "Allow devices to control this computer?",
+                "This lets authorized devices, such as your phone, connect to ChatGPT and control this computer remotely",
+            ),
+            SetupStep::MfaRequired => (
+                "Turn on Multi-Factor Authentication",
+                "To enable this feature, you’ll need to turn on Multi-Factor Authentication for your ChatGPT account",
+            ),
+            SetupStep::Initial | SetupStep::Pending | SetupStep::Error => (
+                "Connect your phone to this Mac",
+                "Continue chats from the ChatGPT desktop app on your phone or another device",
+            ),
+        };
         // `divide-y-[0.5px] divide-border`
         let divider = |row: Div| row.border_b(px(0.5)).border_color(t.border);
+        let column = div()
+            .w_full()
+            .max_w(px(640.))
+            .px(px(24.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(24.))
+            .text_center()
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(400.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(text(heading, 28., 35., 400., t.text).whitespace_normal())
+                    .child(text(description, 16., 24., 430., t.text_tertiary).whitespace_normal()),
+            );
+        let column = match step {
+            // `Allow` would enable remote control (`remoteControl/enable`), which this app does
+            // not support yet: the button is disabled and says so.
+            SetupStep::AllowHost => column
+                .child(button("allow-host", "Allow").px(px(20.)))
+                .child(text(
+                    "Remote control can’t be turned on from this app yet",
+                    13.,
+                    18.571_428,
+                    430.,
+                    t.text_tertiary,
+                )),
+            SetupStep::MfaRequired => column.child(
+                button("continue-on-chatgpt", "Continue on chatgpt.com")
+                    .px(px(20.))
+                    .on_click(|_, _, cx| cx.open_url(MFA_SETTINGS)),
+            ),
+            SetupStep::Initial | SetupStep::Pending | SetupStep::Error => column
+                .child(
+                    div()
+                        .w_full()
+                        .max_w(px(400.))
+                        .relative()
+                        .flex()
+                        .flex_col()
+                        .child(shapes::decoration(shapes::Decoration {
+                            radius: Corners::all(px(20.)),
+                            corner: Squircle,
+                            border: Some((px(1.), t.border)),
+                            ..Default::default()
+                        }))
+                        .p(px(1.))
+                        .text_left()
+                        .child(divider(feature(
+                            "mobile-phone",
+                            "Pick up where you left off",
+                            "Continue any chat or project from the ChatGPT desktop app",
+                            t,
+                        )))
+                        .child(divider(feature(
+                            "mobile-chat",
+                            "Stay in the loop",
+                            "Get notified when ChatGPT finishes a task or needs your attention",
+                            t,
+                        )))
+                        .child(feature(
+                            "mobile-start",
+                            "Start something new",
+                            "Just send a message to start a task on your desktop",
+                            t,
+                        )),
+                )
+                .child(
+                    button("get-started", "Get started")
+                        .w_full()
+                        .max_w(px(400.))
+                        .when(!pending, |b| b.on_click(crate::dispatch::<GetStarted>)),
+                )
+                .child(
+                    div().w_full().max_w(px(400.)).child(
+                        text(
+                            "ChatGPT can access your desktop—including files, apps, and your browser—to complete tasks you send from your phone. This can introduce security risks. Only connect devices that you own and trust.",
+                            12.,
+                            18.,
+                            430.,
+                            t.text_tertiary,
+                        )
+                        .whitespace_normal(),
+                    ),
+                )
+                .when(step == SetupStep::Error, |c| {
+                    c.child(text(
+                        "Couldn’t check security requirements. Try again",
+                        13.,
+                        18.571_428,
+                        430.,
+                        t.text_error,
+                    ))
+                }),
+        };
         div()
             .size_full()
             .relative()
@@ -280,123 +472,21 @@ impl Render for MobileSetupPage {
             // (`Shell::main_backgrounds`).
             .bg(t.surface)
             .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px(px(24.))
-                            .py(px(48.))
-                    .child(
-                        div()
-                            .w_full()
-                            .max_w(px(640.))
-                            .px(px(24.))
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .gap(px(24.))
-                            .text_center()
-                            .child(
-                                div()
-                                    .w_full()
-                                    .max_w(px(400.))
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(8.))
-                                    .child(
-                                        text("Connect your phone to this Mac", 28., 35., 400., t.text)
-                                            .whitespace_normal(),
-                                    )
-                                    .child(
-                                        text(
-                                            "Continue chats from the ChatGPT desktop app on your phone or another device",
-                                            16.,
-                                            24.,
-                                            430.,
-                                            t.text_tertiary,
-                                        )
-                                        .whitespace_normal(),
-                                    ),
-                            )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .max_w(px(400.))
-                                    .relative()
-                                    .flex()
-                                    .flex_col()
-                                    .child(shapes::decoration(shapes::Decoration {
-                                        radius: Corners::all(px(20.)),
-                                        corner: Squircle,
-                                        border: Some((px(1.), t.border)),
-                                        ..Default::default()
-                                    }))
-                                    .p(px(1.))
-                                    .text_left()
-                                    .child(divider(feature(
-                                        "mobile-phone",
-                                        "Pick up where you left off",
-                                        "Continue any chat or project from the ChatGPT desktop app",
-                                        t,
-                                    )))
-                                    .child(divider(feature(
-                                        "mobile-chat",
-                                        "Stay in the loop",
-                                        "Get notified when ChatGPT finishes a task or needs your attention",
-                                        t,
-                                    )))
-                                    .child(feature(
-                                        "mobile-start",
-                                        "Start something new",
-                                        "Just send a message to start a task on your desktop",
-                                        t,
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .id("get-started")
-                                    .w_full()
-                                    .max_w(px(400.))
-                                    .h(px(36.))
-                                    .relative()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(shapes::decoration(shapes::Decoration {
-                                        radius: Corners::all(px(9999.)),
-                                        fill: Some(button_bg),
-                                        border: Some((px(1.), t.border)),
-                                        ..Default::default()
-                                    }))
-                                    .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
-                                        this.hovered = *hovered;
-                                        cx.notify();
-                                    }))
-                                    .on_click(crate::dispatch::<GetStarted>)
-                                    .child(text("Get started", 14., 18., 430., button_fg)),
-                            )
-                            .child(
-                                div().w_full().max_w(px(400.)).child(
-                                    text(
-                                        "ChatGPT can access your desktop—including files, apps, and your browser—to complete tasks you send from your phone. This can introduce security risks. Only connect devices that you own and trust.",
-                                        12.,
-                                        18.,
-                                        430.,
-                                        t.text_tertiary,
-                                    )
-                                    .whitespace_normal(),
-                                ),
-                            ),
-                    )),
+                div().flex_1().min_w_0().flex().child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .px(px(24.))
+                        .py(px(48.))
+                        .child(column),
+                ),
             )
             // Artwork panel: `page-artwork-background` (cover) under `page-artwork-shared`
             // (contain), in a 15 px rounded box.
+            // ponytail: the allow-host and MFA steps keep this artwork; the original swaps the
+            // overlay per step (`page-artwork-allow-host`, `page-artwork-mfa`).
             .child(
                 div()
                     .flex_1()

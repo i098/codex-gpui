@@ -1,4 +1,8 @@
 use super::*;
+use base64::Engine as _;
+use gpui::{Image, ImageFormat};
+
+pub(super) type McpImages = RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>;
 
 /// Right-aligned user message: `bg-user-message`, 22 px squircle, at most 70% wide.
 pub(super) fn user_bubble(message: &str, t: &Theme) -> Div {
@@ -128,6 +132,7 @@ pub(super) fn diff_card(
         })
         .collect();
     let first = changes.first()?;
+    let review_path = first.path.clone();
     let (added, removed) = diff_counts(changes.iter().copied());
     let mut files: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
     files.dedup();
@@ -242,7 +247,12 @@ pub(super) fn diff_card(
                                     ),
                                 )
                                 .id("view-changes")
-                                .on_click(crate::dispatch::<crate::OpenChangesPanel>),
+                                .on_click(move |_, window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(crate::ViewChanges(review_path.clone())),
+                                        cx,
+                                    )
+                                }),
                             ),
                     ),
             ),
@@ -267,6 +277,7 @@ pub(super) enum Activity<'a> {
     Markdown(&'a str, &'a str),
     /// A command still running, by its command line.
     Running(&'a str),
+    Mcp(&'a ThreadItem),
     /// Consecutive finished commands and file changes behind one summary
     /// (`agent-activity-group`, keyed by its first item): `Edited a file, read files, ran
     /// commands`.
@@ -318,6 +329,7 @@ impl Activity<'_> {
         match self {
             Activity::Markdown(_, text) => vec![(*text).to_owned()],
             Activity::Running(command) => vec![(*command).to_owned()],
+            Activity::Mcp(item) => vec![mcp_label(item)],
             Activity::Group {
                 key, summary, rows, ..
             } => std::iter::once(summary.clone())
@@ -345,6 +357,10 @@ pub(super) fn activities<'a>(items: &'a [ThreadItem], running: bool) -> Vec<Acti
             } if running && status == "inProgress" => {
                 flush(&mut out, &mut group);
                 out.push(Activity::Running(command));
+            }
+            ThreadItem::McpToolCall { .. } => {
+                flush(&mut out, &mut group);
+                out.push(Activity::Mcp(item));
             }
             ThreadItem::CommandExecution { .. } | ThreadItem::FileChange { .. } => {
                 group.push(item);
@@ -397,7 +413,7 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                 // command line without one. ponytail: `search` and `list_files` rows also read
                 // as `Ran <command>`; the original words them per action (`Searched for …`).
                 let parsed = match command_actions.as_slice() {
-                    [] => shell_command(command).to_owned(),
+                    [] => shell_command(command, command_actions).to_owned(),
                     actions => actions
                         .iter()
                         .map(|a| a.command.as_str())
@@ -419,7 +435,7 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                         stats: None,
                         shell: Some(Shell {
                             key: format!("shell-{id}"),
-                            command: shell_command(command).to_owned(),
+                            command: shell_command(command, command_actions).to_owned(),
                             output: aggregated_output
                                 .as_deref()
                                 .unwrap_or_default()
@@ -485,12 +501,14 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
 pub(super) fn activity(
     items: &[ThreadItem],
     running: bool,
-    open: &HashSet<String>,
-    fades: &HashMap<String, Vec<StreamSegment>>,
+    view: &ThreadView,
     window: &Window,
     t: &Theme,
     cx: &Context<ThreadView>,
 ) -> Div {
+    let open = &view.expanded;
+    let fades = &view.stream_fades;
+    let images = &view.mcp_images;
     let text60 = t.text_alpha_60;
     // Exact-width 14 px text, styled before it is boxed (see [`measured`]).
     let label = |s: String, color: Hsla| {
@@ -552,6 +570,124 @@ pub(super) fn activity(
             Activity::Running(command) => {
                 row("thread-terminal", plain(label(command.to_owned(), text60)))
             }
+            Activity::Mcp(item) => {
+                let ThreadItem::McpToolCall {
+                    id,
+                    status,
+                    result,
+                    error,
+                    progress,
+                    ..
+                } = item
+                else {
+                    unreachable!();
+                };
+                let key = format!("mcp-{id}");
+                let is_open = open.contains(&key);
+                let color = if status == "failed" || error.is_some() {
+                    t.text
+                } else {
+                    text60
+                };
+                let mut content = div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(disclosure(
+                        key,
+                        "thread-mcp",
+                        label(mcp_label(item), color),
+                        is_open,
+                    ));
+                if is_open {
+                    for update in progress {
+                        if let Some(message) = update["message"].as_str() {
+                            content =
+                                content.child(text(message.to_owned(), 14., 21., 430., text60));
+                        }
+                    }
+                    if let Some(result) = result {
+                        if let Some(blocks) = result["content"].as_array() {
+                            let mut output = div().flex().flex_col().gap(px(2.));
+                            for (index, block) in blocks.iter().enumerate() {
+                                if let Some(text) = block["text"].as_str() {
+                                    output = output.child(mcp_output(
+                                        format!("{id}-text-{index}"),
+                                        "plaintext",
+                                        text,
+                                        t,
+                                    ));
+                                } else if block["type"] == "image" {
+                                    let mut images = images.borrow_mut();
+                                    let decoded = images.entry(id.clone()).or_insert_with(|| {
+                                        blocks
+                                            .iter()
+                                            .enumerate()
+                                            .filter_map(|(index, block)| {
+                                                let format = ImageFormat::from_mime_type(
+                                                    block["mimeType"].as_str()?,
+                                                )?;
+                                                let data =
+                                                    base64::engine::general_purpose::STANDARD
+                                                        .decode(block["data"].as_str()?)
+                                                        .ok()?;
+                                                Some((
+                                                    index,
+                                                    Arc::new(Image::from_bytes(format, data)),
+                                                ))
+                                            })
+                                            .collect()
+                                    });
+                                    if let Some((_, image)) =
+                                        decoded.iter().find(|(at, _)| *at == index)
+                                    {
+                                        let context = crate::image_context::ImageContext {
+                                            image: image.clone(),
+                                            path: None,
+                                        };
+                                        output = output.child(
+                                            gpui::img(image.clone()).max_w_full()
+                                                .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                                    this.menu = Some(context.menu(event.position, window, cx));
+                                                    this.context_image = Some(context.clone());
+                                                    cx.stop_propagation();
+                                                    cx.notify();
+                                                })),
+                                        );
+                                    } else {
+                                        output = output.child(text(
+                                            "Could not display tool image",
+                                            14.,
+                                            21.,
+                                            430.,
+                                            t.text,
+                                        ));
+                                    }
+                                }
+                            }
+                            content = content.child(output);
+                        }
+                        if let Some(structured) = result.get("structuredContent") {
+                            content = content.child(mcp_output(
+                                format!("{id}-structured"),
+                                "json",
+                                &format!("{structured:#}"),
+                                t,
+                            ));
+                        }
+                    }
+                    if let Some(error) = error {
+                        content = content.child(mcp_output(
+                            format!("{id}-error"),
+                            "plaintext",
+                            error["message"].as_str().unwrap_or("Tool call failed"),
+                            t,
+                        ));
+                    }
+                }
+                content
+            }
             Activity::Group {
                 key,
                 summary,
@@ -606,6 +742,66 @@ pub(super) fn activity(
         });
     }
     col
+}
+
+fn mcp_output(id: String, language: &'static str, value: &str, t: &Theme) -> Div {
+    let color = t.text_alpha_60.opacity(5. / 6.);
+    div()
+        .relative()
+        .w_full()
+        .p(px(1.))
+        .child(shapes::decoration(shapes::Decoration {
+            radius: Corners::all(px(12.5)),
+            corner: shapes::Corner::Squircle,
+            fill: Some(t.ghost_hover),
+            border: Some((px(1.), t.border_strong)),
+            ..Default::default()
+        }))
+        .child(
+            div()
+                .px(px(8.))
+                .py(px(4.))
+                .layer()
+                .child(text(language, 13., 18.570_313, 430., color)),
+        )
+        .child(
+            div()
+                .id(SharedString::from(id))
+                .max_h(px(192.))
+                .overflow_y_scroll()
+                .layer()
+                .p(px(8.))
+                .child(
+                    text(value.to_owned(), 14., 22.75, 430., color)
+                        .font_family(MONO)
+                        .whitespace_normal(),
+                ),
+        )
+}
+
+fn mcp_label(item: &ThreadItem) -> String {
+    let ThreadItem::McpToolCall {
+        server,
+        tool,
+        arguments,
+        ..
+    } = item
+    else {
+        unreachable!();
+    };
+    if tool == "js"
+        && let Some(title) = arguments["title"].as_str()
+    {
+        let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !title.is_empty() {
+            return if title.chars().count() > 80 {
+                format!("{}…", title.chars().take(79).collect::<String>().trim_end())
+            } else {
+                title
+            };
+        }
+    }
+    format!("{server}.{tool}")
 }
 
 /// The card under an open `Ran` row, 8 px below it and 4 px above the next row, 10 px short

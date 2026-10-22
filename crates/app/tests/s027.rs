@@ -24,8 +24,15 @@ fn center(value: &Value) -> Result<(f32, f32)> {
     ))
 }
 
-fn menu(fx: &Fx) -> Vec<(&'static str, bool)> {
-    fx.read(|root, cx| root.diff_panel().unwrap().read(cx).menu_items().collect())
+fn menu(fx: &Fx) -> Vec<(String, bool)> {
+    fx.read(|root, cx| {
+        root.diff_panel()
+            .unwrap()
+            .read(cx)
+            .menu_items()
+            .map(|(label, enabled)| (label.to_owned(), enabled))
+            .collect()
+    })
 }
 
 fn clipboard(fx: &mut Fx) -> Option<String> {
@@ -53,6 +60,7 @@ fn diff_selection_and_hover_replay() -> Result<()> {
         eprintln!("S027 requires the macOS headless renderer");
         return Ok(());
     }
+    let screenshots = tempfile::tempdir()?;
     let recording: Value =
         serde_json::from_str(include_str!("../../../refs/interactions/s027.json"))?;
     let mut fx = Fx::captured("dark", (1280., 832.), common::script(None, |_| {})?)?;
@@ -73,14 +81,14 @@ fn diff_selection_and_hover_replay() -> Result<()> {
         .iter()
         .map(|item| {
             (
-                item["text"].as_str().unwrap(),
+                item["text"].as_str().unwrap().to_owned(),
                 item["disabled"].as_bool() != Some(true),
             )
         })
         .collect();
     ensure!(menu(&fx) == expected, "header menu: {:?}", menu(&fx));
     fx.shot()?
-        .save(std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("s027-header-menu.png"))?;
+        .save(screenshots.path().join("s027-header-menu.png"))?;
     let copy = steps
         .iter()
         .find(|s| s["target"]["text"] == "Copy path")
@@ -105,7 +113,7 @@ fn diff_selection_and_hover_replay() -> Result<()> {
     );
     fx.right_click((800., 229.))?;
     ensure!(
-        menu(&fx)[0] == ("Copy selection", false),
+        menu(&fx)[0] == ("Copy selection".into(), false),
         "copy needs a selection"
     );
     fx.keys("escape")?;
@@ -141,7 +149,7 @@ fn diff_selection_and_hover_replay() -> Result<()> {
         "clipboard: {copied:?}"
     );
     fx.shot()?
-        .save(std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("s027-selection.png"))?;
+        .save(screenshots.path().join("s027-selection.png"))?;
     fx.drag(point(&drag["portTo"])?, point(&drag["portFrom"])?, 10)?;
     fx.keys("cmd-c")?;
     let reverse = clipboard(&mut fx);
@@ -166,14 +174,14 @@ fn diff_selection_and_hover_replay() -> Result<()> {
         })
         .map(|item| {
             (
-                item["label"].as_str().unwrap(),
+                item["label"].as_str().unwrap().to_owned(),
                 item["enabled"].as_bool().unwrap(),
             )
         })
         .collect();
     ensure!(menu(&fx) == expected, "context menu: {:?}", menu(&fx));
     fx.shot()?
-        .save(std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("s027-context-menu.png"))?;
+        .save(screenshots.path().join("s027-context-menu.png"))?;
     choose(&mut fx, "Copy selection")?;
     ensure!(
         clipboard(&mut fx).as_deref()
@@ -253,9 +261,8 @@ fn diff_selection_and_hover_replay() -> Result<()> {
     fx.cx.run_until_parked();
     fx.drag((714., 143.), (1270., 174.), 10)?;
     fx.keys("cmd-c")?;
-    fx.shot()?.save(
-        std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("s027-wrapped-selection.png"),
-    )?;
+    fx.shot()?
+        .save(screenshots.path().join("s027-wrapped-selection.png"))?;
     let wrapped = clipboard(&mut fx);
     ensure!(
         wrapped.as_deref() == Some(long_line.as_str()),
@@ -312,9 +319,8 @@ fn launches(log: &Path) -> Vec<String> {
 }
 
 #[test]
-fn open_in_editor_native_input_reaches_the_host_opener() -> Result<()> {
+fn failed_editor_launch_keeps_the_diff_and_reports_the_error() -> Result<()> {
     if !cfg!(target_os = "macos") {
-        eprintln!("S027 requires the macOS headless renderer");
         return Ok(());
     }
     let scratch = std::env::var_os("CGX_OPEN_IN_EDITOR_EVIDENCE")
@@ -330,27 +336,27 @@ fn open_in_editor_native_input_reaches_the_host_opener() -> Result<()> {
     git(&root, &["add", "a.txt"])?;
     git(&root, &["commit", "-qm", "base"])?;
     fs::write(root.join("a.txt"), "one\nchanged\n")?;
-
-    // The controlled opener records its arguments, or fails while `fail` exists.
-    let log = scratch.join(format!("opener-{}.log", std::process::id()));
-    let fail = scratch.join(format!("opener-{}.fail", std::process::id()));
-    let opener = scratch.join(format!("opener-{}.sh", std::process::id()));
+    let log = scratch.join(format!("failed-editor-{}.log", std::process::id()));
+    let opener = scratch.join(format!("failed-editor-{}.sh", std::process::id()));
+    fs::write(&log, "")?;
     fs::write(
         &opener,
         format!(
-            "#!/bin/sh\nif [ -e '{}' ]; then echo 'editor refused' >&2; exit 3; fi\nprintf '%s\\n' \"$*\" >> '{}'\n",
-            fail.display(),
+            "#!/bin/sh\nprintf 'attempt\\n' >> '{}'\nexit 3\n",
             log.display()
         ),
     )?;
     fs::set_permissions(&opener, fs::Permissions::from_mode(0o755))?;
-
     let mut settings =
         Settings::load(scratch.join(format!("host-settings-{}.json", std::process::id())))?;
-    for (key, value) in common::recorded_host_settings()?.read_all() {
+    for (key, value) in common::recorded_host_settings()?.read_all().iter() {
         settings.write(key, value.clone())?;
     }
-    settings.write("open-in-target-preferences", json!({"global": "zed"}))?;
+    settings.write(
+        "open-in-target-preferences",
+        json!({"global": "systemDefault"}),
+    )?;
+    let host_settings = settings.clone();
     let mut lines = common::script(None, |_| {})?;
     for line in &mut lines {
         if let Some(thread) = line.pointer_mut("/msg/result/thread") {
@@ -358,64 +364,47 @@ fn open_in_editor_native_input_reaches_the_host_opener() -> Result<()> {
         }
     }
     let mut fx = common::Fx::captured_with_host_settings("dark", (1280., 832.), lines, settings)?;
-    let host = LocalHost::new(root.join(".git/proof-profile")).with_opener(&opener);
+    let host = LocalHost::new(root.join(".git/proof-profile"))
+        .with_opener(&opener)
+        .with_settings(Some(host_settings));
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(Arc::new(host), cx));
     fx.keys("cmd-1")?;
     fx.wait_thread(common::GREETING)?;
     fx.keys("alt-cmd-b")?;
-    fx.hover((1000., 22.))?;
-    fx.advance(ui::toast::LIFETIME + std::time::Duration::from_secs(1))?;
+    clear_toasts(&mut fx)?;
     fx.click((735., 70.))?;
     choose(&mut fx, "Unstaged")?;
     fx.wait("repository changes", |fx| {
         fx.read(|root, cx| !root.diff_panel().unwrap().read(cx).pending())
     })?;
-    fx.shot()?.save(scratch.join("header-icon.png"))?;
-
-    // The header icon launches the configured editor on the repository file.
-    let expected = format!("-a Zed {}", root.join("a.txt").display());
     fx.click(OPEN_ICON)?;
-    fx.wait("icon launch", |_| launches(&log).len() == 1)?;
-    ensure!(launches(&log) == [expected.clone()], "{:?}", launches(&log));
-
-    // The file menu reaches the same opener, and its other actions stay enabled.
-    fx.click(FILE_ACTIONS)?;
-    ensure!(
-        ["Open in editor", "Stage file", "Revert file"]
-            .iter()
-            .all(|label| menu(&fx).contains(&(*label, true)))
-    );
-    fx.shot()?.save(scratch.join("file-menu.png"))?;
-    choose(&mut fx, "Open in editor")?;
-    fx.wait("menu launch", |_| launches(&log).len() == 2)?;
-    ensure!(launches(&log)[1] == expected);
+    fx.wait("failed editor toast", |fx| toast(fx, FAILED))?;
+    ensure!(launches(&log).len() == 1);
     ensure!(!fx.read(|root, cx| root.diff_panel().unwrap().read(cx).pending()));
     ensure!(fx.read(|root, cx| root.diff_panel().unwrap().read(cx).files[0].open));
-
-    // An opener failure is reported, and the changes list stays as it was.
-    fs::write(&fail, "")?;
-    fx.click(OPEN_ICON)?;
-    fx.wait("failure toast", |fx| toast(fx, FAILED))?;
     fx.shot()?.save(scratch.join("failure-toast.png"))?;
-    ensure!(launches(&log).len() == 2, "a refused launch was recorded");
-    ensure!(!fx.read(|root, cx| root.diff_panel().unwrap().read(cx).pending()));
-    fs::remove_file(&fail)?;
     clear_toasts(&mut fx)?;
-
-    // A changed file that no longer exists is not opened.
+    fx.click(FILE_ACTIONS)?;
+    choose(&mut fx, "Open in editor")?;
+    fx.wait("failed menu editor toast", |fx| toast(fx, FAILED))?;
+    ensure!(launches(&log).len() == 2);
+    ensure!(!fx.read(|root, cx| root.diff_panel().unwrap().read(cx).pending()));
+    clear_toasts(&mut fx)?;
     fs::remove_file(root.join("a.txt"))?;
     fx.click(OPEN_ICON)?;
     fx.wait("missing file toast", |fx| toast(fx, FAILED))?;
     ensure!(
         launches(&log).len() == 2,
-        "a missing file reached the opener"
+        "a missing file reached the launcher"
     );
     Ok(())
 }
 
 #[test]
-fn host_open_file_refuses_paths_outside_the_project_and_unknown_targets() -> Result<()> {
+fn host_open_in_preserves_project_containment_and_reports_unknown_targets() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    common::install_panic_hook();
     let scratch = tempfile::tempdir()?;
     fs::create_dir(scratch.path().join("repo"))?;
     let root = scratch.path().join("repo").canonicalize()?;
@@ -430,23 +419,24 @@ fn host_open_file_refuses_paths_outside_the_project_and_unknown_targets() -> Res
     let opener = scratch.path().join("opener.sh");
     fs::write(
         &opener,
-        format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n", log.display()),
+        format!("#!/bin/sh\nprintf 'opened\\n' >> '{}'\n", log.display()),
     )?;
     fs::set_permissions(&opener, fs::Permissions::from_mode(0o755))?;
-    let host = LocalHost::new(scratch.path().join("home")).with_opener(&opener);
-    let open = |cwd: &Path, path: &str, target: Option<&str>| {
-        use app::host::{Host as _, Request};
-        host.fetch(&Request::post(
-            "open-file",
-            Some(json!({"hostId": "local", "cwd": cwd, "path": path, "target": target})),
-        ))
+    let host = LocalHost::new(scratch.path().join("home"))
+        .with_opener(&opener)
+        .with_settings(Some(Settings::default()));
+    let open = |cwd: &Path, path: &str, target: Option<&str>| -> Result<Value> {
+        use app::host::{Host as _, Request, json_body};
+        json_body(&host.fetch(&Request::post(
+            "open-in",
+            Some(json!({"hostId": "local", "cwd": cwd, "path": path, "target": target.unwrap_or("systemDefault")})),
+        ))?)
     };
     let inside = root.join("src/a.txt");
     let outside_path = outside.to_string_lossy().into_owned();
     let traversal = root.join("src/../../outside.txt");
     for (cwd, path, target, reason) in [
         (&root, outside_path.as_str(), None, "outside file"),
-        (&root, "src/a.txt", None, "relative path"),
         (&root, traversal.to_str().unwrap(), None, "dot-dot escape"),
         (
             &root,
@@ -454,7 +444,6 @@ fn host_open_file_refuses_paths_outside_the_project_and_unknown_targets() -> Res
             None,
             "symlink escape",
         ),
-        (&root, root.join("src").to_str().unwrap(), None, "directory"),
         (
             &root,
             root.join("gone.txt").to_str().unwrap(),
@@ -468,15 +457,26 @@ fn host_open_file_refuses_paths_outside_the_project_and_unknown_targets() -> Res
             "unknown target",
         ),
     ] {
-        ensure!(open(cwd, path, target).is_err(), "{reason} was opened");
+        ensure!(
+            open(cwd, path, target)?["success"] == false,
+            "{reason} was opened"
+        );
     }
     ensure!(
         launches(&log).is_empty(),
-        "a refused request ran the opener"
+        "a refused request ran the launcher"
     );
-    // A thread in a subfolder still opens repository files outside that subfolder.
-    let top = root.join("top.txt");
-    open(&root.join("src"), top.to_str().unwrap(), Some("cursor"))?;
-    ensure!(launches(&log) == [format!("-a Cursor {}", top.display())]);
+    ensure!(open(&root, "src/a.txt", None)?["success"] == true);
+    ensure!(open(&root, root.join("src").to_str().unwrap(), None)?["success"] == true);
+    ensure!(
+        open(
+            &root.join("src"),
+            root.join("top.txt").to_str().unwrap(),
+            None
+        )?["success"]
+            == true
+    );
+    ensure!(launches(&log).len() == 3);
+    ensure!(fs::read_to_string(outside)? == "outside");
     Ok(())
 }

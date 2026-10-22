@@ -22,14 +22,14 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use bridge::Event;
 use bridge::types::{
-    AgentMessageDeltaNotification, FileUpdateChange, ItemNotification, Thread, ThreadItem, Turn,
-    TurnNotification, TurnStatus, UserInput,
+    AgentMessageDeltaNotification, CommandAction, FileUpdateChange, ItemNotification, Thread,
+    ThreadItem, Turn, TurnNotification, TurnStatus, UserInput,
 };
 use gpui::{
-    Action, AnyView, App, Bounds, ClipboardItem, Context, Corners, Div, FontWeight, Hsla, Image,
-    ImageFormat, IntoElement, ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString,
-    Size, Styled, Task, TextRun, TransformationMatrix, Window, canvas, div, font, prelude::*, px,
-    radians, relative, rgb, rgba, white,
+    Action, AnyView, App, Bounds, ClipboardItem, Context, Corners, Div, FontWeight, Hsla,
+    IntoElement, ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString, Size, Styled,
+    Task, TextRun, TransformationMatrix, Window, canvas, div, font, prelude::*, px, radians,
+    relative, rgb, rgba, white,
 };
 use theme::{ActiveTheme as _, Appearance, Theme};
 
@@ -50,8 +50,12 @@ mod items;
 mod markdown;
 #[path = "thread/menu.rs"]
 pub(crate) mod menu;
+#[path = "thread/recovery.rs"]
+mod recovery;
 #[path = "thread/select.rs"]
 mod select;
+
+pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
 use actions::action_row;
 pub use actions::{EditMessage, ForkThread, RevertTurn};
@@ -128,13 +132,19 @@ pub struct ThreadView {
     terminal_item: Option<String>,
     pub terminals_stopping: bool,
     turns: Vec<Turn>,
+    render_errors: RefCell<HashMap<String, String>>,
+    stream_errors: HashMap<String, Vec<(bridge::types::TurnError, bool)>>,
+    usage_limit_notice: UsageLimitNotice,
     clock: Clock,
     composer: AnyView,
+    embedded: bool,
     _tick: Option<Task<()>>,
     stream_fades: HashMap<String, Vec<StreamSegment>>,
+    mcp_images: items::McpImages,
     /// Open disclosures: turns whose `Worked for` is expanded, by turn id, and activity groups
     /// whose rows show, by the id of their first item.
     expanded: HashSet<String>,
+    pending_question: Option<String>,
     scroll: ScrollHandle,
     /// The turns as last laid out, to stand in for the ones far off screen.
     laid_out: Rc<RefCell<LaidOut>>,
@@ -147,6 +157,7 @@ pub struct ThreadView {
     find: Option<FindState>,
     /// The link menu (`menu.rs`): `subject` is the right-clicked link.
     menu: Option<menu::ContextMenu>,
+    context_image: Option<crate::image_context::ImageContext>,
 }
 
 struct StreamSegment {
@@ -576,11 +587,17 @@ impl ThreadView {
             summary_open: false,
             clip_right: false,
             turns: thread.turns,
+            render_errors: RefCell::default(),
+            stream_errors: HashMap::new(),
+            usage_limit_notice: UsageLimitNotice::RetryLater,
             clock,
             composer,
+            embedded: false,
             _tick: None,
             stream_fades: HashMap::new(),
+            mcp_images: RefCell::default(),
             expanded: HashSet::new(),
+            pending_question: None,
             scroll: ScrollHandle::new(),
             laid_out: Rc::default(),
             focus: None,
@@ -588,7 +605,20 @@ impl ThreadView {
             press_focus: None,
             find: None,
             menu: None,
+            context_image: None,
         }
+    }
+
+    pub fn embedded(thread: Thread, clock: Clock, cx: &mut Context<Self>) -> Self {
+        let empty = cx.new(|_| crate::EmptyMain).into();
+        let mut view = Self::new(thread, clock, empty);
+        view.embedded = true;
+        view
+    }
+
+    pub fn set_embedded_turns(&mut self, turns: Vec<Turn>, cx: &mut Context<Self>) {
+        self.turns = turns;
+        cx.notify();
     }
 
     pub fn id(&self) -> &str {
@@ -602,6 +632,14 @@ impl ThreadView {
 
     pub fn turns(&self) -> &[Turn] {
         &self.turns
+    }
+
+    /// Projects the visible question's turn from the root request queue.
+    pub fn set_pending_question(&mut self, turn_id: Option<String>, cx: &mut Context<Self>) {
+        if self.pending_question != turn_id {
+            self.pending_question = turn_id;
+            cx.notify();
+        }
     }
 
     pub fn transcript_focused(&self, window: &Window) -> bool {
@@ -620,6 +658,21 @@ impl ThreadView {
     fn copy_selection(&mut self, _: &crate::Copy, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.selected_text(window, cx) {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
+        } else {
+            cx.propagate();
+        }
+    }
+
+    fn speak_selection(
+        &mut self,
+        _: &crate::StartSpeaking,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(text) = self.selected_text(window, cx) {
+            if let Err(error) = crate::native_text::speak(&text, cx) {
+                eprintln!("codex-gpui: cannot speak selection: {error:#}");
+            }
         } else {
             cx.propagate();
         }
@@ -999,6 +1052,9 @@ impl ThreadView {
     /// Only the last user message is editable, and only when its later turns have stopped.
     /// Non-text content stays read-only because `UserInput::Other` cannot retain attachments.
     pub fn can_edit(&self, turn_id: &str) -> bool {
+        if self.embedded {
+            return false;
+        }
         for turn in self.turns.iter().rev() {
             if turn.status == TurnStatus::InProgress {
                 return false;
@@ -1028,10 +1084,11 @@ impl ThreadView {
             .filter_map(|item| match item {
                 ThreadItem::CommandExecution {
                     command,
+                    command_actions,
                     aggregated_output,
                     ..
                 } => Some((
-                    shell_command(command).to_owned(),
+                    shell_command(command, command_actions).to_owned(),
                     aggregated_output.as_deref().unwrap_or_default(),
                 )),
                 _ => None,
@@ -1052,11 +1109,12 @@ impl ThreadView {
             ThreadItem::CommandExecution {
                 id,
                 command,
+                command_actions,
                 aggregated_output,
                 ..
             } => Some((
                 id,
-                shell_command(command),
+                shell_command(command, command_actions),
                 aggregated_output.as_deref().unwrap_or_default(),
             )),
             _ => None,
@@ -1198,7 +1256,13 @@ impl ThreadView {
                     .child(header("Background processes".into()))
                     .children(self.background_terminal_items().enumerate().filter_map(
                         |(ix, item)| {
-                            let ThreadItem::CommandExecution { id, command, .. } = item else {
+                            let ThreadItem::CommandExecution {
+                                id,
+                                command,
+                                command_actions,
+                                ..
+                            } = item
+                            else {
                                 return None;
                             };
                             let id = id.clone();
@@ -1246,7 +1310,7 @@ impl ThreadView {
                                 .child(div().size(px(8.8)).rounded(px(1.)).bg(t.text_tertiary));
                             let control = row(
                                 "thread-summary-terminal",
-                                shell_command(command).to_owned(),
+                                shell_command(command, command_actions).to_owned(),
                                 22.,
                                 ix,
                                 window,
@@ -1373,6 +1437,7 @@ impl ThreadView {
                 match self.turns.iter_mut().find(|t| t.id == n.turn.id) {
                     Some(turn) => {
                         turn.status = n.turn.status;
+                        turn.started_at = n.turn.started_at.or(turn.started_at);
                         turn.completed_at = n.turn.completed_at;
                         turn.duration_ms = n.turn.duration_ms;
                         turn.error = n.turn.error;
@@ -1398,6 +1463,9 @@ impl ThreadView {
                     return;
                 };
                 let id = item_id(&n.item).map(str::to_owned);
+                if let Some(id) = &id {
+                    self.mcp_images.borrow_mut().remove(id);
+                }
                 match turn
                     .items
                     .iter_mut()
@@ -1427,10 +1495,48 @@ impl ThreadView {
                             // A completion without a final snapshot must retain streamed output.
                             *after = before.take();
                         }
+                        if let (
+                            ThreadItem::McpToolCall {
+                                progress: previous,
+                                metadata: previous_metadata,
+                                ..
+                            },
+                            ThreadItem::McpToolCall {
+                                progress, metadata, ..
+                            },
+                        ) = (&mut *item, &mut n.item)
+                        {
+                            if progress.is_empty() {
+                                *progress = std::mem::take(previous);
+                            }
+                            for (key, value) in std::mem::take(previous_metadata) {
+                                metadata.entry(key).or_insert(value);
+                            }
+                        }
                         *item = n.item;
                     }
                     None => turn.items.push(n.item),
                 }
+            }
+            "item/mcpToolCall/progress" => {
+                let Some(item_id) = params["itemId"].as_str() else {
+                    return;
+                };
+                let Some(turn) = self
+                    .turns
+                    .iter_mut()
+                    .find(|turn| Some(turn.id.as_str()) == params["turnId"].as_str())
+                else {
+                    return;
+                };
+                let Some(ThreadItem::McpToolCall { progress, .. }) = turn
+                    .items
+                    .iter_mut()
+                    .find(|item| self::item_id(item) == Some(item_id))
+                else {
+                    return;
+                };
+                progress.push(params.clone());
             }
             "item/agentMessage/delta" | "item/commandExecution/outputDelta" => {
                 let Ok(n) = serde_json::from_value::<AgentMessageDeltaNotification>(params.clone())
@@ -1457,6 +1563,18 @@ impl ThreadView {
                         aggregated_output, ..
                     }) => aggregated_output.get_or_insert_default().push_str(&n.delta),
                     _ => {}
+                }
+            }
+            "error" => {
+                let Ok(error) =
+                    serde_json::from_value::<bridge::types::ErrorNotification>(params.clone())
+                else {
+                    return;
+                };
+                let errors = self.stream_errors.entry(error.turn_id).or_default();
+                match errors.last_mut() {
+                    Some((last, true)) if error.will_retry => *last = error.error,
+                    _ => errors.push((error.error, error.will_retry)),
                 }
             }
             _ => return,
@@ -1538,7 +1656,56 @@ impl ThreadView {
             });
         }
         let (work, final_answer) = work(turn);
+        let has_work = work
+            .iter()
+            .any(|item| !matches!(item, ThreadItem::UserMessage { .. }));
+        if self.pending_question.as_deref() == Some(turn.id.as_str()) {
+            col = col
+                .child(div().h(px(16.)))
+                .child(self.activity(work, false, window, t, cx));
+            if let Some((item, answer)) = final_answer {
+                col = col.child(div().h(px(16.))).child(markdown::with_find(
+                    answer,
+                    window,
+                    t,
+                    self.find_paint(item).as_ref(),
+                    self.fades(item),
+                ));
+            }
+            col = col.child(
+                div()
+                    .mt(px(16.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .size(px(14.))
+                            .border_1()
+                            .border_color(t.text_tertiary)
+                            .rounded(px(999.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(text("?", 10., 12., 430., t.text_tertiary)),
+                    )
+                    .child(text("Asking question", 14., 20., 430., t.text_tertiary)),
+            );
+            if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
+                col = col.child(div().mt(px(16.)).pb(px(8.)).child(card));
+            }
+            return col;
+        }
         if let Some((item, answer)) = final_answer {
+            if self.embedded && !has_work {
+                return col.child(div().h(px(16.))).child(markdown::with_find(
+                    answer,
+                    window,
+                    t,
+                    self.find_paint(item).as_ref(),
+                    self.fades(item),
+                ));
+            }
             let secs = turn.duration_ms.unwrap_or(0) / 1000;
             let open = self.expanded.contains(&turn.id)
                 || self.find.as_ref().is_some_and(|find| {
@@ -1631,9 +1798,11 @@ impl ThreadView {
             if let Some(card) = diff_card(&turn.id, &turn.items, window, t) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
             }
-            return col.child(action_row(last, &group, &turn.id, answer, t));
+            return col.when(!self.embedded, |col| {
+                col.child(action_row(last, &group, &turn.id, answer, t))
+            });
         }
-        if turn.status == TurnStatus::InProgress {
+        if turn.status == TurnStatus::InProgress && (!self.embedded || has_work) {
             let secs = self.clock.now() - turn.started_at.unwrap_or(self.clock.now());
             col = col
                 .child(div().h(px(16.)))
@@ -1672,30 +1841,15 @@ impl ThreadView {
             .as_ref()
             .is_none_or(|find| find.matches.is_empty())
         {
-            return activity(
-                items,
-                running,
-                &self.expanded,
-                &self.stream_fades,
-                window,
-                t,
-                cx,
-            );
+            return activity(items, running, self, window, t, cx);
         }
         let mut column = div().flex().flex_col().gap(px(16.));
         let mut start = 0;
         for (index, item) in items.iter().enumerate() {
             if let ThreadItem::AgentMessage { id, text, .. } = item {
                 if start < index {
-                    column = column.child(activity(
-                        &items[start..index],
-                        running,
-                        &self.expanded,
-                        &self.stream_fades,
-                        window,
-                        t,
-                        cx,
-                    ));
+                    column =
+                        column.child(activity(&items[start..index], running, self, window, t, cx));
                 }
                 column = column.child(markdown::with_find(
                     text,
@@ -1708,15 +1862,7 @@ impl ThreadView {
             }
         }
         if start < items.len() {
-            column = column.child(activity(
-                &items[start..],
-                running,
-                &self.expanded,
-                &self.stream_fades,
-                window,
-                t,
-                cx,
-            ));
+            column = column.child(activity(&items[start..], running, self, window, t, cx));
         }
         column
     }
@@ -1794,11 +1940,43 @@ impl Render for ThreadView {
                     .filter(|&&(top, h)| far(top + offset, h, view));
                 match stand_in {
                     Some(&(_, h)) => div().h(h),
-                    None => self.turn(turn, i + 1 == n, window, &t, cx),
+                    None => {
+                        let errors = self.render_errors.borrow();
+                        if let Some(error) = errors.get(&turn.id) {
+                            self.render_failure(&turn.id, error, window, cx)
+                        } else {
+                            drop(errors);
+                            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                self.turn(turn, i + 1 == n, window, &t, cx)
+                            })) {
+                                Ok(body) => body.children(self.turn_errors(turn, window, cx)),
+                                Err(error) => {
+                                    let error = error
+                                        .downcast_ref::<String>()
+                                        .cloned()
+                                        .or_else(|| {
+                                            error.downcast_ref::<&str>().map(|s| (*s).to_owned())
+                                        })
+                                        .unwrap_or_else(|| "Unknown render error".to_owned());
+                                    eprintln!(
+                                        "codex-gpui: thread {} turn {}: {error}",
+                                        self.thread_id, turn.id
+                                    );
+                                    self.render_errors
+                                        .borrow_mut()
+                                        .insert(turn.id.clone(), error.clone());
+                                    self.render_failure(&turn.id, &error, window, cx)
+                                }
+                            }
+                        }
+                    }
                 }
             })
             .collect();
         drop(laid_out);
+        if self.embedded {
+            return div().w_full().children(turns);
+        }
         let ids: Vec<String> = self.turns.iter().map(|t| t.id.clone()).collect();
         let (laid_out, scroll) = (self.laid_out.clone(), self.scroll.clone());
         let find_scroll = self
@@ -1843,7 +2021,7 @@ impl Render for ThreadView {
         };
         // The thread fills the main panel: window minus titlebar (44) and bottom inset (4).
         let viewport = window.viewport_size();
-        let (width, height) = (f32::from(viewport.width), f32::from(viewport.height) - 48.);
+        let width = f32::from(viewport.width);
         let scale = window.scale_factor();
         let fade = |a: f32| Hsla { a, ..t.surface };
         let clear = gpui::transparent_black();
@@ -1902,14 +2080,27 @@ impl Render for ThreadView {
         .left_0()
         .size_full();
         // Fade above the composer's surface band (`-top-8`, `to top`).
-        let bottom_fade = skia_gradient(
-            &[(t.surface, 0.), (clear, 1.)],
-            t.surface,
-            (width, 32.),
-            (0., height - 146.),
-            true,
-            scale,
-        );
+        let surface_color = t.surface;
+        let bottom_fade = canvas(
+            move |bounds, window, _| {
+                gradient_image(
+                    &[(surface_color, 0.), (clear, 1.)],
+                    surface_color,
+                    (f32::from(bounds.size.width), f32::from(bounds.size.height)),
+                    (0., f32::from(bounds.top()) - 44.),
+                    true,
+                    window.scale_factor(),
+                )
+            },
+            |bounds, image, window, _| {
+                window
+                    .paint_image(bounds, bounds, Corners::default(), image, 0, false)
+                    .ok();
+            },
+        )
+        .w(px(width))
+        .h(px(32.))
+        .top_layer();
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let drag_focus = focus.clone();
         let this = cx.entity().downgrade();
@@ -1955,6 +2146,9 @@ impl Render for ThreadView {
             .clone()
             .downcast::<crate::composer::Composer>()
             .ok();
+        let native_approval = composer
+            .as_ref()
+            .is_some_and(|composer| composer.read(cx).is_computer_use_request());
         let page = div()
             .size_full()
             .relative()
@@ -1969,6 +2163,10 @@ impl Render for ThreadView {
                     .track_scroll(&self.scroll)
                     .track_focus(&focus)
                     .on_action(cx.listener(Self::copy_selection))
+                    .when(
+                        cfg!(target_os = "macos") && self.carets.range().is_some(),
+                        |view| view.on_action(cx.listener(Self::speak_selection)),
+                    )
                     // A press on the transcript collapses the selection to a caret, takes the
                     // focus from the editor, and starts a drag (TH-127). Buttons stop it; a
                     // control that took the focus during the press (the inline editor) keeps it.
@@ -2031,6 +2229,7 @@ impl Render for ThreadView {
                     // transcript press.
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .layer()
+                    .when(native_approval, |d| d.cc_tiles().window_space_recording())
                     .child(
                         div()
                             .relative()
@@ -2087,8 +2286,11 @@ fn work(turn: &Turn) -> (&[ThreadItem], Option<(&str, &str)>) {
     }
 }
 
-/// The command inside the `<shell> -lc "<command>"` wrapper the server reports.
-fn shell_command(command: &str) -> &str {
+/// Uses the server's parsed command when it reports one, otherwise removes the shell wrapper.
+fn shell_command<'a>(command: &'a str, actions: &'a [CommandAction]) -> &'a str {
+    if let [action] = actions {
+        return &action.command;
+    }
     let Some((_, inner)) = command.split_once(" -lc ") else {
         return command;
     };
@@ -2170,6 +2372,7 @@ fn measured(
 /// 510 device px; a tile owns its far edge pixel). `origin` is the image's top-left in css px
 /// relative to that layer (for the thread view: the main panel's top-left). Stops are
 /// `(color, position 0..=1)`; `to_top` flips the direction. `size` is in css px.
+/// The baked image uses a separate layer so later paints do not use it as their layer destination.
 pub fn skia_gradient(
     stops: &[(Hsla, f32)],
     under: Hsla,
@@ -2178,7 +2381,25 @@ pub fn skia_gradient(
     to_top: bool,
     scale: f32,
 ) -> gpui::Img {
-    static CACHE: LazyLock<Mutex<HashMap<u64, Arc<Image>>>> = LazyLock::new(Default::default);
+    gpui::img(gradient_image(stops, under, size, origin, to_top, scale))
+        .w(px(size.0))
+        .h(px(size.1))
+        .top_layer()
+        .object_fit(gpui::ObjectFit::Fill)
+}
+
+const MAX_GRADIENT_IMAGES: usize = 16;
+
+fn gradient_image(
+    stops: &[(Hsla, f32)],
+    under: Hsla,
+    size: (f32, f32),
+    origin: (f32, f32),
+    to_top: bool,
+    scale: f32,
+) -> Arc<gpui::RenderImage> {
+    static CACHE: LazyLock<Mutex<HashMap<u64, Arc<gpui::RenderImage>>>> =
+        LazyLock::new(Default::default);
     let dev = |v: f32| (v * scale).round().max(0.) as u32;
     let (w, h, ox, oy) = (dev(size.0), dev(size.1), dev(origin.0), dev(origin.1));
     let mut key = DefaultHasher::new();
@@ -2193,46 +2414,27 @@ pub fn skia_gradient(
         v.to_bits().hash(&mut key);
     }
     (w, h, ox, oy, to_top).hash(&mut key);
-    let image = CACHE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .entry(key.finish())
-        .or_insert_with(|| {
-            Arc::new(Image::from_bytes(
-                ImageFormat::Pnm,
-                gradient_ppm(stops, under, (w, h), (ox, oy), to_top),
-            ))
-        })
-        .clone();
-    gpui::img(image)
-        .w(px(size.0))
-        .h(px(size.1))
-        .object_fit(gpui::ObjectFit::Fill)
-}
-
-/// Pixels of [`skia_gradient`] as a binary PPM.
-fn gradient_ppm(
-    stops: &[(Hsla, f32)],
-    under: Hsla,
-    (w, h): (u32, u32),
-    (ox, oy): (u32, u32),
-    to_top: bool,
-) -> Vec<u8> {
-    let stops = premul_stops(stops);
-    let u = Rgba::from(under);
-    let under = [u.r, u.g, u.b].map(|v| (v * 255.).round() as u32);
-    let mut out = format!("P6\n{w} {h}\n255\n").into_bytes();
-    out.reserve((w * h * 3) as usize);
-    for j in 0..h {
-        for i in 0..w {
-            let [r, g, b, a] = gradient_px(&stops, h, (ox, oy), to_top, i, j);
-            for (c, under) in [r, g, b].into_iter().zip(under) {
-                let c = u32::from(c) + (under * (255 - u32::from(a)) + 127) / 255;
-                out.push(c.min(255) as u8);
-            }
-        }
+    let key = key.finish();
+    let mut cache = CACHE.lock().unwrap_or_else(|error| error.into_inner());
+    if let Some(image) = cache.get(&key) {
+        return image.clone();
     }
-    out
+    // ponytail: clear 16 layouts together; use an LRU if multi-window resizing causes cache churn.
+    if cache.len() >= MAX_GRADIENT_IMAGES {
+        cache.clear();
+    }
+    let stops = premul_stops(stops);
+    let under = [u.r, u.g, u.b].map(|v| (v * 255.).round() as u32);
+    let image = image::RgbaImage::from_fn(w, h, |i, j| {
+        let [r, g, b, a] = gradient_px(&stops, h, (ox, oy), to_top, i, j);
+        let [r, g, b] = [(r, under[0]), (g, under[1]), (b, under[2])].map(|(c, under)| {
+            (u32::from(c) + (under * (255 - u32::from(a)) + 127) / 255).min(255) as u8
+        });
+        image::Rgba([b, g, r, 255])
+    });
+    let image = Arc::new(gpui::RenderImage::new([image::Frame::new(image)]));
+    cache.insert(key, image.clone());
+    image
 }
 
 /// `stops` of [`skia_gradient`] as `(premultiplied color, alpha, position)`.
@@ -2416,8 +2618,9 @@ mod tests {
             (fade(0.12), 0.6),
             (gpui::transparent_black(), 1.),
         ];
-        let ppm = gradient_ppm(&stops, s, (1871, 80), (0, 0), false);
-        let px = |x: usize, y: usize| ppm[ppm.len() - 1871 * 80 * 3 + (y * 1871 + x) * 3];
+        let image = gradient_image(&stops, s, (1871., 80.), (0., 0.), false, 1.);
+        let pixels = image.as_bytes(0).unwrap();
+        let px = |x: usize, y: usize| pixels[(y * 1871 + x) * 4 + 2];
         let rows: Vec<String> = [96, 116, 131]
             .iter()
             .map(|&y| {
@@ -2438,6 +2641,40 @@ mod tests {
     }
 
     #[test]
+    fn transparent_gradient_preserves_background_color_channels() {
+        let clear = gpui::transparent_black();
+        let image = gradient_image(
+            &[(clear, 0.), (clear, 1.)],
+            rgb(0x123456).into(),
+            (1., 1.),
+            (0., 0.),
+            false,
+            1.,
+        );
+        assert_eq!(image.as_bytes(0).unwrap(), &[0x56, 0x34, 0x12, 0xff]);
+    }
+
+    #[test]
+    fn changing_fade_origins_releases_old_images() {
+        let color = gpui::rgb(0x102030).into();
+        let stops = [(color, 0.), (gpui::transparent_black(), 1.)];
+        let first = gradient_image(&stops, color, (2., 2.), (0., 0.), false, 1.);
+        let weak = Arc::downgrade(&first);
+        drop(first);
+        for offset in 1..=MAX_GRADIENT_IMAGES {
+            drop(gradient_image(
+                &stops,
+                color,
+                (2., 2.),
+                (0., offset as f32),
+                false,
+                1.,
+            ));
+        }
+        assert!(weak.upgrade().is_none());
+    }
+
+    #[test]
     fn formats_times() {
         // 2026-10-14 21:54:31 PDT, seen the next morning.
         let at = 1_792_040_071;
@@ -2447,8 +2684,19 @@ mod tests {
         );
         assert_eq!(day_and_time(at, at + 3 * 86_400, -25_200).0, "Oct 14");
         assert_eq!(duration(17), "17s");
+    }
+
+    #[test]
+    fn terminal_labels_preserve_parsed_shell_escapes() {
+        let command = r#"/bin/zsh -lc "printf '\\033[31mred\\033[0m'""#;
+        let actions = [CommandAction {
+            kind: "unknown".into(),
+            command: r"printf '\033[31mred\033[0m'".into(),
+            name: None,
+        }];
+        assert_eq!(shell_command(command, &actions), actions[0].command);
         assert_eq!(
-            shell_command(r#"/bin/zsh -lc "python3 -c 'print(2)'""#),
+            shell_command(r#"/bin/zsh -lc "python3 -c 'print(2)'""#, &[]),
             "python3 -c 'print(2)'"
         );
     }

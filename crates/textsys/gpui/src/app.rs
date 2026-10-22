@@ -53,9 +53,9 @@ use crate::{
     PlatformKeyboardLayout, PlatformKeyboardMapper, Point, Priority, PromptBuilder, PromptButton,
     PromptHandle, PromptLevel, Render, RenderImage, RenderablePromptHandle, Reservation,
     ScreenCaptureSource, SharedString, SubscriberSet, Subscription, SvgRenderer,
-    SystemNotification, SystemNotificationResponse, Task, TextRenderingMode, TextSystem,
-    ThermalState, Window, WindowAppearance, WindowButtonLayout, WindowHandle, WindowId,
-    WindowInvalidator, WindowingRequest,
+    SystemNotification, SystemNotificationReply, SystemNotificationResponse, Task,
+    TextRenderingMode, TextSystem, ThermalState, Window, WindowAppearance, WindowButtonLayout,
+    WindowHandle, WindowId, WindowInvalidator, WindowingRequest,
     colors::{Colors, GlobalColors},
     hash, init_app_menus,
 };
@@ -1927,6 +1927,21 @@ impl App {
             .on_system_notification_response(Box::new(move |response| {
                 if let Some(app) = this.upgrade() {
                     callback(response, &mut app.borrow_mut());
+                }
+            }));
+    }
+
+    /// Registers a handler for inline notification replies on supported platforms.
+    /// Subsequent registrations replace the handler.
+    pub fn on_system_notification_reply<F>(&self, mut callback: F)
+    where
+        F: 'static + FnMut(SystemNotificationReply, &mut App),
+    {
+        let this = self.this.clone();
+        self.platform
+            .on_system_notification_reply(Box::new(move |reply| {
+                if let Some(app) = this.upgrade() {
+                    callback(reply, &mut app.borrow_mut());
                 }
             }));
     }

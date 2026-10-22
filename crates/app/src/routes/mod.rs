@@ -1,0 +1,218 @@
+use crate::*;
+use gpui::Div;
+
+mod archive;
+mod automations;
+mod home;
+mod mobile;
+mod settings;
+mod thread;
+
+pub(crate) use thread::load_thread;
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum Route {
+    #[default]
+    Home,
+    Thread(String),
+    Remote {
+        task_id: String,
+        hotkey: bool,
+    },
+    Settings,
+    SettingsSubtree(String),
+    /// Rail `Scheduled` (`/scheduled`): the Automations page.
+    Scheduled,
+    /// A sidebar task row (`/scheduled?automationId=<id>`): the task's thread.
+    Automation(String),
+    /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
+    Mobile,
+    Archive,
+}
+
+pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
+    root = home::actions(root, cx);
+    root = thread::actions(root, cx);
+    root = settings::actions(root, cx);
+    root = automations::actions(root, cx);
+    root = mobile::actions(root, cx);
+    root = archive::actions(root, cx);
+    root
+}
+
+impl Root {
+    pub(crate) fn navigate(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigate_with_sidebar(route, None, window, cx);
+    }
+
+    pub(crate) fn navigate_with_sidebar(
+        &mut self,
+        route: Route,
+        automation: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if route != self.state.route || automation != self.sidebar_automation {
+            self.remember_thread_settings(cx);
+            self.back.push((
+                std::mem::replace(&mut self.state.route, route),
+                std::mem::replace(&mut self.sidebar_automation, automation),
+            ));
+            self.navigation_epoch += 1;
+            self.forward.clear();
+            self.sync(window, cx);
+        }
+        self.select_route(cx);
+    }
+
+    pub(crate) fn step(&mut self, back: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.remember_thread_settings(cx);
+        let (from, to) = if back {
+            (&mut self.back, &mut self.forward)
+        } else {
+            (&mut self.forward, &mut self.back)
+        };
+        if let Some((route, automation)) = from.pop() {
+            to.push((
+                std::mem::replace(&mut self.state.route, route),
+                std::mem::replace(&mut self.sidebar_automation, automation),
+            ));
+            self.navigation_epoch += 1;
+            self.select_route(cx);
+            self.sync(window, cx);
+        }
+    }
+
+    pub(crate) fn select_route(&self, cx: &mut Context<Self>) {
+        let id = match &self.state.route {
+            Route::Thread(id) => Some(id.as_str()),
+            _ => None,
+        };
+        self.sidebar.update(cx, |s, cx| s.select(id, cx));
+    }
+
+    /// Shows the route (loading its thread if needed), pushes history into the shell and
+    /// persists the state.
+    pub(crate) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.remember_recent_chat();
+        self.flush_settings(cx);
+        self.settings_page = None;
+        self.suggestion_load = None;
+        let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
+        self.archive_page = None;
+        self.mobile_page = None;
+        self.cloud = None;
+        self.page = match self.state.route.clone() {
+            Route::Remote { task_id, hotkey } => {
+                self.load_cloud_task(task_id, hotkey, window, cx);
+                None
+            }
+            Route::Settings | Route::SettingsSubtree(_) => Some(settings::page(self, cx)),
+            Route::Scheduled => Some(automations::scheduled(self, cx)),
+            Route::Automation(id) => Some(automations::automation(self, id, window, cx)),
+            Route::Archive => Some(archive::page(self, cx)),
+            Route::Thread(_) if self.sidebar_automation.is_some() => {
+                Some(automations::thread(self, cx))
+            }
+            Route::Mobile => Some(mobile::page(self, cx)),
+            Route::Home | Route::Thread(_) => None,
+        };
+        if let Some(sidebar) = &self.scheduled {
+            for id in self.automation_updates.keys() {
+                sidebar.update(cx, |sidebar, cx| sidebar.set_pending(id, true, cx));
+            }
+        }
+        if self.scheduled_route() {
+            self.load_suggestions(cx);
+        }
+        if let Some(page) = &self.page {
+            page.update(cx, |shell, _| {
+                shell.can_go_back = can_back;
+                shell.can_go_forward = can_forward;
+            });
+        }
+        let thread_id = match &self.state.route {
+            Route::Thread(id) => Some(id.clone()),
+            _ => None,
+        };
+        if self
+            .history
+            .as_ref()
+            .is_some_and(|(id, _)| Some(id) != thread_id.as_ref())
+        {
+            self.history = None;
+        }
+        let view = self
+            .thread
+            .clone()
+            .filter(|v| Some(v.read(cx).id()) == thread_id.as_deref());
+        let main: AnyView = match (&thread_id, &view) {
+            _ if self.cloud.is_some() => self.cloud.as_ref().unwrap().page.clone().into(),
+            (Some(_), Some(view)) => view.clone().into(),
+            (Some(id), None) => self.load_thread(id.clone(), window, cx).into(),
+            (None, _) => self.home.clone().into(),
+        };
+        let shell = if self.sidebar_automation.is_some() {
+            self.page.clone().unwrap_or_else(|| self.shell.clone())
+        } else {
+            self.shell.clone()
+        };
+        window.focus(&self.route_focus(cx), cx);
+        let home = matches!(
+            self.state.route,
+            Route::Home | Route::Thread(_) | Route::Remote { .. }
+        );
+        shell.update(cx, |shell, cx| {
+            shell.selected_rail = if self.sidebar_automation.is_some() {
+                Some("scheduled")
+            } else {
+                home.then_some("home")
+            };
+            shell.can_go_back = can_back;
+            shell.can_go_forward = can_forward;
+            // Thread routes: `with_side_panel` below sets its own.
+            shell.new_tab = true;
+            shell.main_composited = false;
+            shell.set_main(main, cx);
+        });
+        self.split = view.map(|view| {
+            let panel = self.side_tabs_view(&view, cx);
+            with_side_tabs(shell.clone(), view, panel, cx)
+        });
+        if let Some(id) = thread_id
+            && self
+                .thread
+                .as_ref()
+                .is_some_and(|view| view.read(cx).id() == id)
+        {
+            self.list_queue(id, cx);
+        }
+        self.save(window, cx);
+        cx.notify();
+    }
+
+    /// Keys need a focused element in the frame: the route's composer, else the root (the
+    /// route's own shell, a loading thread, the sign-in view, which take no keys of their own).
+    pub(crate) fn route_focus(&self, cx: &App) -> FocusHandle {
+        let open = |id: &str| self.thread.as_ref().is_some_and(|v| v.read(cx).id() == id);
+        match &self.state.route {
+            _ if self.login.is_some() => self.focus.clone(),
+            Route::Remote { .. } => self
+                .cloud
+                .as_ref()
+                .map(|session| {
+                    let page = session.page.read(cx);
+                    if page.has_composer() {
+                        page.composer.focus_handle(cx)
+                    } else {
+                        page.focus_handle(cx)
+                    }
+                })
+                .unwrap_or_else(|| self.focus.clone()),
+            Route::Thread(id) if open(id) => self.thread_composer.focus_handle(cx),
+            _ if self.page.is_some() => self.focus.clone(),
+            Route::Thread(_) => self.focus.clone(),
+            _ => self.home.read(cx).composer.focus_handle(cx),
+        }
+    }
+}

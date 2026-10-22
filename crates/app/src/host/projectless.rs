@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(super) struct Workspace {
+pub struct Workspace {
     pub cwd: String,
     output: String,
     pub root: String,
@@ -44,11 +44,13 @@ fn real_directory(path: &Path) -> Result<()> {
 
 impl LocalHost {
     pub(super) fn create_projectless_workspace(&self, prompt: &str) -> Result<Workspace> {
-        let settings = crate::host_settings::Settings::load(self.host_settings_path.clone())?;
-        let configured = settings
-            .read_all()
-            .get("projectlessWorkspaceRoot")
-            .unwrap_or(&Value::Null);
+        let bridge = self
+            .bridge
+            .as_ref()
+            .context("The app server is not connected")?;
+        let config: Value =
+            pollster::block_on(bridge.request("config/read", json!({"includeLayers": false})))?;
+        let configured = &config["config"]["desktop"]["projectlessWorkspaceRoot"];
         let root = if configured.is_null() {
             PathBuf::from(
                 std::env::var_os("HOME").context("No home directory for projectless tasks")?,

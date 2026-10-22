@@ -30,6 +30,12 @@ use std::{
 };
 use theme::{ActiveTheme as _, Theme};
 
+#[path = "computer_use.rs"]
+pub mod computer_use;
+
+#[path = "settings_subtrees.rs"]
+pub mod subtrees;
+
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
@@ -164,6 +170,7 @@ const EXTERNAL: &str = "Profile";
 ///   access menu visibility, Bottom panel, Show predictions); session only.
 pub struct SettingsPage {
     section: &'static str,
+    subtree: Option<AnyView>,
     query: String,
     /// `config/read` config, plus a `host` object for host settings.
     values: Value,
@@ -189,6 +196,7 @@ impl SettingsPage {
         let values = config.clone();
         Self {
             section: "General",
+            subtree: None,
             query: String::new(),
             values,
             projectless_root,
@@ -222,6 +230,11 @@ impl SettingsPage {
 
     pub fn refresh_host(&mut self, values: Value, cx: &mut Context<Self>) {
         self.values["host"] = values;
+        cx.notify();
+    }
+
+    pub fn show_subtree(&mut self, view: AnyView, cx: &mut Context<Self>) {
+        self.subtree = Some(view);
         cx.notify();
     }
 
@@ -355,7 +368,16 @@ impl SettingsNav {
                 d.child(icon("arrow-up-right", 16., t.text_secondary).opacity(0.5))
             })
             .when(label != EXTERNAL, |d| {
-                d.on_click(cx.listener(move |this, _, _, cx| {
+                d.on_click(cx.listener(move |this, _, window, cx| {
+                    if this.page.read(cx).subtree.is_some() {
+                        window.dispatch_action(
+                            Box::new(subtrees::OpenSection {
+                                label: label.into(),
+                            }),
+                            cx,
+                        );
+                        return;
+                    }
                     this.page.update(cx, |p, cx| {
                         p.section = label;
                         cx.notify();
@@ -470,7 +492,7 @@ const CLOSE_OPTIONS: &[(&str, &str)] = &[
 const SEND_OPTIONS: &[(&str, &str)] = &[
     ("enter", "Enter"),
     ("cmdIfMultiline", "⌘ + Enter for multiline prompts"),
-    ("cmdEnter", "⌘ + Enter always"),
+    ("cmdAlways", "⌘ + Enter always"),
 ];
 
 impl SettingsPane {
@@ -998,14 +1020,27 @@ impl SettingsPane {
                     row(
                         "Open source licenses",
                         Some("Third-party notices for bundled dependencies"),
-                        button("View", t.text_alpha_5, None, t).into_any_element(),
+                        button("View", t.text_alpha_5, None, t)
+                            .id("open-source-licenses")
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(subtrees::OpenSubtree {
+                                        path: subtrees::LICENSES_PATH.into(),
+                                    }),
+                                    cx,
+                                );
+                            })
+                            .into_any_element(),
                     ),
                     row(
                         "Plugins",
                         Some("Allow ChatGPT to use installed plugins"),
                         self.toggle("features.plugins", true, t, window, cx),
                     ),
-                ],
+                ]
+                .into_iter()
+                .chain(crate::updater::managed_row(t, cx))
+                .collect(),
             ),
             (
                 "Composer",
@@ -1135,7 +1170,13 @@ impl SettingsPane {
 impl Render for SettingsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        if let Some(view) = &self.page.read(cx).subtree {
+            return view.clone().into_any_element();
+        }
         let section = self.page.read(cx).section;
+        if section == "Computer use" {
+            return super::computer_use::render(window, cx);
+        }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
             "General" => self.general(&t, window, cx),
@@ -1240,6 +1281,7 @@ impl Render for SettingsPane {
                         ),
                     ),
             )
+            .into_any_element()
     }
 }
 
@@ -1268,7 +1310,7 @@ fn middle_truncate(s: &str, fits: impl Fn(&str) -> bool) -> String {
 
 /// One settings row: title, optional description (an `<a>…</a>` span renders as the inline
 /// link) and the trailing control.
-fn settings_row(
+pub(crate) fn settings_row(
     title: &'static str,
     detail: Option<&'static str>,
     control: AnyElement,
@@ -1338,7 +1380,7 @@ fn description(s: &'static str, t: &Theme) -> Div {
 /// paints the track and thumb into one `saveLayerAlpha(153)`.
 /// Toggling moves the thumb 2 px -> 14 px and fades the track colour, both 150 ms `ease-out`
 /// (`refs/interactions/ms6a.json`); the tracks stay active under reduced motion.
-fn switch(id: &'static str, on: bool, disabled: bool, t: &Theme) -> Stateful<Div> {
+pub(super) fn switch(id: &'static str, on: bool, disabled: bool, t: &Theme) -> Stateful<Div> {
     let (track_off, track_on) = (t.switch_track, t.switch_track_checked);
     let thumb = shapes::Decoration {
         radius: Corners::all(px(9999.)),

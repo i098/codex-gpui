@@ -31,14 +31,14 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 | 14.1 Left rail | 12 | 4 | 1 | 7 |
 | 14.2 Sidebar | 23 | 12 | 4 | 7 |
 | 14.3 Home | 21 | 10 | 3 | 8 |
-| 14.4 Thread view | 20 | 6 | 3 | 11 |
+| 14.4 Thread view | 20 | 11 | 2 | 7 |
 | 14.5 Composer | 20 | 6 | 5 | 9 |
-| 14.6 Diff view | 20 | 2 | 1 | 17 |
+| 14.6 Diff view | 20 | 14 | 5 | 1 |
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 10 | 0 | 0 |
-| 15.3 Mobile setup | 10 | 2 | 1 | 7 |
-| **All** | **192** | **74** | **31** | **87** |
+| 15.3 Mobile setup | 10 | 3 | 2 | 5 |
+| **All** | **192** | **92** | **35** | **65** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -62,7 +62,7 @@ Each screen still runs both themes and sizes before it returns its combined fail
 The flow executable exits 1 if any flow fails.
 There is no report-only or optional mode.
 
-`Fx::reference_shot` parks the pointer at `(round(width * 0.6), 6)` and makes only the captured composer caret transparent.
+`Fx::reference_shot` parks the pointer at `(round(width * 0.6), 6)` and makes the captured composer and search input carets transparent.
 It keeps keyboard focus, selection, and editor input intact, then restores normal caret drawing.
 The fixture clock uses the original `2026-10-15T17:00:00Z` base and `-07:00` offset, plus monotonic elapsed time from test startup.
 The original preload also advances from its base; the exact historical screenshot instant is not retained.
@@ -95,7 +95,7 @@ The prior large-window clicks miss the menu; the corrected clicks and reference 
 
 Pointer, clock, and composer-caret preparation now follow the reference; other fixture, host-data, and drawing differences remain unresolved.
 None of these remaining causes waives a failure.
-Keep S026's recorded command groups and settled search behavior instead of restoring an older pending-search screenshot state.
+Keep S026's recorded command groups and settled local search behavior; the independent ChatGPT search can still be pending.
 Keep S009's File viewer behavior; its recorded test replaces the obsolete file-link-to-Changes assertion.
 The S009, S026, F3b, and S034b recorded tests pass with the strict shared helper.
 Formatting and `cargo clippy --workspace --all-targets -- -D warnings` pass after integrating current main.
@@ -129,6 +129,40 @@ Cells give `outside count / text percent`; the owned empty `CODEX_HOME` excludes
 | Remaining full-Root failure | Dark 1280x832 | Dark 1440x900 | Light 1280x832 | Light 1440x900 |
 |---|---|---|---|---|
 | Sidebar | 95831 / 12.250% | 102522 / 9.995% | 128199 / 13.491% | 137557 / 10.381% |
+
+### Sidebar multi-source search
+
+The fixed Sidebar reference shows a completed local content search while the separate ChatGPT search remains pending.
+The Root now consumes both sources through the existing app-server and `CloudHost`.
+The spinner remains while either source is pending.
+Cloud failures retain local results and expose Retry by pointer or keyboard.
+The cloud source uses the original three retries, after one, two, and four seconds.
+Query generations reject stale results, and a closed menu sends no later retry.
+
+Local results open the native thread route.
+Cloud conversations and dot messages open their encoded canonical ChatGPT pages through the existing platform URL action.
+This repair does not add a separate ChatGPT application mode.
+
+`sidebar-math-search.jsonl` retains the real local answer from the recovered original rollout files and history database.
+`sidebar-cloud-search.json` retains the original owned fixture server's HTTP response.
+That response triggers the original pending retry interval without fabricated search results or production pending overrides.
+The search input uses the same transparent-caret capture setting as the composer.
+The references, text masks, and strict assertions remain unchanged.
+
+The focused native run passes all four Sidebar comparisons:
+
+| Case | Outside-text pixels | Text difference |
+|---|---:|---:|
+| Dark 1280x832 | 0 | 0.154% |
+| Dark 1440x900 | 0 | 0.152% |
+| Light 1280x832 | 0 | 0.153% |
+| Light 1440x900 | 0 | 0.152% |
+
+Run `cargo test -p app --test flows -- parity_sidebar` on the Mac for the unchanged pixel gate.
+Run `cargo test -p app --test sidebar_search` for source completion, failure, retry, selection, and canonical navigation checks.
+The S026 control creates its own Git repository; it no longer depends on the shared temporary project surviving system cleanup.
+The repair is tracked in [the Sidebar issue](https://github.com/i098/codex-gpui/issues/273).
+
 
 ## App shell: shortcuts, menu bar, window (§2.2, §12, §13)
 
@@ -291,6 +325,19 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 
 ## 14.3 Home
 
+The retained native Home input capture reaches `Choose project` and `This computer` with Tab and Shift-Tab.
+Pointer movement keeps the keyboard ring; a pointer press clears it.
+Tab and Shift-Tab scroll an overflowing utility bar to the focused control.
+`Choose project` keeps the existing native folder picker; `This computer` still has no location-menu handler.
+The original `⌥⇧⌘O` shortcut and `⌘O` open that same picker.
+Home derives live fades from the scroll range and captures the finished-animation mask for static references.
+Both utility icons use the runtime path so the scroll masks affect their pixels.
+The capture regression checks live-state restoration, another window, a closed-window error, and the reduced-motion preference.
+The focused project-control crop now matches the original, including the tooltip shadow over the ring.
+The original recordings, masks and strict gates stay unchanged; remaining tooltip and rail differences are tracked separately.
+
+New chat adds a Back entry even when Home is already open.
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Launch to `/` | entry | Hero, announcement slot and composer. | Route Home, rail Home selected, composer focused, Recents loaded. | PASS (`launch_home`, `parity_home`) |
@@ -309,20 +356,25 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 | 14 | `Start new voice chat` | click | Starts realtime voice. | With an empty draft the button calls `submit`, which does nothing. | NOT WIRED (`crates/ui/src/composer.rs`, `send`) |
 | 15 | Submit with Enter | shortcut | `thread/start`, `turn/start`, navigates to the thread. | Same; the turn streams in; the draft clears; also by clicking Send. | PASS (`submit_enter_starts_thread`, `submit_click_send`) |
 | 16 | Hover on every button | hover | Ghost background fades in. | Hover fill on composer buttons (checked on `Dictate`). | PASS (`composer_button_hover`) |
-| 17 | Tab through controls | focus ring | 2 px ring. | No tab stops. | NOT WIRED (`crates/ui/src/composer.rs`, `crates/ui/src/screens/home.rs`) |
+| 17 | Tab through controls | focus ring | 2 px ring. | `Choose project` and `This computer` have tab stops; the native capture proves focus traversal, not menu activation. | NOT WIRED (remaining composer controls) |
 | 18 | No projects / no chats | empty | `No projects`, `No chats`, `What should we build?`. | Same with an empty `thread/list`. | PASS (`sidebar_empty_lists`) |
 | 19 | Model list loading | loading | `Loading model…`. | Empty `model/list` shows `Loading model…` (the pill repaints). | PASS (`model_list_loading`) |
 | 20 | Account load failure | error | `We couldn’t load your account`, `Reload`, `Sign out`. | An `account/read` error stops `Root::connect`; the window stays empty. | FAIL (`crates/app/src/lib.rs` `connect`; no error page in `crates/ui`) |
 | 21 | Resize | resize | Below 768 px the sidebar is an overlay; below 40rem the composer stacks. | Sidebar hides (row 14.2/23); composer does not stack. | FAIL (`crates/ui/src/composer.rs`: only the 475 px compact footer) |
+
+The shared Composer session API includes `finish_dictation(window, cx)` and `Completion` events.
+Success follows transcript processing; failure and cancellation remain distinct.
+Consumers can wait before submitting a draft. A closed event stream fails instead of leaving the session active.
+`cargo test -p ui --lib composer::dictation` checks completion order, cancellation, and closed streams without microphone access.
 
 ## 14.4 Thread view
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Open `/local/:conversationId` | entry | `thread/resume`, turns render, scroll to bottom. | `thread/read` with turns (resume on the first send); parity: see `parity_thread`. | PASS (`thread_row_opens_thread`, `parity_thread`) |
-| 2 | History loading | loading | `Loading task…`. | The main panel is empty while `thread/read` runs. | NOT WIRED (`crates/ui/src/thread.rs`: no loading view; `crates/app/src/lib.rs` `sync` shows `EmptyMain`) |
-| 3 | History failure | error | `Couldn't load messages` + `Retry`. | The error is logged; the panel stays empty. | FAIL (`crates/app/src/lib.rs` `load_thread` only logs; no error view in `crates/ui/src/thread.rs`) |
-| 4 | Turn render failure | error | `This turn couldn't render`. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
+| 2 | History loading | loading | Spinner; `Loading task…` for assistive technology. | The loading view remains visible during `thread/read`. The spinner uses the original SVG in its own raster layer and retains its rotation timing. The composer stays unmounted, so hidden bindings cannot send or approve in another chat. | PASS (`thread_recovery`: hidden-composer regression and zero differences over the 3600-pixel spinner region; `native_icon_rotation_preserves_its_raster`) |
+| 3 | History failure | error | `Couldn't load messages` + `Retry`. | The squircle warning shares its opaque footer's compositor layer above the original fade. Its Retry tooltip and accessibility label retain the source error. Retry reads the same thread again. Late responses cannot replace another route. | PASS (`thread_recovery`: button-bound retry and route change; complete 123984-pixel warning comparison: zero differences) |
+| 4 | Turn render failure | error | `This turn couldn't render`. | A failed turn leaves other turns visible. Try again rebuilds that turn from current data. Its tooltip and accessibility label retain the source error. The squircle card and Retry fill use the original viewport layer; Retry keeps its hover behavior and border-box size. | PASS (`thread_recovery`: Linux render failure and retry without a graphics adapter; original-context component: zero differences over 233208 pixels, hover and restoration checked without a Mac panic) |
 | 5 | Streaming agent message | loading | Text grows by deltas; new segments fade over 700 ms; `Working` shimmer. | New glyphs use the recorded adaptive fade. Later deltas do not restart older glyphs. Reduced motion shows the end state immediately. Shimmer belongs to S5. | PASS (`submit_enter_starts_thread`, `stream_fade`) |
 | 6 | Reasoning item | click | Toggles `Thought for {elapsed}`. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 7 | Command card | click | Expands output; copy buttons. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
@@ -334,11 +386,38 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 | 13 | `⌘F` | shortcut | Find bar. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 14 | `⌘⇧A` | shortcut | Archives the chat. | `ArchiveChat`: `thread/archive`, the row leaves Recents, the route goes to Home. | PASS (`archive_chat`) |
 | 15 | `⌘⌥R` | shortcut | Rename dialog. | — | NOT WIRED (`crates/ui`: no rename dialog) |
-| 16 | Approval card | click | Approve, Allow similar, Allow all edits, Deny. | `Root::on_event` keeps each command or file-change approval request by its request id and thread, and the thread composer shows the open thread's oldest one. `Allow once`, the scoped allow, `Deny`, `Enter` and `Escape` answer that request once by its id; the next one then shows. `serverRequest/resolved` and the `turn/completed` of a request's turn remove it without an answer. Other server requests (permissions, user input, elicitation, tool calls) stay unanswered. | PASS (`approval_round_trip`: a command approval request crafted from `CommandApprovalRequest`, because the sessions ran with `approvalPolicy: never`; `approval_queue.rs`: five pending requests on two chats, decision order, withdrawal and turn end) |
-| 17 | Stream error | error | `Reconnecting {progress}`. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
-| 18 | Usage limit | error | Usage limit banner. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
+| 16 | Approval card | click | Approve, Allow similar, Allow all edits, Deny. | `Root::on_event` keeps each pending request by its request id and thread. The open thread shows its oldest request. Command, file-change, permission, user-input, standard MCP elicitation, and supported dynamic-tool forms use this queue. Responses retain the displayed card's identity. Explicit resolution removes requests without answering them. Turn completion removes only turn-bound requests. | PASS (`approval_queue.rs`: command/file-change queue order, withdrawal, thread isolation and turn end; non-command release gates remain open below) |
+| 17 | Stream error | error | `Reconnecting {progress}`. | Thread-bound notices show reconnect progress or busy status for `serverOverloaded` and HTTP 429 stream disconnects. Each digit uses the original character width and a separate layer. The suffix keeps its fractional position. Progress updates replace the current retry count. Later activity and completion retain source notices with their turn. | PASS (`thread_recovery`: thread and turn isolation, progress, busy status, retained notices, and zero pixel differences in both counter regions) |
+| 18 | Usage limit | error | Usage limit banner. | `usageLimitExceeded` shows the divider and the advice for the plan reported by `account/read`. Unknown plans use the retry-later fallback. Source details remain available, and completion retains terminal errors. | PASS (`thread_recovery`: account-plan advice and source-error retention) |
 | 19 | Focus ring on cards | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 20 | Resize | resize | The side panel yields width before the chat column. | `panel_width` keeps 320 px for the chat; no flow checks the 3 widths with the panel open. | FAIL (no flow; `crates/ui/src/diff.rs` `panel_width` assumes the sidebar open) |
+
+TH-123/124/125 add permission, user-input, standard MCP elicitation, and supported dynamic-tool forms to the existing request queue.
+The request editor retains drafts by thread and request while switching chats or recovering from a failed cancellation.
+MCP elicitations and nonblocking questions remain pending until explicit resolution.
+Unsupported question and permission requests receive empty-denial responses.
+Skipping an optional final choice submits the answers from earlier fields.
+Enter retains draft submission for command and file-change approvals.
+The reference frames use the pinned original renderer on macOS, with native fonts, at 1280x832 and scale 2.
+The native request replay covers numeric bounds, pointer steps, and keyboard stepping after a pointer step.
+Plain input fields keep a stable keyboard context across request and focus changes.
+The appearance packet remains held until the remaining visible differences are resolved.
+
+Native Computer Use app approvals use this queue and retain the original request, thread, and turn IDs.
+Only the registered `lcu` server can use the native card.
+The card shows the app name, elevated risk, and first-use disclosure.
+The card uses the shared rounded clip for content and paints the risk shield outside that clip.
+The icon rasterizes during paint in the active compositor layer; the footer records in window space.
+`Allow this conversation` selects the offered session scope; without that scope, `Allow once` permits one use.
+`Always allow` appears only when the server offers that scope in the persistence array.
+MCP responses use `action`, optional empty `content`, and the selected `_meta.persist`; they never use a command-approval `decision`.
+The host retains the disclosure choice only after an accepted response enters the bridge.
+Run `cargo test -p app --test computer_use_approvals`; the native replay and captures require macOS.
+
+The native recovery replay runs with `cargo test -p app --test thread_recovery -- --test-threads=1`.
+It exercises Root, ThreadView, the replayed JSON-RPC bridge and the Metal renderer on macOS.
+The deliberate render-panic case runs only on Linux. The Mac suite exits on unexpected panics to prevent system crash dialogs.
+Set `CGX_THREAD_RECOVERY_PROOF` to an output directory to retain native captures.
 
 MO-36 uses `refs/interactions/ms4.json`, recorded with the original CSS classes in an isolated route1 Chrome context.
 The recording appends synthetic markdown spans and seeks their animations; it does not measure live model segmentation.
@@ -363,7 +442,7 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 |---|---|---|---|---|---|
 | 1 | Composer in thread | entry | `Work with Codex` (idle) or `Working…`. | Docked thread composer, focused on open; `Working…` not checked. | PASS (`shift_enter_newline`, `parity_thread`) |
 | 2 | Type text | focus | Editor grows to a max height, then scrolls. | Lines add; height growth not measured. | FAIL (no flow checks the max height) |
-| 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Enter sends; no `Send shortcut` setting. | PASS (`submit_enter_starts_thread`) |
+| 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Reads `desktop.composerEnterBehavior` at startup and after successful writes. `cmdAlways` requires Command+Enter; `cmdIfMultiline` requires it for multiline drafts. Shift+Enter inserts a line break. | PASS (`submit_enter_starts_thread`, `send_shortcut_controls_enter_without_changing_shift_enter`) |
 | 4 | Shift+Enter | shortcut | New line. | New line in the Home and thread composers. | PASS (`shift_enter_newline`) |
 | 5 | `@` | shortcut | Mention list. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 6 | `/` | shortcut | Slash command menu. | Matches the recorded menu, filtering, selected row, editor focus, arrows, Escape, Enter, and Tab. | PASS (`s021::slash_menu_keyboard_replay`) |
@@ -418,6 +497,11 @@ The original S023b recording, pixel probes, and references remain unchanged.
 Captured images are headless native application frames, not installed-window desktop captures.
 Run `tools/mac.sh -l queue-actions 'cargo test -p app --test s023b -- --test-threads=1'`.
 
+When the model catalog is unavailable, the composer blocks idle submission from both Send and Enter.
+`git_revert_ui::missing_model_blocks_new_submission_but_preserves_running_actions` checks the retained draft and running-turn actions.
+Inline code wraps within a narrow thread while its background stays continuous on each line.
+`git_revert_ui::inline_code_wraps_across_lines` checks both visible line backgrounds.
+
 ## 14.6 Diff view
 
 `Root` opens the Changes panel beside the open thread (`⌥⌘B`, `View changes`, the summary's `Changes` row) through `ui::screens::diff::panel::with_side_panel`, which the `diff` screen builder also uses.
@@ -451,12 +535,27 @@ Comment actions (S075/S082), file tabs (S186), and external targets remain outsi
 Local Changes uses the existing desktop host for `git-changes`, `git-stage`, and `git-unstage`.
 Each request uses the open thread's absolute `cwd`; file actions also send one repository-relative `path`.
 The response body contains `root`, `unstaged`, and `staged`; each file contains `path` and its unified `diff`.
-The selector keeps Last Turn and adds Unstaged, Staged, and Refresh.
+The selector offers Last Turn, Uncommitted, Unstaged, Staged, Committed, and Branch.
+Committed opens the commit submenu; the selected source has a checkmark.
+The toolbar retains Refresh. Re-selecting a repository source also refreshes a narrow panel.
+Uncommitted compares the working tree with HEAD and includes untracked files.
+Branch compares HEAD with the selected branch's merge base; Committed compares a selected commit with its first parent.
+An initial commit compares with the empty tree.
 Each local file menu stages or unstages the whole file; unstage preserves the working tree.
 Reads and mutations run off the UI thread, with loading and error states in the panel.
 Tracked files use one bulk Git diff per source; untracked files use separate comparisons.
 The `git_stage` native proof checks the real index, visible diff text, partial staging, deletion, lock recovery, and unborn repositories.
 It also checks literal and newline filenames, multi-file patches, and rejects paths outside the repository.
+Hunk Stage and Unstage apply only the reviewed hunk to the index and preserve the working tree.
+Stage all, Unstage all, and Revert all send the reviewed section through the existing Git endpoints.
+The host checks every file snapshot before it applies one combined patch.
+Patch writes use the captured bytes; only the displayed diff replaces invalid UTF-8.
+Revert all uses the same confirmation and saved preference as file and hunk reverts.
+Uncommitted permits Stage all but hides and rejects Revert all; that action is available only in Unstaged.
+Source and revision menus remain open while repository refresh replaces the displayed files.
+For a folder outside Git, Changes shows Create a Git repository and the Create git repository button.
+The button calls `git-init-repo` in the thread's folder; initialization preserves existing files and rejects an existing repository.
+The portable `git_review` proof checks real source selection, repository creation, file/hunk/section effects, stale snapshots, locks, and newer-work preservation.
 The file menu, file revert button, and per-hunk `Revert` controls call the existing `git-revert` host endpoint.
 It takes `cwd`, a repository-relative `path`, `source` (`unstaged` or `staged`), the `diff` text that Changes shows for that file, and an optional 0-based `hunk`.
 The host captures that file's `--binary` diff once, compares it with the request up to the binary data (the text form says `Binary files … differ` there; the full `index` line pins that data), and refuses a stale request (`file changed since its diff was shown`); the same capture is the patch it applies, so an edit made while the request runs can only fail the check, never enter the patch.
@@ -475,32 +574,55 @@ Failure shows `Failed to revert` with the target and keeps the displayed changes
 A partial result shows `Partially reverted` with the target and refreshes both sources from the host response.
 The `git_revert_ui` native proof drives pointer and keyboard input on disposable local Git repositories.
 It checks cancellation, preference reload, file and hunk effects on disk and index, stale and locked failures, and index-only partial results.
-Remote Git, hunk staging, and section-wide `Revert all` remain separate work.
+Remote Git remains separate work.
 Commit and push are in DT-139 below.
 
+Diff controls reuse `DiffPanel` for the thread panel and the standalone `/diff <patch-file>` entry.
+The standalone entry reads a Git-style unified patch from disk without starting an app-server.
+Auto uses split layout only when both sides change and the file pane is at least 800 px wide.
+The file tree filter changes the tree, not the displayed code.
+Paired replacement lines mark the changed text range.
+The header and context menu share the same word-wrap state.
+The file viewer handles `⌘L`, clamps line numbers, and counts negative numbers from the end.
+The line input stays closed until file contents are available.
+The `git-file-url` host read uses the current branch for a GitHub origin, as in the original.
+It encodes path segments and can include a line anchor.
+Other origins return no link.
+A detached HEAD returns no link.
+The parser stops above 2,000,000 input bytes, 20,000 input lines, or 10,000 bytes per input line.
+Invalid hunk numbers show `Diff failed to render` instead of overflowing a line counter.
+File boundaries must start a line; a `diff --git` string inside changed code does not split the file.
+Refresh retains the displayed changes.
+A failed read or mutation adds a status row with Retry.
+`cargo test -p app --test diff_controls -- --nocapture --test-threads=1` runs the native input proof on macOS.
+`CGX_DIFF_EVIDENCE` selects its screenshot folder; the default is the system temporary folder under `cgx-diff-controls`.
+The proof covers header wrap, file filtering, layout changes, empty and loading states, real read failure, Retry, and line navigation.
+Original captures for the file tree and file filter remain open capture items.
+The release comparison omits both pairs and identifies its exact matching component crops.
+Whole-window pixel parity is not claimed by those component comparisons.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Open Changes panel | entry | `⌥⌘B` or `View changes`. | Both open the last turn's diff (`Last Turn` source). A file link opens the File viewer, as S009 records. | PASS (`changes_panel_keys`, `view_changes_opens_panel`, `s009`); strict pixels FAIL (`parity_diff`) |
-| 2 | `/diff` window | entry | Single file diff. | — | NOT WIRED (`crates/app/src/main.rs`: one window only) |
-| 3 | Source selector | click | Uncommitted / Staged / … | Last Turn, Unstaged, Staged, and Refresh read the open thread's local repository. | PARTIAL (`git_stage`; other sources remain separate) |
-| 4 | Show / Hide files | click | Toggles the file tree. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 5 | File tree filter | focus | `Filter files…`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 2 | `/diff` window | entry | Single file diff. | `/diff <patch-file>` opens the shared renderer in its own window without a chat backend. | PASS (`diff_controls`; standalone executable accepts the route and reports unreadable input) |
+| 3 | Source selector | click | Uncommitted / Staged / … | Last Turn, Uncommitted, Unstaged, Staged, Committed, and Branch select the corresponding local comparison. | PASS (`git_review`, `git_revert_ui`) |
+| 4 | Show / Hide files | click | Toggles the file tree. | The header toggles the file tree without losing its filter. | PASS (`diff_controls` native frames) |
+| 5 | File tree filter | focus | `Filter files…`. | Filters paths and shows `No matching files`; typing and paste retain keyboard ownership. | PASS (`diff_controls` native frames) |
 | 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Open in editor works from the header icon and the menu. Local sources add Stage file, Unstage file, and confirmed Revert file. | PARTIAL (`s027::diff_selection_and_hover_replay`, `s027::open_in_editor_native_input_reaches_the_host_opener`, `git_stage`, `git_revert_ui`) |
-| 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | Local staged and unstaged hunks have confirmed Revert controls. Hunk staging and unstaging remain separate. | PARTIAL (`git_revert_ui`) |
-| 8 | Revert all | click | `Revert changes?` dialog. | File and hunk actions use the original confirmation and saved skip preference. Section-wide Revert all remains separate. | PARTIAL (`git_revert_ui`) |
-| 9 | Split / unified toggle | click | Switch diff layout. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 10 | Word wrap | click | Toggles wrap. | The body context menu toggles wrap; the header control remains separate work. | PARTIAL (`s027::diff_selection_and_hover_replay`) |
-| 11 | Mark as viewed | click | Collapses, persists. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | Local staged and unstaged hunks have confirmed Revert and Stage/Unstage controls. | PASS (`git_review`, `git_revert_ui`) |
+| 8 | Revert all | click | `Revert changes?` dialog. | Unstaged provides section-wide Revert all with confirmation and the saved skip preference. Uncommitted does not expose this action. | PASS (`git_revert_ui`) |
+| 9 | Split / unified toggle | click | Switch diff layout. | Unified, Split, and Auto share the existing line renderer. The narrow header exposes layout through Changes options. | PASS (`diff_controls`; split pairing regression check) |
+| 10 | Word wrap | click | Toggles wrap. | The header, Changes options, and body menu toggle the same wrap state. | PASS (`diff_controls`; `s027::diff_selection_and_hover_replay`) |
+| 11 | Mark as viewed | click | Branch diffs collapse and retain the reviewed revision. | Deferred until the Branch source and stable revision contract are available. | Follow-up: [issue 300](https://github.com/i098/codex-gpui/issues/300), dependent on the operations source-menu work |
 | 12 | `⌘F` in diff | shortcut | `Search diff…`. | Focus the panel, open find, and type a query; matches highlight and update with the diff. | PASS (`s028::streamed_diff_and_find_replay`) |
-| 13 | `⌘L` | shortcut | Go to line. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 13 | `⌘L` | shortcut | Go to line in the file viewer. | Available files expose the line input; Enter navigates, Escape closes, and negative numbers count from the end. Unavailable files keep the input closed. | PASS (`diff_controls`; whole-line validation regression check) |
 | 14 | Line hover | hover | No background change in the recorded Last Turn state; no `data-hovered` attribute. | No background change. | PASS (`s027::diff_selection_and_hover_replay`; corrects DT-014) |
-| 15 | No changes | empty | `No file changes yet`. | Local sources show `No changes`. | PARTIAL (`git_stage`; Last Turn unchanged) |
-| 16 | Not a git repo | empty | `Create a Git repository`. | Local sources show the Git error; repository creation remains separate. | PARTIAL (`crates/ui/src/diff.rs`) |
-| 17 | Loading | loading | `Loading diff`. | Local sources show `Loading changes…` and disable mutations until completion. | PARTIAL (`crates/ui/src/diff.rs`) |
-| 18 | Load failure | error | `Couldn't load changes`. | Local sources show the host error; Refresh retries the read. | PARTIAL (`git_stage` checks index-lock failure and recovery) |
-| 19 | Too large | error | `Diff too large to display`. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
-| 20 | Resize | resize | Split → inline for narrow panes. | — | NOT WIRED (`crates/ui/src/diff.rs`) |
+| 15 | No changes | empty | `No file changes yet`. | Last Turn shows `No file changes yet`; local sources show `No staged changes` or `No unstaged changes`. | PASS (`diff_controls` native frames) |
+| 16 | Not a git repo | empty | `Create a Git repository`. | The action initializes the thread's folder and preserves existing files. | PASS (`git_review`, `git_revert_ui`) |
+| 17 | Loading | loading | `Loading diff`. | Initial local reads show `Loading diff`. Refresh retains the file list and disables mutations until completion. | PASS (`diff_controls` native frame) |
+| 18 | Load failure | error | `Couldn't load changes`. | Shows the host error and Retry without hiding existing changes. Invalid hunk data shows `Diff failed to render`. | PASS (`diff_controls` real read failure and recovery; parser regression checks) |
+| 19 | Too large | error | `Diff too large to display`. | Oversized input shows the boundary and retains the file header. | PASS (`diff_controls` native frame; parser limit checks) |
+| 20 | Resize | resize | Split → inline for narrow panes. | Auto uses inline at 767 and 600 px and split for a wide, two-sided diff. | PASS (`diff_controls`; original 1280, 767, and 600 px captures) |
 
 ### DT-139: Commit or push
 
@@ -571,6 +693,25 @@ The scenario checks real branch refs, retained file contents, commit recovery, a
 It also checks an exact tag checkout followed by native reattachment, a real `heads/main` branch, and committing dirty detached work.
 Its thread data uses replay fixtures, not a live installed-account session.
 
+### Native worktree ownership and GitHub process transport
+
+`LocalHost` accepts the native `worktree-set-owner-thread` request and the Git worker's `set-worktree-owner-thread` request.
+Both persist the original `codex-thread.json` format in a linked worktree's Git directory.
+The main checkout is not a valid ownership target.
+`automation_worktree::creates_the_automation_worktree_at_the_remote_default_without_touching_the_source` checks both request names against the same fixture.
+
+`host::git_pr::execute` runs an argv vector through the connected app-server's `process/spawn` method.
+It subscribes before spawning, matches `process/exited` by handle, and returns the exit code, stdout, stderr, and capture-limit flags.
+The caller supplies an absolute working directory and a timeout in milliseconds.
+One deadline bounds the spawn reply and process exit.
+Timeout cleanup sends `process/kill` without waiting for its reply.
+Dropped requests release their pending reply slots.
+The deadline regression delays spawn and cleanup replies; neither delay extends the caller's timeout.
+The transport disables Git and GitHub prompts and does not run a local shell.
+These trusted UI commands run without a Codex sandbox.
+Connection failures and process-spawn failures remain errors.
+The original bundled app-server smoke checked concurrent handles, separate stdout and stderr, and a nonzero exit code.
+
 ## 14.7 Settings, login and onboarding
 
 A settings row reports its change to `Root`.
@@ -629,14 +770,19 @@ Slice S035 proves suggestion hover (AM-037) with `refs/interactions/s035.json` a
 The test replays pointer entry and exit on the existing fixture screen with the original server suggestions.
 It checks the card fill, the adjacent card, and the icon colors against the Linux route1 recording.
 The existing hover implementation already matches; no production code changes are needed.
-Slice S035b proves suggestion click (AM-036) with `refs/interactions/s035b.json` and `crates/app/tests/s035b.rs`.
-The click puts the card in `Starting…` (rays spinner, status text) and disables every card at opacity 0.4.
-`Root` then reads the TPP models through the desktop host like the original's guided start (`conversation-actions` `J`).
-The oracle answers that read with the host's 499, so the recorded outcome is the toast `Couldn’t start this suggested task` and the cards enabled again.
-The conversation prepare, its stream, and the navigation into the started conversation are not recorded and not wired.
+Slice S035b covers the suggestion click (AM-036) with `refs/interactions/s035b.json` and `crates/app/tests/s035b.rs`.
+The original recording shows a failed models read, not a successful guided start.
+The retained live capture reached the Apple DeviceCheck requirement before any conversation or automation write.
+Captain decision 110 selects an unsupported state for this release.
+The click shows `Starting suggested tasks isn’t supported in this version` through the existing danger toast.
+It sends no host request, creates no conversation or task, and keeps the route and every card enabled.
+The native click test checks these effects without changing the recorded fixture.
+Set `S035B_SHOTS` to retain the before and after screenshots outside the Cargo target.
+Ordinary local task creation and the existing draft remain unchanged.
 
 `Run now` (AM-021) is the first item of the row `Scheduled task actions` menu, as in `run-now-11e55df28c95.js`.
-Choosing it sends `automation-run-now` with `{id, collaborationMode, permissions}`; the row reads `Starting run…` and an info toast shows until the host answers.
+Choosing it sends `automation-run-now` with `{id, collaborationMode, permissions}` and disables duplicate starts until the host answers.
+The information toast and row show `Starting run…` until the host answers.
 `LocalHost` starts one app-server thread per task folder, titles it with the task name, and sends the original's run preamble and the prompt as the first turn.
 The new thread then appears in Recents through `thread/started`.
 Before each thread the host reads the user's saved config (`config/read` for the folder) and the config requirements, and picks the model from `model/list` like the original (`Pr`): the task's model, else `gpt-5.3-codex`, else the default.
@@ -654,7 +800,8 @@ If archive is in flight or already complete, the bridge restores the thread firs
 The per-thread archive lock also prevents a user request from racing with that restore.
 No completion path removes a worktree or starts a cleanup service.
 A missing store or run row releases only the matching completed tracker, without creating an archive row.
-A refusal or `success: false` shows the danger toast `Could not start scheduled task`, with the reason on one line.
+A refusal shows the danger toast `Could not start scheduled task`, with the host error on a separate description line.
+A `success: false` result shows the title without a description; a successful start adds no result toast.
 Event-triggered tasks (`## When this happens` prompts) have the item disabled with the tooltip `Automations triggered by events can’t be run manually`; the host refuses them too.
 The project folders or project target (its first root from `.codex-global-state.json`) run, in a new worktree for the original default environment (`create_worktree` and `set_owner_thread`, removed again when no thread starts) or in the folder for `local`; outside a Git repository the run happens in the folder.
 For a project target, the host saves `{projectKind: "local", projectId}` after `thread/start` and worktree ownership.
@@ -664,6 +811,7 @@ All native project-state writers use the same locked, atomic `.codex-global-stat
 An assignment failure archives the pending row and sends no turn; the started thread keeps its worktree.
 Legacy folder targets do not receive a project assignment, even when a saved project contains the folder.
 Projectless tasks use the original `nl`/`Ct` allocation under `projectlessWorkspaceRoot`, or `~/Documents/Codex` when that setting is absent.
+The host reads `desktop.projectlessWorkspaceRoot` through `config/read`, matching the General page's configuration write.
 Each run gets a local-date folder and a unique prompt-derived folder with `work` and `outputs` subfolders.
 The host rejects relative roots and symlinks at the root or local-date folder.
 It saves `projectless-thread-ids`, `thread-workspace-root-hints`, and `thread-projectless-output-directories` through the shared atomic global-state writer.
@@ -672,11 +820,21 @@ A failed start retains the owned folder and archives the pending run; a failed t
 Successful projectless runs use the same automatic archive completion path and retain their saved folders and metadata.
 The host reads config requirements before it creates a projectless workspace, as in the original `Ll`.
 A failed metadata write retains the started thread and its folder without starting a turn.
-Heartbeat tasks still require renderer thread state.
+Heartbeat tasks use the original `Wl` path: read the target thread, check its active flags and recent turns, then resume it.
+The renderer supplies the target thread's selected collaboration mode and permissions, not another thread's composer settings.
+The heartbeat retains saved approvals when no renderer permission override exists.
+Permission resolution fails if the managed requirements cannot be read.
+The heartbeat uses the thread's saved effort when no renderer snapshot exists.
+The host starts one turn with `automation_heartbeat_run_now` and the original heartbeat XML prompt, without creating or renaming a thread.
+Success waits for a matching `turn/started` or `turn/completed` notification.
+It opens the existing thread with the Scheduled sidebar only if the original navigation location still matches.
+Missing, busy, loading, resume, and turn failures clear `Starting run…`, keep the location, and show the existing failure toast.
+An interval heartbeat recalculates its next run from the current run time and does not create a cron run row.
 Not yet carried over: the desktop notification and the unread dot on the rail.
 `automation_run_now` checks projectless metadata, project assignment, saved policy, early completion, user cancellation, and archive failures against a stdio peer.
 It also checks account isolation, recoverable restore writes, and retained worktrees.
-The native row-menu replay needs macOS.
+Its native window proof also checks pending state, duplicate suppression, success navigation, failure, Back/Forward, and navigation away.
+On macOS, its native row-menu replay starts a task, then displays the real app-server refusal through the same toast component.
 
 `LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
 It accepts `{id, status}` or the original full cron or heartbeat body, including edits to `name`, `prompt`, and `rrule`.
@@ -796,9 +954,9 @@ They do not replace original-versus-native appearance approval or the strict pix
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Profile menu → Help → `Set up mobile` | entry | `/codex-mobile`. | `Route::Mobile`: sidebar closed, no rail item selected. | PASS (`profile_menu_mobile`, `parity_mobile`) |
-| 2 | Initial step | click | `Get started` / `Later`. | Dispatches `GetStarted`; no handler, no `Later`. | NOT WIRED (`crates/ui/src/screens/mobile.rs`: no allow-host step view) |
-| 3 | Allow host step | click | `remoteControl/enable`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`, then `crates/app/src/lib.rs`) |
-| 4 | MFA required | error | `Turn on Multi-Factor Authentication`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
+| 2 | Initial step | click | `Get started` reads `/wham/remote/control/mfa_requirement`, then on `required` `/accounts/mfa_info`; `Later` (dialog only). | `GetStarted`: loading button; `required` with `mfa_enabled_v2` off opens the MFA step, otherwise the allow-host step; a failed read or a body without the expected field shows `Couldn’t check security requirements. Try again`. | PASS (`mobile_get_started_follows_the_recorded_mfa_status`) |
+| 3 | Allow host step | click | `Allow`: `remoteControl/enable`. | Step view; `Allow` is disabled with `Remote control can’t be turned on from this app yet`. | NOT WIRED (`crates/app/src/lib.rs`: no `remoteControl/enable`) |
+| 4 | MFA required | error | `Turn on Multi-Factor Authentication`, `Continue on chatgpt.com`. | Step view; the button opens `chatgpt.com/#settings/Security`. | FAIL (no flow reaches it: the recorded account has MFA on, and no MFA-off response is recorded) |
 | 5 | Waiting / pairing step | loading | QR code, pairing code. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
 | 6 | Pairing unavailable | error | `Pairing code unavailable`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
 | 7 | Connected step | click | Toggles, `Done`, `Manage connections`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
@@ -812,7 +970,7 @@ A row above that names a `crates/ui` owner needs that change first. The changes 
 
 1. `crates/ui/src/thread.rs`: click handlers on the reasoning and command cards, `Reapply`, the user message's hover actions, a find bar, and loading and error views.
 2. `crates/ui/src/diff.rs`: the Changes header controls (source selector, file tree, layout, wrap, refresh), empty, loading and error states.
-3. `crates/ui/src/screens/mobile.rs`: the allow-host, pairing and connected steps (`remoteControl/*`).
+3. `crates/ui/src/screens/mobile.rs`: the pairing and connected steps (`remoteControl/*`).
 4. Focus-visible rings on the shared buttons (`icon_button`, `pill`, rail items), and tooltips on the composer and sidebar row buttons.
 
 ## S016: Thread header
@@ -844,8 +1002,32 @@ The test checks both the paging requests and the retry transition.
 
 The original hides timestamps in every Home sidebar list, including project groups.
 It shows an unread dot after a failed background turn, rather than an error icon.
-`Show more` belongs to a non-final Recents section; `Show less` belongs to custom sections.
-Those section arrangements remain outside this port's default layout.
+`refs/interactions/s003_sections.json` records a non-final custom section with fifteen local chats.
+`Show more` changes ten visible rows to fifteen; `Show less` restores ten rows.
+A header click hides the section; reopening keeps its expanded list.
+Default Recents retains infinite paging and has no paging button.
+The recorded input check verifies all five clicks, unchanged Recents, and no app-server requests.
+The dark paging label uses the original generated theme alpha, `0.498`; the light label stays unchanged.
+Each paging label gets an independent transparent layer; the default sidebar drawing stays unchanged.
+Both paging-label image checks pass with zero differing pixels in every recorded More/Less state.
+The references, text rectangles, and limits remain unchanged.
+Section creation and new storage remain outside RS-066.
+
+### Custom section header actions
+
+`crates/app/tests/section_actions.rs` drives section actions and section-targeted chat creation.
+The header shows Options and New chat when the pointer or keyboard focus enters it.
+Options contains Edit, Mark all as read, Archive chats, New section, and Remove section.
+On macOS, Options opens an AppKit `NSMenu` with 16-pixel template icons and the original button-bottom-left anchor.
+`HomeSidebar::native_menu_snapshot` exposes the actual menu readback, including its open state, native items, and popup anchor.
+Mark all as read requires unread members; Archive chats requires at least one member.
+Remove section preserves its chats.
+The app loads sections through `threadSection/list` and their ordered members through `thread/list`.
+Edit, Create, and Remove use `threadSection/update`, `threadSection/create`, and `threadSection/delete`.
+New chat selects an available section project, opens an empty composer, and assigns the resulting chat through `thread/section/move` before `turn/start`.
+Ordinary New chat clears the section target.
+The native check covers section edits, default naming, removal, read state, archive cancellation, bulk archive, and chat assignment order.
+
 
 ## S025: Command-query caret and selection
 
@@ -901,6 +1083,23 @@ The test also checks the unread dot in the port's pixels.
 The unread state is injected in the port because the original fixture contains no unread chat.
 Command activation belongs to the later command-menu slices.
 The test also checks selection after a delayed search reply and spinner removal after a failed search.
+The replay owns its Git repository and waits for its recorded commit availability.
+It does not depend on the shared Mac temporary project.
+
+## Native file search and detached chats
+
+`crates/app/tests/command_destinations.rs` drives the current Root through keyboard and command-menu input.
+File search ignores responses for another session or an old query.
+The file index starts when a fuzzy query needs it.
+A refused index start can be retried without losing the query.
+Closing the menu releases its index, including when a dialog replaces it.
+Selecting a match opens the existing file viewer.
+Absolute path lookup rejects directories.
+Only successfully loaded files enter the shared recent-file history.
+The history stays available across windows and trailing directory separators.
+The detached chat test closes the first window, then receives another backend turn in the remaining window.
+The bridge regression also checks both event receivers and connection closure.
+These checks do not complete the other command products.
 
 ## F0b: Recording contract dispatch
 
@@ -994,7 +1193,7 @@ The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/f
 
 ## Native project selection and chat directories
 
-`Choose project`, the selected Home title, `⌘O`, File > Open Folder, and the `Open folder` command use GPUI's folder picker.
+`Choose project`, the selected Home title, `⌘O`, `⌥⇧⌘O`, File > Open Folder, and the `Open folder` command use GPUI's folder picker.
 The picker accepts one folder and does not change the selection or the current chat when canceled.
 The local host adds the folder to the existing `local-projects` and `project-order` records.
 It retains other projects and unrelated values in `.codex-global-state.json`.
@@ -1101,3 +1300,17 @@ The default hover delay and `side_offset` geometry remain unchanged.
 This API does not complete Home focus behavior or add the separate F1d overflow predicate.
 The original Home inputs and edge probes remain unchanged.
 The scoped issue is [Add an opt-in focus API to the shared tooltip](https://github.com/i098/codex-gpui/issues/186).
+
+## Shortcut navigation (SH-044, SH-058, SH-069)
+
+Control-Tab and Control-Shift-Tab open the command menu in `Recently viewed` mode.
+The picker omits the search field and number labels.
+Repeated shortcuts move the selection without changing the open chat.
+Releasing Control opens the selected chat; Escape cancels.
+The picker keeps viewed order separate from the updated order used by Command-Option-number.
+
+Mouse Back and Forward use the same route history as Command-[ and Command-].
+Control-Shift-G opens the existing Changes tab.
+`crates/app/tests/shortcut_navigation.rs` checks these paths on recorded threads.
+The [original/native picker pair](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/9a2941014013a3237d6c7389b13d9c4a3a00e15a0eba9abb/report.html) uses a 520×134 CSS-pixel crop at scale 2.
+It has zero outside-text differences and 45 differing pixels inside 147631 text pixels (0.0305%).

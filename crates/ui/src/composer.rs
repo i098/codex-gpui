@@ -10,7 +10,8 @@
 
 use crate::{MONO, icon::icon, text};
 use bridge::types::{
-    ApprovalDecision, CommandApprovalRequest, FileChangeApprovalRequest, Model, QueuedSubmission,
+    ApprovalDecision, CommandApprovalRequest, FileChangeApprovalRequest, Model,
+    PermissionsApprovalRequest, QueuedSubmission,
 };
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ClipboardItem, Context, Corners, CursorStyle, Div,
@@ -22,15 +23,40 @@ use gpui::{
     UnderlineStyle, Window, WrappedLine, actions, deferred, div, fill, point,
     prelude::FluentBuilder as _, px, relative, size,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{ops::Range, path::PathBuf, rc::Rc, time::Duration};
 use theme::{ActiveTheme as _, Appearance, Theme};
+
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub enum EnterBehavior {
+    #[default]
+    Enter,
+    CmdIfMultiline,
+    CmdAlways,
+}
+
+impl EnterBehavior {
+    pub fn from_setting(value: &str) -> Self {
+        match value {
+            "cmdIfMultiline" => Self::CmdIfMultiline,
+            "cmdAlways" => Self::CmdAlways,
+            _ => Self::Enter,
+        }
+    }
+
+    fn inserts_newline(self, content: &str) -> bool {
+        self == Self::CmdAlways || self == Self::CmdIfMultiline && content.contains('\n')
+    }
+}
+
+impl gpui::Global for EnterBehavior {}
 
 actions!(
     composer,
     [
         /// Send the prompt (Enter).
         Submit,
+        ModifiedSubmit,
         Stop,
         RequestFullAccess,
         /// Insert a line break (Shift+Enter).
@@ -65,8 +91,11 @@ actions!(
 );
 
 mod attach;
+pub mod computer_use;
+pub mod dictation;
 mod editor;
 mod footer;
+mod requests;
 mod menu {
     //! Focus rules for the recorded Radix menus: arrows stop at the ends, Escape returns
     //! focus to the trigger, and Enter or Space activates the focused item.
@@ -172,6 +201,8 @@ mod slash;
 pub use slash::SlashCommand;
 
 const KEY_CONTEXT: &str = "Composer";
+const REQUEST_CONTEXT: &str = "ComposerRequest";
+const REQUEST_FORM_CONTEXT: &str = "ComposerRequestForm";
 /// `@container composer-footer` (the card's width, CSS px) at or below which the footer hides
 /// its `collapse=sm` labels (permissions) and its `collapse=xs` labels (model and effort).
 const SM_WIDTH: f32 = 440.;
@@ -185,6 +216,10 @@ pub fn bind_keys(cx: &mut App) {
     let c = Some(KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("enter", Submit, c),
+        KeyBinding::new("cmd-enter", ModifiedSubmit, c),
+        KeyBinding::new("escape", Dismiss, Some(REQUEST_CONTEXT)),
+        KeyBinding::new("cmd-enter", Submit, Some(REQUEST_FORM_CONTEXT)),
+        KeyBinding::new("ctrl-enter", Submit, Some(REQUEST_FORM_CONTEXT)),
         KeyBinding::new("shift-enter", Newline, c),
         KeyBinding::new("backspace", Backspace, c),
         KeyBinding::new("shift-backspace", Backspace, c),
@@ -317,7 +352,7 @@ impl Permission {
     ];
 
     /// The preset `config/read` matches; anything else is `Custom (config.toml)`.
-    fn from_config(config: &Value) -> Self {
+    pub fn from_config(config: &Value) -> Self {
         match (
             config["approval_policy"].as_str(),
             config["sandbox_mode"].as_str(),
@@ -363,15 +398,31 @@ impl Permission {
 pub struct Submission {
     pub text: String,
     pub attachments: Vec<PathBuf>,
+    /// File references added as context, not image uploads.
+    pub context_files: Vec<PathBuf>,
     pub model: String,
-    pub effort: String,
+    pub effort: Option<String>,
     pub permission: Permission,
     /// Fast mode (bolt toggle in the model picker).
     pub fast: bool,
 }
 
-/// A pending server approval request (`item/commandExecution/requestApproval`,
-/// `item/fileChange/requestApproval`), shown above the composer.
+#[derive(Debug, PartialEq)]
+struct RequestIdentity {
+    id: Value,
+    thread: String,
+}
+
+#[derive(Default)]
+struct RequestDraft {
+    fields: Vec<Entity<Composer>>,
+    selected: Vec<Vec<Value>>,
+    accept_focus: Option<FocusHandle>,
+    index: usize,
+    error: Option<String>,
+}
+
+/// A pending server request, shown above the composer with its connection request id.
 #[derive(Clone, Debug)]
 pub struct Approval {
     title: SharedString,
@@ -380,20 +431,31 @@ pub struct Approval {
     reason: Option<String>,
     /// Session-wide approve label (`acceptForSession`).
     scoped_label: SharedString,
+    permissions: Option<Value>,
+    form: Option<requests::Form>,
+    computer_use: Option<computer_use::ComputerUseApproval>,
+    identity: Rc<RequestIdentity>,
 }
 
 impl Approval {
-    pub fn command(req: &CommandApprovalRequest) -> Self {
+    pub fn command(id: Value, req: &CommandApprovalRequest) -> Self {
         Self {
             title: "Allow ChatGPT to run this command?".into(),
             detail: req.command.clone(),
             reason: req.reason.clone(),
             scoped_label: "Allow similar commands".into(),
+            permissions: None,
+            form: None,
+            computer_use: None,
+            identity: Rc::new(RequestIdentity {
+                id,
+                thread: req.thread_id.clone(),
+            }),
         }
     }
 
     /// `paths`: the files of the pending `fileChange` item.
-    pub fn file_change(req: &FileChangeApprovalRequest, paths: &[String]) -> Self {
+    pub fn file_change(id: Value, req: &FileChangeApprovalRequest, paths: &[String]) -> Self {
         let files = if paths.len() == 1 {
             "the following file"
         } else {
@@ -404,7 +466,89 @@ impl Approval {
             detail: (!paths.is_empty()).then(|| paths.join("\n")),
             reason: req.reason.clone(),
             scoped_label: "Allow all edits".into(),
+            permissions: None,
+            form: None,
+            computer_use: None,
+            identity: Rc::new(RequestIdentity {
+                id,
+                thread: req.thread_id.clone(),
+            }),
         }
+    }
+
+    pub fn permissions(id: Value, req: &PermissionsApprovalRequest) -> Self {
+        let mut actions = Vec::new();
+        if req.permissions["network"]["enabled"] == true {
+            actions.push("connect to the internet".to_owned());
+        }
+        if let Some(files) = req.permissions["fileSystem"].as_object() {
+            for (access, verb) in [("read", "view"), ("write", "edit")] {
+                if let Some(paths) = files.get(access).and_then(Value::as_array) {
+                    let paths: Vec<_> = paths.iter().filter_map(Value::as_str).collect();
+                    if !paths.is_empty() {
+                        actions.push(format!("{verb} the contents of {}", paths.join(", ")));
+                    }
+                }
+            }
+            if let Some(entries) = files.get("entries").filter(|v| !v.is_null()) {
+                actions.push(format!("access these files: {entries}"));
+            }
+        }
+        Self {
+            title: if actions.is_empty() {
+                "Allow ChatGPT to use these permissions?".into()
+            } else {
+                format!("Allow ChatGPT to {}?", actions.join(" and ")).into()
+            },
+            detail: None,
+            reason: req.reason.clone(),
+            scoped_label: "Allow for this session".into(),
+            permissions: Some(req.permissions.clone()),
+            form: None,
+            computer_use: None,
+            identity: Rc::new(RequestIdentity {
+                id,
+                thread: req.thread_id.clone(),
+            }),
+        }
+    }
+
+    fn response(&self, decision: ApprovalDecision) -> Value {
+        if let Some(request) = &self.computer_use {
+            use computer_use::ComputerUseChoice;
+            let choice = match decision {
+                ApprovalDecision::Accept if request.allow_session => {
+                    ComputerUseChoice::Conversation
+                }
+                ApprovalDecision::Accept => ComputerUseChoice::Once,
+                ApprovalDecision::AcceptForSession => ComputerUseChoice::Always,
+                ApprovalDecision::Decline => ComputerUseChoice::Decline,
+                ApprovalDecision::Cancel => ComputerUseChoice::Cancel,
+            };
+            return request
+                .response(choice)
+                .unwrap_or_else(|| serde_json::json!({"action": "cancel"}));
+        }
+        let Some(permissions) = &self.permissions else {
+            return serde_json::json!({ "decision": decision });
+        };
+        let granted = matches!(
+            decision,
+            ApprovalDecision::Accept | ApprovalDecision::AcceptForSession
+        );
+        let permissions = permissions
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(key, value)| {
+                granted && matches!(key.as_str(), "network" | "fileSystem") && !value.is_null()
+            })
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect::<serde_json::Map<_, _>>();
+        serde_json::json!({
+            "permissions": permissions,
+            "scope": if decision == ApprovalDecision::AcceptForSession { "session" } else { "turn" }
+        })
     }
 }
 
@@ -429,7 +573,7 @@ const SPEEDS: [(&str, &str); 3] = [
 
 type SubmitHandler = Rc<dyn Fn(&Submission, &mut Window, &mut App)>;
 type CancelEditHandler = Rc<dyn Fn(&mut Window, &mut App)>;
-type ApprovalHandler = Rc<dyn Fn(ApprovalDecision, &mut Window, &mut App)>;
+type ApprovalHandler = Rc<dyn Fn(Value, String, Value, &mut Window, &mut App)>;
 /// `(model id, effort)` after the user picks them.
 type ModelHandler = Rc<dyn Fn(&str, &str, &mut App)>;
 
@@ -472,6 +616,8 @@ pub struct Composer {
     history: editor::History,
     /// The right-click menu (Electron's native editable-field menu).
     context_menu: Option<crate::screens::thread::view::menu::ContextMenu>,
+    context_spelling: Option<(Range<usize>, String)>,
+    context_image: Option<crate::image_context::ImageContext>,
     is_selecting: bool,
     /// Shaped lines and editor bounds of the last paint, for hit testing.
     lines: Vec<WrappedLine>,
@@ -487,8 +633,8 @@ pub struct Composer {
     drag_active: bool,
     models: Vec<ModelOption>,
     model: usize,
-    effort: String,
-    default_selection: (usize, String),
+    effort: Option<String>,
+    default_selection: (usize, Option<String>),
     fast: bool,
     permission: Permission,
     menu: Option<Menu>,
@@ -505,6 +651,15 @@ pub struct Composer {
     footer_width: f32,
     menu_trigger_hovered: bool,
     approval: Option<Approval>,
+    computer_use_icon: computer_use::IconCache,
+    request_draft: RequestDraft,
+    request_drafts: Vec<(Rc<RequestIdentity>, RequestDraft)>,
+    request_focus_pending: bool,
+    request_compact: bool,
+    request_number: bool,
+    request_label: Option<SharedString>,
+    secret: bool,
+    request_parent: Option<(gpui::WeakEntity<Composer>, Rc<RequestIdentity>, usize)>,
     running: bool,
     /// Escape while a turn runs arms the stop for 2 s (the Stop button reads `Esc`); a second
     /// Escape in that window interrupts the turn. The task clears the arm.
@@ -521,6 +676,8 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    dictation: Option<dictation::Active>,
+    dictation_error: Option<String>,
 }
 
 impl Composer {
@@ -551,6 +708,8 @@ impl Composer {
             marked_range: None,
             history: editor::History::default(),
             context_menu: None,
+            context_spelling: None,
+            context_image: None,
             is_selecting: false,
             lines: Vec::new(),
             bounds: None,
@@ -562,8 +721,8 @@ impl Composer {
             drag_active: false,
             models: Vec::new(),
             model: 0,
-            effort: "medium".into(),
-            default_selection: (0, "medium".into()),
+            effort: Some("medium".into()),
+            default_selection: (0, Some("medium".into())),
             fast: false,
             permission: Permission::Custom,
             menu: None,
@@ -577,6 +736,15 @@ impl Composer {
             footer_width: f32::INFINITY,
             menu_trigger_hovered: false,
             approval: None,
+            computer_use_icon: Default::default(),
+            request_draft: RequestDraft::default(),
+            request_drafts: Vec::new(),
+            request_focus_pending: false,
+            request_compact: false,
+            request_number: false,
+            request_label: None,
+            secret: false,
+            request_parent: None,
             running: false,
             stop_armed: None,
             queue_mode: false,
@@ -588,6 +756,8 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            dictation: None,
+            dictation_error: None,
         }
     }
 
@@ -666,8 +836,7 @@ impl Composer {
                 let id = &self.models.get(self.model)?.id;
                 let m = models.iter().find(|m| &m.id == id)?;
                 Some(m.default_reasoning_effort.clone())
-            })
-            .unwrap_or_else(|| "medium".into());
+            });
         self.default_selection = (self.model, self.effort.clone());
         self.permission = Permission::from_config(config);
         self.queue_mode = config["desktop"]["followUpQueueMode"] == "queue";
@@ -680,16 +849,23 @@ impl Composer {
     pub fn set_model_and_effort(&mut self, model: &str, effort: &str, cx: &mut Context<Self>) {
         if let Some(index) = self.models.iter().position(|option| option.id == model) {
             self.model = index;
-            self.effort = effort.into();
+            self.effort = Some(effort.into());
             cx.notify();
         }
+    }
+
+    fn displayed_effort(&self) -> &str {
+        self.effort.as_deref().unwrap_or("medium")
     }
 
     pub fn on_submit(&mut self, f: impl Fn(&Submission, &mut Window, &mut App) + 'static) {
         self.on_submit = Some(Rc::new(f));
     }
 
-    pub fn on_approval(&mut self, f: impl Fn(ApprovalDecision, &mut Window, &mut App) + 'static) {
+    pub fn on_approval(
+        &mut self,
+        f: impl Fn(Value, String, Value, &mut Window, &mut App) + 'static,
+    ) {
         self.on_approval = Some(Rc::new(f));
     }
 
@@ -701,6 +877,12 @@ impl Composer {
     /// The approval card's request, while one shows.
     pub fn approval(&self) -> Option<&Approval> {
         self.approval.as_ref()
+    }
+
+    pub(crate) fn is_computer_use_request(&self) -> bool {
+        self.approval
+            .as_ref()
+            .is_some_and(|approval| approval.computer_use.is_some())
     }
 
     pub fn restart_ready(&self) -> bool {
@@ -727,7 +909,28 @@ impl Composer {
     }
 
     pub fn set_approval(&mut self, approval: Option<Approval>, cx: &mut Context<Self>) {
+        let same_request = self
+            .approval
+            .as_ref()
+            .map(|approval| approval.identity.as_ref())
+            == approval.as_ref().map(|approval| approval.identity.as_ref());
+        if !same_request {
+            self.cancel_dictation(cx);
+        }
+        if !same_request
+            && let Some(old) = &self.approval
+            && old.form.is_some()
+            && !self.request_draft.fields.is_empty()
+        {
+            self.request_drafts.push((
+                old.identity.clone(),
+                std::mem::take(&mut self.request_draft),
+            ));
+        }
         self.approval = approval;
+        if !same_request {
+            self.prepare_request(cx);
+        }
         cx.notify();
     }
 
@@ -969,11 +1172,15 @@ impl Composer {
     }
 
     pub fn set_text(&mut self, s: &str, cx: &mut Context<Self>) {
+        self.cancel_dictation(cx);
+        self.dictation_error = None;
         self.content = s.into();
         self.mentions.clear();
         self.selected_range = s.len()..s.len();
         self.marked_range = None;
         self.history = editor::History::default();
+        self.context_spelling = None;
+        self.context_image = None;
         self.slash.reset();
         self.end_search(cx);
         cx.notify();
@@ -1027,22 +1234,26 @@ impl Composer {
     fn select_model(&mut self, index: usize) {
         self.model = index;
         let efforts = &self.models[index].efforts;
-        if !efforts.contains(&self.effort)
+        let effort = self.effort.get_or_insert_with(|| "medium".into());
+        if !efforts.contains(effort)
             && let Some(first) = efforts.first()
         {
-            self.effort = first.clone();
+            *effort = first.clone();
         }
     }
 
     /// Reports the picked model and effort to [`Self::on_model`].
     fn picked(&self, cx: &mut App) {
         if let (Some(f), Some(model)) = (self.on_model.clone(), self.current_model()) {
-            f(&model.id, &self.effort, cx);
+            f(&model.id, self.displayed_effort(), cx);
         }
     }
 
-    /// Enter: `approval.approve` accepts a pending request, and a draft still sends.
+    /// Enter sends the draft only when the approval leaves the composer visible.
     fn enter(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.answer_request_parent(ApprovalDecision::Accept, window, cx) {
+            return;
+        }
         if let Some(multiline) = self.plain_field {
             if multiline {
                 self.insert("\n", window, cx);
@@ -1052,9 +1263,32 @@ impl Composer {
             return;
         }
         if self.approval.is_some() && !self.slash.open {
-            self.decide(ApprovalDecision::Accept, window, cx);
+            let replaces_composer = self.approval.as_ref().is_some_and(|approval| {
+                approval.form.is_some()
+                    || approval.permissions.is_some()
+                    || approval.computer_use.is_some()
+            });
+            self.request_action(ApprovalDecision::Accept, window, cx);
+            if replaces_composer {
+                return;
+            }
         }
-        self.submit(&Submit, window, cx);
+        let newline = cx
+            .try_global::<EnterBehavior>()
+            .is_some_and(|behavior| behavior.inserts_newline(&self.content));
+        if newline && !self.slash.open {
+            self.newline(&Newline, window, cx);
+        } else {
+            self.submit(&Submit, window, cx);
+        }
+    }
+
+    fn modified_enter(&mut self, _: &ModifiedSubmit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.plain_field.is_some() {
+            self.enter(&Submit, window, cx);
+        } else {
+            self.submit(&Submit, window, cx);
+        }
     }
 
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
@@ -1063,10 +1297,22 @@ impl Composer {
             return;
         }
         if self.edit_pending
+            || (!self.running && self.current_model().is_none())
             || self.pending_attachments > 0
             || (self.content.trim().is_empty() && self.attachments.is_empty())
         {
             return;
+        }
+        self.cancel_dictation(cx);
+        self.submitted = std::mem::take(&mut self.attachments);
+        let mut attachments = Vec::new();
+        let mut context_files = Vec::new();
+        for attachment in &self.submitted {
+            if attachment.is_context_file() {
+                context_files.push(attachment.path.clone());
+            } else {
+                attachments.push(attachment.path.clone());
+            }
         }
         let submission = Submission {
             text: if self.mentions.is_empty() && self.on_cancel_edit.is_none() {
@@ -1074,10 +1320,8 @@ impl Composer {
             } else {
                 self.prompt()
             },
-            attachments: {
-                self.submitted = std::mem::take(&mut self.attachments);
-                self.submitted.iter().map(|a| a.path.clone()).collect()
-            },
+            attachments,
+            context_files,
             model: self
                 .current_model()
                 .map(|m| m.id.clone())
@@ -1104,10 +1348,41 @@ impl Composer {
     }
 
     fn decide(&mut self, decision: ApprovalDecision, window: &mut Window, cx: &mut Context<Self>) {
-        self.approval = None;
+        self.cancel_dictation(cx);
+        if self.approval.is_none() {
+            return;
+        }
+        let response = match self.request_response(decision, cx) {
+            Ok(response) => response,
+            Err((field, error)) => {
+                self.request_draft.index = field;
+                self.request_draft.error = Some(error);
+                self.request_focus_pending = true;
+                self.focus_request_field(window, cx);
+                cx.notify();
+                return;
+            }
+        };
+        let approval = self.approval.take().unwrap();
+        if response.is_null() {
+            self.request_drafts.push((
+                approval.identity.clone(),
+                std::mem::take(&mut self.request_draft),
+            ));
+        } else {
+            self.request_draft = RequestDraft::default();
+        }
+        self.focus_handle.focus(window, cx);
+        self.menu = None;
         cx.notify();
         if let Some(f) = self.on_approval.clone() {
-            f(decision, window, cx);
+            f(
+                approval.identity.id.clone(),
+                approval.identity.thread.clone(),
+                response,
+                window,
+                cx,
+            );
         }
     }
 
@@ -1137,7 +1412,14 @@ impl Composer {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dictation.is_some() {
+            self.cancel_dictation(cx);
+            return;
+        }
         if self.marked_range.is_some() {
+            return;
+        }
+        if self.answer_request_parent(ApprovalDecision::Cancel, window, cx) {
             return;
         }
         if self.slash.open {
@@ -1157,7 +1439,16 @@ impl Composer {
             cx.notify();
         } else if self.approval.is_some() {
             // `approval.decline` (Escape), unless a menu has focus.
-            self.decide(ApprovalDecision::Decline, window, cx);
+            let decision = if self
+                .approval
+                .as_ref()
+                .is_some_and(|approval| approval.form.is_some())
+            {
+                ApprovalDecision::Cancel
+            } else {
+                ApprovalDecision::Decline
+            };
+            self.decide(decision, window, cx);
         } else if self.running {
             if self.stop_armed.take().is_some() {
                 window.dispatch_action(Box::new(Stop), cx);
@@ -1372,6 +1663,34 @@ impl Composer {
         self.permission
     }
 
+    pub fn run_settings(&self) -> (Value, Permission) {
+        (
+            json!({"mode": "default", "settings": {
+                "model": self.current_model().map_or("", |m| m.id.as_str()),
+                "reasoning_effort": self.effort, "developer_instructions": null,
+            }}),
+            self.permission,
+        )
+    }
+
+    pub fn restore_run_settings(
+        &mut self,
+        mode: &Value,
+        permission: Permission,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(model) = mode["settings"]["model"].as_str()
+            && let Some(index) = self.models.iter().position(|option| option.id == model)
+        {
+            self.model = index;
+            self.effort = mode["settings"]["reasoning_effort"]
+                .as_str()
+                .map(str::to_owned);
+        }
+        self.permission = permission;
+        cx.notify();
+    }
+
     pub fn confirm_full_access(&mut self, cx: &mut Context<Self>) {
         self.permission = Permission::FullAccess;
         cx.notify();
@@ -1402,8 +1721,7 @@ pub fn pill(id: impl Into<ElementId>, t: &Theme) -> Stateful<Div> {
         .hover(move |s| s.bg(hover))
 }
 
-/// 13/18 composer footer label. Its text blends like a transparent cc layer onto the final
-/// pill/bar pixel (the fills under it do not).
+/// A 13/18 label painted through a transparent compositing layer.
 pub fn label(s: impl Into<SharedString>, color: Hsla) -> Div {
     text(s, 13., 18., 400., color).top_layer()
 }
@@ -1579,13 +1897,48 @@ impl Render for Composer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editing = self.on_cancel_edit.is_some();
         let t = cx.theme().clone();
+        if self.request_focus_pending {
+            self.request_focus_pending = false;
+            self.focus_request_field(window, cx);
+        }
+        if let Some(approval) = self.approval.as_ref()
+            && (approval.form.is_some()
+                || approval.permissions.is_some()
+                || approval.computer_use.is_some())
+        {
+            let context = match (
+                approval.form.is_some(),
+                self.focus_handle.is_focused(window),
+            ) {
+                (true, true) => "Composer ComposerRequest ComposerRequestForm",
+                (true, false) => "ComposerRequest ComposerRequestForm",
+                (false, true) => "Composer ComposerRequest",
+                (false, false) => "ComposerRequest",
+            };
+            return div().w_full().child(
+                div()
+                    .id("server-request")
+                    .key_context(context)
+                    .track_focus(&self.focus_handle)
+                    .on_action(self.request_listener(cx, Self::enter))
+                    .on_action(self.request_listener(cx, Self::dismiss))
+                    .child(if approval.computer_use.is_some() {
+                        self.computer_use_card(approval, &t, cx)
+                    } else if approval.form.is_some() {
+                        self.request_card(approval, &t, cx)
+                    } else {
+                        self.permission_request_card(approval, &t, window, cx)
+                    }),
+            );
+        }
         let card = div()
             .id("composer")
             .when(self.focus_handle.is_focused(window), |d| {
                 d.key_context(KEY_CONTEXT)
             })
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::enter))
+            .on_action(self.request_listener(cx, Self::enter))
+            .on_action(self.request_listener(cx, Self::modified_enter))
             .on_action(cx.listener(Self::newline))
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
@@ -1612,19 +1965,74 @@ impl Render for Composer {
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(|this, _: &crate::Paste, window, cx| this.paste(window, cx)))
-            .on_action(cx.listener(Self::dismiss))
+            .on_action(
+                cx.listener(|this, _: &crate::PasteAndMatchStyle, window, cx| {
+                    this.paste_and_match_style(window, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &crate::DeleteSelection, window, cx| {
+                if !this.selected_range.is_empty() {
+                    this.insert("", window, cx);
+                }
+            }))
+            .when(
+                cfg!(target_os = "macos") && !self.secret && !self.content.is_empty(),
+                |card| card.on_action(cx.listener(Self::speak_selection)),
+            )
+            .on_action(self.request_listener(cx, Self::dismiss))
             .on_action(cx.listener(Self::complete_command))
             .on_action(cx.listener(Self::next_command))
             .on_action(cx.listener(Self::previous_command))
             .relative();
         if self.plain_field.is_some() {
             return div().w_full().child(
-                card.border_1()
-                    .border_color(t.border)
-                    .rounded(px(8.))
-                    .bg(t.background_panel)
-                    .py(px(8.))
-                    .child(self.editor(cx)),
+                card.key_context(KEY_CONTEXT)
+                    .when(self.request_parent.is_none(), |d| {
+                        d.border_1()
+                            .border_color(t.border)
+                            .rounded(px(8.))
+                            .bg(t.background_panel)
+                            .py(px(8.))
+                    })
+                    .when(self.request_parent.is_some(), |d| {
+                        d.px(px(1.))
+                            .py(px(if self.secret {
+                                8.449_219
+                            } else if self.request_compact {
+                                8.
+                            } else {
+                                13.
+                            }))
+                            .child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(px(if self.request_compact && !self.secret {
+                                    10.
+                                } else {
+                                    12.5
+                                })),
+                                corner: shapes::Corner::Squircle,
+                                border: Some((px(1.), t.border_strong)),
+                                ..Default::default()
+                            }))
+                    })
+                    .when(self.request_parent.is_some(), |d| {
+                        d.role(if self.secret {
+                            gpui::Role::PasswordInput
+                        } else {
+                            gpui::Role::TextInput
+                        })
+                        .aria_label(
+                            self.request_label
+                                .as_ref()
+                                .unwrap_or(&self.placeholder)
+                                .clone(),
+                        )
+                        .aria_placeholder(self.placeholder.clone())
+                        .when(!self.secret, |d| d.aria_value(self.content.clone()))
+                    })
+                    .child(self.editor(cx).when(self.request_number, |d| d.pr(px(30.))))
+                    .when(self.request_number, |d| {
+                        d.child(self.request_number_stepper(&t, cx))
+                    }),
             );
         }
         let card = card
@@ -1716,7 +2124,7 @@ impl Render for Composer {
                             )
                             .into_any_element()
                     } else {
-                        self.footer(&t, cx).into_any_element()
+                        self.footer(window, &t, cx).into_any_element()
                     }),
             );
         let card = card.when(self.slash.open, |d| d.child(self.slash_menu(&t, cx)));
@@ -1781,6 +2189,8 @@ impl Render for Composer {
                     "composer-menu",
                     if menu.items.first().is_some_and(|item| item.id == QUEUE_EDIT) {
                         QUEUE_ACTIONS
+                    } else if self.context_image.is_some() {
+                        "Image actions"
                     } else {
                         "Edit actions"
                     },
@@ -1796,6 +2206,84 @@ impl Render for Composer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn send_shortcut_controls_enter_without_changing_shift_enter() {
+        use gpui::{AppContext as _, HeadlessAppContext, Keystroke};
+        use std::{cell::RefCell, sync::Arc};
+
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+
+        let mut app =
+            HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
+        app.update(|cx| {
+            cx.set_global(Theme::dark());
+            theme::load_fonts(cx);
+            bind_keys(cx);
+        });
+        let sent = Rc::new(RefCell::new(Vec::new()));
+        let received = sent.clone();
+        let window = app
+            .open_window(size(px(600.), px(400.)), |window, cx| {
+                let composer = cx.new(|cx| {
+                    let mut composer = Composer::home(window, cx);
+                    composer.models.push(ModelOption {
+                        id: "gpt-6.1-sol".into(),
+                        label: "GPT-6.1 Sol".into(),
+                        efforts: vec!["medium".into()],
+                    });
+                    composer.on_submit(move |submission, _, _| {
+                        received.borrow_mut().push(submission.text.clone());
+                    });
+                    composer
+                });
+                composer.read(cx).focus_handle(cx).focus(window, cx);
+                composer
+            })
+            .unwrap();
+        for (setting, draft, key, sends) in [
+            ("enter", "one", "enter", true),
+            ("enter", "one\ntwo", "cmd-enter", true),
+            ("cmdIfMultiline", "one", "enter", true),
+            ("cmdIfMultiline", "one\ntwo", "enter", false),
+            ("cmdIfMultiline", "one\ntwo", "cmd-enter", true),
+            ("cmdAlways", "one", "enter", false),
+            ("cmdAlways", "one", "cmd-enter", true),
+            ("cmdAlways", "one", "shift-enter", false),
+            ("unknown", "one", "enter", true),
+        ] {
+            sent.borrow_mut().clear();
+            app.update(|cx| {
+                cx.set_global(EnterBehavior::from_setting(setting));
+                window
+                    .update(cx, |composer, _, cx| composer.set_text(draft, cx))
+                    .unwrap();
+            });
+            app.run_until_parked();
+            app.update_window(window.into(), |_, window, cx| {
+                window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx);
+            })
+            .unwrap();
+            app.run_until_parked();
+            app.update(|cx| {
+                window
+                    .update(cx, |composer, _, _| {
+                        if sends {
+                            assert_eq!(*sent.borrow(), [draft], "{setting}: {key}");
+                            assert!(composer.content.is_empty());
+                        } else {
+                            assert!(sent.borrow().is_empty(), "{setting}: {key}");
+                            assert_eq!(composer.content, format!("{draft}\n"));
+                        }
+                    })
+                    .unwrap();
+            });
+        }
+    }
 
     #[test]
     fn model_selection_preserves_other_composer_choices() {
@@ -1820,14 +2308,42 @@ mod tests {
                 composer.set_text("Keep this draft", cx);
                 composer.set_model_and_effort("announced", "high", cx);
                 assert_eq!(composer.current_model().unwrap().id, "announced");
-                assert_eq!(composer.effort, "high");
+                assert_eq!(composer.effort.as_deref(), Some("high"));
                 composer.set_model_and_effort("missing", "low", cx);
                 assert_eq!(composer.current_model().unwrap().id, "announced");
-                assert_eq!(composer.effort, "high");
+                assert_eq!(composer.effort.as_deref(), Some("high"));
                 assert_eq!(composer.permission, Permission::FullAccess);
                 assert!(composer.queue_mode);
-                assert_eq!(composer.default_selection, (0, "medium".into()));
+                assert_eq!(composer.default_selection, (0, Some("medium".into())));
                 assert_eq!(composer.content, "Keep this draft");
+            });
+        });
+    }
+
+    #[test]
+    fn restored_effort_stays_unset_while_displaying_medium() {
+        use gpui::{AppContext as _, HeadlessAppContext};
+        let mut app = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            let composer = cx.new(|cx| Composer::new("Do anything", false, cx));
+            composer.update(cx, |composer, cx| {
+                composer.models = vec![ModelOption {
+                    id: "gpt-6.1-sol".into(),
+                    label: "GPT-6.1 Sol".into(),
+                    efforts: vec!["low".into(), "medium".into()],
+                }];
+                composer.restore_run_settings(
+                    &json!({"settings":{"model":"gpt-6.1-sol","reasoning_effort":null}}),
+                    Permission::Ask,
+                    cx,
+                );
+                assert!(composer.effort.is_none());
+                assert_eq!(composer.displayed_effort(), "medium");
+                assert!(composer.run_settings().0["settings"]["reasoning_effort"].is_null());
             });
         });
     }
