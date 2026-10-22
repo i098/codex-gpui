@@ -573,6 +573,15 @@ fn activity_opens_running_chats_and_shortcut_restores_the_sidebar() -> Result<()
             fx.hover((size.0 * 0.6, 6.))?;
             assert!(fx.read(|r, cx| r.sidebar().read(cx).activity_clock.is_some()));
             sidebar_shot(&mut fx, "activity-empty")?;
+            assert_eq!(
+                fx.shot()?.get_pixel(548, 112).0,
+                if theme == "dark" {
+                    [26, 39, 50, 255]
+                } else {
+                    [228, 241, 252, 255]
+                },
+                "The active bell edge differs from the original {theme} capture"
+            );
             fx.hover((150., 300.))?;
             sidebar_shot(&mut fx, "activity-hover")?;
         }
