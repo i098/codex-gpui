@@ -199,13 +199,121 @@ fn control(
         .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(focus))
 }
 
-impl Render for Personalization {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl Personalization {
+    /// The editor's Back, Cancel and Save controls; an empty bar until it opens.
+    fn toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        if !self.opened {
+            return div().h(px(46.)).flex_none();
+        }
         let t = cx.theme().clone();
         let button_text = match t.appearance {
             theme::Appearance::Dark => gpui::rgb(0x2d2d2d).into(),
             theme::Appearance::Light => t.text_inverse,
         };
+        let save = self.editor.is_some() && !self.loading && !self.saving && self.dirty(cx);
+        div()
+            .h(px(46.))
+            .flex_none()
+            .px(px(20.))
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(
+                control(
+                    "Back",
+                    gpui::transparent_black(),
+                    t.text,
+                    !self.saving,
+                    window,
+                    cx,
+                )
+                .when(!self.saving, |d| {
+                    d.on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Leave)))
+                }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .child(
+                        control("Cancel", t.text_alpha_5, t.text, !self.saving, window, cx)
+                            .when(!self.saving, |d| {
+                                d.on_click(cx.listener(|this, _, _, cx| this.discard(cx)))
+                            }),
+                    )
+                    .child(
+                        control(
+                            "Save",
+                            t.button_primary_solid,
+                            button_text,
+                            save,
+                            window,
+                            cx,
+                        )
+                        .when(save, |d| {
+                            d.on_click(cx.listener(|this, _, _, cx| this.save(cx)))
+                        }),
+                    ),
+            )
+    }
+
+    /// The open editor's page: its heading over the loading state, load error or editor.
+    fn editor_page(&self, description: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        let body = div().flex().flex_col().gap(px(33.)).child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .child(text("Codex instructions", 28., 33.6, 500., t.text))
+                .child(description),
+        );
+        if self.loading {
+            return body.child(
+                div()
+                    .id("instructions-loading")
+                    .role(gpui::Role::Status)
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(icon("sidebar-cmd-spinner", 16., t.text_secondary))
+                    .child(text(
+                        "Loading instructions…",
+                        14.,
+                        20.,
+                        430.,
+                        t.text_secondary,
+                    )),
+            );
+        }
+        if self.load_error {
+            return body.child(
+                div()
+                    .id("instructions-load-error")
+                    .role(gpui::Role::Alert)
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(text(
+                        "Unable to load instructions",
+                        14.,
+                        20.,
+                        430.,
+                        t.text_secondary,
+                    ))
+                    .child(
+                        control("Retry", t.list_hover, t.text, true, window, cx)
+                            .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
+                    ),
+            );
+        }
+        body.children(self.editor.clone())
+    }
+}
+
+impl Render for Personalization {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
         let (description_size, description_line_height) =
             if self.opened { (13., 24.) } else { (12., 16.) };
         let description = div().flex().items_center()
@@ -220,55 +328,7 @@ impl Render for Personalization {
                     cx.stop_propagation();
                     cx.open_url("https://developers.openai.com/codex/guides/agents-md/#create-global-guidance");
                 }));
-        let toolbar = if self.opened {
-            let save = self.editor.is_some() && !self.loading && !self.saving && self.dirty(cx);
-            div()
-                .h(px(46.))
-                .flex_none()
-                .px(px(20.))
-                .flex()
-                .items_center()
-                .justify_between()
-                .child(
-                    control(
-                        "Back",
-                        gpui::transparent_black(),
-                        t.text,
-                        !self.saving,
-                        window,
-                        cx,
-                    )
-                    .when(!self.saving, |d| {
-                        d.on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Leave)))
-                    }),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .gap(px(8.))
-                        .child(
-                            control("Cancel", t.text_alpha_5, t.text, !self.saving, window, cx)
-                                .when(!self.saving, |d| {
-                                    d.on_click(cx.listener(|this, _, _, cx| this.discard(cx)))
-                                }),
-                        )
-                        .child(
-                            control(
-                                "Save",
-                                t.button_primary_solid,
-                                button_text,
-                                save,
-                                window,
-                                cx,
-                            )
-                            .when(save, |d| {
-                                d.on_click(cx.listener(|this, _, _, cx| this.save(cx)))
-                            }),
-                        ),
-                )
-        } else {
-            div().h(px(46.)).flex_none()
-        };
+        let toolbar = self.toolbar(window, cx);
         let content = if !self.opened {
             let focus = focus::handle("Edit Codex custom instructions", 0, window, cx);
             let row = focus::ring(
@@ -320,55 +380,7 @@ impl Render for Personalization {
                         .child(row),
                 )
         } else {
-            let mut body = div().flex().flex_col().gap(px(33.)).child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .child(text("Codex instructions", 28., 33.6, 500., t.text))
-                    .child(description),
-            );
-            if self.loading {
-                body = body.child(
-                    div()
-                        .id("instructions-loading")
-                        .role(gpui::Role::Status)
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .child(icon("sidebar-cmd-spinner", 16., t.text_secondary))
-                        .child(text(
-                            "Loading instructions…",
-                            14.,
-                            20.,
-                            430.,
-                            t.text_secondary,
-                        )),
-                );
-            } else if self.load_error {
-                body = body.child(
-                    div()
-                        .id("instructions-load-error")
-                        .role(gpui::Role::Alert)
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .child(text(
-                            "Unable to load instructions",
-                            14.,
-                            20.,
-                            430.,
-                            t.text_secondary,
-                        ))
-                        .child(
-                            control("Retry", t.list_hover, t.text, true, window, cx)
-                                .on_click(cx.listener(|this, _, _, cx| this.load(cx))),
-                        ),
-                );
-            } else if let Some(editor) = self.editor.clone() {
-                body = body.child(editor);
-            }
-            body
+            self.editor_page(description, window, cx)
         };
         div()
             .size_full()
