@@ -103,6 +103,12 @@ pub const SANS: &str = ".SystemUIFont";
 /// `ui-monospace`, which Chromium on macOS resolves to Menlo.
 pub const MONO: &str = "Menlo";
 
+/// The code font for code spans. This PR keeps `MONO`; following the appearance setting comes
+/// with the terminal stack's settings change.
+pub fn code_font() -> &'static str {
+    MONO
+}
+
 pub struct Shell {
     pub sidebar_open: bool,
     /// The toggle's spring: its start and the progress it left from
