@@ -364,21 +364,29 @@ pub fn key_label(accelerator: &str) -> String {
                 }
             }
             let key = pieces.last().copied().unwrap_or("");
-            let named = match key.to_ascii_lowercase().as_str() {
-                "enter" | "return" => Some("⏎"),
-                "escape" => Some("Esc"),
-                "space" => Some("Space"),
-                "tab" => Some("Tab"),
-                "backspace" => Some("⌫"),
-                "left" => Some("←"),
-                "right" => Some("→"),
-                "up" => Some("↑"),
-                "down" => Some("↓"),
-                "mouseback" => Some("Mouse Back"),
-                "mouseforward" => Some("Mouse Forward"),
-                "control" | "ctrl" | "alt" | "shift" | "command" | "cmdorctrl" | "fn" => Some(""),
-                _ => None,
-            };
+            let named = [
+                ("enter", "⏎"),
+                ("return", "⏎"),
+                ("escape", "Esc"),
+                ("space", "Space"),
+                ("tab", "Tab"),
+                ("backspace", "⌫"),
+                ("left", "←"),
+                ("right", "→"),
+                ("up", "↑"),
+                ("down", "↓"),
+                ("mouseback", "Mouse Back"),
+                ("mouseforward", "Mouse Forward"),
+                ("control", ""),
+                ("ctrl", ""),
+                ("alt", ""),
+                ("shift", ""),
+                ("command", ""),
+                ("cmdorctrl", ""),
+                ("fn", ""),
+            ]
+            .into_iter()
+            .find_map(|(name, label)| key.eq_ignore_ascii_case(name).then_some(label));
             if let Some(named) = named {
                 label.push_str(named);
             } else {

@@ -133,6 +133,11 @@ fn recent_commands_follow_update_order_instead_of_sidebar_order() -> Result<()> 
         let mut thread = recorded_thread(GREETING)?;
         thread["id"] = (*id).into();
         lines.extend(exchange("thread/read", json!({"thread": thread})));
+        let mut resumed = common::recorded_resume(GREETING)?;
+        resumed["thread"] = thread;
+        let mut pair = exchange("thread/resume", resumed);
+        pair[0]["msg"]["params"] = json!({"threadId": id, "excludeTurns": true});
+        lines.extend(pair);
     }
     let mut fx = Fx::scripted(lines)?;
     for (slot, id) in ids.iter().enumerate() {

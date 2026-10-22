@@ -156,6 +156,7 @@ dependencies = [
  "bridge",
  "chrono",
  "chrono-tz",
+ "glob",
  "gpui",
  "gpui_platform",
  "iana-time-zone",
@@ -172,6 +173,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
+ "sha1",
  "sha2 0.10.9",
  "shlex 2.0.1",
  "tempfile",
@@ -650,6 +652,7 @@ dependencies = [
  "anyhow",
  "async-channel",
  "async-lock",
+ "chrono",
  "futures-lite",
  "log",
  "parking_lot",
@@ -659,6 +662,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tungstenite",
+ "uuid",
  "webpki-roots",
 ]
 

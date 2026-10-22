@@ -57,7 +57,7 @@ fn next_tab_takes_its_keys_only_with_focus_in_a_side_tab() -> Result<()> {
             .update(&mut fx.cx, |root, cx| root.on_event(event, cx));
         fx.cx.run_until_parked();
     }
-    fx.keys("ctrl-`")?;
+    fx.action(Box::new(ui::OpenBackgroundTerminal))?;
     let tabs = fx.read(|root, _| root.side_tabs().to_vec());
     ensure!(tabs.len() == 2, "tabs {tabs:?}");
     fx.keys("alt-cmd-b")?;
