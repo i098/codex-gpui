@@ -63,10 +63,11 @@ pub(super) struct Bedrock {
 
 impl Bedrock {
     fn new(cx: &mut Context<Login>) -> Self {
+        let text_color = super::login_theme(cx).text;
         let fields = std::array::from_fn(|index| {
             let field = cx.new(|cx| {
                 let mut field = Composer::settings_field("", "", false, cx);
-                field.set_compact_field(cx);
+                field.set_compact_field(text_color, cx);
                 field.set_secret(matches!(index, 2..=4), cx);
                 field.set_field_label(
                     [
@@ -683,6 +684,7 @@ mod tests {
     #[test]
     fn empty_session_tokens_are_null_without_trimming_credentials() {
         let mut app = gpui::HeadlessAppContext::new(textsys::text_system());
+        app.update(|cx| cx.set_global(theme::Theme::dark()));
         let login = app.new(Login::new);
         login.update(&mut app, |_, cx| {
             let mut bedrock = Bedrock::new(cx);

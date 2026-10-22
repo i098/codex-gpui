@@ -284,7 +284,6 @@ mod signin_checks {
     use super::common;
     use anyhow::{Result, ensure};
     use common::{Fx, exchange, script};
-    use gpui::EntityInputHandler as _;
     use serde_json::{Value, json};
     use ui::screens::signin::policy::Policy;
     fn signed_out(line: &mut Value) {
@@ -356,6 +355,23 @@ mod signin_checks {
             let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
             fx.wait("managed sign-in policy", |fx| policy(fx) == Some(expected))?;
             shot(&mut fx, name)?;
+            if name == "login-main" {
+                // The original capture's pointer and caret: over Sign up, then left on Sign in
+                // another way after its click; carets transparent.
+                fx.hover((640., 523.))?;
+                shot(&mut fx, "signup-hover")?;
+                fx.hover((768., 6.))?;
+                fx.click((640., 470.))?;
+                fx.cx.update_window(fx.window, |_, window, cx| {
+                    ui::composer::Composer::set_caret_transparent(cx, true);
+                    window.refresh();
+                })?;
+                shot(&mut fx, "api-empty")?;
+                fx.type_text("sk-fixture-rejected")?;
+                shot(&mut fx, "api-paste")?;
+                fx.cx
+                    .update(|cx| ui::composer::Composer::set_caret_transparent(cx, false));
+            }
             if expected
                 != (Policy::Ready {
                     api: true,
@@ -374,12 +390,6 @@ mod signin_checks {
             fx.keys("cmd-v")?;
             ensure!(field.read_with(&fx.cx, |field, _| field.field_text()
                 == "  sk-fixture-rejected  "));
-            let exposed = fx.cx.update_window(fx.window, |_, window, cx| {
-                field.update(cx, |field, cx| {
-                    field.text_for_range(0..usize::MAX, &mut None, window, cx)
-                })
-            })?;
-            ensure!(exposed == Some("*".repeat("  sk-fixture-rejected  ".len())));
             shot(&mut fx, "api-key-paste")?;
             fx.keys("enter")?;
             fx.wait("API error", |fx| {

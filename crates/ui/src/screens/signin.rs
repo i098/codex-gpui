@@ -498,10 +498,10 @@ impl EventEmitter<LoginEvent> for Login {}
 
 impl Login {
     pub fn new(cx: &mut Context<Self>) -> Self {
+        let text_color = login_theme(cx).text;
         let api_key = cx.new(|cx| {
             let mut field = Composer::settings_field("sk-…", "", false, cx);
-            field.set_compact_field(cx);
-            field.set_secret(true, cx);
+            field.set_compact_field(text_color, cx);
             field.set_field_label("OpenAI API key", cx);
             field
         });
@@ -846,12 +846,49 @@ impl Login {
             .line_height(px(if api_form { 18. } else { 20. }))
             .font_weight(gpui::FontWeight(if api_form { 430. } else { 500. }))
             .whitespace_nowrap()
-            .child(label)
-            .when(matches!(style, Style::Link), |label| label.underline());
+            .when(matches!(style, Style::Link), |link| {
+                link.relative().child(underline(label.clone()))
+            })
+            .child(label);
         let button = button.children(command.icon(style, color));
         let focus = focus::handle(id, 0, window, cx);
         focus::ring(button.child(label), &focus, Theme::RADIUS_FULL, px(2.), cx)
     }
+}
+
+/// Blink's auto `text-decoration: underline` under one line of `text`, painted before the text:
+/// `max(1, font size / 10)` device px thick, truncated to whole px, its top
+/// `ceil(thickness / 2)` device px below the baseline. Ink skipping is not drawn.
+fn underline(text: SharedString) -> impl IntoElement {
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let style = window.text_style();
+            let size = style.font_size.to_pixels(window.rem_size());
+            let run = style.to_run(text.len());
+            let line = window
+                .text_system()
+                .shape_line(text.clone(), size, &[run], None);
+            let scale = window.scale_factor();
+            let thickness = (f32::from(size) * scale / 10.).max(1.);
+            let gap = (thickness / 2.).ceil();
+            // The text's baseline: Blink floors the half leading to whole device px.
+            let leading = f32::from(bounds.size.height - line.ascent - line.descent) * scale;
+            let below = px(((leading / 2.).floor() + gap) / scale);
+            let top = bounds.top() + line.ascent + below;
+            window.paint_underline(
+                gpui::point(bounds.left(), top),
+                line.width,
+                &gpui::UnderlineStyle {
+                    color: Some(style.color),
+                    thickness: px(thickness.trunc() / scale),
+                    wavy: false,
+                },
+            );
+        },
+    )
+    .absolute()
+    .inset_0()
 }
 
 fn cancel(id: String, cx: &App) {
@@ -900,8 +937,11 @@ impl Render for Login {
         let header = self.login_header(window, cx);
         let body = self.signin_controls(window, cx);
         frame.pb(px(24.)).child(
+            // The original composites this column: its text, icons and pill edges blend
+            // into a transparent tile that is then drawn over the surface.
             div()
                 .w(px(340.))
+                .layer()
                 .flex()
                 .flex_col()
                 .items_center()
@@ -927,7 +967,14 @@ impl Style {
                 } else {
                     t.button_primary_solid
                 }),
-                api_form.then_some((px(1.), t.border)),
+                Some((
+                    px(1.),
+                    if api_form {
+                        t.border
+                    } else {
+                        gpui::transparent_black()
+                    },
+                )),
             ),
             Style::Outline if api_form => {
                 (Some(t.text.opacity(if hovered { 0.1 } else { 0.05 })), None)

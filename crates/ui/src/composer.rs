@@ -630,6 +630,9 @@ pub struct Composer {
     request_drafts: Vec<(Rc<RequestIdentity>, RequestDraft)>,
     request_focus_pending: bool,
     request_compact: bool,
+    /// The sign-in `input`'s text color (set by [`Self::set_compact_field`]); its placeholder
+    /// is `text-tertiary` at full opacity.
+    field_text: Option<Hsla>,
     request_number: bool,
     request_label: Option<SharedString>,
     secret: bool,
@@ -715,6 +718,7 @@ impl Composer {
             request_drafts: Vec::new(),
             request_focus_pending: false,
             request_compact: false,
+            field_text: None,
             request_number: false,
             request_label: None,
             secret: false,
@@ -761,8 +765,9 @@ impl Composer {
         cx.notify();
     }
 
-    pub(crate) fn set_compact_field(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn set_compact_field(&mut self, text: Hsla, cx: &mut Context<Self>) {
         self.request_compact = true;
+        self.field_text = Some(text);
         cx.notify();
     }
 
@@ -1958,18 +1963,43 @@ impl Render for Composer {
             .on_action(cx.listener(Self::previous_command))
             .relative();
         if self.plain_field.is_some() {
+            let focused = self.focus_handle.is_focused(window);
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)
-                    .when(self.request_parent.is_none(), |d| {
-                        d.border_1()
-                            .border_color(t.border)
-                            .rounded(if self.request_compact {
-                                Theme::RADIUS_MD
-                            } else {
-                                px(8.)
-                            })
-                            .bg(t.background_panel)
-                            .py(px(if self.request_compact { 7. } else { 8. }))
+                    .when(
+                        self.request_parent.is_none() && !self.request_compact,
+                        |d| {
+                            d.border_1()
+                                .border_color(t.border)
+                                .rounded(px(8.))
+                                .bg(t.background_panel)
+                                .py(px(8.))
+                        },
+                    )
+                    .when(self.request_parent.is_none() && self.request_compact, |d| {
+                        // The sign-in `input`: `rounded-md bg-primary-soft border
+                        // border-primary-outline focus:border-ring`, `--codex-corner-shape`.
+                        let dark = t.appearance == Appearance::Dark;
+                        d.px(px(1.))
+                            .py(px(8.))
+                            .child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(Theme::RADIUS_MD),
+                                corner: shapes::Corner::Squircle,
+                                fill: Some(if dark {
+                                    gpui::rgba(0x2d2d2df5).into()
+                                } else {
+                                    t.background_panel
+                                }),
+                                border: Some((
+                                    px(1.),
+                                    if focused {
+                                        gpui::rgba(0x83c3ffc2).into()
+                                    } else {
+                                        t.border_strong
+                                    },
+                                )),
+                                ..Default::default()
+                            }))
                     })
                     .when(self.request_parent.is_some(), |d| {
                         d.px(px(1.))

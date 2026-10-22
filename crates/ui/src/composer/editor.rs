@@ -675,13 +675,15 @@ impl Composer {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             // `--opacity-composer-placeholder: .5` on the placeholder. The text blends like
             // Chromium's: blitted into a transparent layer (`_ComposerLayoutInput`'s
-            // `overflow-y: auto` contents), then composited onto the card.
-            .child(
-                div()
+            // `overflow-y: auto` contents), then composited onto the card. The sign-in
+            // `input` has neither: its text blends where the field paints.
+            .child(match self.field_text {
+                Some(_) => div().child(Editor(cx.entity())),
+                None => div()
                     .when(self.content.is_empty(), |d| d.opacity(0.5))
                     .layer()
                     .child(Editor(cx.entity())),
-            )
+            })
     }
 }
 
@@ -966,9 +968,10 @@ impl gpui::Element for Editor {
         cx: &mut App,
     ) {
         let t = cx.theme().clone();
+        let composer = self.0.read(cx);
         let lines = shape(
-            self.0.read(cx),
-            t.text,
+            composer,
+            composer.field_text.unwrap_or(t.text),
             t.text_tertiary,
             chip_color(&t),
             Some(bounds.size.width),
@@ -1001,8 +1004,8 @@ impl gpui::Element for Editor {
         let focus = self.0.read(cx).focus_handle.clone();
         window.handle_input(&focus, ElementInputHandler::new(bounds, self.0.clone()), cx);
         let selection_color = cx.theme().text_selection;
-        let caret_color = cx.theme().text;
         let c = self.0.read(cx);
+        let caret_color = c.field_text.unwrap_or(cx.theme().text);
         if !c.selected_range.is_empty()
             && let (Some(a), Some(b)) = (
                 c.point_for_index(c.selected_range.start),

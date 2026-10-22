@@ -122,8 +122,9 @@ Null requirements fall back to `config/read` and its `forced_login_method`.
 The screen uses the original feature gates for Google, Microsoft, Amazon Bedrock, and browser account lookup.
 Browser account lookup uses the installed app's native eligibility helper and a bounded localhost callback.
 It does not read browser profiles or cookies.
-API-key fields support the native clipboard and keyboard editor.
-They mask both displayed text and operating-system text reads.
+Credential fields support the native clipboard and keyboard editor.
+The OpenAI API-key field shows its text, as the original does.
+The Bedrock secret fields mask both displayed text and operating-system text reads.
 The copied sign-in link matches the browser URL, including provider and account selection.
 Bedrock sign-in discovers AWS profiles, accepts explicit credentials, restarts the app-server, and checks GovCloud requirements.
 The GovCloud warning remains open after restart until the user selects Continue.
