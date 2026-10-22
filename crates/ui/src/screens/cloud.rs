@@ -1128,6 +1128,15 @@ impl CloudPage {
                 std::path::Path::new(workspace).join(repository).display()
             )
         };
+        let font = gpui::Font {
+            weight: gpui::FontWeight(430.),
+            ..gpui::font(crate::SANS)
+        };
+        let font_id = cx.text_system().resolve_font(&font);
+        // CSS vertical-align: middle uses the paragraph baseline and half its x-height.
+        let middle_offset = cx.text_system().baseline_offset(font_id, px(12.), px(16.))
+            - cx.text_system().x_height(font_id, px(12.)) / 2.
+            - px(8.);
         div()
             .flex()
             .flex_col()
@@ -1144,19 +1153,21 @@ impl CloudPage {
                 div()
                     .flex()
                     .flex_wrap()
-                    .items_baseline()
+                    .items_start()
                     .child(text(summary, 12., 16., 430., t.text_secondary))
                     .child(
-                        self.wire_button(
-                            "cloud-workspace".into(),
-                            "Edit workspace directory".into(),
-                            text("Edit workspace directory", 12., 16., 430., t.text_secondary)
-                                .underline(),
-                            cx,
-                            |this, _, cx| {
-                                this.expanded_workspace = !this.expanded_workspace;
-                                cx.notify();
-                            },
+                        div().mt(middle_offset).child(
+                            self.wire_button(
+                                "cloud-workspace".into(),
+                                "Edit workspace directory".into(),
+                                text("Edit workspace directory", 12., 16., 430., t.text_secondary)
+                                    .underline(),
+                                cx,
+                                |this, _, cx| {
+                                    this.expanded_workspace = !this.expanded_workspace;
+                                    cx.notify();
+                                },
+                            ),
                         ),
                     )
                     .child(text(".", 12., 16., 430., t.text_secondary)),
@@ -1344,9 +1355,9 @@ impl CloudPage {
             }
             variables.push(self.variable_row(index, false, cx));
         }
-        variables.push(Self::row(
+        let mut secrets = vec![Self::row(
             "Secrets",
-            None,
+            Some("Paste .env content into a secret key to add multiple secrets"),
             self.button("add-secret", "Add secret", false, cx, |this, _, cx| {
                 if let Some(e) = &mut this.editor {
                     e.draft.secrets.push(Secret {
@@ -1359,9 +1370,9 @@ impl CloudPage {
                 cx.notify();
             }),
             &t,
-        ));
+        )];
         if self.access.domain_secrets {
-            variables.push(Self::row(
+            secrets.push(Self::row(
                 "Domain-scoped secrets",
                 Some("During tasks, secrets are sent only to their configured domain. Secrets without a domain are available only to setup scripts."),
                 self.button("cloud-scoped-secrets", if editor.draft.authtranslator {"On"} else {"Off"}, false, cx, |this,_,cx|{
@@ -1372,7 +1383,7 @@ impl CloudPage {
             ));
         }
         for index in 0..editor.draft.secrets.len() {
-            variables.push(self.variable_row(index, true, cx));
+            secrets.push(self.variable_row(index, true, cx));
         }
         let mut network = vec![Self::row(
             "Internet access",
@@ -1431,7 +1442,14 @@ impl CloudPage {
                 ))
             })
             .child(Self::group("Code execution", setup, &t))
-            .child(Self::group("Variables and secrets", variables, &t))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(6.))
+                    .child(Self::group("Variables and secrets", variables, &t))
+                    .child(Self::group("", secrets, &t)),
+            )
             .child(Self::group("Agent internet access", network, &t))
             .child(
                 div()
