@@ -336,6 +336,8 @@ The capture regression checks live-state restoration, another window, a closed-w
 The focused project-control crop now matches the original, including the tooltip shadow over the ring.
 The original recordings, masks and strict gates stay unchanged; remaining tooltip and rail differences are tracked separately.
 
+New chat adds a Back entry even when Home is already open.
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Launch to `/` | entry | Hero, announcement slot and composer. | Route Home, rail Home selected, composer focused, Recents loaded. | PASS (`launch_home`, `parity_home`) |
@@ -440,7 +442,7 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 |---|---|---|---|---|---|
 | 1 | Composer in thread | entry | `Work with Codex` (idle) or `Working…`. | Docked thread composer, focused on open; `Working…` not checked. | PASS (`shift_enter_newline`, `parity_thread`) |
 | 2 | Type text | focus | Editor grows to a max height, then scrolls. | Lines add; height growth not measured. | FAIL (no flow checks the max height) |
-| 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Enter sends; no `Send shortcut` setting. | PASS (`submit_enter_starts_thread`) |
+| 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Reads `desktop.composerEnterBehavior` at startup and after successful writes. `cmdAlways` requires Command+Enter; `cmdIfMultiline` requires it for multiline drafts. Shift+Enter inserts a line break. | PASS (`submit_enter_starts_thread`, `send_shortcut_controls_enter_without_changing_shift_enter`) |
 | 4 | Shift+Enter | shortcut | New line. | New line in the Home and thread composers. | PASS (`shift_enter_newline`) |
 | 5 | `@` | shortcut | Mention list. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 6 | `/` | shortcut | Slash command menu. | Matches the recorded menu, filtering, selected row, editor focus, arrows, Escape, Enter, and Tab. | PASS (`s021::slash_menu_keyboard_replay`) |
@@ -768,11 +770,15 @@ Slice S035 proves suggestion hover (AM-037) with `refs/interactions/s035.json` a
 The test replays pointer entry and exit on the existing fixture screen with the original server suggestions.
 It checks the card fill, the adjacent card, and the icon colors against the Linux route1 recording.
 The existing hover implementation already matches; no production code changes are needed.
-Slice S035b proves suggestion click (AM-036) with `refs/interactions/s035b.json` and `crates/app/tests/s035b.rs`.
-The click puts the card in `Starting…` (rays spinner, status text) and disables every card at opacity 0.4.
-`Root` then reads the TPP models through the desktop host like the original's guided start (`conversation-actions` `J`).
-The oracle answers that read with the host's 499, so the recorded outcome is the toast `Couldn’t start this suggested task` and the cards enabled again.
-The conversation prepare, its stream, and the navigation into the started conversation are not recorded and not wired.
+Slice S035b covers the suggestion click (AM-036) with `refs/interactions/s035b.json` and `crates/app/tests/s035b.rs`.
+The original recording shows a failed models read, not a successful guided start.
+The retained live capture reached the Apple DeviceCheck requirement before any conversation or automation write.
+Captain decision 110 selects an unsupported state for this release.
+The click shows `Starting suggested tasks isn’t supported in this version` through the existing danger toast.
+It sends no host request, creates no conversation or task, and keeps the route and every card enabled.
+The native click test checks these effects without changing the recorded fixture.
+Set `S035B_SHOTS` to retain the before and after screenshots outside the Cargo target.
+Ordinary local task creation and the existing draft remain unchanged.
 
 `Run now` (AM-021) is the first item of the row `Scheduled task actions` menu, as in `run-now-11e55df28c95.js`.
 Choosing it sends `automation-run-now` with `{id, collaborationMode, permissions}` and disables duplicate starts until the host answers.

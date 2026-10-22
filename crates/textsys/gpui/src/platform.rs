@@ -1552,6 +1552,16 @@ pub trait PlatformTextSystem: Send + Sync {
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     /// Layout a line of text with the given font runs.
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+    /// Layout text using the window's device scale for native metric rounding.
+    fn layout_line_with_scale(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+        _scale_factor: f32,
+    ) -> LineLayout {
+        self.layout_line(text, font_size, runs)
+    }
     /// Returns the recommended text rendering mode for the given font and size.
     fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
     -> TextRenderingMode;

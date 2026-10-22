@@ -313,7 +313,7 @@ fn plain_command(root: &Path) -> Command {
     command
 }
 
-fn command(root: &Path, args: &[&str]) -> Command {
+pub(super) fn command(root: &Path, args: &[&str]) -> Command {
     let mut command = plain_command(root);
     command.arg("--literal-pathspecs").args(args);
     command

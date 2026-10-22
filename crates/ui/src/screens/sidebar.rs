@@ -59,7 +59,7 @@ pub struct Project {
     pub expanded: bool,
 }
 
-/// Recents row label: the thread name, else its preview cut to 80 chars with `…`.
+/// Thread name or preview, cut to 80 characters. Views supply their own empty-state label.
 pub fn title(thread: &Thread) -> SharedString {
     if let Some(name) = &thread.name {
         return name.clone().into();
@@ -69,6 +69,14 @@ pub fn title(thread: &Thread) -> SharedString {
         preview.to_owned().into()
     } else {
         format!("{}…", preview.chars().take(79).collect::<String>()).into()
+    }
+}
+
+fn display_title(title: SharedString) -> SharedString {
+    if title.is_empty() {
+        "New chat".into()
+    } else {
+        title
     }
 }
 
@@ -187,7 +195,7 @@ impl Render for ArchivedChats {
                     .p(px(16.))
                     .bg(t.surface_secondary)
                     .rounded(px(16.))
-                    .child(text(title(thread), 14., 21., 430., t.text))
+                    .child(text(display_title(title(thread)), 14., 21., 430., t.text))
             })),
         };
         div()
@@ -340,7 +348,10 @@ impl HomeSidebar {
     /// Recents from a live `thread/list`; `selected` is the open thread, highlighted.
     pub fn new(threads: &[Thread], selected: Option<&str>) -> Self {
         Self {
-            threads: threads.iter().map(|t| (t.id.clone(), title(t))).collect(),
+            threads: threads
+                .iter()
+                .map(|t| (t.id.clone(), display_title(title(t))))
+                .collect(),
             projects: Vec::new(),
             worktree_tip: false,
             worktree_tip_epoch: 0,
@@ -613,7 +624,10 @@ impl HomeSidebar {
     }
 
     pub fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
-        self.threads = threads.iter().map(|t| (t.id.clone(), title(t))).collect();
+        self.threads = threads
+            .iter()
+            .map(|t| (t.id.clone(), display_title(title(t))))
+            .collect();
         self.pinned = pinned_ids(threads);
         for thread in threads {
             if thread.status == ThreadStatus::Active {
@@ -634,10 +648,10 @@ impl HomeSidebar {
         }
         let old = self.threads.iter().position(|(id, _)| *id == thread.id);
         let old = old.map(|i| self.threads.remove(i).1);
-        let label = match (title(thread), old) {
+        let label = display_title(match (title(thread), old) {
             (label, Some(old)) if label.is_empty() => old,
             (label, _) => label,
-        };
+        });
         self.threads.insert(0, (thread.id.clone(), label));
         self.reindex_sections();
         self.set_running(&thread.id, thread.status == ThreadStatus::Active, cx);
@@ -1358,7 +1372,7 @@ impl Item {
     }
 
     fn chat(thread: &Thread, snippet: Option<String>, unread: bool) -> Self {
-        let label = title(thread);
+        let label = display_title(title(thread));
         Self {
             search_value: label.clone(),
             label,
@@ -4086,6 +4100,17 @@ impl Render for Overlaid {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_recent_thread_keeps_a_label_without_changing_its_title() {
+        let list: ThreadListResponse = fixture::response("readback.jsonl", "thread/list", 0);
+        let mut thread = list.data.into_iter().next().unwrap();
+        thread.name = None;
+        thread.preview.clear();
+        let sidebar = HomeSidebar::new(std::slice::from_ref(&thread), Some(&thread.id));
+        assert_eq!(sidebar.threads[0].1.as_ref(), "New chat");
+        assert!(title(&thread).is_empty());
+    }
 
     #[test]
     fn emoji_chat_titles_keep_the_original_utf16_order() {

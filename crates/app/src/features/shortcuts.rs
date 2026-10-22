@@ -62,6 +62,9 @@ pub(crate) enum AppEdit {
 
 pub(super) fn init(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new("ctrl-tab", NextRecentChat, None),
+        KeyBinding::new("ctrl-shift-tab", PreviousRecentChat, None),
+        KeyBinding::new("ctrl-shift-g", OpenChangesPanel, None),
         KeyBinding::new("cmd-+", ZoomIn, None),
         KeyBinding::new("cmd-=", ZoomIn, None),
         KeyBinding::new("cmd-shift-=", ZoomIn, None),
@@ -158,7 +161,6 @@ impl Root {
             self.state.save();
         }
     }
-
     pub(crate) fn remember_recent_chat(&mut self) {
         let Route::Thread(id) = &self.state.route else {
             return;

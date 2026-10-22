@@ -469,7 +469,7 @@ impl Composer {
         }
         if let Some(command) = COMMANDS.get(index) {
             let description = if command.id == "reasoning" {
-                effort_label(&self.effort)
+                effort_label(self.displayed_effort())
             } else {
                 command.description
             };
@@ -577,7 +577,7 @@ impl Composer {
                 .flat_map(|model| &model.efforts)
                 .map(|effort| SubItem {
                     title: effort_label(effort).into(),
-                    description: current(*effort == self.effort).into(),
+                    description: current(effort == self.displayed_effort()).into(),
                     icon: "settings-personalization",
                     action: SubAction::Effort(effort.clone()),
                 })
@@ -657,7 +657,7 @@ impl Composer {
                 self.picked(cx);
             }
             SubAction::Effort(effort) => {
-                self.effort = effort;
+                self.effort = Some(effort);
                 self.picked(cx);
             }
             SubAction::Fork => cx.emit(SlashCommand::Fork),

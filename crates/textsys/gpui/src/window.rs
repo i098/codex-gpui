@@ -1668,6 +1668,7 @@ impl Window {
         let scale_factor = platform_window.scale_factor();
         let appearance = platform_window.appearance();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
+        text_system.set_scale_factor(scale_factor);
         let invalidator = WindowInvalidator::new(handle.window_id());
         let active = Rc::new(Cell::new(platform_window.is_active()));
         let visibility = platform_window.visibility();
@@ -2829,6 +2830,7 @@ impl Window {
     pub fn bounds_changed(&mut self, cx: &mut App) {
         self.device_scale_factor = self.platform_window.scale_factor();
         self.scale_factor = self.device_scale_factor * self.ui_scale;
+        self.text_system.set_scale_factor(self.scale_factor);
         self.viewport_size = self
             .platform_window
             .content_size()
@@ -3192,6 +3194,7 @@ impl Window {
     pub fn set_scale_factor(&mut self, scale_factor: f32) {
         self.device_scale_factor = scale_factor;
         self.scale_factor = scale_factor * self.ui_scale;
+        self.text_system.set_scale_factor(self.scale_factor);
         self.refresh();
     }
 
