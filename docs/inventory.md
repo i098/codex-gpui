@@ -112,6 +112,9 @@ The All and Reviewing views remove duplicate requests across review and authored
 Each search stream retains its rows and cursor after a failed page request.
 Retry reloads the failed data without creating a GitHub write.
 Retry reads the active GitHub account again before reloading.
+The search field stays on one line and keeps the caret visible during horizontal editing.
+The default detail width adapts to the window and preserves room for the request list.
+The inbox uses the original compact toolbar, row spacing, and grouped change counts.
 
 The executable also accepts `/pull-requests` and `/pull-requests/<host>/<owner>/<repository>/<number>` as its first argument.
 The host runs GitHub CLI reads through the existing app-server `process/spawn` connection.

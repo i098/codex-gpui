@@ -15,6 +15,41 @@ use serde_json::Value;
 use std::{cell::RefCell, collections::HashMap, sync::Arc, time::Duration};
 use theme::ActiveTheme as _;
 
+fn toolbar_icon(name: &'static str, side: f32, color: gpui::Hsla) -> impl IntoElement {
+    let source: &'static [u8] = match name {
+        "search" => br##"<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M7.33057 1.98535C10.2484 1.98535 12.6136 4.3508 12.6138 7.26855C12.6138 8.58031 12.1346 9.77942 11.3433 10.7031L13.9897 13.3496C14.1655 13.5253 14.1655 13.8106 13.9897 13.9863C13.814 14.1621 13.5288 14.1621 13.353 13.9863L10.7017 11.335C9.78678 12.0942 8.61243 12.5518 7.33057 12.5518C4.41281 12.5516 2.04736 10.1864 2.04736 7.26855C2.04754 4.35091 4.41292 1.98553 7.33057 1.98535ZM7.33057 2.88574C4.90998 2.88592 2.94793 4.84796 2.94775 7.26855C2.94775 9.68929 4.90987 11.6522 7.33057 11.6523C9.75141 11.6523 11.7144 9.6894 11.7144 7.26855C11.7142 4.84786 9.75131 2.88574 7.33057 2.88574Z" fill="currentColor"/></svg>"##,
+        "clear" => br##"<svg height="16" viewBox="0 0 16 16" width="16" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M8 1.25C11.7279 1.25 14.75 4.27208 14.75 8C14.75 11.7279 11.7279 14.75 8 14.75C4.27208 14.75 1.25 11.7279 1.25 8C1.25 4.27208 4.27208 1.25 8 1.25ZM10.5332 5.46582C10.2403 5.17333 9.76544 5.17317 9.47266 5.46582L8 6.93848L6.52734 5.46582C6.23456 5.17317 5.75968 5.17333 5.4668 5.46582C5.1739 5.75871 5.1739 6.23445 5.4668 6.52734L6.93848 7.99902L5.46582 9.47363C5.17319 9.76655 5.17302 10.2414 5.46582 10.5342C5.75864 10.8269 6.23349 10.8268 6.52637 10.5342L8 9.06055L9.47363 10.5342C9.76651 10.8268 10.2414 10.8269 10.5342 10.5342C10.827 10.2414 10.8268 9.76655 10.5342 9.47363L9.06055 7.99902L10.5332 6.52734C10.8261 6.23445 10.8261 5.75871 10.5332 5.46582Z" fill="currentColor"/></svg>"##,
+        "filter" => br##"<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M16.0013 5.00024C16.0013 4.44715 15.5534 3.99847 15.0003 3.99829H5.00031C4.4471 3.99829 3.99835 4.44704 3.99835 5.00024V5.97583C3.99835 6.24147 4.10349 6.49697 4.29132 6.68481L7.48175 9.87524L7.63702 10.0461C7.97691 10.461 8.16534 10.9826 8.16534 11.5237V15.1663C8.16534 15.3015 8.24656 15.4238 8.3714 15.4758L11.3714 16.7258C11.592 16.8176 11.8353 16.6553 11.8353 16.4163V11.5237C11.8353 10.9054 12.0808 10.3125 12.5179 9.87524L15.7083 6.68481L15.7747 6.6106C15.9206 6.43239 16.0013 6.20818 16.0013 5.97583V5.00024ZM17.3314 5.97583C17.3314 6.51694 17.144 7.03943 16.804 7.45435L16.6487 7.62524L13.4583 10.8157C13.2706 11.0035 13.1653 11.2581 13.1653 11.5237V16.4163C13.1653 17.6044 11.9564 18.4103 10.8597 17.9534L7.85968 16.7034C7.23925 16.4448 6.83527 15.8384 6.83527 15.1663V11.5237C6.83527 11.258 6.72917 11.0035 6.54132 10.8157L3.35089 7.62524C2.91364 7.18798 2.66827 6.59421 2.66827 5.97583V5.00024C2.66827 3.7125 3.71256 2.66821 5.00031 2.66821H15.0003C16.2879 2.66839 17.3314 3.71261 17.3314 5.00024V5.97583Z" fill="currentColor"/></svg>"##,
+        "filter-active" => br##"<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20 5A4 4 0 1 1 12 5A4 4 0 0 1 20 5Z" fill="#0285FF"/><path fill="currentColor" d="M12.5 14.005a.665.665 0 0 1 0 1.33h-5a.665.665 0 0 1 0-1.33h5Zm-.646-4.67a5.996 5.996 0 0 0 2.169 1.33H5a.665.665 0 1 1 0-1.33h6.854ZM10 5c0 .34.03.671.084.995H2.5a.665.665 0 0 1 0-1.33h7.51c-.006.11-.01.223-.01.335Z"/></svg>"##,
+        _ => unreachable!(),
+    };
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, (), window, cx| {
+            let key = match name {
+                "search" => "pull-request-toolbar-search",
+                "clear" => "pull-request-toolbar-clear",
+                "filter-active" => "pull-request-toolbar-filter-active",
+                _ => "pull-request-toolbar-filter",
+            };
+            if !shapes::paint_icon(source, key, bounds, false, color, None, window, cx) {
+                window
+                    .paint_svg(
+                        bounds,
+                        key.into(),
+                        Some(source),
+                        gpui::TransformationMatrix::default(),
+                        color,
+                        cx,
+                    )
+                    .ok();
+            }
+        },
+    )
+    .size(px(side))
+    .flex_none()
+}
+
 pub const INSTALL_PROMPT: &str = "Install GitHub CLI (`gh`) on this machine, verify it works, and help me authenticate if needed so I can view and manage pull requests in Codex";
 
 const PREVIEW_MEMORY_LIMIT: usize = 512 * 1024 * 1024;
@@ -72,16 +107,17 @@ pub fn shell(page: Entity<Page>, cx: &mut App) -> Entity<Shell> {
     cx.new(|_| {
         let mut shell = Shell::new(sidebar, page.into());
         shell.sidebar_open = false;
-        shell.selected_rail = Some("rail-code-review");
+        shell.selected_rail = None;
         shell.chat_chrome = false;
         shell.new_tab = false;
+        shell.main_backgrounds = 1;
         shell
     })
 }
 
 impl Page {
     pub fn new(clock: Clock, cx: &mut Context<Self>) -> Self {
-        let search = cx.new(|cx| Composer::settings_field("Search pull requests", "", false, cx));
+        let search = cx.new(|cx| Composer::search_field("Search pull requests", cx));
         cx.observe(&search, |this, editor, cx| {
             let query = model::limit_query(editor.read(cx).field_text()).to_owned();
             if editor.read(cx).field_text() != query {
@@ -565,12 +601,43 @@ impl Page {
         }
     }
 
-    fn input(&self) -> Stateful<Div> {
+    fn input(&self, cx: &Context<Self>) -> Stateful<Div> {
+        let t = cx.theme();
         div()
             .id("pull-request-inbox-search")
+            .relative()
             .flex_1()
             .min_w_0()
-            .child(self.search.clone())
+            .h(px(32.))
+            .px(px(11.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(shapes::decoration(shapes::Decoration {
+                radius: gpui::Corners::all(px(16.)),
+                fill: Some(t.control_background),
+                border: Some((px(1.), t.border_strong)),
+                ..Default::default()
+            }))
+            .child(toolbar_icon("search", 18., t.text_secondary))
+            .child(div().flex_1().min_w_0().child(self.search.clone()))
+            .when(!self.query.is_empty(), |d| {
+                d.child(
+                    div()
+                        .id("clear-pull-request-search")
+                        .role(gpui::Role::Button)
+                        .aria_label("Clear search")
+                        .track_focus(&self.control("clear-pull-request-search", cx))
+                        .cursor_pointer()
+                        .size(px(16.))
+                        .flex_none()
+                        .child(toolbar_icon("clear", 16., t.text_secondary))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.search.update(cx, |search, cx| search.set_text("", cx));
+                            this.search.focus_handle(cx).focus(window, cx);
+                        })),
+                )
+            })
     }
 
     fn filters(&self, cx: &Context<Self>) -> Div {
@@ -680,8 +747,19 @@ impl Page {
         }))
     }
 
-    fn inbox(&mut self, _window: &Window, cx: &mut Context<Self>) -> Div {
-        let mut navigation = div().h(px(40.)).flex().items_center().gap(px(4.));
+    fn inbox(&mut self, window: &Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme();
+        let viewport = window.viewport_size();
+        let width = (f32::from(viewport.width - crate::RAIL_WIDTH - crate::PAGE_INSET)
+            - default_detail_width(viewport))
+        .max(0.);
+        let mut navigation = div()
+            .h(px(46.))
+            .flex_none()
+            .px(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(2.));
         for (index, (view, label)) in [
             (View::All, "All"),
             (View::Reviewing, "Reviewing"),
@@ -691,8 +769,37 @@ impl Page {
         .enumerate()
         {
             navigation = navigation.child(
-                self.button(("view", index), label, cx)
-                    .when(self.view != view, |d| d.bg(gpui::transparent_black()))
+                div()
+                    .id(("view", index))
+                    .role(gpui::Role::Button)
+                    .aria_label(label)
+                    .track_focus(&self.control(("view", index), cx))
+                    .relative()
+                    .h(px(28.))
+                    .px(px(9.))
+                    .flex()
+                    .items_center()
+                    .rounded(px(12.5))
+                    .hover(|s| s.bg(t.ghost_hover))
+                    .when(self.view == view, |d| {
+                        d.child(shapes::decoration(shapes::Decoration {
+                            radius: gpui::Corners::all(px(12.5)),
+                            corner: shapes::Corner::Squircle,
+                            fill: Some(t.text_alpha_5),
+                            ..Default::default()
+                        }))
+                    })
+                    .child(text(
+                        label,
+                        13.,
+                        18.,
+                        430.,
+                        if self.view == view {
+                            t.text
+                        } else {
+                            t.text_tertiary
+                        },
+                    ))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if this.view != view {
                             this.view = view;
@@ -701,16 +808,47 @@ impl Page {
                     })),
             );
         }
-        let search = self.input();
+        let search = self.input(cx);
         let mut toolbar = div()
             .relative()
+            .px(px(30.))
+            .pt(px(20.))
+            .pb(px(8.))
+            .flex_none()
             .flex()
             .gap(px(8.))
             .items_center()
             .child(search)
             .child(
-                self.button("pull-request-filters", "Filter", cx)
+                div()
+                    .id("pull-request-filters")
+                    .role(gpui::Role::Button)
                     .aria_label("Filter pull requests")
+                    .track_focus(&self.control("pull-request-filters", cx))
+                    .relative()
+                    .size(px(28.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(12.5))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(t.ghost_hover))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: gpui::Corners::all(px(12.5)),
+                        corner: shapes::Corner::Squircle,
+                        fill: Some(t.text_alpha_5),
+                        ..Default::default()
+                    }))
+                    .child(toolbar_icon(
+                        if self.lifecycle != "open" || self.repository.is_some() {
+                            "filter-active"
+                        } else {
+                            "filter"
+                        },
+                        18.,
+                        t.text,
+                    ))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.filter_open = !this.filter_open;
                         this.filter_submenu = None;
@@ -722,14 +860,27 @@ impl Page {
         }
         let body = self.inbox_body(cx);
         div()
+            .relative()
             .size_full()
             .flex()
             .flex_col()
-            .gap(px(16.))
-            .p(px(24.))
+            .min_h_0()
             .child(navigation)
             .child(toolbar)
-            .child(body)
+            .child(body.px(px(30.)).pt(px(20.)).pb(px(20.)))
+            .child(
+                crate::screens::thread::view::skia_gradient(
+                    &[(t.surface, 0.), (t.surface.opacity(0.), 1.)],
+                    gpui::transparent_black(),
+                    (width, 32.),
+                    (0., 60.),
+                    false,
+                    window.scale_factor(),
+                )
+                .absolute()
+                .top(px(106.))
+                .left_0(),
+            )
     }
 
     fn inbox_body(&self, cx: &Context<Self>) -> Div {
@@ -810,6 +961,7 @@ impl Page {
             .min_h_0()
             .flex()
             .flex_col()
+            .layer()
             .gap(px(16.));
         for (index, stream) in self.streams.iter().enumerate() {
             if rows[index].is_empty() && !stream.loading {
@@ -827,15 +979,15 @@ impl Page {
                     .flex()
                     .gap(px(4.))
                     .cursor_pointer()
-                    .child(text(stream.title, 12., 18., 500., t.text_secondary))
-                    .child(icon(
-                        if stream.expanded {
-                            "chevron-down"
-                        } else {
-                            "thread-chevron-right"
+                    .items_center()
+                    .child(text(stream.title, 12., 16., 500., t.text_tertiary))
+                    .child(icon("thread-chevron-right", 14., t.text_tertiary).when(
+                        stream.expanded,
+                        |glyph| {
+                            glyph.with_transformation(gpui::Transformation::rotate(gpui::radians(
+                                std::f32::consts::FRAC_PI_2,
+                            )))
                         },
-                        12.,
-                        t.text_secondary,
                     ))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.streams[index].expanded = !this.streams[index].expanded;
@@ -850,8 +1002,27 @@ impl Page {
                             .overflow_hidden(),
                     );
                 } else {
-                    for item in &rows[index] {
-                        section = section.child(self.row(item, stream.key != "authored", cx));
+                    for (position, item) in rows[index].iter().enumerate() {
+                        let next = rows[index].get(position + 1);
+                        let divider = [Some(item), next]
+                            .into_iter()
+                            .flatten()
+                            .all(|item| self.selected.as_ref() != Some(&item.pull_request));
+                        section = section.child(self.row(item, stream.key != "authored", cx).when(
+                            divider,
+                            |row| {
+                                row.child(
+                                    div()
+                                        .absolute()
+                                        .left(px(12.))
+                                        .right(px(12.))
+                                        .bottom(px(if next.is_some() { -1. } else { 0. }))
+                                        .h(px(1.))
+                                        .bg(t.border_subtle)
+                                        .group_hover("pull-request-row", |s| s.opacity(0.)),
+                                )
+                            },
+                        ));
                     }
                 }
             }
@@ -878,7 +1049,7 @@ impl Page {
         let t = cx.theme();
         let identity = item.pull_request.clone();
         let selected = self.selected.as_ref() == Some(&identity);
-        let mut metadata = div().flex().items_center().gap(px(8.)).min_w_0();
+        let mut metadata = div().flex_1().flex().items_center().gap(px(8.)).min_w_0();
         if show_author && let Some(url) = &item.author_avatar_url {
             metadata = metadata.child(
                 gpui::img(url.clone())
@@ -888,29 +1059,47 @@ impl Page {
             );
         }
         if self.repository.is_none() {
-            metadata = metadata.child(text(
-                format!("{}/{}", identity.owner, identity.repository),
-                12.,
-                18.,
-                430.,
-                t.text_tertiary,
-            ));
+            metadata = metadata.child(
+                text(
+                    format!("{}/{}", identity.owner, identity.repository),
+                    12.,
+                    16.,
+                    430.,
+                    t.text_tertiary,
+                )
+                .flex_none()
+                .max_w(gpui::relative(0.35))
+                .truncate(),
+            );
         }
-        metadata = metadata
-            .child(text(item.head_branch.clone(), 12., 18., 430., t.text_tertiary).truncate());
+        metadata = metadata.child(
+            text(item.head_branch.clone(), 12., 16., 430., t.text_tertiary)
+                .flex_1()
+                .min_w_0()
+                .truncate(),
+        );
         div()
             .id(SharedString::from(item.node_id.clone()))
             .role(gpui::Role::Button)
             .aria_label(item.title.clone())
             .track_focus(&self.control(SharedString::from(item.node_id.clone()), cx))
-            .rounded(px(8.))
+            .relative()
+            .group("pull-request-row")
+            .rounded(px(15.))
             .px(px(12.))
             .py(px(10.))
             .cursor_pointer()
             .flex()
             .items_center()
-            .gap(px(12.))
-            .when(selected, |d| d.bg(t.primary_soft_alpha))
+            .gap(px(8.))
+            .when(selected, |d| {
+                d.child(shapes::decoration(shapes::Decoration {
+                    radius: gpui::Corners::all(px(15.)),
+                    corner: shapes::Corner::Squircle,
+                    fill: Some(t.text.opacity(0.05)),
+                    ..Default::default()
+                }))
+            })
             .hover(|s| s.bg(t.ghost_hover))
             .child(status_icon(item, t))
             .child(
@@ -920,31 +1109,58 @@ impl Page {
                     .flex()
                     .flex_col()
                     .gap(px(2.))
-                    .child(text(item.title.clone(), 14., 20., 500., t.text).truncate())
-                    .child(metadata),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_end()
-                    .gap(px(2.))
-                    .child(text(
-                        relative_age(&item.updated_at, self.clock),
-                        12.,
-                        18.,
-                        430.,
-                        t.text_tertiary,
-                    ))
-                    .when(item.has_diff_stats, |d| {
-                        d.child(text(
-                            format!("+{} −{}", item.additions, item.deletions),
-                            12.,
-                            18.,
-                            430.,
-                            t.text_tertiary,
-                        ))
-                    }),
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(12.))
+                            .items_start()
+                            .child(
+                                text(item.title.clone(), 14., 24., 430., t.text)
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate(),
+                            )
+                            .child(
+                                text(
+                                    relative_age(&item.updated_at, self.clock),
+                                    12.,
+                                    16.,
+                                    430.,
+                                    t.text_tertiary,
+                                )
+                                .mt(px(2.))
+                                .flex_none(),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(12.))
+                            .child(metadata)
+                            .when(item.has_diff_stats, |d| {
+                                d.child(
+                                    div()
+                                        .flex_none()
+                                        .flex()
+                                        .gap(px(4.))
+                                        .child(text(
+                                            format!("+{}", grouped_count(item.additions)),
+                                            12.,
+                                            12.,
+                                            430.,
+                                            t.text_tertiary,
+                                        ))
+                                        .child(text(
+                                            format!("-{}", grouped_count(item.deletions)),
+                                            12.,
+                                            12.,
+                                            430.,
+                                            t.text_tertiary,
+                                        )),
+                                )
+                            }),
+                    ),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.emit(Event::Select(
@@ -959,7 +1175,12 @@ impl Page {
 
     fn detail(&self, window: &Window, cx: &Context<Self>) -> Div {
         let Some(identity) = &self.selected else {
-            return self.empty("Select pull request to view", None, None, false, cx);
+            return div()
+                .size_full()
+                .pt(px(46.))
+                .flex()
+                .flex_col()
+                .child(self.empty("Select pull request to view", None, None, false, cx));
         };
         let t = cx.theme();
         let mut pane = div().size_full().flex().flex_col().p(px(24.)).gap(px(16.));
@@ -1125,17 +1346,14 @@ impl Render for Page {
                 .size_full()
                 .flex()
                 .flex_col()
-                .p(px(24.))
-                .child(text("Pull requests", 16., 24., 500., cx.theme().text))
                 .child(
-                    text(
-                        "Review and track work across GitHub.",
-                        16.,
-                        24.,
-                        430.,
-                        cx.theme().text_secondary,
-                    )
-                    .mt(px(16.)),
+                    div()
+                        .h(px(46.))
+                        .flex_none()
+                        .px(px(16.))
+                        .flex()
+                        .items_center()
+                        .child(text("Pull requests", 14., 20., 500., cx.theme().text)),
                 )
                 .child(self.setup(cx))
         };
@@ -1148,7 +1366,8 @@ impl Render for Page {
             .when(ready || self.selected.is_some(), |d| {
                 d.child(
                     div()
-                        .w(px(480.))
+                        .w(px(default_detail_width(window.viewport_size())))
+                        .flex_none()
                         .h_full()
                         .border_l_1()
                         .border_color(cx.theme().border)
@@ -1156,6 +1375,26 @@ impl Render for Page {
                 )
             })
     }
+}
+
+fn grouped_count(value: u64) -> String {
+    let mut text = value.to_string();
+    let mut offset = text.len();
+    while offset > 3 {
+        offset -= 3;
+        text.insert(offset, ',');
+    }
+    text
+}
+
+fn default_detail_width(viewport: gpui::Size<gpui::Pixels>) -> f32 {
+    let width = f32::from(viewport.width - crate::RAIL_WIDTH - crate::PAGE_INSET);
+    let height = f32::from(viewport.height - theme::Theme::TITLEBAR_HEIGHT - crate::PAGE_INSET);
+    let maximum = (width - 352.).max(320.);
+    (height * 1.6)
+        .min(width - 500.)
+        .max(640_f32.min(width - 352.))
+        .clamp(320., maximum)
 }
 
 fn relative_age(date: &str, clock: Clock) -> String {
@@ -1332,8 +1571,8 @@ fn status_icon(item: &model::Item, t: &theme::Theme) -> Div {
             "pull-request-merged",
             gpui::rgb(if dark { 0xad7bf9 } else { 0x924ff7 }).into(),
         ),
-        _ if item.is_draft => ("pull-request-draft", t.text_secondary),
-        _ => ("pull-request-status", t.text_secondary),
+        _ if item.is_draft => ("pull-request-draft", t.text_tertiary),
+        _ => ("pull-request-status", t.text_tertiary),
     };
     let mut icon_box = div()
         .relative()
@@ -1408,6 +1647,28 @@ fn loading_rows(label: &'static str, cx: &Context<Page>) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detail_pane_reserves_the_list_and_respects_short_windows() {
+        for (width, height, expected) in [
+            (1280., 832., 724.),
+            (1024., 832., 616.),
+            (1440., 300., 640.),
+        ] {
+            assert_eq!(
+                default_detail_width(gpui::size(px(width), px(height))),
+                expected,
+            );
+        }
+    }
+
+    #[test]
+    fn diff_counts_keep_three_digit_groups() {
+        assert_eq!(grouped_count(0), "0");
+        assert_eq!(grouped_count(999), "999");
+        assert_eq!(grouped_count(1_000), "1,000");
+        assert_eq!(grouped_count(u64::MAX), "18,446,744,073,709,551,615");
+    }
 
     #[test]
     fn compact_age_uses_the_original_units_and_capture_clock() {

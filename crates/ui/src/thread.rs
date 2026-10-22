@@ -2414,7 +2414,7 @@ fn gradient_image(
         }
     }
     let u = Rgba::from(under);
-    for v in [u.r, u.g, u.b] {
+    for v in [u.r, u.g, u.b, u.a] {
         v.to_bits().hash(&mut key);
     }
     (w, h, ox, oy, to_top).hash(&mut key);
@@ -2428,13 +2428,14 @@ fn gradient_image(
         cache.clear();
     }
     let stops = premul_stops(stops);
-    let under = [u.r, u.g, u.b].map(|v| (v * 255.).round() as u32);
+    let under = [u.r * u.a, u.g * u.a, u.b * u.a, u.a].map(|v| (v * 255.).round() as u32);
     let image = image::RgbaImage::from_fn(w, h, |i, j| {
         let [r, g, b, a] = gradient_px(&stops, h, (ox, oy), to_top, i, j);
         let [r, g, b] = [(r, under[0]), (g, under[1]), (b, under[2])].map(|(c, under)| {
             (u32::from(c) + (under * (255 - u32::from(a)) + 127) / 255).min(255) as u8
         });
-        image::Rgba([b, g, r, 255])
+        let alpha = u32::from(a) + (under[3] * (255 - u32::from(a)) + 127) / 255;
+        image::Rgba([b, g, r, alpha.min(255) as u8])
     });
     let image = Arc::new(gpui::RenderImage::new([image::Frame::new(image)]));
     cache.insert(key, image.clone());
@@ -2642,6 +2643,24 @@ mod tests {
                 "23,24,23,24,23,24,23,24"
             ]
         );
+    }
+
+    #[test]
+    fn gradient_overlay_preserves_transparency_and_distinct_cache_entries() {
+        let stops = [(gpui::white(), 0.), (gpui::white().opacity(0.), 1.)];
+        let transparent = gradient_image(
+            &stops,
+            gpui::transparent_black(),
+            (1., 2.),
+            (0., 0.),
+            false,
+            1.,
+        );
+        let opaque = gradient_image(&stops, gpui::black(), (1., 2.), (0., 0.), false, 1.);
+        let transparent = transparent.as_bytes(0).unwrap();
+        let opaque = opaque.as_bytes(0).unwrap();
+        assert_eq!([transparent[3], transparent[7]], [191, 64]);
+        assert_eq!([opaque[3], opaque[7]], [255, 255]);
     }
 
     #[test]

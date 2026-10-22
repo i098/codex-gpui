@@ -668,7 +668,9 @@ impl Composer {
             // `overflow-y: auto` contents), then composited onto the card.
             .child(
                 div()
-                    .when(self.content.is_empty(), |d| d.opacity(0.5))
+                    .when(self.content.is_empty() && !self.compact_field, |d| {
+                        d.opacity(0.5)
+                    })
                     .layer()
                     .child(Editor(cx.entity())),
             )
@@ -901,7 +903,7 @@ pub(super) fn shape(
                 FONT_SIZE
             },
             &runs,
-            width,
+            if composer.compact_field { None } else { width },
             None,
         )
         .map(|lines| lines.into_iter().collect())
@@ -969,6 +971,13 @@ impl gpui::Element for Editor {
         let collapse = |w: f32| (w <= SM_WIDTH, w <= XS_WIDTH);
         let changed = self.0.update(cx, |c, _| {
             c.lines = lines;
+            let mut bounds = bounds;
+            if c.compact_field {
+                let cursor = c
+                    .point_for_index(c.cursor())
+                    .map_or(px(0.), |point| point.x);
+                bounds.origin.x -= (cursor - bounds.size.width + px(2.)).max(px(0.));
+            }
             c.bounds = Some(bounds);
             collapse(std::mem::replace(&mut c.footer_width, width)) != collapse(width)
         });
@@ -993,6 +1002,11 @@ impl gpui::Element for Editor {
         let selection_color = cx.theme().text_selection;
         let caret_color = cx.theme().text;
         let c = self.0.read(cx);
+        let bounds = if c.compact_field {
+            c.bounds.unwrap_or(bounds)
+        } else {
+            bounds
+        };
         if !c.selected_range.is_empty()
             && let (Some(a), Some(b)) = (
                 c.point_for_index(c.selected_range.start),

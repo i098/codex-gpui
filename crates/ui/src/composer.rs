@@ -650,6 +650,7 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    compact_field: bool,
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
 }
@@ -730,6 +731,7 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            compact_field: false,
             dictation: None,
             dictation_error: None,
         }
@@ -744,6 +746,12 @@ impl Composer {
         let mut editor = Self::new(placeholder, false, cx);
         editor.plain_field = Some(multiline);
         editor.set_text(value, cx);
+        editor
+    }
+
+    pub(crate) fn search_field(placeholder: &'static str, cx: &mut Context<Self>) -> Self {
+        let mut editor = Self::settings_field(placeholder, "", false, cx);
+        editor.compact_field = true;
         editor
     }
 
@@ -1942,6 +1950,17 @@ impl Render for Composer {
             .on_action(cx.listener(Self::next_command))
             .on_action(cx.listener(Self::previous_command))
             .relative();
+        if self.compact_field {
+            return div().w_full().child(
+                card.key_context(KEY_CONTEXT)
+                    .role(gpui::Role::TextInput)
+                    .aria_label(self.placeholder.clone())
+                    .aria_value(self.content.clone())
+                    .h(LINE_HEIGHT)
+                    .overflow_hidden()
+                    .child(self.editor(cx).px_0().pb_0().min_h(LINE_HEIGHT)),
+            );
+        }
         if self.plain_field.is_some() {
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)

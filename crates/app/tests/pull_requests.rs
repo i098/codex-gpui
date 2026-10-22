@@ -200,7 +200,7 @@ fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
 fn capture(fx: &mut Fx, name: &str) -> Result<()> {
     if let Some(directory) = std::env::var_os("CGX_PULL_REQUEST_EVIDENCE") {
         std::fs::create_dir_all(&directory)?;
-        fx.shot()?
+        fx.reference_shot()?
             .save(std::path::Path::new(&directory).join(format!("{name}.png")))?;
     }
     Ok(())
