@@ -398,6 +398,7 @@ Stock GPUI cannot match Chromium's pixels, so the copies change three things:
 RGB-to-HSL conversion keeps saturated sRGB colors at saturation 1.0.
 This keeps their edges on Skia's legacy raster path instead of the float path.
 Comment cards clip their contents to the rounded card shape while their shadows remain outside the clip.
+Comment attachments use Skia for the rounded border and fill, including the hover state.
 
 `Window::layout_origin_residual_y` returns the fractional vertical origin removed by layout rounding.
 Use it when placing multiline field glyphs to retain Blink's baseline positions.
