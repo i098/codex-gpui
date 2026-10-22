@@ -5468,6 +5468,14 @@ impl Render for Root {
                 },
             ))
             .on_action(cx.listener(
+                |this, action: &settings::integrations::OpenMcpSettings, window, cx| {
+                    this.open_settings_section("MCP servers", window, cx);
+                    cx.update_global::<settings::integrations::State, _>(|state, _| {
+                        state.mcp_search = Some(action.0.clone());
+                    });
+                },
+            ))
+            .on_action(cx.listener(
                 |this, action: &settings::integrations::OpenExtensionDirectory, window, cx| {
                     this.open_plugins(action.0, window, cx);
                 },

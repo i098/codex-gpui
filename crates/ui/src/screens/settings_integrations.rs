@@ -24,6 +24,10 @@ gpui::actions!(
 #[action(namespace = settings_integrations, no_json)]
 pub struct OpenExtensionDirectory(pub &'static str);
 
+#[derive(Clone, PartialEq, gpui::Action)]
+#[action(namespace = settings_integrations, no_json)]
+pub struct OpenMcpSettings(pub String);
+
 #[path = "settings_mcp_form.rs"]
 mod form;
 
@@ -76,6 +80,7 @@ pub type Dispatch = Arc<dyn Fn(Action, &mut App) + Send + Sync>;
 #[derive(Clone, Default)]
 pub struct State {
     pub configuration: Arc<Value>,
+    pub mcp_search: Option<String>,
     pub plugin_creator: Option<String>,
     pub config_error: Option<String>,
     pub servers: Load<Arc<Value>>,
@@ -139,7 +144,11 @@ pub fn render(section: &'static str, window: &mut Window, cx: &mut App) -> AnyEl
             .detach();
             Manager {
                 section,
-                tab: Tab::Plugins,
+                tab: if section == "MCP servers" {
+                    Tab::Mcps
+                } else {
+                    Tab::Plugins
+                },
                 query: String::new(),
                 focus: cx.focus_handle().tab_stop(true),
                 layer: Layer::default(),
@@ -162,6 +171,19 @@ pub fn render(section: &'static str, window: &mut Window, cx: &mut App) -> AnyEl
             }
         },
     );
+    if section == "MCP servers"
+        && cx
+            .try_global::<State>()
+            .is_some_and(|state| state.mcp_search.is_some())
+        && let Some(query) = cx.update_global::<State, _>(|state, _| state.mcp_search.take())
+    {
+        page.update(cx, |page, cx| {
+            page.select_tab(Tab::Mcps, cx);
+            page.query = query;
+            page.marketplace = None;
+            page.marketplace_form = None;
+        });
+    }
     page.into_any_element()
 }
 
@@ -287,6 +309,16 @@ pub fn server_read_only(configuration: &Value, key: &str) -> bool {
         .any(|(path, origin)| {
             (path.starts_with(&plain) || path.starts_with(&quoted))
                 && origin["name"]["type"] == "project"
+        })
+}
+
+fn server_status<'a>(statuses: &'a [Value], key: &str, config: &Value) -> Option<&'a Value> {
+    statuses
+        .iter()
+        .find(|status| status["name"] == key)
+        .or_else(|| {
+            let name = config["name"].as_str()?;
+            statuses.iter().find(|status| status["name"] == name)
         })
 }
 
@@ -746,7 +778,7 @@ impl Manager {
         if let Some(error) = &state.config_error {
             return self.load_error("MCP server settings are unavailable", error, t, window, cx);
         }
-        let query = self.query.to_lowercase();
+        let query = self.query.trim().to_lowercase();
         let mut configured = configured_servers(&state.configuration).collect::<Vec<_>>();
         configured.sort_by_key(|(key, config)| {
             (
@@ -769,7 +801,7 @@ impl Manager {
             .map(|(key, config)| {
                 self.server_row(
                     (key, Some(config)),
-                    statuses.iter().find(|s| s["name"] == *key),
+                    server_status(statuses, key, config),
                     state,
                     t,
                     window,
@@ -825,7 +857,7 @@ impl Manager {
                     .items_center()
                     .justify_between()
                     .child(text(
-                        if self.query.is_empty() {
+                        if query.is_empty() {
                             "No MCP servers connected"
                         } else {
                             "No MCP servers found"
@@ -835,15 +867,17 @@ impl Manager {
                         500.,
                         t.text,
                     ))
-                    .child(
-                        action_button("add-mcp-server", "Add server", t).on_activate(
-                            window,
-                            cx,
-                            |this, _, cx| {
-                                this.open_form(None, serde_json::json!({"command":""}), cx)
-                            },
-                        ),
-                    )],
+                    .when(query.is_empty(), |row| {
+                        row.child(
+                            action_button("add-mcp-server", "Add server", t).on_activate(
+                                window,
+                                cx,
+                                |this, _, cx| {
+                                    this.open_form(None, serde_json::json!({"command":""}), cx)
+                                },
+                            ),
+                        )
+                    })],
                 &self.layer,
                 t,
             ));
@@ -2064,7 +2098,14 @@ impl Render for Manager {
                     .map_or(Tab::Mcps, |(tab, _, _)| *tab);
             }
         }
-        let heading = if hooks { "Hooks" } else { "Plugins" };
+        let mcp = self.section == "MCP servers";
+        let heading = if hooks {
+            "Hooks"
+        } else if mcp {
+            "MCP servers"
+        } else {
+            "Plugins"
+        };
         let subtitle = if hooks {
             div()
                 .flex()
@@ -2087,7 +2128,11 @@ impl Render for Manager {
                 )
         } else {
             text(
-                "Manage plugins, skills, and MCPs",
+                if mcp {
+                    "Connect external tools and data sources"
+                } else {
+                    "Manage plugins, skills, and MCPs"
+                },
                 14.,
                 24.,
                 430.,
@@ -2292,5 +2337,23 @@ mod tests {
         assert!(server_read_only(&configuration, "work.search"));
         assert!(!server_read_only(&configuration, "work"));
         assert!(!server_read_only(&configuration, "personal"));
+    }
+
+    #[test]
+    fn configured_server_status_uses_its_name_only_when_the_key_has_no_status() {
+        test_panic_hook();
+        let config = json!({"name":"Display Name"});
+        let alias = json!({"name":"Display Name","authStatus":"notLoggedIn"});
+        assert_eq!(
+            server_status(std::slice::from_ref(&alias), "server-key", &config),
+            Some(&alias)
+        );
+        let direct = json!({"name":"server-key","authStatus":"loggedIn"});
+        let statuses = [alias, direct.clone()];
+        assert_eq!(
+            server_status(&statuses, "server-key", &config),
+            Some(&direct)
+        );
+        assert_eq!(server_status(&statuses, "missing", &Value::Null), None);
     }
 }

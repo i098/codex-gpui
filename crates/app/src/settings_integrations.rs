@@ -106,6 +106,12 @@ impl Root {
         let host = self.host.clone();
         let roots = cx.global::<State>().roots.clone();
         let configuration = cx.global::<State>().configuration.clone();
+        let removed_name = match &action {
+            Action::RemoveServer(key) => configuration["config"]["mcp_servers"][key]["name"]
+                .as_str()
+                .map(str::to_owned),
+            _ => None,
+        };
         let cached_plugins = match &cx.global::<State>().plugins {
             Load::Ready(value) => value.clone(),
             _ => Arc::new(Value::Null),
@@ -165,6 +171,7 @@ impl Root {
                             }
                             if let Action::RemoveServer(key) = &action {
                                 state.suppressed_servers.insert(key.clone());
+                                state.suppressed_servers.extend(removed_name);
                             }
                             if let Action::Authenticate { name, .. } = &action
                                 && let Some(url) = url

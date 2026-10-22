@@ -1145,7 +1145,7 @@ impl Render for SettingsPane {
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
         }
-        if matches!(section, "Plugins" | "Hooks") {
+        if matches!(section, "Plugins" | "Hooks" | "MCP servers") {
             return integrations::render(section, window, cx);
         }
         // Unimplemented sections retain their title-only surface.
