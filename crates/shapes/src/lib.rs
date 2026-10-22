@@ -407,20 +407,22 @@ pub fn with_rounded_clip<R>(
     }
 }
 
-/// Runs `paint` inside an anti-aliased rectangle at `bounds`' unsnapped device geometry, as
-/// Skia clips by a `clip-path: inset()` (Blink does not snap it) the boxes that do snap to
-/// whole px: at a fractional edge the box's last px row blends at the clip's coverage.
-/// Straight edges only. macOS only; elsewhere `paint` just runs.
+/// Runs `paint` inside an anti-aliased rounded rectangle at `bounds`' unsnapped device
+/// geometry, as Skia clips by a `clip-path: inset(.. round radius)` (Blink does not snap it)
+/// the boxes that do snap to whole px: at a fractional edge the box's last px row blends at the
+/// clip's coverage, and the corners follow the clip's arcs. macOS only; elsewhere `paint` just
+/// runs.
 pub fn with_unsnapped_clip<R>(
     bounds: Bounds<Pixels>,
+    radius: Corners<Pixels>,
     window: &mut Window,
     paint: impl FnOnce(&mut Window) -> R,
 ) -> R {
     #[cfg(target_os = "macos")]
-    return skia::with_unsnapped_clip(bounds, window, paint);
+    return skia::with_unsnapped_clip(bounds, radius, window, paint);
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = bounds;
+        let _ = (bounds, radius);
         paint(window)
     }
 }

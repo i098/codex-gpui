@@ -1053,12 +1053,8 @@ impl Shell {
     /// While the toggle springs, the content fades with `progress` and slides from -16 px.
     fn sidebar_panel(&self, t: &Theme, progress: f32) -> Div {
         let r = Theme::RADIUS_XL_BASE;
+        // Square: the `clip-path` rounds the corners at its fractional edges.
         let background = shapes::Decoration {
-            radius: Corners {
-                top_left: r,
-                bottom_left: r,
-                ..Default::default()
-            },
             fill: Some(t.sidebar_background),
             ..Default::default()
         };
@@ -1090,7 +1086,7 @@ impl Shell {
                             point(RAIL_WIDTH, top + shift),
                             point(bounds.right() + r, bottom),
                         );
-                        shapes::with_unsnapped_clip(clip, window, |window| {
+                        shapes::with_unsnapped_clip(clip, Corners::all(r), window, |window| {
                             shapes::paint(&background, None, bounds, window, cx);
                         });
                     },
@@ -1393,6 +1389,7 @@ impl Render for Shell {
             1 + self.main_backgrounds
         };
         let r = Theme::RADIUS_XL_BASE;
+        // The corners a composited main surface's compositor clip rounds.
         let radius = if open {
             Corners {
                 top_right: r,
@@ -1402,15 +1399,11 @@ impl Render for Shell {
         } else {
             Corners::all(r)
         };
+        // Square (`border-radius: 0`): its `clip-path`, or for a composited main surface the
+        // compositor, rounds the corners.
         let main_fill = shapes::Decoration {
-            radius,
             fill: Some(t.surface),
             ..Default::default()
-        };
-        // A composited main surface's own fill, in its layer: the compositor rounds it.
-        let square_fill = shapes::Decoration {
-            radius: Corners::default(),
-            ..main_fill.clone()
         };
         let hairline = shapes::Decoration {
             fill: Some(t.sidebar_divider.opacity(hairline_alpha)),
@@ -1427,7 +1420,12 @@ impl Render for Shell {
                           square: bool,
                           window: &mut Window,
                           cx: &mut App| {
-            let fill = if square { &square_fill } else { &main_fill };
+            // The compositor rounds a composited (`square`) main surface; otherwise the clip does.
+            let clip_radius = if square {
+                Corners::default()
+            } else {
+                Corners::all(r)
+            };
             let page_surface = Bounds::from_corners(
                 bounds.origin + point(RAIL_WIDTH, Theme::TITLEBAR_HEIGHT),
                 bounds.bottom_right() - point(PAGE_INSET, PAGE_INSET),
@@ -1446,13 +1444,14 @@ impl Render for Shell {
                 main.size.width -= MAIN_HAIRLINE;
                 line
             });
+            // `clip-path: inset(0 -r 0 0 round r)` rounds every corner at its fractional edges.
             let main_surface = |window: &mut Window, cx: &mut App| {
-                shapes::with_unsnapped_clip(clip, window, |window| {
+                shapes::with_unsnapped_clip(clip, clip_radius, window, |window| {
                     if let Some(line) = line {
                         shapes::paint(&hairline, None, line, window, cx);
                     }
                     for _ in 0..fills {
-                        shapes::paint(fill, None, main, window, cx);
+                        shapes::paint(&main_fill, None, main, window, cx);
                     }
                 });
             };

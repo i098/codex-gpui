@@ -1934,16 +1934,25 @@ pub(crate) fn with_rounded_clip<R>(
 /// `crate::with_unsnapped_clip` on macOS.
 pub(crate) fn with_unsnapped_clip<R>(
     bounds: Bounds<Pixels>,
+    radius: gpui::Corners<Pixels>,
     window: &mut Window,
     paint: impl FnOnce(&mut Window) -> R,
 ) -> R {
     let s = window.scale_factor();
     let [l, t, r, b] =
         [bounds.left(), bounds.top(), bounds.right(), bounds.bottom()].map(|v| f32::from(v) * s);
-    let rr = Rounded {
+    let radii = [
+        radius.top_left,
+        radius.top_right,
+        radius.bottom_right,
+        radius.bottom_left,
+    ]
+    .map(|v| [f32::from(v) * s; 2]);
+    let mut rr = Rounded {
         r: [l, t, r - l, b - t],
-        radii: [[0.; 2]; 4],
+        radii,
     };
+    rr.constrain();
     let clip = Contour {
         rr,
         k: [2.; 4],
