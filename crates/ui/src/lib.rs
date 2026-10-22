@@ -721,15 +721,10 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                         .gap(px(6.))
                         .rounded(RADIUS_BUTTON_XL)
                         .child(
-                            icon::icon_sized(
-                                "codex-wordmark",
-                                53.22,
-                                18.,
-                                t.text_default_nav,
-                            )
-                            // `h-[1em] w-auto` on the svg's viewBox (53.225983 x 18).
-                            .auto_width(53.225983 / 18.)
-                            .own_layer(Some(mode_switch)),
+                            icon::icon_sized("codex-wordmark", 53.22, 18., t.text_default_nav)
+                                // `h-[1em] w-auto` on the svg's viewBox (53.225983 x 18).
+                                .auto_width(53.225983 / 18.)
+                                .own_layer(Some(mode_switch)),
                         )
                         .child(
                             icon::icon("chevron-down-medium", 14., t.text_tertiary)
