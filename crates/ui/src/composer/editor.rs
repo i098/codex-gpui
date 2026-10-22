@@ -651,13 +651,11 @@ impl Composer {
                     4.
                 },
             ))
-            .min_h(px(
-                if self.request_parent.is_some() || self.request_compact {
-                    20.
-                } else {
-                    48.
-                },
-            ))
+            .min_h(if self.request_parent.is_some() || self.request_compact {
+                px(20.)
+            } else {
+                self.field_min_height
+            })
             .cursor(CursorStyle::IBeam)
             .text_size(self.editor_font_size())
             .line_height(self.editor_line_height())

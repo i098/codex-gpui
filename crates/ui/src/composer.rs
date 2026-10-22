@@ -2130,10 +2130,6 @@ impl Render for Composer {
             let card = card
                 .child(
                     self.editor(cx)
-                        .when(
-                            self.request_parent.is_none() && !self.request_compact,
-                            |editor| editor.min_h(self.field_min_height),
-                        )
                         .when(self.request_number, |editor| editor.pr(px(30.))),
                 )
                 .when(self.request_number, |d| {
