@@ -611,7 +611,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn copy_failures_preserve_installed_skills_and_never_publish_partial_skills() -> Result<()> {
-        let home = tempfile::tempdir()?;
+        let home = tempfile::tempdir_in("/tmp")?;
         let source = home
             .path()
             .join("vendor_imports/skills/skills/.curated/failing");
