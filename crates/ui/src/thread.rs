@@ -2435,6 +2435,12 @@ fn gradient_image(
             (u32::from(c) + (under * (255 - u32::from(a)) + 127) / 255).min(255) as u8
         });
         let alpha = u32::from(a) + (under[3] * (255 - u32::from(a)) + 127) / 255;
+        let [b, g, r] = [b, g, r].map(|channel| {
+            (u32::from(channel) * 255 + alpha / 2)
+                .checked_div(alpha)
+                .unwrap_or(0)
+                .min(255) as u8
+        });
         image::Rgba([b, g, r, alpha.min(255) as u8])
     });
     let image = Arc::new(gpui::RenderImage::new([image::Frame::new(image)]));
@@ -2660,6 +2666,7 @@ mod tests {
         let transparent = transparent.as_bytes(0).unwrap();
         let opaque = opaque.as_bytes(0).unwrap();
         assert_eq!([transparent[3], transparent[7]], [191, 64]);
+        assert_eq!([transparent[0], transparent[4]], [255, 255]);
         assert_eq!([opaque[3], opaque[7]], [255, 255]);
     }
 
