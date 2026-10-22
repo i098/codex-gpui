@@ -43,6 +43,7 @@ pub fn icon_sized(name: &str, width: f32, height: f32, color: Hsla) -> Icon {
         composited: None,
         own_layer: false,
         runtime: false,
+        image: false,
         transformation: None,
         interactivity: Interactivity::new(),
     }
@@ -64,6 +65,8 @@ pub struct Icon {
     composited: Option<Point<Pixels>>,
     own_layer: bool,
     runtime: bool,
+    /// An `<img>`: Blink draws the svg image into its snapped dest rect.
+    image: bool,
     transformation: Option<Transformation>,
     interactivity: Interactivity,
 }
@@ -108,6 +111,13 @@ impl Icon {
     /// body) does not have.
     pub fn runtime(mut self) -> Self {
         self.runtime = true;
+        self
+    }
+
+    /// An `<img>` of an svg: Blink draws the image into the box's snapped device rect (35 px
+    /// for 16 px at 110%), not the LayoutUnit box an inline svg fills (35.1875 px).
+    pub fn image(mut self) -> Self {
+        self.image = true;
         self
     }
 
@@ -217,7 +227,11 @@ impl Element for Icon {
         let (name, flip_x, own_layer) = (self.name.clone(), self.flip_x, self.own_layer);
         let (composited, runtime) = (self.composited, self.runtime);
         let transformation = self.transformation;
-        let css = self.css_size(window.scale_factor());
+        let css = if self.image {
+            bounds.size
+        } else {
+            self.css_size(window.scale_factor())
+        };
         self.interactivity.paint(
             global_id,
             inspector_id,
