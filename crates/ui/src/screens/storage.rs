@@ -752,8 +752,10 @@ impl StoragePage {
             )
             .child(Self::control_content(&action, checked, label, &t))
             .when(dropdown, |d| {
+                // The dropdowns sit in the review dialog's composited layer, so the chevron
+                // rasterizes there instead of using the page-blended fitted image.
                 d.gap(px(4.))
-                    .child(icon("chevron-down", 14., t.text_tertiary))
+                    .child(icon("chevron-down", 14., t.text_tertiary).runtime())
             })
             .when(enabled, |d| {
                 d.on_click(cx.listener(move |this, _, window, cx| {
