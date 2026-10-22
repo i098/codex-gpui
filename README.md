@@ -140,6 +140,7 @@ The bridge does not embed the Security SDK or install the provider.
 The API reads scans, repositories, findings, and target metadata.
 It also handles scan setup, continuation delivery, cancellation, and finding remediation.
 Failed or unconfirmed delivery keeps the ownership claim when another turn might still be active.
+Rejected or mismatched handoff claims never cancel a scan owned by another client.
 Gate resolution requires the rollout gate and an enabled, available `codex-security@` plugin.
 
 Run `cargo test -p bridge --lib security::tests` for gate, response-validation, pagination, and delivery-ownership checks.

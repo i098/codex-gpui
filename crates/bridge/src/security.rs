@@ -490,6 +490,16 @@ impl Client {
             .await?;
         let scan_id = string(&started["workspace"]["results"], "scanId")?.to_owned();
         let token = uuid::Uuid::new_v4().to_string();
+        let claimed = self
+            .call(
+                "claim_codex_security_scan_handoff_delivery",
+                json!({"scanId": scan_id, "claimToken": token}),
+            )
+            .await?;
+        let results = &claimed["workspace"]["results"];
+        if results["scanId"] != scan_id || results["handoffClaimToken"] != token {
+            return Err(Error::new(ErrorKind::InvalidResponse));
+        }
         let result = self.deliver_scan(&scan_id, &token, setup).await;
         if let Err((error, false)) = &result {
             self.cleanup_scan(&scan_id, &token).await;
@@ -504,17 +514,6 @@ impl Client {
         token: &str,
         setup: &Setup,
     ) -> std::result::Result<(), (Error, bool)> {
-        let claimed = self
-            .call(
-                "claim_codex_security_scan_handoff_delivery",
-                json!({"scanId": id, "claimToken": token}),
-            )
-            .await
-            .map_err(|e| (e, false))?;
-        let results = &claimed["workspace"]["results"];
-        if results["scanId"] != id || results["handoffClaimToken"] != token {
-            return Err((Error::new(ErrorKind::InvalidResponse), false));
-        }
         let skill = match setup.mode.as_str() {
             "diff" => "$security-diff-scan",
             "deep" => "$deep-security-scan",
@@ -1001,6 +1000,8 @@ mod tests {
     enum DeliveryFault {
         LostReply,
         Attachment,
+        ClaimRejected,
+        ClaimMismatch,
     }
 
     #[derive(Default)]
@@ -1095,13 +1096,29 @@ mod tests {
                         writeln!(output, "{}", json!({"id":request["id"],"error":{"code":-32000,"message":"attachment failed"}})).unwrap();
                         continue;
                     }
-                    "mcpServer/tool/call" => json!({
-                        "structuredContent": delivery_tool(
+                    "mcpServer/tool/call"
+                        if params["tool"] == "claim_codex_security_scan_handoff_delivery"
+                            && matches!(fault, DeliveryFault::ClaimRejected) =>
+                    {
+                        state.scan = Some("other-owner".into());
+                        writeln!(output, "{}", json!({"id":request["id"],"error":{"code":-32000,"message":"claim already owned"}})).unwrap();
+                        continue;
+                    }
+                    "mcpServer/tool/call" => {
+                        let mut content = delivery_tool(
                             params["tool"].as_str().unwrap(),
                             &params["arguments"],
                             &mut state,
-                        )
-                    }),
+                        );
+                        if params["tool"] == "claim_codex_security_scan_handoff_delivery"
+                            && matches!(fault, DeliveryFault::ClaimMismatch)
+                        {
+                            state.scan = Some("other-owner".into());
+                            content["workspace"]["results"]["handoffClaimToken"] =
+                                "other-owner".into();
+                        }
+                        json!({"structuredContent": content})
+                    }
                     other => panic!("Unexpected request: {other}"),
                 };
                 writeln!(output, "{}", json!({"id":request["id"],"result":response})).unwrap();
@@ -1158,6 +1175,20 @@ mod tests {
             } else {
                 state.scan.is_some()
             });
+            drop(state);
+            drop(client);
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn failed_claim_acquisition_preserves_the_competing_owner() {
+        for fault in [DeliveryFault::ClaimRejected, DeliveryFault::ClaimMismatch] {
+            let (client, claims, server) = delivery_client(fault);
+            assert!(futures_lite::future::block_on(client.start(&setup_value())).is_err());
+            let state = claims.lock().unwrap();
+            assert_eq!(state.scan.as_deref(), Some("other-owner"));
+            assert!(!state.turn_accepted);
             drop(state);
             drop(client);
             server.join().unwrap();
