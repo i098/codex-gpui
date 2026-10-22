@@ -36,3 +36,19 @@ The commands read status, branch, diff statistics, diff text, commits, and remot
 The fixture branch has one committed `sample.txt` addition above its local `main`.
 These responses are reference data; replaying them does not execute Git commands.
 
+## Recorded archive actions
+
+`sessions/archive-actions.jsonl` contains real `thread/unarchive` and `thread/archive` replies for the owned subtract thread.
+The original CLI version is `0.163.0-alpha.10.2`.
+The recording used `/private/tmp/cgx-mac/cgx-fam-set-archived-profile`, an owned copy without authentication files.
+No new model turn or recording was needed.
+
+The source is `data/cgx-fam-set-archived/original-archive-mutations.jsonl` in the retained Firstmate data.
+Its SHA256 is `4278165811d3196f3a3c6b17d38e46792b075cdf9fbfe07a4cdddce9ba1e24f2`.
+The extracted source lines are 7, 8, 10, 9, 11, and 13.
+Notifications follow their causal replies in this extraction; every message payload stays unchanged.
+
+Route 1 replays these actions only for local offline requests with exact recorded parameters.
+Replay does not write to an app-server or update the recorded thread lists.
+These responses enable action captures; they do not prove archive-list transitions or pixel parity.
+
