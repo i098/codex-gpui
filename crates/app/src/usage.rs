@@ -400,10 +400,10 @@ async fn load_account_details(
     entry: Option<&Value>,
 ) {
     if state.access.manage_credits {
-        state.reload = load(read_reload(host.as_ref(), &identity));
+        state.reload = load(read_reload(host.as_ref(), identity));
         state.has_saved_payment_method = http(
             host.as_ref(),
-            &identity,
+            identity,
             "GET",
             &format!(
                 "/payments/payment_methods?account_id={}",
@@ -429,7 +429,7 @@ async fn load_account_details(
                     );
                     http(
                         host.as_ref(),
-                        &identity,
+                        identity,
                         "GET",
                         &format!("/checkout_pricing_config/configs/{currency}"),
                         None,
@@ -441,7 +441,7 @@ async fn load_account_details(
         let id = &identity.account_id;
         state.monthly = load(http(
             host.as_ref(),
-            &identity,
+            identity,
             "GET",
             &format!(
                 "/accounts/{id}/spend-controls/current-user/monthly-usage?supports_usage_limit_modes=true"
@@ -451,7 +451,7 @@ async fn load_account_details(
         state.request_policy = load(
             http(
                 host.as_ref(),
-                &identity,
+                identity,
                 "GET",
                 &format!("/accounts/{id}/settings"),
                 None,
@@ -466,14 +466,14 @@ async fn load_account_details(
         );
         if matches!(&state.request_policy, Load::Ready(policy) if policy["kind"] == "openai_native")
         {
-            state.requests = load(requests(host.as_ref(), &identity));
+            state.requests = load(requests(host.as_ref(), identity));
         }
     }
     if matches!(&state.limits, Load::Ready(limits) if limits.rate_limit_reset_credits.as_ref().is_some_and(|credits| credits.history_enabled))
     {
         state.reset_history = load(http(
             host.as_ref(),
-            &identity,
+            identity,
             "GET",
             "/wham/rate-limit-reset-credits/history",
             None,
@@ -483,7 +483,7 @@ async fn load_account_details(
         state.analytics = analytics_api::snapshot(
             bridge.as_ref(),
             host.as_ref(),
-            &identity,
+            identity,
             state.reference_time,
         )
         .await;
@@ -501,7 +501,7 @@ async fn load_account_details(
             _ => None,
         };
         if let Some(minutes) = minutes {
-            state.history = load_history(history(host.as_ref(), &identity, minutes));
+            state.history = load_history(history(host.as_ref(), identity, minutes));
         } else {
             state.access.balance_history = false;
         }
