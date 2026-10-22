@@ -853,6 +853,7 @@ impl Root {
                     });
                 }
                 this.config = config.config;
+                this.refresh_enter_behavior(cx);
                 this.config["host"]["confirm-before-close"] =
                     serde_json::to_value(this.state.confirm_before_close)
                         .expect("close preference");
@@ -3871,6 +3872,7 @@ impl Root {
                 });
                 if let Ok(Some(config)) = result {
                     this.config = config;
+                    this.refresh_enter_behavior(cx);
                 }
                 if success {
                     this.load_computer_use(cx);
@@ -4083,9 +4085,20 @@ impl Root {
                 }
                 return Err(error);
             }
-            this.update(cx, |this, _| apply(&mut this.config))
+            this.update(cx, |this, cx| {
+                apply(&mut this.config);
+                this.refresh_enter_behavior(cx);
+            })
         });
         log_err(task, cx);
+    }
+
+    fn refresh_enter_behavior(&self, cx: &mut Context<Self>) {
+        cx.set_global(ui::composer::EnterBehavior::from_setting(
+            self.config["desktop"]["composerEnterBehavior"]
+                .as_str()
+                .unwrap_or("enter"),
+        ));
     }
 
     /// Settles only the request whose card produced the answer.
