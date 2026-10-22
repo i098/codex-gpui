@@ -5,6 +5,8 @@ The original is the Codex section of the macOS ChatGPT app.
 The goal is pixel parity with the original: the same layout, text, colors and icons, device pixel for device pixel.
 The app drives the real `codex app-server` over stdio, the same JSON-RPC transport that the original uses.
 
+[Build and run](#build-and-run) · [Architecture](#architecture) · [Parity method](#parity-method) · [Contributing](CONTRIBUTING.md) · [Security](.github/SECURITY.md) · [Changelog](CHANGELOG.md)
+
 ## Requirements
 
 - macOS on Apple silicon (arm64).
@@ -17,6 +19,7 @@ The app drives the real `codex app-server` over stdio, the same JSON-RPC transpo
 The workspace also builds on Linux, with GPUI's no-op text system, for CI (fmt, clippy, tests).
 The self-hosted CI job disables dev/test debug information and incremental compilation.
 It uses only its own workspace's `target` directory and removes that directory after success or failure.
+CI skips draft pull requests: marking a PR ready for review starts its run. A newer push to a PR cancels that PR's older run; pushes to `main` always run. A pull request that changes only the listed documentation files (`paths-ignore` in `.github/workflows/ci.yml`) starts no run.
 
 ## Computer use runtime
 
@@ -57,6 +60,15 @@ An in-flight JavaScript call can delay Interrupt cleanup; the original hook can 
 
 Run `cargo test -p app --test computer_use_lifecycle` on macOS for native Stop and thread-projection regression checks.
 
+## SSH connection discovery
+
+The host service supports `discover-remote-ssh-connections` and returns an `sshAliases` list.
+It reads `$HOME/.ssh/config` and its top-level `Include` files without running SSH or changing connection settings.
+Discovery follows the original literal-host, quote, and include rules.
+The Connections page and protected pairing flows remain separate work.
+
+Run `cargo test -p app --lib --test host ssh_discovery` for the parser and host-service checks.
+
 ## Background terminal output
 
 Background command output displays ANSI colors and supports text selection.
@@ -66,6 +78,17 @@ The terminal fixture in `fixtures/terminal-depth.json` contains recorded `thread
 
 Run `cargo test -p ui --lib terminal` for parser and command-label checks.
 Run `cargo test -p app --test terminal_states background_ansi_output_supports_selection_and_copy` on macOS for the native selection check.
+
+## Recommended skills
+
+The local host supports `recommended-skills` and `install-recommended-skill`.
+The catalog uses `CODEX_HOME/vendor_imports/skills` and a ten-minute cache in `skills-curated-cache.json`.
+Installation writes to `CODEX_HOME/skills`, or `<installRoot>/.codex/skills` for a selected workspace.
+Existing skills remain unchanged unless the request explicitly replaces them or supplies a Markdown override.
+The host rejects remote host IDs and paths that leave the source or installation root.
+This service does not enable the Plugin or Skill directory UI.
+
+Run `cargo test -p app --lib host::skills::tests` for the catalog and installation checks.
 
 ## ACP backend
 
@@ -168,6 +191,12 @@ Host settings use the local `settings.write(key, value)` service and persist bes
 Theme and window-close preferences remain in `state.json`.
 The S034 replay checks the menu-bar switch, its saved values, and Back navigation against `refs/interactions/s034.json`.
 
+The local `get-global-state` host request reads a named value from `.codex-global-state.json` without changing the profile.
+Missing files and keys return `{"value": null}`; malformed files and invalid requests return errors.
+Thread replies retain the optional rollout `path` for archived-chat search.
+Run `cargo test -p app --test host global_state` for the filesystem and request checks.
+This support increment does not change the Archived chats page.
+
 Settings > Git stores branch, merge, push, draft, diff, and pull request instruction preferences in `host-settings.json`.
 Review delivery uses the existing app-server config store.
 Branch prefix saves on blur or Enter; multiline instructions save after three idle seconds or when the page closes.
@@ -203,6 +232,13 @@ Run `cargo test -p ui --lib screens::diff::panel::patch` for its boundary checks
 `Host::review_repositories(thread, cwd)` reads the assigned project roots and worktrees owned by that thread.
 It returns each repository root, working directory, and display name without changing a rendered control.
 Run `cargo test -p app --test diff_repositories` for the real-Git ownership and path checks.
+
+The local host lists managed worktrees and saves tracked and untracked files in `refs/codex/snapshots` before targeted deletion.
+It rejects deletion of initialized nested Git repositories.
+Worktree creation uses the saved root, upstream refresh preference, and selected local environment.
+Local environment files support inherited listing, validated atomic writes, and revision conflict checks.
+The `git-pr-watch-update` host operation changes only active PR heartbeat instructions.
+Run `cargo test -p app --test settings_git_family` for these file and Git operations.
 
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.

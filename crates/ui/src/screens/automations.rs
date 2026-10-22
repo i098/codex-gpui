@@ -51,16 +51,10 @@ actions!(
         SearchTasks,
         /// Sidebar `Filter tasks` (ownership `Personal` / `Team`).
         FilterTasks,
+        /// A suggested-task card was clicked (unsupported; see S035b).
+        StartSuggestedTask,
     ]
 );
-
-/// A suggested-task card was clicked: the page shows the card as `Starting…` and the app
-/// starts the guided setup conversation from its prompt.
-#[derive(Clone, PartialEq, Action)]
-#[action(namespace = automations, no_json)]
-pub struct StartSuggestedTask {
-    pub prompt: SharedString,
-}
 
 /// A sidebar task row was clicked: `/scheduled?automationId=<id>`.
 #[derive(Clone, PartialEq, Action)]
@@ -319,7 +313,6 @@ pub fn task_card(name: SharedString, detail: SharedString, can_open: bool, t: &T
 pub struct Suggestion {
     title: SharedString,
     description: SharedString,
-    user_message: SharedString,
     emoji: SharedString,
     icon_url: Option<String>,
 }
@@ -351,38 +344,32 @@ fn landing_examples() -> Vec<Suggestion> {
             "🥗",
             "Weekly meal plan",
             "Plan meals for the week and make a grocery list.",
-            "Help me set up a weekly meal plan with a grocery list. Ask about my dietary preferences, household size, and when I’d like to receive it before scheduling.",
         ),
         (
             "💰",
             "Weekly finances update",
             "Review my recent spending, and anything that needs attention.",
-            "Help me set up a weekly review of my recent spending, recurring charges, and anything that needs attention. Ask which financial information I want to use and what day and time works for me before scheduling.",
         ),
         (
             "😴",
             "Sleep coaching",
             "Track my sleep quality and help me improve my habits.",
-            "Help me set up a regular sleep check-in. Ask about my sleep goals, the information I’m comfortable sharing, and when I’d like to check in before scheduling.",
         ),
         (
             "🛩",
             "Find flights for a trip",
             "Find the best deal on flights for an upcoming trip.",
-            "Help me set up a flight price watch for an upcoming trip. Ask where I’m flying from and to, my dates, budget, and how often to check. Notify me when there’s a good match.",
         ),
         (
             "✉️",
             "Email monitor",
             "Scan my emails and let me know anything that needs my attention.",
-            "Help me set up an email monitor that flags messages needing my attention. Ask which inbox or senders to watch, what counts as important, and how often to check before scheduling. Help me connect email if needed.",
         ),
     ]
     .into_iter()
-    .map(|(emoji, title, description, prompt)| Suggestion {
+    .map(|(emoji, title, description)| Suggestion {
         title: title.into(),
         description: description.into(),
-        user_message: prompt.into(),
         emoji: emoji.into(),
         icon_url: None,
     })
@@ -463,7 +450,6 @@ fn shell_with(
         None => page
             .insert(cx.new(|_| AutomationsPage {
                 cards: cards(server),
-                pending: None,
             }))
             .clone()
             .into(),
@@ -997,67 +983,33 @@ impl Render for ScheduledSidebar {
     }
 }
 
-/// Main column of the empty page: hero and the suggested-task grid. While `pending` (a card
-/// index) starts its conversation, that card shows the rays spinner and `Starting…` instead
-/// of its description, and every card is disabled (`disabled:opacity-40`, no hover fill, no
-/// click).
+/// Main column of the empty page: hero and the suggested-task grid.
 pub struct AutomationsPage {
     cards: Vec<Suggestion>,
-    pending: Option<usize>,
 }
 
 impl AutomationsPage {
     pub fn set_suggestions(&mut self, server: Vec<Suggestion>, cx: &mut Context<Self>) {
-        let pending = self.pending.map(|i| self.cards.swap_remove(i));
         self.cards = cards(server);
-        if let Some(pending) = pending {
-            self.pending = Some(
-                self.cards
-                    .iter()
-                    .position(|card| card.user_message == pending.user_message)
-                    .unwrap_or_else(|| {
-                        self.cards.truncate(5);
-                        self.cards.push(pending);
-                        self.cards.len() - 1
-                    }),
-            );
-        }
-        cx.notify();
-    }
-
-    /// The card whose conversation is starting.
-    pub fn pending(&self) -> Option<usize> {
-        self.pending
-    }
-
-    pub fn set_pending(&mut self, pending: Option<usize>, cx: &mut Context<Self>) {
-        self.pending = pending;
         cx.notify();
     }
 
     fn card(&self, i: usize, s: &Suggestion, cx: &mut Context<Self>) -> Stateful<Div> {
         let t: &Theme = cx.theme();
         let hover_bg = t.ghost_hover;
-        let disabled = self.pending.is_some();
-        let starting = self.pending == Some(i);
         // `icon_url` is shown from its bundled copy under assets/ui/automations, its paths
         // rasterized by Chromium's Skia like Blink draws an svg `<img>`. Elsewhere GPUI's own
         // image raster (the copies declare 40x40, the 20 px slot at 2x: GPUI rasterizes svg
         // images at their intrinsic size).
-        let bundled = (!starting)
-            .then_some(s.icon_url.as_ref())
-            .flatten()
-            .and_then(|url| {
-                let path = format!("ui/automations/{}", url.rsplit('/').next().unwrap_or(url));
-                cx.asset_source()
-                    .load(&path)
-                    .ok()
-                    .flatten()
-                    .map(|source| (path, source))
-            });
+        let bundled = s.icon_url.as_ref().and_then(|url| {
+            let path = format!("ui/automations/{}", url.rsplit('/').next().unwrap_or(url));
+            cx.asset_source()
+                .load(&path)
+                .ok()
+                .flatten()
+                .map(|source| (path, source))
+        });
         let glyph = match bundled {
-            // ponytail: the original spins the rays (`animate-spin`); animations are out of scope.
-            _ if starting => icon("rays", 20., t.text_tertiary).into_any_element(),
             Some((path, source)) => {
                 if cfg!(target_os = "macos") {
                     canvas(
@@ -1074,12 +1026,6 @@ impl AutomationsPage {
                 }
             }
             None => text(s.emoji.clone(), 28., 28., 430., t.text).into_any_element(),
-        };
-        let prompt = s.user_message.clone();
-        let description = if starting {
-            "Starting…".into()
-        } else {
-            s.description.clone()
         };
         div()
             .id(("suggestion", i))
@@ -1100,20 +1046,8 @@ impl AutomationsPage {
                 dashed: true,
                 ..Default::default()
             }))
-            .when(disabled, |d| d.opacity(0.4))
-            .when(!disabled, |d| {
-                d.hover(move |st| st.bg(hover_bg)).on_click(cx.listener(
-                    move |this, _, window, cx| {
-                        this.set_pending(Some(i), cx);
-                        window.dispatch_action(
-                            Box::new(StartSuggestedTask {
-                                prompt: prompt.clone(),
-                            }),
-                            cx,
-                        )
-                    },
-                ))
-            })
+            .hover(move |st| st.bg(hover_bg))
+            .on_click(crate::dispatch::<StartSuggestedTask>)
             .child(
                 div()
                     .size(px(24.))
@@ -1136,7 +1070,7 @@ impl AutomationsPage {
                             .truncate(),
                     )
                     .child(
-                        text(description, 14., 20., 400., t.text_tertiary)
+                        text(s.description.clone(), 14., 20., 400., t.text_tertiary)
                             .whitespace_normal()
                             .line_clamp(2)
                             .text_ellipsis(),

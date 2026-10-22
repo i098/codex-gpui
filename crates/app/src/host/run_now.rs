@@ -835,8 +835,7 @@ impl LocalHost {
                 // The original's default: the run happens in a fresh worktree of the folder's
                 // repository, or in the folder itself when it is no repository.
                 let worktree = if worktree_env && projectless.is_none() {
-                    git::create_worktree(
-                        &self.home.join("worktrees"),
+                    self.managed_worktree(
                         std::path::Path::new(cwd),
                         None,
                         local_environment.as_deref(),
@@ -883,8 +882,10 @@ impl LocalHost {
                     Ok(started) => started,
                     Err(error) => {
                         // No thread owns the worktree yet, so the helper may remove it.
-                        if let Some(worktree) = &worktree {
-                            let _ = git::remove_unstarted_worktree(&self.home.join("worktrees"), worktree);
+                        if let Some(worktree) = &worktree
+                            && let Some(root) = worktree.git_root.parent().and_then(std::path::Path::parent)
+                        {
+                            let _ = git::remove_unstarted_worktree(root, worktree);
                         }
                         return Err(error);
                     }

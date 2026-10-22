@@ -40,7 +40,10 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     }))
     .on_action(
         cx.listener(|this, _: &automations::StartSuggestedTask, _, cx| {
-            this.start_suggested_task(cx)
+            this.toast(
+                Toast::danger("Starting suggested tasks isn’t supported in this version"),
+                cx,
+            )
         }),
     )
 }
