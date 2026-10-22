@@ -411,7 +411,7 @@ impl Analytics {
     ) -> Div {
         let mut arrows = div().flex();
         for (direction, glyph, label) in [
-            (-1, "chevron-right", "Next period"),
+            (-1, "usage-chevron-right", "Next period"),
             (1, "chevron-left", "Previous period"),
         ]
         .into_iter()
