@@ -2,7 +2,6 @@
 
 pub mod automations;
 pub mod cloud_task;
-pub mod cloud;
 pub mod composer;
 pub mod computer_use_native;
 pub use settings::computer_use;

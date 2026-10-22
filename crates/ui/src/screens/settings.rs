@@ -173,7 +173,6 @@ pub struct SettingsPage {
     /// `projectlessWorkspaceRoot` default: `~/Documents/Codex`.
     projectless_root: String,
     pending_instructions: Vec<SettingChanged>,
-    cloud: Option<Entity<super::cloud::CloudPage>>,
 }
 
 impl SettingsPage {
@@ -197,7 +196,6 @@ impl SettingsPage {
             values,
             projectless_root,
             pending_instructions: Vec::new(),
-            cloud: None,
         }
     }
 
@@ -222,14 +220,6 @@ impl SettingsPage {
         // `IndexMut` makes a missing store an object on its first key.
         self.values[store][key] = value.clone();
         cx.emit(SettingChanged { path, value });
-        cx.notify();
-    }
-
-    pub fn set_cloud(&mut self, cloud: Entity<super::cloud::CloudPage>, cx: &mut Context<Self>) {
-        if matches!(self.section, "Codex Cloud" | "Legacy Codex Cloud") {
-            cloud.update(cx, |cloud, cx| cloud.open_section(self.section, cx));
-        }
-        self.cloud = Some(cloud);
         cx.notify();
     }
 
@@ -371,11 +361,6 @@ impl SettingsNav {
                 d.on_click(cx.listener(move |this, _, _, cx| {
                     this.page.update(cx, |p, cx| {
                         p.section = label;
-                        if matches!(label, "Codex Cloud" | "Legacy Codex Cloud")
-                            && let Some(cloud) = &p.cloud
-                        {
-                            cloud.update(cx, |cloud, cx| cloud.open_section(label, cx));
-                        }
                         cx.notify();
                     })
                 }))
@@ -397,22 +382,11 @@ impl Render for SettingsNav {
         let page = self.page.read(cx);
         let (section, query) = (page.section, page.query.clone());
         let needle = query.to_lowercase();
-        let cloud_access = page
-            .cloud
-            .as_ref()
-            .map(|cloud| cloud.read(cx).access())
-            .unwrap_or_default();
         let mut sections = Vec::new();
         for (heading, items) in NAV {
             let rows: Vec<_> = items
                 .iter()
                 .filter(|(label, _)| label.to_lowercase().contains(&needle))
-                .filter(|(label, _)| match *label {
-                    "Cloud computer" => false,
-                    "Codex Cloud" => cloud_access.cloud,
-                    "Legacy Codex Cloud" => cloud_access.legacy,
-                    _ => true,
-                })
                 .map(|&(label, glyph)| self.item(label, glyph, label == section, &t, cx))
                 .collect();
             if rows.is_empty() {
@@ -1168,11 +1142,6 @@ impl Render for SettingsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let section = self.page.read(cx).section;
-        if matches!(section, "Codex Cloud" | "Legacy Codex Cloud")
-            && let Some(cloud) = self.page.read(cx).cloud.clone()
-        {
-            return div().size_full().child(cloud).into_any_element();
-        }
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
         }
@@ -1439,7 +1408,7 @@ fn deco(l: &Layer, radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>
 
 /// A control's surface on a settings card: Chromium blits it onto the card's opaque pixels in
 /// the scroller's layer, as on the page (`shapes` takes the `.layer()` origin for its tiles).
-pub(crate) fn on_card(radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> AnyElement {
+fn on_card(radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> AnyElement {
     shapes::decoration(surface(radius, corner, fill, border)).into_any_element()
 }
 

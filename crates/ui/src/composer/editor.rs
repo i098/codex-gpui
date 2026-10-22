@@ -371,13 +371,6 @@ impl Composer {
                 }
             }
         } else if let Some(text) = item.text() {
-            if self
-                .on_settings_paste
-                .as_ref()
-                .is_some_and(|handler| handler(&text, cx))
-            {
-                return;
-            }
             if attach && text.encode_utf16().take(5000).count() == 5000 {
                 self.save_paste(attach::Content::Text(text), cx);
             } else {
@@ -564,23 +557,14 @@ impl Composer {
         }
     }
 
-    fn editor_line_height(&self) -> Pixels {
-        if self.plain_compact {
-            px(20.)
-        } else {
-            LINE_HEIGHT
-        }
-    }
-
     /// Byte offset where each shaped line starts (lines are split at `\n`).
     pub(super) fn line_starts(&self) -> impl Iterator<Item = (usize, Pixels, &WrappedLine)> {
         let mut start = 0;
         let mut y = px(0.);
-        let line_height = self.editor_line_height();
         self.lines.iter().map(move |line| {
             let item = (start, y, line);
             start += line.len() + 1;
-            y += line.size(line_height).height;
+            y += line.size(LINE_HEIGHT).height;
             item
         })
     }
@@ -590,7 +574,7 @@ impl Composer {
         self.line_starts()
             .find(|(start, _, line)| offset <= start + line.len())
             .and_then(|(start, y, line)| {
-                let p = line.position_for_index(offset - start, self.editor_line_height())?;
+                let p = line.position_for_index(offset - start, LINE_HEIGHT)?;
                 Some(point(p.x, p.y + y))
             })
     }
@@ -598,11 +582,11 @@ impl Composer {
     pub(super) fn index_for_local(&self, local: Point<Pixels>) -> usize {
         let mut last = 0;
         for (start, y, line) in self.line_starts() {
-            let h = line.size(self.editor_line_height()).height;
+            let h = line.size(LINE_HEIGHT).height;
             if local.y < y + h {
                 let p = point(local.x, (local.y - y).max(px(0.)));
                 let i = line
-                    .closest_index_for_position(p, self.editor_line_height())
+                    .closest_index_for_position(p, LINE_HEIGHT)
                     .unwrap_or_else(|i| i);
                 return self.snap(start + i, None);
             }
@@ -621,9 +605,8 @@ impl Composer {
     /// Offset one row above (`-1`) or below (`1`) the caret; `None` past the first/last row.
     pub(super) fn vertical(&self, rows: f32) -> Option<usize> {
         let p = self.point_for_index(self.cursor())?;
-        let line_height = self.editor_line_height();
-        let y = p.y + line_height * rows + line_height / 2.;
-        let total: Pixels = self.lines.iter().map(|l| l.size(line_height).height).sum();
+        let y = p.y + LINE_HEIGHT * rows + LINE_HEIGHT / 2.;
+        let total: Pixels = self.lines.iter().map(|l| l.size(LINE_HEIGHT).height).sum();
         (y >= px(0.) && y < total).then(|| self.index_for_local(point(p.x, y)))
     }
 
@@ -654,26 +637,26 @@ impl Composer {
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
-            .px(px(if self.plain_compact {
-                0.
-            } else if self.request_parent.is_some() && self.request_compact && !self.secret {
-                10.
-            } else {
-                12.
-            }))
-            .pb(px(if self.request_parent.is_some() || self.plain_compact {
+            .px(px(
+                if self.request_parent.is_some() && self.request_compact && !self.secret {
+                    10.
+                } else {
+                    12.
+                },
+            ))
+            .pb(px(if self.request_parent.is_some() {
                 0.
             } else {
                 4.
             }))
-            .min_h(px(if self.request_parent.is_some() || self.plain_compact {
+            .min_h(px(if self.request_parent.is_some() {
                 20.
             } else {
                 48.
             }))
             .cursor(CursorStyle::IBeam)
             .text_size(FONT_SIZE)
-            .line_height(self.editor_line_height())
+            .line_height(LINE_HEIGHT)
             .font_weight(gpui::FontWeight(430.))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_click))
@@ -685,9 +668,7 @@ impl Composer {
             // `overflow-y: auto` contents), then composited onto the card.
             .child(
                 div()
-                    .when(self.content.is_empty() && !self.plain_compact, |d| {
-                        d.opacity(0.5)
-                    })
+                    .when(self.content.is_empty(), |d| d.opacity(0.5))
                     .layer()
                     .child(Editor(cx.entity())),
             )
@@ -819,7 +800,7 @@ impl EntityInputHandler for Composer {
         let end = self.point_for_index(range.end)?;
         Some(Bounds::from_corners(
             bounds.origin + start,
-            bounds.origin + point(end.x, end.y + self.editor_line_height()),
+            bounds.origin + point(end.x, end.y + LINE_HEIGHT),
         ))
     }
 
@@ -955,12 +936,8 @@ impl gpui::Element for Editor {
                 _ => None,
             });
             let black = gpui::black();
-            let input = input.read(cx);
-            let lines = shape(input, black, black, black, width, window);
-            let height = lines
-                .iter()
-                .map(|l| l.size(input.editor_line_height()).height)
-                .sum();
+            let lines = shape(input.read(cx), black, black, black, width, window);
+            let height = lines.iter().map(|l| l.size(LINE_HEIGHT).height).sum();
             Size {
                 width: width.unwrap_or_default(),
                 height,
@@ -1016,7 +993,6 @@ impl gpui::Element for Editor {
         let selection_color = cx.theme().text_selection;
         let caret_color = cx.theme().text;
         let c = self.0.read(cx);
-        let line_height = c.editor_line_height();
         if !c.selected_range.is_empty()
             && let (Some(a), Some(b)) = (
                 c.point_for_index(c.selected_range.start),
@@ -1030,10 +1006,10 @@ impl gpui::Element for Editor {
                 let x1 = if row == b.y { b.x } else { w };
                 let r = Bounds::from_corners(
                     bounds.origin + point(x0, row),
-                    bounds.origin + point(x1, row + line_height),
+                    bounds.origin + point(x1, row + LINE_HEIGHT),
                 );
                 window.paint_quad(fill(r, selection_color));
-                row += line_height;
+                row += LINE_HEIGHT;
             }
         }
         let caret = (c.selected_range.is_empty()
@@ -1053,9 +1029,9 @@ impl gpui::Element for Editor {
         let mut y = px(0.);
         for line in &lines {
             let origin = bounds.origin + point(x, y);
-            line.paint(origin, line_height, TextAlign::Left, None, window, cx)
+            line.paint(origin, LINE_HEIGHT, TextAlign::Left, None, window, cx)
                 .ok();
-            y += line.size(line_height).height;
+            y += line.size(LINE_HEIGHT).height;
         }
         self.0.update(cx, |c, _| c.lines = lines);
         let chip = chip_color(cx.theme());
@@ -1078,7 +1054,7 @@ impl gpui::Element for Editor {
         if let Some(p) = caret {
             let r = Bounds::new(
                 bounds.origin + point(p.x, p.y + px(1.5)),
-                size(px(1.), line_height - px(3.)),
+                size(px(1.), LINE_HEIGHT - px(3.)),
             );
             window.paint_quad(fill(r, caret_color));
         }

@@ -33,7 +33,6 @@ pub(super) fn page(root: &mut Root, cx: &mut Context<Root>) -> Entity<Shell> {
     config["host"]["confirm-before-close"] = json!(root.state.confirm_before_close);
     let section = root.settings_section.take();
     let (shell, page) = settings::shell(&config, &root.skills, section, cx);
-    crate::cloud::attach(&page, cx);
     root.settings_page = Some(page.clone());
     cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
         this.write_setting(e, cx);

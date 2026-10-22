@@ -652,8 +652,6 @@ pub struct Composer {
     plain_field: Option<bool>,
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
-    plain_compact: bool,
-    on_settings_paste: Option<Rc<dyn Fn(&str, &mut App) -> bool>>,
 }
 
 impl Composer {
@@ -734,8 +732,6 @@ impl Composer {
             plain_field: None,
             dictation: None,
             dictation_error: None,
-            plain_compact: false,
-            on_settings_paste: None,
         }
     }
 
@@ -748,24 +744,6 @@ impl Composer {
         let mut editor = Self::new(placeholder, false, cx);
         editor.plain_field = Some(multiline);
         editor.set_text(value, cx);
-        editor
-    }
-
-    pub fn settings_search(label: &'static str, value: &str, cx: &mut Context<Self>) -> Self {
-        let mut editor = Self::settings_field("Search", value, false, cx);
-        editor.plain_compact = true;
-        editor.request_compact = true;
-        editor.request_label = Some(label.into());
-        editor
-    }
-
-    pub fn on_settings_paste(&mut self, handler: impl Fn(&str, &mut App) -> bool + 'static) {
-        self.on_settings_paste = Some(Rc::new(handler));
-    }
-
-    pub fn settings_secret(placeholder: &'static str, value: &str, cx: &mut Context<Self>) -> Self {
-        let mut editor = Self::settings_field(placeholder, value, false, cx);
-        editor.secret = true;
         editor
     }
 
@@ -1967,7 +1945,7 @@ impl Render for Composer {
         if self.plain_field.is_some() {
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)
-                    .when(self.request_parent.is_none() && !self.plain_compact, |d| {
+                    .when(self.request_parent.is_none(), |d| {
                         d.border_1()
                             .border_color(t.border)
                             .rounded(px(8.))
@@ -1994,7 +1972,7 @@ impl Render for Composer {
                                 ..Default::default()
                             }))
                     })
-                    .when(self.request_parent.is_some() || self.plain_compact, |d| {
+                    .when(self.request_parent.is_some(), |d| {
                         d.role(if self.secret {
                             gpui::Role::PasswordInput
                         } else {
