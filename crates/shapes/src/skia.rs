@@ -1931,14 +1931,9 @@ pub(crate) fn with_rounded_clip<R>(
     out
 }
 
-/// `crate::with_unsnapped_clip` on macOS.
-pub(crate) fn with_unsnapped_clip<R>(
-    bounds: Bounds<Pixels>,
-    radius: gpui::Corners<Pixels>,
-    window: &mut Window,
-    paint: impl FnOnce(&mut Window) -> R,
-) -> R {
-    let s = window.scale_factor();
+/// The clip [`with_unsnapped_clip`] pushes: `bounds` and `radius` at their unsnapped device
+/// geometry.
+fn unsnapped_clip(bounds: Bounds<Pixels>, radius: gpui::Corners<Pixels>, s: f32) -> Contour {
     let [l, t, r, b] =
         [bounds.left(), bounds.top(), bounds.right(), bounds.bottom()].map(|v| f32::from(v) * s);
     let radii = [
@@ -1953,11 +1948,21 @@ pub(crate) fn with_unsnapped_clip<R>(
         radii,
     };
     rr.constrain();
-    let clip = Contour {
+    Contour {
         rr,
         k: [2.; 4],
         origin: rr,
-    };
+    }
+}
+
+/// `crate::with_unsnapped_clip` on macOS.
+pub(crate) fn with_unsnapped_clip<R>(
+    bounds: Bounds<Pixels>,
+    radius: gpui::Corners<Pixels>,
+    window: &mut Window,
+    paint: impl FnOnce(&mut Window) -> R,
+) -> R {
+    let clip = unsnapped_clip(bounds, radius, window.scale_factor());
     CLIPS.with_borrow_mut(|c| c.push((clip, None)));
     let out = paint(window);
     CLIPS.with_borrow_mut(|c| c.pop());
@@ -3000,6 +3005,26 @@ pub(crate) fn paint_icon(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsnapped_clip_keeps_fractional_edges_and_scaled_radii() {
+        // The original's main surface `clip-path` at 110% on a 2x display (paint log
+        // `clipRRect`): [721.6, 96.796875, 2551.203125, 1655.203125], radii 26.4.
+        let s = 2.2;
+        let [l, t, r, b] = [721.6, 96. + 51. / 64., 2551. + 13. / 64., 1655. + 13. / 64.];
+        let bounds = Bounds::from_corners(point(px(l / s), px(t / s)), point(px(r / s), px(b / s)));
+        let clip = unsnapped_clip(bounds, gpui::Corners::all(px(12.)), s);
+        let expected = [l, t, r - l, b - t];
+        for (got, want) in clip.rr.r.into_iter().zip(expected) {
+            assert!((got - want).abs() < 1e-3, "edge {got} != {want}");
+        }
+        for [x, y] in clip.rr.radii {
+            assert!(
+                (x - 26.4).abs() < 1e-4 && (y - 26.4).abs() < 1e-4,
+                "radius {x}, {y}"
+            );
+        }
+    }
     use crate as shapes;
     use gpui::{
         AppContext, Corners, IntoElement, ParentElement, Render, Styled, Window, canvas, div,

@@ -1421,11 +1421,8 @@ impl Render for Shell {
                           window: &mut Window,
                           cx: &mut App| {
             // The compositor rounds a composited (`square`) main surface; otherwise the clip does.
-            let clip_radius = if square {
-                Corners::default()
-            } else {
-                Corners::all(r)
-            };
+            // Under an open sidebar the clip's left corners lie under it, so they stay square.
+            let clip_radius = if square { Corners::default() } else { radius };
             let page_surface = Bounds::from_corners(
                 bounds.origin + point(RAIL_WIDTH, Theme::TITLEBAR_HEIGHT),
                 bounds.bottom_right() - point(PAGE_INSET, PAGE_INSET),
