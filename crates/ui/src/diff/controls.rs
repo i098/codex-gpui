@@ -245,6 +245,7 @@ impl FileDiff {
             problem,
             raw: diff.into(),
             raw_kind: None,
+            line_info_separators: true,
             full: None,
             full_error: None,
             full_loading: false,

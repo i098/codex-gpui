@@ -442,6 +442,10 @@ impl DiffPanel {
                 .raw
                 .lines()
                 .any(|line| line == "+++ /dev/null" || line.starts_with("deleted file mode "));
+        if before && before_oid.is_none() {
+            file.full_error = Some(FullError::Unavailable);
+            return;
+        }
         let mut requests = Vec::new();
         let before = before.then(|| {
             requests.push(BlobRequest {
@@ -679,7 +683,7 @@ impl DiffPanel {
             .font_weight(FontWeight(430.))
             .line_height(px(CODE_LINE))
             .text_color(foreground)
-            .child(
+            .child(if entry.line_info_separators {
                 div()
                     .relative()
                     .w_full()
@@ -777,8 +781,28 @@ impl DiffPanel {
                                     .focus(|d| d.opacity(1.))
                                     .child("Expand all"),
                             ),
-                    ),
-            )
+                    )
+            } else {
+                div()
+                    .relative()
+                    .w_full()
+                    .h_full()
+                    .overflow_hidden()
+                    .flex()
+                    .items_center()
+                    .px(px(7.6242))
+                    .child(shapes::decoration(Decoration {
+                        fill: Some(background.into()),
+                        radius: gpui::Corners {
+                            top_left: px(6.),
+                            bottom_left: px(6.),
+                            top_right: px(8.),
+                            bottom_right: px(8.),
+                        },
+                        ..Default::default()
+                    }))
+                    .child(label)
+            })
             .into_any_element()
     }
 
@@ -1027,5 +1051,19 @@ mod tests {
         assert!(!full.validate(&hunks, false));
         full.before[0] = "different();\n".into();
         assert!(!full.validate(&hunks, true));
+    }
+
+    #[gpui::test]
+    fn headerless_turn_preserves_partial_metadata(cx: &mut gpui::TestAppContext) {
+        let panel = cx.new(|_| DiffPanel::subtract());
+        panel.update(cx, |panel, cx| {
+            panel.request_full_file(0, cx);
+            assert_eq!(panel.files[0].full_error, Some(FullError::Unavailable));
+            assert!(!panel.files[0].line_info_separators);
+            assert_eq!(
+                panel.files[0].hunks[0].separator.as_deref(),
+                Some("1 unmodified line")
+            );
+        });
     }
 }
