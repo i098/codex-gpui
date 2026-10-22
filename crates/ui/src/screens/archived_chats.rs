@@ -200,6 +200,8 @@ pub struct ArchivedChats {
     layer: Layer,
 }
 
+impl gpui::EventEmitter<Operation> for ArchivedChats {}
+
 impl ArchivedChats {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let query = cx.new(|cx| Composer::page_search("Search archived chats", cx));
@@ -239,16 +241,6 @@ impl ArchivedChats {
             confirmation: None,
             layer: Layer::default(),
         }
-    }
-
-    fn dispatch(&self, operation: Operation, window: &mut Window, cx: &mut Context<Self>) {
-        window.dispatch_action(
-            Box::new(ArchiveAction {
-                page: cx.entity(),
-                operation,
-            }),
-            cx,
-        );
     }
 
     pub fn confirmation(&self) -> Option<Entity<Confirmation>> {
@@ -291,10 +283,10 @@ impl ArchivedChats {
         }
         if success {
             self.removed.extend(ids.iter().cloned());
-        }
-        if success && let Some(Ok(threads)) = &mut self.threads {
-            let removed: HashSet<&str> = ids.iter().map(String::as_str).collect();
-            threads.retain(|thread| !removed.contains(thread.id.as_str()));
+            if let Some(Ok(threads)) = &mut self.threads {
+                let removed: HashSet<&str> = ids.iter().map(String::as_str).collect();
+                threads.retain(|thread| !removed.contains(thread.id.as_str()));
+            }
         }
         self.rebuild(cx);
         cx.notify();
@@ -323,11 +315,11 @@ impl ArchivedChats {
             .unwrap_or(&[])
     }
 
-    fn restore_cloud(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn restore_cloud(&mut self, id: String, cx: &mut Context<Self>) {
         if !self.pending.is_empty() || !self.cloud_pending.insert(id.clone()) {
             return;
         }
-        self.dispatch(Operation::RestoreCloud(id), window, cx);
+        cx.emit(Operation::RestoreCloud(id));
         cx.notify();
     }
 
@@ -343,13 +335,13 @@ impl ArchivedChats {
         );
     }
 
-    fn restore(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn restore(&mut self, id: String, cx: &mut Context<Self>) {
         if !self.pending.is_empty() {
             return;
         }
         self.pending.insert(id.clone());
         self.rebuild(cx);
-        self.dispatch(Operation::Restore(id), window, cx);
+        cx.emit(Operation::Restore(id));
         cx.notify();
     }
 
@@ -366,7 +358,7 @@ impl ArchivedChats {
         let Some(Ok(threads)) = &self.threads else {
             return;
         };
-        let (title, description, ids) = if let Some(id) = row.as_deref() {
+        let (title, description, ids, scope) = if let Some(id) = row.as_deref() {
             let Some(thread) = threads.iter().find(|thread| thread.id == id) else {
                 return;
             };
@@ -374,6 +366,7 @@ impl ArchivedChats {
                 "Delete archived chat?",
                 "This permanently deletes the archived chat".to_owned(),
                 vec![thread.id.clone()],
+                DeleteScope::Single(thread.id.clone()),
             )
         } else if let Some(project) = project {
             let ids: Vec<_> = self
@@ -385,6 +378,7 @@ impl ArchivedChats {
                 .map(|thread| thread.id.clone())
                 .collect();
             let noun = if ids.len() == 1 { "chat" } else { "chats" };
+            let scope = DeleteScope::Project(ids.clone());
             (
                 "Delete all in project?",
                 format!(
@@ -392,55 +386,46 @@ impl ArchivedChats {
                     ids.len()
                 ),
                 ids,
+                scope,
             )
         } else {
             (
                 "Delete all archived local chats?",
                 "This permanently deletes all local archived chats".to_owned(),
                 threads.iter().map(|thread| thread.id.clone()).collect(),
+                DeleteScope::All,
             )
         };
         if ids.is_empty() {
             return;
         }
-        let scope = if row.is_some() {
-            DeleteScope::Single(ids[0].clone())
-        } else if project.is_some() {
-            DeleteScope::Project(ids.clone())
-        } else {
-            DeleteScope::All
-        };
         self.menu = None;
         let confirmation = cx.new(|cx| {
             Confirmation::new(title, description, "Delete", window, cx)
                 .destructive()
                 .settings_dialog()
         });
-        cx.subscribe_in(
-            &confirmation,
-            window,
-            move |this, _, outcome, window, cx| {
-                this.confirmation = None;
-                if *outcome == Outcome::Confirm {
-                    this.pending.extend(ids.iter().cloned());
-                    this.rebuild(cx);
-                    this.dispatch(Operation::Delete(scope.clone()), window, cx);
-                }
-                cx.notify();
-            },
-        )
+        cx.subscribe_in(&confirmation, window, move |this, _, outcome, _, cx| {
+            this.confirmation = None;
+            if *outcome == Outcome::Confirm {
+                this.pending.extend(ids.iter().cloned());
+                this.rebuild(cx);
+                cx.emit(Operation::Delete(scope.clone()));
+            }
+            cx.notify();
+        })
         .detach();
         self.confirmation = Some(confirmation);
         cx.notify();
     }
 
-    fn retry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn retry(&mut self, cx: &mut Context<Self>) {
         self.threads = None;
         self.cloud_loading = true;
         self.cloud_error = None;
         self.metadata_error = None;
         self.rebuild(cx);
-        self.dispatch(Operation::Load, window, cx);
+        cx.emit(Operation::Load);
         cx.notify();
     }
 
@@ -596,11 +581,11 @@ impl ArchivedChats {
 
     fn activate(&mut self, command: Control, window: &mut Window, cx: &mut Context<Self>) {
         match command {
-            Control::Restore(id) => self.restore(id, window, cx),
-            Control::RestoreCloud(id) => self.restore_cloud(id, window, cx),
+            Control::Restore(id) => self.restore(id, cx),
+            Control::RestoreCloud(id) => self.restore_cloud(id, cx),
             Control::DeleteRow(row) => self.confirm_delete(None, Some(row), window, cx),
             Control::DeleteAll => self.confirm_delete(None, None, window, cx),
-            Control::Retry => self.retry(window, cx),
+            Control::Retry => self.retry(cx),
             Control::Menu(menu) => {
                 self.menu = if self.menu.as_ref() == Some(&menu) {
                     None
@@ -615,44 +600,44 @@ impl ArchivedChats {
     fn row(&self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let t = cx.theme().clone();
         let locals = self.local_threads();
-        let (label, date, restore, delete) = if let Some(thread) = locals.get(index) {
+        let (label, date, id, cloud) = if let Some(thread) = locals.get(index) {
             (
                 title(thread).to_owned(),
                 row_date(thread.updated_at, thread.created_at),
-                Control::Restore(thread.id.clone()),
-                Some(Control::DeleteRow(thread.id.clone())),
+                &thread.id,
+                false,
             )
         } else {
             let task = &self.cloud[index - locals.len()];
             (
                 task.title().to_owned(),
                 row_date(task.updated(), task.created()),
-                Control::RestoreCloud(task.id.clone()),
-                None,
+                &task.id,
+                true,
             )
         };
-        let id = match &restore {
-            Control::Restore(id) | Control::RestoreCloud(id) => id.clone(),
-            _ => unreachable!(),
+        let restoring = cloud && self.cloud_pending.contains(id);
+        let operation = if cloud {
+            Control::RestoreCloud(id.clone())
+        } else {
+            Control::Restore(id.clone())
         };
-        let cloud = delete.is_none();
-        let restoring = cloud && self.cloud_pending.contains(&id);
         let restore = self
             .control(
                 format!("unarchive-{id}").into(),
                 "Unarchive".into(),
-                restore,
+                operation,
                 window,
                 cx,
             )
             .when(restoring, |button| {
                 button.child(icon("sidebar-cmd-spinner", 12., t.text))
             });
-        let delete = delete.map(|command| {
+        let delete = (!cloud).then(|| {
             self.control(
                 format!("delete-archived-{id}").into(),
                 "Delete archived chat".into(),
-                command,
+                Control::DeleteRow(id.clone()),
                 window,
                 cx,
             )
@@ -691,6 +676,16 @@ impl ArchivedChats {
             )
     }
 
+    fn card(&self, t: &theme::Theme) -> Div {
+        div().relative().p(px(1.)).child(deco(
+            &self.layer,
+            20.,
+            Squircle,
+            t.background_panel,
+            Some(t.border),
+        ))
+    }
+
     fn error_row(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let t = cx.theme().clone();
         let control = self.control(
@@ -700,50 +695,30 @@ impl ArchivedChats {
             window,
             cx,
         );
-        div()
-            .relative()
-            .p(px(1.))
-            .child(deco(
-                &self.layer,
-                20.,
-                Squircle,
-                t.background_panel,
-                Some(t.border),
-            ))
-            .child(crate::rounded_clip(
-                px(19.),
-                Squircle,
-                super::settings_row(
-                    "Could not load archived chats",
-                    None,
-                    control.into_any_element(),
-                    &t,
-                ),
-            ))
+        self.card(&t).child(crate::rounded_clip(
+            px(19.),
+            Squircle,
+            super::settings_row(
+                "Could not load archived chats",
+                None,
+                control.into_any_element(),
+                &t,
+            ),
+        ))
     }
 
     fn message_row(&self, label: &'static str, glyph: Option<&'static str>, cx: &App) -> Div {
         let t = cx.theme();
-        div()
-            .relative()
-            .p(px(1.))
-            .child(deco(
-                &self.layer,
-                20.,
-                Squircle,
-                t.background_panel,
-                Some(t.border),
-            ))
-            .child(
-                div()
-                    .px(px(16.))
-                    .py(px(12.))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .children(glyph.map(|glyph| icon(glyph, 16., t.text_secondary)))
-                    .child(text(label, 13., 18.571_428, 400., t.text_secondary)),
-            )
+        self.card(t).child(
+            div()
+                .px(px(16.))
+                .py(px(12.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .children(glyph.map(|glyph| icon(glyph, 16., t.text_secondary)))
+                .child(text(label, 13., 18.571_428, 400., t.text_secondary)),
+        )
     }
 
     fn filter_controls(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -1080,23 +1055,11 @@ impl ArchivedChats {
                 )
             })
         });
-        section.child(
-            div()
-                .relative()
-                .p(px(1.))
-                .child(deco(
-                    &self.layer,
-                    20.,
-                    Squircle,
-                    t.background_panel,
-                    Some(t.border),
-                ))
-                .child(crate::rounded_clip(
-                    px(19.),
-                    Squircle,
-                    div().flex().flex_col().children(rows),
-                )),
-        )
+        section.child(self.card(t).child(crate::rounded_clip(
+            px(19.),
+            Squircle,
+            div().flex().flex_col().children(rows),
+        )))
     }
 }
 
@@ -1226,22 +1189,27 @@ fn title(thread: &Thread) -> &str {
     }
 }
 
-fn project_for(thread: &Thread, projects: &[Project], metadata: &Metadata) -> Option<usize> {
-    if metadata.projectless.contains(&thread.id) {
+fn project_for(
+    thread_id: &str,
+    cwd: Option<&str>,
+    projects: &[Project],
+    metadata: &Metadata,
+) -> Option<usize> {
+    if metadata.projectless.contains(thread_id) {
         return None;
     }
-    if let Some(id) =
-        metadata.values["thread-project-assignments"][&thread.id]["projectId"].as_str()
-        && metadata.values["thread-project-assignments"][&thread.id]["projectKind"] == "local"
+    if let Some(id) = metadata.values["thread-project-assignments"][thread_id]["projectId"].as_str()
+        && metadata.values["thread-project-assignments"][thread_id]["projectKind"] == "local"
         && let Some(index) = projects
             .iter()
             .position(|project| project.id.as_ref() == id)
     {
         return Some(index);
     }
+    let cwd = cwd?;
     for path in [
-        metadata.values["thread-workspace-root-hints"][&thread.id].as_str(),
-        Some(thread.cwd.as_str()),
+        metadata.values["thread-workspace-root-hints"][thread_id].as_str(),
+        Some(cwd),
     ]
     .into_iter()
     .flatten()
@@ -1325,20 +1293,12 @@ fn project_groups(
             path: thread.path.as_deref().unwrap_or(""),
             created: thread.created_at,
             updated: thread.updated_at,
-            project: project_for(thread, projects, metadata),
+            project: project_for(&thread.id, Some(&thread.cwd), projects, metadata),
             kind: Kind::Local,
             scheduled: metadata.scheduled.contains(&thread.id),
         })
         .chain(cloud.iter().map(|task| {
-            let projectless = metadata.projectless.contains(&task.id);
-            let assignment = &metadata.values["thread-project-assignments"][&task.id];
-            let project = (!projectless && assignment["projectKind"] == "local")
-                .then(|| {
-                    projects.iter().position(|project| {
-                        assignment["projectId"].as_str() == Some(project.id.as_ref())
-                    })
-                })
-                .flatten();
+            let project = project_for(&task.id, None, projects, metadata);
             Row {
                 id: &task.id,
                 title: task.title(),
@@ -1429,9 +1389,6 @@ fn fuzzy_match(field: &str, query: &str) -> bool {
         return true;
     }
     let needle: Vec<_> = query.chars().collect();
-    if needle.is_empty() {
-        return true;
-    }
     let limit = needle.len() * 2 / 5;
     let mut previous: Vec<_> = (0..=needle.len()).collect();
     let mut current = vec![0; needle.len() + 1];
@@ -1502,17 +1459,28 @@ mod tests {
         let projects = vec![project("one", "/repo"), project("two", "/elsewhere")];
         let mut metadata = json!({"thread-project-assignments": {thread.id.clone(): {"projectId": "two", "projectKind": "local"}}});
         assert_eq!(
-            project_for(&thread, &projects, &Metadata::from(metadata.clone())),
+            project_for(
+                &thread.id,
+                Some(&thread.cwd),
+                &projects,
+                &Metadata::from(metadata.clone())
+            ),
             Some(1)
         );
         metadata["projectless-thread-ids"] = json!([thread.id]);
         assert_eq!(
-            project_for(&thread, &projects, &Metadata::from(metadata)),
+            project_for(
+                &thread.id,
+                Some(&thread.cwd),
+                &projects,
+                &Metadata::from(metadata)
+            ),
             None
         );
         assert_eq!(
             project_for(
-                &thread,
+                &thread.id,
+                Some(&thread.cwd),
                 &[project("one", "/repo"), project("two", "/repo/")],
                 &Metadata::default()
             ),
@@ -1618,6 +1586,23 @@ mod tests {
     }
 
     #[test]
+    fn cloud_assignment_ignores_local_workspace_hints() {
+        let projects = vec![project("one", "/repo")];
+        let mut values = json!({"thread-workspace-root-hints": {"cloud": "/repo"}});
+        assert_eq!(
+            project_for("cloud", None, &projects, &Metadata::from(values.clone())),
+            None
+        );
+        values["thread-project-assignments"] = json!({
+            "cloud": {"projectKind": "local", "projectId": "one"}
+        });
+        assert_eq!(
+            project_for("cloud", None, &projects, &Metadata::from(values)),
+            Some(0)
+        );
+    }
+
+    #[test]
     fn retry_after_partial_failure_clears_stale_row_indices() -> anyhow::Result<()> {
         use gpui::{AppContext as _, HeadlessAppContext, size};
         use std::sync::Arc;
@@ -1659,8 +1644,8 @@ mod tests {
             })
         });
         app.run_until_parked();
-        app.update_window(window.into(), |_, window, cx| {
-            page.update(cx, |page, cx| page.retry(window, cx))
+        app.update_window(window.into(), |_, _, cx| {
+            page.update(cx, |page, cx| page.retry(cx))
         })?;
         app.run_until_parked();
         page.read_with(&app, |page, _| {

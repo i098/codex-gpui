@@ -10,27 +10,36 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
         this.open_settings_section("Archived chats", window, cx);
     }))
     .on_action(cx.listener(|this, action: &ArchiveAction, window, cx| {
-        this.archive_action(action.clone(), window, cx);
+        this.archive_action(action.page.clone(), action.operation.clone(), window, cx);
     }))
 }
 
 impl Root {
     fn archive_action(
         &mut self,
-        action: ArchiveAction,
+        page: Entity<ArchivedSettings>,
+        operation: Operation,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let bridge = self.bridge.clone();
         let host = self.host.clone();
-        match action.operation {
+        match operation {
             Operation::Load => {
-                if self.archived_settings.as_ref() != Some(&action.page) {
-                    cx.observe(&action.page, |_, _, cx| cx.notify()).detach();
-                    self.archived_settings = Some(action.page.clone());
+                if self.archived_settings.as_ref() != Some(&page) {
+                    cx.observe(&page, |_, _, cx| cx.notify()).detach();
+                    cx.subscribe_in(
+                        &page,
+                        window,
+                        |this, page, operation: &Operation, window, cx| {
+                            this.archive_action(page.clone(), operation.clone(), window, cx);
+                        },
+                    )
+                    .detach();
+                    self.archived_settings = Some(page.clone());
                 }
                 let cloud_host = host.clone();
-                let cloud_page = action.page.clone();
+                let cloud_page = page.clone();
                 let cloud = cx.background_spawn(async move { cloud_archived(&*cloud_host) });
                 cx.spawn(async move |_, cx| {
                     let result = cloud.await;
@@ -47,7 +56,7 @@ impl Root {
                         metadata,
                         metadata_error,
                     };
-                    action.page.update(cx, |page, cx| page.loaded(data, cx));
+                    page.update(cx, |page, cx| page.loaded(data, cx));
                 })
                 .detach();
             }
@@ -63,7 +72,7 @@ impl Root {
                             json!({"threadId": id}),
                         )
                         .await;
-                    action.page.update(cx, |page, cx| {
+                    page.update(cx, |page, cx| {
                         page.finished(std::slice::from_ref(&id), result.is_ok(), cx)
                     });
                     this.update_in(cx, |this, _, cx| match result {
@@ -128,9 +137,7 @@ impl Root {
                 });
                 cx.spawn_in(window, async move |this, cx| {
                     let result = work.await;
-                    action
-                        .page
-                        .update(cx, |page, cx| page.cloud_finished(&id, result.is_ok(), cx));
+                    page.update(cx, |page, cx| page.cloud_finished(&id, result.is_ok(), cx));
                     this.update(cx, |this, cx| {
                         let toast = match result {
                             Ok(()) => {
@@ -172,7 +179,7 @@ impl Root {
                 });
                 cx.spawn(async move |this, cx| {
                     let (deleted, first_error) = delete_archived(&bridge, &scope).await;
-                    action.page.update(cx, |page, cx| {
+                    page.update(cx, |page, cx| {
                         page.deletion_finished(&deleted, cx);
                     });
                     this.update(cx, |this, cx| {
@@ -324,9 +331,7 @@ async fn delete_archived(
         match result {
             Ok(_) => deleted.push(id.clone()),
             Err(error) => {
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
+                first_error.get_or_insert(error);
             }
         }
     }
@@ -336,6 +341,22 @@ async fn delete_archived(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn records() -> Result<Vec<Value>> {
+        include_str!("../../../fixtures/sessions/archived-chats.jsonl")
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<serde_json::Result<_>>()
+            .map_err(Into::into)
+    }
+
+    fn replayed<'a>(lines: impl Iterator<Item = &'a Value>) -> Result<Bridge> {
+        let file = tempfile::NamedTempFile::new()?;
+        let content = lines.map(Value::to_string).collect::<Vec<_>>().join("\n");
+        fs::write(file.path(), content)?;
+        let (bridge, _) = Bridge::replay(file.path())?;
+        Ok(bridge)
+    }
 
     fn recorded_exchanges<'a>(records: &'a [Value], method: &str) -> Vec<(usize, [&'a Value; 2])> {
         records
@@ -369,10 +390,7 @@ mod tests {
 
     #[test]
     fn deletion_refuses_a_chat_that_is_no_longer_archived() -> Result<()> {
-        let records: Vec<Value> = include_str!("../../../fixtures/sessions/archived-chats.jsonl")
-            .lines()
-            .map(serde_json::from_str)
-            .collect::<serde_json::Result<_>>()?;
+        let records = records()?;
         let (_, list) = recorded_exchanges(&records, "thread/list")
             .into_iter()
             .last()
@@ -392,15 +410,7 @@ mod tests {
             .as_str()
             .context("recorded thread id")?
             .to_owned();
-        let file = tempfile::NamedTempFile::new()?;
-        let content = list
-            .into_iter()
-            .chain(delete)
-            .map(Value::to_string)
-            .collect::<Vec<_>>()
-            .join("\n");
-        fs::write(file.path(), content)?;
-        let (bridge, _) = Bridge::replay(file.path())?;
+        let bridge = replayed(list.into_iter().chain(delete))?;
         let (deleted, error) =
             pollster::block_on(delete_archived(&bridge, &DeleteScope::Single(id)));
         ensure!(deleted.is_empty());
@@ -412,10 +422,7 @@ mod tests {
 
     #[test]
     fn delete_all_uses_the_current_archived_inventory() -> Result<()> {
-        let records: Vec<Value> = include_str!("../../../fixtures/sessions/archived-chats.jsonl")
-            .lines()
-            .map(serde_json::from_str)
-            .collect::<serde_json::Result<_>>()?;
+        let records = records()?;
         let (start, pair) = recorded_exchanges(&records, "thread/list")
             .into_iter()
             .rfind(|(_, pair)| {
@@ -430,16 +437,7 @@ mod tests {
             .iter()
             .filter_map(|thread| thread["id"].as_str())
             .collect();
-        let file = tempfile::NamedTempFile::new()?;
-        fs::write(
-            file.path(),
-            records[start..]
-                .iter()
-                .map(Value::to_string)
-                .collect::<Vec<_>>()
-                .join("\n"),
-        )?;
-        let (bridge, _) = Bridge::replay(file.path())?;
+        let bridge = replayed(records[start..].iter())?;
         let (deleted, error) = pollster::block_on(delete_archived(&bridge, &DeleteScope::All));
         ensure!(error.is_none(), "recorded delete failed: {error:?}");
         ensure!(deleted == expected);
