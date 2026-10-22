@@ -5,7 +5,7 @@ The original is the Codex section of the macOS ChatGPT app.
 The goal is pixel parity with the original: the same layout, text, colors and icons, device pixel for device pixel.
 The app drives the real `codex app-server` over stdio, the same JSON-RPC transport that the original uses.
 
-[Build and run](#build-and-run) · [Architecture](#architecture) · [Parity method](#parity-method) · [Contributing](CONTRIBUTING.md) · [Security](.github/SECURITY.md) · [Changelog](CHANGELOG.md)
+[Build and run](#build-and-run) · [Architecture](#architecture) · [Parity method](#parity-method) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
 
 ## Requirements
 

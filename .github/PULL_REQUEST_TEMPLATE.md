@@ -22,4 +22,4 @@ Closes #
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` is clean.
 - [ ] `cargo test --workspace` passes.
 - [ ] A visual change passes `cargo run -p parity -- --gate` on macOS, or Test evidence compares it with the original app.
-- [ ] A changelog fragment, `changelog.d/<issue>.<type>.md`, not a `CHANGELOG.md` edit.
+- [ ] A user-visible change has a line under `## [Unreleased]` in `CHANGELOG.md`.

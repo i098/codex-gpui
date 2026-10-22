@@ -62,7 +62,6 @@ fix(diff): preserve decoded Changes file paths
 Use the [bug report](.github/ISSUE_TEMPLATE/bug_report.yml) or [feature request](.github/ISSUE_TEMPLATE/feature_request.yml) form.
 Write a plain sentence-case title, without a commit prefix such as `fix:`.
 For a visual difference, attach screenshots of the original app and of codex-gpui in the same state and at the same window size.
-Report a vulnerability in private, as the [security policy](.github/SECURITY.md) tells; never in an issue.
 
 ## Pull requests
 
@@ -71,17 +70,10 @@ Report a vulnerability in private, as the [security policy](.github/SECURITY.md)
 - Start the body with `Closes #N` on its own line, then fill each section of the [pull request template](.github/PULL_REQUEST_TEMPLATE.md).
 - Under Test evidence, name the commands that you ran and their results; do not claim checks that you did not run.
 - Leave an inapplicable checklist item unchecked and tell why beside it.
-- Add a changelog fragment (see [Changelog](#changelog)).
+- Add a user-visible change to [CHANGELOG.md](CHANGELOG.md) (see [Changelog](#changelog)).
 
 ## Changelog
 
 [CHANGELOG.md](CHANGELOG.md) follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
-Do not edit it in a pull request.
-Add one fragment file, `changelog.d/<issue>.<type>.md`, instead.
-`<issue>` is the number of the issue that the pull request closes.
-`<type>` is `added`, `changed`, `deprecated`, `removed`, `fixed` or `security`.
-The file holds one or two plain sentences for a user, without the issue link.
-Separate files let pull requests merge in parallel without changelog conflicts.
-
-A pull request with nothing for a user to note, such as a test-only change, needs no fragment; tell why in its checklist.
-At a release, the maintainer moves the fragments into a dated version section and deletes them.
+Add one line for a user-visible change under `## [Unreleased]`, in the section that fits: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed` or `Security`.
+A change with nothing for a user to note, such as a test-only change, needs no line.
