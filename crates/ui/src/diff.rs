@@ -1990,9 +1990,13 @@ pub fn with_side_tabs(
         // The thread route's main surface is a composited layer; with the Changes panel,
         // Chromium composites the surface itself too.
         shell.main_composited = true;
-        shell.main_layer = panel
-            .as_ref()
-            .is_some_and(|(view, ..)| view.clone().downcast::<DiffPanel>().is_ok());
+        shell.main_opaque_scroll = panel.as_ref().and_then(|(view, ..)| {
+            view.clone()
+                .downcast::<DiffPanel>()
+                .ok()
+                .map(|panel| panel.read(cx).scroll.clone())
+        });
+        shell.main_layer = shell.main_opaque_scroll.is_some();
         // A lone thread draws its own px at the surface's right corners.
         shell.main_clips_right = panel.is_none();
         shell.set_main(main, cx);
