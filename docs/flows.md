@@ -442,7 +442,7 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 |---|---|---|---|---|---|
 | 1 | Composer in thread | entry | `Work with Codex` (idle) or `Working…`. | Docked thread composer, focused on open; `Working…` not checked. | PASS (`shift_enter_newline`, `parity_thread`) |
 | 2 | Type text | focus | Editor grows to a max height, then scrolls. | Lines add; height growth not measured. | FAIL (no flow checks the max height) |
-| 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Enter sends; no `Send shortcut` setting. | PASS (`submit_enter_starts_thread`) |
+| 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Reads `desktop.composerEnterBehavior` at startup and after successful writes. `cmdAlways` requires Command+Enter; `cmdIfMultiline` requires it for multiline drafts. Shift+Enter inserts a line break. | PASS (`submit_enter_starts_thread`, `send_shortcut_controls_enter_without_changing_shift_enter`) |
 | 4 | Shift+Enter | shortcut | New line. | New line in the Home and thread composers. | PASS (`shift_enter_newline`) |
 | 5 | `@` | shortcut | Mention list. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 6 | `/` | shortcut | Slash command menu. | Matches the recorded menu, filtering, selected row, editor focus, arrows, Escape, Enter, and Tab. | PASS (`s021::slash_menu_keyboard_replay`) |
