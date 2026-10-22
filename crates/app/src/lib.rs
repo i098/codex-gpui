@@ -2849,35 +2849,33 @@ impl Root {
         let mode = self.shortcut_state.new_chat_mode;
         let host = self.host.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let workspace = if mode == features::shortcuts::NewChatMode::Standalone {
-                let prepare = host.clone();
-                let prompt = s.text.clone();
-                match cx.background_executor().spawn(async move { prepare.prepare_projectless(&prompt) }).await {
-                    Ok(workspace) => Some(workspace),
-                    Err(error) => {
-                        this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
-                        return Err(error);
-                    }
+            // A failure before the chat exists keeps the draft, its attachments and the chosen
+            // project as they were.
+            let started = async {
+                let workspace = if mode == features::shortcuts::NewChatMode::Standalone {
+                    let prepare = host.clone();
+                    let prompt = s.text.clone();
+                    let task = async move { prepare.prepare_projectless(&prompt) };
+                    Some(cx.background_executor().spawn(task).await?)
+                } else {
+                    None
+                };
+                let params = thread_start_params(&cwd, &s, workspace.as_ref(), mode, computer_use);
+                let started = bridge
+                    .request::<_, ThreadStartResponse>("thread/start", params)
+                    .await?;
+                if let Some(workspace) = workspace {
+                    let record = host.clone();
+                    let thread_id = started.thread.id.clone();
+                    let task = async move { record.record_projectless(&thread_id, &workspace) };
+                    cx.background_executor().spawn(task).await?;
                 }
-            } else { None };
-            let mut params = json!({ "cwd": workspace.as_ref().map(|workspace| workspace.cwd.as_str()).unwrap_or(&cwd), "model": model(&s) });
-            if let Some(workspace) = &workspace {
-                params["developerInstructions"] = json!(workspace.instructions());
+                anyhow::Ok(started.thread)
             }
-            if mode == features::shortcuts::NewChatMode::Temporary {
-                params["ephemeral"] = json!(true);
-            }
-            apply_permissions(&mut params, s.permission);
-            if let Some(config) = computer_use {
-                params["config"] = config;
-            }
-            let mut thread = match bridge
-                .request::<_, ThreadStartResponse>("thread/start", params)
-                .await
-            {
-                Ok(started) => started.thread,
+            .await;
+            let mut thread = match started {
+                Ok(thread) => thread,
                 Err(error) => {
-                    // The draft, its attachments and the chosen project stay as they were.
                     this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
                     return Err(error);
                 }
@@ -2887,14 +2885,6 @@ impl Root {
                 thread.preview = s.text.clone();
             }
             let id = thread.id.clone();
-            if let Some(workspace) = workspace {
-                let record = host.clone();
-                let thread_id = id.clone();
-                if let Err(error) = cx.background_executor().spawn(async move { record.record_projectless(&thread_id, &workspace) }).await {
-                    this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
-                    return Err(error);
-                }
-            }
             let section = if let Some(section) = section {
                 match bridge
                     .request::<_, Value>(
@@ -4594,6 +4584,30 @@ fn computer_use_overrides(config: &Value) -> Option<Value> {
 /// `None` (the server's default) when `model/list` gave the picker nothing.
 fn model(s: &Submission) -> Option<&str> {
     (!s.model.is_empty()).then_some(s.model.as_str())
+}
+
+/// `thread/start` parameters for a new chat. A standalone workspace replaces the project
+/// directory and adds its instructions; a temporary chat is ephemeral.
+fn thread_start_params(
+    cwd: &str,
+    s: &Submission,
+    workspace: Option<&host::Workspace>,
+    mode: features::shortcuts::NewChatMode,
+    computer_use: Option<Value>,
+) -> Value {
+    let cwd = workspace.map_or(cwd, |workspace| workspace.cwd.as_str());
+    let mut params = json!({ "cwd": cwd, "model": model(s) });
+    if let Some(workspace) = workspace {
+        params["developerInstructions"] = json!(workspace.instructions());
+    }
+    if mode == features::shortcuts::NewChatMode::Temporary {
+        params["ephemeral"] = json!(true);
+    }
+    apply_permissions(&mut params, s.permission);
+    if let Some(config) = computer_use {
+        params["config"] = config;
+    }
+    params
 }
 fn apply_permissions(params: &mut Value, permission: Permission) {
     let (policy, profile, reviewer) = match permission {
