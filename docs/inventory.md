@@ -122,8 +122,10 @@ Missing CLI, unavailable access, empty results, loading, and partial failures re
 Ask Codex fills a new chat draft; it does not install software or start a turn.
 The detail panel shows the description, branches, checks, and supported GitHub attachment images.
 Media requests validate HTTPS hosts and stop at the size limit.
-Image decoding runs off the UI thread and limits both each decoded image and the retained previews to 512 MiB.
+Each page loads at most eight attachment previews, one at a time, including when the selected request changes.
+Image decoding runs off the UI thread with a 64 MiB per-image limit and a 512 MiB retention limit.
 Video attachments show the original `Preview unavailable` card and `Open in GitHub` action instead of an inline player.
+The host rejects video content before downloading its body.
 `fixtures/pull-requests.json` retains scoped GitHub reads for `i098/codex-gpui`, with original response normalization and no credential tokens.
 
 Implementation: `crates/app/src/pull_requests.rs`, `crates/app/src/host/github_pull_requests.rs`, and `crates/ui/src/screens/pull_requests.rs`.

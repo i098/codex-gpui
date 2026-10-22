@@ -70,7 +70,9 @@ impl Root {
                 self.navigate(Route::PullRequests(selected.clone()), window, cx)
             }
             Event::AskCodex(prompt) => self.prefill_pull_request_chat(prompt, window, cx),
-            Event::Media(url) => self.load_pull_request_media(page, url.clone(), cx),
+            Event::Media { generation, url } => {
+                self.load_pull_request_media(page, *generation, url.clone(), cx)
+            }
         }
     }
 
@@ -100,23 +102,25 @@ impl Root {
             .to_owned();
         let service = self.host.clone();
         let load = cx.background_spawn(async move {
-            let status = service
-                .fetch(&host::Request::post(
-                    "gh-cli-status",
-                    Some(json!({"hostId":"local", "hostname":hostname})),
-                ))
-                .and_then(|response| host::json_body(&response));
+            let status = cfg!(target_os = "macos").then(|| {
+                service
+                    .fetch(&host::Request::post(
+                        "gh-cli-status",
+                        Some(json!({"hostId":"local", "hostname":hostname})),
+                    ))
+                    .and_then(|response| host::json_body(&response))
+            });
             let user = service
                 .fetch(&host::Request::post(
                     "gh-current-user",
                     Some(json!({"hostId":"local", "hostname":hostname})),
                 ))
                 .and_then(|response| host::json_body(&response));
-            anyhow::Ok((status, user))
+            (status, user)
         });
         cx.spawn(async move |this, cx| {
-            let result = load.await;
-            let availability = access(result);
+            let (status, user) = load.await;
+            let availability = access(status, user);
             let ready = matches!(availability, Availability::Ready(_));
             let current = page.update(cx, |page, cx| {
                 if page.generation != generation {
@@ -199,14 +203,33 @@ impl Root {
         .detach();
     }
 
-    fn load_pull_request_media(&self, page: Entity<Page>, url: String, cx: &mut Context<Self>) {
+    fn load_pull_request_media(
+        &self,
+        page: Entity<Page>,
+        generation: u64,
+        url: String,
+        cx: &mut Context<Self>,
+    ) {
+        if generation != page.read(cx).detail_generation {
+            page.update(cx, |page, cx| {
+                page.apply_media(generation, &url, Err("Preview expired".into()), cx)
+            });
+            return;
+        }
         let (Some(account), Some(identity)) = (
             page.read(cx).account().cloned(),
             page.read(cx).selected.clone(),
         ) else {
+            page.update(cx, |page, cx| {
+                page.apply_media(
+                    generation,
+                    &url,
+                    Err("GitHub account unavailable".into()),
+                    cx,
+                )
+            });
             return;
         };
-        let generation = page.read(cx).detail_generation;
         let service = self.host.clone();
         let request = host::Request::post(
             "gh-pr-media",
@@ -247,22 +270,18 @@ impl Root {
     }
 }
 
-fn access(result: Result<(Result<Value>, Result<Value>)>) -> Availability {
-    let (status, user) = match result {
-        Ok(result) => result,
-        Err(error) => return Availability::Unavailable(format!("{error:#}")),
-    };
+fn access(status: Option<Result<Value>>, user: Result<Value>) -> Availability {
     if let Ok(user) = &user
         && user["status"] == "success"
         && let Ok(account) = serde_json::from_value::<Account>(user["account"].clone())
     {
         return Availability::Ready(account);
     }
-    if cfg!(target_os = "macos")
-        && status
+    if status.as_ref().is_some_and(|status| {
+        status
             .as_ref()
-            .is_ok_and(|status| status["isInstalled"] == false)
-    {
+            .is_ok_and(|value| value["isInstalled"] == false)
+    }) {
         return Availability::Missing;
     }
     let error = match user {

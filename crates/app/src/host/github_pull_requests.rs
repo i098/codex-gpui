@@ -32,24 +32,24 @@ fn run(host: &super::LocalHost, args: &[String], seconds: u64) -> Result<Output>
                 missing: false,
             })
         }
-        Err(error)
-            if error
-                .downcast_ref::<bridge::RpcError>()
-                .is_some_and(|error| {
-                    error.code == -32603
-                        && error.message
-                            == "failed to spawn process: No such file or directory (os error 2)"
-                }) =>
-        {
-            Ok(Output {
-                code: None,
-                stdout: String::new(),
-                stderr: String::new(),
-                missing: true,
-            })
-        }
+        Err(error) if missing_gh(&error, &host.home) => Ok(Output {
+            code: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            missing: true,
+        }),
         Err(error) => Err(error).context("Failed to start GitHub CLI"),
     }
+}
+
+fn missing_gh(error: &anyhow::Error, home: &std::path::Path) -> bool {
+    error
+        .downcast_ref::<bridge::RpcError>()
+        .is_some_and(|error| {
+            error.code == -32603
+                && error.message.contains("No such file or directory")
+                && home.is_dir()
+        })
 }
 
 fn checked(output: Output) -> Result<String> {
@@ -198,13 +198,7 @@ fn ci(value: &Value) -> &'static str {
     }
 }
 
-impl super::LocalHost {
-    pub(super) fn pull_requests(&self, endpoint: &str, params: &Value) -> Result<Value> {
-        fetch(self, endpoint, params)
-    }
-}
-
-fn fetch(host: &super::LocalHost, endpoint: &str, params: &Value) -> Result<Value> {
+pub(super) fn fetch(host: &super::LocalHost, endpoint: &str, params: &Value) -> Result<Value> {
     match endpoint {
         "gh-cli-status" => {
             let hostname = params["hostname"].as_str().unwrap_or("github.com");
@@ -457,10 +451,7 @@ fn media(host: &super::LocalHost, params: &Value) -> Result<Value> {
             .and_then(|s| s.split(';').next())
             .unwrap_or("")
             .to_owned();
-        ensure!(
-            mime.starts_with("image/") || mime.starts_with("video/"),
-            "GitHub media is unavailable"
-        );
+        ensure!(mime.starts_with("image/"), "GitHub media is unavailable");
         let bytes = response
             .body_mut()
             .with_config()
@@ -476,6 +467,61 @@ fn media(host: &super::LocalHost, params: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_executable_does_not_hide_a_missing_working_directory() {
+        let home = tempfile::tempdir().unwrap();
+        let error = anyhow::Error::new(bridge::RpcError {
+            code: -32603,
+            message: "could not start gh: No such file or directory".into(),
+            data: Value::Null,
+        });
+        assert!(missing_gh(&error, home.path()));
+        assert!(!missing_gh(&error, &home.path().join("missing")));
+        assert!(!missing_gh(
+            &anyhow::anyhow!("No such file or directory"),
+            home.path()
+        ));
+    }
+
+    #[test]
+    fn check_status_preserves_pending_failure_and_partial_results() {
+        for (rollup, expected) in [
+            (json!({"contexts":{"nodes":[],"totalCount":0}}), "none"),
+            (
+                json!({"contexts":{"nodes":[{"status":"QUEUED","conclusion":null}],"totalCount":1}}),
+                "pending",
+            ),
+            (
+                json!({"contexts":{"nodes":[{"status":"COMPLETED","conclusion":"SUCCESS"}],"totalCount":1}}),
+                "passing",
+            ),
+            (
+                json!({"contexts":{"nodes":[{"status":"COMPLETED","conclusion":"SUCCESS"}],"totalCount":2}}),
+                "pending",
+            ),
+            (
+                json!({"contexts":{"nodes":[{"status":"QUEUED"},{"conclusion":"FAILURE"}],"totalCount":2}}),
+                "failing",
+            ),
+        ] {
+            assert_eq!(ci(&rollup), expected, "{rollup}");
+        }
+    }
+
+    #[test]
+    fn authentication_errors_preserve_the_setup_contract() {
+        for (code, stderr) in [(4, ""), (1, "Run gh auth login to continue")] {
+            let error = checked(Output {
+                code: Some(code),
+                stdout: String::new(),
+                stderr: stderr.into(),
+                missing: false,
+            })
+            .unwrap_err();
+            assert_eq!(error.to_string(), "GitHub CLI (gh) is not authenticated.");
+        }
+    }
 
     #[test]
     fn media_rejects_credentials_local_hosts_and_non_https() {

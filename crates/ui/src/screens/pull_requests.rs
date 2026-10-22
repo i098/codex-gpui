@@ -12,7 +12,12 @@ use gpui::{
 use image::ImageDecoder as _;
 use model::{Account, Filters, Identity, Repository, SearchPage, Stream, View};
 use serde_json::Value;
-use std::{cell::RefCell, collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, VecDeque},
+    sync::Arc,
+    time::Duration,
+};
 use theme::ActiveTheme as _;
 
 fn toolbar_icon(name: &'static str, side: f32, color: gpui::Hsla) -> impl IntoElement {
@@ -53,6 +58,8 @@ fn toolbar_icon(name: &'static str, side: f32, color: gpui::Hsla) -> impl IntoEl
 pub const INSTALL_PROMPT: &str = "Install GitHub CLI (`gh`) on this machine, verify it works, and help me authenticate if needed so I can view and manage pull requests in Codex";
 
 const PREVIEW_MEMORY_LIMIT: usize = 512 * 1024 * 1024;
+const PREVIEW_COUNT_LIMIT: usize = 8;
+const PREVIEW_IMAGE_LIMIT: usize = PREVIEW_MEMORY_LIMIT / PREVIEW_COUNT_LIMIT;
 
 #[derive(Clone, Debug)]
 pub enum Availability {
@@ -69,7 +76,7 @@ pub enum Event {
     More,
     Select(Option<Identity>),
     AskCodex(String),
-    Media(String),
+    Media { generation: u64, url: String },
 }
 
 pub struct Page {
@@ -81,6 +88,8 @@ pub struct Page {
     pub selected: Option<Identity>,
     pub detail: Option<Result<Value, String>>,
     media_images: HashMap<String, Option<Result<Arc<gpui::RenderImage>, String>>>,
+    media_queue: VecDeque<String>,
+    media_inflight: bool,
     pub generation: u64,
     pub detail_generation: u64,
     pub query: String,
@@ -138,6 +147,8 @@ impl Page {
             selected: None,
             detail: None,
             media_images: HashMap::new(),
+            media_queue: VecDeque::new(),
+            media_inflight: false,
             generation: 0,
             detail_generation: 0,
             query: String::new(),
@@ -167,6 +178,7 @@ impl Page {
                 self.detail_generation += 1;
                 self.detail = None;
                 self.media_images.clear();
+                self.media_queue.clear();
                 self.streams.clear();
                 self.last_filters = None;
             }
@@ -194,6 +206,7 @@ impl Page {
             self.repository.clone(),
         );
         if !more {
+            self.controls.borrow_mut().clear();
             self.generation += 1;
             let sections = self.query_sections(explicit_relation);
             if self.last_filters.as_ref() != Some(&filters)
@@ -269,6 +282,7 @@ impl Page {
         self.selected = identity;
         self.detail = None;
         self.media_images.clear();
+        self.media_queue.clear();
         self.detail_generation += 1;
         self.collapsed_detail = [false; 3];
         self.detail_scroll.set_offset(point(px(0.), px(0.)));
@@ -289,12 +303,25 @@ impl Page {
             for (_, url) in media_spans(detail["body"].as_str().unwrap_or("")) {
                 if !self.media_images.contains_key(&url) {
                     self.media_images.insert(url.clone(), None);
-                    cx.emit(Event::Media(url));
+                    self.media_queue.push_back(url);
                 }
             }
         }
         self.detail = Some(result);
+        self.start_next_media(cx);
         cx.notify();
+    }
+
+    fn start_next_media(&mut self, cx: &mut Context<Self>) {
+        if !self.media_inflight
+            && let Some(url) = self.media_queue.pop_front()
+        {
+            self.media_inflight = true;
+            cx.emit(Event::Media {
+                generation: self.detail_generation,
+                url,
+            });
+        }
     }
 
     pub fn apply_media(
@@ -304,7 +331,9 @@ impl Page {
         result: Result<Arc<gpui::RenderImage>, String>,
         cx: &mut Context<Self>,
     ) {
+        self.media_inflight = false;
         if self.detail_generation != generation {
+            self.start_next_media(cx);
             return;
         }
         let retained_bytes: usize = self
@@ -324,6 +353,7 @@ impl Page {
             }
         });
         self.media_images.insert(url.to_owned(), Some(result));
+        self.start_next_media(cx);
         cx.notify();
     }
 
@@ -1463,6 +1493,9 @@ fn media_spans(body: &str) -> Vec<(std::ops::Range<usize>, String)> {
                 })
         {
             spans.push((span, url));
+            if spans.len() == PREVIEW_COUNT_LIMIT {
+                break;
+            }
         }
     }
     spans
@@ -1490,7 +1523,7 @@ fn video_link(url: &str) -> bool {
 
 pub fn decode_image_preview(value: Value) -> Result<Arc<gpui::RenderImage>, String> {
     let mime = value["mimeType"].as_str().ok_or("Preview unavailable")?;
-    if !mime.starts_with("image/") && mime != "application/octet-stream" {
+    if !mime.starts_with("image/") {
         return Err("Preview unavailable".into());
     }
     let source = value["contentsBase64"]
@@ -1507,7 +1540,7 @@ pub fn decode_image_preview(value: Value) -> Result<Arc<gpui::RenderImage>, Stri
     let rgba_bytes = u64::from(width)
         .saturating_mul(u64::from(height))
         .saturating_mul(4);
-    if decoder.total_bytes().max(rgba_bytes) > PREVIEW_MEMORY_LIMIT as u64 {
+    if decoder.total_bytes().max(rgba_bytes) > PREVIEW_IMAGE_LIMIT as u64 {
         return Err("Preview exceeds the image memory limit".into());
     }
     let pixels = image::DynamicImage::from_decoder(decoder)
@@ -1647,6 +1680,76 @@ fn loading_rows(label: &'static str, cx: &Context<Page>) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stale_preview_completion_releases_the_next_request_without_retaining_old_data() {
+        let mut app = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            let page = cx.new(|cx| {
+                Page::new(
+                    Clock {
+                        utc_offset: 0,
+                        pinned_now: Some(0),
+                        elapsed_since: None,
+                    },
+                    cx,
+                )
+            });
+            page.update(cx, |page, cx| {
+                let body = (0..9)
+                    .map(|index| {
+                        format!("![image](https://github.com/user-attachments/assets/{index})")
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                page.apply_detail(0, Ok(serde_json::json!({"body":body})), cx);
+                assert!(page.media_inflight);
+                assert_eq!(page.media_images.len(), 8);
+                assert_eq!(page.media_queue.len(), 7);
+
+                page.select(
+                    Some(Identity {
+                        hostname: "github.com".into(),
+                        owner: "owner".into(),
+                        repository: "repo".into(),
+                        number: 2,
+                    }),
+                    cx,
+                );
+                let current = "https://github.com/user-attachments/assets/current";
+                page.apply_detail(
+                    1,
+                    Ok(serde_json::json!({"body":format!("![image]({current})")})),
+                    cx,
+                );
+                assert_eq!(page.media_queue.len(), 1);
+                page.apply_media(
+                    0,
+                    "https://github.com/user-attachments/assets/0",
+                    Err("old".into()),
+                    cx,
+                );
+                assert!(page.media_inflight);
+                assert!(page.media_queue.is_empty());
+                assert_eq!(page.media_images.len(), 1);
+                assert!(page.media_images[current].is_none());
+                page.apply_media(1, current, Err("current".into()), cx);
+                assert!(!page.media_inflight);
+                assert_eq!(
+                    page.media_images[current]
+                        .as_ref()
+                        .unwrap()
+                        .as_ref()
+                        .unwrap_err(),
+                    "current"
+                );
+            });
+        });
+    }
 
     #[test]
     fn detail_pane_reserves_the_list_and_respects_short_windows() {
