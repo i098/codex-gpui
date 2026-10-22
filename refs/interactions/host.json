@@ -3905,6 +3905,26 @@
         "fn": false,
         "calls": []
       }
+    },
+    {
+      "request": {
+        "transport": "fetch",
+        "request": {
+          "method": "POST",
+          "url": "vscode://codex/discover-remote-ssh-connections",
+          "body": ""
+        }
+      },
+      "response": {
+        "type": "fetch-response",
+        "responseType": "success",
+        "requestId": "capture-512d7a42-d713-4a13-b003-aadf11e30c4c",
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "bodyJsonString": "{\"sshAliases\":[\"capture-fixture\"]}"
+      }
     }
   ]
 }
