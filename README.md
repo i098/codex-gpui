@@ -233,6 +233,13 @@ Run `cargo test -p ui --lib screens::diff::panel::patch` for its boundary checks
 It returns each repository root, working directory, and display name without changing a rendered control.
 Run `cargo test -p app --test diff_repositories` for the real-Git ownership and path checks.
 
+The local host lists managed worktrees and saves tracked and untracked files in `refs/codex/snapshots` before targeted deletion.
+It rejects deletion of initialized nested Git repositories.
+Worktree creation uses the saved root, upstream refresh preference, and selected local environment.
+Local environment files support inherited listing, validated atomic writes, and revision conflict checks.
+The `git-pr-watch-update` host operation changes only active PR heartbeat instructions.
+Run `cargo test -p app --test settings_git_family` for these file and Git operations.
+
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
