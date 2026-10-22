@@ -16,7 +16,9 @@ mod routes;
 pub use routes::Route;
 mod search;
 mod section_actions;
+mod settings_subtrees;
 pub mod updater;
+mod window_shell;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
@@ -149,7 +151,7 @@ pub fn init(cx: &mut App) {
     ui::composer::bind_keys(cx);
     features::init(cx);
     native_menus::init(cx);
-    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &Quit, cx| window_shell::request_quit(cx));
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
@@ -855,6 +857,7 @@ impl Root {
                     });
                 }
                 this.config = config.config;
+                this.refresh_enter_behavior(cx);
                 this.config["host"]["confirm-before-close"] =
                     serde_json::to_value(this.state.confirm_before_close)
                         .expect("close preference");
@@ -1736,7 +1739,6 @@ impl Root {
             return;
         };
         page.update(cx, |page, cx| {
-            page.set_pending(None, cx);
             page.set_suggestions(Vec::new(), cx);
         });
         let host = self.host.clone();
@@ -1877,37 +1879,6 @@ impl Root {
         self.suggestions.as_ref()
     }
 
-    /// A suggestion card click (`refs/interactions/s035b.json`): the card is already
-    /// `Starting…` and every card disabled. The original's guided start first reads the TPP
-    /// models through the desktop host, then prepares and streams the conversation and
-    /// navigates into it; when any step fails it shows `Couldn’t start this suggested task`
-    /// and re-enables the cards.
-    fn start_suggested_task(&mut self, cx: &mut Context<Self>) {
-        let host = self.host.clone();
-        let read = cx.background_spawn(async move {
-            let identity = host.identity().context("no ChatGPT sign-in")?;
-            host.fetch(&host::tpp_models(&identity))
-                .and_then(|response| host::json_body(&response))
-        });
-        cx.spawn(async move |this, cx| {
-            let result = read.await;
-            this.update(cx, |this, cx| {
-                if let Some(page) = &this.suggestions {
-                    page.update(cx, |page, cx| page.set_pending(None, cx));
-                }
-                // ponytail: with the models in hand the original prepares the ChatGPT
-                // conversation (`/f/conversation/prepare`) and streams it; neither is recorded
-                // (the oracle refuses the start), so the port stops here and reports it.
-                if result.is_ok() {
-                    eprintln!("codex-gpui: suggested task: the conversation stream is not wired");
-                }
-                this.toast(Toast::danger("Couldn’t start this suggested task"), cx);
-            })
-            .ok();
-        })
-        .detach();
-    }
-
     /// Mobile `Get started` (`codex-mobile-setup-flow` `P`, `XNn`): the initial step shows its
     /// loading button while the host reads the account's MFA requirement. A non-`required`
     /// answer opens the allow-host step (whose `Allow` is disabled); `required` also reads
@@ -2006,20 +1977,6 @@ impl Root {
         self.threads.retain(|t| t.id != thread.id);
         self.threads.insert(0, thread.clone());
         self.sidebar.update(cx, |s, cx| s.add_thread(thread, cx));
-    }
-
-    /// `⌘N`, the `New chat` row and rail Home: Home with an empty, focused composer.
-    fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.shortcut_state.new_chat_mode = features::shortcuts::NewChatMode::Project;
-        self.home.update(cx, |home, cx| {
-            home.project = self.state.project_root.as_deref().map(project_name);
-            cx.notify();
-        });
-        self.new_chat_section = None;
-        self.navigate(Route::Home, window, cx);
-        let composer = self.home.read(cx).composer.clone();
-        composer.update(cx, |c, cx| c.set_text("", cx));
-        window.focus(&composer.focus_handle(cx), cx);
     }
 
     /// Opens the Recents row `delta` rows from the open thread; from any other route,
@@ -2731,7 +2688,7 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// `thread/read` with turns, then shows it if the route still points at it.
+    /// Loads history and resumes its settings before showing the selected thread.
     fn load_thread(
         &mut self,
         id: String,
@@ -2751,11 +2708,18 @@ impl Root {
         })
         .detach();
         let bridge = self.bridge.clone();
+        let resume = (!self.loaded.contains(&id)).then(|| {
+            let mut params = json!({"threadId": id, "excludeTurns": true});
+            if let Some(config) = computer_use_overrides(&self.config) {
+                params["config"] = config;
+            }
+            params
+        });
         let loading_view = view.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let result = bridge.thread_read(&id, true).await;
+            let result = routes::load_thread(&bridge, &id, resume).await;
             this.update_in(cx, |this, window, cx| {
-                if this.state.route != Route::Thread(id)
+                if !matches!(&this.state.route, Route::Thread(current) if current == &id)
                     || !this
                         .history
                         .as_ref()
@@ -2764,9 +2728,15 @@ impl Root {
                     return;
                 }
                 match result {
-                    Ok(read) => this.show_thread(read.thread, window, cx),
+                    Ok((thread, settings)) => {
+                        if let Some(settings) = settings {
+                            this.loaded.insert(id.clone());
+                            this.thread_run_settings.entry(id).or_insert(settings);
+                        }
+                        this.show_thread(thread, window, cx);
+                    }
                     Err(error) => {
-                        eprintln!("codex-gpui: thread/read: {error:#}");
+                        eprintln!("codex-gpui: thread/load: {error:#}");
                         loading_view.update(cx, |view, cx| view.fail(format!("{error:#}"), cx));
                     }
                 }
@@ -3918,6 +3888,7 @@ impl Root {
                 });
                 if let Ok(Some(config)) = result {
                     this.config = config;
+                    this.refresh_enter_behavior(cx);
                 }
                 if success {
                     this.load_computer_use(cx);
@@ -4130,9 +4101,20 @@ impl Root {
                 }
                 return Err(error);
             }
-            this.update(cx, |this, _| apply(&mut this.config))
+            this.update(cx, |this, cx| {
+                apply(&mut this.config);
+                this.refresh_enter_behavior(cx);
+            })
         });
         log_err(task, cx);
+    }
+
+    fn refresh_enter_behavior(&self, cx: &mut Context<Self>) {
+        cx.set_global(ui::composer::EnterBehavior::from_setting(
+            self.config["desktop"]["composerEnterBehavior"]
+                .as_str()
+                .unwrap_or("enter"),
+        ));
     }
 
     /// Settles only the request whose card produced the answer.
@@ -4324,7 +4306,7 @@ impl Root {
                     && params["threadId"].as_str() == Some(view.id())
                 {
                     panel.update(cx, |panel, cx| {
-                        panel.apply(&event, &self.cwd, view.turns(), cx);
+                        panel.apply(&event, view.cwd(), view.turns(), cx);
                     });
                 }
             });
