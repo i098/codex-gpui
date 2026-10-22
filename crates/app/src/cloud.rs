@@ -2,6 +2,7 @@ use crate::{Root, host};
 use anyhow::{Context as _, Result, ensure};
 use gpui::{AppContext as _, Context, Entity};
 use serde_json::{Value, json};
+use std::sync::{Arc, OnceLock};
 use ui::screens::{
     cloud::{Access, CloudPage, Operation, Request},
     settings::SettingsPage,
@@ -53,11 +54,13 @@ pub(crate) fn attach(settings: &Entity<SettingsPage>, cx: &mut Context<Root>) ->
         observed.update(cx, |_, cx| cx.notify()).ok();
     })
     .detach();
-    cx.subscribe(&page, |root, page, request: &Request, cx| {
+    let owner: Arc<OnceLock<host::Identity>> = Arc::new(OnceLock::new());
+    cx.subscribe(&page, move |root, page, request: &Request, cx| {
         let request = request.clone();
         let host = root.host.clone();
         let bridge = root.bridge.clone();
         let weak = page.downgrade();
+        let owner = owner.clone();
         cx.spawn(async move |_, cx| {
             if matches!(request.operation, Operation::Access) {
                 let result = async {
@@ -66,8 +69,14 @@ pub(crate) fn attach(settings: &Entity<SettingsPage>, cx: &mut Context<Root>) ->
                         Some(bridge::types::Account::Chatgpt { plan_type, .. }) => plan_type,
                         _ => return Ok(Access::default()),
                     };
-                    cx.background_spawn(async move { access(host.as_ref(), &plan) })
-                        .await
+                    cx.background_spawn(async move {
+                        let identity = host
+                            .identity()
+                            .context("Cloud authentication is unavailable")?;
+                        let identity = owner.get_or_init(|| identity);
+                        access(host.as_ref(), &plan, identity)
+                    })
+                    .await
                 }
                 .await
                 .map_err(|_: anyhow::Error| "Unable to load cloud access".to_owned());
@@ -75,7 +84,10 @@ pub(crate) fn attach(settings: &Entity<SettingsPage>, cx: &mut Context<Root>) ->
             } else {
                 let operation = request.operation.clone();
                 let result = cx
-                    .background_spawn(async move { execute(host.as_ref(), &operation) })
+                    .background_spawn(async move {
+                        let identity = owner.get().context("Cloud access has not loaded")?;
+                        execute(host.as_ref(), identity, &operation)
+                    })
                     .await
                     .map_err(|_| error_label(&request.operation).to_owned());
                 weak.update(cx, |page, cx| page.apply(&request, result, cx))
@@ -138,6 +150,10 @@ fn request(
     path: &str,
     body: Option<Value>,
 ) -> Result<Value> {
+    ensure!(
+        host.identity().as_ref() == Some(identity),
+        "Cloud authentication changed before the request"
+    );
     let mut request = json!({
         "url":path,"method":method,
         "headers":{
@@ -177,13 +193,14 @@ fn gate(gates: &Value, name: &str) -> bool {
     gates["feature_gates"][name]["value"] == true
 }
 
-pub(crate) fn access(host: &dyn host::Host, plan: &str) -> Result<Access> {
-    let Some(identity) = host.identity() else {
-        return Ok(Access::default());
-    };
+pub(crate) fn access(
+    host: &dyn host::Host,
+    plan: &str,
+    identity: &host::Identity,
+) -> Result<Access> {
     let bootstrap = request(
         host,
-        &identity,
+        identity,
         "POST",
         "/wham/statsig/bootstrap",
         Some(json!({
@@ -204,7 +221,7 @@ pub(crate) fn access(host: &dyn host::Host, plan: &str) -> Result<Access> {
     } else {
         request(
             host,
-            &identity,
+            identity,
             "GET",
             &path(&["accounts", &identity.account_id, "settings"]),
             None,
@@ -250,10 +267,11 @@ fn path(parts: &[&str]) -> String {
     url.path().to_owned()
 }
 
-pub(crate) fn execute(host: &dyn host::Host, operation: &Operation) -> Result<Value> {
-    let identity = host
-        .identity()
-        .context("Cloud authentication is unavailable")?;
+pub(crate) fn execute(
+    host: &dyn host::Host,
+    identity: &host::Identity,
+    operation: &Operation,
+) -> Result<Value> {
     let (method, url, body) = match operation {
         Operation::List { query, cursor } => {
             let mut url = Url::parse("https://chatgpt.com/wham/environments/search")?;
@@ -316,8 +334,8 @@ pub(crate) fn execute(host: &dyn host::Host, operation: &Operation) -> Result<Va
             path(&["wham", "environments", id, "reset-cache"]),
             None,
         ),
-        Operation::Configs => return configs(host, &identity),
-        Operation::Vault => return vault_entries(host, &identity),
+        Operation::Configs => return configs(host, identity),
+        Operation::Vault => return vault_entries(host, identity),
         Operation::Config(id) => ("GET", cloud_path(&[id]), None),
         Operation::ConfigDelete(id) => ("DELETE", cloud_path(&[id]), None),
         Operation::ConfigCreate(body) => ("POST", cloud_path(&[]), Some(body.clone())),
@@ -326,10 +344,10 @@ pub(crate) fn execute(host: &dyn host::Host, operation: &Operation) -> Result<Va
             config,
             changes,
             metadata,
-        } => return save_config(host, &identity, id, config, changes, metadata),
+        } => return save_config(host, identity, id, config, changes, metadata),
         Operation::Access => anyhow::bail!("Cloud access uses the account response"),
     };
-    request(host, &identity, method, &url, body)
+    request(host, identity, method, &url, body)
 }
 
 fn cloud_path(parts: &[&str]) -> String {
@@ -556,12 +574,42 @@ mod tests {
 
     #[test]
     fn name_lookup_only_treats_not_found_as_empty() {
+        let identity = host::Host::identity(&StatusHost(200)).unwrap();
         assert_eq!(
-            execute(&StatusHost(404), &Operation::Names).unwrap(),
+            execute(&StatusHost(404), &identity, &Operation::Names).unwrap(),
             json!([])
         );
-        assert!(execute(&StatusHost(403), &Operation::Names).is_err());
-        assert!(execute(&StatusHost(500), &Operation::Names).is_err());
-        assert!(execute(&StatusHost(404), &Operation::Machines).is_err());
+        assert!(execute(&StatusHost(403), &identity, &Operation::Names).is_err());
+        assert!(execute(&StatusHost(500), &identity, &Operation::Names).is_err());
+        assert!(execute(&StatusHost(404), &identity, &Operation::Machines).is_err());
+    }
+
+    struct UnreachableHost;
+
+    impl host::Host for UnreachableHost {
+        fn fetch(&self, _: &host::Request) -> Result<Value> {
+            panic!("A stale page must not send an authenticated request");
+        }
+
+        fn identity(&self) -> Option<host::Identity> {
+            host::Host::identity(&StatusHost(200))
+        }
+    }
+
+    #[test]
+    fn account_changes_reject_writes_before_host_dispatch() {
+        for (account, user) in [("previous-account", "user"), ("account", "previous-user")] {
+            let mut owner = host::Host::identity(&StatusHost(200)).unwrap();
+            owner.account_id = account.into();
+            owner.user_id = user.into();
+            assert!(
+                execute(
+                    &UnreachableHost,
+                    &owner,
+                    &Operation::Delete("environment".into())
+                )
+                .is_err()
+            );
+        }
     }
 }
