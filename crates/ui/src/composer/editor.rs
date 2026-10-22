@@ -27,6 +27,14 @@ fn is_word(c: char) -> bool {
 }
 
 impl Composer {
+    fn editor_line_height(&self) -> Pixels {
+        if self.search_field {
+            px(18.571_428)
+        } else {
+            LINE_HEIGHT
+        }
+    }
+
     /// Makes the captured caret transparent without changing focus, selection, or input.
     pub fn set_caret_transparent(cx: &mut App, transparent: bool) {
         cx.default_global::<TransparentCaret>().0 = transparent;
@@ -638,6 +646,16 @@ impl Composer {
         self.offset_from_utf16(r.start)..self.offset_from_utf16(r.end)
     }
 
+    fn editor_inset(&self) -> Pixels {
+        px(if self.search_field {
+            0.
+        } else if self.request_parent.is_some() && self.request_compact && !self.secret {
+            10.
+        } else {
+            12.
+        })
+    }
+
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
             .px(px(if self.compact_text() { 10. } else { 12. }))
@@ -645,13 +663,16 @@ impl Composer {
                 if self.plain_field == Some(true)
                     || self.request_parent.is_some()
                     || self.request_compact
+                    || self.search_field
                 {
                     0.
                 } else {
                     4.
                 },
             ))
-            .min_h(if self.request_parent.is_some() || self.request_compact {
+            .min_h(if self.search_field {
+                self.editor_line_height()
+            } else if self.request_parent.is_some() || self.request_compact {
                 px(20.)
             } else {
                 self.field_min_height
@@ -660,7 +681,7 @@ impl Composer {
             .when(self.embedded_field.is_some(), |d| {
                 d.px_0().pb_0().min_h(self.editor_line_height())
             })
-            .text_size(self.editor_font_size())
+            .text_size(if self.search_field { px(13.) } else { self.editor_font_size() })
             .line_height(self.editor_line_height())
             .font_weight(gpui::FontWeight(if self.field_text.is_some() {
                 500.
@@ -681,11 +702,11 @@ impl Composer {
                 div()
                     .when(self.field_text.is_none(), |d| {
                         d.when(
-                            self.content.is_empty() && self.embedded_field.is_none(),
+                            self.content.is_empty() && self.embedded_field.is_none() && !self.search_field,
                             |d| d.opacity(0.5),
                         )
                         .when(
-                            self.embedded_field.is_none() && self.plain_field != Some(true),
+                            self.embedded_field.is_none() && self.plain_field != Some(true) || self.search_field,
                             |d| d.layer(),
                         )
                     })

@@ -729,6 +729,9 @@ The menu-bar switch persists through the local `settings.write` service.
 Session rows keep their values for the session.
 Leaving and reopening Settings shows the kept value (`settings_value_round_trip`).
 
+The shared single-select menu searches labels and aliases, skips disabled choices, and returns focus to its trigger.
+`settings_kit` checks these interactions and the existing checkbox-menu, cancellation, and external-link behavior.
+
 S034 covers ST-003 and ST-026 with the unchanged off/on samples in `refs/interactions/s034.json`.
 The replay advances the virtual clock by the original 150 ms transition before checking settled pixels.
 Enabled switches use the existing GPUI native click path for Enter and Space, without duplicate key handlers.

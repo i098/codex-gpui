@@ -100,7 +100,7 @@ pub(crate) mod menu {
     //! Focus rules for the recorded Radix menus: arrows stop at the ends, Escape returns
     //! focus to the trigger, and Enter or Space activates the focused item.
 
-    use gpui::{App, BoxShadow, FocusHandle, StyleRefinement, Styled, Window, point, px, rgb};
+    use gpui::{App, FocusHandle, Window};
     use std::time::{Duration, Instant};
 
     pub(super) struct MenuFocus {
@@ -695,6 +695,7 @@ pub struct Composer {
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
     embedded_field: Option<EmbeddedField>,
+    search_field: bool,
 }
 
 impl Composer {
@@ -779,6 +780,7 @@ impl Composer {
             dictation: None,
             dictation_error: None,
             embedded_field: None,
+            search_field: false,
         }
     }
 
@@ -841,6 +843,12 @@ impl Composer {
         }
     }
 
+    pub fn settings_search(placeholder: &'static str, cx: &mut Context<Self>) -> Self {
+        let mut editor = Self::settings_field(placeholder, "", false, cx);
+        editor.search_field = true;
+        editor.request_compact = true;
+        editor
+    }
     pub fn field_text(&self) -> &str {
         &self.content
     }
@@ -1167,7 +1175,7 @@ impl Composer {
                 .aria_disabled(self.queue_pending)
                 .focusable()
                 .tab_index(0)
-                .focus_visible(menu::trigger_focus)
+                .focus_visible(crate::focus::trigger_focus)
                 .opacity(if self.queue_pending { 0.4 } else { 1. })
                 .when(!self.queue_pending, |d| d.hover(|s| s.bg(t.ghost_hover)))
                 .child(match action {
@@ -1213,7 +1221,7 @@ impl Composer {
                 .aria_disabled(self.queue_pending)
                 .focusable()
                 .tab_index(0)
-                .focus_visible(menu::trigger_focus)
+                .focus_visible(crate::focus::trigger_focus)
                 .opacity(if self.queue_pending { 0.4 } else { 1. })
                 .when(!self.queue_pending, |d| d.hover(|s| s.bg(t.ghost_hover)))
                 .child(icon("diff-more", 14., t.text_tertiary))
