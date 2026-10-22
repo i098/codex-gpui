@@ -440,11 +440,16 @@ fn upload_image(host: &dyn Host, identity: &Identity, path: &std::path::Path) ->
     )
 }
 
-fn segment(value: &str) -> String {
+pub(crate) fn segment(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
-fn request(identity: &Identity, path: &str, method: &str, body: Option<Value>) -> Request {
+pub(crate) fn request(
+    identity: &Identity,
+    path: &str,
+    method: &str,
+    body: Option<Value>,
+) -> Request {
     let mut request = json!({"url":path,"method":method,"headers":{"OAI-Language":"en-US","X-OpenAI-Attach-Auth":"1","X-OpenAI-Attach-Integrity-State":"1","originator":"Codex Desktop"},"expectedIdentity":{"accountId":identity.account_id,"userId":identity.user_id},"returnErrorResponse":true});
     if let Some(body) = body {
         request["body"] = body.to_string().into();

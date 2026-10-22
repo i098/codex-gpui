@@ -273,6 +273,9 @@ pub mod storage;
 #[path = "settings_integrations.rs"]
 pub mod integrations;
 
+#[path = "archived_chats.rs"]
+pub mod archived_chats;
+
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
@@ -1474,6 +1477,9 @@ impl Render for SettingsPane {
                 window,
                 cx,
             );
+        }
+        if section == "Archived chats" {
+            return archived_chats::render(window, cx);
         }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
