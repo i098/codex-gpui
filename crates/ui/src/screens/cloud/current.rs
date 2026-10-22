@@ -259,7 +259,7 @@ impl CloudPage {
         let secondary = gpui::Hsla { a: 0.65, ..t.text };
         div().size_full().relative().flex().flex_col()
             .child(div().h(px(46.)).flex_none())
-            .child(div().id("cloud-current-page").overflow_y_scroll().flex_1().layer()
+            .child(div().id("cloud-current-page").overflow_y_scroll().flex_1()
                 .child(div().pt(px(16.)).pb(px(1.)).flex().flex_col().items_center()
                     .child(div().w_full().max_w(px(768.)).px(px(20.))
                         .child(div().py(px(12.)).flex().flex_col().gap(px(4.))
