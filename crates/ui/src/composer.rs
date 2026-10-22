@@ -381,6 +381,11 @@ pub struct Submission {
     pub fast: bool,
 }
 
+/// Enter in a single-line settings form field.
+pub struct SettingsFieldSubmit;
+
+impl gpui::EventEmitter<SettingsFieldSubmit> for Composer {}
+
 #[derive(Debug, PartialEq)]
 struct RequestIdentity {
     id: Value,
@@ -777,6 +782,7 @@ impl Composer {
     }
 
     /// A compact settings input with a separate accessible label and placeholder.
+    /// Subscribe to `SettingsFieldSubmit` to submit its form on Enter.
     pub fn settings_form_field(
         label: &'static str,
         placeholder: &'static str,
@@ -1286,6 +1292,8 @@ impl Composer {
         if let Some(multiline) = self.plain_field {
             if multiline {
                 self.insert("\n", window, cx);
+            } else if self.plain_layout == PlainFieldLayout::Form {
+                cx.emit(SettingsFieldSubmit);
             } else {
                 window.blur(cx);
             }

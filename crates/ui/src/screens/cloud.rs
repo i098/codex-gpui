@@ -2,7 +2,7 @@ mod current;
 pub mod model;
 
 use crate::{
-    composer::{Composer, popover},
+    composer::{Composer, SettingsFieldSubmit, popover},
     focus, text,
 };
 use gpui::{
@@ -430,6 +430,14 @@ impl CloudPage {
             }
         });
         cx.observe(&field, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&field, |this, _, _: &SettingsFieldSubmit, cx| {
+            if this.current_mode == Some(true) {
+                this.current_save(cx);
+            } else {
+                this.save(cx);
+            }
+        })
+        .detach();
         field
     }
 

@@ -170,7 +170,7 @@ impl CloudPage {
         self.error = None;
     }
 
-    fn current_save(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn current_save(&mut self, cx: &mut Context<Self>) {
         if self.pending {
             return;
         }
