@@ -56,6 +56,7 @@ mod open_in;
 mod projectless;
 pub use projectless::Workspace;
 pub(crate) mod run_now;
+mod skills;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
@@ -1195,6 +1196,8 @@ impl Host for LocalHost {
             "read-file" => diff_files::text(&params)?,
             "read-file-binary" => diff_files::binary(&params)?,
             "read-git-file-binary" => diff_files::git_binary(&params)?,
+            "recommended-skills" => skills::recommended(&self.home, &params),
+            "install-recommended-skill" => skills::install(&self.home, &params),
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             "workspace-directory-entries" => directories::read(&params)?,
             "native-desktop-apps" => json!({"apps": native_apps::list(&params)?}),

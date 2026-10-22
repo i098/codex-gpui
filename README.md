@@ -65,6 +65,17 @@ The terminal fixture in `fixtures/terminal-depth.json` contains recorded `thread
 Run `cargo test -p ui --lib terminal` for parser and command-label checks.
 Run `cargo test -p app --test terminal_states background_ansi_output_supports_selection_and_copy` on macOS for the native selection check.
 
+## Recommended skills
+
+The local host supports `recommended-skills` and `install-recommended-skill`.
+The catalog uses `CODEX_HOME/vendor_imports/skills` and a ten-minute cache in `skills-curated-cache.json`.
+Installation writes to `CODEX_HOME/skills`, or `<installRoot>/.codex/skills` for a selected workspace.
+Existing skills remain unchanged unless the request explicitly replaces them or supplies a Markdown override.
+The host rejects remote host IDs and paths that leave the source or installation root.
+This service does not enable the Plugin or Skill directory UI.
+
+Run `cargo test -p app --lib host::skills::tests` for the catalog and installation checks.
+
 ## ACP backend
 
 Set `CODEX_GPUI_ACP` to the command line of an [Agent Client Protocol](https://agentclientprotocol.com) agent to use that agent instead of `codex app-server`:
