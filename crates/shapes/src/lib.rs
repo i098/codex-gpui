@@ -56,6 +56,81 @@ mod mask;
 #[cfg(target_os = "macos")]
 mod skia;
 
+/// Restore the root under page tiles that an opaque scroller removes before rounded clipping.
+#[cfg(target_os = "macos")]
+pub fn paint_page_occlusion(
+    page: Bounds<Pixels>,
+    opaque: Bounds<Pixels>,
+    root: Hsla,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let scale = window.scale_factor();
+    let rect = |bounds: Bounds<Pixels>| {
+        [
+            f32::from(bounds.left()) * scale,
+            f32::from(bounds.top()) * scale,
+            f32::from(bounds.right()) * scale,
+            f32::from(bounds.bottom()) * scale,
+        ]
+        .map(|v| v.round() as i32)
+    };
+    let page = rect(page);
+    let opaque = rect(opaque);
+    let fill = Decoration {
+        fill: Some(root),
+        ..Default::default()
+    };
+    for (_, _, tile) in skia::tiles(page, [page[2], page[3]], [skia::TILE; 2]) {
+        if let Some(removed) = occluded_tile(tile, opaque) {
+            let [left, top, right, bottom] = removed.map(|v| gpui::px(v as f32 / scale));
+            paint(
+                &fill,
+                None,
+                Bounds::from_corners(gpui::point(left, top), gpui::point(right, bottom)),
+                window,
+                cx,
+            );
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn occluded_tile(tile: [i32; 4], opaque: [i32; 4]) -> Option<[i32; 4]> {
+    let removed = [
+        tile[0].max(opaque[0]),
+        tile[1].max(opaque[1]),
+        tile[2].min(opaque[2]),
+        tile[3].min(opaque[3]),
+    ];
+    if removed[0] >= removed[2] || removed[1] >= removed[3] {
+        return None;
+    }
+    let trims_width = removed[0] == tile[0]
+        && removed[2] == tile[2]
+        && (removed[1] == tile[1] || removed[3] == tile[3]);
+    let trims_height = removed[1] == tile[1]
+        && removed[3] == tile[3]
+        && (removed[0] == tile[0] || removed[2] == tile[2]);
+    (trims_width || trims_height).then_some(removed)
+}
+
+#[test]
+fn page_occlusion_preserves_nonrectangular_tile_remainders() {
+    let opaque = [1323, 186, 2552, 1656];
+    assert_eq!(
+        occluded_tile([2041, 1531, 2551, 1664], opaque),
+        Some([2041, 1531, 2551, 1656])
+    );
+    assert_eq!(occluded_tile([2551, 1531, 2560, 1664], opaque), None);
+    assert_eq!(
+        occluded_tile([2041, 0, 2551, 511], opaque),
+        Some([2041, 186, 2551, 511])
+    );
+    assert_eq!(occluded_tile([0, 0, 511, 511], opaque), None);
+    assert_eq!(occluded_tile([0, 0, 10, 10], [2, 2, 8, 8]), None);
+}
+
 /// CSS `corner-shape`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Corner {
