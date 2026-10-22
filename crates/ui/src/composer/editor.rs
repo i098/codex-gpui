@@ -676,8 +676,12 @@ impl Composer {
             // never scrolls here, so it has no such layer: its text blends onto the field's fill.
             .child(
                 div()
-                    .when(self.content.is_empty(), |d| d.opacity(0.5))
-                    .when(self.plain_field != Some(true), |d| d.layer())
+                    .when(self.content.is_empty() && !self.compact_field, |d| {
+                        d.opacity(0.5)
+                    })
+                    .when(!self.compact_field && self.plain_field != Some(true), |d| {
+                        d.layer()
+                    })
                     .child(Editor(cx.entity())),
             )
     }
@@ -901,7 +905,13 @@ pub(super) fn shape(
         .collect::<Vec<_>>();
     window
         .text_system()
-        .shape_text(s.into(), composer.editor_font_size(), &runs, width, None)
+        .shape_text(
+            s.into(),
+            composer.editor_font_size(),
+            &runs,
+            if composer.compact_field { None } else { width },
+            None,
+        )
         .map(|lines| lines.into_iter().collect())
         .unwrap_or_default()
 }
@@ -971,6 +981,13 @@ impl gpui::Element for Editor {
         let collapse = |w: f32| (w <= SM_WIDTH, w <= XS_WIDTH);
         let changed = self.0.update(cx, |c, _| {
             c.lines = lines;
+            let mut bounds = bounds;
+            if c.compact_field {
+                let cursor = c
+                    .point_for_index(c.cursor())
+                    .map_or(px(0.), |point| point.x);
+                bounds.origin.x -= (cursor - bounds.size.width + px(2.)).max(px(0.));
+            }
             c.bounds = Some(bounds);
             collapse(std::mem::replace(&mut c.footer_width, width)) != collapse(width)
         });
@@ -995,6 +1012,11 @@ impl gpui::Element for Editor {
         let selection_color = cx.theme().text_selection;
         let caret_color = cx.theme().text;
         let c = self.0.read(cx);
+        let bounds = if c.compact_field {
+            c.bounds.unwrap_or(bounds)
+        } else {
+            bounds
+        };
         let line_height = c.editor_line_height();
         if !c.selected_range.is_empty()
             && let (Some(a), Some(b)) = (
