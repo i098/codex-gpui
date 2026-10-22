@@ -4,11 +4,12 @@ pub enum WorkspaceLayout {
     #[default]
     Split,
     Full,
+    FullChat,
 }
 
 impl WorkspaceLayout {
     pub fn toggle_full(self) -> Self {
-        if self == Self::Full {
+        if matches!(self, Self::Full | Self::FullChat) {
             Self::Split
         } else {
             Self::Full
@@ -17,7 +18,7 @@ impl WorkspaceLayout {
 
     pub fn step(self, persistent: bool) -> Self {
         match self {
-            Self::Full | Self::Chat => Self::Split,
+            Self::Full | Self::FullChat | Self::Chat => Self::Split,
             Self::Split if persistent => Self::Full,
             Self::Split => Self::Chat,
         }

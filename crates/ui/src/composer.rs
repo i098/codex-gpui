@@ -581,6 +581,7 @@ pub struct Composer {
     /// Docked under a thread: `_ComposerLayoutRoot` paints the card and `_ComposerLayoutBody`
     /// (the content) is a `will-change: opacity` layer. On Home the body paints the card.
     docked: bool,
+    pub(crate) floating: bool,
     content: String,
     /// Mention chips in `content`, in order.
     mentions: Vec<mention::Mention>,
@@ -675,6 +676,7 @@ impl Composer {
             focus_handle: cx.focus_handle().tab_stop(true),
             placeholder: placeholder.into(),
             docked,
+            floating: false,
             content: String::new(),
             mentions: Vec::new(),
             selected_range: 0..0,
@@ -880,6 +882,10 @@ impl Composer {
     pub fn set_compact(&mut self, compact: bool, cx: &mut Context<Self>) {
         self.footer_width = if compact { 0. } else { f32::INFINITY };
         cx.notify();
+    }
+
+    fn single_line(&self) -> bool {
+        self.floating && self.attachments.is_empty() && self.on_cancel_edit.is_none()
     }
 
     pub fn set_approval(&mut self, approval: Option<Approval>, cx: &mut Context<Self>) {
@@ -1856,6 +1862,7 @@ impl Render for Composer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editing = self.on_cancel_edit.is_some();
         let t = cx.theme().clone();
+        let single_line = self.single_line();
         if self.request_focus_pending {
             self.request_focus_pending = false;
             self.focus_request_field(window, cx);
@@ -1993,98 +2000,108 @@ impl Render for Composer {
                     }),
             );
         }
-        let card = card
-            .flex()
-            .flex_col()
-            .child(shapes::decoration(if editing {
-                shapes::Decoration {
-                    radius: Corners::all(px(24.)),
-                    fill: Some(match t.appearance {
-                        Appearance::Dark => t.control_background.opacity(0.95),
-                        Appearance::Light => t.text_alpha_5,
-                    }),
-                    ..Default::default()
-                }
-            } else if self.drag_active(cx) {
-                // `[data-composer-drag-active]`: `surface-elevated-secondary` at 50%.
-                shapes::Decoration {
-                    fill: Some(t.surface_elevated_secondary.opacity(0.5)),
-                    ..card_decoration(&t)
-                }
-            } else {
-                card_decoration(&t)
+        let card = if single_line {
+            card.child(shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(22.)),
+                fill: Some(t.surface_elevated_secondary),
+                border: Some((px(0.5), t.border)),
+                shadows: vec![shadow(gpui::black().opacity(0.19), 16., 32., -8., false)],
+                ..Default::default()
             }))
-            // See `docked`: the docked body is a transparent cc layer over the card.
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .when(self.docked, |d| d.layer())
-                    .when(!editing, |d| d.child(self.attachments_row(&t, cx)))
-                    .when_some(self.attachment_error, |d, error| {
-                        d.child(label(error, t.text))
-                    })
-                    .child(
-                        self.editor(cx)
-                            .when(editing, |d| d.pt(px(12.)).pb_0().min_h(px(52.))),
-                    )
-                    .child(if editing {
-                        let cancel = self.on_cancel_edit.clone().expect("edit callback");
-                        let enabled = !self.edit_pending && !self.content.trim().is_empty();
-                        div()
-                            .flex()
-                            .justify_end()
-                            .gap(px(6.))
-                            .px(px(12.))
-                            .pt(px(8.))
-                            .pb(px(12.))
-                            .child(
-                                div()
-                                    .id("cancel-message-edit")
-                                    .h(px(28.))
-                                    .px(px(10.))
-                                    .role(gpui::Role::Button)
-                                    .aria_label("Cancel")
-                                    .focusable()
-                                    .tab_index(0)
-                                    .focus_visible(|s| {
-                                        s.border_2().border_color(gpui::rgb(0x3a83f7))
-                                    })
-                                    .rounded(px(6.))
-                                    .border_1()
-                                    .border_color(t.border)
-                                    .child(text("Cancel", 13., 26., 400., t.text))
-                                    .when(!self.edit_pending, |d| {
-                                        d.on_click(move |_, window, cx| cancel(window, cx))
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .id("send-message-edit")
-                                    .h(px(28.))
-                                    .px(px(10.))
-                                    .role(gpui::Role::Button)
-                                    .aria_label("Send")
-                                    .focusable()
-                                    .tab_index(0)
-                                    .focus_visible(|s| {
-                                        s.border_2().border_color(gpui::rgb(0x3a83f7))
-                                    })
-                                    .rounded(px(6.))
-                                    .bg(t.text)
-                                    .opacity(if enabled { 1. } else { 0.4 })
-                                    .child(text("Send", 13., 28., 400., t.surface_elevated))
-                                    .when(enabled, |d| {
-                                        d.on_click(cx.listener(|this, _, window, cx| {
-                                            this.submit(&Submit, window, cx)
-                                        }))
-                                    }),
-                            )
-                            .into_any_element()
-                    } else {
-                        self.footer(window, &t, cx).into_any_element()
-                    }),
-            );
+            .child(self.footer(window, &t, cx))
+        } else {
+            card.flex()
+                .flex_col()
+                .child(shapes::decoration(if editing {
+                    shapes::Decoration {
+                        radius: Corners::all(px(24.)),
+                        fill: Some(match t.appearance {
+                            Appearance::Dark => t.control_background.opacity(0.95),
+                            Appearance::Light => t.text_alpha_5,
+                        }),
+                        ..Default::default()
+                    }
+                } else if self.drag_active(cx) {
+                    // `[data-composer-drag-active]`: `surface-elevated-secondary` at 50%.
+                    shapes::Decoration {
+                        fill: Some(t.surface_elevated_secondary.opacity(0.5)),
+                        ..card_decoration(&t)
+                    }
+                } else {
+                    card_decoration(&t)
+                }))
+                // See `docked`: the docked body is a transparent cc layer over the card.
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .when(self.docked, |d| d.layer())
+                        .when(!editing, |d| d.child(self.attachments_row(&t, cx)))
+                        .when_some(self.attachment_error, |d, error| {
+                            d.child(label(error, t.text))
+                        })
+                        .child(
+                            self.editor(cx)
+                                .when(editing, |d| d.pt(px(12.)).pb_0().min_h(px(52.))),
+                        )
+                        .child(if editing {
+                            let cancel = self.on_cancel_edit.clone().expect("edit callback");
+                            let enabled = !self.edit_pending && !self.content.trim().is_empty();
+                            div()
+                                .flex()
+                                .justify_end()
+                                .gap(px(6.))
+                                .px(px(12.))
+                                .pt(px(8.))
+                                .pb(px(12.))
+                                .child(
+                                    div()
+                                        .id("cancel-message-edit")
+                                        .h(px(28.))
+                                        .px(px(10.))
+                                        .role(gpui::Role::Button)
+                                        .aria_label("Cancel")
+                                        .focusable()
+                                        .tab_index(0)
+                                        .focus_visible(|s| {
+                                            s.border_2().border_color(gpui::rgb(0x3a83f7))
+                                        })
+                                        .rounded(px(6.))
+                                        .border_1()
+                                        .border_color(t.border)
+                                        .child(text("Cancel", 13., 26., 400., t.text))
+                                        .when(!self.edit_pending, |d| {
+                                            d.on_click(move |_, window, cx| cancel(window, cx))
+                                        }),
+                                )
+                                .child(
+                                    div()
+                                        .id("send-message-edit")
+                                        .h(px(28.))
+                                        .px(px(10.))
+                                        .role(gpui::Role::Button)
+                                        .aria_label("Send")
+                                        .focusable()
+                                        .tab_index(0)
+                                        .focus_visible(|s| {
+                                            s.border_2().border_color(gpui::rgb(0x3a83f7))
+                                        })
+                                        .rounded(px(6.))
+                                        .bg(t.text)
+                                        .opacity(if enabled { 1. } else { 0.4 })
+                                        .child(text("Send", 13., 28., 400., t.surface_elevated))
+                                        .when(enabled, |d| {
+                                            d.on_click(cx.listener(|this, _, window, cx| {
+                                                this.submit(&Submit, window, cx)
+                                            }))
+                                        }),
+                                )
+                                .into_any_element()
+                        } else {
+                            self.footer(window, &t, cx).into_any_element()
+                        }),
+                )
+        };
         let card = card.when(self.slash.open, |d| d.child(self.slash_menu(&t, cx)));
         // The queued-follow-up tray (`bg-surface-elevated-secondary`, border-x border-t) sits
         // on the card's top edge, 13 px inside its sides; rows (handle, text, Steer, Delete,

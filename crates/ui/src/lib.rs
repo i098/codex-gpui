@@ -58,6 +58,7 @@ actions!(
         OpenBackgroundTerminal,
         ShowWorkspaceTabView,
         StepWorkspaceLayout,
+        SelectWorkspaceChat,
         /// `⌘K`, `⌘⇧P`, sidebar `Search`: the command menu.
         OpenCommandMenu,
     ]

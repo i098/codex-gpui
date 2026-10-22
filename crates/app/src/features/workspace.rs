@@ -15,6 +15,11 @@ pub(super) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
     .on_action(cx.listener(|this, _: &StepWorkspaceLayout, window, cx| {
         this.set_workspace_layout(this.workspace_layout.step(false), window, cx);
     }))
+    .on_action(
+        cx.listener(|this, _: &ui::SelectWorkspaceChat, window, cx| {
+            this.set_workspace_layout(WorkspaceLayout::FullChat, window, cx);
+        }),
+    )
 }
 
 impl Root {

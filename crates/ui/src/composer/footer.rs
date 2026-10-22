@@ -80,6 +80,7 @@ fn effort_icon(effort: &str) -> &'static str {
 
 impl Composer {
     pub(super) fn footer(&self, window: &Window, t: &Theme, cx: &mut Context<Self>) -> Div {
+        let single_line = self.single_line();
         let open = matches!(self.menu, Some(Menu::Effort | Menu::Models));
         let model = self.current_model();
         let loading = model.is_none();
@@ -136,7 +137,7 @@ impl Composer {
                 .gap(px(4.))
                 .child(loading_model(t.text_tertiary))
                 .child(label(value, t.text_tertiary.opacity(0.4)).w(width))
-        } else if self.footer_width <= XS_WIDTH {
+        } else if single_line || self.footer_width <= XS_WIDTH {
             pill("model-picker", t)
                 .w(px(28.))
                 .justify_center()
@@ -201,83 +202,77 @@ impl Composer {
         let voice_ring = t.text;
         let footer_icon =
             move |name: &str, color| icon(name, 16., color).when(docked, |i| i.own_layer(None));
-        let left = div()
-            .flex()
-            .items_center()
-            .gap(px(5.))
-            .child(
-                crate::tooltip::tooltip(
-                    pill("add-files", t)
-                        .role(gpui::Role::Button)
-                        .aria_label("Add files and more")
-                        .aria_expanded(self.slash.open && self.slash.mention)
-                        .tab_index(0)
-                        .focus_visible(menu::trigger_focus)
-                        .w(px(28.))
-                        .justify_center()
-                        .child(footer_icon("plus", t.text))
-                        .capture_any_mouse_down(cx.listener(|this, _, _, _| {
-                            this.slash.add_mouse_open = this.slash.open && this.slash.mention;
-                        }))
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
-                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                this.slash.add_mouse_open = false;
-                                this.toggle_add(window, cx);
-                                cx.stop_propagation();
-                            }
-                        }))
-                        .on_click(cx.listener(|this, _, window, cx| this.toggle_add(window, cx))),
-                    "Add files and more",
-                    Some("@"),
-                    crate::tooltip::Side::Top,
-                )
-                // The 1 px trigger border leaves a 4 px visible gap with this content-edge offset.
-                .side_offset(px(5.)),
+        let left = div().flex().items_center().gap(px(5.)).child(
+            crate::tooltip::tooltip(
+                pill("add-files", t)
+                    .role(gpui::Role::Button)
+                    .aria_label("Add files and more")
+                    .aria_expanded(self.slash.open && self.slash.mention)
+                    .tab_index(0)
+                    .focus_visible(menu::trigger_focus)
+                    .w(px(28.))
+                    .justify_center()
+                    .child(footer_icon("plus", t.text))
+                    .capture_any_mouse_down(cx.listener(|this, _, _, _| {
+                        this.slash.add_mouse_open = this.slash.open && this.slash.mention;
+                    }))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            this.slash.add_mouse_open = false;
+                            this.toggle_add(window, cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .on_click(cx.listener(|this, _, window, cx| this.toggle_add(window, cx))),
+                "Add files and more",
+                Some("@"),
+                crate::tooltip::Side::Top,
             )
+            // The 1 px trigger border leaves a 4 px visible gap with this content-edge offset.
+            .side_offset(px(5.)),
+        );
+        let permissions = div()
+            .relative()
             .child(
-                div()
-                    .relative()
-                    .child(
-                        pill("permissions", t)
-                            .track_focus(&self.permissions_focus)
-                            .focus_visible(menu::trigger_focus)
-                            .on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                                this.menu_trigger_hovered = *hovered
-                            }))
-                            .on_key_down(cx.listener(|this, event, window, cx| {
-                                this.trigger_key(Menu::Permissions, event, window, cx)
-                            }))
-                            .px(px(6.))
-                            .gap(px(4.))
-                            .child(footer_icon(
-                                if self.permission == Permission::Ask {
-                                    "composer-permission-ask"
-                                } else {
-                                    "permissions"
-                                },
+                pill("permissions", t)
+                    .track_focus(&self.permissions_focus)
+                    .focus_visible(menu::trigger_focus)
+                    .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                        this.menu_trigger_hovered = *hovered
+                    }))
+                    .on_key_down(cx.listener(|this, event, window, cx| {
+                        this.trigger_key(Menu::Permissions, event, window, cx)
+                    }))
+                    .px(px(6.))
+                    .gap(px(4.))
+                    .child(footer_icon(
+                        if self.permission == Permission::Ask {
+                            "composer-permission-ask"
+                        } else {
+                            "permissions"
+                        },
+                        t.text_tertiary,
+                    ))
+                    .when(!single_line && self.footer_width > SM_WIDTH, |d| {
+                        d.child(
+                            text(
+                                self.permission.short_label(),
+                                13.,
+                                18.,
+                                400.,
                                 t.text_tertiary,
-                            ))
-                            .when(self.footer_width > SM_WIDTH, |d| {
-                                d.child(
-                                    text(
-                                        self.permission.short_label(),
-                                        13.,
-                                        18.,
-                                        400.,
-                                        t.text_tertiary,
-                                    )
-                                    .when(self.docked, |d| d.top_layer()),
-                                )
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_menu(Menu::Permissions, window, cx)
-                            })),
-                    )
-                    .when(self.menu == Some(Menu::Permissions), |d| {
-                        d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
-                    }),
-            );
+                            )
+                            .when(self.docked, |d| d.top_layer()),
+                        )
+                    })
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_menu(Menu::Permissions, window, cx)
+                    })),
+            )
+            .when(self.menu == Some(Menu::Permissions), |d| {
+                d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
+            });
         let send = div()
             .id("send")
             .role(gpui::Role::Button)
@@ -345,10 +340,13 @@ impl Composer {
                     this.submit(&Submit, window, cx);
                 }
             }));
-        let right = div()
-            .flex()
-            .items_center()
-            .child(model_button)
+        let (left, right) = if single_line {
+            (left, div().child(model_button).child(permissions))
+        } else {
+            (left.child(permissions), div().child(model_button))
+        };
+        let right = right.flex().items_center();
+        let right = right
             .child(
                 pill("dictate", t)
                     .tab_index(0)
@@ -363,8 +361,20 @@ impl Composer {
             .items_center()
             .justify_between()
             .px(px(8.))
-            .pb(px(8.))
+            .py(px(if single_line { 4. } else { 0. }))
+            .pb(px(if single_line { 4. } else { 8. }))
+            .gap(px(if single_line { 5. } else { 0. }))
             .child(left)
+            .when(single_line, |d| {
+                d.child(
+                    self.editor(cx)
+                        .flex_1()
+                        .min_w_0()
+                        .px_0()
+                        .py(px(8.))
+                        .min_h(px(36.)),
+                )
+            })
             .child(right)
     }
 }

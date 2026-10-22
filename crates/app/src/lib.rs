@@ -964,7 +964,11 @@ impl Root {
     }
 
     fn side_visible(&self, side: SidePanel) -> bool {
-        self.side == Some(side) && self.workspace_layout() != WorkspaceLayout::Chat
+        self.side == Some(side)
+            && matches!(
+                self.workspace_layout(),
+                WorkspaceLayout::Split | WorkspaceLayout::Full
+            )
     }
 
     pub fn diff_panel(&self) -> Option<&Entity<DiffPanel>> {
@@ -2169,9 +2173,11 @@ impl Root {
             self.tabs.push(side);
         }
         self.side = Some(side);
-        if self.workspace_layout == WorkspaceLayout::Chat {
-            self.workspace_layout = WorkspaceLayout::Split;
-        }
+        self.workspace_layout = match self.workspace_layout {
+            WorkspaceLayout::Chat => WorkspaceLayout::Split,
+            WorkspaceLayout::FullChat => WorkspaceLayout::Full,
+            layout => layout,
+        };
         self.sync(window, cx);
     }
 
@@ -2555,7 +2561,7 @@ impl Root {
         }
         if let Some(side) = self
             .side
-            .filter(|_| self.split.is_some() && self.workspace_layout() != WorkspaceLayout::Chat)
+            .filter(|side| self.split.is_some() && self.side_visible(*side))
         {
             return self.close_side(side, window, cx);
         }

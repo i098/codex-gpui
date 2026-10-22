@@ -136,7 +136,7 @@ pub struct ThreadView {
     stream_errors: HashMap<String, Vec<(bridge::types::TurnError, bool)>>,
     usage_limit_notice: UsageLimitNotice,
     clock: Clock,
-    composer: AnyView,
+    pub(crate) composer: AnyView,
     embedded: bool,
     _tick: Option<Task<()>>,
     stream_fades: HashMap<String, Vec<StreamSegment>>,

@@ -1500,7 +1500,7 @@ impl SplitScreen {
             Appearance::Light => t.surface_elevated_secondary,
         };
         let mut tab = |ix: usize, (tab_icon, label): &Tab, cx: &mut Context<Self>| {
-            let selected = ix == self.active;
+            let selected = ix == self.active && self.layout != WorkspaceLayout::FullChat;
             let hovered = self.hovered == Some(ix);
             let color = if selected { t.text } else { t.text_tertiary };
             let label = label.clone();
@@ -1667,6 +1667,45 @@ impl SplitScreen {
                     .h(px(20.))
                     .bg(over(t.border, layout)),
             )
+            .when(
+                matches!(
+                    self.layout,
+                    WorkspaceLayout::Full | WorkspaceLayout::FullChat
+                ),
+                |d| {
+                    d.child(
+                        div()
+                            .id("workspace-chat-tab")
+                            .role(gpui::Role::Tab)
+                            .aria_label("Chat")
+                            .focusable()
+                            .tab_index(0)
+                            .focus_visible(|s| s.border_2().border_color(rgb(0x3a83f7)))
+                            .w(px(240.))
+                            .h(px(32.))
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .px(px(10.))
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .on_click(dispatch_action(crate::SelectWorkspaceChat))
+                            .on_key_down(dispatch_key(crate::SelectWorkspaceChat))
+                            .child(icon("workspace-chat", 16., t.text_tertiary))
+                            .child(
+                                div().flex_1().min_w_0().overflow_hidden().child(
+                                    text(
+                                        self.thread.read(cx).header_title(),
+                                        13.,
+                                        18.5714,
+                                        430.,
+                                        t.text_tertiary,
+                                    )
+                                    .text_ellipsis(),
+                                ),
+                            ),
+                    )
+                },
+            )
             .children(self.tabs.iter().enumerate().map(|(ix, t)| {
                 // The tab's box clips its shadow (`overflow` on the 240 px tab slot).
                 div()
@@ -1678,16 +1717,21 @@ impl SplitScreen {
                     .overflow_hidden()
                     .child(tab(ix, t, cx))
             }))
-            .child(
-                div()
-                    .pl(px(6.))
-                    .child(strip_button("diff-new-tab", t.text_tertiary, None)),
-            )
+            .when(self.layout == WorkspaceLayout::Split, |d| {
+                d.child(
+                    div()
+                        .pl(px(6.))
+                        .child(strip_button("diff-new-tab", t.text_tertiary, None)),
+                )
+            })
             .child(self.layout_controls(t))
     }
 
     fn layout_controls(&self, t: &Theme) -> Div {
-        let full = self.layout == WorkspaceLayout::Full;
+        let full = matches!(
+            self.layout,
+            WorkspaceLayout::Full | WorkspaceLayout::FullChat
+        );
         let (glyph, label, step_label) = if full {
             (
                 "workspace-exit-full-view",
@@ -1769,6 +1813,7 @@ fn dispatch_key(action: impl Action) -> impl Fn(&KeyDownEvent, &mut Window, &mut
 struct SplitMain {
     thread: AnyView,
     panel: AnyView,
+    composer: AnyView,
     /// Width at press plus the pointer x at press, while the divider is dragged.
     drag_anchor: Option<Pixels>,
     layout: WorkspaceLayout,
@@ -1780,8 +1825,26 @@ impl Render for SplitMain {
         if self.layout == WorkspaceLayout::Full {
             return div()
                 .size_full()
+                .relative()
                 .track_focus(&self.focus)
-                .child(self.panel.clone());
+                .child(self.panel.clone())
+                .child(
+                    div()
+                        .absolute()
+                        .bottom(px(16.))
+                        .left_0()
+                        .right_0()
+                        .px(px(10.))
+                        .flex()
+                        .justify_center()
+                        .child(
+                            div()
+                                .w(px(560.))
+                                .max_w_full()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .child(self.composer.clone()),
+                        ),
+                );
         }
         let t = cx.theme();
         let width = panel_width(window, cx);
@@ -1870,11 +1933,13 @@ impl Render for SplitScreen {
             WorkspaceLayout::Split => {
                 Some(window.viewport_size().width - px(4.) - panel_width(window, cx))
             }
-            WorkspaceLayout::Full => Some(if self.shell.read(cx).sidebar_open {
-                self.shell.read(cx).sidebar_width
-            } else {
-                crate::RAIL_WIDTH
-            }),
+            WorkspaceLayout::Full | WorkspaceLayout::FullChat => {
+                Some(if self.shell.read(cx).sidebar_open {
+                    self.shell.read(cx).sidebar_width
+                } else {
+                    crate::RAIL_WIDTH
+                })
+            }
         };
         // ponytail: like refs/thread, the header only follows the open-sidebar titlebar layout.
         let open = self.shell.read(cx).sidebar_open;
@@ -1885,14 +1950,20 @@ impl Render for SplitScreen {
             .font_family(SANS)
             .on_key_down(crate::focus::tab)
             .child(self.shell.clone())
-            .when(open && self.layout != WorkspaceLayout::Full, |d| {
-                d.child(
-                    self.thread
-                        .update(cx, |view, cx| view.titlebar_header(left.is_some(), cx))
-                        .left(sidebar_width)
-                        .when_some(left, |h, left| h.w(left - sidebar_width)),
-                )
-            })
+            .when(
+                open && !matches!(
+                    self.layout,
+                    WorkspaceLayout::Full | WorkspaceLayout::FullChat
+                ),
+                |d| {
+                    d.child(
+                        self.thread
+                            .update(cx, |view, cx| view.titlebar_header(left.is_some(), cx))
+                            .left(sidebar_width)
+                            .when_some(left, |h, left| h.w(left - sidebar_width)),
+                    )
+                },
+            )
             // Without a panel the shell's `New tab` group follows the header behind a divider.
             .when(open && left.is_none(), |d| {
                 let t = cx.theme();
@@ -2024,6 +2095,17 @@ pub fn with_side_tabs(
     cx: &mut App,
 ) -> Entity<SplitScreen> {
     let layout = panel.as_ref().map_or(WorkspaceLayout::Chat, |_| layout);
+    if let Ok(composer) = thread
+        .read(cx)
+        .composer
+        .clone()
+        .downcast::<crate::composer::Composer>()
+    {
+        composer.update(cx, |composer, cx| {
+            composer.floating = layout == WorkspaceLayout::Full;
+            cx.notify();
+        });
+    }
     if let Some((panel, ..)) = &panel
         && let Ok(panel) = panel.clone().downcast::<DiffPanel>()
     {
@@ -2040,16 +2122,17 @@ pub fn with_side_tabs(
         // The thread route's main surface is a composited layer; with the Changes panel,
         // Chromium composites the surface itself too.
         shell.main_composited = true;
-        shell.main_layer = layout != WorkspaceLayout::Chat
+        shell.main_layer = matches!(layout, WorkspaceLayout::Split | WorkspaceLayout::Full)
             && panel
                 .as_ref()
                 .is_some_and(|(view, ..)| view.clone().downcast::<DiffPanel>().is_ok());
         // A lone thread draws its own px at the surface's right corners.
-        shell.main_clips_right = layout == WorkspaceLayout::Chat;
+        shell.main_clips_right =
+            matches!(layout, WorkspaceLayout::Chat | WorkspaceLayout::FullChat);
         shell.set_main(main, cx);
     });
     thread.update(cx, |thread, _| {
-        thread.clip_right = layout == WorkspaceLayout::Chat
+        thread.clip_right = matches!(layout, WorkspaceLayout::Chat | WorkspaceLayout::FullChat)
     });
     let (tabs, active) = panel
         .map(|(_, tabs, active)| (tabs, active))
@@ -2075,18 +2158,20 @@ fn workspace_content(
     cx: &mut App,
 ) -> (AnyView, FocusHandle) {
     let focus = cx.focus_handle();
-    let main = match panel.filter(|_| layout != WorkspaceLayout::Chat) {
-        Some(panel) => cx
-            .new(|_| SplitMain {
-                thread: thread.clone().into(),
-                panel: panel.clone(),
-                drag_anchor: None,
-                layout,
-                focus: focus.clone(),
-            })
-            .into(),
-        None => thread.clone().into(),
-    };
+    let main =
+        match panel.filter(|_| matches!(layout, WorkspaceLayout::Split | WorkspaceLayout::Full)) {
+            Some(panel) => cx
+                .new(|cx| SplitMain {
+                    thread: thread.clone().into(),
+                    panel: panel.clone(),
+                    composer: thread.read(cx).composer.clone(),
+                    drag_anchor: None,
+                    layout,
+                    focus: focus.clone(),
+                })
+                .into(),
+            None => thread.clone().into(),
+        };
     (main, focus)
 }
 
