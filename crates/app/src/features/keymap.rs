@@ -1,5 +1,6 @@
 use super::shortcuts;
 use crate::*;
+use gpui::{MouseButton, NavigationDirection};
 use ui::keyboard::{self, Change, KeyboardState, PreferenceKind, Preferences};
 
 const BINDINGS: &str = "codex-command-keybindings";
@@ -137,13 +138,7 @@ fn rebind(previous: Option<&Preferences>, next: &Preferences, cx: &mut App) {
             if key.starts_with("mouse") {
                 continue;
             }
-            let context = if command.id.starts_with("composer.") {
-                Some("Composer")
-            } else if !key.contains("cmd-") && !key.contains("ctrl-") && !key.contains("alt-") {
-                Some("!Composer && !Editable")
-            } else {
-                None
-            };
+            let context = binding_context(command.id, &key);
             let predicate = context.map(|context| {
                 std::rc::Rc::new(
                     gpui::KeyBindingContextPredicate::parse(context).expect("literal key context"),
@@ -161,62 +156,105 @@ fn rebind(previous: Option<&Preferences>, next: &Preferences, cx: &mut App) {
     crate::native_menus::refresh_menus(cx);
 }
 
+fn binding_context(command: &str, key: &str) -> Option<&'static str> {
+    if command.starts_with("composer.") {
+        Some("Composer")
+    } else if !key.contains("cmd-") && !key.contains("ctrl-") && !key.contains("alt-") {
+        Some("!Composer && !Editable")
+    } else {
+        None
+    }
+}
+
 fn action(id: &str) -> Option<Box<dyn Action>> {
-    let action: Box<dyn Action> = match id {
-        "newTask" => Box::new(NewChat),
-        "newProjectlessTask" => Box::new(shortcuts::NewStandaloneChat),
-        "temporaryChat" => Box::new(shortcuts::NewTemporaryChat),
-        "settings" => Box::new(OpenSettings),
-        "keyboardShortcuts" => Box::new(shortcuts::OpenShortcutSettings),
-        "showKeyboardShortcuts" => Box::new(ShowKeyboardShortcuts),
-        "toggleSidebar" => Box::new(ToggleSidebar),
-        "navigateBack" => Box::new(GoBack),
-        "navigateForward" => Box::new(GoForward),
-        "previousThread" => Box::new(PreviousChat),
-        "nextThread" => Box::new(NextChat),
-        "previousRecentThread" => Box::new(shortcuts::PreviousRecentChat),
-        "nextRecentThread" => Box::new(shortcuts::NextRecentChat),
-        "openReviewTab" => Box::new(OpenChangesPanel),
-        "toggleSidePanel" => Box::new(ToggleChangesPanel),
-        "undoAppAction" => Box::new(Undo),
-        "redoAppAction" => Box::new(Redo),
-        "openFolder" | "composer.openProjectPicker" => Box::new(OpenFolder),
-        "openCommandMenu" => Box::new(OpenCommandMenu),
-        "searchFiles" => Box::new(super::command_destinations::SearchFiles),
-        "archiveThread" => Box::new(ArchiveChat),
-        "logOut" => Box::new(LogOut),
-        "clearAllUnreads" => Box::new(shortcuts::ClearAllUnreads),
-        "nextThreadNeedingAttention" => Box::new(shortcuts::NextAttentionChat),
-        "manageTasks" => Box::new(OpenScheduled),
-        "openThreadInNewWindow" => Box::new(super::OpenThreadInNewWindow),
-        "closeWindow" | "closeTab" => Box::new(CloseWindow),
-        "composer.submit" => Box::new(ui::composer::Submit),
-        id => {
-            if let Some(number) = id
-                .strip_prefix("recentThread")
-                .and_then(|n| n.parse::<usize>().ok())
-                .filter(|n| (1..=6).contains(n))
-            {
-                Box::new(GoToRecentChat(number - 1))
-            } else if let Some(number) = id
-                .strip_prefix("thread")
-                .and_then(|n| n.parse::<usize>().ok())
-                .filter(|n| (1..=9).contains(n))
-            {
-                Box::new(GoToChat(number - 1))
-            } else {
-                let number = id
-                    .strip_prefix("focusTab")
-                    .and_then(|n| n.parse::<usize>().ok())
-                    .filter(|n| (1..=9).contains(n))?;
-                Box::new(ActivateSideTab(number - 1))
-            }
-        }
+    fn boxed<A: Action + Default>() -> Box<dyn Action> {
+        Box::new(A::default())
+    }
+    type Constructor = fn() -> Box<dyn Action>;
+    const ACTIONS: &[(&str, Constructor)] = &[
+        ("archiveThread", boxed::<ArchiveChat>),
+        ("clearAllUnreads", boxed::<shortcuts::ClearAllUnreads>),
+        ("closeTab", boxed::<CloseWindow>),
+        ("closeWindow", boxed::<CloseWindow>),
+        ("composer.openProjectPicker", boxed::<OpenFolder>),
+        ("composer.submit", boxed::<ui::composer::Submit>),
+        (
+            "keyboardShortcuts",
+            boxed::<shortcuts::OpenShortcutSettings>,
+        ),
+        ("logOut", boxed::<LogOut>),
+        ("manageTasks", boxed::<OpenScheduled>),
+        ("navigateBack", boxed::<GoBack>),
+        ("navigateForward", boxed::<GoForward>),
+        ("newProjectlessTask", boxed::<shortcuts::NewStandaloneChat>),
+        ("newTask", boxed::<NewChat>),
+        ("nextRecentThread", boxed::<shortcuts::NextRecentChat>),
+        ("nextThread", boxed::<NextChat>),
+        (
+            "nextThreadNeedingAttention",
+            boxed::<shortcuts::NextAttentionChat>,
+        ),
+        ("openCommandMenu", boxed::<OpenCommandMenu>),
+        ("openFolder", boxed::<OpenFolder>),
+        ("openReviewTab", boxed::<OpenChangesPanel>),
+        (
+            "openThreadInNewWindow",
+            boxed::<super::OpenThreadInNewWindow>,
+        ),
+        (
+            "previousRecentThread",
+            boxed::<shortcuts::PreviousRecentChat>,
+        ),
+        ("previousThread", boxed::<PreviousChat>),
+        ("redoAppAction", boxed::<Redo>),
+        (
+            "searchFiles",
+            boxed::<super::command_destinations::SearchFiles>,
+        ),
+        ("settings", boxed::<OpenSettings>),
+        ("showKeyboardShortcuts", boxed::<ShowKeyboardShortcuts>),
+        ("temporaryChat", boxed::<shortcuts::NewTemporaryChat>),
+        ("toggleSidePanel", boxed::<ToggleChangesPanel>),
+        ("toggleSidebar", boxed::<ToggleSidebar>),
+        ("undoAppAction", boxed::<Undo>),
+    ];
+    if let Some((_, construct)) = ACTIONS.iter().find(|(name, _)| *name == id) {
+        return Some(construct());
+    }
+    let action: Box<dyn Action> = if let Some(number) = id
+        .strip_prefix("recentThread")
+        .and_then(|n| n.parse::<usize>().ok())
+        .filter(|n| (1..=6).contains(n))
+    {
+        Box::new(GoToRecentChat(number - 1))
+    } else if let Some(number) = id
+        .strip_prefix("thread")
+        .and_then(|n| n.parse::<usize>().ok())
+        .filter(|n| (1..=9).contains(n))
+    {
+        Box::new(GoToChat(number - 1))
+    } else {
+        let number = id
+            .strip_prefix("focusTab")
+            .and_then(|n| n.parse::<usize>().ok())
+            .filter(|n| (1..=9).contains(n))?;
+        Box::new(ActivateSideTab(number - 1))
     };
     Some(action)
 }
 
-pub(super) fn dispatch_mouse(key: &str, window: &mut Window, cx: &mut Context<Root>) {
+pub(super) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
+    root.on_mouse_up(
+        MouseButton::Navigate(NavigationDirection::Back),
+        cx.listener(|_, _, window, cx| dispatch_mouse("MouseBack", window, cx)),
+    )
+    .on_mouse_up(
+        MouseButton::Navigate(NavigationDirection::Forward),
+        cx.listener(|_, _, window, cx| dispatch_mouse("MouseForward", window, cx)),
+    )
+}
+
+fn dispatch_mouse(key: &str, window: &mut Window, cx: &mut Context<Root>) {
     let state = cx.global::<KeyboardState>();
     if state.capture_owner.is_some() {
         return;
