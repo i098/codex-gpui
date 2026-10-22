@@ -47,9 +47,7 @@
 //! with its float raster pipeline. Limits: inset shadows paint apart from Blink's clip layer.
 //! Use [`with_composited_opacity`] for compositor opacity; [`with_layer`] retains Skia's save-layer rounding.
 
-use gpui::{
-    App, Bounds, Corners, Hsla, IntoElement, Pixels, Point, Styled as _, Window, canvas, point, px,
-};
+use gpui::{App, Bounds, Corners, Hsla, IntoElement, Pixels, Point, Styled as _, Window, canvas};
 
 #[cfg(target_os = "macos")]
 mod backdrop;
@@ -93,35 +91,16 @@ pub struct Decoration {
 
 /// An element covering its parent's box that paints `d`.
 pub fn decoration(d: Decoration) -> impl IntoElement {
-    cover(recorded(d), |bounds, d, window, cx| {
-        paint(&d, None, bounds, window, cx)
-    })
-}
-
-/// A decoration painted into a transparent composited layer with its shadow bounds.
-pub fn composited_decoration(d: Decoration) -> impl IntoElement {
-    cover(recorded(d), |bounds, d, window, cx| {
-        let reach = |s: &Shadow, offset: Pixels| {
-            (f32::from(s.blur) * 1.5 + f32::from(s.spread) - f32::from(offset)).max(0.)
-        };
-        let (mut x, mut y) = (0f32, 0f32);
-        for s in d.shadows.iter().filter(|s| !s.inset) {
-            x = x.max(reach(s, s.offset.x));
-            y = y.max(reach(s, s.offset.y));
-        }
-        let layer = bounds.origin - point(px(x), px(y));
-        paint(&d, Some(layer), bounds, window, cx)
-    })
-}
-
-fn recorded(d: Decoration) -> impl FnOnce(Bounds<Pixels>, &mut Window, &mut App) -> Decoration {
-    move |bounds, window, _| {
-        #[cfg(target_os = "macos")]
-        skia::record_decoration(&d, bounds, window);
-        #[cfg(not(target_os = "macos"))]
-        let _ = (bounds, window);
-        d
-    }
+    cover(
+        move |bounds, window, _| {
+            #[cfg(target_os = "macos")]
+            skia::record_decoration(&d, bounds, window);
+            #[cfg(not(target_os = "macos"))]
+            let _ = (bounds, window);
+            d
+        },
+        |bounds, d, window, cx| paint(&d, None, bounds, window, cx),
+    )
 }
 
 /// An element covering its parent's box, painted by `paint`.
