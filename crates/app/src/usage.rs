@@ -50,8 +50,12 @@ pub fn install(root: WeakEntity<Root>, cx: &mut App) {
     cx.set_global(Runtime::default());
     let agent_reset_enabled = cx
         .try_global::<crate::host_settings::Settings>()
-        .and_then(|settings| settings.read_all().get("agent-usage-reset-enabled"))
-        .and_then(Value::as_bool)
+        .and_then(|settings| {
+            settings
+                .read_all()
+                .get("agent-usage-reset-enabled")
+                .and_then(Value::as_bool)
+        })
         .unwrap_or(false);
     cx.set_global(State {
         agent_reset_enabled,
@@ -640,8 +644,12 @@ impl Root {
                     state.page_open = cx.global::<State>().page_open;
                     state.agent_reset_enabled = cx
                         .try_global::<crate::host_settings::Settings>()
-                        .and_then(|settings| settings.read_all().get("agent-usage-reset-enabled"))
-                        .and_then(Value::as_bool)
+                        .and_then(|settings| {
+                            settings
+                                .read_all()
+                                .get("agent-usage-reset-enabled")
+                                .and_then(Value::as_bool)
+                        })
                         .unwrap_or(false);
                     state.revision = cx.global::<State>().revision + 1;
                     cx.update_global::<Runtime, _>(|runtime, _| {
