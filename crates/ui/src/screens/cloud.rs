@@ -615,10 +615,7 @@ impl CloudPage {
                 Some(t.border),
             ))
             .child(text(label.clone(), 13., 18., 430., t.text))
-            .child(
-                crate::icon::icon("chevron-down", 14., t.text_tertiary)
-                    .own_layer(Some(gpui::Point::default())),
-            );
+            .child(crate::icon::icon("chevron-down", 14., t.text_tertiary).runtime());
         self.wire_button(id.into(), label, content, cx, action)
     }
 
@@ -634,7 +631,7 @@ impl CloudPage {
         let content = div()
             .w(px(32.))
             .h(px(20.))
-            .child(super::settings::switch(id, on, false, &t));
+            .child(super::settings::composited_switch(id, on, false, &t));
         self.wire_button(
             id.into(),
             format!("{label}: {}", if on { "On" } else { "Off" }).into(),
@@ -660,12 +657,12 @@ impl CloudPage {
             .flex()
             .items_center()
             .when(selected, |d| {
-                d.child(super::settings::on_card(
-                    9999.,
-                    shapes::Corner::Round,
-                    t.text_alpha_5,
-                    None,
-                ))
+                d.child(shapes::composited_decoration(shapes::Decoration {
+                    radius: gpui::Corners::all(px(9999.)),
+                    corner: shapes::Corner::Round,
+                    fill: Some(t.text_alpha_5),
+                    ..Default::default()
+                }))
             })
             .child(text(
                 label,

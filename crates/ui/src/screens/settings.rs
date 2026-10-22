@@ -1394,6 +1394,25 @@ fn description(s: &'static str, t: &Theme) -> Div {
 /// Toggling moves the thumb 2 px -> 14 px and fades the track colour, both 150 ms `ease-out`
 /// (`refs/interactions/ms6a.json`); the tracks stay active under reduced motion.
 pub(super) fn switch(id: &'static str, on: bool, disabled: bool, t: &Theme) -> Stateful<Div> {
+    switch_painted(id, on, disabled, false, t)
+}
+
+pub(super) fn composited_switch(
+    id: &'static str,
+    on: bool,
+    disabled: bool,
+    t: &Theme,
+) -> Stateful<Div> {
+    switch_painted(id, on, disabled, true, t)
+}
+
+fn switch_painted(
+    id: &'static str,
+    on: bool,
+    disabled: bool,
+    composited: bool,
+    t: &Theme,
+) -> Stateful<Div> {
     let (track_off, track_on) = (t.switch_track, t.switch_track_checked);
     let thumb = shapes::Decoration {
         radius: Corners::all(px(9999.)),
@@ -1428,11 +1447,12 @@ pub(super) fn switch(id: &'static str, on: bool, disabled: bool, t: &Theme) -> S
                     p => motion::mix_oklab(track_off.into(), track_on.into(), p).into(),
                 };
                 let track = surface(9999., Round, fill, None);
+                let layer = composited.then_some(b.origin);
                 let x = 2. + 12. * progress;
                 let paint = |window: &mut Window| {
-                    shapes::paint(&track, None, b, window, cx);
+                    shapes::paint(&track, layer, b, window, cx);
                     let at = Bounds::new(b.origin + point(px(x), px(2.)), size(px(16.), px(16.)));
-                    shapes::paint(&thumb, None, at, window, cx);
+                    shapes::paint(&thumb, layer, at, window, cx);
                 };
                 if disabled {
                     shapes::with_layer(153, b, window, paint)
