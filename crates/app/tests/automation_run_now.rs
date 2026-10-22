@@ -675,8 +675,9 @@ fn row_menu_run_now_starts_the_task_through_the_app_server() -> Result<()> {
     shot(&mut fx, "2-menu-open")?;
     // The click without running the app to rest: the host call is queued, not yet sent, so the
     // pending state is real. `Fx::click` would run the queued call to its end first.
-    fx.hover((250., 228.))?;
-    let at = gpui::point(gpui::px(250.), gpui::px(228.));
+    // `Run now` is the second item, after `Pause` / `Resume` (the original's `statusFirst` order).
+    fx.hover((250., 256.5625))?;
+    let at = gpui::point(gpui::px(250.), gpui::px(256.5625));
     fx.cx.update_window(fx.window, |_, window, cx| {
         for event in [
             gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
@@ -734,10 +735,10 @@ fn row_menu_run_now_starts_the_task_through_the_app_server() -> Result<()> {
     fx.hover((150., 239.))?;
     fx.click((302., 239.))?;
     ensure!(open_menu(&fx).as_deref() == Some("event"));
-    fx.hover((250., 277.))?;
+    fx.hover((250., 305.5625))?;
     fx.advance(std::time::Duration::from_secs(1))?;
     shot(&mut fx, "5-event-task-disabled")?;
-    fx.click((250., 277.))?;
+    fx.click((250., 305.5625))?;
     ensure!(requests(&log)?.len() == 3, "an event task starts nothing");
 
     fs::write(
@@ -746,7 +747,7 @@ fn row_menu_run_now_starts_the_task_through_the_app_server() -> Result<()> {
     )?;
     fx.keys("escape")?;
     fx.click((302., 190.))?;
-    fx.click((250., 228.))?;
+    fx.click((250., 256.5625))?;
     fx.wait("run refusal", |fx| {
         fx.read(|r, cx| r.toasts(cx))
             .first()
@@ -2031,7 +2032,7 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
         fx.click((302., 190.))?;
         fx.cx.update_window(fx.window, |_, window, cx| {
             for at in [
-                gpui::point(gpui::px(250.), gpui::px(228.)),
+                gpui::point(gpui::px(250.), gpui::px(256.5625)),
                 gpui::point(gpui::px(640.), gpui::px(780.)),
             ] {
                 for event in [

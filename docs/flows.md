@@ -774,7 +774,7 @@ The click puts the card in `Starting…` (rays spinner, status text) and disable
 The oracle answers that read with the host's 499, so the recorded outcome is the toast `Couldn’t start this suggested task` and the cards enabled again.
 The conversation prepare, its stream, and the navigation into the started conversation are not recorded and not wired.
 
-`Run now` (AM-021) is the first item of the row `Scheduled task actions` menu, as in `run-now-11e55df28c95.js`.
+`Run now` (AM-021) is the second item of the row `Scheduled task actions` menu, after `Pause` / `Resume`. The original sidebar menu is `q` in `menu-items-19a7bd2f5b31.js`, called with `statusFirst: true` from `actions-b3b1b77c618b.js`; `run-now-11e55df28c95.js` holds only the run action.
 Choosing it sends `automation-run-now` with `{id, collaborationMode, permissions}` and disables duplicate starts until the host answers.
 The information toast and row show `Starting run…` until the host answers.
 `LocalHost` starts one app-server thread per task folder, titles it with the task name, and sends the original's run preamble and the prompt as the first turn.
@@ -830,7 +830,7 @@ It also checks account isolation, recoverable restore writes, and retained workt
 Its native window proof also checks pending state, duplicate suppression, success navigation, failure, Back/Forward, and navigation away.
 On macOS, its native row-menu replay starts a task, then displays the real app-server refusal through the same toast component.
 
-`Share` (AM-024) follows `Run now` and `Pause` / `Resume` in the same task menu.
+`Share` (AM-024) follows `Pause` / `Resume` and `Run now` in the same task menu. The original then adds `Edit` before `Share` and `Delete` after it; those items come with the editor and delete changes.
 It uses the original `link-light-20` icon and copies `https://chatgpt.com/scheduled?automationId=<id>&automationSource=local`.
 The URL encoder protects reserved characters and Unicode in the task ID.
 The app shows `Link copied` only when the clipboard reads back the link.
@@ -852,7 +852,7 @@ The `host` checks match the retained original oracle.
 
 AM-022, AM-023 and AM-028 use the existing sidebar task list.
 The `Scheduled task actions` menu opens under the row button like the original (right edge 1 px inside the button, 220 px wide).
-`Pause` or `Resume` follows `Run now`.
+`Pause` or `Resume` is the first item, before `Run now`, as in the original.
 The row status control shows `Pause` or `Resume` on hover or keyboard focus, with a named accessible action.
 Both send `automation-update` with the original cron or heartbeat request, block duplicate writes and refetch the list.
 Success shows `Successfully paused automation` or `Successfully resumed automation`; the row shows `Paused` only after the host reports PAUSED.
