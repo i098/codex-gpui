@@ -1333,6 +1333,25 @@ impl Composer {
             return;
         }
         self.cancel_dictation(cx);
+        let submission = self.take_submission(background);
+        if self.on_cancel_edit.is_some() {
+            self.edit_pending = true;
+        } else {
+            self.content.clear();
+            self.mentions.clear();
+            self.selected_range = 0..0;
+            self.marked_range = None;
+            self.menu = None;
+            self.slash.reset();
+            self.end_search(cx);
+        }
+        cx.notify();
+        if let Some(f) = self.on_submit.clone() {
+            f(&submission, window, cx);
+        }
+    }
+
+    fn take_submission(&mut self, background: bool) -> Submission {
         self.submitted = std::mem::take(&mut self.attachments);
         let mut attachments = Vec::new();
         let mut context_files = Vec::new();
@@ -1343,7 +1362,7 @@ impl Composer {
                 attachments.push(attachment.path.clone());
             }
         }
-        let submission = Submission {
+        Submission {
             text: if self.mentions.is_empty() && self.on_cancel_edit.is_none() {
                 std::mem::take(&mut self.content)
             } else {
@@ -1359,21 +1378,6 @@ impl Composer {
             permission: self.permission,
             fast: self.fast,
             background,
-        };
-        if self.on_cancel_edit.is_some() {
-            self.edit_pending = true;
-        } else {
-            self.content.clear();
-            self.mentions.clear();
-            self.selected_range = 0..0;
-            self.marked_range = None;
-            self.menu = None;
-            self.slash.reset();
-            self.end_search(cx);
-        }
-        cx.notify();
-        if let Some(f) = self.on_submit.clone() {
-            f(&submission, window, cx);
         }
     }
 
