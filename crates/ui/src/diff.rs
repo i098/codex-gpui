@@ -36,8 +36,11 @@ pub use content::{BlobError, BlobReply, BlobRequest, FullError, FullFileRequest,
 #[path = "diff/word.rs"]
 pub mod word;
 
+#[path = "diff/file_tree.rs"]
+mod file_tree;
 #[path = "diff/patch.rs"]
 pub mod patch;
+pub use file_tree::FileTreeRequest;
 
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
 const STORED_WIDTH: f32 = 664.17;
@@ -46,6 +49,7 @@ const MIN_CHAT: f32 = 320.;
 /// `--diffs-font-size`, `--diffs-line-height`.
 const CODE_SIZE: f32 = 12.;
 const CODE_LINE: f32 = 21.6;
+const FILE_LINE_HEIGHT: f32 = 22.;
 /// Menlo advance at 12 px (0.602em); `--diffs-min-number-column-width` is 4ch.
 const CH: f32 = 7.224_609_4;
 
@@ -259,6 +263,15 @@ pub struct DiffPanel {
 }
 
 impl DiffPanel {
+    pub fn file_tree_open(&self) -> bool {
+        self.show_tree
+    }
+
+    pub fn toggle_file_tree(&mut self, cx: &mut Context<Self>) {
+        self.show_tree = !self.show_tree;
+        cx.notify();
+    }
+
     /// The subtract session as the reference shows it.
     pub fn subtract() -> Self {
         let start: ThreadStartResponse =
@@ -1090,14 +1103,12 @@ impl DiffPanel {
                             .focusable()
                             .cursor_pointer()
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.show_tree = !this.show_tree;
-                                cx.notify();
+                                this.toggle_file_tree(cx);
                             }))
                             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                    this.show_tree = !this.show_tree;
+                                    this.toggle_file_tree(cx);
                                     cx.stop_propagation();
-                                    cx.notify();
                                 }
                             })),
                     ),
@@ -1453,8 +1464,27 @@ impl Render for DiffPanel {
     }
 }
 
-/// A side panel tab: its icon and label.
-pub type Tab = (&'static str, SharedString);
+/// A side panel tab, with italic text for a preview file.
+#[derive(Clone)]
+pub struct Tab {
+    pub icon: &'static str,
+    pub label: SharedString,
+    pub preview: bool,
+}
+
+impl Tab {
+    fn label_font(&self) -> Font {
+        Font {
+            weight: FontWeight(430.),
+            style: if self.preview {
+                gpui::FontStyle::Italic
+            } else {
+                gpui::FontStyle::Normal
+            },
+            ..font(SANS)
+        }
+    }
+}
 
 /// Click on a tab of the side panel's strip (`activateOnClick`): index into the strip.
 #[derive(Clone, PartialEq, Action)]
@@ -1480,17 +1510,19 @@ impl SplitScreen {
             Appearance::Dark => t.ghost_hover,
             Appearance::Light => t.surface_elevated_secondary,
         };
-        let mut tab = |ix: usize, (tab_icon, label): &Tab, cx: &mut Context<Self>| {
+        let mut tab = |ix: usize, tab: &Tab, cx: &mut Context<Self>| {
+            let Tab {
+                icon: tab_icon,
+                label,
+                preview,
+            } = tab;
             let selected = ix == self.active;
             let hovered = self.hovered == Some(ix);
             let color = if selected { t.text } else { t.text_tertiary };
             let label = label.clone();
             let run = TextRun {
                 len: label.len(),
-                font: Font {
-                    weight: FontWeight(430.),
-                    ..font(SANS)
-                },
+                font: tab.label_font(),
                 color,
                 background_color: None,
                 underline: None,
@@ -1590,7 +1622,10 @@ impl SplitScreen {
                                 .min_w_0()
                                 .ml(px(-4.))
                                 .overflow_hidden()
-                                .child(text(label, 13., 18.5714, 430., color))
+                                .child(
+                                    text(label, 13., 18.5714, 430., color)
+                                        .when(*preview, |label| label.italic()),
+                                )
                                 .when(fade, |d| d.layer().child(shapes::x_fade(px(0.), px(FADE)))),
                         ),
                 )
@@ -1599,7 +1634,7 @@ impl SplitScreen {
                     let close = div()
                         .id("side-panel-close-tab")
                         .tab_index(0)
-                        .aria_label(format!("Close {} tab", self.tabs[ix].1))
+                        .aria_label(format!("Close {} tab", self.tabs[ix].label))
                         .on_key_down(move |event, window, cx| {
                             if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                                 window.dispatch_action(Box::new(CloseSideTab(ix)), cx);
@@ -1848,7 +1883,7 @@ impl Render for SplitScreen {
                         && self
                             .tabs
                             .get(*ix)
-                            .is_some_and(|tab| tab.0 == "thread-terminal")
+                            .is_some_and(|tab| tab.icon == "thread-terminal")
                 }),
                 |d, ix| {
                     let left = (left.unwrap_or_default() + px(8. + ix as f32 * 240.))
@@ -1900,7 +1935,17 @@ pub fn with_side_panel(
     panel: Option<(AnyView, &'static str, SharedString)>,
     cx: &mut App,
 ) -> Entity<SplitScreen> {
-    let panel = panel.map(|(view, icon, label)| (view, vec![(icon, label)], 0));
+    let panel = panel.map(|(view, icon, label)| {
+        (
+            view,
+            vec![Tab {
+                icon,
+                label,
+                preview: false,
+            }],
+            0,
+        )
+    });
     with_side_tabs(shell, thread, panel, cx)
 }
 
@@ -1974,6 +2019,9 @@ pub struct FileView {
     focus: Option<FocusHandle>,
     go_to_line: Option<controls::TextField>,
     line_count: u32,
+    tree: file_tree::WorkspaceTree,
+    revision: u64,
+    preview: bool,
 }
 
 impl FileView {
@@ -1981,14 +2029,8 @@ impl FileView {
     /// (`/private/tmp/...`) while links carry the written path, so the crumbs start at the
     /// first segment named like the workspace folder.
     pub fn new(workspace: &str, path: String, line: Option<u32>) -> Self {
-        let root = workspace.trim_end_matches('/');
-        let name = root.rsplit('/').next().unwrap_or(root);
-        let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        let start = segments.iter().position(|s| *s == name).unwrap_or(0);
-        let crumbs = segments[start..]
-            .iter()
-            .map(|s| SharedString::from((*s).to_owned()))
-            .collect();
+        let crumbs = Self::breadcrumbs(workspace, &path);
+        let tree = file_tree::WorkspaceTree::new(workspace, &path);
         Self {
             path,
             crumbs,
@@ -1998,17 +2040,43 @@ impl FileView {
             focus: None,
             go_to_line: None,
             line_count: 0,
+            tree,
+            revision: 0,
+            preview: true,
         }
+    }
+
+    fn breadcrumbs(workspace: &str, path: &str) -> Vec<SharedString> {
+        let root = workspace.trim_end_matches('/');
+        let name = root.rsplit('/').next().unwrap_or(root);
+        let segments: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+        let start = segments.iter().position(|part| *part == name).unwrap_or(0);
+        segments[start..]
+            .iter()
+            .map(|part| (*part).to_owned().into())
+            .collect()
     }
 
     pub fn name(&self) -> SharedString {
         self.crumbs.last().cloned().unwrap_or_default()
     }
 
+    pub fn is_preview(&self) -> bool {
+        self.preview
+    }
+
+    fn pin_preview(&mut self, cx: &mut Context<Self>) {
+        if self.preview {
+            self.preview = false;
+            cx.emit(FileTreeRequest::PinPreview);
+            cx.notify();
+        }
+    }
+
     /// The tab strip icon: the Python sprite for `.py`, else the file change card's file glyph.
     pub fn tab_icon(&self) -> &'static str {
         if self.path.ends_with(".py") {
-            "diff-file-python"
+            "navigation-python"
         } else {
             "thread-file-diff"
         }
@@ -2024,22 +2092,29 @@ impl FileView {
             self.go_to_line = None;
         }
         if let (Ok(_), Some(line)) = (&contents, self.line) {
-            let top = line.saturating_sub(3) as f32 * CODE_LINE;
+            let top = line.saturating_sub(3) as f32 * FILE_LINE_HEIGHT;
             self.scroll.set_offset(gpui::point(px(0.), -px(top)));
         }
         self.contents = Some(contents);
         cx.notify();
     }
 
-    fn header(&self, t: &Theme, clamped: bool) -> Div {
+    fn header(&self, t: &Theme, clamped: bool, cx: &Context<Self>) -> Div {
         let last = self.crumbs.len().saturating_sub(1);
         let crumbs = self.crumbs.iter().enumerate().flat_map(|(i, crumb)| {
             let color = if i == last { t.text } else { t.text_secondary };
             (i > 0)
-                .then(|| icon("thread-chevron-right", 12., t.text_tertiary).into_any_element())
+                .then(|| icon("thread-chevron-right", 14., t.text_tertiary).into_any_element())
                 .into_iter()
                 .chain(std::iter::once(
-                    text(crumb.clone(), 13., 19., 430., color).into_any_element(),
+                    text(
+                        crumb.clone(),
+                        13.,
+                        130. / 7.,
+                        if i == last { 500. } else { 430. },
+                        color,
+                    )
+                    .into_any_element(),
                 ))
         });
         div()
@@ -2058,7 +2133,7 @@ impl FileView {
                         .h(px(28.))
                         .flex()
                         .items_center()
-                        .gap(px(6.))
+                        .gap(px(4.))
                         .px(px(8.))
                         .children(crumbs),
                 ),
@@ -2069,39 +2144,64 @@ impl FileView {
                     .gap(px(6.))
                     .child(
                         capsule(t, clamped)
-                            .child(
-                                round_icon("diff-jump-to-file", 28., t)
-                                    .id("file-search")
-                                    .aria_label("Search in files"),
+                            .w(px(32.))
+                            .id("file-search")
+                            .role(gpui::Role::Button)
+                            .aria_label("Search in files")
+                            .focusable()
+                            .tab_index(0)
+                            .rounded_full()
+                            .focus_visible(crate::composer::menu::trigger_focus)
+                            .justify_center()
+                            .on_click(
+                                cx.listener(|view, _, window, cx| {
+                                    view.focus_file_search(window, cx)
+                                }),
                             )
-                            .child(
-                                round_icon("diff-show-files", 28., t)
-                                    .id("file-tree")
-                                    .aria_label("Toggle file tree"),
-                            ),
+                            .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
+                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                    view.focus_file_search(window, cx);
+                                    cx.stop_propagation();
+                                }
+                            }))
+                            .child(icon("diff-jump-to-file", 16., t.text).runtime()),
                     )
+                    .child(self.file_tree_button(t, clamped, cx))
                     .child(
-                        capsule(t, clamped).child(
+                        capsule(t, clamped).p_0().child(
                             div()
-                                .h(px(28.))
+                                .h(px(32.))
+                                .pl(px(9.))
                                 .flex()
                                 .items_center()
-                                .gap(px(4.))
-                                .pl(px(12.))
-                                .pr(px(6.))
-                                .child(text("Open", 13., 20., 430., t.text))
-                                .child(icon("diff-chevron-down", 12., t.text)),
+                                .child(text("Open", 13., 18., 430., t.text))
+                                .child(
+                                    div()
+                                        .ml(px(4.))
+                                        .w(px(23.))
+                                        .h_full()
+                                        .flex()
+                                        .items_center()
+                                        .pl(px(2.))
+                                        .child(
+                                            menu::source_glyph(
+                                                include_bytes!(
+                                                    "../../../assets/icons/chevron-down.svg"
+                                                ),
+                                                "navigation-open-chevron",
+                                                t.text,
+                                                128,
+                                            )
+                                            .size(px(14.)),
+                                        ),
+                                ),
                         ),
                     ),
             )
     }
-}
 
-impl Render for FileView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme().clone();
-        let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
-        let body = match &self.contents {
+    fn file_content(&self, t: &Theme) -> gpui::AnyElement {
+        match &self.contents {
             None => div().flex_1().into_any_element(),
             Some(Err(_)) => div()
                 .flex_1()
@@ -2111,10 +2211,20 @@ impl Render for FileView {
                 .child(text("Could not open file", 13., 20., 430., t.text_tertiary))
                 .into_any_element(),
             Some(Ok(contents)) => {
-                let syntax = Syntax::of(&t);
+                let syntax = Syntax::of(t);
                 let python = self.path.ends_with(".py");
                 let lines: Vec<_> = controls::lines(contents).collect();
-                let gutter = px(CH * lines.len().to_string().len().max(4) as f32 + 16.);
+                let gutter = px(CH * (lines.len().to_string().len().max(1) + 3) as f32 + 2.);
+                let foreground = rgb(if t.appearance == Appearance::Dark {
+                    0xfcfcfc
+                } else {
+                    0x0d0d0d
+                });
+                let line_number = rgb(if t.appearance == Appearance::Dark {
+                    0xa1a1a1
+                } else {
+                    0x585858
+                });
                 let cited = over(t.info_solid.opacity(0.12), t.surface);
                 div()
                     .id("file-lines")
@@ -2123,11 +2233,12 @@ impl Render for FileView {
                     .track_scroll(&self.scroll)
                     .flex()
                     .flex_col()
-                    .py(px(8.))
                     .font_family(MONO)
                     .text_size(px(CODE_SIZE))
-                    .line_height(px(CODE_LINE))
-                    .text_color(t.text)
+                    .line_height(px(FILE_LINE_HEIGHT))
+                    .font_weight(FontWeight(430.))
+                    .text_color(foreground)
+                    .pr(px(16.))
                     .children(lines.into_iter().enumerate().map(|(i, line)| {
                         let number = i as u32 + 1;
                         let bg = if Some(number) == self.line {
@@ -2142,7 +2253,7 @@ impl Render for FileView {
                             StyledText::new(text)
                         };
                         div()
-                            .h(px(CODE_LINE))
+                            .h(px(FILE_LINE_HEIGHT))
                             .flex()
                             .bg(bg)
                             .child(
@@ -2152,22 +2263,39 @@ impl Render for FileView {
                                     .flex()
                                     .justify_end()
                                     .items_center()
-                                    .pr(px(8.))
-                                    .text_color(t.text_tertiary)
+                                    .pr(px(CH + 2.))
+                                    .text_color(line_number)
                                     .child(number.to_string()),
                             )
-                            .child(div().flex_1().pl(px(8.)).whitespace_nowrap().child(content))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .pl(px(CH))
+                                    .pr(px(CH))
+                                    .whitespace_nowrap()
+                                    .child(content),
+                            )
                     }))
                     .into_any_element()
             }
-        };
+        }
+    }
+}
+
+impl Render for FileView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
+        let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
+        let body = self.file_content(&t);
         div()
+            .id("file-view")
             .relative()
             .track_focus(&focus)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |_, _, window, cx| window.focus(&focus, cx)),
             )
+            .on_click(cx.listener(|view, _, _, cx| view.pin_preview(cx)))
             .on_key_down(cx.listener(Self::line_key))
             .on_action(cx.listener(|this, _: &crate::Paste, _, cx| {
                 if let Some(query) = &mut this.go_to_line {
@@ -2192,12 +2320,29 @@ impl Render for FileView {
             .flex_col()
             .child(
                 div()
-                    .flex_none()
-                    .border_b_1()
-                    .border_color(t.border)
-                    .child(self.header(&t, panel_clamped(window, cx))),
+                    .mt(px(48.))
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .flex()
+                            .flex_col()
+                            .child(body),
+                    )
+                    .when(self.tree.open, |row| row.child(self.file_tree_view(cx))),
             )
-            .child(body)
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w_full()
+                    .child(self.header(&t, panel_clamped(window, cx), cx)),
+            )
             .when(self.go_to_line.is_some(), |d| d.child(self.line_bar(cx)))
     }
 }
