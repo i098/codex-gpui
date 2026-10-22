@@ -708,7 +708,7 @@ impl Composer {
                         self.content.is_empty() && self.plain_layout == PlainFieldLayout::Regular,
                         |d| d.opacity(0.5),
                     )
-                    .layer()
+                    .when(self.plain_layout != PlainFieldLayout::Form, |d| d.layer())
                     .child(Editor(cx.entity())),
             )
     }
