@@ -268,7 +268,7 @@ impl CloudPage {
                 .child(div().flex().flex_col().items_center()
                     .child(div().w_full().max_w(px(768.)).px(px(20.)).pb(px(20.))
                         .when(self.access.cloud,|d|d.child(self.current_page(cx))))))
-            .children(self.overlay(cx)).children(self.menu_overlay(cx)).into_any_element()
+            .children((!self.has_modal()).then(|| self.menu_overlay(cx)).flatten()).into_any_element()
     }
 
     fn current_button(

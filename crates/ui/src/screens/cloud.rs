@@ -108,6 +108,7 @@ pub struct CloudPage {
     expanded_workspace: bool,
     discard_to_list: bool,
     button_focus: RefCell<BTreeMap<SharedString, FocusHandle>>,
+    modal_focus: RefCell<Option<Vec<FocusHandle>>>,
     current: current::Current,
     current_mode: Option<bool>,
     route_pending: Option<String>,
@@ -147,6 +148,7 @@ impl CloudPage {
             expanded_workspace: false,
             discard_to_list: false,
             button_focus: RefCell::new(BTreeMap::new()),
+            modal_focus: RefCell::new(None),
             current: current::Current::default(),
             current_mode: None,
             route_pending: None,
@@ -157,6 +159,27 @@ impl CloudPage {
 
     pub fn access(&self) -> Access {
         self.access
+    }
+
+    fn has_modal(&self) -> bool {
+        self.unavailable || self.confirm.is_some() || self.packages || self.repository_picker
+    }
+
+    fn dismiss_modal(&mut self, cx: &mut Context<Self>) {
+        if self.pending && self.retry.is_none() {
+            return;
+        }
+        if self.menu.take().is_none() {
+            if self.confirm.take().is_some() {
+                self.discard_to_list = false;
+            } else {
+                self.unavailable = false;
+                self.packages = false;
+                self.repository_picker = false;
+                self.current.creating = false;
+            }
+        }
+        cx.notify();
     }
 
     pub fn load(&mut self, operation: Operation, cx: &mut Context<Self>) {
@@ -709,6 +732,11 @@ impl CloudPage {
             .entry(id.clone())
             .or_insert_with(|| cx.focus_handle().tab_stop(true))
             .clone();
+        if !disabled {
+            if let Some(controls) = self.modal_focus.borrow_mut().as_mut() {
+                controls.push(handle.clone());
+            }
+        }
         content
             .id(id)
             .role(gpui::Role::Button)
@@ -1849,6 +1877,7 @@ impl CloudPage {
                 .bg(gpui::rgba(0x00000060))
                 .child(
                     div()
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .w(px(640.))
                         .max_h(px(760.))
                         .p(px(24.))
@@ -2036,8 +2065,111 @@ impl Render for CloudPage {
                             })),
                     ),
             )
-            .children(self.overlay(cx))
-            .children(self.menu_overlay(cx))
+            .children((!self.has_modal()).then(|| self.menu_overlay(cx)).flatten())
+            .into_any_element()
+    }
+}
+
+pub struct CloudModal {
+    page: Entity<CloudPage>,
+    focus: FocusHandle,
+    return_focus: Option<FocusHandle>,
+    controls: Vec<FocusHandle>,
+    open: bool,
+}
+
+impl CloudModal {
+    pub fn new(page: Entity<CloudPage>, cx: &mut Context<Self>) -> Self {
+        cx.observe(&page, |_, _, cx| cx.notify()).detach();
+        Self {
+            page,
+            focus: cx.focus_handle(),
+            return_focus: None,
+            controls: Vec::new(),
+            open: false,
+        }
+    }
+
+    pub fn is_open(&self, cx: &App) -> bool {
+        self.page.read(cx).has_modal()
+    }
+
+    fn key(&mut self, event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.keystroke.key == "escape" {
+            self.page.update(cx, |page, cx| page.dismiss_modal(cx));
+        } else if event.keystroke.key == "tab"
+            && !event.keystroke.modifiers.control
+            && !event.keystroke.modifiers.alt
+            && !event.keystroke.modifiers.platform
+        {
+            if !self.controls.is_empty() {
+                let current = self
+                    .controls
+                    .iter()
+                    .position(|focus| focus.is_focused(window));
+                let next = if event.keystroke.modifiers.shift {
+                    current.map_or(self.controls.len() - 1, |index| {
+                        (index + self.controls.len() - 1) % self.controls.len()
+                    })
+                } else {
+                    current.map_or(0, |index| (index + 1) % self.controls.len())
+                };
+                self.controls[next].focus(window, cx);
+            }
+        } else {
+            return;
+        }
+        cx.stop_propagation();
+    }
+}
+
+impl Render for CloudModal {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.is_open(cx) {
+            if self.open {
+                if let Some(focus) = self.return_focus.take() {
+                    focus.focus(window, cx);
+                }
+            }
+            self.open = false;
+            return div().into_any_element();
+        }
+        self.controls.clear();
+        let reusable = std::mem::take(&mut self.controls);
+        let (content, controls) = self.page.update(cx, |page, cx| {
+            *page.modal_focus.borrow_mut() = Some(reusable);
+            let content = div()
+                .children(page.overlay(cx))
+                .children(page.menu_overlay(cx));
+            let controls = page.modal_focus.borrow_mut().take().unwrap_or_default();
+            (content, controls)
+        });
+        self.controls = controls;
+        if !self.open {
+            self.return_focus = window.focused(cx);
+            self.controls
+                .first()
+                .unwrap_or(&self.focus)
+                .focus(window, cx);
+        }
+        self.open = true;
+        div()
+            .id("cloud-modal-root")
+            .absolute()
+            .inset_0()
+            .occlude()
+            .font_family(crate::SANS)
+            .role(gpui::Role::Dialog)
+            .aria_label("Cloud environment dialog")
+            .track_focus(&self.focus)
+            .capture_key_down(cx.listener(Self::key))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.page.update(cx, |page, cx| page.dismiss_modal(cx));
+                }),
+            )
+            .child(content)
             .into_any_element()
     }
 }
@@ -2117,5 +2249,75 @@ mod tests {
                 assert!(page.error.is_none());
             });
         });
+    }
+
+    #[test]
+    fn modal_traps_tab_and_restores_focus_on_escape() {
+        struct Scene {
+            modal: Entity<CloudModal>,
+            background: FocusHandle,
+        }
+        impl Render for Scene {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .relative()
+                    .child(
+                        div()
+                            .id("background")
+                            .w(px(40.))
+                            .h(px(20.))
+                            .track_focus(&self.background),
+                    )
+                    .child(self.modal.clone())
+            }
+        }
+        let mut app = gpui::HeadlessAppContext::with_asset_source(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+        );
+        app.update(|cx| {
+            cx.set_global(Theme::dark());
+            theme::load_fonts(cx);
+        });
+        let page = app.update(|cx| cx.new(CloudPage::new));
+        page.update(&mut app, |page, _| page.confirm = Some("discard"));
+        let modal = app.update(|cx| cx.new(|cx| CloudModal::new(page.clone(), cx)));
+        let background = app.update(|cx| cx.focus_handle().tab_stop(true));
+        let scene_modal = modal.clone();
+        let scene_background = background.clone();
+        let window = app
+            .open_window(gpui::size(px(800.), px(600.)), |window, cx| {
+                scene_background.focus(window, cx);
+                cx.new(|_| Scene {
+                    modal: scene_modal,
+                    background: scene_background,
+                })
+            })
+            .unwrap();
+        app.run_until_parked();
+        let press = |app: &mut gpui::HeadlessAppContext, key: &str| {
+            app.update_window(window.into(), |_, window, cx| {
+                window.dispatch_keystroke(gpui::Keystroke::parse(key).unwrap(), cx);
+            })
+            .unwrap();
+            app.run_until_parked();
+        };
+        press(&mut app, "tab");
+        app.update_window(window.into(), |_, window, cx| {
+            assert!(page.read(cx).button_focus.borrow()["confirm-action"].is_focused(window));
+        })
+        .unwrap();
+        press(&mut app, "tab");
+        app.update_window(window.into(), |_, window, cx| {
+            assert!(page.read(cx).button_focus.borrow()["confirm-cancel"].is_focused(window));
+        })
+        .unwrap();
+        press(&mut app, "escape");
+        app.update_window(window.into(), |_, window, cx| {
+            assert!(!modal.read(cx).is_open(cx));
+            assert!(background.is_focused(window));
+        })
+        .unwrap();
     }
 }

@@ -46,8 +46,13 @@ pub fn create_cloud_task(host: &dyn host::Host, task: &CloudTaskRequest) -> Resu
     request(host, &identity, "POST", "/wham/tasks", Some(body))
 }
 
-pub(crate) fn attach(settings: &Entity<SettingsPage>, cx: &mut Context<Root>) -> Entity<CloudPage> {
+pub(crate) fn attach(
+    root: &mut Root,
+    settings: &Entity<SettingsPage>,
+    cx: &mut Context<Root>,
+) -> Entity<CloudPage> {
     let page = cx.new(CloudPage::new);
+    root.cloud_modal = Some(cx.new(|cx| ui::screens::cloud::CloudModal::new(page.clone(), cx)));
     settings.update(cx, |settings, cx| settings.set_cloud(page.clone(), cx));
     let observed = settings.downgrade();
     cx.observe(&page, move |_, _, cx| {
@@ -119,7 +124,7 @@ pub(crate) fn shell(root: &mut Root, path: &str, cx: &mut Context<Root>) -> Enti
         |root, _, event: &ui::screens::settings::SettingChanged, cx| root.write_setting(event, cx),
     )
     .detach();
-    let page = attach(&settings, cx);
+    let page = attach(root, &settings, cx);
     page.update(cx, |page, cx| page.open_path(path, cx));
     shell
 }

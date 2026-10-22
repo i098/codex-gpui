@@ -162,7 +162,6 @@ pub fn menus() -> Vec<gpui::Menu> {
     native_menus::menus()
 }
 
-
 /// The thread route's side panel tab.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SidePanel {
@@ -364,6 +363,7 @@ pub struct Root {
     /// The Mobile route's setup page.
     mobile_page: Option<Entity<mobile::MobileSetupPage>>,
     cloud: Option<cloud_task::Session>,
+    cloud_modal: Option<Entity<ui::screens::cloud::CloudModal>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
@@ -658,6 +658,7 @@ impl Root {
             archive_page: None,
             mobile_page: None,
             cloud: None,
+            cloud_modal: None,
             settings_section: None,
             settings_page: None,
             command_menu: None,
@@ -995,6 +996,7 @@ impl Root {
     /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
         self.cloud = None;
+        self.cloud_modal = None;
         self.automation_load = None;
         self.project_load = None;
         self.suggestion_load = None;
@@ -2052,7 +2054,6 @@ impl Root {
         }
     }
 
-
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
     /// Content ancestors can hold plain focus handles without being popovers.
@@ -2081,6 +2082,10 @@ impl Root {
             || keystroke.modifiers.platform
             || keystroke.modifiers.control
             || self.dialog.is_some()
+            || self
+                .cloud_modal
+                .as_ref()
+                .is_some_and(|modal| modal.read(cx).is_open(cx))
             || self.command_menu.is_some()
             || route_focus == self.focus
             || in_popover
@@ -2483,6 +2488,7 @@ impl Root {
                             .detach();
                         this.command_menu = None;
                         this.dialog = None;
+                        this.cloud_modal = None;
                         this.thread = None;
                         this.diff = None;
                         this.file = None;
@@ -2532,7 +2538,12 @@ impl Root {
     /// `⌘W`: Electron main runs `closeTab` (`close-active-app-shell-tab`) while the thread
     /// route's panel shows a tab, else the window closes.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dialog.is_some() {
+        if self.dialog.is_some()
+            || self
+                .cloud_modal
+                .as_ref()
+                .is_some_and(|modal| modal.read(cx).is_open(cx))
+        {
             return;
         }
         if let Some(side) = self.side.filter(|_| self.split.is_some()) {
@@ -5266,6 +5277,7 @@ impl Render for Root {
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(session.header.clone())
             }))
+            .children(self.cloud_modal.clone())
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
             .children(self.dialog.clone());

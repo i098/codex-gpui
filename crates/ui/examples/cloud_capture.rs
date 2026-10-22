@@ -1,15 +1,25 @@
-use gpui::{AnyView, AppContext as _, HeadlessAppContext, Render, Window, px, size};
+use gpui::{
+    AnyView, AppContext as _, Entity, HeadlessAppContext, ParentElement, Render, Styled, Window,
+    div, px, size,
+};
 use serde_json::Value;
 use std::sync::Arc;
 use ui::screens::{
-    cloud::{Access, CloudPage, Operation, Request},
+    cloud::{Access, CloudModal, CloudPage, Operation, Request},
     settings,
 };
 
-struct Root(AnyView);
+struct Root {
+    shell: AnyView,
+    modal: Entity<CloudModal>,
+}
 impl Render for Root {
     fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl gpui::IntoElement {
-        self.0.clone()
+        div()
+            .size_full()
+            .relative()
+            .child(self.shell.clone())
+            .child(self.modal.clone())
     }
 }
 
@@ -75,7 +85,11 @@ fn main() -> anyhow::Result<()> {
                 );
             }
         });
-        cx.new(|_| Root(shell.into()))
+        let modal = cx.new(|cx| CloudModal::new(cloud, cx));
+        cx.new(|_| Root {
+            shell: shell.into(),
+            modal,
+        })
     })?;
     cx.run_until_parked();
     cx.capture_screenshot(window.into())?.save(&output)?;

@@ -102,6 +102,7 @@ impl Root {
         self.archive_page = None;
         self.mobile_page = None;
         self.cloud = None;
+        self.cloud_modal = None;
         self.page = match self.state.route.clone() {
             Route::Remote { task_id, hotkey } => {
                 self.load_cloud_task(task_id, hotkey, window, cx);
