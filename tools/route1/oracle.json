@@ -18985,5 +18985,15 @@
   },
   "fn": false,
   "calls": []
+ },
+ "fetch POST vscode://codex/discover-remote-ssh-connections \"\"": {
+  "type": "fetch-response",
+  "responseType": "success",
+  "requestId": "capture-512d7a42-d713-4a13-b003-aadf11e30c4c",
+  "status": 200,
+  "headers": {
+   "content-type": "application/json"
+  },
+  "bodyJsonString": "{\"sshAliases\":[\"capture-fixture\"]}"
  }
 }

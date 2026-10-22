@@ -265,7 +265,7 @@ impl DiffPanel {
     }
 
     /// The directory a displayed file path is relative to.
-    fn file_root(&self) -> &str {
+    pub(super) fn file_root(&self) -> &str {
         if self.source == DiffSource::LastTurn {
             &self.workspace
         } else {
@@ -326,8 +326,8 @@ impl DiffPanel {
         }
         if menu.kind == Kind::Options {
             match index {
-                0 => self.files.iter_mut().for_each(|file| file.open = true),
-                1 => self.files.iter_mut().for_each(|file| file.open = false),
+                0 => self.set_all_files_open(true),
+                1 => self.set_all_files_open(false),
                 2 => self.wrap = !self.wrap,
                 _ => self.layout = self.layout.next(),
             }
@@ -377,7 +377,8 @@ impl DiffPanel {
                 cx.write_to_clipboard(ClipboardItem::new_string(path));
             }
             "Collapse file" | "Expand file" => {
-                file.open = !file.open;
+                let open = !file.open;
+                self.set_file_open(menu.file, open);
                 self.selection = None;
             }
             "Toggle line wrap" => self.wrap = !self.wrap,
@@ -585,7 +586,7 @@ impl DiffPanel {
     }
 }
 
-fn absolute_path(workspace: &str, relative: &str) -> String {
+pub(super) fn absolute_path(workspace: &str, relative: &str) -> String {
     let mut path = PathBuf::new();
     for component in Path::new(workspace).join(relative).components() {
         match component {
