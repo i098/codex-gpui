@@ -56,6 +56,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
 <key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
+<key>NSMicrophoneUsageDescription</key><string>Codex uses the microphone to turn your speech into text.</string>
 </dict></plist>
 PLIST
 plutil -lint "$app/Contents/Info.plist"

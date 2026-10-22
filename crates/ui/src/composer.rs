@@ -1990,6 +1990,13 @@ impl Render for Composer {
                     .child(self.editor(cx).when(self.request_number, |d| d.pr(px(30.))))
                     .when(self.request_number, |d| {
                         d.child(self.request_number_stepper(&t, cx))
+                    })
+                    .when(
+                        self.request_parent.is_some() && !self.secret && !self.request_number,
+                        |d| d.child(self.dictation_button(&t, cx)),
+                    )
+                    .when_some(self.dictation_error.clone(), |d, error| {
+                        d.child(text(error, 12., 16., 400., t.text))
                     }),
             );
         }
@@ -2142,6 +2149,9 @@ impl Render for Composer {
                 d.child(self.approval_card(&a, &t, cx))
             })
             .child(div().children(tray).child(card))
+            .when_some(self.dictation_error.clone(), |d, error| {
+                d.child(text(error, 12., 16., 400., t.text))
+            })
             .when_some(self.context_menu.as_ref(), |d, menu| {
                 d.child(menu.overlay(
                     "composer-menu",

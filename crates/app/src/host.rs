@@ -1376,6 +1376,7 @@ impl CloudHost {
             .unwrap_or("GET")
             .to_ascii_uppercase();
         let body = request["body"].as_str().map(str::to_owned);
+        let timeout = request["timeoutMs"].as_u64().map(Duration::from_millis);
         let binary_body = request["bodyBase64"]
             .as_str()
             .map(|body| {
@@ -1511,13 +1512,19 @@ impl CloudHost {
             }
             let bad = |e: ureq::http::Error| (400, e.to_string());
             let response = match (&binary_body, &body) {
-                (Some(body), _) => {
-                    self.run_request(builder.body(body.clone()).map_err(bad)?, body_timeout)
+                (Some(body), _) => self.run_request(
+                    builder.body(body.clone()).map_err(bad)?,
+                    body_timeout,
+                    timeout,
+                ),
+                (None, Some(body)) => self.run_request(
+                    builder.body(body.clone()).map_err(bad)?,
+                    body_timeout,
+                    timeout,
+                ),
+                (None, None) => {
+                    self.run_request(builder.body(()).map_err(bad)?, body_timeout, timeout)
                 }
-                (None, Some(body)) => {
-                    self.run_request(builder.body(body.clone()).map_err(bad)?, body_timeout)
-                }
-                (None, None) => self.run_request(builder.body(()).map_err(bad)?, body_timeout),
             }
             .map_err(|e| (500, e.to_string()))?;
             if integrity {
@@ -1536,12 +1543,14 @@ impl CloudHost {
         &self,
         request: ureq::http::Request<B>,
         body_timeout: Option<Duration>,
+        timeout: Option<Duration>,
     ) -> std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error> {
         use ureq::RequestExt as _;
         request
             .with_agent(&self.agent)
             .configure()
             .timeout_recv_body(body_timeout)
+            .timeout_global(timeout)
             .build()
             .run()
     }

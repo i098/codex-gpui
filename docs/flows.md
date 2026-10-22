@@ -350,7 +350,7 @@ The original recordings, masks and strict gates stay unchanged; remaining toolti
 | 10 | `+` Add files and more | click | Context menu (files, photos, @-mentions). | Opens the system file picker at once. | FAIL (`crates/ui/src/composer.rs` `add_files`: no context menu) |
 | 11 | `Custom` permissions | click | Permissions dropdown. | Opens; Escape closes. | PASS (`permissions_popover`) |
 | 12 | Model picker | click | Model and effort menu. | Opens; Escape closes. | PASS (`model_picker_popover`) |
-| 13 | `Dictate` | click | Starts dictation. | No handler. | NOT WIRED (`crates/ui/src/composer.rs`, `dictate`) |
+| 13 | `Dictate` | click | Starts dictation. | Uses native macOS capture and authenticated `/transcribe`; inserts at the initiating Composer selection. | WIRED; live microphone acceptance remains gated. |
 | 14 | `Start new voice chat` | click | Starts realtime voice. | With an empty draft the button calls `submit`, which does nothing. | NOT WIRED (`crates/ui/src/composer.rs`, `send`) |
 | 15 | Submit with Enter | shortcut | `thread/start`, `turn/start`, navigates to the thread. | Same; the turn streams in; the draft clears; also by clicking Send. | PASS (`submit_enter_starts_thread`, `submit_click_send`) |
 | 16 | Hover on every button | hover | Ghost background fades in. | Hover fill on composer buttons (checked on `Dictate`). | PASS (`composer_button_hover`) |
@@ -368,6 +368,13 @@ Consumers can wait before submitting a draft. A closed event stream fails instea
 `Dispatcher::new` receives the initiating `Window` and `App`, so a capture service can select that window's host.
 Typing, IME edits, mentions, and slash commands cancel dictation and emit `Completion::Cancelled`.
 Comment owners call `finish_dictation` and wait for `Completion::Succeeded` before saving the inserted transcript.
+
+The app installs `app::dictation::dispatcher`, which reads the initiating window's current `CloudHost`.
+Host replacement cancels only that window's session; route changes and window closure also cancel the active session.
+Transcription requests have a 60-second deadline; streaming requests keep their existing timeout policy.
+Request text fields share the dispatcher; secret and numeric fields do not expose Dictate.
+The `app` integration test uses generated WAV bytes and a loopback HTTP response, not a microphone or speech recognition.
+Run `cargo test -p app --features test-support --test dictation -- --test-threads=1` for that controlled path.
 
 ## 14.4 Thread view
 
