@@ -93,9 +93,7 @@ impl<S: Read + Write + Debug> Debug for MaybeTlsStream<S> {
                     }
                 }
 
-                f.debug_tuple("MaybeTlsStream::Rustls")
-                    .field(&RustlsStreamDebug(s))
-                    .finish()
+                f.debug_tuple("MaybeTlsStream::Rustls").field(&RustlsStreamDebug(s)).finish()
             }
         }
     }

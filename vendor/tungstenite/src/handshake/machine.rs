@@ -20,17 +20,11 @@ pub struct HandshakeMachine<Stream> {
 impl<Stream> HandshakeMachine<Stream> {
     /// Start reading data from the peer.
     pub fn start_read(stream: Stream) -> Self {
-        Self {
-            stream,
-            state: HandshakeState::Reading(ReadBuffer::new(), AttackCheck::new()),
-        }
+        Self { stream, state: HandshakeState::Reading(ReadBuffer::new(), AttackCheck::new()) }
     }
     /// Start writing data to the peer.
     pub fn start_write<D: Into<Vec<u8>>>(stream: Stream, data: D) -> Self {
-        HandshakeMachine {
-            stream,
-            state: HandshakeState::Writing(Cursor::new(data.into())),
-        }
+        HandshakeMachine { stream, state: HandshakeState::Writing(Cursor::new(data.into())) }
     }
     /// Returns a shared reference to the inner stream.
     pub fn get_ref(&self) -> &Stream {
@@ -56,21 +50,19 @@ impl<Stream: Read + Write> HandshakeMachine<Stream> {
                         // TODO: this is slow for big headers with too many small packets.
                         // The parser has to be reworked in order to work on streams instead
                         // of buffers.
-                        Ok(
-                            if let Some((size, obj)) = Obj::try_parse(Buf::chunk(&buf))? {
-                                buf.advance(size);
-                                RoundResult::StageFinished(StageResult::DoneReading {
-                                    result: obj,
-                                    stream: self.stream,
-                                    tail: buf.into_vec(),
-                                })
-                            } else {
-                                RoundResult::Incomplete(HandshakeMachine {
-                                    state: HandshakeState::Reading(buf, attack_check),
-                                    ..self
-                                })
-                            },
-                        )
+                        Ok(if let Some((size, obj)) = Obj::try_parse(Buf::chunk(&buf))? {
+                            buf.advance(size);
+                            RoundResult::StageFinished(StageResult::DoneReading {
+                                result: obj,
+                                stream: self.stream,
+                                tail: buf.into_vec(),
+                            })
+                        } else {
+                            RoundResult::Incomplete(HandshakeMachine {
+                                state: HandshakeState::Reading(buf, attack_check),
+                                ..self
+                            })
+                        })
                     }
                     None => Ok(RoundResult::WouldBlock(HandshakeMachine {
                         state: HandshakeState::Reading(buf, attack_check),
@@ -128,11 +120,7 @@ pub enum RoundResult<Obj, Stream> {
 pub enum StageResult<Obj, Stream> {
     /// Reading round finished.
     #[allow(missing_docs)]
-    DoneReading {
-        result: Obj,
-        stream: Stream,
-        tail: Vec<u8>,
-    },
+    DoneReading { result: Obj, stream: Stream, tail: Vec<u8> },
     /// Writing round finished.
     DoneWriting(Stream),
 }
@@ -167,10 +155,7 @@ pub(crate) struct AttackCheck {
 impl AttackCheck {
     /// Initialize attack checking for incoming buffer.
     fn new() -> Self {
-        Self {
-            number_of_packets: 0,
-            number_of_bytes: 0,
-        }
+        Self { number_of_packets: 0, number_of_bytes: 0 }
     }
 
     /// Check the size of an incoming packet. To be called immediately after `read()`

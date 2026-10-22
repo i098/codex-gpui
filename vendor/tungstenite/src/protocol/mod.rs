@@ -176,10 +176,7 @@ impl<Stream> WebSocket<Stream> {
     /// # Panics
     /// Panics if config is invalid e.g. `max_write_buffer_size <= write_buffer_size`.
     pub fn from_raw_socket(stream: Stream, role: Role, config: Option<WebSocketConfig>) -> Self {
-        WebSocket {
-            socket: stream,
-            context: WebSocketContext::new(role, config),
-        }
+        WebSocket { socket: stream, context: WebSocketContext::new(role, config) }
     }
 
     /// Convert a raw socket into a WebSocket without performing a handshake.
@@ -396,11 +393,7 @@ impl WebSocketContext {
     /// Panics if config is invalid e.g. `max_write_buffer_size <= write_buffer_size`.
     pub fn from_partially_read(part: Vec<u8>, role: Role, config: Option<WebSocketConfig>) -> Self {
         let conf = config.unwrap_or_default();
-        Self::_new(
-            role,
-            FrameCodec::from_partially_read(part, conf.read_buffer_size),
-            conf,
-        )
+        Self::_new(role, FrameCodec::from_partially_read(part, conf.read_buffer_size), conf)
     }
 
     fn _new(role: Role, mut frame: FrameCodec, config: WebSocketConfig) -> Self {
@@ -425,10 +418,8 @@ impl WebSocketContext {
     pub fn set_config(&mut self, set_func: impl FnOnce(&mut WebSocketConfig)) {
         set_func(&mut self.config);
         self.config.assert_valid();
-        self.frame
-            .set_max_out_buffer_len(self.config.max_write_buffer_size);
-        self.frame
-            .set_out_buffer_write_len(self.config.write_buffer_size);
+        self.frame.set_max_out_buffer_len(self.config.max_write_buffer_size);
+        self.frame.set_out_buffer_write_len(self.config.write_buffer_size);
     }
 
     /// Read the configuration.
@@ -775,9 +766,7 @@ impl WebSocketContext {
         }
 
         trace!("Sending frame: {frame:?}");
-        self.frame
-            .buffer_frame(stream, frame)
-            .check_connection_reset(self.state)
+        self.frame.buffer_frame(stream, frame).check_connection_reset(self.state)
     }
 
     /// Replace `additional_send` if it is currently a `Pong` message.
@@ -795,10 +784,7 @@ impl WebSocketContext {
 fn check_max_size(size: usize, max_size: Option<usize>) -> crate::Result<()> {
     if let Some(max_size) = max_size {
         if size > max_size {
-            return Err(Error::Capacity(CapacityError::MessageTooLong {
-                size,
-                max_size,
-            }));
+            return Err(Error::Capacity(CapacityError::MessageTooLong { size, max_size }));
         }
     }
     Ok(())
@@ -895,14 +881,8 @@ mod tests {
         let mut socket = WebSocket::from_raw_socket(WriteMoc(incoming), Role::Client, None);
         assert_eq!(socket.read().unwrap(), Message::Ping(vec![1, 2].into()));
         assert_eq!(socket.read().unwrap(), Message::Pong(vec![3].into()));
-        assert_eq!(
-            socket.read().unwrap(),
-            Message::Text("Hello, World!".into())
-        );
-        assert_eq!(
-            socket.read().unwrap(),
-            Message::Binary(vec![0x01, 0x02, 0x03].into())
-        );
+        assert_eq!(socket.read().unwrap(), Message::Text("Hello, World!".into()));
+        assert_eq!(socket.read().unwrap(), Message::Binary(vec![0x01, 0x02, 0x03].into()));
     }
 
     #[test]
@@ -911,36 +891,24 @@ mod tests {
             0x01, 0x07, 0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x2c, 0x20, 0x80, 0x06, 0x57, 0x6f, 0x72,
             0x6c, 0x64, 0x21,
         ]);
-        let limit = WebSocketConfig {
-            max_message_size: Some(10),
-            ..WebSocketConfig::default()
-        };
+        let limit = WebSocketConfig { max_message_size: Some(10), ..WebSocketConfig::default() };
         let mut socket = WebSocket::from_raw_socket(WriteMoc(incoming), Role::Client, Some(limit));
 
         assert!(matches!(
             socket.read(),
-            Err(Error::Capacity(CapacityError::MessageTooLong {
-                size: 13,
-                max_size: 10
-            }))
+            Err(Error::Capacity(CapacityError::MessageTooLong { size: 13, max_size: 10 }))
         ));
     }
 
     #[test]
     fn size_limiting_binary() {
         let incoming = Cursor::new(vec![0x82, 0x03, 0x01, 0x02, 0x03]);
-        let limit = WebSocketConfig {
-            max_message_size: Some(2),
-            ..WebSocketConfig::default()
-        };
+        let limit = WebSocketConfig { max_message_size: Some(2), ..WebSocketConfig::default() };
         let mut socket = WebSocket::from_raw_socket(WriteMoc(incoming), Role::Client, Some(limit));
 
         assert!(matches!(
             socket.read(),
-            Err(Error::Capacity(CapacityError::MessageTooLong {
-                size: 3,
-                max_size: 2
-            }))
+            Err(Error::Capacity(CapacityError::MessageTooLong { size: 3, max_size: 2 }))
         ));
     }
 }

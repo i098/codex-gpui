@@ -18,10 +18,7 @@ mod string_collect {
 
     impl StringCollector {
         pub fn new() -> Self {
-            StringCollector {
-                data: String::new(),
-                incomplete: None,
-            }
+            StringCollector { data: String::new(), incomplete: None }
         }
 
         pub fn len(&self) -> usize {
@@ -54,23 +51,14 @@ mod string_collect {
                         self.data.push_str(text);
                         Ok(())
                     }
-                    Err(DecodeError::Incomplete {
-                        valid_prefix,
-                        incomplete_suffix,
-                    }) => {
+                    Err(DecodeError::Incomplete { valid_prefix, incomplete_suffix }) => {
                         self.data.push_str(valid_prefix);
                         self.incomplete = Some(incomplete_suffix);
                         Ok(())
                     }
-                    Err(DecodeError::Invalid {
-                        valid_prefix,
-                        invalid_sequence,
-                        ..
-                    }) => {
+                    Err(DecodeError::Invalid { valid_prefix, invalid_sequence, .. }) => {
                         self.data.push_str(valid_prefix);
-                        Err(Error::Utf8(
-                            String::from_utf8_lossy(invalid_sequence).into(),
-                        ))
+                        Err(Error::Utf8(String::from_utf8_lossy(invalid_sequence).into()))
                     }
                 }
             } else {

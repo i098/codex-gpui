@@ -66,20 +66,14 @@ impl<S: Read + Write> ClientHandshake<S> {
         let client = {
             let accept_key = derive_accept_key(key.as_ref());
             ClientHandshake {
-                verify_data: VerifyData {
-                    accept_key,
-                    subprotocols,
-                },
+                verify_data: VerifyData { accept_key, subprotocols },
                 config,
                 _marker: PhantomData,
             }
         };
 
         trace!("Client handshake initiated.");
-        Ok(MidHandshake {
-            role: client,
-            machine,
-        })
+        Ok(MidHandshake { role: client, machine })
     }
 }
 
@@ -95,11 +89,7 @@ impl<S: Read + Write> HandshakeRole for ClientHandshake<S> {
             StageResult::DoneWriting(stream) => {
                 ProcessingResult::Continue(HandshakeMachine::start_read(stream))
             }
-            StageResult::DoneReading {
-                stream,
-                result,
-                tail,
-            } => {
+            StageResult::DoneReading { stream, result, tail } => {
                 let result = match self.verify_data.verify_response(result) {
                     Ok(r) => r,
                     Err(Error::Http(mut e)) => {
@@ -124,24 +114,15 @@ pub fn generate_request(mut request: Request) -> Result<(Vec<u8>, String)> {
     write!(
         req,
         "GET {path} {version}\r\n",
-        path = request
-            .uri()
-            .path_and_query()
-            .ok_or(Error::Url(UrlError::NoPathOrQuery))?
-            .as_str(),
+        path = request.uri().path_and_query().ok_or(Error::Url(UrlError::NoPathOrQuery))?.as_str(),
         version = version_as_str(request.version())?,
     )
     .unwrap();
 
     // Headers that must be present in a correct request.
     const KEY_HEADERNAME: &str = "Sec-WebSocket-Key";
-    const WEBSOCKET_HEADERS: [&str; 5] = [
-        "Host",
-        "Connection",
-        "Upgrade",
-        "Sec-WebSocket-Version",
-        KEY_HEADERNAME,
-    ];
+    const WEBSOCKET_HEADERS: [&str; 5] =
+        ["Host", "Connection", "Upgrade", "Sec-WebSocket-Version", KEY_HEADERNAME];
 
     // We must extract a WebSocket key from a properly formed request or fail if it's not present.
     let key = request
@@ -149,9 +130,7 @@ pub fn generate_request(mut request: Request) -> Result<(Vec<u8>, String)> {
         .get(KEY_HEADERNAME)
         .ok_or_else(|| {
             Error::Protocol(ProtocolError::InvalidHeader(
-                HeaderName::from_bytes(KEY_HEADERNAME.as_bytes())
-                    .unwrap()
-                    .into(),
+                HeaderName::from_bytes(KEY_HEADERNAME.as_bytes()).unwrap().into(),
             ))
         })?
         .to_str()?
@@ -176,9 +155,7 @@ pub fn generate_request(mut request: Request) -> Result<(Vec<u8>, String)> {
             "{header}: {value}\r\n",
             header = header,
             value = value.to_str().map_err(|err| {
-                Error::Utf8(format!(
-                    "{err} for header name '{header}' with value: {value:?}"
-                ))
+                Error::Utf8(format!("{err} for header name '{header}' with value: {value:?}"))
             })?
         )
         .unwrap();
@@ -186,11 +163,8 @@ pub fn generate_request(mut request: Request) -> Result<(Vec<u8>, String)> {
 
     // Now we must ensure that the headers that we've written once are not anymore present in the map.
     // If they do, then the request is invalid (some headers are duplicated there for some reason).
-    let websocket_headers_contains = |name| {
-        WEBSOCKET_HEADERS
-            .iter()
-            .any(|h| h.eq_ignore_ascii_case(name))
-    };
+    let websocket_headers_contains =
+        |name| WEBSOCKET_HEADERS.iter().any(|h| h.eq_ignore_ascii_case(name));
 
     for (k, v) in headers {
         let mut name = k.as_str();
@@ -198,9 +172,7 @@ pub fn generate_request(mut request: Request) -> Result<(Vec<u8>, String)> {
         // We have already written the necessary headers once (above) and removed them from the map.
         // If we encounter them again, then the request is considered invalid and error is returned.
         if websocket_headers_contains(name) {
-            return Err(Error::Protocol(ProtocolError::InvalidHeader(
-                k.clone().into(),
-            )));
+            return Err(Error::Protocol(ProtocolError::InvalidHeader(k.clone().into())));
         }
 
         // Relates to the issue of some servers treating headers in a case-sensitive way, please see:
@@ -230,13 +202,7 @@ pub fn generate_request(mut request: Request) -> Result<(Vec<u8>, String)> {
 
 fn extract_subprotocols_from_request(request: &Request) -> Result<Option<Vec<String>>> {
     if let Some(subprotocols) = request.headers().get("Sec-WebSocket-Protocol") {
-        Ok(Some(
-            subprotocols
-                .to_str()?
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .collect(),
-        ))
+        Ok(Some(subprotocols.to_str()?.split(',').map(|s| s.trim().to_string()).collect()))
     } else {
         Ok(None)
     }
@@ -272,9 +238,7 @@ impl VerifyData {
             .map(|h| h.eq_ignore_ascii_case("websocket"))
             .unwrap_or(false)
         {
-            return Err(Error::Protocol(
-                ProtocolError::MissingUpgradeWebSocketHeader,
-            ));
+            return Err(Error::Protocol(ProtocolError::MissingUpgradeWebSocketHeader));
         }
         // 3.  If the response lacks a |Connection| header field or the
         // |Connection| header field doesn't contain a token that is an
@@ -286,22 +250,14 @@ impl VerifyData {
             .map(|h| h.eq_ignore_ascii_case("Upgrade"))
             .unwrap_or(false)
         {
-            return Err(Error::Protocol(
-                ProtocolError::MissingConnectionUpgradeHeader,
-            ));
+            return Err(Error::Protocol(ProtocolError::MissingConnectionUpgradeHeader));
         }
         // 4.  If the response lacks a |Sec-WebSocket-Accept| header field or
         // the |Sec-WebSocket-Accept| contains a value other than the
         // base64-encoded SHA-1 of ... the client MUST _Fail the WebSocket
         // Connection_. (RFC 6455)
-        if !headers
-            .get("Sec-WebSocket-Accept")
-            .map(|h| h == &self.accept_key)
-            .unwrap_or(false)
-        {
-            return Err(Error::Protocol(
-                ProtocolError::SecWebSocketAcceptKeyMismatch,
-            ));
+        if !headers.get("Sec-WebSocket-Accept").map(|h| h == &self.accept_key).unwrap_or(false) {
+            return Err(Error::Protocol(ProtocolError::SecWebSocketAcceptKeyMismatch));
         }
         // 5.  If the response includes a |Sec-WebSocket-Extensions| header
         // field and this header field indicates the use of an extension
@@ -316,27 +272,23 @@ impl VerifyData {
         // subprotocol not requested by the client), the client MUST _Fail
         // the WebSocket Connection_. (RFC 6455)
         if headers.get("Sec-WebSocket-Protocol").is_none() && self.subprotocols.is_some() {
-            return Err(Error::Protocol(
-                ProtocolError::SecWebSocketSubProtocolError(SubProtocolError::NoSubProtocol),
-            ));
+            return Err(Error::Protocol(ProtocolError::SecWebSocketSubProtocolError(
+                SubProtocolError::NoSubProtocol,
+            )));
         }
 
         if headers.get("Sec-WebSocket-Protocol").is_some() && self.subprotocols.is_none() {
-            return Err(Error::Protocol(
-                ProtocolError::SecWebSocketSubProtocolError(
-                    SubProtocolError::ServerSentSubProtocolNoneRequested,
-                ),
-            ));
+            return Err(Error::Protocol(ProtocolError::SecWebSocketSubProtocolError(
+                SubProtocolError::ServerSentSubProtocolNoneRequested,
+            )));
         }
 
         if let Some(returned_subprotocol) = headers.get("Sec-WebSocket-Protocol") {
             if let Some(accepted_subprotocols) = &self.subprotocols {
                 if !accepted_subprotocols.contains(&returned_subprotocol.to_str()?.to_string()) {
-                    return Err(Error::Protocol(
-                        ProtocolError::SecWebSocketSubProtocolError(
-                            SubProtocolError::InvalidSubProtocol,
-                        ),
-                    ));
+                    return Err(Error::Protocol(ProtocolError::SecWebSocketSubProtocolError(
+                        SubProtocolError::InvalidSubProtocol,
+                    )));
                 }
             }
         }
@@ -428,9 +380,7 @@ mod tests {
 
     #[test]
     fn request_formatting_with_host() {
-        let request = "wss://localhost:9001/getCaseCount"
-            .into_client_request()
-            .unwrap();
+        let request = "wss://localhost:9001/getCaseCount".into_client_request().unwrap();
         let (request, key) = generate_request(request).unwrap();
         let correct = construct_expected("localhost:9001", &key);
         assert_eq!(&request[..], &correct[..]);
@@ -438,9 +388,7 @@ mod tests {
 
     #[test]
     fn request_formatting_with_at() {
-        let request = "wss://user:pass@localhost:9001/getCaseCount"
-            .into_client_request()
-            .unwrap();
+        let request = "wss://user:pass@localhost:9001/getCaseCount".into_client_request().unwrap();
         let (request, key) = generate_request(request).unwrap();
         let correct = construct_expected("localhost:9001", &key);
         assert_eq!(&request[..], &correct[..]);
@@ -451,10 +399,7 @@ mod tests {
         const DATA: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
         let (_, resp) = Response::try_parse(DATA).unwrap().unwrap();
         assert_eq!(resp.status(), http::StatusCode::OK);
-        assert_eq!(
-            resp.headers().get("Content-Type").unwrap(),
-            &b"text/html"[..],
-        );
+        assert_eq!(resp.headers().get("Content-Type").unwrap(), &b"text/html"[..],);
     }
 
     #[test]

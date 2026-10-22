@@ -12,9 +12,7 @@ fn main() {
         println!("* {header}");
     }
 
-    socket
-        .send(Message::Text("Hello WebSocket".into()))
-        .unwrap();
+    socket.send(Message::Text("Hello WebSocket".into())).unwrap();
     loop {
         let msg = socket.read().expect("Error reading message");
         println!("Received: {msg}");

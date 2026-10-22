@@ -46,15 +46,10 @@ fn create_parts<T>(request: &HttpRequest<T>) -> Result<Builder> {
         .headers()
         .get("Connection")
         .and_then(|h| h.to_str().ok())
-        .map(|h| {
-            h.split([' ', ','])
-                .any(|p| p.eq_ignore_ascii_case("Upgrade"))
-        })
+        .map(|h| h.split([' ', ',']).any(|p| p.eq_ignore_ascii_case("Upgrade")))
         .unwrap_or(false)
     {
-        return Err(Error::Protocol(
-            ProtocolError::MissingConnectionUpgradeHeader,
-        ));
+        return Err(Error::Protocol(ProtocolError::MissingConnectionUpgradeHeader));
     }
 
     if !request
@@ -64,20 +59,11 @@ fn create_parts<T>(request: &HttpRequest<T>) -> Result<Builder> {
         .map(|h| h.eq_ignore_ascii_case("websocket"))
         .unwrap_or(false)
     {
-        return Err(Error::Protocol(
-            ProtocolError::MissingUpgradeWebSocketHeader,
-        ));
+        return Err(Error::Protocol(ProtocolError::MissingUpgradeWebSocketHeader));
     }
 
-    if !request
-        .headers()
-        .get("Sec-WebSocket-Version")
-        .map(|h| h == "13")
-        .unwrap_or(false)
-    {
-        return Err(Error::Protocol(
-            ProtocolError::MissingSecWebSocketVersionHeader,
-        ));
+    if !request.headers().get("Sec-WebSocket-Version").map(|h| h == "13").unwrap_or(false) {
+        return Err(Error::Protocol(ProtocolError::MissingSecWebSocketVersionHeader));
     }
 
     let key = request
@@ -250,11 +236,7 @@ impl<S: Read + Write, C: Callback> HandshakeRole for ServerHandshake<S, C> {
         finish: StageResult<Self::IncomingData, Self::InternalStream>,
     ) -> Result<ProcessingResult<Self::InternalStream, Self::FinalResult>> {
         Ok(match finish {
-            StageResult::DoneReading {
-                stream,
-                result,
-                tail,
-            } => {
+            StageResult::DoneReading { stream, result, tail } => {
                 if !tail.is_empty() {
                     return Err(Error::Protocol(ProtocolError::JunkAfterRequest));
                 }

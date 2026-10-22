@@ -197,14 +197,7 @@ impl FrameHeader {
             _ => (),
         }
 
-        let hdr = FrameHeader {
-            is_final,
-            rsv1,
-            rsv2,
-            rsv3,
-            opcode,
-            mask,
-        };
+        let hdr = FrameHeader { is_final, rsv1, rsv2, rsv3, opcode, mask };
 
         Ok(Some((hdr, length)))
     }
@@ -300,16 +293,9 @@ impl Frame {
     /// Create a new data frame.
     #[inline]
     pub fn message(data: impl Into<Bytes>, opcode: OpCode, is_final: bool) -> Frame {
-        debug_assert!(
-            matches!(opcode, OpCode::Data(_)),
-            "Invalid opcode for data frame."
-        );
+        debug_assert!(matches!(opcode, OpCode::Data(_)), "Invalid opcode for data frame.");
         Frame {
-            header: FrameHeader {
-                is_final,
-                opcode,
-                ..FrameHeader::default()
-            },
+            header: FrameHeader { is_final, opcode, ..FrameHeader::default() },
             payload: data.into(),
         }
     }
@@ -350,10 +336,7 @@ impl Frame {
             <_>::default()
         };
 
-        Frame {
-            header: FrameHeader::default(),
-            payload: payload.into(),
-        }
+        Frame { header: FrameHeader::default(), payload: payload.into() }
     }
 
     /// Create a frame from given header and data.
@@ -488,10 +471,7 @@ mod tests {
         let mut payload = Vec::new();
         raw.read_to_end(&mut payload).unwrap();
         let frame = Frame::from_payload(header, payload.into());
-        assert_eq!(
-            frame.into_payload(),
-            &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07][..]
-        );
+        assert_eq!(frame.into_payload(), &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07][..]);
     }
 
     #[test]
@@ -512,11 +492,7 @@ mod tests {
 
     #[test]
     fn display() {
-        let f = Frame::message(
-            Bytes::from_static(b"hi there"),
-            OpCode::Data(Data::Text),
-            true,
-        );
+        let f = Frame::message(Bytes::from_static(b"hi there"), OpCode::Data(Data::Text), true);
         let view = format!("{f}");
         assert!(view.contains("payload:"));
     }

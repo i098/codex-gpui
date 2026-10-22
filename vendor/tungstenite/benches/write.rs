@@ -17,10 +17,7 @@ struct MockWrite(Vec<u8>);
 
 impl io::Read for MockWrite {
     fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
-        Err(io::Error::new(
-            io::ErrorKind::WouldBlock,
-            "reads not supported",
-        ))
+        Err(io::Error::new(io::ErrorKind::WouldBlock, "reads not supported"))
     }
 }
 impl io::Write for MockWrite {

@@ -837,18 +837,17 @@ impl DiffPanel {
                 .files
                 .iter_mut()
                 .find(|old| old.path_key == file.path_key)
+                && file.raw == old.raw
             {
-                if file.raw == old.raw {
-                    file.full = old.full.take();
-                    file.imports = old.imports.take();
-                    file.full_error = old.full_error.take();
-                    file.original_hunks = old.original_hunks.take();
-                    if file.original_hunks.is_some() {
-                        file.hunks = std::mem::take(&mut old.hunks);
-                    }
-                    if old.preview.as_ref().is_some_and(preview::Preview::loaded) {
-                        file.preview = old.preview.take();
-                    }
+                file.full = old.full.take();
+                file.imports = old.imports.take();
+                file.full_error = old.full_error.take();
+                file.original_hunks = old.original_hunks.take();
+                if file.original_hunks.is_some() {
+                    file.hunks = std::mem::take(&mut old.hunks);
+                }
+                if old.preview.as_ref().is_some_and(preview::Preview::loaded) {
+                    file.preview = old.preview.take();
                 }
             }
             file.open = self

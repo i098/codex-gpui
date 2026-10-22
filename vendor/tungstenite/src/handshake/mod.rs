@@ -41,10 +41,7 @@ impl<Role: HandshakeRole> MidHandshake<Role> {
         loop {
             mach = match mach.single_round()? {
                 RoundResult::WouldBlock(m) => {
-                    return Err(HandshakeError::Interrupted(MidHandshake {
-                        machine: m,
-                        ..self
-                    }))
+                    return Err(HandshakeError::Interrupted(MidHandshake { machine: m, ..self }))
                 }
                 RoundResult::Incomplete(m) => m,
                 RoundResult::StageFinished(s) => match self.role.stage_finished(s)? {
@@ -143,9 +140,6 @@ mod tests {
     #[test]
     fn key_conversion() {
         // example from RFC 6455
-        assert_eq!(
-            derive_accept_key(b"dGhlIHNhbXBsZSBub25jZQ=="),
-            "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
-        );
+        assert_eq!(derive_accept_key(b"dGhlIHNhbXBsZSBub25jZQ=="), "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
     }
 }
