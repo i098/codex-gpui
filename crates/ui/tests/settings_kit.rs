@@ -5,6 +5,7 @@ use gpui::{
     size,
 };
 use std::sync::Arc;
+use ui::composer::Composer;
 use ui::settings_kit::{Choice, MultiSelect};
 
 fn press(cx: &mut HeadlessAppContext, window: AnyWindowHandle, key: &str) {
@@ -184,4 +185,34 @@ fn link_opens_once_when_enter_is_released() {
         cx.take_opened_url().as_deref(),
         Some("https://example.com/docs")
     );
+}
+
+#[test]
+fn enter_respects_single_line_and_multiline_form_fields() {
+    let mut app =
+        HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
+    app.update(|cx| {
+        cx.set_global(theme::Theme::dark());
+        theme::load_fonts(cx);
+        ui::composer::bind_keys(cx);
+    });
+    for (multiline, expected) in [(false, "abc"), (true, "ab\nc")] {
+        let input = app.update(|cx| {
+            cx.new(|cx| Composer::settings_form_field("Environment name", "", "", multiline, cx))
+        });
+        let view = input.clone();
+        let window = app
+            .open_window(size(px(320.), px(120.)), move |window, cx| {
+                view.read(cx).focus_handle(cx).focus(window, cx);
+                view
+            })
+            .unwrap();
+        app.run_until_parked();
+        for key in ["a", "b", "enter", "c"] {
+            press(&mut app, window.into(), key);
+        }
+        app.update(|cx| assert_eq!(input.read(cx).field_text(), expected));
+        app.update_window(window.into(), |_, window, _| window.remove_window())
+            .unwrap();
+    }
 }
