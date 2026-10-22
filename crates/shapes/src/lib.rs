@@ -271,6 +271,27 @@ pub fn top_fade(fade: Pixels) -> impl IntoElement {
     )
 }
 
+/// A vertical linear gradient from `color` to transparent over the parent's box.
+pub fn vertical_fade(color: Hsla) -> impl IntoElement {
+    cover(
+        |_, _, _| {},
+        move |bounds, (), window, _cx| {
+            #[cfg(target_os = "macos")]
+            mask::paint_vertical_fade(color, bounds, window, _cx);
+            #[cfg(not(target_os = "macos"))]
+            window.paint_quad(gpui::fill(
+                bounds,
+                gpui::linear_gradient(
+                    180.,
+                    gpui::linear_color_stop(color, 0.),
+                    gpui::linear_color_stop(color.opacity(0.), 1.),
+                ),
+            ));
+        },
+    )
+}
+
+
 /// CSS `mask-image: linear-gradient(to right, transparent, black <left>, black calc(100% -
 /// <right>), transparent)` over its parent (`.text-fade-truncate` has `left` 0), which must be
 /// a `.layer()` element, like [`top_fade`]: put it last. macOS only, like [`top_fade`].

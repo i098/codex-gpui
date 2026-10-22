@@ -3,7 +3,7 @@
 //! GPUI layer's pixel with [`DST_IN`] sprites.
 
 use crate::skia::{
-    ARGB32, Blits, CLIP, DST_IN, MASK, OPACITY, paint_sprites, sprites, tile_pixels,
+    ARGB32, Blits, CLIP, DST_IN, MASK, OPACITY, PIPELINE, paint_sprites, sprites, tile_pixels,
 };
 use gpui::{App, Bounds, Corners, Hsla, Pixels, Rgba, Window};
 use skia_safe::{Color4f, Paint, RRect, Rect, Vector};
@@ -51,6 +51,30 @@ pub(crate) fn paint_top_fade(fade: Pixels, bounds: Bounds<Pixels>, window: &mut 
     });
     paint_sprites(&sprites, Hsla::default(), [0, 0], window, cx);
 }
+
+pub(crate) fn paint_vertical_fade(color: Hsla, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) {
+    let scale = window.scale_factor();
+    let dev = |value: Pixels| (f32::from(value) * scale).round() as i32;
+    let (x, y) = (dev(bounds.left()), dev(bounds.top()));
+    let (w, h) = (dev(bounds.right()) - x, dev(bounds.bottom()) - y);
+    let top = f32::from(bounds.top()) * scale;
+    let height = f32::from(bounds.size.height) * scale;
+    if w <= 0 || h <= 0 || height <= 0. {
+        return;
+    }
+    let sprites = sprites(format!("vertical_fade {x} {y} {w} {h} {top} {height}"), || {
+        let blits = (0..h)
+            .flat_map(|row| {
+                let position = ((y + row) as f32 + 0.5 - top) / height;
+                let alpha = ((1. - position.clamp(0., 1.)) * 255.).round() as u8;
+                std::iter::repeat_n([alpha, PIPELINE, 0, MASK] as Blits, w as usize)
+            })
+            .collect();
+        ([x, y, w, h], blits)
+    });
+    paint_sprites(&sprites, color, [0, 0], window, cx);
+}
+
 
 /// `crate::x_fade` on macOS: the gradient's alpha at each column's center, rounded to a byte,
 /// over all of the box's rows.
