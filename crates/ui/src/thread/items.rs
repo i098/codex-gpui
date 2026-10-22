@@ -132,6 +132,7 @@ pub(super) fn diff_card(
         })
         .collect();
     let first = changes.first()?;
+    let review_path = first.path.clone();
     let (added, removed) = diff_counts(changes.iter().copied());
     let mut files: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
     files.dedup();
@@ -246,7 +247,12 @@ pub(super) fn diff_card(
                                     ),
                                 )
                                 .id("view-changes")
-                                .on_click(crate::dispatch::<crate::OpenChangesPanel>),
+                                .on_click(move |_, window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(crate::ViewChanges(review_path.clone())),
+                                        cx,
+                                    )
+                                }),
                             ),
                     ),
             ),

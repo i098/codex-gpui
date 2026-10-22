@@ -177,13 +177,46 @@ impl KeyboardPage {
         }
     }
 
-    fn activate(
-        &mut self,
-        action: Control,
-        append: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn result_card(
+        &self,
+        rows: Vec<Div>,
+        has_other_rows: bool,
+        t: &Theme,
+        cx: &App,
+    ) -> Option<AnyElement> {
+        let state = cx.global::<KeyboardState>();
+        if !state.loaded {
+            return state.error.is_none().then(|| {
+                text("Loading shortcuts…", 13., 20., 430., t.text_secondary).into_any_element()
+            });
+        }
+        if rows.is_empty() {
+            return (!has_other_rows).then(|| {
+                self.card(
+                    vec![
+                        div()
+                            .min_h(px(64.))
+                            .px(px(16.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(text(
+                                "No matching shortcuts",
+                                13.,
+                                18.571_428,
+                                430.,
+                                t.text_secondary,
+                            )),
+                    ],
+                    t,
+                )
+                .into_any_element()
+            });
+        }
+        Some(self.card(rows, t).into_any_element())
+    }
+
+    fn prepare_control(&mut self, action: &Control) {
         if !matches!(action, Control::Edit(..) | Control::CancelCapture) {
             self.editing = None;
             self.return_focus = None;
@@ -192,6 +225,142 @@ impl KeyboardPage {
         }
         self.number_menu = matches!(action, Control::NumberMenu) && !self.number_menu;
         self.link_menu = matches!(action, Control::LinkMenu) && !self.link_menu;
+    }
+
+    fn remove_binding(&mut self, command: &str, index: usize, cx: &mut Context<Self>) {
+        if let Some(definition) = commands().iter().find(|c| c.id == command) {
+            let mut keys: Vec<_> = cx
+                .global::<KeyboardState>()
+                .preferences
+                .keys(definition)
+                .map(str::to_owned)
+                .collect();
+            if index < keys.len() {
+                keys.remove(index);
+            }
+            self.dispatch(
+                Change::Bindings {
+                    command: command.into(),
+                    keys,
+                },
+                cx,
+            );
+        }
+    }
+
+    fn search_keystroke(
+        &mut self,
+        stroke: &Keystroke,
+        escape: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        if escape {
+            self.search_by_key = false;
+            self.strokes.clear();
+            self.search.focus_handle(cx).focus(window, cx);
+        } else if let Some(key) = capture(stroke) {
+            let next = format!("{} {}", self.strokes, key_label(&key));
+            let state = cx.global::<KeyboardState>();
+            let sequence = !self.strokes.is_empty()
+                && commands().iter().any(|command| {
+                    state
+                        .preferences
+                        .keys(command)
+                        .any(|key| key_label(key).starts_with(&next))
+                });
+            self.strokes = if sequence { next } else { key_label(&key) };
+        }
+        cx.notify();
+    }
+
+    fn preference_details(
+        &self,
+        number: bool,
+        preferences: &Preferences,
+    ) -> (&'static str, &'static str, &'static str, Control, bool) {
+        if number {
+            let (detail, label) = match preferences.primary_number_shortcut_target {
+                NumberTarget::Tabs => (
+                    "Use ⌘1–9 to switch tabs and ⌃1–9 to switch chats",
+                    "⌘1-9 for Tabs",
+                ),
+                NumberTarget::Sidebar => (
+                    "Use ⌘1–9 to switch chats and ⌃1–9 to switch tabs",
+                    "⌘1-9 for Chats",
+                ),
+            };
+            (
+                "Number shortcuts",
+                detail,
+                label,
+                Control::NumberMenu,
+                self.number_menu,
+            )
+        } else {
+            (
+                LINK_TITLE,
+                LINK_DESCRIPTION,
+                preferences.external_browser_link_shortcut.label(),
+                Control::LinkMenu,
+                self.link_menu,
+            )
+        }
+    }
+
+    fn start_binding_capture(
+        &mut self,
+        command: &'static str,
+        index: usize,
+        append: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.return_focus = window.focused(cx);
+        let index = if append {
+            commands()
+                .iter()
+                .find(|c| c.id == command)
+                .map(|c| cx.global::<KeyboardState>().preferences.keys(c).count())
+                .unwrap_or(index)
+        } else {
+            index
+        };
+        self.editing = Some(Editing {
+            command,
+            index,
+            first: None,
+            error: None,
+        });
+        self.capture_generation += 1;
+        self.capture_focus.focus(window, cx);
+    }
+
+    fn cancel_binding_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.editing = None;
+        self.held_modifiers = None;
+        self.capture_generation += 1;
+        if let Some(focus) = self.return_focus.take() {
+            focus.focus(window, cx);
+        }
+    }
+
+    fn refresh_capture(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.publish_capture(
+            self.capture_focus.is_focused(window) && (self.search_by_key || self.editing.is_some()),
+            cx,
+        );
+    }
+
+    fn activate(
+        &mut self,
+        action: Control,
+        append: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.prepare_control(&action);
         match action {
             Control::SearchMode => {
                 self.search_by_key = !self.search_by_key;
@@ -208,82 +377,17 @@ impl KeyboardPage {
                 self.search.focus_handle(cx).focus(window, cx);
             }
             Control::Edit(command, index) => {
-                self.return_focus = window.focused(cx);
-                let index = if append {
-                    commands()
-                        .iter()
-                        .find(|c| c.id == command)
-                        .map(|c| cx.global::<KeyboardState>().preferences.keys(c).count())
-                        .unwrap_or(index)
-                } else {
-                    index
-                };
-                self.editing = Some(Editing {
-                    command,
-                    index,
-                    first: None,
-                    error: None,
-                });
-                self.capture_generation += 1;
-                self.capture_focus.focus(window, cx);
+                self.start_binding_capture(command, index, append, window, cx);
             }
             Control::Remove(command, index) => {
-                if let Some(definition) = commands().iter().find(|c| c.id == command) {
-                    let mut keys: Vec<_> = cx
-                        .global::<KeyboardState>()
-                        .preferences
-                        .keys(definition)
-                        .map(str::to_owned)
-                        .collect();
-                    if index < keys.len() {
-                        keys.remove(index);
-                    }
-                    self.dispatch(
-                        Change::Bindings {
-                            command: command.into(),
-                            keys,
-                        },
-                        cx,
-                    );
-                }
+                self.remove_binding(command, index, cx);
             }
             Control::ResetCommand(command) => {
                 self.dispatch(Change::ResetCommand(command.into()), cx);
             }
-            Control::ResetAll => {
-                let modal = cx.new(|cx| {
-                    Confirmation::new(
-                        "Reset all keyboard shortcuts?",
-                        "This will discard all custom shortcuts and restore the defaults",
-                        "Reset all",
-                        window,
-                        cx,
-                    )
-                    .destructive()
-                });
-                cx.subscribe_in(&modal, window, |this, modal, outcome, window, cx| {
-                    if *outcome == Outcome::Cancel || this.dispatch(Change::Reset, cx) {
-                        this.confirmation = None;
-                    } else {
-                        let error = cx
-                            .global::<KeyboardState>()
-                            .error
-                            .clone()
-                            .unwrap_or_else(|| "Failed to reset keyboard shortcuts".into());
-                        modal.update(cx, |modal, cx| modal.failed(error, window, cx));
-                    }
-                    cx.notify();
-                })
-                .detach();
-                self.confirmation = Some(modal);
-            }
+            Control::ResetAll => self.confirm_reset(window, cx),
             Control::CancelCapture => {
-                self.editing = None;
-                self.held_modifiers = None;
-                self.capture_generation += 1;
-                if let Some(focus) = self.return_focus.take() {
-                    focus.focus(window, cx);
-                }
+                self.cancel_binding_capture(window, cx);
             }
             Control::Advanced => self.advanced = !self.advanced,
             Control::Number(target) => {
@@ -294,11 +398,36 @@ impl KeyboardPage {
             }
             Control::NumberMenu | Control::LinkMenu => {}
         }
-        self.publish_capture(
-            self.capture_focus.is_focused(window) && (self.search_by_key || self.editing.is_some()),
-            cx,
-        );
+        self.refresh_capture(window, cx);
         cx.notify();
+    }
+
+    fn confirm_reset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let modal = cx.new(|cx| {
+            Confirmation::new(
+                "Reset all keyboard shortcuts?",
+                "This will discard all custom shortcuts and restore the defaults",
+                "Reset all",
+                window,
+                cx,
+            )
+            .destructive()
+        });
+        cx.subscribe_in(&modal, window, |this, modal, outcome, window, cx| {
+            if *outcome == Outcome::Cancel || this.dispatch(Change::Reset, cx) {
+                this.confirmation = None;
+            } else {
+                let error = cx
+                    .global::<KeyboardState>()
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "Failed to reset keyboard shortcuts".into());
+                modal.update(cx, |modal, cx| modal.failed(error, window, cx));
+            }
+            cx.notify();
+        })
+        .detach();
+        self.confirmation = Some(modal);
     }
 
     fn save_capture(&mut self, key: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -359,50 +488,37 @@ impl KeyboardPage {
                 self.activate(Control::CancelCapture, false, window, cx);
                 return;
             }
-            let Some(key) = capture(stroke) else { return };
-            let editing = self.editing.as_mut().unwrap();
-            if let Some(first) = editing.first.take() {
-                self.save_capture(format!("{first} {key}"), window, cx);
-            } else if key.contains('+') || allows_bare(editing.command) {
-                self.save_capture(key, window, cx);
-            } else {
-                editing.first = Some(key.clone());
-                editing.error = None;
-                self.capture_generation += 1;
-                let generation = self.capture_generation;
-                cx.spawn_in(window, async move |this, cx| {
-                    cx.background_executor().timer(Duration::from_secs(1)).await;
-                    let _ = this.update_in(cx, |this, window, cx| {
-                        if this.capture_generation == generation {
-                            this.save_capture(key, window, cx);
-                        }
-                    });
-                })
-                .detach();
-                cx.notify();
-            }
+            self.capture_binding(stroke, window, cx);
         } else if self.search_by_key && self.capture_focus.is_focused(window) {
-            cx.stop_propagation();
-            if escape {
-                self.search_by_key = false;
-                self.strokes.clear();
-                self.search.focus_handle(cx).focus(window, cx);
-            } else if let Some(key) = capture(stroke) {
-                let next = format!("{} {}", self.strokes, key_label(&key));
-                let state = cx.global::<KeyboardState>();
-                let sequence = !self.strokes.is_empty()
-                    && commands().iter().any(|command| {
-                        state
-                            .preferences
-                            .keys(command)
-                            .any(|key| key_label(key).starts_with(&next))
-                    });
-                self.strokes = if sequence { next } else { key_label(&key) };
-            }
-            cx.notify();
+            self.search_keystroke(stroke, escape, window, cx);
         } else if escape && !self.search.read(cx).field_text().is_empty() {
             self.search.update(cx, |search, cx| search.set_text("", cx));
             cx.stop_propagation();
+        }
+    }
+
+    fn capture_binding(&mut self, stroke: &Keystroke, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(key) = capture(stroke) else { return };
+        let editing = self.editing.as_mut().unwrap();
+        if let Some(first) = editing.first.take() {
+            self.save_capture(format!("{first} {key}"), window, cx);
+        } else if key.contains('+') || allows_bare(editing.command) {
+            self.save_capture(key, window, cx);
+        } else {
+            editing.first = Some(key.clone());
+            editing.error = None;
+            self.capture_generation += 1;
+            let generation = self.capture_generation;
+            cx.spawn_in(window, async move |this, cx| {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                let _ = this.update_in(cx, |this, window, cx| {
+                    if this.capture_generation == generation {
+                        this.save_capture(key, window, cx);
+                    }
+                });
+            })
+            .detach();
+            cx.notify();
         }
     }
 
@@ -574,28 +690,7 @@ impl KeyboardPage {
                     .children(error.map(|error| text(error, 12., 16., 430., t.text_warning)))
             } else {
                 let key = keys.get(index);
-                let label = key.map(|key| key_label(key)).unwrap_or_else(|| {
-                    if allows_bare(command.id) {
-                        "Off".into()
-                    } else {
-                        "Unassigned".into()
-                    }
-                });
-                let keycap = div()
-                    .flex()
-                    .items_center()
-                    .min_h(px(32.))
-                    .child(if key.is_some() {
-                        div()
-                            .px(px(8.))
-                            .py(px(4.))
-                            .relative()
-                            .child(on_card(10., Round, t.text_secondary.opacity(0.1), None))
-                            .child(text(label, 12., 12., 430., t.text_secondary))
-                            .into_any_element()
-                    } else {
-                        text(label, 13., 18.571_428, 430., t.text_secondary).into_any_element()
-                    });
+                let keycap = Self::keycap(command, key, &t);
                 let edit = self.icon_control(
                     command,
                     index,
@@ -667,6 +762,31 @@ impl KeyboardPage {
             .child(bindings)
     }
 
+    fn keycap(command: &Command, key: Option<&String>, t: &Theme) -> Div {
+        let label = key.map(|key| key_label(key)).unwrap_or_else(|| {
+            if allows_bare(command.id) {
+                "Off".into()
+            } else {
+                "Unassigned".into()
+            }
+        });
+        div()
+            .flex()
+            .items_center()
+            .min_h(px(32.))
+            .child(if key.is_some() {
+                div()
+                    .px(px(8.))
+                    .py(px(4.))
+                    .relative()
+                    .child(on_card(10., Round, t.text_secondary.opacity(0.1), None))
+                    .child(text(label, 12., 12., 430., t.text_secondary))
+                    .into_any_element()
+            } else {
+                text(label, 13., 18.571_428, 430., t.text_secondary).into_any_element()
+            })
+    }
+
     fn card(&self, rows: Vec<Div>, t: &Theme) -> Div {
         let count = rows.len();
         div()
@@ -701,80 +821,188 @@ impl KeyboardPage {
             ))
     }
 
-    fn preference(&mut self, number: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let t = cx.theme().clone();
-        let preferences = &cx.global::<KeyboardState>().preferences;
-        let (title, detail, label, action, open) = if number {
-            let tabs = preferences.primary_number_shortcut_target == NumberTarget::Tabs;
-            (
-                "Number shortcuts",
-                if tabs {
-                    "Use ⌘1–9 to switch tabs and ⌃1–9 to switch chats"
-                } else {
-                    "Use ⌘1–9 to switch chats and ⌃1–9 to switch tabs"
-                },
-                if tabs {
-                    "⌘1-9 for Tabs"
-                } else {
-                    "⌘1-9 for Chats"
-                },
-                Control::NumberMenu,
-                self.number_menu,
-            )
-        } else {
-            (
-                LINK_TITLE,
-                LINK_DESCRIPTION,
-                preferences.external_browser_link_shortcut.label(),
-                Control::LinkMenu,
-                self.link_menu,
-            )
-        };
-        let current = label;
-        let conflict = number && preferences.number_conflict();
-        let kind = if number {
-            PreferenceKind::Number
-        } else {
-            PreferenceKind::Link
-        };
-        let error = cx.global::<KeyboardState>().preference_error == Some(kind)
-            && cx.global::<KeyboardState>().error.is_some();
-        // The number select is a bordered button at the row's end; the link select is a bare
-        // chip that starts the 384 px control column.
-        let (chip_text, chip_icon, pad) = if number {
-            (t.text, 14., 13.)
-        } else {
-            (t.text_secondary, 12., 9.)
-        };
-        let trigger = self
+    fn search_control(
+        &mut self,
+        query: &str,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let toggle = self
             .control(
-                format!("shortcut-pref-{number}"),
-                title.into(),
+                "shortcut-search-mode".into(),
+                "Search by keystrokes".into(),
                 div()
+                    .relative()
+                    .size(px(28.))
                     .flex()
                     .items_center()
-                    .gap(px(4.))
-                    .child(text(label, 13., 18., 430., chip_text))
-                    .child(icon("chevron-down", chip_icon, t.text_tertiary))
+                    .justify_center()
+                    .when(self.search_by_key, |d| {
+                        d.child(on_card(12.5, Squircle, t.text.opacity(0.05), None))
+                    })
+                    .child(icon(
+                        "shortcut-keystrokes",
+                        18.,
+                        if self.search_by_key {
+                            t.text
+                        } else {
+                            t.text_tertiary
+                        },
+                    ))
                     .into_any_element(),
-                action,
+                Control::SearchMode,
                 window,
                 cx,
             )
-            .px(px(pad))
-            .h(px(28.))
+            .size(px(28.))
             .flex()
-            .items_center();
-        let fill = if open {
-            Some(t.text.opacity(0.08))
-        } else {
-            number.then_some(t.primary_soft_alpha)
-        };
-        let trigger = div()
+            .items_center()
+            .justify_center();
+        let clear = (!self.search_by_key && !query.is_empty()).then(|| {
+            self.control(
+                "clear-shortcut-search".into(),
+                "Clear search".into(),
+                icon("shortcut-clear", 16., t.text_secondary).into_any_element(),
+                Control::ClearSearch,
+                window,
+                cx,
+            )
+            .size(px(16.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+        });
+        div()
+            .id("shortcut-search")
+            .h(px(32.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .px(px(11.))
             .relative()
-            .when(!number, |d| d.ml(px(-9.)))
-            .children(fill.map(|fill| on_card(12.5, Squircle, fill, number.then_some(t.border))))
-            .child(trigger);
+            .child(on_card(
+                9999.,
+                Round,
+                t.control_background,
+                Some(t.border_strong),
+            ))
+            .child(icon("shortcut-search", 18., t.text_secondary))
+            .child(if self.search_by_key {
+                div()
+                    .id("shortcut-keystroke-input")
+                    .flex_1()
+                    .min_w_0()
+                    .track_focus(&self.capture_focus)
+                    .role(gpui::Role::TextInput)
+                    .aria_label("Keystroke search capture")
+                    .on_click(
+                        cx.listener(|this, _, window, cx| this.capture_focus.focus(window, cx)),
+                    )
+                    .child(text(
+                        if query.is_empty() {
+                            "Press shortcut to search"
+                        } else {
+                            query
+                        },
+                        14.,
+                        18.,
+                        430.,
+                        if query.is_empty() {
+                            t.text_tertiary
+                        } else {
+                            t.text
+                        },
+                    ))
+                    .into_any_element()
+            } else {
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(self.search.clone())
+                    .into_any_element()
+            })
+            .children(clear)
+            .child(toggle)
+    }
+
+    fn matching_rows(
+        &mut self,
+        query: &str,
+        loaded: bool,
+        preferences: &Preferences,
+        pattern: &crate::screens::sidebar::MatchPattern,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Vec<Div>, Vec<Div>) {
+        let search_by_key = self.search_by_key;
+        let matches = |command: &&Command| {
+            loaded
+                && command.visible
+                && Self::matches_command(command, query, preferences, search_by_key, pattern)
+        };
+        let mut pending_link = loaded
+            && !search_by_key
+            && (query.trim().is_empty()
+                || [
+                    LINK_TITLE,
+                    LINK_DESCRIPTION,
+                    preferences.external_browser_link_shortcut.label(),
+                ]
+                .iter()
+                .any(|text| pattern.score(text) > 0));
+        let mut rows = Vec::new();
+        let mut dictation = Vec::new();
+        for command in commands().iter().filter(matches) {
+            if command.id == "globalDictationSingleTap" && !self.advanced && query.is_empty() {
+                continue;
+            }
+            if allows_bare(command.id) {
+                dictation.push(self.row(command, window, cx));
+            } else {
+                rows.push(self.row(command, window, cx));
+                if command.id == "openBrowserTab" && pending_link {
+                    rows.push(self.preference(false, window, cx));
+                    pending_link = false;
+                }
+            }
+        }
+        if pending_link {
+            rows.push(self.preference(false, window, cx));
+        }
+        (rows, dictation)
+    }
+
+    fn matches_command(
+        command: &Command,
+        query: &str,
+        preferences: &Preferences,
+        search_by_key: bool,
+        pattern: &crate::screens::sidebar::MatchPattern,
+    ) -> bool {
+        query.trim().is_empty()
+            || if search_by_key {
+                preferences.keys(command).any(|key| {
+                    let label = key_label(key);
+                    label == query || label.starts_with(&format!("{query} "))
+                })
+            } else {
+                [command.id, command.title, command.detail]
+                    .iter()
+                    .any(|value| pattern.score(value) > 0)
+            }
+    }
+
+    fn preference_menu(
+        &mut self,
+        number: bool,
+        current: &str,
+        open: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let t = cx.theme().clone();
         let options: Vec<(&str, Control)> = if number {
             vec![
                 ("⌘1-9 for Tabs", Control::Number(NumberTarget::Tabs)),
@@ -788,7 +1016,7 @@ impl KeyboardPage {
                 ("⇧⌘+Click", Control::Link(LinkModifier::PrimaryShift)),
             ]
         };
-        let menu = if open {
+        if open {
             // The original popup sizes to its widest label (Chromium's measure, "⌘1-9 for Chats"
             // and "Unassigned"), 6 px and an 18 px check slot, in 8 px row padding inside the
             // popover's 4 px padding.
@@ -857,7 +1085,59 @@ impl KeyboardPage {
             )
         } else {
             None
+        }
+    }
+
+    fn preference(&mut self, number: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        let preferences = &cx.global::<KeyboardState>().preferences;
+        let (title, detail, label, action, open) = self.preference_details(number, preferences);
+        let current = label;
+        let conflict = number && preferences.number_conflict();
+        let kind = if number {
+            PreferenceKind::Number
+        } else {
+            PreferenceKind::Link
         };
+        let error = cx.global::<KeyboardState>().preference_error == Some(kind)
+            && cx.global::<KeyboardState>().error.is_some();
+        // The number select is a bordered button at the row's end; the link select is a bare
+        // chip that starts the 384 px control column.
+        let (chip_text, chip_icon, pad) = if number {
+            (t.text, 14., 13.)
+        } else {
+            (t.text_secondary, 12., 9.)
+        };
+        let trigger = self
+            .control(
+                format!("shortcut-pref-{number}"),
+                title.into(),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(text(label, 13., 18., 430., chip_text))
+                    .child(icon("chevron-down", chip_icon, t.text_tertiary))
+                    .into_any_element(),
+                action,
+                window,
+                cx,
+            )
+            .px(px(pad))
+            .h(px(28.))
+            .flex()
+            .items_center();
+        let fill = if open {
+            Some(t.text.opacity(0.08))
+        } else {
+            number.then_some(t.primary_soft_alpha)
+        };
+        let trigger = div()
+            .relative()
+            .when(!number, |d| d.ml(px(-9.)))
+            .children(fill.map(|fill| on_card(12.5, Squircle, fill, number.then_some(t.border))))
+            .child(trigger);
+        let menu = self.preference_menu(number, current, open, window, cx);
         div()
             .relative()
             .px(px(16.))
@@ -918,57 +1198,14 @@ impl Render for KeyboardPage {
         let (loaded, preferences, error) =
             (state.loaded, state.preferences.clone(), state.error.clone());
         let preference_error = state.preference_error;
-        let search_by_key = self.search_by_key;
         let query = if self.search_by_key {
             self.strokes.clone()
         } else {
             self.search.read(cx).field_text().to_owned()
         };
         let pattern = crate::screens::sidebar::MatchPattern::new(query.trim());
-        let matches = |command: &&Command| {
-            loaded
-                && command.visible
-                && (query.trim().is_empty()
-                    || if search_by_key {
-                        preferences.keys(command).any(|key| {
-                            let label = key_label(key);
-                            label == query || label.starts_with(&format!("{query} "))
-                        })
-                    } else {
-                        [command.id, command.title, command.detail]
-                            .iter()
-                            .any(|value| pattern.score(value) > 0)
-                    })
-        };
-        let mut pending_link = loaded
-            && !search_by_key
-            && (query.trim().is_empty()
-                || [
-                    LINK_TITLE,
-                    LINK_DESCRIPTION,
-                    preferences.external_browser_link_shortcut.label(),
-                ]
-                .iter()
-                .any(|text| pattern.score(text) > 0));
-        let mut rows = Vec::new();
-        let mut dictation = Vec::new();
-        for command in commands().iter().filter(matches) {
-            if command.id == "globalDictationSingleTap" && !self.advanced && query.is_empty() {
-                continue;
-            }
-            if allows_bare(command.id) {
-                dictation.push(self.row(command, window, cx));
-            } else {
-                rows.push(self.row(command, window, cx));
-                if command.id == "openBrowserTab" && pending_link {
-                    rows.push(self.preference(false, window, cx));
-                    pending_link = false;
-                }
-            }
-        }
-        if pending_link {
-            rows.push(self.preference(false, window, cx));
-        }
+        let (rows, mut dictation) =
+            self.matching_rows(&query, loaded, &preferences, &pattern, window, cx);
         let number = loaded
             && !self.search_by_key
             && (query.is_empty()
@@ -978,30 +1215,7 @@ impl Render for KeyboardPage {
             let row = self.preference(true, window, cx);
             cards = cards.child(self.card(vec![row], &t));
         }
-        if !loaded {
-            if error.is_none() {
-                cards = cards.child(text("Loading shortcuts…", 13., 20., 430., t.text_secondary));
-            }
-        } else if rows.is_empty() && dictation.is_empty() && !number {
-            cards = cards.child(self.card(
-                vec![div()
-                    .min_h(px(64.))
-                    .px(px(16.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(text(
-                        "No matching shortcuts",
-                        13.,
-                        18.571_428,
-                        430.,
-                        t.text_secondary,
-                    ))],
-                &t,
-            ));
-        } else if !rows.is_empty() {
-            cards = cards.child(self.card(rows, &t));
-        }
+        cards = cards.children(self.result_card(rows, !dictation.is_empty() || number, &t, cx));
         if !dictation.is_empty() {
             if query.is_empty() {
                 let advanced = self
@@ -1036,103 +1250,7 @@ impl Render for KeyboardPage {
                     ))),
             );
         }
-        let toggle = self
-            .control(
-                "shortcut-search-mode".into(),
-                "Search by keystrokes".into(),
-                div()
-                    .relative()
-                    .size(px(28.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .when(self.search_by_key, |d| {
-                        d.child(on_card(12.5, Squircle, t.text.opacity(0.05), None))
-                    })
-                    .child(icon(
-                        "shortcut-keystrokes",
-                        18.,
-                        if self.search_by_key {
-                            t.text
-                        } else {
-                            t.text_tertiary
-                        },
-                    ))
-                    .into_any_element(),
-                Control::SearchMode,
-                window,
-                cx,
-            )
-            .size(px(28.))
-            .flex()
-            .items_center()
-            .justify_center();
-        let clear = (!self.search_by_key && !query.is_empty()).then(|| {
-            self.control(
-                "clear-shortcut-search".into(),
-                "Clear search".into(),
-                icon("shortcut-clear", 16., t.text_secondary).into_any_element(),
-                Control::ClearSearch,
-                window,
-                cx,
-            )
-            .size(px(16.))
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_center()
-        });
-        let search = div()
-            .id("shortcut-search")
-            .h(px(32.))
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .px(px(11.))
-            .relative()
-            .child(on_card(
-                9999.,
-                Round,
-                t.control_background,
-                Some(t.border_strong),
-            ))
-            .child(icon("shortcut-search", 18., t.text_secondary))
-            .child(if self.search_by_key {
-                div()
-                    .id("shortcut-keystroke-input")
-                    .flex_1()
-                    .min_w_0()
-                    .track_focus(&self.capture_focus)
-                    .role(gpui::Role::TextInput)
-                    .aria_label("Keystroke search capture")
-                    .on_click(
-                        cx.listener(|this, _, window, cx| this.capture_focus.focus(window, cx)),
-                    )
-                    .child(text(
-                        if query.is_empty() {
-                            "Press shortcut to search"
-                        } else {
-                            &query
-                        },
-                        14.,
-                        18.,
-                        430.,
-                        if query.is_empty() {
-                            t.text_tertiary
-                        } else {
-                            t.text
-                        },
-                    ))
-                    .into_any_element()
-            } else {
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(self.search.clone())
-                    .into_any_element()
-            })
-            .children(clear)
-            .child(toggle);
+        let search = self.search_control(&query, &t, window, cx);
         let search_bar = loaded.then(|| {
             div()
                 .tab_group()

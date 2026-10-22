@@ -16,7 +16,9 @@ mod routes;
 pub use routes::Route;
 mod search;
 mod section_actions;
+mod settings_subtrees;
 pub mod updater;
+mod window_shell;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
@@ -52,7 +54,7 @@ use ui::screens::diff::panel::{
     with_side_tabs,
 };
 use ui::screens::home::{HomeMain, OpenFolder};
-use ui::screens::settings::{self, AppServer, Login, SettingChanged};
+use ui::screens::settings::{self, AppServer, Login, SettingChanged, workspace};
 use ui::screens::sidebar::{
     ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
     PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, SearchRequest,
@@ -121,9 +123,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-m", Minimize, None),
     ]);
     ui::composer::bind_keys(cx);
-    features::init(cx);
     native_menus::init(cx);
-    cx.on_action(|_: &Quit, cx| cx.quit());
+    cx.on_action(|_: &Quit, cx| cx.defer(routes::request_quit));
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
@@ -207,7 +208,10 @@ impl State {
         let state: Self = fs::read(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default();
+            .unwrap_or_else(|| Self {
+                route: Route::SelectWorkspace,
+                ..Self::default()
+            });
         Self {
             path: Some(path),
             ..state
@@ -291,6 +295,17 @@ struct DeletedQueuedMessage {
     next: Option<String>,
 }
 
+enum SettingsLeave {
+    Section(&'static str),
+    Editor,
+    Route(Route, Option<String>),
+    History(bool),
+    Window,
+    NativeWindow,
+    LogOut,
+    Quit,
+}
+
 pub struct Root {
     /// Window size, sidebar and route, saved back on every change.
     state: State,
@@ -339,6 +354,8 @@ pub struct Root {
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
+    pending_settings_leave: Option<SettingsLeave>,
+    workspace: Entity<workspace::Workspace>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     dialog: Option<Entity<Dialog>>,
@@ -634,6 +651,8 @@ impl Root {
             cloud: None,
             settings_section: None,
             settings_page: None,
+            pending_settings_leave: None,
+            workspace: cx.new(workspace::Workspace::new),
             command_menu: None,
             dialog: None,
             dialog_to_composer: false,
@@ -683,9 +702,23 @@ impl Root {
             _update_policy: None,
             state,
         };
+        let workspace = root.workspace.clone();
+        cx.subscribe_in(
+            &workspace,
+            window,
+            |this, _, event, window, cx| match event {
+                workspace::Event::PickFolder => this.open_folder(window, cx),
+                workspace::Event::CreateProject => this.create_onboarding_workspace(window, cx),
+            },
+        )
+        .detach();
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
             this.update(cx, |this, cx| {
+                if this.instructions_changed(cx) {
+                    this.confirm_instructions_leave(SettingsLeave::NativeWindow, window, cx);
+                    return false;
+                }
                 if this.state.confirm_before_close != ConfirmBeforeClose::Always {
                     this.flush_settings(cx);
                     return windows::allow_close(window, cx);
@@ -771,7 +804,7 @@ impl Root {
                 this._update_policy = updater::poll_policy(bridge.clone(), cx);
                 this.set_account(account.as_ref(), cx);
                 if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
-                    this.login = Some(cx.new(Login::new));
+                    this.show_login(config.config["forced_login_method"].clone(), cx);
                 }
                 this.set_threads(&threads.data, cx);
                 this.set_next_cursor(threads.next_cursor, cx);
@@ -830,12 +863,13 @@ impl Root {
                     });
                 }
                 this.config = config.config;
+                this.refresh_enter_behavior(cx);
                 this.config["host"]["confirm-before-close"] =
                     serde_json::to_value(this.state.confirm_before_close)
                         .expect("close preference");
                 this.skills = skills;
                 this.models = models;
-                this.ready = true;
+                this.ready = this.login.is_none();
                 this.select_route(cx);
                 this.sync(window, cx);
                 if bridge.is_acp() {
@@ -1026,10 +1060,17 @@ impl Root {
     }
 
     fn open_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.picking_project {
+        if self.picking_project
+            || (self.state.route == Route::SelectWorkspace && self.workspace.read(cx).busy())
+        {
             return;
         }
         self.picking_project = true;
+        if self.state.route == Route::SelectWorkspace {
+            self.workspace.update(cx, |workspace, cx| {
+                workspace.begin(workspace::Pending::Picking, cx)
+            });
+        }
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -1054,6 +1095,14 @@ impl Root {
             .await;
             this.update_in(cx, |this, window, cx| {
                 this.picking_project = false;
+                if this.state.route == Route::SelectWorkspace {
+                    let error = result
+                        .as_ref()
+                        .err()
+                        .map(|_| "Could not add the selected folders".to_owned());
+                    this.workspace
+                        .update(cx, |workspace, cx| workspace.finish(error, cx));
+                }
                 match result {
                     Ok(Some((root, projects))) => {
                         this.project_load = None;
@@ -1064,8 +1113,54 @@ impl Root {
                     Ok(None) => {}
                     Err(error) => {
                         eprintln!("codex-gpui: cannot choose project: {error:#}");
-                        this.toast(Toast::danger("Cannot open project folder"), cx);
+                        if this.state.route != Route::SelectWorkspace {
+                            this.toast(Toast::danger("Cannot open project folder"), cx);
+                        }
                     }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn create_onboarding_workspace(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if self.workspace.read(cx).busy() || self.picking_project {
+            return;
+        }
+        self.workspace.update(cx, |workspace, cx| {
+            workspace.begin(workspace::Pending::Creating, cx)
+        });
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            let response = host::json_body(&host.fetch(&host::Request::post(
+                "electron-onboarding-skip-workspace",
+                None,
+            ))?)?;
+            anyhow::ensure!(
+                response["success"] == true,
+                "Could not create a new project"
+            );
+            let root = response["root"]
+                .as_str()
+                .context("created project has no root")?
+                .to_owned();
+            Ok::<_, anyhow::Error>((root, host.projects()?))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = read.await;
+            this.update_in(cx, |this, window, cx| {
+                let error = result
+                    .as_ref()
+                    .err()
+                    .map(|error| format!("Couldn't create a new project: {error}"));
+                this.workspace
+                    .update(cx, |workspace, cx| workspace.finish(error, cx));
+                if this.state.route == Route::SelectWorkspace
+                    && let Ok((root, projects)) = result
+                {
+                    this.set_projects(projects, cx);
+                    this.select_project(root, window, cx);
                 }
             })
             .ok();
@@ -1711,7 +1806,6 @@ impl Root {
             return;
         };
         page.update(cx, |page, cx| {
-            page.set_pending(None, cx);
             page.set_suggestions(Vec::new(), cx);
         });
         let host = self.host.clone();
@@ -1852,37 +1946,6 @@ impl Root {
         self.suggestions.as_ref()
     }
 
-    /// A suggestion card click (`refs/interactions/s035b.json`): the card is already
-    /// `Starting…` and every card disabled. The original's guided start first reads the TPP
-    /// models through the desktop host, then prepares and streams the conversation and
-    /// navigates into it; when any step fails it shows `Couldn’t start this suggested task`
-    /// and re-enables the cards.
-    fn start_suggested_task(&mut self, cx: &mut Context<Self>) {
-        let host = self.host.clone();
-        let read = cx.background_spawn(async move {
-            let identity = host.identity().context("no ChatGPT sign-in")?;
-            host.fetch(&host::tpp_models(&identity))
-                .and_then(|response| host::json_body(&response))
-        });
-        cx.spawn(async move |this, cx| {
-            let result = read.await;
-            this.update(cx, |this, cx| {
-                if let Some(page) = &this.suggestions {
-                    page.update(cx, |page, cx| page.set_pending(None, cx));
-                }
-                // ponytail: with the models in hand the original prepares the ChatGPT
-                // conversation (`/f/conversation/prepare`) and streams it; neither is recorded
-                // (the oracle refuses the start), so the port stops here and reports it.
-                if result.is_ok() {
-                    eprintln!("codex-gpui: suggested task: the conversation stream is not wired");
-                }
-                this.toast(Toast::danger("Couldn’t start this suggested task"), cx);
-            })
-            .ok();
-        })
-        .detach();
-    }
-
     /// Mobile `Get started` (`codex-mobile-setup-flow` `P`, `XNn`): the initial step shows its
     /// loading button while the host reads the account's MFA requirement. A non-`required`
     /// answer opens the allow-host step (whose `Allow` is disabled); `required` also reads
@@ -1981,20 +2044,6 @@ impl Root {
         self.threads.retain(|t| t.id != thread.id);
         self.threads.insert(0, thread.clone());
         self.sidebar.update(cx, |s, cx| s.add_thread(thread, cx));
-    }
-
-    /// `⌘N`, the `New chat` row and rail Home: Home with an empty, focused composer.
-    fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.shortcut_state.new_chat_mode = features::shortcuts::NewChatMode::Project;
-        self.home.update(cx, |home, cx| {
-            home.project = self.state.project_root.as_deref().map(project_name);
-            cx.notify();
-        });
-        self.new_chat_section = None;
-        self.navigate(Route::Home, window, cx);
-        let composer = self.home.read(cx).composer.clone();
-        composer.update(cx, |c, cx| c.set_text("", cx));
-        window.focus(&composer.focus_handle(cx), cx);
     }
 
     /// Opens the Recents row `delta` rows from the open thread; from any other route,
@@ -2229,6 +2278,15 @@ impl Root {
         self.dialog.as_ref()
     }
 
+    pub fn personal_instructions<'a>(
+        &'a self,
+        cx: &'a App,
+    ) -> Option<&'a Entity<settings::personalization::Personalization>> {
+        self.settings_page
+            .as_ref()
+            .map(|page| &page.read(cx).personalization)
+    }
+
     fn model_announcement_history(cx: &App) -> Vec<Value> {
         cx.try_global::<host_settings::Settings>()
             .and_then(|settings| {
@@ -2370,15 +2428,23 @@ impl Root {
             };
             match outcome {
                 DialogOutcome::Dismiss => {
+                    this.pending_settings_leave = None;
                     if git_dialog {
                         this.commit_cwd = None;
                         window.focus(&this.composer(cx).focus_handle(cx), cx);
+                    } else if dialog.read(cx).kind() == DialogKind::DiscardInstructions {
+                        if let Some(focus) = this.settings_page.as_ref().and_then(|page| {
+                            page.read(cx).personalization.read(cx).editor_focus(cx)
+                        }) {
+                            window.focus(&focus, cx);
+                        }
                     } else {
                         window.focus(&focus, cx);
                     }
                 }
                 DialogOutcome::LogOut => this.logout(window, cx),
                 DialogOutcome::RevertChanges { .. } => window.focus(&this.focus, cx),
+                DialogOutcome::DiscardInstructions => this.finish_instructions_leave(window, cx),
                 DialogOutcome::DismissAnnouncement(model)
                 | DialogOutcome::UseAnnouncedModel { model, .. } => {
                     if let DialogOutcome::UseAnnouncedModel {
@@ -2463,7 +2529,7 @@ impl Root {
                 this.logout_pending = false;
                 match result {
                     Ok(_) => {
-                        this.login = Some(cx.new(Login::new));
+                        this.show_login(this.config["forced_login_method"].clone(), cx);
                         this.set_account(None, cx);
                         let host = this.host.clone();
                         cx.background_spawn(async move { host.invalidate_identity() })
@@ -2521,6 +2587,10 @@ impl Root {
     /// right panel), else the window.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.dialog.is_some() {
+            return;
+        }
+        if self.instructions_changed(cx) {
+            self.confirm_instructions_leave(SettingsLeave::Window, window, cx);
             return;
         }
         if let Some(side) = self.side.filter(|_| self.split.is_some()) {
@@ -2730,7 +2800,7 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// `thread/read` with turns, then shows it if the route still points at it.
+    /// Loads history and resumes its settings before showing the selected thread.
     fn load_thread(
         &mut self,
         id: String,
@@ -2750,11 +2820,18 @@ impl Root {
         })
         .detach();
         let bridge = self.bridge.clone();
+        let resume = (!self.loaded.contains(&id)).then(|| {
+            let mut params = json!({"threadId": id, "excludeTurns": true});
+            if let Some(config) = computer_use_overrides(&self.config) {
+                params["config"] = config;
+            }
+            params
+        });
         let loading_view = view.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let result = bridge.thread_read(&id, true).await;
+            let result = routes::load_thread(&bridge, &id, resume).await;
             this.update_in(cx, |this, window, cx| {
-                if this.state.route != Route::Thread(id)
+                if !matches!(&this.state.route, Route::Thread(current) if current == &id)
                     || !this
                         .history
                         .as_ref()
@@ -2763,9 +2840,15 @@ impl Root {
                     return;
                 }
                 match result {
-                    Ok(read) => this.show_thread(read.thread, window, cx),
+                    Ok((thread, settings)) => {
+                        if let Some(settings) = settings {
+                            this.loaded.insert(id.clone());
+                            this.thread_run_settings.entry(id).or_insert(settings);
+                        }
+                        this.show_thread(thread, window, cx);
+                    }
                     Err(error) => {
-                        eprintln!("codex-gpui: thread/read: {error:#}");
+                        eprintln!("codex-gpui: thread/load: {error:#}");
                         loading_view.update(cx, |view, cx| view.fail(format!("{error:#}"), cx));
                     }
                 }
@@ -2878,35 +2961,33 @@ impl Root {
         let mode = self.shortcut_state.new_chat_mode;
         let host = self.host.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let workspace = if mode == features::shortcuts::NewChatMode::Standalone {
-                let prepare = host.clone();
-                let prompt = s.text.clone();
-                match cx.background_executor().spawn(async move { prepare.prepare_projectless(&prompt) }).await {
-                    Ok(workspace) => Some(workspace),
-                    Err(error) => {
-                        this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
-                        return Err(error);
-                    }
+            // A failure before the chat exists keeps the draft, its attachments and the chosen
+            // project as they were.
+            let started = async {
+                let workspace = if mode == features::shortcuts::NewChatMode::Standalone {
+                    let prepare = host.clone();
+                    let prompt = s.text.clone();
+                    let task = async move { prepare.prepare_projectless(&prompt) };
+                    Some(cx.background_executor().spawn(task).await?)
+                } else {
+                    None
+                };
+                let params = thread_start_params(&cwd, &s, workspace.as_ref(), mode, computer_use);
+                let started = bridge
+                    .request::<_, ThreadStartResponse>("thread/start", params)
+                    .await?;
+                if let Some(workspace) = workspace {
+                    let record = host.clone();
+                    let thread_id = started.thread.id.clone();
+                    let task = async move { record.record_projectless(&thread_id, &workspace) };
+                    cx.background_executor().spawn(task).await?;
                 }
-            } else { None };
-            let mut params = json!({ "cwd": workspace.as_ref().map(|workspace| workspace.cwd.as_str()).unwrap_or(&cwd), "model": model(&s) });
-            if let Some(workspace) = &workspace {
-                params["developerInstructions"] = json!(workspace.instructions());
+                anyhow::Ok(started.thread)
             }
-            if mode == features::shortcuts::NewChatMode::Temporary {
-                params["ephemeral"] = json!(true);
-            }
-            apply_permissions(&mut params, s.permission);
-            if let Some(config) = computer_use {
-                params["config"] = config;
-            }
-            let mut thread = match bridge
-                .request::<_, ThreadStartResponse>("thread/start", params)
-                .await
-            {
-                Ok(started) => started.thread,
+            .await;
+            let mut thread = match started {
+                Ok(thread) => thread,
                 Err(error) => {
-                    // The draft, its attachments and the chosen project stay as they were.
                     this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
                     return Err(error);
                 }
@@ -2916,14 +2997,6 @@ impl Root {
                 thread.preview = s.text.clone();
             }
             let id = thread.id.clone();
-            if let Some(workspace) = workspace {
-                let record = host.clone();
-                let thread_id = id.clone();
-                if let Err(error) = cx.background_executor().spawn(async move { record.record_projectless(&thread_id, &workspace) }).await {
-                    this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
-                    return Err(error);
-                }
-            }
             let section = if let Some(section) = section {
                 match bridge
                     .request::<_, Value>(
@@ -3920,6 +3993,7 @@ impl Root {
                 });
                 if let Ok(Some(config)) = result {
                     this.config = config;
+                    this.refresh_enter_behavior(cx);
                 }
                 if success {
                     this.load_computer_use(cx);
@@ -3937,6 +4011,10 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.instructions_changed(cx) {
+            self.confirm_instructions_leave(SettingsLeave::Section(section), window, cx);
+            return;
+        }
         self.settings_section = Some(section);
         if self.state.route == Route::Settings {
             self.sync(window, cx);
@@ -3992,6 +4070,165 @@ impl Root {
             done.map(drop)
         });
         log_err(task, cx);
+    }
+
+    fn instructions_changed(&self, cx: &App) -> bool {
+        self.personal_instructions(cx)
+            .is_some_and(|editor| editor.read(cx).saving() || editor.read(cx).dirty(cx))
+    }
+
+    fn confirm_instructions_leave(
+        &mut self,
+        target: SettingsLeave,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.dialog.is_some() {
+            return;
+        }
+        if self
+            .settings_page
+            .as_ref()
+            .is_some_and(|page| page.read(cx).personalization.read(cx).saving())
+        {
+            return;
+        }
+        self.pending_settings_leave = Some(target);
+        self.open_dialog(DialogKind::DiscardInstructions, window, cx);
+    }
+
+    fn finish_instructions_leave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(target) = self.pending_settings_leave.take() else {
+            return;
+        };
+        if let Some(page) = &self.settings_page {
+            page.read(cx)
+                .personalization
+                .clone()
+                .update(cx, |editor, cx| editor.discard(cx));
+        }
+        match target {
+            SettingsLeave::Section(label) => {
+                if let Some(page) = self.settings_page.clone() {
+                    page.update(cx, |page, cx| page.select_section(label, cx));
+                }
+            }
+            SettingsLeave::Editor => window.focus(&self.focus, cx),
+            SettingsLeave::Route(route, automation) => {
+                self.navigate_with_sidebar(route, automation, window, cx)
+            }
+            SettingsLeave::History(back) => self.step(back, window, cx),
+            SettingsLeave::Window => self.close_window(window, cx),
+            SettingsLeave::NativeWindow => {
+                if self.state.confirm_before_close == ConfirmBeforeClose::Always {
+                    self.open_dialog(DialogKind::CloseWindow, window, cx);
+                } else {
+                    self.flush_settings(cx);
+                    windows::close(window, cx);
+                }
+            }
+            SettingsLeave::LogOut => {
+                let dialog = cx.new(|cx| Dialog::logout(self.account_email.clone(), cx));
+                self.show_dialog(dialog, window, cx);
+            }
+            SettingsLeave::Quit => cx.defer(routes::request_quit),
+        }
+    }
+
+    fn instructions_event(
+        &mut self,
+        event: &settings::personalization::Event,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(page) = self.settings_page.clone() else {
+            return;
+        };
+        let view = page.read(cx).personalization.clone();
+        match event {
+            settings::personalization::Event::Load(generation) => {
+                let generation = *generation;
+                let host = self.host.clone();
+                let read = cx.background_spawn(async move {
+                    host.fetch(&host::Request::post(
+                        "codex-agents-md",
+                        Some(json!({"hostId": "local"})),
+                    ))
+                    .and_then(|response| host::json_body(&response))
+                    .map_err(|error| error.to_string())
+                });
+                cx.spawn_in(window, async move |this, cx| {
+                    let result = read.await;
+                    this.update_in(cx, |this, window, cx| {
+                        if this
+                            .settings_page
+                            .as_ref()
+                            .is_some_and(|page| page.read(cx).personalization == view)
+                            && view.read(cx).opened()
+                        {
+                            view.update(cx, |view, cx| view.loaded(generation, result, window, cx));
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+            settings::personalization::Event::Save(contents) => {
+                let contents = contents.clone();
+                let host = self.host.clone();
+                let params = json!({"hostId": "local", "contents": contents});
+                let write = cx.background_spawn(async move {
+                    host.fetch(&host::Request::post("codex-agents-md-save", Some(params)))
+                        .and_then(|response| host::json_body(&response))
+                        .and_then(|value| {
+                            anyhow::ensure!(
+                                value["path"].is_string(),
+                                "saved instructions have no path"
+                            );
+                            Ok(())
+                        })
+                });
+                cx.spawn(async move |this, cx| {
+                    let result = write.await;
+                    this.update(cx, |this, cx| {
+                        if !this
+                            .settings_page
+                            .as_ref()
+                            .is_some_and(|page| page.read(cx).personalization == view)
+                        {
+                            return;
+                        }
+                        match result {
+                            Ok(()) => {
+                                view.update(cx, |view, cx| view.saved(contents, cx));
+                                this.toast(Toast::success("Instructions updated"), cx);
+                            }
+                            Err(error) => {
+                                eprintln!("codex-gpui: save personal instructions: {error:#}");
+                                view.update(cx, |view, cx| view.save_failed(cx));
+                                this.toast(Toast::danger("Unable to save instructions"), cx);
+                            }
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+            settings::personalization::Event::Leave => {
+                if self.instructions_changed(cx) {
+                    self.confirm_instructions_leave(SettingsLeave::Editor, window, cx);
+                } else {
+                    view.update(cx, |view, cx| view.discard(cx));
+                }
+            }
+            settings::personalization::Event::Section(label) => {
+                if self.instructions_changed(cx) {
+                    self.confirm_instructions_leave(SettingsLeave::Section(label), window, cx);
+                } else {
+                    page.update(cx, |page, cx| page.select_section(label, cx));
+                }
+            }
+        }
     }
 
     fn flush_settings(&mut self, cx: &mut Context<Self>) {
@@ -4109,32 +4346,42 @@ impl Root {
     ) {
         self.qa_work_started = true;
         let bridge = self.bridge.clone();
-        let review_delivery = params["keyPath"] == "desktop.reviewDelivery";
+        let failure = match (
+            params["keyPath"].as_str(),
+            self.state.route == Route::Settings,
+        ) {
+            (Some("desktop.reviewDelivery"), _) => "Could not save review delivery preference",
+            (Some("desktop.followUpQueueMode"), true) => "Could not save follow-up behavior",
+            (Some("desktop.followUpQueueMode"), false) => "Couldn’t save your changes. Try again",
+            _ => "Couldn't save your changes. Try again",
+        };
         let queue_mode = params["keyPath"] == "desktop.followUpQueueMode";
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             if let Err(error) = bridge.request::<_, Value>(method, params).await {
-                if review_delivery {
-                    this.update(cx, |this, cx| {
-                        this.toast(
-                            Toast::danger("Could not save review delivery preference"),
-                            cx,
-                        );
-                    })?;
-                }
-                if queue_mode {
-                    // The composer shows the behavior that still applies.
-                    this.update(cx, |this, cx| {
+                this.update(cx, |this, cx| {
+                    if queue_mode {
                         let queue = this.config["desktop"]["followUpQueueMode"] == "queue";
                         this.thread_composer
                             .update(cx, |c, cx| c.set_queue_mode(queue, cx));
-                        this.toast(Toast::danger("Couldn’t save your changes. Try again"), cx);
-                    })?;
-                }
+                    }
+                    this.toast(Toast::danger(failure), cx);
+                })?;
                 return Err(error);
             }
-            this.update(cx, |this, _| apply(&mut this.config))
+            this.update(cx, |this, cx| {
+                apply(&mut this.config);
+                this.refresh_enter_behavior(cx);
+            })
         });
         log_err(task, cx);
+    }
+
+    fn refresh_enter_behavior(&self, cx: &mut Context<Self>) {
+        cx.set_global(ui::composer::EnterBehavior::from_setting(
+            self.config["desktop"]["composerEnterBehavior"]
+                .as_str()
+                .unwrap_or("enter"),
+        ));
     }
 
     /// Settles only the request whose card produced the answer.
@@ -4271,16 +4518,8 @@ impl Root {
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         if let Some(login) = &self.login {
-            login.update(cx, |login, cx| login.apply(&event, cx));
-            if matches!(&event, Event::Notification { method, params }
-                if method == "account/login/completed" && params["success"] == true)
-            {
-                self.login = None;
-                self.read_account(cx);
-                self.refresh_threads(cx);
-                self.load_projects(cx);
-                self.load_sections(cx);
-                cx.notify();
+            if login.update(cx, |login, cx| login.apply(&event, cx)) {
+                self.finish_sign_in(cx);
             }
             return;
         }
@@ -4326,7 +4565,7 @@ impl Root {
                     && params["threadId"].as_str() == Some(view.id())
                 {
                     panel.update(cx, |panel, cx| {
-                        panel.apply(&event, &self.cwd, view.turns(), cx);
+                        panel.apply(&event, view.cwd(), view.turns(), cx);
                     });
                 }
             });
@@ -4450,6 +4689,30 @@ impl Root {
                 }
             }
         }
+    }
+
+    fn show_login(&mut self, forced_login_method: Value, cx: &mut Context<Self>) {
+        self.ready = false;
+        let login = cx.new(|cx| Login::with_login_policy(forced_login_method, cx));
+        cx.subscribe(&login, |this, _, _: &settings::LoginMethodsLoaded, cx| {
+            this.ready = true;
+            cx.notify();
+        })
+        .detach();
+        cx.subscribe(&login, |this, _, _: &settings::LoggedIn, cx| {
+            this.finish_sign_in(cx);
+        })
+        .detach();
+        self.login = Some(login);
+    }
+
+    fn finish_sign_in(&mut self, cx: &mut Context<Self>) {
+        self.login = None;
+        self.read_account(cx);
+        self.refresh_threads(cx);
+        self.load_projects(cx);
+        self.load_sections(cx);
+        cx.notify();
     }
 
     fn set_account(&mut self, account: Option<&AccountReadResponse>, cx: &mut Context<Self>) {
@@ -4614,6 +4877,30 @@ fn computer_use_overrides(config: &Value) -> Option<Value> {
 /// `None` (the server's default) when `model/list` gave the picker nothing.
 fn model(s: &Submission) -> Option<&str> {
     (!s.model.is_empty()).then_some(s.model.as_str())
+}
+
+/// `thread/start` parameters for a new chat. A standalone workspace replaces the project
+/// directory and adds its instructions; a temporary chat is ephemeral.
+fn thread_start_params(
+    cwd: &str,
+    s: &Submission,
+    workspace: Option<&host::Workspace>,
+    mode: features::shortcuts::NewChatMode,
+    computer_use: Option<Value>,
+) -> Value {
+    let cwd = workspace.map_or(cwd, |workspace| workspace.cwd.as_str());
+    let mut params = json!({ "cwd": cwd, "model": model(s) });
+    if let Some(workspace) = workspace {
+        params["developerInstructions"] = json!(workspace.instructions());
+    }
+    if mode == features::shortcuts::NewChatMode::Temporary {
+        params["ephemeral"] = json!(true);
+    }
+    apply_permissions(&mut params, s.permission);
+    if let Some(config) = computer_use {
+        params["config"] = config;
+    }
+    params
 }
 fn apply_permissions(params: &mut Value, permission: Permission) {
     let (policy, profile, reviewer) = match permission {
@@ -5249,6 +5536,7 @@ impl Render for Root {
                     .relative()
                     .font_family(ui::SANS)
                     .track_focus(&self.focus)
+                    .on_key_down(ui::focus::tab)
                     .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
                         this.close_window(window, cx);
                     }))
@@ -5260,6 +5548,25 @@ impl Render for Root {
                 cx,
             )
             .into_any_element();
+        }
+        if self.state.route == Route::SelectWorkspace {
+            return div()
+                .size_full()
+                .relative()
+                .track_focus(&self.focus)
+                .on_key_down(ui::focus::tab)
+                .on_action(
+                    cx.listener(|this, _: &OpenFolder, window, cx| this.open_folder(window, cx)),
+                )
+                .on_action(
+                    cx.listener(|this, _: &CloseWindow, window, cx| this.close_window(window, cx)),
+                )
+                .on_action(|_: &Minimize, window, _| window.minimize_window())
+                .on_action(|_: &Zoom, window, _| window.zoom_window())
+                .child(self.workspace.clone())
+                .child(self.toaster.clone())
+                .children(self.dialog.clone())
+                .into_any_element();
         }
         let content: AnyElement = match (&self.page, &self.split) {
             (_, Some(split)) if self.sidebar_automation.is_some() => {
@@ -5310,6 +5617,10 @@ impl Render for Root {
             .on_action(
                 cx.listener(|this, _: &CloseWindow, window, cx| this.close_window(window, cx)),
             )
+            .on_action(cx.listener(|_, _: &Quit, _, cx| {
+                cx.stop_propagation();
+                cx.defer(routes::request_quit);
+            }))
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &Zoom, window, _| window.zoom_window())
             .child(content)
