@@ -2,6 +2,7 @@ use super::{Backend, Bridge, Incoming, Sink};
 use anyhow::{Context as _, Result, anyhow, bail, ensure};
 use async_channel::{Receiver, Sender, TryRecvError};
 use polling::{Event as Ready, Events, Poller};
+use serde_json::{Value, json};
 use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
@@ -51,6 +52,38 @@ impl Bridge {
         account_id: Option<&str>,
     ) -> Result<(Self, Receiver<super::Event>)> {
         connect(endpoint, token, account_id)
+    }
+
+    /// Starts an onboarding thread for a saved environment on this cloud account.
+    /// Pass the expected account, configuration ID, and ordinary `thread/start` parameters.
+    /// Local connections, account mismatches, empty IDs, and non-object parameters fail before sending.
+    /// Call `initialize` first. This does not send a model turn or complete environment setup.
+    /// Returns the server JSON unchanged, including cloud-only fields and nullable local fields.
+    pub async fn start_cloud_environment_onboarding(
+        &self,
+        account_id: &str,
+        config_id: &str,
+        mut params: Value,
+    ) -> Result<Value> {
+        ensure!(
+            !account_id.is_empty() && self.cloud_account_id.as_deref() == Some(account_id),
+            "the saved environment account or cloud connection changed"
+        );
+        ensure!(
+            !config_id.is_empty(),
+            "empty cloud environment configuration ID"
+        );
+        let params = params
+            .as_object_mut()
+            .context("cloud thread parameters must be an object")?;
+        params.remove("cwd");
+        params.remove("runtimeWorkspaceRoots");
+        params.insert(
+            "environments".into(),
+            json!([{"onboardingConfigId":config_id}]),
+        );
+        params.insert("deferredEnvironment".into(), true.into());
+        self.request("thread/start", params).await
     }
 }
 
@@ -202,7 +235,9 @@ fn connect(
         })
         .context("start cloud transport")?;
     let backend = CloudBackend { sender, poller };
-    Ok((Bridge::new(Box::new(backend), sink, None, false), events))
+    let mut bridge = Bridge::new(Box::new(backend), sink, None, false);
+    bridge.cloud_account_id = account_id.map(str::to_owned);
+    Ok((bridge, events))
 }
 
 struct CloudBackend {
@@ -210,9 +245,42 @@ struct CloudBackend {
     poller: Arc<Poller>,
 }
 
+fn normalize_request(message: &mut Value) {
+    let method = message["method"].as_str().unwrap_or_default();
+    let start = method == "thread/start";
+    if !matches!(
+        method,
+        "thread/start"
+            | "thread/startAeon"
+            | "thread/resume"
+            | "turn/start"
+            | "turn/addUserMessage"
+    ) {
+        return;
+    }
+    let Some(params) = message.get_mut("params").and_then(Value::as_object_mut) else {
+        return;
+    };
+    params.remove("personality");
+    match params.get("serviceTier") {
+        Some(Value::String(tier)) if tier == "priority" => {
+            params.insert("serviceTier".into(), "fast".into());
+        }
+        None | Some(Value::Null) => {}
+        Some(Value::String(tier)) if matches!(tier.as_str(), "fast" | "flex" | "ultrafast") => {}
+        Some(_) => {
+            params.remove("serviceTier");
+        }
+    }
+    if start {
+        params.insert("pluginsMcp".into(), json!({"productSku":"codex"}));
+    }
+}
+
 impl Backend for CloudBackend {
-    fn send(&mut self, message: &serde_json::Value) -> Result<()> {
-        let message = serde_json::to_string(message)?;
+    fn send(&mut self, mut message: Value) -> Result<()> {
+        normalize_request(&mut message);
+        let message = serde_json::to_string(&message)?;
         self.sender
             .try_send(message)
             .map_err(|_| anyhow!("cloud app-server closed"))?;
