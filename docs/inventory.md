@@ -111,6 +111,7 @@ Open Code Review to search, filter, and group pull requests for the active GitHu
 The All and Reviewing views remove duplicate requests across review and authored sections.
 Each search stream retains its rows and cursor after a failed page request.
 Retry reloads the failed data without creating a GitHub write.
+Retry reads the active GitHub account again before reloading.
 
 The executable also accepts `/pull-requests` and `/pull-requests/<host>/<owner>/<repository>/<number>` as its first argument.
 The host runs GitHub CLI reads through the existing app-server `process/spawn` connection.
@@ -118,6 +119,7 @@ Missing CLI, unavailable access, empty results, loading, and partial failures re
 Ask Codex fills a new chat draft; it does not install software or start a turn.
 The detail panel shows the description, branches, checks, and supported GitHub attachment images.
 Media requests validate HTTPS hosts and stop at the size limit.
+Image decoding runs off the UI thread and limits both each decoded image and the retained previews to 512 MiB.
 Video attachments show the original `Preview unavailable` card and `Open in GitHub` action instead of an inline player.
 `fixtures/pull-requests.json` retains scoped GitHub reads for `i098/codex-gpui`, with original response normalization and no credential tokens.
 

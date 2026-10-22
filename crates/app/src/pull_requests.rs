@@ -65,14 +65,7 @@ impl Root {
         match event {
             Event::Query => self.load_pull_requests(page, false, cx),
             Event::More => self.load_pull_requests(page, true, cx),
-            Event::Retry => {
-                if page.read(cx).account().is_some() {
-                    self.load_pull_requests(page.clone(), false, cx);
-                    self.load_pull_request_detail(page, cx);
-                } else {
-                    self.check_pull_request_access(page, cx);
-                }
-            }
+            Event::Retry => self.check_pull_request_access(page, cx),
             Event::Select(selected) => {
                 self.navigate(Route::PullRequests(selected.clone()), window, cx)
             }
@@ -219,9 +212,15 @@ impl Root {
             "gh-pr-media",
             Some(json!({"account": account, "pullRequest": identity, "url": url})),
         );
-        let load = cx.background_spawn(async move { host::json_body(&service.fetch(&request)?) });
+        let load = cx.background_spawn(async move {
+            service
+                .fetch(&request)
+                .and_then(|response| host::json_body(&response))
+                .map_err(|error| format!("{error:#}"))
+                .and_then(screen::decode_image_preview)
+        });
         cx.spawn(async move |_, cx| {
-            let result = load.await.map_err(|error| format!("{error:#}"));
+            let result = load.await;
             page.update(cx, |page, cx| {
                 page.apply_media(generation, &url, result, cx)
             });

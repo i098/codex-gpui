@@ -1,13 +1,38 @@
 mod common;
 
 use anyhow::Result;
-use app::{Route, host::ReplayHost};
+use app::{
+    Route,
+    host::{Host, ReplayHost, Request, json_body},
+};
 use common::Fx;
 use gpui::Focusable as _;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use ui::screens::pull_requests::{Availability, Event};
+
+struct AccountHost {
+    replay: ReplayHost,
+    switched: AtomicBool,
+}
+
+impl Host for AccountHost {
+    fn fetch(&self, request: &Request) -> Result<serde_json::Value> {
+        let mut response = self.replay.fetch(request)?;
+        if self.switched.load(Ordering::SeqCst)
+            && let Request::Fetch { url, .. } = request
+            && url == "vscode://codex/gh-current-user"
+        {
+            let mut body = json_body(&response)?;
+            body["account"]["login"] = "changed-account".into();
+            body["login"] = "changed-account".into();
+            response["bodyJsonString"] = body.to_string().into();
+        }
+        Ok(response)
+    }
+}
 
 #[test]
 fn missing_host_response_keeps_retry_and_chat_available() -> Result<()> {
@@ -57,9 +82,12 @@ fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
     let mut fx = Fx::new()?;
     let recording =
         std::fs::read_to_string(format!("{}/fixtures/pull-requests.json", common::ROOT))?;
-    let host = Arc::new(ReplayHost::from_recording(&recording)?);
+    let host = Arc::new(AccountHost {
+        replay: ReplayHost::from_recording(&recording)?,
+        switched: AtomicBool::new(false),
+    });
     fx.root
-        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
+        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
     fx.cx.update_window(fx.window, |_, window, cx| {
         window.dispatch_action(Box::new(ui::OpenPullRequests), cx);
     })?;
@@ -157,6 +185,15 @@ fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
         fx.read(|_, cx| matches!(page.read(cx).detail, Some(Ok(_))))
     })?;
     capture(&mut fx, "merged-detail")?;
+    host.switched.store(true, Ordering::SeqCst);
+    page.update(&mut fx.cx, |_, cx| cx.emit(Event::Retry));
+    fx.wait("switched GitHub account", |fx| {
+        fx.read(|_, cx| {
+            page.read(cx)
+                .account()
+                .is_some_and(|account| account.login == "changed-account")
+        })
+    })?;
     Ok(())
 }
 

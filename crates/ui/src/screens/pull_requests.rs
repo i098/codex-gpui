@@ -9,12 +9,15 @@ use gpui::{
     Stateful, StatefulInteractiveElement, Styled, StyledImage, Window, div, point,
     prelude::FluentBuilder as _, px,
 };
+use image::ImageDecoder as _;
 use model::{Account, Filters, Identity, Repository, SearchPage, Stream, View};
 use serde_json::Value;
 use std::{cell::RefCell, collections::HashMap, sync::Arc, time::Duration};
 use theme::ActiveTheme as _;
 
 pub const INSTALL_PROMPT: &str = "Install GitHub CLI (`gh`) on this machine, verify it works, and help me authenticate if needed so I can view and manage pull requests in Codex";
+
+const PREVIEW_MEMORY_LIMIT: usize = 512 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub enum Availability {
@@ -262,14 +265,29 @@ impl Page {
         &mut self,
         generation: u64,
         url: &str,
-        result: Result<Value, String>,
+        result: Result<Arc<gpui::RenderImage>, String>,
         cx: &mut Context<Self>,
     ) {
         if self.detail_generation != generation {
             return;
         }
-        self.media_images
-            .insert(url.to_owned(), Some(result.and_then(decode_image_preview)));
+        let retained_bytes: usize = self
+            .media_images
+            .iter()
+            .filter(|(key, _)| key.as_str() != url)
+            .filter_map(|(_, preview)| preview.as_ref()?.as_ref().ok())
+            .map(|image| image.as_bytes(0).map_or(0, <[u8]>::len))
+            .sum();
+        let result = result.and_then(|image| {
+            if image.as_bytes(0).map_or(0, <[u8]>::len)
+                <= PREVIEW_MEMORY_LIMIT.saturating_sub(retained_bytes)
+            {
+                Ok(image)
+            } else {
+                Err("Preview exceeds the image memory limit".into())
+            }
+        });
+        self.media_images.insert(url.to_owned(), Some(result));
         cx.notify();
     }
 
@@ -1231,7 +1249,7 @@ fn video_link(url: &str) -> bool {
                 .any(|extension| path.ends_with(extension)))
 }
 
-fn decode_image_preview(value: Value) -> Result<Arc<gpui::RenderImage>, String> {
+pub fn decode_image_preview(value: Value) -> Result<Arc<gpui::RenderImage>, String> {
     let mime = value["mimeType"].as_str().ok_or("Preview unavailable")?;
     if !mime.starts_with("image/") && mime != "application/octet-stream" {
         return Err("Preview unavailable".into());
@@ -1245,7 +1263,17 @@ fn decode_image_preview(value: Value) -> Result<Arc<gpui::RenderImage>, String> 
     let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|e| e.to_string())?;
-    let pixels = reader.decode().map_err(|e| e.to_string())?.into_rgba8();
+    let decoder = reader.into_decoder().map_err(|e| e.to_string())?;
+    let (width, height) = decoder.dimensions();
+    let rgba_bytes = u64::from(width)
+        .saturating_mul(u64::from(height))
+        .saturating_mul(4);
+    if decoder.total_bytes().max(rgba_bytes) > PREVIEW_MEMORY_LIMIT as u64 {
+        return Err("Preview exceeds the image memory limit".into());
+    }
+    let pixels = image::DynamicImage::from_decoder(decoder)
+        .map_err(|e| e.to_string())?
+        .into_rgba8();
     Ok(Arc::new(gpui::RenderImage::new([image::Frame::new(
         pixels,
     )])))
@@ -1448,5 +1476,17 @@ mod tests {
             Some("Preview unavailable")
         );
         assert!(media_spans(&format!("Text before [video]({url})")).is_empty());
+    }
+
+    #[test]
+    fn oversized_preview_is_rejected_before_pixel_decoding() {
+        let value = serde_json::json!({
+            "mimeType": "image/png",
+            "contentsBase64": "iVBORw0KGgoAAAANSUhEUgAATiAAAE4gCAYAAADjcEY5AAAACElEQVR4nAMAAAAAAUgGidIAAAAASUVORK5CYII="
+        });
+        assert_eq!(
+            decode_image_preview(value).unwrap_err(),
+            "Preview exceeds the image memory limit"
+        );
     }
 }
