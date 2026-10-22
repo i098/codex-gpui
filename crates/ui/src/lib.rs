@@ -1100,10 +1100,11 @@ impl Shell {
                     |_, _, _| {},
                     move |bounds, (), window, cx| {
                         // The `clip-path` box keeps a zoomed edge's fraction, in
-                        // `#app-shell-sidebar`'s space: its left and bottom are insets in
-                        // LayoutUnits, and its top is rounded to device px.
+                        // `#app-shell-sidebar`'s space: its left is the content-sized rail
+                        // (`px-2` around 36 px items, each in LayoutUnits), its bottom an inset
+                        // in LayoutUnits, and its top is rounded to device px.
                         let s = window.scale_factor();
-                        let left = layout_unit(RAIL_WIDTH, s);
+                        let left = layout_unit(px(8.), s) * 2. + layout_unit(px(36.), s);
                         let top = Theme::TITLEBAR_HEIGHT;
                         let shift = px((f32::from(top) * s).round() / s) - top;
                         let bottom = window.viewport_size().height - layout_unit(PAGE_INSET, s);
