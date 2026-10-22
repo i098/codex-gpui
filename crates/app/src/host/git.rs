@@ -282,8 +282,9 @@ mod cloud_patch {
 }
 pub(super) use cloud_patch::apply_cloud_patch;
 
+use super::local_environments::{self, Environment, Lifecycle};
 use anyhow::{Context as _, Result, anyhow, bail, ensure};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -1324,47 +1325,6 @@ struct ShellEnvironment {
     exclude: Vec<String>,
 }
 
-/// A local-environment file, `.codex/environments/<name>.toml` (`UF`).
-#[derive(Deserialize)]
-struct Environment {
-    version: Option<i64>,
-    #[allow(dead_code)]
-    name: String,
-    setup: Scripts,
-    cleanup: Option<Scripts>,
-}
-
-#[derive(Deserialize)]
-struct Scripts {
-    script: String,
-    darwin: Option<Script>,
-    linux: Option<Script>,
-    win32: Option<Script>,
-}
-
-#[derive(Deserialize)]
-struct Script {
-    script: String,
-}
-
-impl Scripts {
-    /// This platform's script when it has one, else the shared one (`Lwe`).
-    fn current(&self) -> &str {
-        let platform = if cfg!(target_os = "macos") {
-            &self.darwin
-        } else if cfg!(windows) {
-            &self.win32
-        } else {
-            &self.linux
-        };
-        platform
-            .as_ref()
-            .map(|s| s.script.trim())
-            .filter(|s| !s.is_empty())
-            .unwrap_or(self.script.trim())
-    }
-}
-
 /// Creates the worktree an automation runs in under `worktrees_root` (original git worker
 /// `create-worktree`, `D2`). `Ok(None)` when `cwd` is in no Git repository: the original
 /// then runs in `cwd` itself. `starting_ref` `None` is the automation's start (`Ol`): the
@@ -1481,7 +1441,7 @@ pub(super) fn remove_unstarted_worktree(worktrees_root: &Path, worktree: &Worktr
     if let Some(config) = selected.map(PathBuf::from)
         && let Ok(environment) = environment(&config)
     {
-        let script = environment.cleanup.as_ref().map_or("", Scripts::current);
+        let script = environment.cleanup.as_ref().map_or("", Lifecycle::current);
         if !script.is_empty() {
             run_script(
                 &root.join(script_dir(&config)),
@@ -2106,14 +2066,8 @@ fn environment(path: &Path) -> Result<Environment> {
         .map_err(anyhow::Error::from)
         .and_then(|text| Ok(text.parse()?))
         .map_err(|e| anyhow!("Failed to parse environment config at {shown}: {e}"))?;
-    let environment: Environment = toml::Value::Table(table)
-        .try_into()
-        .map_err(|e| anyhow!("Invalid environment config at {shown}: {e}"))?;
-    ensure!(
-        environment.version.unwrap_or(1) >= 1,
-        "Invalid environment config at {shown}: version must be at least 1"
-    );
-    Ok(environment)
+    local_environments::parse_value(toml::Value::Table(table))
+        .map_err(|e| anyhow!("Invalid environment config at {shown}: {e}"))
 }
 
 /// The directory a script runs in, relative to its Git root (`cCe`, `lCe`): the project that

@@ -315,6 +315,11 @@ Section registry: `gWa` (order) and `lQa` (lazy pages) in app-initial-6350d04672
 
 - General settings (general-settings-65e65871cdcd.js): `Theme` `Light` / `Dark` / `System`, light and dark chrome themes (accent, background, foreground, UI/code fonts, contrast, translucent sidebar, import/copy theme), `UI font size`, `Code font size`, `Diff markers` (`Color` / `+/-`), `Use pointer cursors`, `Font smoothing`, `Reduce motion`, `Dock icon`, `Send shortcut`, `Follow-up behavior`.
 - Keyboard shortcuts (keyboard-shortcuts-settings-e5d452e7d34c.js) lists and rebinds the commands of section 11; `⌘/` opens `KeyboardShortcutsDialog` (keyboard-shortcuts-dialog-a55e88bf0464.js).
+- Native local environment file services live in `host::local_environments`.
+  `Host` exposes environment discovery, config reads, revision-checked writes, and explicit workspace selection.
+  Malformed files retain diagnostics; stale writes return a conflict without replacing external edits.
+  Selection uses `electron-persisted-atom-state.local-env-selections-by-workspace` and preserves unrelated state.
+  The worktree runner uses the same environment schema and platform-script fallback.
 
 ### 9.2 Login and onboarding
 

@@ -178,6 +178,13 @@ Run `cargo test -p ui --lib screens::diff::panel::patch` for its boundary checks
 It returns each repository root, working directory, and display name without changing a rendered control.
 Run `cargo test -p app --test diff_repositories` for the real-Git ownership and path checks.
 
+`Host` lists `.codex/environments/*.toml`, reads and saves explicit local environment paths, and persists workspace selections in `.codex-global-state.json`.
+Saving uses SHA-256 revisions to reject stale edits and keeps existing symlinks and file permissions.
+Only trusted native callers can use these local file operations; they are not model-callable tools.
+Worktree setup uses the same environment schema, including platform scripts and action validation.
+Run `cargo test -p app --lib host::local_environments` to check file edits, selections, inherited files, and invalid-file handling.
+This service does not add the local environment settings page.
+
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.

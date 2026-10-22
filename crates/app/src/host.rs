@@ -51,6 +51,7 @@ mod diff_repositories;
 mod directories;
 mod git;
 pub mod git_pr;
+pub mod local_environments;
 mod native_apps;
 mod open_in;
 mod projectless;
@@ -124,6 +125,40 @@ pub trait Host: Send + Sync {
 
     fn add_project(&self, _root: &Path) -> Result<String> {
         bail!("adding a local project is unsupported by this host")
+    }
+
+    fn local_environments(
+        &self,
+        _workspace: &Path,
+    ) -> Result<Vec<local_environments::ParsedEnvironment>> {
+        bail!("Local environments are not supported by this host.")
+    }
+
+    fn local_environment_config(
+        &self,
+        _path: &Path,
+    ) -> Result<local_environments::EnvironmentConfig> {
+        bail!("Local environments are not supported by this host.")
+    }
+
+    fn save_local_environment_config(
+        &self,
+        _path: &Path,
+        _revision: Option<&str>,
+        _raw: &str,
+    ) -> Result<local_environments::SaveResult> {
+        bail!("Local environments are not supported by this host.")
+    }
+
+    fn local_environment_selection(
+        &self,
+        _workspace: &Path,
+    ) -> Result<local_environments::Selection> {
+        bail!("Local environments are not supported by this host.")
+    }
+
+    fn select_local_environment(&self, _workspace: &Path, _config: Option<&Path>) -> Result<()> {
+        bail!("Local environments are not supported by this host.")
     }
 
     fn prepare_projectless(&self, _prompt: &str) -> Result<Workspace> {
@@ -1072,6 +1107,40 @@ impl Host for LocalHost {
         Some(self.native_computer_use.clone())
     }
 
+    fn local_environments(
+        &self,
+        workspace: &Path,
+    ) -> Result<Vec<local_environments::ParsedEnvironment>> {
+        local_environments::list(workspace)
+    }
+
+    fn local_environment_config(
+        &self,
+        path: &Path,
+    ) -> Result<local_environments::EnvironmentConfig> {
+        local_environments::read_config(path)
+    }
+
+    fn save_local_environment_config(
+        &self,
+        path: &Path,
+        revision: Option<&str>,
+        raw: &str,
+    ) -> Result<local_environments::SaveResult> {
+        local_environments::save_config(path, revision, raw)
+    }
+
+    fn local_environment_selection(
+        &self,
+        workspace: &Path,
+    ) -> Result<local_environments::Selection> {
+        local_environments::selection(self, workspace)
+    }
+
+    fn select_local_environment(&self, workspace: &Path, config: Option<&Path>) -> Result<()> {
+        local_environments::select(self, workspace, config)
+    }
+
     fn projects(&self) -> Result<Vec<Project>> {
         let path = self.home.join(".codex-global-state.json");
         let contents = match fs::read(&path) {
@@ -1609,6 +1678,41 @@ impl Host for CloudHost {
 
     fn add_project(&self, root: &Path) -> Result<String> {
         self.local.add_project(root)
+    }
+
+    fn local_environments(
+        &self,
+        workspace: &Path,
+    ) -> Result<Vec<local_environments::ParsedEnvironment>> {
+        self.local.local_environments(workspace)
+    }
+
+    fn local_environment_config(
+        &self,
+        path: &Path,
+    ) -> Result<local_environments::EnvironmentConfig> {
+        self.local.local_environment_config(path)
+    }
+
+    fn save_local_environment_config(
+        &self,
+        path: &Path,
+        revision: Option<&str>,
+        raw: &str,
+    ) -> Result<local_environments::SaveResult> {
+        self.local
+            .save_local_environment_config(path, revision, raw)
+    }
+
+    fn local_environment_selection(
+        &self,
+        workspace: &Path,
+    ) -> Result<local_environments::Selection> {
+        self.local.local_environment_selection(workspace)
+    }
+
+    fn select_local_environment(&self, workspace: &Path, config: Option<&Path>) -> Result<()> {
+        self.local.select_local_environment(workspace, config)
     }
 
     fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {
