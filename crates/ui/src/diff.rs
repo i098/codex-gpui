@@ -1882,11 +1882,9 @@ impl Render for SplitScreen {
         }
         let visible = !self.tabs.is_empty() && visibility.visible;
         let hidden_tabs = !self.tabs.is_empty() && !visible;
+        let open = self.shell.read(cx).sidebar_open;
         self.thread.update(cx, |view, cx| {
-            if view.clip_right != !visible {
-                view.clip_right = !visible;
-                cx.notify();
-            }
+            view.set_clips(!visible, !visible && !open, cx)
         });
         self.shell.update(cx, |shell, cx| {
             if shell.main_clips_right != !visible
@@ -1900,7 +1898,6 @@ impl Render for SplitScreen {
         // The panel ends at the main panel's right edge, 4 px
         // (`--app-shell-page-inline-end-inset`) from the window's.
         let left = visible.then(|| window.viewport_size().width - px(4.) - panel_width(window, cx));
-        let open = self.shell.read(cx).sidebar_open;
         let sidebar_width = self.shell.read(cx).sidebar_width;
         let header_left = if open {
             sidebar_width
@@ -1928,13 +1925,16 @@ impl Render for SplitScreen {
                     .left(header_left)
                     .when_some(left, |h, left| h.w(left - header_left))
                     .when(hidden_tabs, |h| {
-                        h.w(window.viewport_size().width - header_left - px(78.))
+                        h.w(window.viewport_size().width - header_left - COMPACT_CONTROLS_WIDTH)
                     }),
             )
             .when(!open, |d| {
                 let t = cx.theme();
+                // The titlebar's New chat is the 16 px pencil (the command menu's), not the
+                // sidebar row's 20 px one, in its own layer like Show sidebar (`Shell::titlebar`).
+                let pencil = icon("sidebar-cmd-new-chat", 16., t.text_tertiary).own_layer(None);
                 d.child(
-                    crate::icon_button("new-chat", icon("new-chat", 16., t.text_tertiary), t)
+                    crate::icon_button("new-chat", pencil, t)
                         .aria_label("New chat")
                         .tab_index(0)
                         .absolute()
@@ -2012,6 +2012,11 @@ impl Render for SplitScreen {
 
 /// Left edge of Chromium's composited `group/titlebar` layer.
 const TITLEBAR_LAYER_X: Pixels = px(224.);
+
+/// The compact titlebar's controls (`compact_controls`): a `w-px` divider, then `Enter full
+/// view` and `Show tabs` (`size-7`), `gap-1.5` apart, inside `pe-2`. The thread's toolbar ends
+/// at the divider.
+const COMPACT_CONTROLS_WIDTH: Pixels = px(1. + 6. + 28. + 6. + 28. + 8.);
 
 /// A thread route (refs/thread): `thread` beside the sidebar; with `panel` (refs/diff,
 /// refs/terminal) the panel view on the right under a titlebar tab `(view, icon, label)`.

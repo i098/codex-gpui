@@ -1145,15 +1145,13 @@ impl Shell {
                     focus::ring(
                         icon_button(
                             "toggle-sidebar",
-                            icon::icon(
-                                if self.sidebar_open {
-                                    "sidebar"
-                                } else {
-                                    "sidebar-hidden"
-                                },
-                                16.,
-                                t.text_tertiary,
-                            ),
+                            if self.sidebar_open {
+                                icon::icon("sidebar", 16., t.text_tertiary)
+                            } else {
+                                // Closed, Chromium composites the titlebar's Show sidebar and
+                                // New chat icons: they blit into a layer of their own.
+                                icon::icon("sidebar-hidden", 16., t.text_tertiary).own_layer(None)
+                            },
                             t,
                         ),
                         &sidebar_focus,
@@ -1431,8 +1429,11 @@ impl Render for Shell {
                                 };
                                 shapes::paint(&fill, None, bounds, window, cx);
                                 main = frame(bounds, u8::from(!main_layer), false, window, cx);
+                                // A lone thread draws its right corners, and its top-left one
+                                // when the sidebar is closed (`ThreadView::clip_top_left`).
                                 let own = clips_right || main_layer;
                                 let own = Corners {
+                                    top_left: clips_right && !open,
                                     top_right: own,
                                     bottom_right: own,
                                     ..Default::default()
