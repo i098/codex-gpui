@@ -835,7 +835,9 @@ impl DiffPanel {
                                                         },
                                                     ))
                                                     .child(if dictation_label == "Dictate" {
-                                                        icon("mic", 16., t.text).into_any_element()
+                                                        icon("mic", 16., t.text)
+                                                            .runtime()
+                                                            .into_any_element()
                                                     } else {
                                                         div()
                                                             .size(px(8.8))

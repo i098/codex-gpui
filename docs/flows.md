@@ -557,6 +557,7 @@ The composer groups comments in one count attachment.
 Its preview opens the selected source file; `Remove comments attachment` clears the stored comments.
 Closing the keyboard preview restores focus to its trigger.
 The comment's Dictate control targets its own Composer through the shared dispatcher.
+The microphone keeps its original shape against the comment card background.
 Comment and Save wait for a successful completion before persisting the edited text.
 A failed or cancelled transcription keeps the comment editable and preserves its stored value.
 Clicking the comment card returns focus to its editor, including after an error.
