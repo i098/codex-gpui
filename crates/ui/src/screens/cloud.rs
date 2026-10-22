@@ -102,6 +102,7 @@ pub struct CloudPage {
     repository_picker: bool,
     confirm: Option<&'static str>,
     expanded_workspace: bool,
+    discard_to_list: bool,
     button_focus: RefCell<BTreeMap<SharedString, FocusHandle>>,
     current: current::Current,
     current_mode: Option<bool>,
@@ -137,6 +138,7 @@ impl CloudPage {
             repository_picker: false,
             confirm: None,
             expanded_workspace: false,
+            discard_to_list: false,
             button_focus: RefCell::new(BTreeMap::new()),
             current: current::Current::default(),
             current_mode: None,
@@ -481,6 +483,9 @@ impl CloudPage {
     }
 
     fn leave_editor(&mut self) {
+        if std::mem::take(&mut self.discard_to_list) {
+            self.selected = None;
+        }
         self.editor = None;
         self.packages = false;
         self.repository_picker = false;
@@ -567,23 +572,99 @@ impl CloudPage {
             .into_any_element()
     }
 
+    fn legacy_header(&self, title: &str, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        div()
+            .h(px(46.))
+            .flex_none()
+            .px(px(20.))
+            .flex()
+            .items_center()
+            .when(self.view != View::List, |d| {
+                let parent = div()
+                    .h(px(28.))
+                    .px(px(9.))
+                    .flex()
+                    .items_center()
+                    .child(text("Legacy Codex Cloud", 13., 18., 430., t.text_tertiary));
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(self.wire_button(
+                            "cloud-breadcrumb".into(),
+                            "Legacy Codex Cloud".into(),
+                            parent,
+                            cx,
+                            |this, _, cx| {
+                                if this.editor.is_some() {
+                                    this.discard_to_list = true;
+                                    this.cancel_edit(cx);
+                                    if this.editor.is_none() {
+                                        this.refresh(cx);
+                                    }
+                                } else {
+                                    this.selected = None;
+                                    this.view = View::List;
+                                    this.refresh(cx);
+                                }
+                            },
+                        ))
+                        .child(crate::icon::icon("cloud-breadcrumb", 16., t.text_tertiary))
+                        .child(
+                            div()
+                                .h(px(28.))
+                                .px(px(8.))
+                                .flex()
+                                .items_center()
+                                .child(text(title.to_owned(), 14., 21., 430., t.text)),
+                        ),
+                )
+            })
+            .into_any_element()
+    }
+
     fn group(title: &'static str, rows: Vec<AnyElement>, t: &Theme) -> AnyElement {
+        let count = rows.len();
         div()
             .flex()
             .flex_col()
-            .gap(px(12.))
             .when(!title.is_empty(), |d| {
-                d.child(text(title, 14., 21., 500., t.text))
+                d.child(
+                    div()
+                        .h(px(46.))
+                        .pb(px(6.))
+                        .flex()
+                        .items_center()
+                        .child(text(title, 14., 21., 500., t.text)),
+                )
             })
             .child(
                 div()
-                    .rounded(px(20.))
-                    .border_1()
-                    .border_color(t.border)
-                    .overflow_hidden()
-                    .flex()
-                    .flex_col()
-                    .children(rows),
+                    .relative()
+                    .p(px(1.))
+                    .child(super::settings::on_card(
+                        20.,
+                        shapes::Corner::Squircle,
+                        t.background_panel,
+                        Some(t.border),
+                    ))
+                    .child(div().overflow_hidden().flex().flex_col().children(
+                        rows.into_iter().enumerate().map(|(index, row)| {
+                            div().relative().child(row).when(index + 1 < count, |d| {
+                                d.child(
+                                    div()
+                                        .absolute()
+                                        .bottom_0()
+                                        .left(px(16.))
+                                        .right(px(16.))
+                                        .h(px(1.))
+                                        .bg(t.border),
+                                )
+                            })
+                        }),
+                    )),
             )
             .into_any_element()
     }
@@ -1087,7 +1168,7 @@ impl CloudPage {
         div()
             .flex()
             .flex_col()
-            .gap(px(24.))
+            .gap(px(20.))
             .child(Self::group("", identity, &t))
             .when(self.access.workspace, |d| {
                 d.child(Self::group(
@@ -1358,6 +1439,7 @@ impl CloudPage {
                         .child(
                             self.button("confirm-cancel", "Cancel", false, cx, |this, _, cx| {
                                 this.confirm = None;
+                                this.discard_to_list = false;
                                 cx.notify();
                             }),
                         )
@@ -1368,7 +1450,12 @@ impl CloudPage {
                             cx,
                             move |this, _, cx| {
                                 match action {
-                                    "discard" => this.leave_editor(),
+                                    "discard" => {
+                                        this.leave_editor();
+                                        if this.view == View::List {
+                                            this.refresh(cx);
+                                        }
+                                    }
                                     "delete" => {
                                         if let Some(e) = &this.selected {
                                             this.load(Operation::Delete(e.id.clone()), cx)
@@ -1605,26 +1692,43 @@ impl Render for CloudPage {
             .relative()
             .flex()
             .flex_col()
-            .child(div().h(px(46.)).flex_none())
+            .child(self.legacy_header(&title, cx))
             .child(
                 div()
                     .id("cloud-environments")
                     .overflow_y_scroll()
                     .flex_1()
-                    .px(px(20.))
-                    .pt(px(16.))
-                    .pb(px(40.))
                     .flex()
                     .flex_col()
                     .items_center()
+                    .layer()
+                    .child(
+                        div()
+                            .w_full()
+                            .pt(px(16.))
+                            .pb(px(1.))
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(768.))
+                                    .px(px(20.))
+                                    .py(px(12.))
+                                    .child(text(title, 28., 33.6, 500., t.text)),
+                            ),
+                    )
                     .child(
                         div()
                             .w_full()
                             .max_w(px(768.))
+                            .px(px(20.))
+                            .pt(px(20.))
+                            .pb(px(20.))
                             .flex()
                             .flex_col()
                             .gap(px(20.))
-                            .child(text(title, 28., 33.6, 500., t.text))
                             .when(self.access.legacy, |d| d.child(body))
                             .when(!self.access_loaded, |d| {
                                 d.child(text(
