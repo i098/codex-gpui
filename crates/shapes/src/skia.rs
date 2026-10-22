@@ -2107,17 +2107,12 @@ pub(crate) fn paint_scaled(
     let (half_w, half_h) = (layout(size.width) / 2., layout(size.height) / 2.);
     for (op, color) in ops(d, layer.local(bounds, s), s).1 {
         let Op::Fill(mut contour) = op else {
-            unreachable!("paint_scaled: a fill-only decoration");
+            debug_assert!(false, "paint_scaled: a fill-only decoration");
+            continue;
         };
-        let (x, y) = (contour.rr.r[0] + half_w, contour.rr.r[1] + half_h);
+        let origin = [contour.rr.r[0] + half_w, contour.rr.r[1] + half_h];
         for rr in [&mut contour.rr, &mut contour.origin] {
-            let [l, t, w, h] = rr.r;
-            rr.r = [
-                x + (l - x) * factor,
-                y + (t - y) * factor,
-                w * factor,
-                h * factor,
-            ];
+            rr.r = crate::scaled_rect(rr.r, origin, factor);
             for r in rr.radii.as_flattened_mut() {
                 *r *= factor;
             }

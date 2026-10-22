@@ -154,10 +154,29 @@ pub fn paint_scaled(
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (cx, layer, size);
-        let size = gpui::size(bounds.size.width * factor, bounds.size.height * factor);
-        let origin = bounds.center() - gpui::point(size.width / 2., size.height / 2.);
-        quads(d, Bounds::new(origin, size), window);
+        let c = bounds.center();
+        let r = [
+            bounds.left(),
+            bounds.top(),
+            bounds.size.width,
+            bounds.size.height,
+        ]
+        .map(f32::from);
+        let [l, t, w, h] = scaled_rect(r, [c.x, c.y].map(f32::from), factor).map(gpui::px);
+        quads(d, Bounds::new(gpui::point(l, t), gpui::size(w, h)), window);
     }
+}
+
+/// `r` (`[left, top, width, height]`, device px) under `scale(factor)` about `origin`.
+fn scaled_rect(r: [f32; 4], origin: [f32; 2], factor: f32) -> [f32; 4] {
+    let [l, t, w, h] = r;
+    let [x, y] = origin;
+    [
+        x + (l - x) * factor,
+        y + (t - y) * factor,
+        w * factor,
+        h * factor,
+    ]
 }
 
 /// Paints a repeating two-color Lab gradient with a hard stop halfway through each CSS-pixel period.
@@ -641,5 +660,26 @@ fn quads(d: &Decoration, bounds: Bounds<Pixels>, window: &mut Window) {
                 BorderStyle::Solid
             },
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scaled_rect;
+
+    #[test]
+    fn scaled_rect_keeps_blink_transform_origin_fraction() {
+        // The Explore dot at 110% on a 2x display: the 16 px box snaps to [62, 97] device px,
+        // and `scale(0.5)` is about 50% of its 35.1875 px layout box from the snapped offset.
+        let origin = [62. + 35.1875 / 2., 497. + 35.1875 / 2.];
+        assert_eq!(
+            scaled_rect([62., 497., 35., 35.], origin, 0.5),
+            [70.796875, 497. + 8.796875, 17.5, 17.5]
+        );
+        // At 2x every edge is whole: the 32 px box scales to 16 px about its center.
+        assert_eq!(
+            scaled_rect([64., 464., 32., 32.], [80., 480.], 0.5),
+            [72., 472., 16., 16.]
+        );
     }
 }
