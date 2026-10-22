@@ -980,19 +980,21 @@ fn comment_button(
         .aria_label(label)
         .tab_index(0)
         .cursor_pointer()
-        .px(px(8.))
+        .px(px(9.))
+        .py(px(1.))
         .h(px(24.))
-        .rounded(px(12.5))
-        .border_1()
-        .border_color(if primary {
-            t.border
-        } else {
-            t.border.opacity(0.)
-        })
+        // `rounded-button-action`: Skia's `superellipse(1.5)` corners; the 1 px border paints
+        // with the fill, inside the padding that keeps its layout width.
+        .child(shapes::decoration(Decoration {
+            radius: Corners::all(px(12.5)),
+            corner: shapes::Corner::Squircle,
+            fill: primary.then_some(t.button_primary_solid),
+            border: primary.then_some((px(1.), t.border)),
+            ..Default::default()
+        }))
         .flex()
         .items_center()
         .justify_center()
-        .when(primary, |d| d.bg(t.button_primary_solid))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _, window, cx| {
             action(this, window, cx);
