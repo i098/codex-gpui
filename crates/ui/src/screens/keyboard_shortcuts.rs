@@ -1014,7 +1014,9 @@ impl KeyboardPage {
                             .px(px(8.))
                             .py(px(4.))
                             .relative()
-                            .child(on_card(10., Round, t.text_secondary.opacity(0.1), None))
+                            // `!bg-current/10`: an oklab mix of the secondary text color, which
+                            // Skia blits with its float pipeline.
+                            .child(on_card(10., Round, t.text_alpha_10.opacity(0.65), None))
                             .child(text(label, 12., 12., 430., t.text_secondary))
                             .into_any_element()
                     } else {
@@ -1234,9 +1236,18 @@ impl KeyboardPage {
                                     .w(px(widest))
                                     .child(text(label, 13., 18.571_428, 500., t.text)),
                             )
-                            .child(div().size(px(18.)).flex_none().children(
-                                (label == current).then(|| icon("menu-check", 18., t.text)),
-                            ))
+                            // GPUI lays the slot out at the row's top; Chromium centers it in
+                            // the 18.57 px row, 0.29 px lower, which snaps a device px lower.
+                            .child(
+                                div()
+                                    .size(px(18.))
+                                    .flex_none()
+                                    .relative()
+                                    .top(px(0.5))
+                                    .children(
+                                        (label == current).then(|| icon("menu-check", 18., t.text)),
+                                    ),
+                            )
                             .into_any_element(),
                         action,
                         window,
@@ -1472,13 +1483,7 @@ impl Render for KeyboardPage {
                     .items_center()
                     .justify_center()
                     .when(self.search_by_key, |d| {
-                        // `bg-text/5` under the button's transparent 1 px border.
-                        d.child(on_card(
-                            12.5,
-                            Squircle,
-                            t.text.opacity(0.05),
-                            Some(gpui::transparent_black()),
-                        ))
+                        d.child(on_card(12.5, Squircle, t.text_alpha_5, None))
                     })
                     .child(icon(
                         "shortcut-keystrokes",
@@ -1621,7 +1626,8 @@ impl Render for KeyboardPage {
                     div().w_full().max_w(px(768.)).px(px(20.)).child(
                         div()
                             .relative()
-                            .top_layer()
+                            // cc promotes the sticky header only inside a composited scroller.
+                            .when(scrolls, |d| d.top_layer())
                             .bg(t.surface)
                             .pt(px(20.))
                             .pb(px(8.))

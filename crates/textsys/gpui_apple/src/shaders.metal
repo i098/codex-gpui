@@ -36,6 +36,9 @@ float4 over(float4 below, float4 above);
 float radians(float degrees);
 float4 fill_color(Background background, float2 position, Bounds_ScaledPixels bounds,
   float4 solid_color, float4 color0, float4 color1);
+float skia_dither(float2 position);
+float4 skia_gradient_over(Background background, float2 position, Bounds_ScaledPixels bounds,
+  float4 color0, float4 color1, float4 target);
 
 struct GradientColor {
   float4 solid;
@@ -99,7 +102,8 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
 
 fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
                               constant Quad *quads
-                              [[buffer(QuadInputIndex_Quads)]]) {
+                              [[buffer(QuadInputIndex_Quads)]],
+                              float4 target [[color(0)]]) {
   Quad quad = quads[input.quad_id];
   float4 background_color = fill_color(quad.background, input.position.xy, quad.bounds,
     input.background_solid, input.background_color0, input.background_color1);
@@ -115,6 +119,14 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
       quad.border_widths.right == 0.0 &&
       quad.border_widths.bottom == 0.0 &&
       unrounded) {
+    // A vertical gradient over opaque px: Skia's float pipeline rounds its srcover once; the
+    // blend unit's precision loses the exact ties it rounds up.
+    float angle = fmod(quad.background.gradient_angle_or_pattern_height, 360.0);
+    if (quad.background.tag == 1 && quad.background.color_space == 0 && target.a == 1.0 &&
+        (angle == 0.0 || angle == 180.0)) {
+      return skia_gradient_over(quad.background, input.position.xy, quad.bounds,
+                                input.background_color0, input.background_color1, target);
+    }
     return background_color;
   }
 
@@ -1447,13 +1459,7 @@ float4 fill_color(Background background,
         color = oklab_to_srgb(color);
       }
 
-      // Skia dithers premultiplied RGB with its ordered 8x8 matrix, not alpha.
-      uint2 pixel = uint2(position);
-      uint row = pixel.y ^ pixel.x;
-      uint value = ((row & 1) << 5) | ((pixel.x & 1) << 4) |
-                   ((row & 2) << 2) | ((pixel.x & 2) << 1) |
-                   ((row & 4) >> 1) | ((pixel.x & 4) >> 2);
-      float dither = (float(value) / 64.0 - 63.0 / 128.0) / 255.0;
+      float dither = skia_dither(position) / 255.0;
       if (color.a > 0.0) {
         color.rgb = clamp(color.rgb * color.a + dither, float3(0.0), float3(color.a)) / color.a;
       }
@@ -1492,4 +1498,32 @@ float4 fill_color(Background background,
   }
 
   return color;
+}
+
+// Skia's ordered 8x8 dither offset in (-0.5, 0.5) for the px at `position`, by its position in
+// its cc raster tile (tiles step 510 device px; a tile owns its far edge px).
+float skia_dither(float2 position) {
+  uint2 pixel = uint2(position);
+  pixel = select((pixel - 1) % 510 + 1, pixel, pixel == 0);
+  uint row = pixel.y ^ pixel.x;
+  uint value = ((row & 1) << 5) | ((pixel.x & 1) << 4) | ((row & 2) << 2) |
+               ((pixel.x & 2) << 1) | ((row & 4) >> 1) | ((pixel.x & 4) >> 2);
+  return float(value) * (2.0 / 128.0) - 63.0 / 128.0;
+}
+
+// A vertical two-stop gradient (premultiplied stops) as SkRasterPipeline highp draws it onto
+// the opaque 8-bit `target`: lerp, dither, clamp to alpha, srcover, store rounding half up.
+float4 skia_gradient_over(Background background, float2 position, Bounds_ScaledPixels bounds,
+                          float4 color0, float4 color1, float4 target) {
+  float t = (position.y - bounds.origin.y) / bounds.size.height;
+  if (fmod(background.gradient_angle_or_pattern_height, 360.0) == 0.0) {
+    t = 1.0 - t;
+  }
+  float p0 = background.colors[0].percentage, p1 = background.colors[1].percentage;
+  t = clamp((t - p0) / (p1 - p0), 0.0, 1.0);
+  float4 c = fma(float4(t), color1 - color0, color0);
+  c.rgb = clamp(fma(float3(skia_dither(position)), float3(1.0 / 255.0), c.rgb), 0.0, c.a);
+  float3 d = round(target.rgb * 255.0) * (1.0 / 255.0);
+  float3 o = fma(d, float3(1.0 - c.a), c.rgb);
+  return float4(floor(fma(saturate(o), float3(255.0), float3(0.5))) / 255.0, 1.0);
 }
