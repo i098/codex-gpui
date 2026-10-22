@@ -27,11 +27,36 @@ use serde_json::{Value, json};
 use std::{ops::Range, path::PathBuf, rc::Rc, time::Duration};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub enum EnterBehavior {
+    #[default]
+    Enter,
+    CmdIfMultiline,
+    CmdAlways,
+}
+
+impl EnterBehavior {
+    pub fn from_setting(value: &str) -> Self {
+        match value {
+            "cmdIfMultiline" => Self::CmdIfMultiline,
+            "cmdAlways" => Self::CmdAlways,
+            _ => Self::Enter,
+        }
+    }
+
+    fn inserts_newline(self, content: &str) -> bool {
+        self == Self::CmdAlways || self == Self::CmdIfMultiline && content.contains('\n')
+    }
+}
+
+impl gpui::Global for EnterBehavior {}
+
 actions!(
     composer,
     [
         /// Send the prompt (Enter).
         Submit,
+        ModifiedSubmit,
         Stop,
         RequestFullAccess,
         /// Insert a line break (Shift+Enter).
@@ -191,6 +216,7 @@ pub fn bind_keys(cx: &mut App) {
     let c = Some(KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("enter", Submit, c),
+        KeyBinding::new("cmd-enter", ModifiedSubmit, c),
         KeyBinding::new("escape", Dismiss, Some(REQUEST_CONTEXT)),
         KeyBinding::new("cmd-enter", Submit, Some(REQUEST_FORM_CONTEXT)),
         KeyBinding::new("ctrl-enter", Submit, Some(REQUEST_FORM_CONTEXT)),
@@ -1255,7 +1281,22 @@ impl Composer {
                 return;
             }
         }
-        self.submit(&Submit, window, cx);
+        let newline = cx
+            .try_global::<EnterBehavior>()
+            .is_some_and(|behavior| behavior.inserts_newline(&self.content));
+        if newline && !self.slash.open {
+            self.newline(&Newline, window, cx);
+        } else {
+            self.submit(&Submit, window, cx);
+        }
+    }
+
+    fn modified_enter(&mut self, _: &ModifiedSubmit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.plain_field.is_some() {
+            self.enter(&Submit, window, cx);
+        } else {
+            self.submit(&Submit, window, cx);
+        }
     }
 
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
@@ -1905,6 +1946,7 @@ impl Render for Composer {
             })
             .track_focus(&self.focus_handle)
             .on_action(self.request_listener(cx, Self::enter))
+            .on_action(self.request_listener(cx, Self::modified_enter))
             .on_action(cx.listener(Self::newline))
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
@@ -2183,6 +2225,84 @@ impl Render for Composer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn send_shortcut_controls_enter_without_changing_shift_enter() {
+        use gpui::{AppContext as _, HeadlessAppContext, Keystroke};
+        use std::{cell::RefCell, sync::Arc};
+
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+
+        let mut app =
+            HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
+        app.update(|cx| {
+            cx.set_global(Theme::dark());
+            theme::load_fonts(cx);
+            bind_keys(cx);
+        });
+        let sent = Rc::new(RefCell::new(Vec::new()));
+        let received = sent.clone();
+        let window = app
+            .open_window(size(px(600.), px(400.)), |window, cx| {
+                let composer = cx.new(|cx| {
+                    let mut composer = Composer::home(window, cx);
+                    composer.models.push(ModelOption {
+                        id: "gpt-6.1-sol".into(),
+                        label: "GPT-6.1 Sol".into(),
+                        efforts: vec!["medium".into()],
+                    });
+                    composer.on_submit(move |submission, _, _| {
+                        received.borrow_mut().push(submission.text.clone());
+                    });
+                    composer
+                });
+                composer.read(cx).focus_handle(cx).focus(window, cx);
+                composer
+            })
+            .unwrap();
+        for (setting, draft, key, sends) in [
+            ("enter", "one", "enter", true),
+            ("enter", "one\ntwo", "cmd-enter", true),
+            ("cmdIfMultiline", "one", "enter", true),
+            ("cmdIfMultiline", "one\ntwo", "enter", false),
+            ("cmdIfMultiline", "one\ntwo", "cmd-enter", true),
+            ("cmdAlways", "one", "enter", false),
+            ("cmdAlways", "one", "cmd-enter", true),
+            ("cmdAlways", "one", "shift-enter", false),
+            ("unknown", "one", "enter", true),
+        ] {
+            sent.borrow_mut().clear();
+            app.update(|cx| {
+                cx.set_global(EnterBehavior::from_setting(setting));
+                window
+                    .update(cx, |composer, _, cx| composer.set_text(draft, cx))
+                    .unwrap();
+            });
+            app.run_until_parked();
+            app.update_window(window.into(), |_, window, cx| {
+                window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx);
+            })
+            .unwrap();
+            app.run_until_parked();
+            app.update(|cx| {
+                window
+                    .update(cx, |composer, _, _| {
+                        if sends {
+                            assert_eq!(*sent.borrow(), [draft], "{setting}: {key}");
+                            assert!(composer.content.is_empty());
+                        } else {
+                            assert!(sent.borrow().is_empty(), "{setting}: {key}");
+                            assert_eq!(composer.content, format!("{draft}\n"));
+                        }
+                    })
+                    .unwrap();
+            });
+        }
+    }
 
     #[test]
     fn model_selection_preserves_other_composer_choices() {
