@@ -73,3 +73,36 @@ fn capture_storage() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn deleted_chat_is_not_cached_after_leaving_its_route() -> Result<()> {
+    common::install_panic_hook();
+    let mut fx = common::Fx::new()?;
+    let sidebar = fx.read(|root, _| root.sidebar().clone());
+    fx.cx.update(|cx| {
+        sidebar.update(cx, |_, cx| {
+            cx.emit(ui::screens::sidebar::OpenThread(common::EXPLAIN.to_owned()));
+        });
+    });
+    fx.wait_thread(common::EXPLAIN)?;
+    fx.keys("cmd-,")?;
+    let root = fx.root.clone();
+    for id in [common::GREETING, common::EXPLAIN] {
+        fx.cx.update(|cx| {
+            root.update(cx, |root, cx| {
+                root.on_event(
+                    bridge::Event::Notification {
+                        method: "thread/deleted".to_owned(),
+                        params: json!({"threadId":id}),
+                    },
+                    cx,
+                );
+            });
+        });
+        assert_eq!(
+            fx.thread_id(),
+            (id != common::EXPLAIN).then(|| common::EXPLAIN.to_owned())
+        );
+    }
+    Ok(())
+}

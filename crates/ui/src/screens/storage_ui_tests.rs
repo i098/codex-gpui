@@ -1,5 +1,5 @@
 use super::*;
-use gpui::{HeadlessAppContext, Keystroke, size};
+use gpui::{HeadlessAppContext, KeyUpEvent, Keystroke, PlatformInput, size};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -100,7 +100,9 @@ fn review_keyboard_selection_and_two_cancel_levels() {
     });
     for expected in [0, 1] {
         cx.update_window(window.into(), |_, window, cx| {
-            window.dispatch_keystroke(Keystroke::parse("space").unwrap(), cx);
+            let stroke = Keystroke::parse("space").unwrap();
+            window.dispatch_keystroke(stroke.clone(), cx);
+            window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke: stroke }), cx);
         })
         .unwrap();
         cx.run_until_parked();
@@ -120,7 +122,9 @@ fn review_keyboard_selection_and_two_cancel_levels() {
             .unwrap()
     });
     cx.update_window(window.into(), |_, window, cx| {
-        window.dispatch_keystroke(Keystroke::parse("enter").unwrap(), cx);
+        let stroke = Keystroke::parse("enter").unwrap();
+        window.dispatch_keystroke(stroke.clone(), cx);
+        window.dispatch_event(PlatformInput::KeyUp(KeyUpEvent { keystroke: stroke }), cx);
     })
     .unwrap();
     cx.run_until_parked();

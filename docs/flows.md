@@ -1351,11 +1351,14 @@ Before deleting, the app reloads the inventory, discovers descendants, and check
 It skips changed trees and reports deleted, skipped, and failed root counts.
 The deletion request goes through `thread/delete`; the UI never removes rollout files directly.
 The cleanup lock and result toast survive navigation away from Storage.
+Keyboard activation runs once per completed Enter or Space press.
+Deleting a chat clears its cached view, so Back cannot reuse the deleted chat.
 
 The management controls route through `Root::open_settings_section` for Worktrees and Archived chats.
 Their destination pages remain owned by their separate settings families.
 The focused checks run with `cargo test -p bridge -p ui --lib storage -- --test-threads=1`.
 They cover measured categories, partial metadata, symlink exclusion, descendant safety, version eligibility, cached refresh state, and keyboard cancellation.
+The `storage_capture` test also checks cached-view invalidation after a deletion notification.
 The UI unit captures use synthetic interaction data and do not establish pixel parity.
 The ignored `storage_capture` integration test captures the real Root and can apply the unchanged parity gate.
 Set `CGX_STORAGE_HOME` to an owned fixture, `CGX_STORAGE_CAPTURE` to its output directory, and `CGX_STORAGE_REFS` to the original references.

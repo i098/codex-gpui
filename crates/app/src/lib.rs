@@ -24,6 +24,7 @@ pub mod updater;
 mod usage;
 mod window_shell;
 mod storage;
+pub mod updater;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
@@ -2125,7 +2126,6 @@ impl Root {
             });
         }
     }
-
 
     /// HC-033: a printable key (no ⌘/⌃, not Space) typed outside an editable, with no
     /// dialog, menu or popover open, goes to the route's composer and focuses it.
@@ -5522,7 +5522,6 @@ impl Render for Root {
             .capture_action(cx.listener(|this, _: &Undo, window, cx| {
                 this.undo_queued(window, cx);
             }))
-
             .on_action(cx.listener(|this, _: &GoBack, window, cx| this.step(true, window, cx)))
             .on_action(cx.listener(|this, _: &GoForward, window, cx| this.step(false, window, cx)))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {

@@ -598,7 +598,6 @@ impl StoragePage {
         if self.review.is_some() && id.starts_with("review-") && enabled {
             self.dialog_order.push(focus.clone());
         }
-        let key_action = action.clone();
         let checkbox = matches!(action, Control::Toggle(_));
         let dropdown = matches!(action, Control::DaysMenu | Control::IncludeMenu);
         let checked = match &action {
@@ -646,14 +645,11 @@ impl StoragePage {
                     this.act(action.clone(), window, cx);
                     cx.stop_propagation();
                 }))
-                .on_key_down(cx.listener(
-                    move |this, event: &KeyDownEvent, window, cx| {
-                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                            this.act(key_action.clone(), window, cx);
-                            cx.stop_propagation();
-                        }
-                    },
-                ))
+                .on_key_down(|event: &KeyDownEvent, _, cx| {
+                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        cx.stop_propagation();
+                    }
+                })
             })
     }
 
