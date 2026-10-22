@@ -2164,7 +2164,10 @@ impl FileView {
                                     cx.stop_propagation();
                                 }
                             }))
-                            .child(icon("diff-jump-to-file", 16., t.text).runtime()),
+                            .child(icon("diff-jump-to-file", 16., t.text).runtime())
+                            // The `backdrop-filter` button is its own cc layer: its icon
+                            // rasterizes on that layer's tiles.
+                            .layer(),
                     )
                     .child(self.file_tree_button(t, clamped, cx))
                     .child(
@@ -2316,6 +2319,8 @@ impl Render for FileView {
                 }
             }))
             .size_full()
+            // The panel's `contain: paint` clips the header capsules' shadows.
+            .overflow_hidden()
             .flex()
             .flex_col()
             .child(

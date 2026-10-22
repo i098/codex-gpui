@@ -2046,10 +2046,12 @@ fn shown([x0, y0, x1, y1]: [i32; 4], layer: Layer, window: &Window) -> bool {
         && ((y1 + ly) as f32) > dev(m.top())
 }
 
-/// `crate::paint` on macOS: Blink's box decoration painting, op by op.
+/// `crate::paint` on macOS: Blink's box decoration painting, op by op, moved by `offset`
+/// (CSS px) after snapping.
 pub(crate) fn paint(
     d: &Decoration,
     composited: Option<gpui::Point<Pixels>>,
+    offset: gpui::Point<Pixels>,
     bounds: Bounds<Pixels>,
     window: &mut Window,
     cx: &App,
@@ -2059,8 +2061,9 @@ pub(crate) fn paint(
     }
     let s = window.scale_factor();
     let layer = Layer::new(window, composited).for_bounds(bounds, s);
+    let offset = [f32::from(offset.x) * s, f32::from(offset.y) * s];
     for (op, color) in ops(d, layer.local(bounds, s), s).1 {
-        paint_op(op, color, layer, window, cx);
+        paint_op(op.moved(offset), color, layer, window, cx);
     }
 }
 

@@ -680,25 +680,18 @@ impl FileView {
         index
     }
 
-    fn tree_icon(&self, row: &Row, theme: &Theme, selected: bool) -> impl IntoElement {
-        let directory = row.kind == EntryKind::Directory;
-        let (name, size, color) = match row.kind {
-            EntryKind::Directory => (
-                if self.tree.expanded(row.path.as_ref()) {
-                    "navigation-chevron-down"
-                } else {
-                    "navigation-chevron-right"
-                },
-                12.,
-                if selected {
+    fn tree_icon(&self, row: &Row, theme: &Theme, selected: bool) -> gpui::AnyElement {
+        let (name, color) = match row.kind {
+            EntryKind::Directory => {
+                let color = if selected {
                     theme.text
                 } else {
                     rgb(0x84848a).into()
-                },
-            ),
+                };
+                return Self::chevron(self.tree.expanded(row.path.as_ref()), color);
+            }
             EntryKind::File if row.name.ends_with(".py") => (
                 "diff-file-python",
-                16.,
                 rgb(if theme.appearance == Appearance::Dark {
                     0x69b1ff
                 } else {
@@ -706,11 +699,33 @@ impl FileView {
                 })
                 .into(),
             ),
-            EntryKind::File => ("thread-file-diff", 16., theme.text_tertiary),
+            EntryKind::File => ("thread-file-diff", theme.text_tertiary),
         };
-        icon(name, size, color)
-            .runtime()
-            .when(directory, |icon| icon.relative().left(px(0.5)).top(px(0.5)))
+        icon(name, 16., color).runtime().into_any_element()
+    }
+
+    /// The original nudges its one chevron: `translate(0, 1px)` open, and closed
+    /// `rotate(-90deg) translate(-0.5px, 0.5px)`, which lands 0.5px right and down.
+    fn chevron(expanded: bool, color: Hsla) -> gpui::AnyElement {
+        if expanded {
+            return icon("navigation-chevron-down", 12., color)
+                .runtime()
+                .relative()
+                .top(px(1.))
+                .into_any_element();
+        }
+        // Chromium's inexact `rotate(-90deg)` turns the svg box clip into an anti-aliased
+        // path clip, which changes AAA's fringe px; a hairline radius gives Skia that clip.
+        crate::rounded_clip(
+            px(0.01),
+            shapes::Corner::Round,
+            icon("navigation-chevron-right", 12., color)
+                .runtime()
+                .relative()
+                .left(px(0.5))
+                .top(px(0.5)),
+        )
+        .into_any_element()
     }
 
     fn tree_rows(
@@ -764,9 +779,16 @@ impl FileView {
                     .child(shapes::decoration(Decoration {
                         radius: Corners::all(px(6.)),
                         fill: Some(fill),
-                        border: (selected && focused).then(|| (px(1.), rgb(0x009fff).into())),
                         ..Default::default()
                     }))
+                    // The original's focus outline is on a `::before` box over the row fill.
+                    .when(selected && focused, |row_element| {
+                        row_element.child(shapes::decoration(Decoration {
+                            radius: Corners::all(px(6.)),
+                            border: Some((px(1.), rgb(0x009fff).into())),
+                            ..Default::default()
+                        }))
+                    })
                     .children((0..row.depth).map(|depth| {
                         div()
                             .absolute()
@@ -774,10 +796,14 @@ impl FileView {
                             .top_0()
                             .h_full()
                             .w(px(1.))
-                            .child(shapes::decoration(Decoration {
-                                fill: Some(rgb(0x84848a).opacity(0.1875).into()),
-                                ..Default::default()
-                            }))
+                            // The original's guide: `transform: translateX(-0.25px)`.
+                            .child(shapes::translated_decoration(
+                                Decoration {
+                                    fill: Some(rgb(0x84848a).opacity(0.1875).into()),
+                                    ..Default::default()
+                                },
+                                gpui::point(px(-0.25), px(0.)),
+                            ))
                     }))
                     .on_hover(cx.listener(move |view, hovered: &bool, _, cx| {
                         view.tree.hovered = hovered.then(|| hovered_path.clone());
@@ -941,11 +967,10 @@ impl FileView {
                                                     }
                                                 },
                                             ))
-                                            .child(icon(
-                                                "diff-tab-close",
-                                                14.,
-                                                theme.text_tertiary,
-                                            )),
+                                            .child(
+                                                icon("diff-tab-close", 14., theme.text_tertiary)
+                                                    .runtime(),
+                                            ),
                                     )
                                 }),
                         ),

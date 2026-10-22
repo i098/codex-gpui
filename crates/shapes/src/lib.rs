@@ -91,6 +91,12 @@ pub struct Decoration {
 
 /// An element covering its parent's box that paints `d`.
 pub fn decoration(d: Decoration) -> impl IntoElement {
+    translated_decoration(d, Point::default())
+}
+
+/// [`decoration`] moved by `offset` CSS px after the box snaps, as Blink paints a snapped box
+/// under a subpixel `transform: translate(..)`.
+pub fn translated_decoration(d: Decoration, offset: Point<Pixels>) -> impl IntoElement {
     cover(
         move |bounds, window, _| {
             #[cfg(target_os = "macos")]
@@ -99,7 +105,15 @@ pub fn decoration(d: Decoration) -> impl IntoElement {
             let _ = (bounds, window);
             d
         },
-        |bounds, d, window, cx| paint(&d, None, bounds, window, cx),
+        move |bounds, d, window, cx| {
+            #[cfg(target_os = "macos")]
+            skia::paint(&d, None, offset, bounds, window, cx);
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = cx;
+                quads(&d, Bounds::new(bounds.origin + offset, bounds.size), window);
+            }
+        },
     )
 }
 
@@ -128,7 +142,7 @@ pub fn paint(
     cx: &App,
 ) {
     #[cfg(target_os = "macos")]
-    skia::paint(d, layer, bounds, window, cx);
+    skia::paint(d, layer, Point::default(), bounds, window, cx);
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (cx, layer);
