@@ -55,6 +55,7 @@ pub(super) fn install(cx: &mut App) {
             .map(|command| command.id)
             .collect(),
         dispatch: Some(Arc::new(change)),
+        home: false,
     });
     rebind(None, &preferences, cx);
 }
@@ -215,6 +216,7 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "closeTab" => Box::new(CloseWindow),
         "closeWindow" => Box::new(shortcuts::CloseWholeWindow),
         "composer.submit" => Box::new(ui::composer::Submit),
+        "composer.submitInBackground" => Box::new(ui::composer::SubmitInBackground),
         id => {
             if let Some(number) = id
                 .strip_prefix("recentThread")

@@ -102,6 +102,8 @@ pub struct KeyboardState {
     pub error: Option<String>,
     pub preference_error: Option<PreferenceKind>,
     pub dispatch: Option<Dispatch>,
+    /// The Home route is open: its composer-only commands count as registered.
+    pub home: bool,
 }
 impl Global for KeyboardState {}
 
@@ -401,6 +403,10 @@ const DIALOG_HIDDEN: &[&str] = &[
     "redoAppAction",
 ];
 
+/// Commands whose original handler exists only on the Home composer
+/// (`backgroundSubmit.enabled` needs `kind === "home"`); recorded: the thread dialog omits them.
+const HOME_ONLY: &[&str] = &["composer.submitInBackground"];
+
 /// The dialog labels a few commands differently from Settings: `toggleSidePanel` is `New tab`
 /// there, and the workspace tab view is `New tab in full view`.
 pub fn dialog_title(command: &Command) -> &'static str {
@@ -510,6 +516,7 @@ pub fn active_shortcuts(cx: &App) -> Vec<Shortcut> {
                 c.section == section
                     && state.active_commands.contains(c.id)
                     && !DIALOG_HIDDEN.contains(&c.id)
+                    && (state.home || !HOME_ONLY.contains(&c.id))
             })
             .collect();
         commands.sort_by_key(|c| {

@@ -32,6 +32,8 @@ actions!(
     [
         /// Send the prompt (Enter).
         Submit,
+        /// Home composer only (`composer.submitInBackground`): send the prompt and stay on Home.
+        SubmitInBackground,
         Stop,
         RequestFullAccess,
         /// Insert a line break (Shift+Enter).
@@ -379,6 +381,8 @@ pub struct Submission {
     pub permission: Permission,
     /// Fast mode (bolt toggle in the model picker).
     pub fast: bool,
+    /// `composer.submitInBackground`: create the chat and start its turn without opening it.
+    pub background: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -1255,6 +1259,23 @@ impl Composer {
     }
 
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
+        self.send_draft(false, window, cx);
+    }
+
+    /// `composer.submitInBackground`: the original enables it only for the Home composer
+    /// (`kind === "home"`), never in an open chat, and not over an approval or request form.
+    fn submit_in_background(
+        &mut self,
+        _: &SubmitInBackground,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.docked && self.approval.is_none() && self.plain_field.is_none() {
+            self.send_draft(true, window, cx);
+        }
+    }
+
+    fn send_draft(&mut self, background: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.slash.open {
             self.activate_slash(window, cx);
             return;
@@ -1292,6 +1313,7 @@ impl Composer {
             effort: self.effort.clone(),
             permission: self.permission,
             fast: self.fast,
+            background,
         };
         if self.on_cancel_edit.is_some() {
             self.edit_pending = true;
@@ -1902,6 +1924,7 @@ impl Render for Composer {
             })
             .track_focus(&self.focus_handle)
             .on_action(self.request_listener(cx, Self::enter))
+            .on_action(cx.listener(Self::submit_in_background))
             .on_action(cx.listener(Self::newline))
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))

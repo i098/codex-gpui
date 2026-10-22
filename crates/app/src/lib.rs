@@ -2962,7 +2962,10 @@ impl Root {
                     this.sidebar
                         .update(cx, |s, cx| s.assign_section(&id, section, cx));
                 }
-                this.show_thread(thread, window, cx);
+                // `composer.submitInBackground`: the chat starts and shows in Recents; Home stays.
+                if !s.background {
+                    this.show_thread(thread, window, cx);
+                }
             })?;
             let result = turn_start(&bridge, &id, &s, user_input(&s)).await;
             if result.is_err() {

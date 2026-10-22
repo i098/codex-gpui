@@ -284,3 +284,73 @@ fn copy_working_directory_skips_a_worktree_with_a_pending_archive_of_the_owner()
     );
     Ok(())
 }
+
+fn started(fx: &mut Fx) -> Result<Vec<String>> {
+    Ok(fx
+        .sent()?
+        .iter()
+        .filter_map(|request| request["method"].as_str())
+        .filter(|method| matches!(*method, "thread/start" | "turn/start"))
+        .map(str::to_owned)
+        .collect())
+}
+
+#[test]
+fn submit_in_background_starts_the_chat_and_keeps_home_and_enter_still_opens_it() -> Result<()> {
+    let session = || script(Some("sessions/greeting.jsonl"), |_| {});
+    let mut fx = Fx::captured("dark", (1280., 832.), session()?)?;
+    fx.type_text(common::GREETING_PROMPT)?;
+    fx.keys("cmd-enter")?;
+    fx.wait("background start", |fx| {
+        started(fx).is_ok_and(|methods| methods == ["thread/start", "turn/start"])
+    })?;
+    ensure!(
+        fx.route() == app::Route::Home,
+        "background must not open the chat"
+    );
+    ensure!(
+        fx.composer_text()?.is_empty(),
+        "the draft clears as in a foreground send"
+    );
+    ensure!(fx.composer_focused()?, "focus stays in the Home composer");
+
+    let mut fx = Fx::captured("dark", (1280., 832.), session()?)?;
+    fx.type_text(common::GREETING_PROMPT)?;
+    fx.keys("enter")?;
+    fx.wait_thread(GREETING)?;
+    Ok(())
+}
+
+#[test]
+fn submit_in_background_is_not_available_in_an_open_chat() -> Result<()> {
+    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
+    fx.keys("cmd-1")?;
+    fx.wait_thread(GREETING)?;
+    fx.type_text("draft")?;
+    let before = fx.sent()?.len();
+    fx.keys("cmd-enter")?;
+    fx.advance(std::time::Duration::from_millis(300))?;
+    ensure!(fx.sent()?.len() == before && fx.composer_text()? == "draft");
+    fx.focus_composer()?;
+    Ok(())
+}
+
+#[test]
+fn the_dialog_lists_send_in_background_on_home_only() -> Result<()> {
+    let mut fx = Fx::new()?;
+    let rows = |fx: &mut Fx| {
+        fx.keys("cmd-/")?;
+        let titles = fx.cx.update(|cx| ui::keyboard::active_shortcuts(cx));
+        fx.keys("cmd-/")?;
+        anyhow::Ok(
+            titles
+                .iter()
+                .any(|row| row.1 == "Send message in background"),
+        )
+    };
+    ensure!(rows(&mut fx)?, "Home lists it");
+    fx.keys("cmd-1")?;
+    fx.wait_thread(GREETING)?;
+    ensure!(!rows(&mut fx)?, "an open chat does not");
+    Ok(())
+}

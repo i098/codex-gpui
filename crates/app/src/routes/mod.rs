@@ -91,6 +91,10 @@ impl Root {
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     pub(crate) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let home = matches!(self.state.route, Route::Home);
+        if cx.has_global::<ui::keyboard::KeyboardState>() {
+            cx.update_global::<ui::keyboard::KeyboardState, _>(|state, _| state.home = home);
+        }
         self.remember_recent_chat();
         self.flush_settings(cx);
         self.settings_page = None;
