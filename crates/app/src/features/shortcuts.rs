@@ -8,7 +8,6 @@ pub(super) fn init(cx: &mut App) {
         KeyBinding::new("ctrl-tab", NextRecentChat, None),
         KeyBinding::new("ctrl-shift-tab", PreviousRecentChat, None),
         KeyBinding::new("ctrl-shift-g", OpenChangesPanel, None),
-        KeyBinding::new("ctrl-`", OpenBackgroundTerminal, None),
     ]);
 }
 

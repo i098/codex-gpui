@@ -26,7 +26,10 @@ const HOME_TERMINAL: &str = "home";
 gpui::actions!(terminal, [ToggleBottomPanel, OpenTerminal]);
 
 pub fn init(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("cmd-j", ToggleBottomPanel, None)]);
+    cx.bind_keys([
+        KeyBinding::new("cmd-j", ToggleBottomPanel, None),
+        KeyBinding::new("ctrl-`", OpenTerminal, None),
+    ]);
 }
 
 pub(crate) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {

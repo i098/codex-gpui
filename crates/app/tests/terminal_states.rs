@@ -28,9 +28,7 @@ fn emit(fx: &mut Fx, method: &str, params: serde_json::Value) {
     fx.cx.run_until_parked();
 }
 
-/// Opens the recorded thread and starts its background command; returns the command's
-/// `item/started` params.
-fn start(fx: &mut Fx) -> Result<serde_json::Value> {
+fn open(fx: &mut Fx) -> Result<(String, String, serde_json::Value)> {
     fx.keys("cmd-2")?;
     fx.wait_thread(SUBTRACT)?;
     let mut command = None;
@@ -50,14 +48,10 @@ fn start(fx: &mut Fx) -> Result<serde_json::Value> {
             .update(&mut fx.cx, |root, cx| root.on_event(event, cx));
         fx.cx.run_until_parked();
     }
-    command.context("running command")
-}
-
-fn open(fx: &mut Fx) -> Result<(String, String, serde_json::Value)> {
-    let command = start(fx)?;
     fx.click((fx.size.0 - 63., 22.))?;
     fx.click((fx.size.0 - 202., 179.7))?;
     ensure!(fx.read(|root, _| root.side_panel() == Some(SidePanel::Terminal)));
+    let command = command.context("running command")?;
     Ok((
         command["turnId"].as_str().unwrap().into(),
         command["item"]["id"].as_str().unwrap().into(),
@@ -562,7 +556,7 @@ fn home_terminal_shortcuts_preserve_the_shell_and_project_directory() -> Result<
     ));
     lines.extend(exchange("command/exec/resize", json!({})));
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
-    fx.action(Box::new(app::terminal::OpenTerminal))?;
+    fx.keys("ctrl-`")?;
     let id = fx
         .read(|root, cx| {
             root.terminal_panel()
@@ -573,7 +567,7 @@ fn home_terminal_shortcuts_preserve_the_shell_and_project_directory() -> Result<
     ensure!(fx.read(|root, cx| root.shell().read(cx).bottom.is_some()));
     fx.keys("cmd-j")?;
     ensure!(fx.read(|root, cx| root.shell().read(cx).bottom.is_none()));
-    fx.action(Box::new(app::terminal::OpenTerminal))?;
+    fx.keys("ctrl-`")?;
     ensure!(fx.read(
         |root, cx| root.terminal_panel().unwrap().read(cx).process_id() == Some(id.as_str())
     ));
@@ -583,14 +577,5 @@ fn home_terminal_shortcuts_preserve_the_shell_and_project_directory() -> Result<
         .filter(|message| message["method"] == "command/exec")
         .collect();
     ensure!(launches.len() == 1 && launches[0]["params"]["cwd"] == common::CWD);
-    Ok(())
-}
-
-#[test]
-fn control_backquote_opens_the_background_terminal_side_panel() -> Result<()> {
-    let mut fx = Fx::new()?;
-    start(&mut fx)?;
-    fx.keys("ctrl-`")?;
-    ensure!(fx.read(|root, _| root.side_panel()) == Some(SidePanel::Terminal));
     Ok(())
 }
