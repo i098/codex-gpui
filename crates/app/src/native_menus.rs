@@ -1,9 +1,6 @@
 mod about;
-<<<<<<< HEAD
 pub(crate) mod context_files;
-=======
 pub(crate) mod zoom;
->>>>>>> bf3b8370 (feat(menus): add per-window zoom controls)
 
 use crate::{
     CloseWindow, FindInThread, GoBack, GoForward, Hide, HideOthers, LogOut, Minimize, NewChat,
