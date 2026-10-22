@@ -15,6 +15,8 @@ The app drives the real `codex app-server` over stdio, the same JSON-RPC transpo
   3. `codex` on `PATH`.
 
 The workspace also builds on Linux, with GPUI's no-op text system, for CI (fmt, clippy, tests).
+The self-hosted CI job disables dev/test debug information and incremental compilation.
+It uses only its own workspace's `target` directory and removes that directory after success or failure.
 
 ## Computer use runtime
 
