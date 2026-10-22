@@ -861,15 +861,13 @@ impl Page {
         let identity = item.pull_request.clone();
         let selected = self.selected.as_ref() == Some(&identity);
         let mut metadata = div().flex().items_center().gap(px(8.)).min_w_0();
-        if show_author {
-            if let Some(url) = &item.author_avatar_url {
-                metadata = metadata.child(
-                    gpui::img(url.clone())
-                        .size(px(16.))
-                        .rounded_full()
-                        .object_fit(gpui::ObjectFit::Cover),
-                );
-            }
+        if show_author && let Some(url) = &item.author_avatar_url {
+            metadata = metadata.child(
+                gpui::img(url.clone())
+                    .size(px(16.))
+                    .rounded_full()
+                    .object_fit(gpui::ObjectFit::Cover),
+            );
         }
         if self.repository.is_none() {
             metadata = metadata.child(text(
@@ -1331,15 +1329,13 @@ fn status_icon(item: &model::Item, t: &theme::Theme) -> Div {
 
 fn status_color(item: &model::Item, t: &theme::Theme) -> gpui::Hsla {
     let dark = t.appearance == theme::Appearance::Dark;
-    let color = if item.merge_blocker.as_deref() == Some("conflicts") || item.ci_status == "failing"
-    {
+    if item.merge_blocker.as_deref() == Some("conflicts") || item.ci_status == "failing" {
         t.text_error
     } else if item.can_merge || item.ci_status == "passing" {
         t.text_success
     } else {
         gpui::rgb(if dark { 0xffd240 } else { 0xffc300 }).into()
-    };
-    color
+    }
 }
 
 fn loading_rows(label: &'static str, cx: &Context<Page>) -> Div {
