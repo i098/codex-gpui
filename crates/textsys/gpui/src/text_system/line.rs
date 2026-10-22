@@ -553,10 +553,12 @@ fn paint_line(
         text,
     );
     window.paint_layer(line_bounds, |window| {
-        // Blink floors the half leading to whole device px.
-        let scale = window.scale_factor();
-        let leading = f32::from(line_height - layout.ascent - layout.descent);
-        let padding_top = px((leading * scale / 2.).floor() / scale);
+        let padding_top = half_leading(
+            line_height,
+            layout.ascent,
+            layout.descent,
+            window.scale_factor(),
+        );
         let baseline_offset = point(px(0.), padding_top + layout.ascent);
         let underline_y_offset = underline_y_offset(line_height, layout.ascent, layout.descent);
         let mut decoration_runs = decoration_runs.iter();
@@ -805,6 +807,17 @@ fn paint_line(
     })
 }
 
+/// Blink floors the half leading to whole device px. Its line height is a LayoutUnit and the
+/// font's ascent and descent are whole device px, so the f32 error of a fractional scale must
+/// not move the floor.
+fn half_leading(line_height: Pixels, ascent: Pixels, descent: Pixels, scale: f32) -> Pixels {
+    let device = |v: Pixels| f32::from(v) * scale;
+    let leading = (device(line_height) * 64.).round() / 64.
+        - device(ascent).round()
+        - device(descent).round();
+    px((leading / 2.).floor() / scale)
+}
+
 fn paint_line_background(
     origin: Point<Pixels>,
     layout: &LineLayout,
@@ -1048,6 +1061,18 @@ mod tests {
         Styled, TestAppContext, TextRun, Underline, canvas, font, hsla,
     };
     use std::rc::Rc;
+
+    #[test]
+    fn half_leading_floors_exact_device_pixels_at_fractional_scale() {
+        // The zoom banner's Reset line at 90%: an 18 px line height at 1/0.9, ascent 25 and
+        // descent 7 device px. The half leading is exactly 2 device px; the plain f32 sum is
+        // 1.9999994, which floored to 1.
+        let ui_scale = 0.9_f32;
+        let scale = 2. * ui_scale;
+        let device = |v: f64| px((v / f64::from(scale)) as f32);
+        let padding = half_leading(px(18. * (1. / ui_scale)), device(25.), device(7.), scale);
+        assert_eq!((f32::from(padding) * scale).round(), 2.);
+    }
 
     /// Helper: build a ShapedLine from glyph descriptors without the platform text system.
     /// Each glyph is described as (byte_index, x_position).
