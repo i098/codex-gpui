@@ -799,6 +799,7 @@ impl Shell {
             )
         };
         let profile_focus = focus::handle("rail-profile", 0, window, cx);
+        let info_solid = t.info_solid;
         // The avatar composites over the rail, or over the profile button's hover fill.
         // ponytail: the hover fill's end color, not its 150 ms fade; pass the fade's color if
         // the avatar's corners ever show during it.
@@ -911,7 +912,41 @@ impl Shell {
                     ))
                     .child(rail_tip(item("plugins"), "Plugins"))
                     // Explore with its unread dot; it shows no tooltip.
-                    .child(item("explore").child(dot(4.)))
+                    // `absolute -end-0.5 -top-0.5` around a `size-5` box centering an `icon-xs`
+                    // dot at `scale-50`.
+                    .child(
+                        item("explore").child(
+                            div()
+                                .absolute()
+                                .top(px(-2.))
+                                .right(px(-2.))
+                                .size(px(20.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    canvas(
+                                        |_, _, _| {},
+                                        move |bounds, (), window, cx| {
+                                            shapes::paint_scaled(
+                                                &shapes::Decoration {
+                                                    radius: Corners::all(Theme::RADIUS_FULL),
+                                                    fill: Some(info_solid),
+                                                    ..Default::default()
+                                                },
+                                                Some(list),
+                                                bounds,
+                                                size(px(16.), px(16.)),
+                                                0.5,
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    )
+                                    .size(px(16.)),
+                                ),
+                        ),
+                    )
                     // A 1 px `border-t` on an empty box: Blink paints it rounded down to whole
                     // device px (at least 1), and the box is that tall.
                     .child(

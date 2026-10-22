@@ -136,6 +136,30 @@ pub fn paint(
     }
 }
 
+/// [`paint`] for a fill-only `d` under CSS `transform: scale(factor)`. Blink paints the snapped
+/// box in its local space and scales it about its transform origin, 50% of the layout box
+/// (`size`, the authored size: `bounds` arrive snapped) from the snapped paint offset, so the
+/// drawn edges keep the scaled fraction.
+pub fn paint_scaled(
+    d: &Decoration,
+    layer: Option<Point<Pixels>>,
+    bounds: Bounds<Pixels>,
+    size: gpui::Size<Pixels>,
+    factor: f32,
+    window: &mut Window,
+    cx: &App,
+) {
+    #[cfg(target_os = "macos")]
+    skia::paint_scaled(d, layer, bounds, size, factor, window, cx);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (cx, layer, size);
+        let size = gpui::size(bounds.size.width * factor, bounds.size.height * factor);
+        let origin = bounds.center() - gpui::point(size.width / 2., size.height / 2.);
+        quads(d, Bounds::new(origin, size), window);
+    }
+}
+
 /// Paints a repeating two-color Lab gradient with a hard stop halfway through each CSS-pixel period.
 /// Colors retain their unrounded sRGB channels. The period must be finite and positive.
 pub fn paint_horizontal_stripes(

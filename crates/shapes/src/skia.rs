@@ -2088,6 +2088,44 @@ pub(crate) fn paint(
     }
 }
 
+/// `crate::paint_scaled` on macOS.
+pub(crate) fn paint_scaled(
+    d: &Decoration,
+    composited: Option<gpui::Point<Pixels>>,
+    bounds: Bounds<Pixels>,
+    size: gpui::Size<Pixels>,
+    factor: f32,
+    window: &mut Window,
+    cx: &App,
+) {
+    if window.element_opacity() <= 0. {
+        return;
+    }
+    let s = window.scale_factor();
+    let layer = Layer::new(window, composited).for_bounds(bounds, s);
+    let layout = |v: Pixels| (f32::from(v) * s * 64.).trunc() / 64.;
+    let (half_w, half_h) = (layout(size.width) / 2., layout(size.height) / 2.);
+    for (op, color) in ops(d, layer.local(bounds, s), s).1 {
+        let Op::Fill(mut contour) = op else {
+            unreachable!("paint_scaled: a fill-only decoration");
+        };
+        let (x, y) = (contour.rr.r[0] + half_w, contour.rr.r[1] + half_h);
+        for rr in [&mut contour.rr, &mut contour.origin] {
+            let [l, t, w, h] = rr.r;
+            rr.r = [
+                x + (l - x) * factor,
+                y + (t - y) * factor,
+                w * factor,
+                h * factor,
+            ];
+            for r in rr.radii.as_flattened_mut() {
+                *r *= factor;
+            }
+        }
+        paint_op(Op::Fill(contour), color, layer, window, cx);
+    }
+}
+
 // Match Blink's padded stops and the fixed-scale tile used by generated images.
 fn stripe_paint(period: f32, colors: [Rgba; 2]) -> Paint {
     use skia_safe::{PictureRecorder, TileMode, gradient, images};
