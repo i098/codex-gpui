@@ -321,7 +321,9 @@ Section registry: `gWa` (order) and `lQa` (lazy pages) in app-initial-6350d04672
   It retains loading and missing-file states.
   Back replaces the subtree with General; selecting another settings section leaves the subtree.
   A virtual list keeps painted rows bounded for large notices files.
-  File lookup, notice generation, and native real-file checks pass; original/native pixel verification remains pending.
+  The card uses its full wrapped height in the scroll layer; the Back arrow uses the main rounded clip.
+  The retained original/native pair passes with zero outside-text differences and 0.0690411% inside-text differences.
+  Measuring all wrapped lines remains costly during initial load and resize.
 
 ### 9.2 Login and onboarding
 
