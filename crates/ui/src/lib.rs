@@ -1120,12 +1120,19 @@ impl Shell {
                             point(left, top + shift),
                             point(bounds.right() + r, bottom),
                         );
-                        // Blink clips to the paint-containment box (snapped, anti-aliased)
-                        // before the `clip-path`: Skia rasters the rounded clip within that
-                        // clip, which changes the arc's last rows above the box's bottom edge.
-                        shapes::with_unsnapped_clip(bounds, Corners::default(), window, |window| {
+                        // Blink clips to `#app-shell-sidebar`'s paint-containment box (snapped,
+                        // anti-aliased) before the `clip-path`: Skia rasters the rounded clip
+                        // within that clip, which changes the arc's last rows above the box's
+                        // bottom edge. The fill rasters in that box's composited layer (layer 46
+                        // at (0, 97) at 110%), so neither the box nor a tile edge cuts the arc's
+                        // left: at 90% the panel's snapped left (94) is right of the clip's.
+                        let shell = Bounds::from_corners(
+                            point(px(0.), bounds.top()),
+                            bounds.bottom_right(),
+                        );
+                        shapes::with_unsnapped_clip(shell, Corners::default(), window, |window| {
                             shapes::with_unsnapped_clip(clip, Corners::all(r), window, |window| {
-                                shapes::paint(&background, None, bounds, window, cx);
+                                shapes::paint(&background, Some(shell.origin), bounds, window, cx);
                             });
                         });
                     },
