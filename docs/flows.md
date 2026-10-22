@@ -762,6 +762,7 @@ The host reads `AGENTS.md` under `CODEX_HOME`, or `~/.codex` by default, through
 The editor shows `Loading instructions…`, or `Unable to load instructions` with Retry.
 Late replies from an earlier instruction load cannot replace a reopened editor or its current draft.
 The editor provides a keyboard-accessible Learn more link to the original instructions guide.
+Its textarea grip resizes the field vertically, down to the original's 96 px `min-h-24` box.
 ST-094 saves through `codex-agents-md-save`; the host replaces the file atomically and preserves its permissions.
 Success shows `Instructions updated`; failure shows `Unable to save instructions` and retains the draft.
 Cancel discards the draft.
