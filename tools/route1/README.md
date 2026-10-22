@@ -91,6 +91,7 @@ Run the regression checks without a browser or an account:
 TMPDIR="$scratch" python3 tools/route1/test_lease.py
 node --experimental-vm-modules tools/route1/test_preload.mjs
 TMPDIR="$scratch" node tools/route1/test_resume.mjs
+TMPDIR="$scratch" node tools/route1/test_archive.mjs
 ```
 
 For a renderer without the Mac fonts (Linux Chrome), start the server with `R1_SF_FONTS=1`:
@@ -112,7 +113,8 @@ For a renderer without the Mac fonts (Linux Chrome), start the server with `R1_S
     It reads `fixtures/readback.jsonl` and `fixtures/sessions`.
     Live mode instead uses the prepared scratch app-server on the Mac.
     Only reads (`*/read`, `*/list`, `*/get*`, `*/search`, `thread/resume`, ...) pass.
-    `thread/start`, `turn/start`, archive, delete and other writes get a JSON-RPC error.
+    Local offline `thread/archive` and `thread/unarchive` requests replay [recorded actions](../../fixtures/README.md#recorded-archive-actions) only when their parameters match exactly.
+    Live archive actions, other hosts, `thread/start`, `turn/start`, delete, and other writes still return a JSON-RPC error.
   - Everything else (vscode:// host fetches, persisted atoms, shared objects, cloud host
     requests, git worker, app-host service calls) comes from `oracle.json`.
     A miss is asked from the live scratch app only outside offline mode.
@@ -165,3 +167,37 @@ For a renderer without the Mac fonts (Linux Chrome), start the server with `R1_S
 - The sidebar refs keep an earlier server state: the search panel shows the "Chats" spinner and a
   snippet line. The current server answers the search POST locally, so a new capture shows
   "Couldn't search ChatGPT chats" and no snippet.
+
+## Direct route navigation
+
+Import `navigate` from `chrome.mjs` to use the original in-app memory router.
+It waits for the pinned host-message handler and dispatches `navigate-to-route`.
+It does not change the browser URL or bypass the original route guards.
+
+```js
+await navigate(page, "/pull-requests");
+await navigate(page, "/settings/local-environments");
+await navigate(page, "/hotkey-window");
+```
+
+Pass `{ state, replace, timeoutMs }` as the optional third argument.
+The default deadline is 90 seconds, including loading the original router module.
+After navigation, wait for the target page's controls before capturing.
+Route data can still show a loading or permission state until its recorded responses arrive.
+Keep the page in the existing capture lease and close its owned context in `finally`.
+Run `node --experimental-vm-modules tools/route1/test_navigation.mjs` for local-route, startup, and stalled-import checks.
+With the fixture server running, verify a real route transition:
+
+```sh
+R1_SERVER=http://127.0.0.1:35583 tools/route1/lease.sh node tools/route1/test_navigation_live.mjs
+```
+
+## Background runner
+
+Network settling ignores the hidden document at
+`https://cdn.platform.openai.com/deployments/dil/v<version>/runner.html`.
+That background request can stay open after the app finishes painting.
+Visible documents, scripts, fonts, and images still participate in the normal settle check.
+Custom recorders can reuse `isCaptureRequest(event.params)` from `chrome.mjs` when tracking `Network.requestWillBeSent`.
+Run `node tools/route1/test_network.mjs` for the background-document boundary check.
+

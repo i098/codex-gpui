@@ -273,7 +273,8 @@ async function fromView(s, msg) {
 
 async function mcpRequest(s, msg) {
   const { method, id } = msg.request;
-  if (!READ_ONLY.test(method)) {
+  const recordedArchive = process.env.R1_OFFLINE && msg.hostId === "local" && /^thread\/(archive|unarchive)$/.test(method);
+  if (!READ_ONLY.test(method) && !recordedArchive) {
     log("refused", msg.hostId, method);
     s.emit({ type: "mcp-response", hostId: msg.hostId, message: { id, error: { code: -32000, message: `route1: ${method} is not allowed` } } });
     return;
