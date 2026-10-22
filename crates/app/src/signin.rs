@@ -382,67 +382,62 @@ impl Root {
         cx: &mut Context<Self>,
     ) -> Entity<Login> {
         let login = cx.new(Login::new);
-        cx.subscribe_in(
-            &login,
-            window,
-            |this, source, event: &LoginEvent, _, cx| {
-                if this.login.as_ref() != Some(source) {
-                    return;
-                }
-                match event {
-                    LoginEvent::OpenBrowser {
-                        url,
-                        provider,
-                        email,
-                    } => {
-                        let stable_id = cx
-                            .global::<host_settings::Settings>()
-                            .read_all()
-                            .get("statsig-stable-id")
-                            .and_then(Value::as_str);
-                        match browser_url(
+        cx.subscribe_in(&login, window, |this, source, event: &LoginEvent, _, cx| {
+            if this.login.as_ref() != Some(source) {
+                return;
+            }
+            match event {
+                LoginEvent::OpenBrowser {
+                    url,
+                    provider,
+                    email,
+                } => {
+                    let resolved = {
+                        let settings = cx.global::<host_settings::Settings>().read_all();
+                        let stable_id = settings.get("statsig-stable-id").and_then(Value::as_str);
+                        browser_url(
                             url,
                             *provider,
                             email.as_deref(),
                             source.read(cx).options(),
                             stable_id,
-                        ) {
-                            Ok(url) => {
-                                cx.open_url(url.as_str());
-                                source
-                                    .update(cx, |login, cx| login.set_browser_url(url.into(), cx));
-                            }
-                            Err(error) => this.toast(
-                                ui::toast::Toast::danger(format!("Sign-in failed: {error}")),
-                                cx,
-                            ),
+                        )
+                    };
+                    match resolved {
+                        Ok(url) => {
+                            cx.open_url(url.as_str());
+                            source.update(cx, |login, cx| login.set_browser_url(url.into(), cx));
                         }
-                    }
-                    LoginEvent::RestartBedrock { region } => {
-                        this.restart_bedrock(source.clone(), region.clone(), cx)
-                    }
-                    LoginEvent::CheckGovCloud { region } => {
-                        let bridge = this.bridge.clone();
-                        let login = source.clone();
-                        let region = region.clone();
-                        cx.spawn(async move |_, cx| {
-                            let result =
-                                check_govcloud(&bridge, &region, cx.background_executor()).await;
-                            login.update(cx, |login, cx| login.bedrock_finished(Ok(result), cx));
-                        })
-                        .detach();
-                    }
-                    LoginEvent::Authenticated => {
-                        this.login = None;
-                        this.read_account(cx);
-                        this.refresh_threads(cx);
-                        this.load_projects(cx);
-                        this.load_sections(cx);
-                        cx.notify();
+                        Err(error) => this.toast(
+                            ui::toast::Toast::danger(format!("Sign-in failed: {error}")),
+                            cx,
+                        ),
                     }
                 }
-            },
-        )
+                LoginEvent::RestartBedrock { region } => {
+                    this.restart_bedrock(source.clone(), region.clone(), cx)
+                }
+                LoginEvent::CheckGovCloud { region } => {
+                    let bridge = this.bridge.clone();
+                    let login = source.clone();
+                    let region = region.clone();
+                    cx.spawn(async move |_, cx| {
+                        let result =
+                            check_govcloud(&bridge, &region, cx.background_executor()).await;
+                        login.update(cx, |login, cx| login.bedrock_finished(Ok(result), cx));
+                    })
+                    .detach();
+                }
+                LoginEvent::Authenticated => {
+                    this.login = None;
+                    this.read_account(cx);
+                    this.refresh_threads(cx);
+                    this.load_projects(cx);
+                    this.load_sections(cx);
+                    cx.notify();
+                }
+            }
+        })
         .detach();
         let settings = cx.global_mut::<host_settings::Settings>();
         let stable_id = if let Some(id) = settings
@@ -658,6 +653,47 @@ fn browser_url(
     } else {
         None
     };
+    provider_parameters(&mut url, provider, email);
+    if let Some(email) = email {
+        url.query_pairs_mut().append_pair("login_hint", email);
+    }
+    url.query_pairs_mut()
+        .append_pair("codex_app_version", ORIGINAL_APP_VERSION);
+    if let Some(id) = stable_id {
+        url.query_pairs_mut()
+            .append_pair("source_surface_stable_id", id)
+            .append_pair("codex_origin_stable_id", id);
+    }
+    if options.streamlined_login {
+        url.query_pairs_mut()
+            .append_pair("codex_streamlined_login", "true");
+    }
+    if desktop.is_some() || options.desktop_auth {
+        let mut desktop = match desktop.take() {
+            Some(desktop) => desktop,
+            None => Url::parse("https://chatgpt.com/codex/desktop-auth")?,
+        };
+        let query: Vec<_> = desktop
+            .query_pairs()
+            .filter(|(key, _)| key != "authorize_url" && key != "codex_streamlined_login")
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect();
+        desktop
+            .query_pairs_mut()
+            .clear()
+            .extend_pairs(query)
+            .append_pair("authorize_url", url.as_str());
+        if options.streamlined_login {
+            desktop
+                .query_pairs_mut()
+                .append_pair("codex_streamlined_login", "true");
+        }
+        return Ok(desktop);
+    }
+    Ok(url)
+}
+
+fn provider_parameters(url: &mut Url, provider: Provider, email: Option<&str>) {
     let query: Vec<(String, String)> = url
         .query_pairs()
         .filter(|(key, _)| match provider {
@@ -701,43 +737,6 @@ fn browser_url(
                 .append_pair("prompt", "select_account");
         }
     }
-    if let Some(email) = email {
-        url.query_pairs_mut().append_pair("login_hint", email);
-    }
-    url.query_pairs_mut()
-        .append_pair("codex_app_version", ORIGINAL_APP_VERSION);
-    if let Some(id) = stable_id {
-        url.query_pairs_mut()
-            .append_pair("source_surface_stable_id", id)
-            .append_pair("codex_origin_stable_id", id);
-    }
-    if options.streamlined_login {
-        url.query_pairs_mut()
-            .append_pair("codex_streamlined_login", "true");
-    }
-    if desktop.is_some() || options.desktop_auth {
-        let mut desktop = match desktop.take() {
-            Some(desktop) => desktop,
-            None => Url::parse("https://chatgpt.com/codex/desktop-auth")?,
-        };
-        let query: Vec<_> = desktop
-            .query_pairs()
-            .filter(|(key, _)| key != "authorize_url" && key != "codex_streamlined_login")
-            .map(|(key, value)| (key.into_owned(), value.into_owned()))
-            .collect();
-        desktop
-            .query_pairs_mut()
-            .clear()
-            .extend_pairs(query)
-            .append_pair("authorize_url", url.as_str());
-        if options.streamlined_login {
-            desktop
-                .query_pairs_mut()
-                .append_pair("codex_streamlined_login", "true");
-        }
-        return Ok(desktop);
-    }
-    Ok(url)
 }
 
 #[cfg(test)]

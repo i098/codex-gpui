@@ -377,165 +377,16 @@ impl Login {
                 ))
             }
             Step::GovCloud(warning) => {
-                let message = if warning == GovCloud::Warning {
-                    "You are using Codex with AWS GovCloud. Please ensure you or your administrator have read the application configuration and security guidance before proceeding."
-                } else {
-                    "Codex couldn’t complete the AWS GovCloud check. If you are using AWS GovCloud, please ensure you or your administrator have read the application configuration and security guidance before proceeding."
-                };
-                body=body.child(text(message,14.,20.,400.,t.text_description).whitespace_normal())
-                    .child(div().id("govcloud-guidance").child(text("Application configuration and security guidance",14.,20.,400.,t.text).underline()).on_click(|_,_,cx|cx.open_url("https://learn.chatgpt.com/docs/enterprise/govcloud-configuration")))
-                    .child(self.button("bedrock-finish","Continue",Command::BedrockFinish,Style::Primary,window,cx));
-                if warning == GovCloud::Unverified {
-                    body = body.child(self.button(
-                        "bedrock-retry",
-                        "Retry",
-                        Command::BedrockRetry,
-                        Style::Outline,
-                        window,
-                        cx,
-                    ));
-                }
+                body = self.govcloud_view(body, warning, window, cx);
             }
             Step::Detected => {
-                for (index, profile) in bedrock.profiles.iter().enumerate() {
-                    body = body.child(
-                        div()
-                            .id(("aws-profile", index))
-                            .p(px(12.))
-                            .border_1()
-                            .border_color(t.border)
-                            .child(text(profile.name.clone(), 14., 20., 500., t.text))
-                            .children(profile.region.clone().map(|region| {
-                                text(
-                                    format!("Region: {region}"),
-                                    12.,
-                                    18.,
-                                    400.,
-                                    t.text_description,
-                                )
-                            }))
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                if let Some(bedrock) = &mut this.bedrock {
-                                    bedrock.profile = index;
-                                }
-                                this.choose_bedrock(Method::Profile, window, cx);
-                            })),
-                    );
-                }
-                if bedrock.environment {
-                    body = body.child(self.button(
-                        "aws-environment",
-                        "Continue with detected credentials",
-                        Command::BedrockMethod(Method::Environment),
-                        Style::Primary,
-                        window,
-                        cx,
-                    ));
-                }
-                body = body.child(self.button(
-                    "aws-other-methods",
-                    "Other AWS sign-in methods",
-                    Command::BedrockChoices,
-                    Style::Outline,
-                    window,
-                    cx,
-                ));
+                body = self.bedrock_detected_view(body, window, cx);
             }
             Step::Choices => {
-                if bedrock.profiles.is_empty() && !bedrock.environment && self.error.is_none() {
-                    body = body.child(text(
-                        "No AWS credentials found",
-                        14.,
-                        20.,
-                        400.,
-                        t.text_description,
-                    ));
-                }
-                if bedrock.discovery_supported {
-                    body = body.child(self.button(
-                        "aws-profile-method",
-                        "AWS profile",
-                        Command::BedrockMethod(Method::Profile),
-                        Style::Outline,
-                        window,
-                        cx,
-                    ));
-                    if self.supports_access_keys {
-                        body = body.child(self.button(
-                            "aws-access-keys",
-                            "AWS access keys",
-                            Command::BedrockMethod(Method::AccessKeys),
-                            Style::Outline,
-                            window,
-                            cx,
-                        ));
-                    }
-                }
-                body = body.child(self.button(
-                    "bedrock-api-key",
-                    "Bedrock API key",
-                    Command::BedrockMethod(Method::ApiKey),
-                    Style::Outline,
-                    window,
-                    cx,
-                ));
+                body = self.bedrock_methods_view(body, window, cx);
             }
             Step::Entry(method) => {
-                let fields: &[(usize, &str)] = match method {
-                    Method::Profile => &[(0, "AWS profile"), (5, "AWS region")],
-                    Method::Environment => &[(5, "AWS region")],
-                    Method::AccessKeys => &[
-                        (1, "AWS access key ID"),
-                        (2, "AWS secret access key"),
-                        (3, "AWS session token (optional)"),
-                        (5, "AWS region"),
-                    ],
-                    Method::ApiKey => &[(4, "Bedrock API key"), (5, "AWS region")],
-                };
-                if method == Method::Environment {
-                    body = body.child(
-                        text(
-                            "AWS credentials detected. Enter your AWS Region to continue.",
-                            14.,
-                            20.,
-                            400.,
-                            t.text_description,
-                        )
-                        .whitespace_normal(),
-                    );
-                }
-                for &(index, label) in fields {
-                    body = body.child(
-                        div()
-                            .w_full()
-                            .flex()
-                            .flex_col()
-                            .gap(px(8.))
-                            .child(text(label, 14., 20., 500., t.text))
-                            .child(bedrock.fields[index].clone()),
-                    );
-                }
-                body = body
-                    .child(text(
-                        "For example, us-east-2",
-                        12.,
-                        18.,
-                        400.,
-                        t.text_description,
-                    ))
-                    .child(
-                        self.button(
-                            "bedrock-continue",
-                            "Continue",
-                            Command::BedrockSubmit,
-                            Style::Primary,
-                            window,
-                            cx,
-                        )
-                        .when(self.pending || bedrock.request(cx).is_none(), |button| {
-                            button.opacity(0.5)
-                        }),
-                    );
+                body = self.bedrock_fields(body, method, window, cx);
             }
         }
         if !matches!(bedrock.step, Step::Finishing | Step::GovCloud(_)) {
@@ -588,6 +439,230 @@ impl Login {
                     )
                     .child(body),
             )
+    }
+
+    fn govcloud_view(
+        &self,
+        mut body: gpui::Div,
+        warning: GovCloud,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let t = super::login_theme(cx);
+        let message = if warning == GovCloud::Warning {
+            "You are using Codex with AWS GovCloud. Please ensure you or your administrator have read the application configuration and security guidance before proceeding."
+        } else {
+            "Codex couldn’t complete the AWS GovCloud check. If you are using AWS GovCloud, please ensure you or your administrator have read the application configuration and security guidance before proceeding."
+        };
+        body = body
+            .child(text(message, 14., 20., 400., t.text_description).whitespace_normal())
+            .child(
+                div()
+                    .id("govcloud-guidance")
+                    .child(
+                        text(
+                            "Application configuration and security guidance",
+                            14.,
+                            20.,
+                            400.,
+                            t.text,
+                        )
+                        .underline(),
+                    )
+                    .on_click(|_, _, cx| {
+                        cx.open_url(
+                            "https://learn.chatgpt.com/docs/enterprise/govcloud-configuration",
+                        )
+                    }),
+            )
+            .child(self.button(
+                "bedrock-finish",
+                "Continue",
+                Command::BedrockFinish,
+                Style::Primary,
+                window,
+                cx,
+            ));
+        if warning == GovCloud::Unverified {
+            body = body.child(self.button(
+                "bedrock-retry",
+                "Retry",
+                Command::BedrockRetry,
+                Style::Outline,
+                window,
+                cx,
+            ));
+        }
+        body
+    }
+
+    fn bedrock_detected_view(
+        &self,
+        mut body: gpui::Div,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let t = super::login_theme(cx);
+        let bedrock = self.bedrock.as_ref().expect("Bedrock view requires state");
+        for (index, profile) in bedrock.profiles.iter().enumerate() {
+            body = body.child(
+                div()
+                    .id(("aws-profile", index))
+                    .p(px(12.))
+                    .border_1()
+                    .border_color(t.border)
+                    .child(text(profile.name.clone(), 14., 20., 500., t.text))
+                    .children(profile.region.clone().map(|region| {
+                        text(
+                            format!("Region: {region}"),
+                            12.,
+                            18.,
+                            400.,
+                            t.text_description,
+                        )
+                    }))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if let Some(bedrock) = &mut this.bedrock {
+                            bedrock.profile = index;
+                        }
+                        this.choose_bedrock(Method::Profile, window, cx);
+                    })),
+            );
+        }
+        if bedrock.environment {
+            body = body.child(self.button(
+                "aws-environment",
+                "Continue with detected credentials",
+                Command::BedrockMethod(Method::Environment),
+                Style::Primary,
+                window,
+                cx,
+            ));
+        }
+        body = body.child(self.button(
+            "aws-other-methods",
+            "Other AWS sign-in methods",
+            Command::BedrockChoices,
+            Style::Outline,
+            window,
+            cx,
+        ));
+        body
+    }
+
+    fn bedrock_methods_view(
+        &self,
+        mut body: gpui::Div,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let t = super::login_theme(cx);
+        let bedrock = self.bedrock.as_ref().expect("Bedrock view requires state");
+        if bedrock.profiles.is_empty() && !bedrock.environment && self.error.is_none() {
+            body = body.child(text(
+                "No AWS credentials found",
+                14.,
+                20.,
+                400.,
+                t.text_description,
+            ));
+        }
+        if bedrock.discovery_supported {
+            body = body.child(self.button(
+                "aws-profile-method",
+                "AWS profile",
+                Command::BedrockMethod(Method::Profile),
+                Style::Outline,
+                window,
+                cx,
+            ));
+            if self.supports_access_keys {
+                body = body.child(self.button(
+                    "aws-access-keys",
+                    "AWS access keys",
+                    Command::BedrockMethod(Method::AccessKeys),
+                    Style::Outline,
+                    window,
+                    cx,
+                ));
+            }
+        }
+        body = body.child(self.button(
+            "bedrock-api-key",
+            "Bedrock API key",
+            Command::BedrockMethod(Method::ApiKey),
+            Style::Outline,
+            window,
+            cx,
+        ));
+        body
+    }
+
+    fn bedrock_fields(
+        &self,
+        mut body: gpui::Div,
+        method: Method,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let t = super::login_theme(cx);
+        let bedrock = self.bedrock.as_ref().expect("Bedrock view requires state");
+        let fields: &[(usize, &str)] = match method {
+            Method::Profile => &[(0, "AWS profile"), (5, "AWS region")],
+            Method::Environment => &[(5, "AWS region")],
+            Method::AccessKeys => &[
+                (1, "AWS access key ID"),
+                (2, "AWS secret access key"),
+                (3, "AWS session token (optional)"),
+                (5, "AWS region"),
+            ],
+            Method::ApiKey => &[(4, "Bedrock API key"), (5, "AWS region")],
+        };
+        if method == Method::Environment {
+            body = body.child(
+                text(
+                    "AWS credentials detected. Enter your AWS Region to continue.",
+                    14.,
+                    20.,
+                    400.,
+                    t.text_description,
+                )
+                .whitespace_normal(),
+            );
+        }
+        for &(index, label) in fields {
+            body = body.child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(text(label, 14., 20., 500., t.text))
+                    .child(bedrock.fields[index].clone()),
+            );
+        }
+        body = body
+            .child(text(
+                "For example, us-east-2",
+                12.,
+                18.,
+                400.,
+                t.text_description,
+            ))
+            .child(
+                self.button(
+                    "bedrock-continue",
+                    "Continue",
+                    Command::BedrockSubmit,
+                    Style::Primary,
+                    window,
+                    cx,
+                )
+                .when(self.pending || bedrock.request(cx).is_none(), |button| {
+                    button.opacity(0.5)
+                }),
+            );
+        body
     }
 
     pub(super) fn bedrock_choices(&mut self, cx: &mut Context<Self>) {
