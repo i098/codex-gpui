@@ -407,6 +407,7 @@ impl Root {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> Entity<Login> {
+        self.ready = false;
         let login = cx.new(Login::new);
         cx.subscribe_in(&login, window, |this, source, event: &LoginEvent, _, cx| {
             if this.login.as_ref() != Some(source) {
@@ -454,14 +455,11 @@ impl Root {
                     })
                     .detach();
                 }
-                LoginEvent::Authenticated => {
-                    this.login = None;
-                    this.read_account(cx);
-                    this.refresh_threads(cx);
-                    this.load_projects(cx);
-                    this.load_sections(cx);
+                LoginEvent::MethodsLoaded => {
+                    this.ready = true;
                     cx.notify();
                 }
+                LoginEvent::Authenticated => this.finish_sign_in(cx),
             }
         })
         .detach();

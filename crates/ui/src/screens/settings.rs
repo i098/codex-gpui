@@ -33,6 +33,226 @@ use theme::{ActiveTheme as _, Theme};
 
 #[path = "computer_use.rs"]
 pub mod computer_use;
+fn focus_on_pointer(
+    focus: Entity<focus::ControlFocus>,
+) -> impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) {
+    move |_, window, cx| {
+        let handle = focus.read(cx).handle.clone();
+        handle.focus(window, cx);
+        cx.stop_propagation();
+    }
+}
+
+pub mod personalization;
+pub mod workspace {
+    use crate::{SANS, composer::popover, focus, icon::icon, text};
+    use gpui::{
+        Anchor, Context, Corners, EventEmitter, InteractiveElement as _, IntoElement,
+        ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Window, anchored,
+        deferred, div, point, px,
+    };
+    use shapes::Corner::Round;
+    use theme::ActiveTheme as _;
+
+    pub enum Event {
+        PickFolder,
+        CreateProject,
+    }
+
+    #[derive(Clone, Copy)]
+    pub enum Pending {
+        Picking,
+        Creating,
+    }
+
+    pub struct Workspace {
+        pending: Option<Pending>,
+        error: Option<String>,
+        menu: bool,
+        menu_hovered: bool,
+    }
+
+    impl EventEmitter<Event> for Workspace {}
+
+    impl Workspace {
+        pub fn new(_: &mut Context<Self>) -> Self {
+            Self {
+                pending: None,
+                error: None,
+                menu: false,
+                menu_hovered: false,
+            }
+        }
+
+        pub fn busy(&self) -> bool {
+            self.pending.is_some()
+        }
+
+        pub fn begin(&mut self, pending: Pending, cx: &mut Context<Self>) {
+            self.pending = Some(pending);
+            self.error = None;
+            self.menu = false;
+            self.menu_hovered = false;
+            cx.notify();
+        }
+
+        pub fn finish(&mut self, error: Option<String>, cx: &mut Context<Self>) {
+            self.pending = None;
+            self.error = error;
+            cx.notify();
+        }
+    }
+
+    impl Render for Workspace {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let t = cx.theme().clone();
+            let busy = self.busy();
+            let add_focus = focus::handle("workspace-add", 0, window, cx);
+            let skip_focus = focus::handle("workspace-skip", 0, window, cx);
+            let button_text = match t.appearance {
+                theme::Appearance::Dark => gpui::rgb(0x2d2d2d).into(),
+                theme::Appearance::Light => t.text_inverse,
+            };
+            let mut add = focus::ring(
+                div()
+                    .id("workspace-add")
+                    .role(gpui::Role::Button)
+                    .aria_label("Add project")
+                    .relative()
+                    .w_full()
+                    .h(px(40.))
+                    .rounded_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(9999.)),
+                        corner: Round,
+                        fill: Some(t.button_primary_solid),
+                        border: Some((px(1.), t.border)),
+                        ..Default::default()
+                    }))
+                    .child(text("Add project", 13., 18., 430., button_text)),
+                &add_focus,
+                theme::Theme::RADIUS_FULL,
+                px(2.),
+                cx,
+            );
+            if busy {
+                add = add.opacity(0.5);
+            } else {
+                add = add
+                    .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(add_focus))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.menu = !this.menu;
+                        cx.notify();
+                    }))
+                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                        if !this.menu_hovered {
+                            this.menu = false;
+                            cx.notify();
+                        }
+                    }));
+            }
+            let menu = self.menu.then(|| {
+                let on_hover =
+                    cx.listener(|this, hovered: &bool, _, _| this.menu_hovered = *hovered);
+                let rows = [
+                    ("Start from scratch", false),
+                    ("Use an existing folder", true),
+                ]
+                .into_iter()
+                .map(|(label, pick)| {
+                    let focus = focus::handle(label, 0, window, cx);
+                    focus::ring(
+                        div()
+                            .id(label)
+                            .role(gpui::Role::MenuItem)
+                            .aria_label(label)
+                            .relative()
+                            .px(px(10.))
+                            .py(px(8.))
+                            .rounded(px(8.))
+                            .hover(|s| s.bg(t.menu_item_hover))
+                            .child(text(label, 14., 20., 430., t.text)),
+                        &focus,
+                        px(8.),
+                        px(0.),
+                        cx,
+                    )
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(if pick {
+                            Event::PickFolder
+                        } else {
+                            Event::CreateProject
+                        });
+                    }))
+                });
+                deferred(
+                    div().absolute().top_0().left_0().child(
+                        anchored()
+                            .anchor(Anchor::TopLeft)
+                            .offset(point(px(0.), px(44.)))
+                            .child(
+                                div()
+                                    .id("workspace-add-menu")
+                                    .on_hover(on_hover)
+                                    .child(popover(&t, 240., |d| d.children(rows))),
+                            ),
+                    ),
+                )
+                .into_any_element()
+            });
+            let skip_label = if matches!(self.pending, Some(Pending::Creating)) {
+                "Creating a new project…"
+            } else {
+                "Skip"
+            };
+            let mut skip = focus::ring(
+                div()
+                    .id("workspace-skip")
+                    .role(gpui::Role::Button)
+                    .aria_label(skip_label)
+                    .relative()
+                    .w_full()
+                    .h(px(36.))
+                    .rounded_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(text(skip_label, 14., 18., 500., t.text_tertiary)),
+                &skip_focus,
+                theme::Theme::RADIUS_FULL,
+                px(2.),
+                cx,
+            );
+            if busy {
+                skip = skip.opacity(0.5);
+            } else {
+                skip = skip
+                    .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(skip_focus))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::CreateProject)));
+            }
+            div().size_full().bg(t.background_surface_under).font_family(SANS)
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" { this.menu = false; cx.notify(); }
+            }))
+            .flex().items_center().justify_center().pt(px(12.)).px(px(20.))
+            // Chromium paints the content into a transparent composited layer, then blends it.
+            .child(div().w_full().max_w(px(330.)).flex().flex_col().items_center().gap(px(24.)).layer()
+                .child(icon("folder-add", 40., t.text))
+                .child(div().w_full().flex().flex_col().gap(px(24.))
+                    .child(div().flex().flex_col().gap(px(24.)).items_center()
+                        .child(text("Select a project", 24., 36., 600., t.text))
+                        .child(text("ChatGPT will be able to edit files and run commands in selected folders", 16., 24., 430., t.text_tertiary)
+                            .w_full().whitespace_normal().text_center()))
+                    .child(div().w_full().flex().flex_col().gap(px(12.))
+                        .child(div().relative().child(add).children(menu))
+                        .children(self.error.clone().map(|error| text(error, 14., 20., 430., t.text_error).whitespace_normal().text_center()))
+                        .child(skip))))
+        }
+    }
+}
 
 #[path = "settings_subtrees.rs"]
 pub mod subtrees;
@@ -75,11 +295,13 @@ pub fn shell(
     section: Option<&'static str>,
     cx: &mut App,
 ) -> (Entity<Shell>, Entity<SettingsPage>) {
-    let mut page = SettingsPage::new(config, skills);
-    if let Some(label) = section {
-        page.section = label;
-    }
-    let page = cx.new(|_| page);
+    let page = cx.new(|cx| {
+        let mut page = SettingsPage::new(config, skills, cx);
+        if let Some(label) = section {
+            page.section = label;
+        }
+        page
+    });
     let nav = cx.new(|cx| SettingsNav::new(page.clone(), cx)).into();
     let pane = cx.new(|cx| SettingsPane::new(page.clone(), cx)).into();
     let shell = cx.new(|_| {
@@ -163,10 +385,11 @@ pub struct SettingsPage {
     /// `projectlessWorkspaceRoot` default: `~/Documents/Codex`.
     projectless_root: String,
     pending_instructions: Vec<SettingChanged>,
+    pub personalization: Entity<personalization::Personalization>,
 }
 
 impl SettingsPage {
-    fn new(config: &Value, skills: &Value) -> Self {
+    fn new(config: &Value, skills: &Value, cx: &mut Context<Self>) -> Self {
         // The fixture's home directory, from the user skills under `~/.agents`.
         let home = skills["data"][0]["skills"]
             .as_array()
@@ -187,6 +410,7 @@ impl SettingsPage {
             values,
             projectless_root,
             pending_instructions: Vec::new(),
+            personalization: cx.new(personalization::Personalization::new),
         }
     }
 
@@ -238,6 +462,18 @@ impl SettingsPage {
     pub fn take_pending_instructions(&mut self) -> Vec<SettingChanged> {
         std::mem::take(&mut self.pending_instructions)
     }
+
+    pub fn select_section(&mut self, label: &'static str, cx: &mut Context<Self>) {
+        let editor = self.personalization.read(cx);
+        if editor.dirty(cx) || editor.saving() {
+            cx.emit(personalization::Event::Section(label));
+            return;
+        }
+        self.personalization
+            .update(cx, |editor, cx| editor.discard(cx));
+        self.section = label;
+        cx.notify();
+    }
 }
 
 /// A settings row changed `path` (`store.key`, see [`SettingsPage`]) to `value`.
@@ -247,6 +483,7 @@ pub struct SettingChanged {
 }
 
 impl EventEmitter<SettingChanged> for SettingsPage {}
+impl EventEmitter<personalization::Event> for SettingsPage {}
 
 /// `--sidebar-navigation` background, opaque.
 fn sidebar_color(t: &Theme) -> Hsla {
@@ -280,7 +517,7 @@ impl SettingsNav {
         match (k.key.as_str(), &k.key_char) {
             ("backspace", _) => _ = query.pop(),
             ("escape", _) => query.clear(),
-            (_, Some(c)) => query.push_str(c),
+            (_, Some(c)) if !c.chars().any(char::is_control) => query.push_str(c),
             _ => return,
         }
         self.page.update(cx, |p, cx| {
@@ -290,13 +527,21 @@ impl SettingsNav {
         cx.stop_propagation();
     }
 
-    fn search(&self, query: &str, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn search(
+        &mut self,
+        query: &str,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let focus = focus::handle("settings-search", 0, window, cx);
+        self.focus = focus.read(cx).handle.clone();
         let (s, color) = if query.is_empty() {
             ("Search".to_string(), t.text_tertiary)
         } else {
             (query.to_string(), t.text)
         };
-        div()
+        let control = div()
             .id("settings-search")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
@@ -313,7 +558,8 @@ impl SettingsNav {
                 ..Default::default()
             }))
             .child(icon("search", 16., t.text_secondary))
-            .child(text(s, 14., 18., 430., color))
+            .child(text(s, 14., 18., 430., color));
+        focus::ring(control, &focus, Theme::RADIUS_FULL, px(2.), cx)
     }
 
     /// A nav row: `overflow: hidden`, so Skia draws a runtime icon (the viewport cuts the last
@@ -324,8 +570,10 @@ impl SettingsNav {
         glyph: &'static str,
         selected: bool,
         t: &Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
+        let focus = focus::handle(label, 0, window, cx);
         let fill = over(t.list_hover, sidebar_color(t));
         let row = div()
             .id(label)
@@ -352,7 +600,20 @@ impl SettingsNav {
             )
             .when(label == EXTERNAL, |d| {
                 d.child(icon("arrow-up-right", 16., t.text_secondary).opacity(0.5))
+            });
+        let control = div()
+            .id((gpui::ElementId::from("settings-nav-item"), label))
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .relative()
+            .flex()
+            .flex_col()
+            .when(selected, |d| {
+                d.child(deco(&self.list, 12.5, Squircle, t.list_hover, None))
             })
+            .child(rounded_clip(Theme::RADIUS_LG, Squircle, row));
+        focus::ring(control, &focus, Theme::RADIUS_LG, px(2.), cx)
+            .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
             .when(label != EXTERNAL, |d| {
                 d.on_click(cx.listener(move |this, _, window, cx| {
                     if this.page.read(cx).subtree.is_some() {
@@ -365,24 +626,15 @@ impl SettingsNav {
                         return;
                     }
                     this.page.update(cx, |p, cx| {
-                        p.section = label;
-                        cx.notify();
-                    })
+                        p.select_section(label, cx);
+                    });
                 }))
-            });
-        div()
-            .relative()
-            .flex()
-            .flex_col()
-            .when(selected, |d| {
-                d.child(deco(&self.list, 12.5, Squircle, t.list_hover, None))
             })
-            .child(rounded_clip(Theme::RADIUS_LG, Squircle, row))
     }
 }
 
 impl Render for SettingsNav {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let page = self.page.read(cx);
         let (section, query) = (page.section, page.query.clone());
@@ -392,7 +644,7 @@ impl Render for SettingsNav {
             let rows: Vec<_> = items
                 .iter()
                 .filter(|(label, _)| label.to_lowercase().contains(&needle))
-                .map(|&(label, glyph)| self.item(label, glyph, label == section, &t, cx))
+                .map(|&(label, glyph)| self.item(label, glyph, label == section, &t, window, cx))
                 .collect();
             if rows.is_empty() {
                 continue;
@@ -426,7 +678,7 @@ impl Render for SettingsNav {
                                 text("Settings", 18., 24., 600., t.text).font_family("OpenAI Sans"),
                             ),
                     )
-                    .child(self.search(&query, &t, cx)),
+                    .child(self.search(&query, &t, window, cx)),
             )
             .child(
                 div()
@@ -510,6 +762,7 @@ impl SettingsPane {
         key: &'static str,
         options: &'static [(&'static str, &'static str)],
         t: &Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let current = self.page.read(cx).choice(key, options[0].0).to_string();
@@ -520,15 +773,23 @@ impl SettingsPane {
         let open = self.open_select == Some(key);
         let hover = t.menu_item_hover;
         let menu = open.then(|| {
+            let on_hover = cx.listener(|this, hovered: &bool, _, _| {
+                this.menu_hovered = *hovered;
+            });
             let rows = options.iter().map(|&(value, label)| {
-                div()
+                let focus = focus::handle((gpui::ElementId::from(key), value), 0, window, cx);
+                let row = div()
                     .id(value)
+                    .role(gpui::Role::MenuItem)
+                    .aria_label(label)
                     .px(px(8.))
                     .py(px(6.))
                     .rounded(px(12.))
                     .when(value == current, |d| d.bg(hover))
                     .hover(move |s| s.bg(hover))
-                    .child(text(label, 14., 20., 430., t.text))
+                    .child(text(label, 14., 20., 430., t.text));
+                focus::ring(row.relative(), &focus, px(12.), px(0.), cx)
+                    .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
                         this.open_select = None;
@@ -542,19 +803,20 @@ impl SettingsPane {
                     anchored()
                         .anchor(Anchor::TopRight)
                         .offset(point(px(0.), px(32.)))
-                        .child(
-                            div()
-                                .id("select-menu")
-                                .on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                                    this.menu_hovered = *hovered
-                                }))
-                                .child(popover(t, 280., |d| d.children(rows))),
-                        ),
+                        .child(div().id("select-menu").on_hover(on_hover).child(popover(
+                            t,
+                            280.,
+                            |d| d.children(rows),
+                        ))),
                 ),
             )
         });
-        select(label, None, false, t)
-            .id(key)
+        let focus = focus::handle(key, 0, window, cx);
+        let trigger = select(label, None, false, t).id(key);
+        focus::ring(trigger.relative(), &focus, Theme::RADIUS_LG, px(2.), cx)
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.open_select = (!open).then_some(key);
                 cx.notify();
@@ -590,10 +852,7 @@ impl SettingsPane {
             px(2.),
             cx,
         )
-        .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
-            focus.read(cx).handle.clone().focus(window, cx);
-            cx.stop_propagation();
-        })
+        .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
         .on_click(cx.listener(move |this, _, _, cx| {
             let value = if key == "host.git-review-mode" {
                 json!(if on { "full" } else { "last-turn-only" })
@@ -612,6 +871,7 @@ impl SettingsPane {
         default: &'static str,
         options: &'static [(&'static str, &'static str)],
         t: &Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let current = self.page.read(cx).choice(key, default).to_string();
@@ -622,8 +882,11 @@ impl SettingsPane {
             .gap(px(2.))
             .children(options.iter().map(|&(value, label)| {
                 let selected = current == value;
-                div()
+                let focus = focus::handle((gpui::ElementId::from(key), value), 0, window, cx);
+                let control = div()
                     .id(label)
+                    .role(gpui::Role::Button)
+                    .aria_label(label)
                     .h(px(24.))
                     .px(px(9.))
                     .flex()
@@ -636,7 +899,9 @@ impl SettingsPane {
                         18.,
                         430.,
                         if selected { t.text } else { t.text_tertiary },
-                    ))
+                    ));
+                focus::ring(control.relative(), &focus, Theme::RADIUS_FULL, px(2.), cx)
+                    .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
                         if key == THEME {
@@ -650,9 +915,14 @@ impl SettingsPane {
     /// Appearance ▸ Theme: the app applies and keeps the choice (`SetTheme`).
     /// ponytail: the chrome theme, font size and motion rows are not here; add them with the
     /// settings they drive.
-    fn appearance(&self, t: &Theme, cx: &mut Context<Self>) -> Vec<(&'static str, Vec<Div>)> {
+    fn appearance(
+        &self,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<(&'static str, Vec<Div>)> {
         let options = &[("light", "Light"), ("dark", "Dark"), ("system", "System")];
-        let theme = self.segmented(THEME, "system", options, t, cx);
+        let theme = self.segmented(THEME, "system", options, t, window, cx);
         vec![("Theme", vec![settings_row("Theme", None, theme, t)])]
     }
 
@@ -751,6 +1021,7 @@ impl SettingsPane {
                         "host.git-pull-request-merge-method",
                         &[("merge", "Merge"), ("squash", "Squash")],
                         t,
+                        window,
                         cx,
                     ),
                     t,
@@ -775,6 +1046,7 @@ impl SettingsPane {
                         "inline",
                         &[("inline", "Inline"), ("detached", "Detached")],
                         t,
+                        window,
                         cx,
                     ),
                     t,
@@ -946,7 +1218,7 @@ impl SettingsPane {
                     row(
                         "Confirm before closing a window",
                         Some("Warn when a tab-close shortcut would close the window"),
-                        self.select_menu("host.confirm-before-close", CLOSE_OPTIONS, t, cx),
+                        self.select_menu("host.confirm-before-close", CLOSE_OPTIONS, t, window, cx),
                     ),
                     row(
                         "Full view by default",
@@ -968,6 +1240,7 @@ impl SettingsPane {
                             "bottom",
                             &[("bottom", "Bottom"), ("right", "Right")],
                             t,
+                            window,
                             cx,
                         ),
                     ),
@@ -1051,7 +1324,13 @@ impl SettingsPane {
                     row(
                         "Send shortcut",
                         Some("Choose when Enter sends a prompt or inserts a new line"),
-                        self.select_menu("desktop.composerEnterBehavior", SEND_OPTIONS, t, cx),
+                        self.select_menu(
+                            "desktop.composerEnterBehavior",
+                            SEND_OPTIONS,
+                            t,
+                            window,
+                            cx,
+                        ),
                     ),
                     row(
                         "Follow-up behavior",
@@ -1063,6 +1342,7 @@ impl SettingsPane {
                             "steer",
                             &[("queue", "Queue"), ("steer", "Steer")],
                             t,
+                            window,
                             cx,
                         ),
                     ),
@@ -1163,10 +1443,16 @@ impl Render for SettingsPane {
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
         }
+        if section == "Personalization" {
+            return div()
+                .size_full()
+                .child(self.page.read(cx).personalization.clone())
+                .into_any_element();
+        }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
             "General" => self.general(&t, window, cx),
-            "Appearance" => self.appearance(&t, cx),
+            "Appearance" => self.appearance(&t, window, cx),
             "Git" => self.git(&t, window, cx),
             _ => Vec::new(),
         };

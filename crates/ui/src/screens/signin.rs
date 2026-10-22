@@ -408,6 +408,8 @@ pub enum LoginEvent {
         provider: Provider,
         email: Option<String>,
     },
+    /// The sign-in requirements are read and the screen shows its methods.
+    MethodsLoaded,
     Authenticated,
     RestartBedrock {
         region: String,
@@ -612,6 +614,7 @@ impl Login {
                 if !policy.permits_api() {
                     this.stage = Stage::Welcome;
                 }
+                cx.emit(LoginEvent::MethodsLoaded);
                 cx.notify();
             })
             .ok();
