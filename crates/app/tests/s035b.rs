@@ -100,13 +100,10 @@ fn suggestion_click_says_unsupported_and_sends_nothing() -> Result<()> {
     );
     let bbox = |b: &Value| ["x", "y", "w", "h"].map(|k| b[k].as_f64().unwrap() as f32);
     let rest_dom = &recording["result"]["dom"][0];
-    // The port shows the five landing examples (no server suggestions): the first five
-    // recorded card boxes.
     let cards: Vec<[f32; 4]> = rest_dom["cards"]
         .as_array()
         .context("cards")?
         .iter()
-        .take(5)
         .map(|c| bbox(&c["bbox"]))
         .collect();
     let brightest = |shot: &RgbaImage, [x, y, w, h]: [f32; 4]| {
@@ -128,10 +125,13 @@ fn suggestion_click_says_unsupported_and_sends_nothing() -> Result<()> {
     std::fs::create_dir_all(&proof)?;
 
     let host = Arc::new(Recorder {
-        replay: ReplayHost::from_recording(RECORDING)?,
+        replay: ReplayHost::from_recording(include_str!("../../../refs/interactions/host.json"))?,
         sent: Mutex::new(Vec::new()),
     });
     let mut fx = Fx::new()?;
+    fx.cx
+        .test_window(fx.window)
+        .simulate_scale_factor_change(recording["viewport"]["dpr"].as_f64().context("dpr")? as f32);
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
     fx.click(RAIL_SCHEDULED)?;
@@ -142,6 +142,7 @@ fn suggestion_click_says_unsupported_and_sends_nothing() -> Result<()> {
     fx.hover((1270., 820.))?;
     fx.advance(Duration::from_millis(300))?;
     let rest = fx.shot()?;
+    ensure!(rest.dimensions() == (1280, 832), "recorded physical size");
     rest.save(proof.join("s035b-before.png"))?;
     for card in &cards {
         ensure!(
@@ -164,7 +165,6 @@ fn suggestion_click_says_unsupported_and_sends_nothing() -> Result<()> {
     ensure!(sent.is_empty(), "the click sent {sent:?}");
     drop(sent);
     ensure!(fx.route() == Route::Scheduled, "route {:?}", fx.route());
-    fx.hover((1270., 820.))?;
     fx.advance(Duration::from_millis(300))?;
     let after = fx.shot()?;
     after.save(proof.join("s035b-after.png"))?;
