@@ -601,3 +601,11 @@ The `⌘/` dialog lists the shortcuts the app really binds (registry order, pers
 `⌥⌘P` toggles the open chat's pin, `⌥⌘R` renames it and `⌘F` finds in it, all through the keymap; the `⌘/` dialog lists them in the original's recorded row order.
 `⌥⌘L` copies the open chat's `codex://threads/{id}` link, and `Next tab`/`Previous tab` step the side tabs when focus is inside one.
 `⌘W` closes the open side tab first (a `closeWindow`-only key closes the window), `⌥⌘W` closes the other side tabs with focus in one, and `⇧⌘C`/`⌥⇧⌘C` copy the chat's newest managed worktree root (else its working directory).
+
+The keymap module owns keyboard and mouse navigation dispatch.
+Shortcut settings separate capture transitions, search matching, and control rendering without changing their behavior.
+Run the shortcut regression checks with:
+
+```sh
+cargo test -p app --test keyboard_store --test keyboard_page --test shortcut_chat_modes --test shortcut_chat_actions --test shortcut_undo --test shortcut_unreads --test shortcuts_dialog
+```
