@@ -903,8 +903,12 @@ fn local_comment_frame(position: &Position, t: &Theme) -> Div {
                                 .id("comment-author")
                                 .size(px(24.))
                                 .flex_none()
-                                .rounded_full()
-                                .bg(rgb(0xff7419))
+                                // Skia's anti-aliased circle, as Chromium paints `rounded-full`.
+                                .child(shapes::decoration(Decoration {
+                                    radius: Corners::all(px(12.)),
+                                    fill: Some(rgb(0xff7419).into()),
+                                    ..Default::default()
+                                }))
                                 .flex()
                                 .items_center()
                                 .justify_center()
