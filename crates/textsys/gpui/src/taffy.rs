@@ -409,6 +409,8 @@ impl TaffyLayoutEngine {
     /// `justify-content: center` place an item at `free_space / 2`, which truncates toward zero,
     /// and auto margins share the free space with `LayoutUnitDiffuser`, which gives the odd
     /// unit to the first margin. Taffy keeps exact halves.
+    // ponytail: reverse directions and one-sided auto margins keep taffy's offsets (nothing
+    // uses them); model them when a screen does.
     fn flex_center_correction(&self, parent: NodeId, child: NodeId) -> TaffyPoint<f32> {
         use taffy::style::{
             AlignContentKeyword, AlignItemsKeyword, Display, FlexDirection, FlexWrap, Position,
