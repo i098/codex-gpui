@@ -190,6 +190,9 @@ Run `cargo test -p app --test diff_repositories` for the real-Git ownership and 
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
 Use `Composer::settings_field` for multiline text and `Toast` for existing information, error, and success messages.
+Use `Composer::settings_form_field` for compact form inputs and `settings_form_secret` for their masked values.
+Subscribe to `SettingsFieldSubmit` to handle Enter without dropping focus.
+Run `cargo test -p ui --test settings_kit enter_respects_single_line_and_multiline_form_fields` for the real keyboard check.
 Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice check.
 
 `app::diff_content::read_full_file` loads typed before/after data through the existing Git object host.
@@ -200,10 +203,13 @@ Run `cargo test -p app --test diff_content` for real Git object and repository-b
 Cloud environment routes use `Root::open_cloud_environment` and the existing authenticated host transport.
 The legacy editor preserves unchanged secret values and keeps package version choices in the environment draft.
 Cloud access follows the original account policy and feature gates; Cloud computer stays hidden on the Codex surface.
+Each Cloud page keeps the account and user identity used by its first access request.
+An identity change stops later environment operations before the host sends them.
+Container-image errors remain inside the editor row; name checks can complete independently.
 The `375130565` feature gate also hides legacy environments when the account otherwise permits cloud access.
 Run `cargo test -p app --lib cloud::tests` for the account and feature-gate checks.
 Run `cargo test -p ui --lib screens::cloud::model::tests` for secret updates and `.env` parsing.
-Cloud v2 setup still needs the durable app-server connection; configuration creation alone does not prove that setup completed.
+Cloud v2 setup still needs host-aware thread routing and the first setup turn; configuration creation alone does not prove completion.
 Original-versus-native pixel validation for these pages remains pending.
 
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
