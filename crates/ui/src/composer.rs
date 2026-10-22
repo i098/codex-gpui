@@ -1352,18 +1352,30 @@ impl Composer {
         use crate::screens::thread::view::menu::{ContextMenu, Item};
         self.menu = None;
         self.slash.reset();
-        let mut items = vec![Item::new(QUEUE_EDIT, "Edit message", true)];
+        let item = |id, label, icon: &'static [u8]| Item {
+            icon: Some(icon),
+            ..Item::new(id, label, true)
+        };
+        let mut items = vec![item(
+            QUEUE_EDIT,
+            "Edit message",
+            include_bytes!("../../../assets/icons/pencil.svg"),
+        )];
         if self.side_chat {
-            items.push(Item::new(QUEUE_SIDE_CHAT, "Open in side chat", true));
+            items.push(item(
+                QUEUE_SIDE_CHAT,
+                "Open in side chat",
+                include_bytes!("../../../assets/icons/side-chat.svg"),
+            ));
         }
-        items.push(Item::new(
+        items.push(item(
             QUEUE_SWITCH,
             if self.queue_mode {
                 "Turn off queueing"
             } else {
                 "Turn on queueing"
             },
-            true,
+            include_bytes!("../../../assets/icons/queue-handle.svg"),
         ));
         self.context_menu = Some(ContextMenu::dropdown(
             items,
@@ -1372,6 +1384,7 @@ impl Composer {
             window,
             cx,
         ));
+
         cx.notify();
     }
 
