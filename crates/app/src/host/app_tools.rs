@@ -217,70 +217,134 @@ impl Service {
     async fn call(&self, call: ToolCall, cancel: &Cancel) -> Result<Value> {
         cancel.check()?;
         let result = async {
-            ensure!(call.caller_source == "codex" && call.host_id.as_deref().unwrap_or("local") == "local" && call.namespace == "codex_app", "This native capability is only available to local Codex threads");
-            ensure!(self.threads.lock().unwrap().contains(&call.thread_id), "The calling thread does not own this app tools connection");
-            let schema = self.catalog.iter().find(|tool| tool["name"] == call.tool).context("Unknown native app tool")?;
-            let arguments = call.arguments.as_object().context("Tool arguments must be an object")?;
+            ensure!(
+                call.caller_source == "codex"
+                    && call.host_id.as_deref().unwrap_or("local") == "local"
+                    && call.namespace == "codex_app",
+                "This native capability is only available to local Codex threads"
+            );
+            ensure!(
+                self.threads.lock().unwrap().contains(&call.thread_id),
+                "The calling thread does not own this app tools connection"
+            );
+            let schema = self
+                .catalog
+                .iter()
+                .find(|tool| tool["name"] == call.tool)
+                .context("Unknown native app tool")?;
+            let arguments = call
+                .arguments
+                .as_object()
+                .context("Tool arguments must be an object")?;
             let properties = schema["inputSchema"]["properties"].as_object();
             if let Some(properties) = properties {
-                ensure!(arguments.keys().all(|key| properties.contains_key(key)), "Unknown tool argument");
+                ensure!(
+                    arguments.keys().all(|key| properties.contains_key(key)),
+                    "Unknown tool argument"
+                );
             }
             if call.tool == "automation_update" {
                 return automation::execute(self, &call.arguments, &call.thread_id, cancel).await;
             }
             let args = ThreadArgs::deserialize(&call.arguments)?;
-            ensure!(args.source.as_deref().is_none_or(|source| source == "codex"), "ChatGPT conversations are not available through this native provider");
-            ensure!(args.host_id.as_deref().is_none_or(|host| host == "local"), "Remote hosts are not available through this native provider");
+            ensure!(
+                args.source
+                    .as_deref()
+                    .is_none_or(|source| source == "codex"),
+                "ChatGPT conversations are not available through this native provider"
+            );
+            ensure!(
+                args.host_id.as_deref().is_none_or(|host| host == "local"),
+                "Remote hosts are not available through this native provider"
+            );
             match call.tool.as_str() {
-                "list_projects" => {
-                    let projects = self.storage.projects()?.into_iter().filter(|project| !project.missing && project.root.is_some()).map(|project| {
-                        let root = project.root.as_ref().unwrap();
-                        let git = std::process::Command::new("git").args(["-C", root.as_ref(), "rev-parse", "--is-inside-work-tree"]).output()
-                            .map(|output| output.status.success() && output.stdout == b"true\n")
-                            .unwrap_or_else(|error| { eprintln!("codex-gpui: cannot read project Git metadata: {error}"); false });
-                        json!({"projectId": project.id.as_ref(), "label": project.label.as_ref(), "projectKind": "local", "hostId": "local", "hostDisplayName": null, "path": root.as_ref(), "isGitRepository": git})
-                    }).collect::<Vec<_>>();
-                    Ok(json!({"schemaVersion": 2, "projects": projects}))
-                }
+                "list_projects" => self.list_projects(),
                 "list_threads" => self.list_threads(&args, cancel).await,
-                "list_archived_threads" => {
-                    let limit = bounded(args.limit, 10, 1, 50)?;
-                    let response = self.request(cancel, "thread/list", json!({"archived": true, "cursor": args.cursor, "limit": limit, "modelProviders": null, "sortKey": "updated_at", "useStateDbOnly": true})).await?;
-                    let state = self.storage.global_state();
-                    let threads = response["data"].as_array().context("thread/list returned no data")?.iter().map(|thread| summary(thread, &state)).collect::<Result<Vec<_>>>()?;
-                    Ok(json!({"threads": threads, "nextCursor": response["nextCursor"]}))
-                }
+                "list_archived_threads" => self.list_archived_threads(&args, cancel).await,
                 "read_thread" => self.read_thread(&args, cancel).await,
                 "set_thread_archived" | "set_thread_title" | "set_thread_pinned" => {
-                    let thread = args.thread_id.as_deref().unwrap_or(&call.thread_id);
-                    ensure!(!thread.is_empty(), "threadId must not be empty");
-                    let (method, params) = match call.tool.as_str() {
-                        "set_thread_archived" => {
-                            let archived = args.archived.context("archived is required")?;
-                            (if archived { "thread/archive" } else { "thread/unarchive" }, json!({"threadId": thread}))
-                        }
-                        "set_thread_title" => {
-                            let title = args.title.as_deref().filter(|title| !title.is_empty()).context("title is required")?;
-                            ("thread/name/set", json!({"threadId": thread, "name": title}))
-                        }
-                        _ => {
-                            ensure!(args.thread_id.is_some(), "threadId is required");
-                            let pinned = args.pinned.context("pinned is required")?;
-                            ("thread/section/move", json!({"threadId": thread, "sectionId": pinned.then_some(ui::screens::sidebar::PINNED_SECTION_ID), "beforeThreadId": null}))
-                        }
-                    };
-                    self.request(cancel, method, params).await?;
-                    self.notify(ToolEvent::ThreadsChanged);
-                    Ok(json!({"threadId": thread, "hostId": "local"}))
+                    self.set_thread_state(&call, &args, cancel).await
                 }
                 _ => bail!("Unknown native app tool"),
             }
-        }.await;
+        }
+        .await;
         cancel.check()?;
         Ok(match result {
             Ok(value) => success(value),
             Err(error) => failure(&error.to_string()),
         })
+    }
+
+    fn list_projects(&self) -> Result<Value> {
+        let projects = self.storage.projects()?.into_iter().filter(|project| !project.missing && project.root.is_some()).map(|project| {
+            let root = project.root.as_ref().unwrap();
+            let git = std::process::Command::new("git").args(["-C", root.as_ref(), "rev-parse", "--is-inside-work-tree"]).output()
+                .map(|output| output.status.success() && output.stdout == b"true\n")
+                .unwrap_or_else(|error| { eprintln!("codex-gpui: cannot read project Git metadata: {error}"); false });
+            json!({"projectId": project.id.as_ref(), "label": project.label.as_ref(), "projectKind": "local", "hostId": "local", "hostDisplayName": null, "path": root.as_ref(), "isGitRepository": git})
+        }).collect::<Vec<_>>();
+        Ok(json!({"schemaVersion": 2, "projects": projects}))
+    }
+
+    async fn list_archived_threads(&self, args: &ThreadArgs, cancel: &Cancel) -> Result<Value> {
+        let limit = bounded(args.limit, 10, 1, 50)?;
+        let response = self.request(cancel, "thread/list", json!({"archived": true, "cursor": args.cursor, "limit": limit, "modelProviders": null, "sortKey": "updated_at", "useStateDbOnly": true})).await?;
+        let state = self.storage.global_state();
+        let threads = response["data"]
+            .as_array()
+            .context("thread/list returned no data")?
+            .iter()
+            .map(|thread| summary(thread, &state))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(json!({"threads": threads, "nextCursor": response["nextCursor"]}))
+    }
+
+    /// `set_thread_archived`, `set_thread_title` and `set_thread_pinned` on the calling thread
+    /// unless the arguments name another one.
+    async fn set_thread_state(
+        &self,
+        call: &ToolCall,
+        args: &ThreadArgs,
+        cancel: &Cancel,
+    ) -> Result<Value> {
+        let thread = args.thread_id.as_deref().unwrap_or(&call.thread_id);
+        ensure!(!thread.is_empty(), "threadId must not be empty");
+        let (method, params) = match call.tool.as_str() {
+            "set_thread_archived" => {
+                let archived = args.archived.context("archived is required")?;
+                (
+                    if archived {
+                        "thread/archive"
+                    } else {
+                        "thread/unarchive"
+                    },
+                    json!({"threadId": thread}),
+                )
+            }
+            "set_thread_title" => {
+                let title = args
+                    .title
+                    .as_deref()
+                    .filter(|title| !title.is_empty())
+                    .context("title is required")?;
+                (
+                    "thread/name/set",
+                    json!({"threadId": thread, "name": title}),
+                )
+            }
+            _ => {
+                ensure!(args.thread_id.is_some(), "threadId is required");
+                let pinned = args.pinned.context("pinned is required")?;
+                (
+                    "thread/section/move",
+                    json!({"threadId": thread, "sectionId": pinned.then_some(ui::screens::sidebar::PINNED_SECTION_ID), "beforeThreadId": null}),
+                )
+            }
+        };
+        self.request(cancel, method, params).await?;
+        self.notify(ToolEvent::ThreadsChanged);
+        Ok(json!({"threadId": thread, "hostId": "local"}))
     }
 
     async fn list_threads(&self, args: &ThreadArgs, cancel: &Cancel) -> Result<Value> {

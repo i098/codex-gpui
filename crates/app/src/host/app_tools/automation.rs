@@ -324,82 +324,7 @@ fn save(
             raw.insert("notification_policy".into(), policy.clone().into());
         }
     }
-    if args.kind.as_deref() == Some("heartbeat") {
-        for key in [
-            "cwds",
-            "target",
-            "model",
-            "reasoning_effort",
-            "execution_environment",
-            "local_environment_config_path",
-            "auto_archive",
-            "plugin_template_id",
-        ] {
-            raw.remove(key);
-        }
-        raw.insert(
-            "target_thread_id".into(),
-            args.target_thread_id
-                .as_deref()
-                .unwrap_or(thread)
-                .to_owned()
-                .into(),
-        );
-    } else {
-        raw.remove("target_thread_id");
-        let (target, cwds) = if let Some(project) = &args.project_id {
-            let project = service
-                .storage
-                .projects()?
-                .into_iter()
-                .find(|item| item.id.as_ref() == project)
-                .context("Automation project no longer exists")?;
-            let root = project.root.context("Automation project has no folder")?;
-            (
-                toml::Table::from_iter([
-                    ("type".into(), "project".into()),
-                    ("project_id".into(), project.id.to_string().into()),
-                ]),
-                vec![toml::Value::String(root.to_string())],
-            )
-        } else {
-            ensure!(
-                args.execution_environment.as_deref() != Some("worktree"),
-                "Worktree automations require a project with a folder"
-            );
-            (
-                toml::Table::from_iter([("type".into(), "projectless".into())]),
-                Vec::new(),
-            )
-        };
-        raw.insert("target".into(), target.into());
-        raw.insert("cwds".into(), cwds.into());
-        raw.insert(
-            "model".into(),
-            required(args.model.as_deref(), "model")?.to_owned().into(),
-        );
-        raw.insert(
-            "reasoning_effort".into(),
-            required(args.reasoning_effort.as_deref(), "reasoningEffort")?
-                .to_owned()
-                .into(),
-        );
-        raw.insert(
-            "execution_environment".into(),
-            required(
-                args.execution_environment.as_deref(),
-                "executionEnvironment",
-            )?
-            .to_owned()
-            .into(),
-        );
-        if value.get("localEnvironmentConfigPath").is_some() {
-            raw.remove("local_environment_config_path");
-            if let Some(path) = &args.local_environment_config_path {
-                raw.insert("local_environment_config_path".into(), path.clone().into());
-            }
-        }
-    }
+    apply_target(service, args, value, thread, &mut raw)?;
     let contents = toml::to_string(&raw)?;
     let item = definition(&key, &contents)?;
     let root = service.storage.home.join("automations");
@@ -459,6 +384,93 @@ fn save(
     }
     service.notify(ToolEvent::AutomationsChanged);
     Ok(json!({"automationId": key, "mode": args.mode, "status": item["status"]}))
+}
+
+/// Writes a heartbeat's target thread, or a cron task's project, model and environment fields.
+fn apply_target(
+    service: &Service,
+    args: &Arguments,
+    value: &Value,
+    thread: &str,
+    raw: &mut toml::Table,
+) -> Result<()> {
+    if args.kind.as_deref() == Some("heartbeat") {
+        for key in [
+            "cwds",
+            "target",
+            "model",
+            "reasoning_effort",
+            "execution_environment",
+            "local_environment_config_path",
+            "auto_archive",
+            "plugin_template_id",
+        ] {
+            raw.remove(key);
+        }
+        raw.insert(
+            "target_thread_id".into(),
+            args.target_thread_id
+                .as_deref()
+                .unwrap_or(thread)
+                .to_owned()
+                .into(),
+        );
+        return Ok(());
+    }
+    raw.remove("target_thread_id");
+    let (target, cwds) = if let Some(project) = &args.project_id {
+        let project = service
+            .storage
+            .projects()?
+            .into_iter()
+            .find(|item| item.id.as_ref() == project)
+            .context("Automation project no longer exists")?;
+        let root = project.root.context("Automation project has no folder")?;
+        (
+            toml::Table::from_iter([
+                ("type".into(), "project".into()),
+                ("project_id".into(), project.id.to_string().into()),
+            ]),
+            vec![toml::Value::String(root.to_string())],
+        )
+    } else {
+        ensure!(
+            args.execution_environment.as_deref() != Some("worktree"),
+            "Worktree automations require a project with a folder"
+        );
+        (
+            toml::Table::from_iter([("type".into(), "projectless".into())]),
+            Vec::new(),
+        )
+    };
+    raw.insert("target".into(), target.into());
+    raw.insert("cwds".into(), cwds.into());
+    raw.insert(
+        "model".into(),
+        required(args.model.as_deref(), "model")?.to_owned().into(),
+    );
+    raw.insert(
+        "reasoning_effort".into(),
+        required(args.reasoning_effort.as_deref(), "reasoningEffort")?
+            .to_owned()
+            .into(),
+    );
+    raw.insert(
+        "execution_environment".into(),
+        required(
+            args.execution_environment.as_deref(),
+            "executionEnvironment",
+        )?
+        .to_owned()
+        .into(),
+    );
+    if value.get("localEnvironmentConfigPath").is_some() {
+        raw.remove("local_environment_config_path");
+        if let Some(path) = &args.local_environment_config_path {
+            raw.insert("local_environment_config_path".into(), path.clone().into());
+        }
+    }
+    Ok(())
 }
 
 fn persist(db: &rusqlite::Connection, item: &Value, schedule: Option<(i64, i64)>) -> Result<()> {

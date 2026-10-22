@@ -174,16 +174,7 @@ pub fn schedule_summary(rrule: &str) -> String {
             .and_then(|n| n.parse::<u64>().ok())
             .unwrap_or(1);
         let minutes = interval.saturating_mul(if frequency == Some("HOURLY") { 60 } else { 1 });
-        return match minutes {
-            1 => "Every minute".into(),
-            60 => "Hourly".into(),
-            1440 => "Daily".into(),
-            10080 => "Weekly".into(),
-            n if n.is_multiple_of(10080) => format!("Every {} weeks", n / 10080),
-            n if n.is_multiple_of(1440) => format!("Every {} days", n / 1440),
-            n if n.is_multiple_of(60) => format!("Every {} hours", n / 60),
-            n => format!("Every {n} minutes"),
-        };
+        return interval_summary(minutes);
     }
     let hour = rule_part(rrule, "BYHOUR").and_then(|h| h.parse::<u32>().ok());
     let minute = rule_part(rrule, "BYMINUTE").and_then(|m| m.parse::<u32>().ok());
@@ -195,7 +186,25 @@ pub fn schedule_summary(rrule: &str) -> String {
         if hour % 12 == 0 { 12 } else { hour % 12 },
         if hour < 12 { "AM" } else { "PM" }
     );
-    let day = match (frequency, rule_part(rrule, "BYDAY")) {
+    format!("{} at {time}", day_label(rrule))
+}
+
+fn interval_summary(minutes: u64) -> String {
+    match minutes {
+        1 => "Every minute".into(),
+        60 => "Hourly".into(),
+        1440 => "Daily".into(),
+        10080 => "Weekly".into(),
+        n if n.is_multiple_of(10080) => format!("Every {} weeks", n / 10080),
+        n if n.is_multiple_of(1440) => format!("Every {} days", n / 1440),
+        n if n.is_multiple_of(60) => format!("Every {} hours", n / 60),
+        n => format!("Every {n} minutes"),
+    }
+}
+
+/// The weekday of a single-day weekly rule, else its cadence.
+fn day_label(rrule: &str) -> &'static str {
+    match (rule_part(rrule, "FREQ"), rule_part(rrule, "BYDAY")) {
         (Some("WEEKLY"), Some("MO")) => "Mondays",
         (Some("WEEKLY"), Some("TU")) => "Tuesdays",
         (Some("WEEKLY"), Some("WE")) => "Wednesdays",
@@ -204,8 +213,7 @@ pub fn schedule_summary(rrule: &str) -> String {
         (Some("WEEKLY"), Some("SA")) => "Saturdays",
         (Some("WEEKLY"), Some("SU")) => "Sundays",
         _ => cadence(rrule),
-    };
-    format!("{day} at {time}")
+    }
 }
 
 // The card uses the original 24 px clock, not the sidebar's 20 px asset.

@@ -2376,10 +2376,6 @@ impl Root {
         if self.automation_editor.is_some() || self.dialog.is_some() {
             return;
         }
-        let id = item
-            .as_ref()
-            .and_then(|item| item["id"].as_str())
-            .map(str::to_owned);
         let editor = cx.new(|cx| automations::editor::Editor::new(item.as_ref(), cx));
         cx.subscribe_in(
             &editor,
@@ -2391,97 +2387,9 @@ impl Root {
                     cx.notify();
                 }
                 automations::editor::Outcome::Save(draft) => {
-                    let proposal = origin.is_some()
-                        && item
-                            .as_ref()
-                            .and_then(|item| item["mode"].as_str())
-                            .is_some_and(|mode| mode.starts_with("suggested_"));
-                    let mut body = if proposal {
-                        item.clone().unwrap()
-                    } else {
-                        json!({})
-                    };
-                    body["name"] = json!(draft.name);
-                    body["prompt"] = json!(draft.prompt);
-                    body["rrule"] = json!(draft.rrule);
-                    let (endpoint, body) = if proposal {
-                        (
-                            "apply-automation-proposal",
-                            json!({"arguments": body, "threadId": origin.as_ref().unwrap().0}),
-                        )
-                    } else if let Some(id) = &id {
-                        body["id"] = json!(id);
-                        body["status"] = item.as_ref().unwrap()["status"].clone();
-                        ("automation-update", body)
-                    } else {
-                        body["cwds"] = json!([this.cwd]);
-                        ("automation-create", body)
-                    };
-                    let host = this.host.clone();
-                    let write = cx.background_spawn(async move {
-                        let response = host::json_body(
-                            &host.fetch(&host::Request::post(endpoint, Some(body)))?,
-                        )?;
-                        serde_json::from_value::<automations::Task>(response["item"].clone())?;
-                        Ok::<_, anyhow::Error>(response["item"].clone())
-                    });
-                    let editor = editor.clone();
-                    let origin = origin.clone();
-                    cx.spawn_in(window, async move |this, cx| {
-                        let result = write.await;
-                        this.update_in(cx, |this, window, cx| {
-                            if this.automation_editor.as_ref() != Some(&editor) {
-                                return;
-                            }
-                            match result {
-                                Ok(item) => {
-                                    this.automation_editor = None;
-                                    window.focus(&this.focus, cx);
-                                    if let Some(Ok(list)) = &mut this.automations
-                                        && let Some(items) = list["items"].as_array_mut()
-                                    {
-                                        if let Some(stored) =
-                                            items.iter_mut().find(|v| v["id"] == item["id"])
-                                        {
-                                            *stored = item.clone();
-                                        } else {
-                                            items.push(item.clone());
-                                        }
-                                    }
-                                    let route = if let Some((thread, call)) = &origin {
-                                        this.automation_card_results
-                                            .insert((thread.clone(), call.clone()), item.clone());
-                                        if let Some(view) = &this.thread
-                                            && view.read(cx).id() == thread
-                                        {
-                                            view.update(cx, |view, cx| {
-                                                view.set_automation_card_result(call, &item, cx)
-                                            });
-                                        }
-                                        Route::Thread(thread.clone())
-                                    } else {
-                                        Route::Automation(item["id"].as_str().unwrap().to_owned())
-                                    };
-                                    if this.state.route == route {
-                                        this.sync(window, cx);
-                                    } else {
-                                        this.navigate(route, window, cx);
-                                    }
-                                    this.load_automations(cx);
-                                    this.toast(
-                                        Toast::success("Successfully saved scheduled task"),
-                                        cx,
-                                    );
-                                }
-                                Err(error) => editor.update(cx, |editor, cx| {
-                                    editor.failed(format!("Couldn’t save task: {error}"), cx)
-                                }),
-                            }
-                            cx.notify();
-                        })
-                        .ok();
-                    })
-                    .detach();
+                    let request =
+                        automation_save_request(item.as_ref(), origin.as_ref(), draft, &this.cwd);
+                    this.save_automation(editor, request, origin.clone(), window, cx);
                 }
             },
         )
@@ -2489,6 +2397,84 @@ impl Root {
         window.focus(&editor.focus_handle(cx), cx);
         self.automation_editor = Some(editor);
         cx.notify();
+    }
+
+    /// Writes the editor's draft; a failed write keeps the editor open with its draft.
+    fn save_automation(
+        &mut self,
+        editor: &Entity<automations::editor::Editor>,
+        (endpoint, body): (&'static str, Value),
+        origin: Option<(String, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let host = self.host.clone();
+        let write = cx.background_spawn(async move {
+            let response =
+                host::json_body(&host.fetch(&host::Request::post(endpoint, Some(body)))?)?;
+            serde_json::from_value::<automations::Task>(response["item"].clone())?;
+            Ok::<_, anyhow::Error>(response["item"].clone())
+        });
+        let editor = editor.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = write.await;
+            this.update_in(cx, |this, window, cx| {
+                if this.automation_editor.as_ref() != Some(&editor) {
+                    return;
+                }
+                match result {
+                    Ok(item) => this.automation_saved(item, origin, window, cx),
+                    Err(error) => editor.update(cx, |editor, cx| {
+                        editor.failed(format!("Couldn’t save task: {error}"), cx)
+                    }),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Closes the editor, stores the saved task, and shows it or its originating card.
+    fn automation_saved(
+        &mut self,
+        item: Value,
+        origin: Option<(String, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.automation_editor = None;
+        window.focus(&self.focus, cx);
+        if let Some(Ok(list)) = &mut self.automations
+            && let Some(items) = list["items"].as_array_mut()
+        {
+            if let Some(stored) = items.iter_mut().find(|v| v["id"] == item["id"]) {
+                *stored = item.clone();
+            } else {
+                items.push(item.clone());
+            }
+        }
+        let route = if let Some((thread, call)) = origin {
+            self.automation_card_results
+                .insert((thread.clone(), call.clone()), item.clone());
+            if let Some(view) = &self.thread
+                && view.read(cx).id() == thread
+            {
+                view.update(cx, |view, cx| {
+                    view.set_automation_card_result(&call, &item, cx)
+                });
+            }
+            Route::Thread(thread)
+        } else {
+            Route::Automation(item["id"].as_str().unwrap().to_owned())
+        };
+        if self.state.route == route {
+            self.sync(window, cx);
+        } else {
+            self.navigate(route, window, cx);
+        }
+        self.load_automations(cx);
+        self.toast(Toast::success("Successfully saved scheduled task"), cx);
     }
 
     pub fn automation_editor(&self) -> Option<&Entity<automations::editor::Editor>> {
@@ -4770,6 +4756,41 @@ async fn resume_params(
         }
     }
     Ok(params)
+}
+
+/// The host request that saves an editor draft: it applies a reviewed card proposal, updates
+/// the edited task `item`, or creates a task in `cwd`.
+fn automation_save_request(
+    item: Option<&Value>,
+    origin: Option<&(String, String)>,
+    draft: &automations::editor::Draft,
+    cwd: &str,
+) -> (&'static str, Value) {
+    let proposal = origin.is_some()
+        && item
+            .and_then(|item| item["mode"].as_str())
+            .is_some_and(|mode| mode.starts_with("suggested_"));
+    let mut body = if proposal {
+        item.cloned().unwrap()
+    } else {
+        json!({})
+    };
+    body["name"] = json!(draft.name);
+    body["prompt"] = json!(draft.prompt);
+    body["rrule"] = json!(draft.rrule);
+    if proposal {
+        (
+            "apply-automation-proposal",
+            json!({"arguments": body, "threadId": origin.unwrap().0}),
+        )
+    } else if let Some(id) = item.and_then(|item| item["id"].as_str()) {
+        body["id"] = json!(id);
+        body["status"] = item.unwrap()["status"].clone();
+        ("automation-update", body)
+    } else {
+        body["cwds"] = json!([cwd]);
+        ("automation-create", body)
+    }
 }
 
 /// The Home chip label for a project root: its folder name.

@@ -856,37 +856,7 @@ impl LocalHost {
         let original = fs::read_to_string(&path).map_err(read_error)?;
         let mut item = definition(id, &original)?;
         ensure!(item["status"] != "DELETED", "{missing}");
-        for (key, value) in params
-            .as_object()
-            .context("host parameters must be an object")?
-        {
-            if matches!(key.as_str(), "id" | "status" | "hostId") {
-                continue;
-            }
-            if matches!(key.as_str(), "name" | "prompt" | "rrule") {
-                let text = value
-                    .as_str()
-                    .map(str::trim)
-                    .filter(|text| !text.is_empty())
-                    .with_context(|| format!("missing automation {key}"))?;
-                item[key] = json!(text);
-                continue;
-            }
-            let stored = if key == "projectId" {
-                &item["target"]["projectId"]
-            } else {
-                &item[key]
-            };
-            // Original `ugi` sends a legacy task's first cwd as `projectId`.
-            let legacy_cwd = key == "projectId"
-                && item["target"].is_null()
-                && item["cwds"].get(0) == Some(value)
-                && value != "~";
-            ensure!(
-                stored == value || legacy_cwd,
-                "automation update cannot change {key}"
-            );
-        }
+        apply_automation_edits(&mut item, params)?;
         let last: Option<i64> = if let Some(transaction) = &transaction {
             transaction
                 .query_row(
@@ -903,37 +873,7 @@ impl LocalHost {
             .as_str()
             .context("missing automation recurrence")?;
         let now = chrono::Utc::now().timestamp_millis();
-        // Resume always recalculates; a cached database time is never reused.
-        let (next, nominal) = if status == "PAUSED" {
-            ensure!(
-                automation_schedule::valid(rule, now),
-                "invalid automation recurrence"
-            );
-            (None, None)
-        } else {
-            // Original ZF: an unreadable salt is replaced, and a failed save still schedules this run.
-            let salt_path = root.join(".run-jitter-salt");
-            let salt = fs::read_to_string(&salt_path)
-                .map(|salt| salt.trim().to_owned())
-                .unwrap_or_default();
-            let salt = if salt.is_empty() {
-                let salt = device_id();
-                let _ = fs::write(&salt_path, format!("{salt}\n"));
-                salt
-            } else {
-                salt
-            };
-            let (next, nominal) = automation_schedule::next_run(
-                rule,
-                item["kind"].as_str().context("missing automation kind")?,
-                id,
-                now,
-                rrule::Tz::LOCAL,
-                &salt,
-            )
-            .context(automation_schedule::NO_FUTURE_RUN)?;
-            (Some(next), Some(nominal))
-        };
+        let (next, nominal) = self.scheduled_run(&item, id, rule, status, now)?;
         if let Some(transaction) = &transaction {
             transaction.execute(
                 "INSERT INTO automations
@@ -994,6 +934,36 @@ impl LocalHost {
         item["nextRunNominalAt"] = json!(nominal);
         item["lastRunAt"] = json!(last);
         Ok(json!({"item": item}))
+    }
+
+    /// The next and nominal run times after a status update; a paused task has none.
+    fn scheduled_run(
+        &self,
+        item: &Value,
+        id: &str,
+        rule: &str,
+        status: &str,
+        now: i64,
+    ) -> Result<(Option<i64>, Option<i64>)> {
+        // Resume always recalculates; a cached database time is never reused.
+        if status == "PAUSED" {
+            ensure!(
+                automation_schedule::valid(rule, now),
+                "invalid automation recurrence"
+            );
+            return Ok((None, None));
+        }
+        // Original ZF: an unreadable salt is replaced, and a failed save still schedules this run.
+        let (next, nominal) = automation_schedule::next_run(
+            rule,
+            item["kind"].as_str().context("missing automation kind")?,
+            id,
+            now,
+            rrule::Tz::LOCAL,
+            &self.jitter_salt(),
+        )
+        .context(automation_schedule::NO_FUTURE_RUN)?;
+        Ok((Some(next), Some(nominal)))
     }
 
     /// Applies the original inbox read-state update, restricted to local, unowned automations.
@@ -2001,6 +1971,42 @@ fn ensure_unowned_automation(db: &Connection, id: &str) -> Result<()> {
         !owned,
         "cannot write an account-owned automation through LocalHost"
     );
+    Ok(())
+}
+
+/// Applies an update's text fields to `item`; every other field must keep its stored value.
+fn apply_automation_edits(item: &mut Value, params: &Value) -> Result<()> {
+    for (key, value) in params
+        .as_object()
+        .context("host parameters must be an object")?
+    {
+        if matches!(key.as_str(), "id" | "status" | "hostId") {
+            continue;
+        }
+        if matches!(key.as_str(), "name" | "prompt" | "rrule") {
+            let text = value
+                .as_str()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .with_context(|| format!("missing automation {key}"))?;
+            item[key] = json!(text);
+            continue;
+        }
+        let stored = if key == "projectId" {
+            &item["target"]["projectId"]
+        } else {
+            &item[key]
+        };
+        // Original `ugi` sends a legacy task's first cwd as `projectId`.
+        let legacy_cwd = key == "projectId"
+            && item["target"].is_null()
+            && item["cwds"].get(0) == Some(value)
+            && value != "~";
+        ensure!(
+            stored == value || legacy_cwd,
+            "automation update cannot change {key}"
+        );
+    }
     Ok(())
 }
 

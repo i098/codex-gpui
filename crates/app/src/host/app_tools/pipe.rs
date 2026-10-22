@@ -177,63 +177,13 @@ fn serve(stream: UnixStream, service: &Arc<Service>) -> Result<()> {
                 continue;
             }
             match request["method"].as_str().unwrap() {
-                "tools/list" => {
-                    let params = request.get("params");
-                    if params.is_some_and(|params| {
-                        !params.is_object()
-                            || params
-                                .get("threadStartKind")
-                                .is_none_or(|kind| kind != "default" && kind != "all")
-                    }) {
-                        write_error(&output, id, -32602, "Invalid app tool request")?;
-                    } else {
-                        write_frame(
-                            &mut *output.lock().unwrap(),
-                            &json!({"id": id, "jsonrpc": "2.0", "result": {"tools": service.catalog}}),
-                        )?;
-                    }
-                }
+                "tools/list" => list_tools(&output, id, &request, service)?,
                 "tools/cancel" => {
                     if let Some(cancel) = pending.lock().unwrap().remove(&key) {
                         cancel.stop();
                     }
                 }
-                "tools/call" => {
-                    let call = serde_json::from_value::<ToolCall>(request["params"].take());
-                    let Ok(call) = call else {
-                        write_error(&output, id, -32602, "Invalid app tool request")?;
-                        continue;
-                    };
-                    if !call.valid() {
-                        write_error(&output, id, -32602, "Invalid app tool request")?;
-                        continue;
-                    }
-                    let cancel = Arc::new(Cancel::new());
-                    if let Some(old) = pending.lock().unwrap().insert(key.clone(), cancel.clone()) {
-                        old.stop();
-                    }
-                    let (service, pending, output) =
-                        (service.clone(), pending.clone(), output.clone());
-                    thread::Builder::new().name("app-tools-call".into()).spawn(move || {
-                        let result = pollster::block_on(service.call(call, &cancel));
-                        let mut calls = pending.lock().unwrap();
-                        if calls.get(&key).is_some_and(|current| Arc::ptr_eq(current, &cancel)) {
-                            calls.remove(&key);
-                            if cancel.check().is_ok() {
-                                let response = match result {
-                                    Ok(result) => json!({"id": id, "jsonrpc": "2.0", "result": result}),
-                                    Err(_) => json!({"id": id, "jsonrpc": "2.0", "error": {"code": -32000, "message": "Codex app tool request failed"}}),
-                                };
-                                let response_failed = write_frame(&mut *output.lock().unwrap(), &response).is_err();
-                                if response_failed
-                                    && write_error(&output, response["id"].clone(), -32000, "Codex app tool request failed").is_err()
-                                {
-                                    let _ = output.lock().unwrap().shutdown(std::net::Shutdown::Both);
-                                }
-                            }
-                        }
-                    })?;
-                }
+                "tools/call" => start_call(&output, &pending, service, id, key, &mut request)?,
                 _ => write_error(&output, id, -32602, "Invalid app tool request")?,
             }
         }
@@ -242,6 +192,71 @@ fn serve(stream: UnixStream, service: &Arc<Service>) -> Result<()> {
         cancel.stop();
     }
     result
+}
+
+fn list_tools(
+    output: &Mutex<UnixStream>,
+    id: Value,
+    request: &Value,
+    service: &Service,
+) -> Result<()> {
+    let params = request.get("params");
+    if params.is_some_and(|params| {
+        !params.is_object()
+            || params
+                .get("threadStartKind")
+                .is_none_or(|kind| kind != "default" && kind != "all")
+    }) {
+        write_error(output, id, -32602, "Invalid app tool request")
+    } else {
+        write_frame(
+            &mut *output.lock().unwrap(),
+            &json!({"id": id, "jsonrpc": "2.0", "result": {"tools": service.catalog}}),
+        )
+    }
+}
+
+/// Runs a `tools/call` on its own thread; a newer call with the same `key` cancels it.
+fn start_call(
+    output: &Arc<Mutex<UnixStream>>,
+    pending: &Pending,
+    service: &Arc<Service>,
+    id: Value,
+    key: String,
+    request: &mut Value,
+) -> Result<()> {
+    let call = serde_json::from_value::<ToolCall>(request["params"].take());
+    let Ok(call) = call else {
+        return write_error(output, id, -32602, "Invalid app tool request");
+    };
+    if !call.valid() {
+        return write_error(output, id, -32602, "Invalid app tool request");
+    }
+    let cancel = Arc::new(Cancel::new());
+    if let Some(old) = pending.lock().unwrap().insert(key.clone(), cancel.clone()) {
+        old.stop();
+    }
+    let (service, pending, output) = (service.clone(), pending.clone(), output.clone());
+    thread::Builder::new().name("app-tools-call".into()).spawn(move || {
+        let result = pollster::block_on(service.call(call, &cancel));
+        let mut calls = pending.lock().unwrap();
+        if calls.get(&key).is_some_and(|current| Arc::ptr_eq(current, &cancel)) {
+            calls.remove(&key);
+            if cancel.check().is_ok() {
+                let response = match result {
+                    Ok(result) => json!({"id": id, "jsonrpc": "2.0", "result": result}),
+                    Err(_) => json!({"id": id, "jsonrpc": "2.0", "error": {"code": -32000, "message": "Codex app tool request failed"}}),
+                };
+                let response_failed = write_frame(&mut *output.lock().unwrap(), &response).is_err();
+                if response_failed
+                    && write_error(&output, response["id"].clone(), -32000, "Codex app tool request failed").is_err()
+                {
+                    let _ = output.lock().unwrap().shutdown(std::net::Shutdown::Both);
+                }
+            }
+        }
+    })?;
+    Ok(())
 }
 
 fn write_error(output: &Mutex<UnixStream>, id: Value, code: i64, message: &str) -> Result<()> {
