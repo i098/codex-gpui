@@ -1333,6 +1333,7 @@ Control-Shift-G opens the existing Changes tab.
 `crates/app/tests/shortcut_navigation.rs` checks these paths on recorded threads.
 The [original/native picker pair](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/9a2941014013a3237d6c7389b13d9c4a3a00e15a0eba9abb/report.html) uses a 520×134 CSS-pixel crop at scale 2.
 It has zero outside-text differences and 45 differing pixels inside 147631 text pixels (0.0305%).
+
 ## Storage settings (ST-159, ST-160, ST-161)
 
 `Settings > Storage` measures the app-server's Codex home without following file symlinks.

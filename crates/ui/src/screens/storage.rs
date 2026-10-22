@@ -468,6 +468,13 @@ impl StoragePage {
                     review.limit += 50;
                 }
             }
+            action => self.change_filter(action),
+        }
+        cx.notify();
+    }
+
+    fn change_filter(&mut self, action: Control) {
+        match action {
             Control::DaysMenu => self.menu = (self.menu != Some(Menu::Days)).then_some(Menu::Days),
             Control::IncludeMenu => {
                 self.menu = (self.menu != Some(Menu::Include)).then_some(Menu::Include)
@@ -491,8 +498,85 @@ impl StoragePage {
                     review.selected.insert(id);
                 }
             }
+            _ => unreachable!("not a review filter"),
         }
-        cx.notify();
+    }
+
+    fn control_surface(action: &Control, checked: bool, t: &theme::Theme) -> gpui::Div {
+        let dropdown = matches!(action, Control::DaysMenu | Control::IncludeMenu);
+        let dialog_button = matches!(action, Control::Close | Control::Delete);
+        div()
+            .h(px(if dialog_button { 32. } else { 28. }))
+            .px(px(if dialog_button {
+                17.
+            } else if dropdown {
+                13.
+            } else {
+                9.
+            }))
+            .relative()
+            .flex()
+            .items_center()
+            .justify_center()
+            .when(!matches!(action, Control::Dismiss), |d| {
+                d.child(super::on_card(
+                    12.5,
+                    shapes::Corner::Squircle,
+                    if matches!(action, Control::Delete) {
+                        t.text_error.opacity(0.1)
+                    } else if dropdown || dialog_button {
+                        t.primary_soft_alpha
+                    } else {
+                        t.text_alpha_5
+                    },
+                    (dropdown || matches!(action, Control::Close)).then_some(t.border),
+                ))
+            })
+            .when(matches!(action, Control::Dismiss), |d| {
+                d.size(px(24.)).p(px(4.))
+            })
+            .when(matches!(action, Control::Toggle(_)), |d| {
+                d.size(px(16.)).p_0().rounded(px(4.)).bg(if checked {
+                    t.button_primary_solid
+                } else {
+                    t.background_panel
+                })
+            })
+    }
+
+    fn control_content(
+        action: &Control,
+        checked: bool,
+        label: SharedString,
+        t: &theme::Theme,
+    ) -> gpui::AnyElement {
+        if matches!(action, Control::Toggle(_)) {
+            div()
+                .size(px(14.))
+                .when(checked, |d| {
+                    d.child(icon("menu-check", 14., t.text_inverse))
+                })
+                .into_any_element()
+        } else if matches!(action, Control::Dismiss) {
+            icon("close", 16., gpui::Hsla { a: 0.8, ..t.text }).into_any_element()
+        } else {
+            text(
+                label,
+                if matches!(action, Control::Close | Control::Delete) {
+                    14.
+                } else {
+                    13.
+                },
+                18.,
+                430.,
+                if matches!(action, Control::Delete) {
+                    t.text_error
+                } else {
+                    t.text
+                },
+            )
+            .into_any_element()
+        }
     }
 
     fn control(
@@ -516,10 +600,7 @@ impl StoragePage {
         }
         let key_action = action.clone();
         let checkbox = matches!(action, Control::Toggle(_));
-        let destructive = matches!(action, Control::Delete);
         let dropdown = matches!(action, Control::DaysMenu | Control::IncludeMenu);
-        let dialog_button = matches!(action, Control::Close | Control::Delete);
-        let dismiss = matches!(action, Control::Dismiss);
         let checked = match &action {
             Control::Toggle(id) => self
                 .review
@@ -527,7 +608,7 @@ impl StoragePage {
                 .is_some_and(|review| review.selected.contains(id)),
             _ => false,
         };
-        div()
+        Self::control_surface(&action, checked, &t)
             .id(SharedString::from(id))
             .role(if checkbox {
                 gpui::Role::CheckBox
@@ -544,40 +625,6 @@ impl StoragePage {
                 })
             })
             .track_focus(&focus)
-            .h(px(if dialog_button { 32. } else { 28. }))
-            .px(px(if dialog_button {
-                17.
-            } else if dropdown {
-                13.
-            } else {
-                9.
-            }))
-            .relative()
-            .flex()
-            .items_center()
-            .justify_center()
-            .when(!dismiss, |d| {
-                d.child(super::on_card(
-                    12.5,
-                    shapes::Corner::Squircle,
-                    if destructive {
-                        t.text_error.opacity(0.1)
-                    } else if dropdown || dialog_button {
-                        t.primary_soft_alpha
-                    } else {
-                        t.text_alpha_5
-                    },
-                    (dropdown || matches!(action, Control::Close)).then_some(t.border),
-                ))
-            })
-            .when(dismiss, |d| d.size(px(24.)).p(px(4.)))
-            .when(checkbox, |d| {
-                d.size(px(16.)).p_0().rounded(px(4.)).bg(if checked {
-                    t.button_primary_solid
-                } else {
-                    t.background_panel
-                })
-            })
             .when(!enabled, |d| d.opacity(0.4))
             .when(
                 enabled && self.keyboard_focus && self.focused.as_ref() == Some(&focus),
@@ -589,25 +636,7 @@ impl StoragePage {
                     }))
                 },
             )
-            .child(if checkbox {
-                div()
-                    .size(px(14.))
-                    .when(checked, |d| {
-                        d.child(icon("menu-check", 14., t.text_inverse))
-                    })
-                    .into_any_element()
-            } else if dismiss {
-                icon("close", 16., gpui::Hsla { a: 0.8, ..t.text }).into_any_element()
-            } else {
-                text(
-                    label,
-                    if dialog_button { 14. } else { 13. },
-                    18.,
-                    430.,
-                    if destructive { t.text_error } else { t.text },
-                )
-                .into_any_element()
-            })
+            .child(Self::control_content(&action, checked, label, &t))
             .when(dropdown, |d| {
                 d.gap(px(4.))
                     .child(icon("chevron-down", 14., t.text_tertiary))
@@ -898,44 +927,27 @@ impl StoragePage {
             })
             .into_any_element()
     }
-}
 
-pub fn format_bytes(bytes: u64) -> String {
-    if bytes < 1024 {
-        let number = if bytes >= 1000 {
-            format!("{},{:03}", bytes / 1000, bytes % 1000)
+    fn category_size(&self, index: usize, bytes: u64) -> String {
+        let done = self.completed >= 6
+            || (index < 4 && self.completed >= 4)
+            || (index == 5 && self.completed >= 5);
+        let size = format_bytes(bytes);
+        if done {
+            size
         } else {
-            bytes.to_string()
-        };
-        return format!("{number} {}", if bytes == 1 { "byte" } else { "bytes" });
-    }
-    let units = ["kB", "MB", "GB", "TB"];
-    let mut size = bytes as f64 / 1024.;
-    let mut unit = 0;
-    while size >= 1024. && unit < units.len() - 1 {
-        size /= 1024.;
-        unit += 1;
-    }
-    let mut number = format!("{:.1}", (size * 10.).round() / 10.);
-    let mut separator = number.find('.').unwrap_or(number.len());
-    while separator > 3 {
-        separator -= 3;
-        number.insert(separator, ',');
-    }
-    format!(
-        "{} {}",
-        number.strip_suffix(".0").unwrap_or(&number),
-        units[unit]
-    )
-}
-
-impl Render for StoragePage {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.focused = window.focused(cx);
-        self.keyboard_focus = window.last_input_was_keyboard();
-        if !self.started {
-            self.refresh(cx);
+            format!(
+                "{size} · {}",
+                if self.error {
+                    "Incomplete"
+                } else {
+                    "Updating…"
+                }
+            )
         }
+    }
+
+    fn usage_chart(&mut self, cx: &mut Context<Self>) -> gpui::Div {
         let t = cx.theme().clone();
         let colors = if t.appearance == Appearance::Dark {
             [
@@ -1005,22 +1017,7 @@ impl Render for StoragePage {
                             })),
                     );
                 }
-                let done = self.completed >= 6
-                    || (index < 4 && self.completed >= 4)
-                    || (index == 5 && self.completed >= 5);
-                let size = format_bytes(bytes);
-                let label = if done {
-                    size
-                } else {
-                    format!(
-                        "{size} · {}",
-                        if self.error {
-                            "Incomplete"
-                        } else {
-                            "Updating…"
-                        }
-                    )
-                };
+                let label = self.category_size(index, bytes);
                 labels = labels.child(
                     div()
                         .flex()
@@ -1088,6 +1085,48 @@ impl Render for StoragePage {
                 t.text_secondary,
             ));
         }
+        chart
+    }
+}
+
+pub fn format_bytes(bytes: u64) -> String {
+    if bytes < 1024 {
+        let number = if bytes >= 1000 {
+            format!("{},{:03}", bytes / 1000, bytes % 1000)
+        } else {
+            bytes.to_string()
+        };
+        return format!("{number} {}", if bytes == 1 { "byte" } else { "bytes" });
+    }
+    let units = ["kB", "MB", "GB", "TB"];
+    let mut size = bytes as f64 / 1024.;
+    let mut unit = 0;
+    while size >= 1024. && unit < units.len() - 1 {
+        size /= 1024.;
+        unit += 1;
+    }
+    let mut number = format!("{:.1}", (size * 10.).round() / 10.);
+    let mut separator = number.find('.').unwrap_or(number.len());
+    while separator > 3 {
+        separator -= 3;
+        number.insert(separator, ',');
+    }
+    format!(
+        "{} {}",
+        number.strip_suffix(".0").unwrap_or(&number),
+        units[unit]
+    )
+}
+
+impl Render for StoragePage {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.focused = window.focused(cx);
+        self.keyboard_focus = window.last_input_was_keyboard();
+        if !self.started {
+            self.refresh(cx);
+        }
+        let t = cx.theme().clone();
+        let chart = self.usage_chart(cx);
         let review = self.control(
             "storage-review",
             if self.loading_review {

@@ -252,6 +252,28 @@ fn walk(paths: Vec<PathBuf>, mut file: impl FnMut(&Path, u64)) -> Result<()> {
     Ok(())
 }
 
+async fn recover_classifications(
+    bridge: &Bridge,
+    files: &[(PathBuf, u64)],
+    classifications: &mut HashMap<String, usize>,
+) {
+    for (path, _) in files {
+        let Some(id) = rollout_id(path) else { continue };
+        if classifications.contains_key(&id) {
+            continue;
+        }
+        if let Ok(reply) = bridge
+            .request::<_, Value>("thread/read", json!({"threadId":id,"includeTurns":false}))
+            .await
+        {
+            let thread = &reply["thread"];
+            if thread["id"] == id && thread["source"] != "unknown" {
+                classifications.insert(id, usize::from(thread["source"].get("subAgent").is_some()));
+            }
+        }
+    }
+}
+
 pub async fn measure(
     bridge: &Bridge,
     home: &Path,
@@ -286,21 +308,7 @@ pub async fn measure(
         vec![home.join("sessions"), home.join("archived_sessions")],
         |path, bytes| files.push((path.to_owned(), bytes)),
     )?;
-    for (path, _) in &files {
-        let Some(id) = rollout_id(path) else { continue };
-        if classifications.contains_key(&id) {
-            continue;
-        }
-        if let Ok(reply) = bridge
-            .request::<_, Value>("thread/read", json!({"threadId":id,"includeTurns":false}))
-            .await
-        {
-            let thread = &reply["thread"];
-            if thread["id"] == id && thread["source"] != "unknown" {
-                classifications.insert(id, usize::from(thread["source"].get("subAgent").is_some()));
-            }
-        }
-    }
+    recover_classifications(bridge, &files, &mut classifications).await;
     let mut usage = Usage {
         home: home.to_owned(),
         ..Default::default()
