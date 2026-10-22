@@ -2005,7 +2005,6 @@ impl Render for Composer {
             .on_action(cx.listener(Self::previous_command))
             .relative();
         if self.plain_field.is_some() {
-            let focused = self.focus_handle.is_focused(window);
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)
                     .when(
@@ -2021,20 +2020,19 @@ impl Render for Composer {
                     .when(self.request_parent.is_none() && self.request_compact, |d| {
                         // The sign-in `input`: `rounded-md bg-primary-soft border
                         // border-primary-outline focus:border-ring`, `--codex-corner-shape`.
-                        let dark = t.appearance == Appearance::Dark;
                         d.px(px(1.))
                             .py(px(8.))
                             .child(shapes::decoration(shapes::Decoration {
                                 radius: Corners::all(Theme::RADIUS_MD),
                                 corner: shapes::Corner::Squircle,
-                                fill: Some(if dark {
+                                fill: Some(if t.appearance == Appearance::Dark {
                                     gpui::rgba(0x2d2d2df5).into()
                                 } else {
                                     t.background_panel
                                 }),
                                 border: Some((
                                     px(1.),
-                                    if focused {
+                                    if self.focus_handle.is_focused(window) {
                                         gpui::rgba(0x83c3ffc2).into()
                                     } else {
                                         t.border_strong
