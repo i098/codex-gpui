@@ -4,7 +4,7 @@
 
 use crate::{
     MONO, SANS, SetTheme, Shell,
-    composer::{Composer, popover, shadow},
+    composer::{Composer, shadow},
     fixture, focus,
     icon::icon,
     in_layer, layout_color,
@@ -14,12 +14,11 @@ use crate::{
 use bridge::Bridge;
 use bridge::types::{AccountReadResponse, ConfigReadResponse};
 use gpui::{
-    Anchor, AnyElement, AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity,
-    EventEmitter, FocusHandle, Focusable, Font, FontWeight, Global, HighlightStyle, Hsla,
-    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render,
-    RenderImage, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun,
-    Window, anchored, canvas, deferred, div, font, img, point, prelude::FluentBuilder as _, px,
-    size,
+    AnyElement, AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity, EventEmitter,
+    FocusHandle, Focusable, Font, FontWeight, Global, HighlightStyle, Hsla, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render, RenderImage, SharedString,
+    Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, canvas, div, font,
+    img, point, prelude::FluentBuilder as _, px, size,
 };
 use serde_json::{Value, json};
 use shapes::Corner::{self, Round, Squircle};
@@ -456,10 +455,7 @@ pub struct SettingsPane {
     page: Entity<SettingsPage>,
     /// The composited contents layer of the page's scroll container.
     layer: Layer,
-    /// Key of the select whose options menu is open.
-    open_select: Option<&'static str>,
-    /// Pointer over that menu: a press there is not a click outside.
-    menu_hovered: bool,
+    selects: std::collections::HashMap<&'static str, Entity<crate::settings_kit::Select>>,
     git_fields: Vec<(&'static str, Entity<Composer>)>,
 }
 
@@ -492,8 +488,7 @@ impl SettingsPane {
         Self {
             page,
             layer: Layer::default(),
-            open_select: None,
-            menu_hovered: false,
+            selects: std::collections::HashMap::new(),
             git_fields: Vec::new(),
         }
     }
@@ -501,67 +496,41 @@ impl SettingsPane {
     /// A select for `key` with its options menu `(value, label)`; the first option is the
     /// default. A click outside closes the menu.
     fn select_menu(
-        &self,
+        &mut self,
         key: &'static str,
         options: &'static [(&'static str, &'static str)],
-        t: &Theme,
+        width: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let current = self.page.read(cx).choice(key, options[0].0).to_string();
-        let label = options
-            .iter()
-            .find(|(value, _)| *value == current)
-            .map_or(options[0].1, |(_, label)| label);
-        let open = self.open_select == Some(key);
-        let hover = t.menu_item_hover;
-        let menu = open.then(|| {
-            let rows = options.iter().map(|&(value, label)| {
-                div()
-                    .id(value)
-                    .px(px(8.))
-                    .py(px(6.))
-                    .rounded(px(12.))
-                    .when(value == current, |d| d.bg(hover))
-                    .hover(move |s| s.bg(hover))
-                    .child(text(label, 14., 20., 430., t.text))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
-                        this.open_select = None;
-                        this.menu_hovered = false;
-                        cx.notify();
-                    }))
+        let current = self.page.read(cx).choice(key, options[0].0).to_owned();
+        let page = self.page.clone();
+        let select = self.selects.entry(key).or_insert_with(|| {
+            let choices = options
+                .iter()
+                .map(|&(value, label)| crate::settings_kit::Choice {
+                    value: value.into(),
+                    label: label.into(),
+                    checked: false,
+                    disabled: false,
+                })
+                .collect();
+            let select = cx.new(|cx| {
+                crate::settings_kit::Select::new(current.clone(), choices, None, cx)
+                    .with_width(width)
             });
-            // Below the trigger, or above it when the window's bottom edge is in the way.
-            deferred(
-                div().absolute().top_0().right_0().child(
-                    anchored()
-                        .anchor(Anchor::TopRight)
-                        .offset(point(px(0.), px(32.)))
-                        .child(
-                            div()
-                                .id("select-menu")
-                                .on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                                    this.menu_hovered = *hovered
-                                }))
-                                .child(popover(t, 280., |d| d.children(rows))),
-                        ),
-                ),
+            cx.subscribe(
+                &select,
+                move |_, _, selected: &crate::settings_kit::Selected, cx| {
+                    page.update(cx, |page, cx| {
+                        page.set(key, json!(selected.0.as_ref()), cx);
+                    });
+                },
             )
+            .detach();
+            select
         });
-        select(label, None, false, t)
-            .id(key)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_select = (!open).then_some(key);
-                cx.notify();
-            }))
-            .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
-                if open && !this.menu_hovered {
-                    this.open_select = None;
-                    cx.notify();
-                }
-            }))
-            .children(menu)
-            .into_any_element()
+        select.update(cx, |select, cx| select.set_value(current, cx));
+        select.clone().into_any_element()
     }
 
     fn toggle(
@@ -745,7 +714,7 @@ impl SettingsPane {
                     self.select_menu(
                         "host.git-pull-request-merge-method",
                         &[("merge", "Merge"), ("squash", "Squash")],
-                        t,
+                        240.,
                         cx,
                     ),
                     t,
@@ -834,7 +803,7 @@ impl SettingsPane {
     }
 
     fn general(
-        &self,
+        &mut self,
         t: &Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -924,6 +893,7 @@ impl SettingsPane {
                             "Zed",
                             Some(app_icon(over(t.primary_soft_alpha, t.background_panel))),
                             false,
+                            false,
                             t,
                         )
                         .into_any_element(),
@@ -931,7 +901,7 @@ impl SettingsPane {
                     row(
                         "Language",
                         Some("Language for the app UI"),
-                        select("Auto detect", None, false, t).into_any_element(),
+                        select("Auto detect", None, false, false, t).into_any_element(),
                     ),
                     row(
                         "Show in menu bar",
@@ -941,7 +911,7 @@ impl SettingsPane {
                     row(
                         "Confirm before closing a window",
                         Some("Warn when a tab-close shortcut would close the window"),
-                        self.select_menu("host.confirm-before-close", CLOSE_OPTIONS, t, cx),
+                        self.select_menu("host.confirm-before-close", CLOSE_OPTIONS, 240., cx),
                     ),
                     row(
                         "Full view by default",
@@ -989,7 +959,7 @@ impl SettingsPane {
                         Some(
                             "Choose how quickly ChatGPT runs across chats, subagents, and compaction",
                         ),
-                        select("Standard", None, false, t).into_any_element(),
+                        select("Standard", None, false, false, t).into_any_element(),
                     ),
                     row(
                         "Suggested prompts",
@@ -1036,7 +1006,7 @@ impl SettingsPane {
                     row(
                         "Send shortcut",
                         Some("Choose when Enter sends a prompt or inserts a new line"),
-                        self.select_menu("desktop.composerEnterBehavior", SEND_OPTIONS, t, cx),
+                        self.select_menu("desktop.composerEnterBehavior", SEND_OPTIONS, 220., cx),
                     ),
                     row(
                         "Follow-up behavior",
@@ -1093,7 +1063,7 @@ impl SettingsPane {
                     row(
                         "Turn completion notifications",
                         Some("Set when ChatGPT alerts you that it's finished"),
-                        select("Only when unfocused", None, true, t).into_any_element(),
+                        select("Only when unfocused", None, true, false, t).into_any_element(),
                     ),
                     row(
                         "Enable permission notifications",
@@ -1113,7 +1083,7 @@ impl SettingsPane {
                     row(
                         "Notification sound",
                         Some("Sound for task completion, permission requests, and questions"),
-                        select("Default", None, true, t).into_any_element(),
+                        select("Default", None, true, false, t).into_any_element(),
                     ),
                 ],
             ),
@@ -1449,7 +1419,13 @@ fn button(label: &'static str, fill: Hsla, border: Option<Hsla>, t: &Theme) -> D
         .child(text(label, 13., 18., 430., t.text))
 }
 /// Dropdown trigger: value (with an optional leading app icon) and a chevron.
-fn select(label: &'static str, leading: Option<AnyElement>, disabled: bool, t: &Theme) -> Div {
+pub(crate) fn select(
+    label: impl Into<SharedString>,
+    leading: Option<AnyElement>,
+    disabled: bool,
+    open: bool,
+    t: &Theme,
+) -> Div {
     div()
         .h(px(28.))
         .px(px(13.))
@@ -1461,7 +1437,11 @@ fn select(label: &'static str, leading: Option<AnyElement>, disabled: bool, t: &
         .child(on_card(
             12.5,
             Squircle,
-            t.primary_soft_alpha,
+            if open {
+                t.ghost_hover
+            } else {
+                t.primary_soft_alpha
+            },
             Some(t.border),
         ))
         .when(disabled, |d| d.opacity(0.4))

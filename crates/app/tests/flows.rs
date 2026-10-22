@@ -1048,28 +1048,25 @@ fn appearance_theme_control() -> Result<String> {
     Ok(String::new())
 }
 
-/// `Confirm before closing a window` select: its menu opens, `Never` sets the value and closes
-/// it.
+/// Choosing Never updates the saved close preference; Escape leaves the value unchanged.
 fn settings_select_menu() -> Result<String> {
     let mut fx = Fx::new()?;
     fx.keys("cmd-,")?;
     let at = fx.at("settings", "Close shortcut only")?;
-    fx.hover((640., 22.))?;
-    let before = fx.shot()?;
     fx.click(at)?;
-    fx.hover((640., 22.))?;
-    let n = changed(&before, &fx.shot()?, MAIN_PANEL);
-    ensure!(n > 2000, "the menu repainted {n} px");
-    // The window's bottom edge is below the trigger, so the menu (3 rows of 32 px in 4 px
-    // padding) opens above it: `Never` is its last row.
-    fx.click((at.0, at.1 - 34.))?;
-    fx.hover((640., 22.))?;
-    let after = fx.shot()?;
-    let label = changed(&before, &after, [at.0 - 80., at.1 - 14., 160., 28.]);
-    ensure!(label > 50, "the trigger label repainted {label} px");
-    let left = changed(&before, &after, MAIN_PANEL);
-    ensure!(left < n / 2, "the menu stayed open ({left} px)");
-    Ok(format!("{n} px"))
+    fx.capture_evidence("CGX_GENERAL_CONTROLS_EVIDENCE", "close-menu-open")?;
+    fx.keys("end enter")?;
+    fx.wait("saved close preference", |fx| {
+        fx.read(|root, _| root.config()["host"]["confirm-before-close"] == "never")
+    })?;
+    fx.capture_evidence("CGX_GENERAL_CONTROLS_EVIDENCE", "close-menu-selected")?;
+    fx.click(at)?;
+    fx.keys("home escape")?;
+    ensure!(
+        fx.read(|root, _| root.config()["host"]["confirm-before-close"] == "never"),
+        "Escape changed the close preference"
+    );
+    Ok("Never persists; Escape cancels selection".into())
 }
 
 // --- Thread actions ---
