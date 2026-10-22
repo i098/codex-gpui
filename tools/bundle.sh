@@ -38,6 +38,7 @@ app="$stage/$name.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$CARGO_TARGET_DIR/release/codex-gpui" "$app/Contents/MacOS/"
 cp assets/app/AppIcon.icns "$app/Contents/Resources/"
+python3 tools/third-party-notices.py "$app/Contents/Resources/THIRD_PARTY_NOTICES.txt"
 cat >"$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
