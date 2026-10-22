@@ -6,6 +6,11 @@ on:
 jobs:
   rust:
     runs-on: [self-hosted, codex-gpui]
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - run: >
           sudo apt-get update && sudo apt-get install -y --no-install-recommends
@@ -24,3 +29,6 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - if: hashFiles('Cargo.toml') != ''
         run: cargo test --workspace
+      - name: Remove job-owned Cargo target
+        if: always()
+        run: rm -rf -- "$CARGO_TARGET_DIR"
