@@ -640,15 +640,7 @@ impl Composer {
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
-            .px(px(
-                if self.plain_field == Some(true)
-                    || (self.request_compact && (self.request_parent.is_none() || !self.secret))
-                {
-                    10.
-                } else {
-                    12.
-                },
-            ))
+            .px(px(if self.compact_text() { 10. } else { 12. }))
             .pb(px(
                 if self.plain_field == Some(true)
                     || self.request_parent.is_some()
@@ -669,13 +661,11 @@ impl Composer {
             .cursor(CursorStyle::IBeam)
             .text_size(self.editor_font_size())
             .line_height(self.editor_line_height())
-            .font_weight(gpui::FontWeight(
-                if self.request_compact && self.request_parent.is_none() {
-                    500.
-                } else {
-                    430.
-                },
-            ))
+            .font_weight(gpui::FontWeight(if self.field_text.is_some() {
+                500.
+            } else {
+                430.
+            }))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_click))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
