@@ -10,8 +10,14 @@ use gpui::{
 use theme::ActiveTheme as _;
 use ui::{icon::icon, motion, text};
 
-static NUMERALS: std::sync::LazyLock<gpui::FontFeatures> =
-    std::sync::LazyLock::new(|| gpui::FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)])));
+/// The banner sits outside the original's zoomed viewport: its text keeps the 100% optical size.
+fn unzoomed(ui_scale: f32, numerals: bool) -> gpui::FontFeatures {
+    let mut features = textsys::outside_zoom(ui_scale).0.as_ref().clone();
+    if numerals {
+        features.push(("tnum".into(), 1));
+    }
+    gpui::FontFeatures(std::sync::Arc::new(features))
+}
 
 #[derive(Clone, Copy)]
 pub enum Change {
@@ -148,6 +154,7 @@ impl Render for ZoomBanner {
                     430.,
                     theme.text_tertiary,
                 )
+                .font_features(unzoomed(window.ui_scale(), false))
                 .into_any_element(),
             };
             div()
@@ -231,7 +238,7 @@ impl Render for ZoomBanner {
                                     600.,
                                     theme.text,
                                 )
-                                .font_features(NUMERALS.clone()),
+                                .font_features(unzoomed(window.ui_scale(), true)),
                             ),
                         )
                         .child(

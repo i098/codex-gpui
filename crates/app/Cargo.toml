@@ -34,6 +34,7 @@ shlex = "2"
 sha2 = "0.10"
 tempfile = "3"
 toml = "0.8"
+textsys = { path = "../textsys" }
 theme = { path = "../theme" }
 ui = { path = "../ui" }
 ureq = "3"
@@ -54,4 +55,3 @@ gpui_platform = { workspace = true, features = ["test-support"] }
 parking_lot = "0.12"
 image.workspace = true
 parity = { path = "../parity" }
-textsys = { path = "../textsys" }
