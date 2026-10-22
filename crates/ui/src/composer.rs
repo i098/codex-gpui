@@ -575,6 +575,13 @@ const QUEUE_ACTIONS: &str = "Queued message actions";
 const QUEUE_EDIT: &str = "queuedEdit";
 const QUEUE_SWITCH: &str = "queuedQueueing";
 const QUEUE_MENU_WIDTH: f32 = 220.;
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PlainFieldLayout {
+    Regular,
+    Search,
+    Form,
+}
+
 pub struct Composer {
     focus_handle: FocusHandle,
     placeholder: SharedString,
@@ -652,7 +659,7 @@ pub struct Composer {
     plain_field: Option<bool>,
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
-    plain_compact: bool,
+    plain_layout: PlainFieldLayout,
     on_settings_paste: Option<Rc<dyn Fn(&str, &mut App) -> bool>>,
 }
 
@@ -734,7 +741,7 @@ impl Composer {
             plain_field: None,
             dictation: None,
             dictation_error: None,
-            plain_compact: false,
+            plain_layout: PlainFieldLayout::Regular,
             on_settings_paste: None,
         }
     }
@@ -753,7 +760,7 @@ impl Composer {
 
     pub fn settings_search(label: &'static str, value: &str, cx: &mut Context<Self>) -> Self {
         let mut editor = Self::settings_field("Search", value, false, cx);
-        editor.plain_compact = true;
+        editor.plain_layout = PlainFieldLayout::Search;
         editor.request_compact = true;
         editor.request_label = Some(label.into());
         editor
@@ -765,6 +772,32 @@ impl Composer {
 
     pub fn settings_secret(placeholder: &'static str, value: &str, cx: &mut Context<Self>) -> Self {
         let mut editor = Self::settings_field(placeholder, value, false, cx);
+        editor.secret = true;
+        editor
+    }
+
+    /// A compact settings input with a separate accessible label and placeholder.
+    pub fn settings_form_field(
+        label: &'static str,
+        placeholder: &'static str,
+        value: &str,
+        multiline: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut editor = Self::settings_field(placeholder, value, multiline, cx);
+        editor.plain_layout = PlainFieldLayout::Form;
+        editor.request_compact = true;
+        editor.request_label = Some(label.into());
+        editor
+    }
+
+    pub fn settings_form_secret(
+        label: &'static str,
+        placeholder: &'static str,
+        value: &str,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut editor = Self::settings_form_field(label, placeholder, value, false, cx);
         editor.secret = true;
         editor
     }
@@ -1965,55 +1998,84 @@ impl Render for Composer {
             .on_action(cx.listener(Self::previous_command))
             .relative();
         if self.plain_field.is_some() {
-            return div().w_full().child(
-                card.key_context(KEY_CONTEXT)
-                    .when(self.request_parent.is_none() && !self.plain_compact, |d| {
-                        d.border_1()
-                            .border_color(t.border)
-                            .rounded(px(8.))
-                            .bg(t.background_panel)
-                            .py(px(8.))
-                    })
-                    .when(self.request_parent.is_some(), |d| {
-                        d.px(px(1.))
-                            .py(px(if self.secret {
-                                8.449_219
-                            } else if self.request_compact {
-                                8.
-                            } else {
-                                13.
-                            }))
-                            .child(shapes::decoration(shapes::Decoration {
-                                radius: Corners::all(px(if self.request_compact && !self.secret {
-                                    10.
-                                } else {
-                                    12.5
-                                })),
-                                corner: shapes::Corner::Squircle,
-                                border: Some((px(1.), t.border_strong)),
-                                ..Default::default()
-                            }))
-                    })
-                    .when(self.request_parent.is_some() || self.plain_compact, |d| {
-                        d.role(if self.secret {
-                            gpui::Role::PasswordInput
-                        } else {
-                            gpui::Role::TextInput
-                        })
-                        .aria_label(
-                            self.request_label
-                                .as_ref()
-                                .unwrap_or(&self.placeholder)
-                                .clone(),
+            let form = self.plain_layout == PlainFieldLayout::Form;
+            let multiline = self.plain_field == Some(true);
+            return div()
+                .w_full()
+                .when(form && multiline, |d| d.pb(px(6.)))
+                .child(
+                    card.key_context(KEY_CONTEXT)
+                        .when(
+                            self.request_parent.is_none()
+                                && self.plain_layout == PlainFieldLayout::Regular,
+                            |d| {
+                                d.border_1()
+                                    .border_color(t.border)
+                                    .rounded(px(8.))
+                                    .bg(t.background_panel)
+                                    .py(px(8.))
+                            },
                         )
-                        .aria_placeholder(self.placeholder.clone())
-                        .when(!self.secret, |d| d.aria_value(self.content.clone()))
-                    })
-                    .child(self.editor(cx).when(self.request_number, |d| d.pr(px(30.))))
-                    .when(self.request_number, |d| {
-                        d.child(self.request_number_stepper(&t, cx))
-                    }),
-            );
+                        .when(form, |d| {
+                            d.px(px(1.))
+                                .when(multiline, |d| {
+                                    d.py(px(9.)).max_h(px(120.)).overflow_y_scroll()
+                                })
+                                .when(!multiline, |d| d.h(px(36.)).flex().items_center())
+                                .child(shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(px(10.)),
+                                    corner: shapes::Corner::Squircle,
+                                    fill: Some(t.primary_soft_alpha),
+                                    border: Some((px(1.), t.border_strong)),
+                                    ..Default::default()
+                                }))
+                        })
+                        .when(self.request_parent.is_some(), |d| {
+                            d.px(px(1.))
+                                .py(px(if self.secret {
+                                    8.449_219
+                                } else if self.request_compact {
+                                    8.
+                                } else {
+                                    13.
+                                }))
+                                .child(shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(px(
+                                        if self.request_compact && !self.secret {
+                                            10.
+                                        } else {
+                                            12.5
+                                        },
+                                    )),
+                                    corner: shapes::Corner::Squircle,
+                                    border: Some((px(1.), t.border_strong)),
+                                    ..Default::default()
+                                }))
+                        })
+                        .when(
+                            self.request_parent.is_some()
+                                || self.plain_layout != PlainFieldLayout::Regular,
+                            |d| {
+                                d.role(if self.secret {
+                                    gpui::Role::PasswordInput
+                                } else {
+                                    gpui::Role::TextInput
+                                })
+                                .aria_label(
+                                    self.request_label
+                                        .as_ref()
+                                        .unwrap_or(&self.placeholder)
+                                        .clone(),
+                                )
+                                .aria_placeholder(self.placeholder.clone())
+                                .when(!self.secret, |d| d.aria_value(self.content.clone()))
+                            },
+                        )
+                        .child(self.editor(cx).when(self.request_number, |d| d.pr(px(30.))))
+                        .when(self.request_number, |d| {
+                            d.child(self.request_number_stepper(&t, cx))
+                        }),
+                );
         }
         let card = card
             .flex()

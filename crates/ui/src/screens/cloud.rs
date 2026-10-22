@@ -356,7 +356,15 @@ impl CloudPage {
         ]
         .into_iter()
         .map(|(key, label, value, multiline)| {
-            (key.into(), self.field(label, &value, multiline, false, cx))
+            let (label, placeholder) = if key == "description" {
+                ("Environment description", "1-2 sentence description")
+            } else {
+                (label, "")
+            };
+            (
+                key.into(),
+                self.field(label, placeholder, &value, multiline, false, cx),
+            )
         })
         .collect();
         self.editor = Some(Editor {
@@ -375,6 +383,7 @@ impl CloudPage {
     fn field(
         &self,
         label: &'static str,
+        placeholder: &'static str,
         value: &str,
         multiline: bool,
         secret: bool,
@@ -382,9 +391,9 @@ impl CloudPage {
     ) -> Entity<Composer> {
         let field = cx.new(|cx| {
             if secret {
-                Composer::settings_secret(label, value, cx)
+                Composer::settings_form_secret(label, placeholder, value, cx)
             } else {
-                Composer::settings_field(label, value, multiline, cx)
+                Composer::settings_form_field(label, placeholder, value, multiline, cx)
             }
         });
         cx.observe(&field, |_, _, cx| cx.notify()).detach();
@@ -1302,7 +1311,7 @@ impl CloudPage {
             }
         }
         for (id, label, value, secret) in missing {
-            let field = self.field(label, &value, false, secret, cx);
+            let field = self.field(label, "", &value, false, secret, cx);
             if label == "Variable name" || label == "Secret name" {
                 let index = id
                     .rsplit('-')

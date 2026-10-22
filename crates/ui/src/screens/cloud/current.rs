@@ -160,7 +160,10 @@ impl CloudPage {
         self.current.fields = fields
             .into_iter()
             .map(|(key, label, value, multiline)| {
-                (key.into(), self.field(label, value, multiline, false, cx))
+                (
+                    key.into(),
+                    self.field(label, label, value, multiline, false, cx),
+                )
             })
             .collect();
         self.current.config = Some(config);

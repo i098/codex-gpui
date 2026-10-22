@@ -565,10 +565,18 @@ impl Composer {
     }
 
     fn editor_line_height(&self) -> Pixels {
-        if self.plain_compact {
-            px(20.)
+        if self.plain_layout == PlainFieldLayout::Form {
+            px(18.571_428)
         } else {
             LINE_HEIGHT
+        }
+    }
+
+    fn editor_font_size(&self) -> Pixels {
+        if self.request_compact && (!self.secret || self.plain_layout == PlainFieldLayout::Form) {
+            px(13.)
+        } else {
+            FONT_SIZE
         }
     }
 
@@ -653,26 +661,37 @@ impl Composer {
     }
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
+        let compact = self.plain_layout != PlainFieldLayout::Regular;
+        let minimum =
+            if self.plain_layout == PlainFieldLayout::Form && self.plain_field == Some(true) {
+                self.editor_line_height() * 2.
+            } else if compact || self.request_parent.is_some() {
+                self.editor_line_height()
+            } else {
+                px(48.)
+            };
         div()
-            .px(px(if self.plain_compact {
+            .px(px(if self.plain_layout == PlainFieldLayout::Search {
                 0.
-            } else if self.request_parent.is_some() && self.request_compact && !self.secret {
+            } else if self.plain_layout == PlainFieldLayout::Form
+                || self.request_parent.is_some() && self.request_compact && !self.secret
+            {
                 10.
             } else {
                 12.
             }))
-            .pb(px(if self.request_parent.is_some() || self.plain_compact {
+            .pb(px(if self.request_parent.is_some() || compact {
                 0.
             } else {
                 4.
             }))
-            .min_h(px(if self.request_parent.is_some() || self.plain_compact {
-                20.
-            } else {
-                48.
-            }))
+            .min_h(minimum)
             .cursor(CursorStyle::IBeam)
-            .text_size(FONT_SIZE)
+            .text_size(if self.plain_layout == PlainFieldLayout::Form {
+                px(13.)
+            } else {
+                FONT_SIZE
+            })
             .line_height(self.editor_line_height())
             .font_weight(gpui::FontWeight(430.))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
@@ -685,9 +704,10 @@ impl Composer {
             // `overflow-y: auto` contents), then composited onto the card.
             .child(
                 div()
-                    .when(self.content.is_empty() && !self.plain_compact, |d| {
-                        d.opacity(0.5)
-                    })
+                    .when(
+                        self.content.is_empty() && self.plain_layout == PlainFieldLayout::Regular,
+                        |d| d.opacity(0.5),
+                    )
                     .layer()
                     .child(Editor(cx.entity())),
             )
@@ -912,17 +932,7 @@ pub(super) fn shape(
         .collect::<Vec<_>>();
     window
         .text_system()
-        .shape_text(
-            s.into(),
-            if composer.request_compact && !composer.secret {
-                px(13.)
-            } else {
-                FONT_SIZE
-            },
-            &runs,
-            width,
-            None,
-        )
+        .shape_text(s.into(), composer.editor_font_size(), &runs, width, None)
         .map(|lines| lines.into_iter().collect())
         .unwrap_or_default()
 }
