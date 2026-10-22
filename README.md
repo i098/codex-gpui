@@ -563,6 +563,7 @@ The `native_menus` and `s013` tests check the edit actions and Find navigation o
 View > Toggle navigation panel opens or closes the active Changes tree or workspace file tree.
 The workspace tree reads real directories and files, keeps its selection, and filters through the app-server file search.
 File navigation does not modify workspace files.
+The File viewer uses the Changes panel's main-surface layer for its divider and rounded window corners.
 Use `native_menus::ToggleNavigationPanel` to dispatch the `toggleFileTreePanel` shortcut action.
 About shows this build's version in a separate window; Escape closes it.
 The Window menu has Bring All to Front, and Control+Command+F toggles the active window's fullscreen state.
