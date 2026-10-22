@@ -158,6 +158,11 @@ fn native_archive_interactions() -> Result<()> {
         fx.read(|root, _| root.recents()) == [initial[0].clone()],
         "Delete all removed an active chat or retained an archived chat"
     );
+    fx.advance(ui::toast::LIFETIME + std::time::Duration::from_millis(1))?;
+    ensure!(
+        fx.read(|root, cx| root.toasts(cx).is_empty()),
+        "Completion toast did not expire"
+    );
     shot(&mut fx, "empty-error")?;
     if let Ok(directory) = std::env::var("CGX_ARCHIVE_SHOTS") {
         let archived = page(&fx);
@@ -269,11 +274,7 @@ fn project_deletion_keeps_the_restored_chat() -> Result<()> {
     fx.advance(std::time::Duration::ZERO)?;
     shot(&mut fx, "project-delete-flow")?;
     fx.click((842., 452.))?;
-    if let Err(error) = fx.wait("deleted project archive", |fx| ids(fx).is_empty()) {
-        eprintln!("project delete requests: {:?}", fx.sent()?);
-        shot(&mut fx, "project-delete-failed")?;
-        return Err(error);
-    }
+    fx.wait("deleted project archive", |fx| ids(fx).is_empty())?;
     ensure!(
         fx.read(|root, _| root.recents()) == [restored],
         "Project deletion removed the restored chat"
