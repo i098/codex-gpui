@@ -2796,9 +2796,16 @@ pub(crate) fn paint_icon(
     let transformed = transformation.is_some();
     let transformation = transformation.unwrap_or_default();
     let snap = |v: Pixels| (f32::from(v) * s + 0.5).floor();
+    // Blink lays the svg box out in LayoutUnits (1/64 device px, truncated), and the viewBox
+    // scale and centering come from that box: the 53.226 x 18 wordmark at 110% fits into
+    // 117.078125 x 39.59375, scale 2.19964 as in the original paint log.
+    let layout_unit = |v: f32| {
+        let units = f64::from(v) * 64.;
+        (units + units.abs() * f64::from(f32::EPSILON) * 4.).trunc() / 64.
+    };
     let (w, h) = (
-        f64::from(f32::from(bounds.size.width) * s),
-        f64::from(f32::from(bounds.size.height) * s),
+        layout_unit(f32::from(bounds.size.width) * s),
+        layout_unit(f32::from(bounds.size.height) * s),
     );
     let layer = if transformed {
         Layer {
