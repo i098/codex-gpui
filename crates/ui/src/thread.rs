@@ -143,6 +143,10 @@ pub struct ThreadView {
     embedded: bool,
     _tick: Option<Task<()>>,
     stream_fades: HashMap<String, Vec<StreamSegment>>,
+    /// A turn's `Undo`, `View changes`, copy and fork focus handles. They belong to the view,
+    /// not to its place in the element tree: the view moves when a side panel opens, and a
+    /// pressed control must keep its focus across that.
+    turn_focus: RefCell<HashMap<String, gpui::FocusHandle>>,
     mcp_images: items::McpImages,
     /// Open disclosures: turns whose `Worked for` is expanded, by turn id, and activity groups
     /// whose rows show, by the id of their first item.
@@ -600,6 +604,7 @@ impl ThreadView {
             embedded: false,
             _tick: None,
             stream_fades: HashMap::new(),
+            turn_focus: RefCell::default(),
             mcp_images: RefCell::default(),
             expanded: HashSet::new(),
             pending_question: None,
@@ -1634,12 +1639,11 @@ impl ThreadView {
             chrono::DateTime::from_timestamp(at + self.clock.utc_offset, 0)
                 .map(|at| at.format("%A %-I:%M %p").to_string())
         });
-        let mut button_focus = |name: &str| {
-            window
-                .use_keyed_state(format!("turn-focus-{}-{name}", turn.id), cx, |_, cx| {
-                    cx.focus_handle().tab_stop(true).tab_index(0)
-                })
-                .read(cx)
+        let button_focus = |name: &str| {
+            self.turn_focus
+                .borrow_mut()
+                .entry(format!("{}-{name}", turn.id))
+                .or_insert_with(|| cx.focus_handle().tab_stop(true).tab_index(0))
                 .clone()
         };
         let focus = TurnFocus::new(
