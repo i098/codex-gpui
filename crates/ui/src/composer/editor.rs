@@ -638,32 +638,32 @@ impl Composer {
         self.offset_from_utf16(r.start)..self.offset_from_utf16(r.end)
     }
 
+    /// The editor box's horizontal padding, bottom padding and minimum height.
+    fn editor_box(&self) -> (f32, f32, f32) {
+        let inline = self.request_parent.is_some() || self.search_field;
+        let horizontal = if self.search_field {
+            0.
+        } else if self.plain_field == Some(true)
+            || (self.request_parent.is_some() && self.request_compact && !self.secret)
+        {
+            10.
+        } else {
+            12.
+        };
+        let bottom = if inline || self.plain_field == Some(true) {
+            0.
+        } else {
+            4.
+        };
+        (horizontal, bottom, if inline { 20. } else { 48. })
+    }
+
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
+        let (horizontal, bottom, min_height) = self.editor_box();
         div()
-            .px(px(if self.search_field {
-                0.
-            } else if self.plain_field == Some(true)
-                || (self.request_parent.is_some() && self.request_compact && !self.secret)
-            {
-                10.
-            } else {
-                12.
-            }))
-            .pb(px(
-                if self.search_field
-                    || self.plain_field == Some(true)
-                    || self.request_parent.is_some()
-                {
-                    0.
-                } else {
-                    4.
-                },
-            ))
-            .min_h(px(if self.search_field || self.request_parent.is_some() {
-                20.
-            } else {
-                48.
-            }))
+            .px(px(horizontal))
+            .pb(px(bottom))
+            .min_h(px(min_height))
             .cursor(CursorStyle::IBeam)
             .text_size(self.editor_font_size())
             .line_height(self.editor_line_height())
