@@ -653,7 +653,9 @@ impl Composer {
     fn editor_inset(&self) -> Pixels {
         px(if self.search_field {
             0.
-        } else if self.request_parent.is_some() && self.request_compact && !self.secret {
+        } else if self.plain_field == Some(true)
+            || (self.request_parent.is_some() && self.request_compact && !self.secret)
+        {
             10.
         } else {
             12.
@@ -663,11 +665,16 @@ impl Composer {
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
             .px(self.editor_inset())
-            .pb(px(if self.search_field || self.request_parent.is_some() {
-                0.
-            } else {
-                4.
-            }))
+            .pb(px(
+                if self.search_field
+                    || self.plain_field == Some(true)
+                    || self.request_parent.is_some()
+                {
+                    0.
+                } else {
+                    4.
+                },
+            ))
             .min_h(if self.search_field {
                 self.editor_line_height()
             } else {
@@ -678,11 +685,7 @@ impl Composer {
                 })
             })
             .cursor(CursorStyle::IBeam)
-            .text_size(if self.search_field {
-                px(13.)
-            } else {
-                FONT_SIZE
-            })
+            .text_size(self.editor_font_size())
             .line_height(self.editor_line_height())
             .font_weight(gpui::FontWeight(430.))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
@@ -692,13 +695,14 @@ impl Composer {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             // `--opacity-composer-placeholder: .5` on the placeholder. The text blends like
             // Chromium's: blitted into a transparent layer (`_ComposerLayoutInput`'s
-            // `overflow-y: auto` contents), then composited onto the card.
+            // `overflow-y: auto` contents), then composited onto the card. A settings textarea
+            // never scrolls here, so it has no such layer: its text blends onto the field's fill.
             .child(
                 div()
                     .when(self.content.is_empty() && !self.search_field, |d| {
                         d.opacity(0.5)
                     })
-                    .layer()
+                    .when(self.plain_field != Some(true), |d| d.layer())
                     .child(Editor(cx.entity())),
             )
     }
@@ -922,17 +926,7 @@ pub(super) fn shape(
         .collect::<Vec<_>>();
     window
         .text_system()
-        .shape_text(
-            s.into(),
-            if composer.request_compact && !composer.secret {
-                px(13.)
-            } else {
-                FONT_SIZE
-            },
-            &runs,
-            width,
-            None,
-        )
+        .shape_text(s.into(), composer.editor_font_size(), &runs, width, None)
         .map(|lines| lines.into_iter().collect())
         .unwrap_or_default()
 }
@@ -965,9 +959,12 @@ impl gpui::Element for Editor {
                 _ => None,
             });
             let black = gpui::black();
-            let lines = shape(input.read(cx), black, black, black, width, window);
-            let line_height = input.read(cx).editor_line_height();
-            let height = lines.iter().map(|line| line.size(line_height).height).sum();
+            let composer = input.read(cx);
+            let lines = shape(composer, black, black, black, width, window);
+            let height = lines
+                .iter()
+                .map(|line| line.size(composer.editor_line_height()).height)
+                .sum();
             Size {
                 width: width.unwrap_or_default(),
                 height,

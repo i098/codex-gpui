@@ -31,6 +31,229 @@ use theme::{ActiveTheme as _, Theme};
 
 #[path = "computer_use.rs"]
 pub mod computer_use;
+fn focus_on_pointer(
+    focus: Entity<focus::ControlFocus>,
+) -> impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) {
+    move |_, window, cx| {
+        let handle = focus.read(cx).handle.clone();
+        handle.focus(window, cx);
+        cx.stop_propagation();
+    }
+}
+
+pub mod personalization;
+pub mod workspace {
+    use crate::{SANS, composer::popover, focus, icon::icon, text};
+    use gpui::{
+        Anchor, Context, Corners, EventEmitter, InteractiveElement as _, IntoElement,
+        ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Window, anchored,
+        deferred, div, point, px,
+    };
+    use shapes::Corner::Round;
+    use theme::ActiveTheme as _;
+
+    pub enum Event {
+        PickFolder,
+        CreateProject,
+    }
+
+    #[derive(Clone, Copy)]
+    pub enum Pending {
+        Picking,
+        Creating,
+    }
+
+    pub struct Workspace {
+        pending: Option<Pending>,
+        error: Option<String>,
+        menu: bool,
+        menu_hovered: bool,
+    }
+
+    impl EventEmitter<Event> for Workspace {}
+
+    impl Workspace {
+        pub fn new(_: &mut Context<Self>) -> Self {
+            Self {
+                pending: None,
+                error: None,
+                menu: false,
+                menu_hovered: false,
+            }
+        }
+
+        pub fn busy(&self) -> bool {
+            self.pending.is_some()
+        }
+
+        pub fn begin(&mut self, pending: Pending, cx: &mut Context<Self>) {
+            self.pending = Some(pending);
+            self.error = None;
+            self.menu = false;
+            self.menu_hovered = false;
+            cx.notify();
+        }
+
+        pub fn finish(&mut self, error: Option<String>, cx: &mut Context<Self>) {
+            self.pending = None;
+            self.error = error;
+            cx.notify();
+        }
+    }
+
+    impl Render for Workspace {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let t = cx.theme().clone();
+            let busy = self.busy();
+            let add_focus = focus::handle("workspace-add", 0, window, cx);
+            let skip_focus = focus::handle("workspace-skip", 0, window, cx);
+            let button_text = match t.appearance {
+                theme::Appearance::Dark => gpui::rgb(0x2d2d2d).into(),
+                theme::Appearance::Light => t.text_inverse,
+            };
+            let mut add = focus::ring(
+                div()
+                    .id("workspace-add")
+                    .role(gpui::Role::Button)
+                    .aria_label("Add project")
+                    .relative()
+                    .w_full()
+                    .h(px(40.))
+                    .rounded_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(9999.)),
+                        corner: Round,
+                        fill: Some(t.button_primary_solid),
+                        border: Some((px(1.), t.border)),
+                        ..Default::default()
+                    }))
+                    .child(text("Add project", 13., 18., 430., button_text)),
+                &add_focus,
+                theme::Theme::RADIUS_FULL,
+                px(2.),
+                cx,
+            );
+            if busy {
+                add = add.opacity(0.5);
+            } else {
+                add = add
+                    .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(add_focus))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.menu = !this.menu;
+                        cx.notify();
+                    }))
+                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                        if !this.menu_hovered {
+                            this.menu = false;
+                            cx.notify();
+                        }
+                    }));
+            }
+            let menu = self.menu.then(|| {
+                let on_hover =
+                    cx.listener(|this, hovered: &bool, _, _| this.menu_hovered = *hovered);
+                let rows = [
+                    ("Start from scratch", false),
+                    ("Use an existing folder", true),
+                ]
+                .into_iter()
+                .map(|(label, pick)| {
+                    let focus = focus::handle(label, 0, window, cx);
+                    focus::ring(
+                        div()
+                            .id(label)
+                            .role(gpui::Role::MenuItem)
+                            .aria_label(label)
+                            .relative()
+                            .px(px(10.))
+                            .py(px(8.))
+                            .rounded(px(8.))
+                            .hover(|s| s.bg(t.menu_item_hover))
+                            .child(text(label, 14., 20., 430., t.text)),
+                        &focus,
+                        px(8.),
+                        px(0.),
+                        cx,
+                    )
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(if pick {
+                            Event::PickFolder
+                        } else {
+                            Event::CreateProject
+                        });
+                    }))
+                });
+                deferred(
+                    div().absolute().top_0().left_0().child(
+                        anchored()
+                            .anchor(Anchor::TopLeft)
+                            .offset(point(px(0.), px(44.)))
+                            .child(
+                                div()
+                                    .id("workspace-add-menu")
+                                    .on_hover(on_hover)
+                                    .child(popover(&t, 240., |d| d.children(rows))),
+                            ),
+                    ),
+                )
+                .into_any_element()
+            });
+            let skip_label = if matches!(self.pending, Some(Pending::Creating)) {
+                "Creating a new project…"
+            } else {
+                "Skip"
+            };
+            let mut skip = focus::ring(
+                div()
+                    .id("workspace-skip")
+                    .role(gpui::Role::Button)
+                    .aria_label(skip_label)
+                    .relative()
+                    .w_full()
+                    .h(px(36.))
+                    .rounded_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(text(skip_label, 14., 18., 500., t.text_tertiary)),
+                &skip_focus,
+                theme::Theme::RADIUS_FULL,
+                px(2.),
+                cx,
+            );
+            if busy {
+                skip = skip.opacity(0.5);
+            } else {
+                skip = skip
+                    .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(skip_focus))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::CreateProject)));
+            }
+            div().size_full().bg(t.background_surface_under).font_family(SANS)
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" { this.menu = false; cx.notify(); }
+            }))
+            .flex().items_center().justify_center().pt(px(12.)).px(px(20.))
+            // Chromium paints the content into a transparent composited layer, then blends it.
+            .child(div().w_full().max_w(px(330.)).flex().flex_col().items_center().gap(px(24.)).layer()
+                .child(icon("folder-add", 40., t.text))
+                .child(div().w_full().flex().flex_col().gap(px(24.))
+                    .child(div().flex().flex_col().gap(px(24.)).items_center()
+                        .child(text("Select a project", 24., 36., 600., t.text))
+                        .child(text("ChatGPT will be able to edit files and run commands in selected folders", 16., 24., 430., t.text_tertiary)
+                            .w_full().whitespace_normal().text_center()))
+                    .child(div().w_full().flex().flex_col().gap(px(12.))
+                        .child(div().relative().child(add).children(menu))
+                        .children(self.error.clone().map(|error| text(error, 14., 20., 430., t.text_error).whitespace_normal().text_center()))
+                        .child(skip))))
+        }
+    }
+}
+
+#[path = "settings_subtrees.rs"]
+pub mod subtrees;
 
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
@@ -70,11 +293,13 @@ pub fn shell(
     section: Option<&'static str>,
     cx: &mut App,
 ) -> (Entity<Shell>, Entity<SettingsPage>) {
-    let mut page = SettingsPage::new(config, skills);
-    if let Some(label) = section {
-        page.section = label;
-    }
-    let page = cx.new(|_| page);
+    let page = cx.new(|cx| {
+        let mut page = SettingsPage::new(config, skills, cx);
+        if let Some(label) = section {
+            page.section = label;
+        }
+        page
+    });
     let nav = cx.new(|cx| SettingsNav::new(page.clone(), cx)).into();
     let pane = cx.new(|cx| SettingsPane::new(page.clone(), cx)).into();
     let shell = cx.new(|_| {
@@ -166,16 +391,18 @@ const EXTERNAL: &str = "Profile";
 ///   access menu visibility, Bottom panel, Show predictions); session only.
 pub struct SettingsPage {
     section: &'static str,
+    subtree: Option<AnyView>,
     query: String,
     /// `config/read` config, plus a `host` object for host settings.
     values: Value,
     /// `projectlessWorkspaceRoot` default: `~/Documents/Codex`.
     projectless_root: String,
     pending_instructions: Vec<SettingChanged>,
+    pub personalization: Entity<personalization::Personalization>,
 }
 
 impl SettingsPage {
-    fn new(config: &Value, skills: &Value) -> Self {
+    fn new(config: &Value, skills: &Value, cx: &mut Context<Self>) -> Self {
         // The fixture's home directory, from the user skills under `~/.agents`.
         let home = skills["data"][0]["skills"]
             .as_array()
@@ -191,10 +418,12 @@ impl SettingsPage {
         let values = config.clone();
         Self {
             section: "General",
+            subtree: None,
             query: String::new(),
             values,
             projectless_root,
             pending_instructions: Vec::new(),
+            personalization: cx.new(personalization::Personalization::new),
         }
     }
 
@@ -227,6 +456,11 @@ impl SettingsPage {
         cx.notify();
     }
 
+    pub fn show_subtree(&mut self, view: AnyView, cx: &mut Context<Self>) {
+        self.subtree = Some(view);
+        cx.notify();
+    }
+
     fn draft_instructions(&mut self, path: &'static str, value: String) {
         self.pending_instructions
             .retain(|change| change.path != path);
@@ -241,6 +475,18 @@ impl SettingsPage {
     pub fn take_pending_instructions(&mut self) -> Vec<SettingChanged> {
         std::mem::take(&mut self.pending_instructions)
     }
+
+    pub fn select_section(&mut self, label: &'static str, cx: &mut Context<Self>) {
+        let editor = self.personalization.read(cx);
+        if editor.dirty(cx) || editor.saving() {
+            cx.emit(personalization::Event::Section(label));
+            return;
+        }
+        self.personalization
+            .update(cx, |editor, cx| editor.discard(cx));
+        self.section = label;
+        cx.notify();
+    }
 }
 
 /// A settings row changed `path` (`store.key`, see [`SettingsPage`]) to `value`.
@@ -250,6 +496,7 @@ pub struct SettingChanged {
 }
 
 impl EventEmitter<SettingChanged> for SettingsPage {}
+impl EventEmitter<personalization::Event> for SettingsPage {}
 
 /// `--sidebar-navigation` background, opaque.
 fn sidebar_color(t: &Theme) -> Hsla {
@@ -283,7 +530,7 @@ impl SettingsNav {
         match (k.key.as_str(), &k.key_char) {
             ("backspace", _) => _ = query.pop(),
             ("escape", _) => query.clear(),
-            (_, Some(c)) => query.push_str(c),
+            (_, Some(c)) if !c.chars().any(char::is_control) => query.push_str(c),
             _ => return,
         }
         self.page.update(cx, |p, cx| {
@@ -293,13 +540,21 @@ impl SettingsNav {
         cx.stop_propagation();
     }
 
-    fn search(&self, query: &str, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn search(
+        &mut self,
+        query: &str,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let focus = focus::handle("settings-search", 0, window, cx);
+        self.focus = focus.read(cx).handle.clone();
         let (s, color) = if query.is_empty() {
             ("Search".to_string(), t.text_tertiary)
         } else {
             (query.to_string(), t.text)
         };
-        div()
+        let control = div()
             .id("settings-search")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
@@ -316,7 +571,8 @@ impl SettingsNav {
                 ..Default::default()
             }))
             .child(icon("search", 16., t.text_secondary))
-            .child(text(s, 14., 18., 430., color))
+            .child(text(s, 14., 18., 430., color));
+        focus::ring(control, &focus, Theme::RADIUS_FULL, px(2.), cx)
     }
 
     /// A nav row: `overflow: hidden`, so Skia draws a runtime icon (the viewport cuts the last
@@ -327,8 +583,10 @@ impl SettingsNav {
         glyph: &'static str,
         selected: bool,
         t: &Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
+        let focus = focus::handle(label, 0, window, cx);
         let fill = over(t.list_hover, sidebar_color(t));
         let row = div()
             .id(label)
@@ -355,28 +613,41 @@ impl SettingsNav {
             )
             .when(label == EXTERNAL, |d| {
                 d.child(icon("arrow-up-right", 16., t.text_secondary).opacity(0.5))
-            })
-            .when(label != EXTERNAL, |d| {
-                d.on_click(cx.listener(move |this, _, _, cx| {
-                    this.page.update(cx, |p, cx| {
-                        p.section = label;
-                        cx.notify();
-                    })
-                }))
             });
-        div()
+        let control = div()
+            .id((gpui::ElementId::from("settings-nav-item"), label))
+            .role(gpui::Role::Button)
+            .aria_label(label)
             .relative()
             .flex()
             .flex_col()
             .when(selected, |d| {
                 d.child(deco(&self.list, 12.5, Squircle, t.list_hover, None))
             })
-            .child(rounded_clip(Theme::RADIUS_LG, Squircle, row))
+            .child(rounded_clip(Theme::RADIUS_LG, Squircle, row));
+        focus::ring(control, &focus, Theme::RADIUS_LG, px(2.), cx)
+            .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
+            .when(label != EXTERNAL, |d| {
+                d.on_click(cx.listener(move |this, _, window, cx| {
+                    if this.page.read(cx).subtree.is_some() {
+                        window.dispatch_action(
+                            Box::new(subtrees::OpenSection {
+                                label: label.into(),
+                            }),
+                            cx,
+                        );
+                        return;
+                    }
+                    this.page.update(cx, |p, cx| {
+                        p.select_section(label, cx);
+                    });
+                }))
+            })
     }
 }
 
 impl Render for SettingsNav {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let page = self.page.read(cx);
         let (section, query) = (page.section, page.query.clone());
@@ -386,7 +657,7 @@ impl Render for SettingsNav {
             let rows: Vec<_> = items
                 .iter()
                 .filter(|(label, _)| label.to_lowercase().contains(&needle))
-                .map(|&(label, glyph)| self.item(label, glyph, label == section, &t, cx))
+                .map(|&(label, glyph)| self.item(label, glyph, label == section, &t, window, cx))
                 .collect();
             if rows.is_empty() {
                 continue;
@@ -420,7 +691,7 @@ impl Render for SettingsNav {
                                 text("Settings", 18., 24., 600., t.text).font_family("OpenAI Sans"),
                             ),
                     )
-                    .child(self.search(&query, &t, cx)),
+                    .child(self.search(&query, &t, window, cx)),
             )
             .child(
                 div()
@@ -554,10 +825,7 @@ impl SettingsPane {
             px(2.),
             cx,
         )
-        .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
-            focus.read(cx).handle.clone().focus(window, cx);
-            cx.stop_propagation();
-        })
+        .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
         .on_click(cx.listener(move |this, _, _, cx| {
             let value = if key == "host.git-review-mode" {
                 json!(if on { "full" } else { "last-turn-only" })
@@ -576,6 +844,7 @@ impl SettingsPane {
         default: &'static str,
         options: &'static [(&'static str, &'static str)],
         t: &Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let current = self.page.read(cx).choice(key, default).to_string();
@@ -586,8 +855,11 @@ impl SettingsPane {
             .gap(px(2.))
             .children(options.iter().map(|&(value, label)| {
                 let selected = current == value;
-                div()
+                let focus = focus::handle((gpui::ElementId::from(key), value), 0, window, cx);
+                let control = div()
                     .id(label)
+                    .role(gpui::Role::Button)
+                    .aria_label(label)
                     .h(px(24.))
                     .px(px(9.))
                     .flex()
@@ -600,7 +872,9 @@ impl SettingsPane {
                         18.,
                         430.,
                         if selected { t.text } else { t.text_tertiary },
-                    ))
+                    ));
+                focus::ring(control.relative(), &focus, Theme::RADIUS_FULL, px(2.), cx)
+                    .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
                         if key == THEME {
@@ -614,9 +888,14 @@ impl SettingsPane {
     /// Appearance ▸ Theme: the app applies and keeps the choice (`SetTheme`).
     /// ponytail: the chrome theme, font size and motion rows are not here; add them with the
     /// settings they drive.
-    fn appearance(&self, t: &Theme, cx: &mut Context<Self>) -> Vec<(&'static str, Vec<Div>)> {
+    fn appearance(
+        &self,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<(&'static str, Vec<Div>)> {
         let options = &[("light", "Light"), ("dark", "Dark"), ("system", "System")];
-        let theme = self.segmented(THEME, "system", options, t, cx);
+        let theme = self.segmented(THEME, "system", options, t, window, cx);
         vec![("Theme", vec![settings_row("Theme", None, theme, t)])]
     }
 
@@ -739,6 +1018,7 @@ impl SettingsPane {
                         "inline",
                         &[("inline", "Inline"), ("detached", "Detached")],
                         t,
+                        window,
                         cx,
                     ),
                     t,
@@ -933,6 +1213,7 @@ impl SettingsPane {
                             "bottom",
                             &[("bottom", "Bottom"), ("right", "Right")],
                             t,
+                            window,
                             cx,
                         ),
                     ),
@@ -971,7 +1252,17 @@ impl SettingsPane {
                     row(
                         "Open source licenses",
                         Some("Third-party notices for bundled dependencies"),
-                        button("View", t.text_alpha_5, None, t).into_any_element(),
+                        button("View", t.text_alpha_5, None, t)
+                            .id("open-source-licenses")
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(subtrees::OpenSubtree {
+                                        path: subtrees::LICENSES_PATH.into(),
+                                    }),
+                                    cx,
+                                );
+                            })
+                            .into_any_element(),
                     ),
                     row(
                         "Plugins",
@@ -1018,6 +1309,7 @@ impl SettingsPane {
                             "steer",
                             &[("queue", "Queue"), ("steer", "Steer")],
                             t,
+                            window,
                             cx,
                         ),
                     ),
@@ -1111,14 +1403,23 @@ impl SettingsPane {
 impl Render for SettingsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        if let Some(view) = &self.page.read(cx).subtree {
+            return view.clone().into_any_element();
+        }
         let section = self.page.read(cx).section;
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
         }
+        if section == "Personalization" {
+            return div()
+                .size_full()
+                .child(self.page.read(cx).personalization.clone())
+                .into_any_element();
+        }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
             "General" => self.general(&t, window, cx),
-            "Appearance" => self.appearance(&t, cx),
+            "Appearance" => self.appearance(&t, window, cx),
             "Git" => self.git(&t, window, cx),
             _ => Vec::new(),
         };
@@ -1520,9 +1821,23 @@ pub struct Login {
     focus: FocusHandle,
     error: Option<String>,
     restart_blocked: bool,
+    allow_api_key: bool,
+    allow_chatgpt: bool,
+    starting: bool,
+    forced_login_method: Value,
 }
 
+pub struct LoggedIn;
+
+impl EventEmitter<LoggedIn> for Login {}
+
+pub struct LoginMethodsLoaded;
+
+impl EventEmitter<LoginMethodsLoaded> for Login {}
+
 enum Stage {
+    LoadingRequirements,
+    RequirementsError(&'static str),
     Welcome,
     /// Browser sign-in started: the `loginId` that `account/login/cancel` takes.
     Pending(String),
@@ -1530,15 +1845,113 @@ enum Stage {
     ApiKey,
 }
 
+fn allowed_login_methods(
+    requirements: &Value,
+    forced: &Value,
+) -> Result<(bool, bool), &'static str> {
+    if requirements.is_null() {
+        return match forced {
+            Value::Null => Ok((true, true)),
+            Value::String(method) if method == "api" => Ok((true, false)),
+            Value::String(method) if method == "chatgpt" => Ok((false, true)),
+            _ => Err("Unable to load sign-in requirements"),
+        };
+    }
+    match requirements.get("allowedLoginMethods") {
+        Some(Value::Null) => Ok((true, true)),
+        Some(Value::Array(methods))
+            if methods
+                .iter()
+                .all(|method| method == "api" || method == "chatgpt") =>
+        {
+            Ok((
+                methods.iter().any(|method| method == "api"),
+                methods.iter().any(|method| method == "chatgpt"),
+            ))
+        }
+        None => Err("Update Codex on this machine to read its managed sign-in requirements"),
+        _ => Err("Unable to load sign-in requirements"),
+    }
+}
+
 impl Login {
     pub fn new(cx: &mut Context<Self>) -> Self {
-        Self {
+        Self::with_login_policy(Value::Null, cx)
+    }
+
+    pub fn with_login_policy(forced_login_method: Value, cx: &mut Context<Self>) -> Self {
+        let live = cx.has_global::<AppServer>();
+        let mut login = Self {
             stage: Stage::Welcome,
             api_key: String::new(),
-            focus: cx.focus_handle(),
+            focus: cx.focus_handle().tab_stop(true),
             error: None,
             restart_blocked: false,
+            allow_api_key: !live,
+            allow_chatgpt: !live,
+            starting: false,
+            forced_login_method,
+        };
+        if live {
+            login.load_requirements(cx);
         }
+        login
+    }
+
+    fn load_requirements(&mut self, cx: &mut Context<Self>) {
+        let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
+            return;
+        };
+        let bridge = bridge.clone();
+        let forced_login_method = self.forced_login_method.clone();
+        self.stage = Stage::LoadingRequirements;
+        self.allow_api_key = false;
+        self.allow_chatgpt = false;
+        self.error = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = async {
+                let response: Value = bridge
+                    .request("configRequirements/read", Value::Null)
+                    .await
+                    .map_err(|error| {
+                        if error
+                            .downcast_ref::<bridge::RpcError>()
+                            .is_some_and(|error| error.code == -32601)
+                        {
+                            "Update Codex on this machine to read its managed sign-in requirements"
+                        } else {
+                            "Unable to load sign-in requirements"
+                        }
+                    })?;
+                let requirements = response.get("requirements").ok_or(
+                    "Update Codex on this machine to read its managed sign-in requirements",
+                )?;
+                allowed_login_methods(requirements, &forced_login_method)
+            }
+            .await;
+            this.update(cx, |this, cx| {
+                this.stage = match result {
+                    Ok((false, false)) => Stage::RequirementsError(
+                        "Your administrator has disabled all available sign-in methods",
+                    ),
+                    Ok((api, chatgpt)) => {
+                        this.allow_api_key = api;
+                        this.allow_chatgpt = chatgpt;
+                        if chatgpt {
+                            Stage::Welcome
+                        } else {
+                            Stage::ApiKey
+                        }
+                    }
+                    Err(message) => Stage::RequirementsError(message),
+                };
+                cx.emit(LoginMethodsLoaded);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub fn restart_ready(&self) -> bool {
@@ -1546,32 +1959,47 @@ impl Login {
     }
 
     /// `account/login/completed`: a failed sign-in shows its error and returns to the start.
-    pub fn apply(&mut self, event: &bridge::Event, cx: &mut Context<Self>) {
+    pub fn apply(&mut self, event: &bridge::Event, cx: &mut Context<Self>) -> bool {
         let bridge::Event::Notification { method, params } = event else {
-            return;
+            return false;
         };
-        if method != "account/login/completed" || params["success"] != false {
-            return;
+        let Stage::Pending(id) = &self.stage else {
+            return false;
+        };
+        if method != "account/login/completed" || params["loginId"].as_str() != Some(id.as_str()) {
+            return false;
         }
-        let raw = params["error"].as_str().unwrap_or_default();
-        self.stage = Stage::Welcome;
-        self.error = Some(format!("Sign-in failed: {raw}"));
-        cx.notify();
+        if params["success"] == true {
+            return true;
+        }
+        if params["success"] == false {
+            let raw = params["error"].as_str().unwrap_or_default();
+            self.stage = Stage::Welcome;
+            self.error = Some(format!("Sign-in failed: {raw}"));
+            cx.notify();
+        }
+        false
     }
 
     /// `account/login/start` as the original's `loginWithChatGpt`: a ChatGPT login opens its
     /// `authUrl` in the browser and waits in `Pending` for `account/login/completed`.
     fn start(&mut self, params: Value, cx: &mut Context<Self>) {
+        if self.starting {
+            return;
+        }
         let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
             return;
         };
         let bridge = bridge.clone();
         self.restart_blocked = true;
+        self.starting = true;
+        self.error = None;
         cx.spawn(async move |this, cx| {
             let result = bridge
                 .request::<_, Value>("account/login/start", params)
                 .await;
             this.update(cx, |this, cx| {
+                this.starting = false;
                 match result {
                     Ok(r) => {
                         if let (Some(id), Some(url)) =
@@ -1579,6 +2007,11 @@ impl Login {
                         {
                             cx.open_url(url);
                             this.stage = Stage::Pending(id.into());
+                        } else if r["type"] == "apiKey" {
+                            this.api_key.clear();
+                            cx.emit(LoggedIn);
+                        } else {
+                            this.error = Some("Sign-in failed: invalid login response".into());
                         }
                     }
                     Err(e) => this.error = Some(format!("Sign-in failed: {e}")),
@@ -1591,6 +2024,9 @@ impl Login {
 
     /// The ChatGPT sign-in request of the original (`appBrand`, hosted success page).
     fn start_chatgpt(&mut self, cx: &mut Context<Self>) {
+        if !self.allow_chatgpt {
+            return;
+        }
         self.start(
             json!({ "type": "chatgpt", "appBrand": "chatgpt", "useHostedLoginSuccessPage": true }),
             cx,
@@ -1602,7 +2038,11 @@ impl Login {
         match (k.key.as_str(), &k.key_char) {
             ("backspace", _) => _ = self.api_key.pop(),
             ("enter", _) => self.submit_api_key(cx),
-            (_, Some(c)) if !k.modifiers.platform && !k.modifiers.control => {
+            (_, Some(c))
+                if !k.modifiers.platform
+                    && !k.modifiers.control
+                    && !c.chars().any(char::is_control) =>
+            {
                 self.api_key.push_str(c)
             }
             _ => return,
@@ -1611,7 +2051,7 @@ impl Login {
     }
 
     fn submit_api_key(&mut self, cx: &mut Context<Self>) {
-        if !self.api_key.is_empty() {
+        if self.allow_api_key && !self.api_key.is_empty() {
             let key = self.api_key.clone();
             self.start(json!({ "type": "apiKey", "apiKey": key }), cx);
         }
@@ -1624,28 +2064,44 @@ impl Login {
     }
 }
 
-/// 46 px outlined pill button of the sign-in screen.
-fn login_button(id: &'static str, label: &'static str, t: &Theme) -> Stateful<Div> {
+/// 46 px outlined pill button of the sign-in screen. Skia paints its fill and border, as
+/// Chromium does in the page's composited layer; the hover fill lies inside the border.
+fn login_button(id: &'static str, label: &'static str, color: Hsla, t: &Theme) -> Stateful<Div> {
     let hover = over(t.ghost_hover, t.surface);
     div()
         .id(id)
+        .group(id)
+        .relative()
         .h(px(46.))
         .w_full()
         .flex()
         .items_center()
         .justify_center()
         .gap(px(8.))
-        .rounded_full()
-        .border_1()
-        .border_color(over(t.border, t.surface))
-        .bg(t.surface)
-        .hover(move |s| s.bg(hover))
-        .child(text(label, 14., 20., 500., t.text))
+        .child(shapes::decoration(shapes::Decoration {
+            radius: Corners::all(px(9999.)),
+            corner: Round,
+            fill: Some(t.surface),
+            border: Some((px(1.), t.border)),
+            ..Default::default()
+        }))
+        .child(
+            div()
+                .absolute()
+                .inset(px(1.))
+                .rounded_full()
+                .group_hover(id, move |s| s.bg(hover)),
+        )
+        .child(text(label, 14., 20., 500., color))
 }
 
 impl Render for Login {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        let requirements = matches!(
+            self.stage,
+            Stage::LoadingRequirements | Stage::RequirementsError(_)
+        );
         let title = |s: &'static str| {
             text(s, 28., 36., 400., t.text)
                 .w(px(316.))
@@ -1653,6 +2109,34 @@ impl Render for Login {
                 .text_center()
         };
         let (heading, body): (Div, AnyElement) = match &self.stage {
+            Stage::LoadingRequirements => (
+                div().child(
+                    div()
+                        .id("login-requirements-status")
+                        .role(gpui::Role::Status)
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(icon("sidebar-cmd-spinner", 16., t.text))
+                        .child(text(
+                            "Loading sign-in requirements…",
+                            14.,
+                            20.,
+                            430.,
+                            t.text_description,
+                        )),
+                ),
+                div().into_any_element(),
+            ),
+            Stage::RequirementsError(message) => (
+                text(*message, 14., 20., 430., t.text_description)
+                    .w(px(340.))
+                    .whitespace_normal()
+                    .text_center(),
+                login_button("retry-requirements", "Retry", t.text, &t)
+                    .on_click(cx.listener(|this, _, _, cx| this.load_requirements(cx)))
+                    .into_any_element(),
+            ),
             Stage::Welcome => (
                 title("Sign in to ChatGPT"),
                 div()
@@ -1676,11 +2160,14 @@ impl Render for Login {
                             .child(text("Continue to sign in", 14., 20., 500., t.text_inverse))
                             .on_click(cx.listener(|this, _, _, cx| this.start_chatgpt(cx))),
                     )
-                    .child(
-                        login_button("another-way", "Sign in another way", &t).on_click(
-                            cx.listener(|this, _, _, cx| this.go(Stage::OtherMethods, cx)),
-                        ),
-                    )
+                    .when(self.allow_api_key, |d| {
+                        d.child(
+                            login_button("another-way", "Sign in another way", t.text, &t)
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.go(Stage::OtherMethods, cx)),
+                                ),
+                        )
+                    })
                     .child(
                         div()
                             .id("sign-up")
@@ -1701,9 +2188,9 @@ impl Render for Login {
                         14.,
                         20.,
                         400.,
-                        t.text_description,
+                        t.text_tertiary,
                     ),
-                    login_button("cancel", "Cancel sign-in", &t)
+                    login_button("cancel", "Cancel sign-in", t.text_tertiary, &t)
                         .h(px(42.))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             send("account/login/cancel", json!({ "loginId": id }), cx);
@@ -1721,7 +2208,7 @@ impl Render for Login {
                     .items_center()
                     .gap(px(12.))
                     .child(
-                        login_button("api-key", "OpenAI API Key", &t)
+                        login_button("api-key", "OpenAI API Key", t.text, &t)
                             .on_click(cx.listener(|this, _, _, cx| this.go(Stage::ApiKey, cx))),
                     )
                     .child(
@@ -1777,14 +2264,16 @@ impl Render for Login {
                             div()
                                 .flex()
                                 .gap(px(12.))
-                                .child(login_button("api-cancel", "Cancel", &t).flex_1().on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.api_key.clear();
-                                        this.go(Stage::OtherMethods, cx)
-                                    }),
-                                ))
                                 .child(
-                                    login_button("api-continue", "Continue", &t)
+                                    login_button("api-cancel", "Cancel", t.text, &t)
+                                        .flex_1()
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.api_key.clear();
+                                            this.go(Stage::OtherMethods, cx)
+                                        })),
+                                )
+                                .child(
+                                    login_button("api-continue", "Continue", t.text, &t)
                                         .flex_1()
                                         .when(self.api_key.is_empty(), |d| d.opacity(0.5))
                                         .on_click(
@@ -1798,10 +2287,11 @@ impl Render for Login {
         };
         div()
             .size_full()
+            .on_key_down(focus::tab)
             .flex()
             .items_center()
             .justify_center()
-            .pb(px(48.))
+            .pb(px(if requirements { 0. } else { 48. }))
             .font_family(SANS)
             .bg(t.surface)
             .child(
@@ -1810,10 +2300,23 @@ impl Render for Login {
                     .flex()
                     .flex_col()
                     .items_center()
-                    .gap(px(32.))
-                    .child(icon("codex-logo", 40., t.text))
+                    .gap(px(if requirements { 12. } else { 32. }))
+                    // As on the workspace page: a transparent composited layer.
+                    .layer()
+                    .when(!requirements, |d| {
+                        d.child(icon(
+                            "login-logo",
+                            40.,
+                            match t.appearance {
+                                theme::Appearance::Dark => gpui::rgb(0xdfdfdf).into(),
+                                theme::Appearance::Light => t.text,
+                            },
+                        ))
+                    })
                     .child(heading)
-                    .child(body)
+                    .when(!matches!(self.stage, Stage::LoadingRequirements), |d| {
+                        d.child(body)
+                    })
                     .children(self.error.clone().map(|e| {
                         text(SharedString::from(e), 14., 20., 430., t.text_error)
                             .whitespace_normal()
@@ -1824,6 +2327,37 @@ impl Render for Login {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn managed_login_policy_has_precedence_and_rejects_unknown_methods() {
+        use super::allowed_login_methods;
+        use serde_json::{Value, json};
+        assert_eq!(
+            allowed_login_methods(&Value::Null, &json!("api")),
+            Ok((true, false))
+        );
+        assert_eq!(
+            allowed_login_methods(&Value::Null, &json!("chatgpt")),
+            Ok((false, true))
+        );
+        assert_eq!(
+            allowed_login_methods(&json!({"allowedLoginMethods": ["chatgpt"]}), &json!("api")),
+            Ok((false, true))
+        );
+        assert_eq!(
+            allowed_login_methods(&json!({"allowedLoginMethods": []}), &Value::Null),
+            Ok((false, false))
+        );
+        assert!(
+            allowed_login_methods(
+                &json!({"allowedLoginMethods": ["chatgpt", "future"]}),
+                &Value::Null
+            )
+            .is_err()
+        );
+        assert!(allowed_login_methods(&json!({}), &Value::Null).is_err());
+        assert!(allowed_login_methods(&Value::Null, &json!("future")).is_err());
+    }
+
     #[test]
     fn middle_truncate_matches_reference() {
         // One cell per character, 26 cells wide (the reference's `w-48` at 12 px).
