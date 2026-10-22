@@ -498,7 +498,7 @@ impl TextSystem {
 
     /// Get the height of the x character in the given font and size.
     pub fn x_height(&self, font_id: FontId, font_size: Pixels) -> Pixels {
-        self.read_metrics(font_id, |metrics| metrics.x_height(font_size))
+        self.platform_text_system.x_height_at_size(font_id, font_size)
     }
 
     /// Get the recommended distance from the baseline for the given font
