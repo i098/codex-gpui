@@ -13,10 +13,10 @@
 //! (`getAuthStatus` with `includeToken`) plus the account route from `account/read`, retries once
 //! after a 401 with a refreshed token, and answers the original wire shapes, including errors.
 //! The token never reaches logs, errors, or `Debug` output.
-//! Local fetches support automations, Git, scoped file reads, native app discovery, and open-in requests.
+//! Local fetches support automations, Git, scoped file reads, native app discovery, open-in requests, personal instructions, and first-run workspace creation.
 //! Unsupported endpoints return errors.
 //! `Root` loads the automation list off the UI thread when the Scheduled route opens.
-//! Consumers read the result through `Root::automations`; this service slice does not change the static screens.
+//! `Root` owns the loading state and displays failures from these services.
 //!
 //! Storage evidence: Codex 26.1007.30912, `src-BJv5Mk7n.js` functions `jF`, `NF`, `QF`,
 //! `Z$`, `Q$`, and `$$`. HTTP evidence: `main-CqEoQDOU.js` `performDesktopFetch`, `fetchHttp`,
@@ -505,6 +505,7 @@ pub fn json_body(response: &Value) -> Result<Value> {
 
 pub struct LocalHost {
     home: PathBuf,
+    workspace_parent: PathBuf,
     ssh_home: Option<PathBuf>,
     /// The `codex app-server` that `automation-run-now` starts runs on; the original's main
     /// process holds the same connection.
@@ -522,6 +523,7 @@ impl LocalHost {
         Self {
             computer_use_settings: None,
             native_computer_use: Arc::new(computer_use_native::NativeComputerUse::new(&home)),
+            workspace_parent: home.join("projects"),
             home,
             ssh_home: std::env::var_os("HOME").map(PathBuf::from),
             bridge: None,
@@ -573,6 +575,8 @@ impl LocalHost {
             .map(PathBuf::from)
             .filter(|home| home.is_absolute())
             .map(|home| computer_use::ComputerUseSettings::new(home, &host.home));
+        host.workspace_parent =
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("Documents/ChatGPT");
         host
     }
 
@@ -629,6 +633,71 @@ impl LocalHost {
             assignments.insert(thread_id.to_owned(), assignment);
             Ok(true)
         })
+    }
+
+    fn agents_md_path(&self) -> Result<PathBuf> {
+        fs::create_dir_all(&self.home)?;
+        let path = self.home.join("AGENTS.md");
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error).context("create personal instructions"),
+        }
+        Ok(path)
+    }
+
+    fn agents_md(&self) -> Result<Value> {
+        let path = self.agents_md_path()?;
+        let contents = fs::read_to_string(&path).context("read personal instructions")?;
+        Ok(json!({"path": path, "contents": contents}))
+    }
+
+    fn save_agents_md(&self, contents: &str) -> Result<Value> {
+        let path = self.agents_md_path()?;
+        let target = path.canonicalize()?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&target)
+            .context("open personal instructions for writing")?;
+        let mut file =
+            tempfile::NamedTempFile::new_in(target.parent().context("instructions parent")?)?;
+        file.as_file()
+            .set_permissions(fs::metadata(&target)?.permissions())?;
+        file.write_all(contents.as_bytes())?;
+        file.as_file().sync_all()?;
+        file.persist(target).context("save personal instructions")?;
+        Ok(json!({"path": path}))
+    }
+
+    fn onboarding_workspace(&self) -> Result<Value> {
+        fs::create_dir_all(&self.workspace_parent)?;
+        for index in 1usize.. {
+            let name = if index == 1 {
+                "New project".to_owned()
+            } else {
+                format!("New project {index}")
+            };
+            let path = self.workspace_parent.join(name);
+            match fs::create_dir(&path) {
+                Ok(()) => {
+                    let root = match self.add_project(&path) {
+                        Ok(root) => root,
+                        Err(error) => {
+                            let _ = fs::remove_dir(&path);
+                            return Err(error);
+                        }
+                    };
+                    return Ok(json!({"success": true, "root": root}));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error).context("create onboarding project"),
+            }
+        }
+        unreachable!()
     }
 
     fn database(&self, flags: OpenFlags) -> Result<Option<Connection>> {
@@ -1237,6 +1306,13 @@ impl Host for LocalHost {
             "remote host is unsupported by LocalHost"
         );
         let body = match endpoint {
+            "codex-agents-md" => self.agents_md()?,
+            "codex-agents-md-save" => self.save_agents_md(
+                params["contents"]
+                    .as_str()
+                    .context("missing instructions contents")?,
+            )?,
+            "electron-onboarding-skip-workspace" => self.onboarding_workspace()?,
             "get-global-state" => {
                 let key = params["key"].as_str().context("missing global state key")?;
                 let value = self
