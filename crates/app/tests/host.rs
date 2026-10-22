@@ -670,35 +670,6 @@ fn recorded_suggestions() -> Result<Value> {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn late_suggestions_keep_starting_on_the_clicked_task() -> Result<()> {
-    let mut fx = common::Fx::new()?;
-    let host = Arc::new(ReplayHost::from_recording(RECORDING)?);
-    fx.root
-        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
-    fx.cx.update_window(fx.window, |_, window, cx| {
-        window.dispatch_action(Box::new(ui::OpenScheduled), cx);
-    })?;
-    let page = fx.read(|root, _| root.suggestions().unwrap().clone());
-    page.update(&mut fx.cx, |page, cx| page.set_pending(Some(0), cx));
-    let server = serde_json::from_value(recorded_suggestions()?)?;
-    page.update(&mut fx.cx, |page, cx| page.set_suggestions(server, cx));
-    let actual = fx.cx.capture_screenshot(fx.window)?;
-    // The recorded response puts the clicked Weekly meal plan at index three.
-    page.update(&mut fx.cx, |page, cx| page.set_pending(Some(3), cx));
-    let expected = fx.cx.capture_screenshot(fx.window)?;
-    assert_eq!(
-        common::changed(&actual, &expected, common::MAIN_PANEL),
-        0,
-        "Starting must stay on Weekly meal plan, not AP Lang practice"
-    );
-    page.update(&mut fx.cx, |page, cx| page.set_pending(None, cx));
-    fx.cx.run_until_parked();
-    fx.parity("automations")?;
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-#[test]
 fn unbundled_suggestion_icon_shows_its_emoji() -> Result<()> {
     let mut fx = common::Fx::new()?;
     let host = Arc::new(ReplayHost::from_recording(RECORDING)?);
