@@ -166,6 +166,12 @@ pub struct Decoration {
 
 /// An element covering its parent's box that paints `d`.
 pub fn decoration(d: Decoration) -> impl IntoElement {
+    translated_decoration(d, Point::default())
+}
+
+/// [`decoration`] moved by `offset` CSS px after the box snaps, as Blink paints a snapped box
+/// under a subpixel `transform: translate(..)`.
+pub fn translated_decoration(d: Decoration, offset: Point<Pixels>) -> impl IntoElement {
     cover(
         move |bounds, window, _| {
             #[cfg(target_os = "macos")]
@@ -174,7 +180,15 @@ pub fn decoration(d: Decoration) -> impl IntoElement {
             let _ = (bounds, window);
             d
         },
-        |bounds, d, window, cx| paint(&d, None, bounds, window, cx),
+        move |bounds, d, window, cx| {
+            #[cfg(target_os = "macos")]
+            skia::paint(&d, None, offset, bounds, window, cx);
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = cx;
+                quads(&d, Bounds::new(bounds.origin + offset, bounds.size), window);
+            }
+        },
     )
 }
 
@@ -203,7 +217,7 @@ pub fn paint(
     cx: &App,
 ) {
     #[cfg(target_os = "macos")]
-    skia::paint(d, layer, bounds, window, cx);
+    skia::paint(d, layer, Point::default(), bounds, window, cx);
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (cx, layer);
@@ -557,6 +571,30 @@ pub fn paint_icon(
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (src, key, bounds, flip_x, color, layer, window, cx);
+        false
+    }
+}
+
+/// Paints the svg icon `src` with CSS `opacity` inside the innermost [`backdrop_blur`] box
+/// painted around `bounds`, as Chromium rasters a non-composited opacity group on that box's
+/// composited layer and composites the layer over the blurred backdrop; `clip`: the box clips
+/// its content to its contour (`overflow: hidden`). Draw nothing else in the icon's box after
+/// the backdrop box. False when no such box holds `bounds`, or off macOS: paint it another way
+/// then.
+pub fn paint_icon_in_backdrop(
+    src: &[u8],
+    key: &str,
+    bounds: Bounds<Pixels>,
+    color: Hsla,
+    opacity: f32,
+    clip: bool,
+    window: &mut Window,
+) -> bool {
+    #[cfg(target_os = "macos")]
+    return backdrop::paint_icon(src, key, bounds, color, opacity, clip, window);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (src, key, bounds, color, opacity, clip, window);
         false
     }
 }

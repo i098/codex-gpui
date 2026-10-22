@@ -657,6 +657,9 @@ impl Composer {
                 self.field_min_height
             })
             .cursor(CursorStyle::IBeam)
+            .when(self.embedded_field.is_some(), |d| {
+                d.px_0().pb_0().min_h(self.editor_line_height())
+            })
             .text_size(self.editor_font_size())
             .line_height(self.editor_line_height())
             .font_weight(gpui::FontWeight(if self.field_text.is_some() {
@@ -677,8 +680,11 @@ impl Composer {
             .child(
                 div()
                     .when(self.field_text.is_none(), |d| {
-                        d.when(self.content.is_empty(), |d| d.opacity(0.5))
-                            .when(self.plain_field != Some(true), |d| d.layer())
+                        d.when(
+                            self.content.is_empty() && self.embedded_field.is_none(),
+                            |d| d.opacity(0.5),
+                        )
+                        .when(self.plain_field != Some(true), |d| d.layer())
                     })
                     .child(Editor(cx.entity())),
             )
