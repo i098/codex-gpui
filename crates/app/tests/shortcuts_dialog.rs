@@ -99,3 +99,24 @@ fn the_open_shortcuts_dialog_follows_live_bindings() -> Result<()> {
     ensure!(titles(&fx).contains(&"Archive chat"));
     Ok(())
 }
+
+#[test]
+fn dialog_search_matches_command_ids_descriptions_and_fuzzy_titles() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-/")?;
+    for (query, expected) in [
+        ("  ARCHIVETHREAD  ", vec!["Archive chat"]),
+        ("outside of any project", vec!["New standalone chat"]),
+        ("arch*ve chat", vec!["Archive chat"]),
+        ("zzzz-no-shortcut", vec![]),
+    ] {
+        fx.keys("cmd-a")?;
+        fx.type_text(query)?;
+        ensure!(
+            titles(&fx) == expected,
+            "query {query:?}: {:?}",
+            titles(&fx)
+        );
+    }
+    Ok(())
+}

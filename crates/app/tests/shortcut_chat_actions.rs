@@ -345,7 +345,7 @@ fn the_dialog_lists_send_in_background_on_home_only() -> Result<()> {
         anyhow::Ok(
             titles
                 .iter()
-                .any(|row| row.1 == "Send message in background"),
+                .any(|row| row.1.id == "composer.submitInBackground"),
         )
     };
     ensure!(rows(&mut fx)?, "Home lists it");

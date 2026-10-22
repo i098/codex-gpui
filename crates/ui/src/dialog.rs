@@ -872,12 +872,24 @@ impl Dialog {
     }
     fn visible(&self) -> impl Iterator<Item = &Shortcut> + '_ {
         let query = self.query.trim();
-        self.shortcuts
-            .iter()
-            .filter(move |(_, title, _)| contains_ignore_ascii_case(title, query))
+        let pattern =
+            (!query.is_empty()).then(|| crate::screens::sidebar::MatchPattern::new(query));
+        self.shortcuts.iter().filter(move |(_, command, _)| {
+            pattern.as_ref().is_none_or(|pattern| {
+                [
+                    command.id,
+                    crate::keyboard::dialog_title(command),
+                    command.detail,
+                ]
+                .iter()
+                .any(|value| pattern.score(value) > 0)
+            })
+        })
     }
     pub fn visible_titles(&self) -> Vec<&'static str> {
-        self.visible().map(|(_, title, _)| *title).collect()
+        self.visible()
+            .map(|(_, command, _)| crate::keyboard::dialog_title(command))
+            .collect()
     }
     fn dismiss(&self, cx: &mut Context<Self>) {
         if self.saving {
@@ -2183,7 +2195,7 @@ impl Dialog {
     fn shortcuts_content(&self, visible: &[&Shortcut], t: &Theme, cx: &Context<Self>) -> Div {
         let mut list = div().flex().flex_col().pr(px(22.));
         let mut heading = "";
-        for (index, &&(section, title, ref keys)) in visible.iter().enumerate() {
+        for (index, &&(section, command, ref keys)) in visible.iter().enumerate() {
             if section != heading {
                 list = list.child(
                     div()
@@ -2207,7 +2219,13 @@ impl Dialog {
                     .items_center()
                     .justify_between()
                     .opacity(0.75)
-                    .child(text(title, 14., 18., 400., t.text))
+                    .child(text(
+                        crate::keyboard::dialog_title(command),
+                        14.,
+                        18.,
+                        400.,
+                        t.text,
+                    ))
                     .child(div().flex().gap(px(8.)).children(keys.iter().map(|key| {
                         div()
                             .rounded(px(6.))

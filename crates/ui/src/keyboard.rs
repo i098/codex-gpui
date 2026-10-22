@@ -390,7 +390,7 @@ pub fn key_label(accelerator: &str) -> String {
         .join(" ")
 }
 
-pub type Shortcut = (&'static str, &'static str, Vec<String>);
+pub type Shortcut = (&'static str, &'static Command, Vec<String>);
 
 /// Commands the original's `⌘/` dialog leaves out of its recorded Home and thread states
 /// (`refs/interactions/f3b.json`, `original-pool5/dialog-{home,thread}.txt`): all are `webview`
@@ -528,7 +528,7 @@ pub fn active_shortcuts(cx: &App) -> Vec<Shortcut> {
         for command in commands {
             let keys: Vec<_> = state.preferences.keys(command).map(key_label).collect();
             if !keys.is_empty() {
-                shortcuts.push((section_title(section), dialog_title(command), keys));
+                shortcuts.push((section_title(section), command, keys));
             }
         }
     }
