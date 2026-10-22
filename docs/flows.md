@@ -386,8 +386,8 @@ These offscreen frames do not prove original/native pixel parity.
 The recording footer exposes Cancel, the input waveform, Stop, and Transcribe and send.
 The app derives waveform levels from microphone metering; controlled tests derive them from their generated PCM samples.
 Transcribe and send submits only after successful transcript insertion.
-The app saves WAV recordings under the initiating host's `codex-gpui-dictation` directory with private file permissions.
-Failed transcription retains its audio for Retry.
+Failed transcription saves audio under the initiating host's `codex-gpui-dictation` directory with private file permissions for Retry.
+Successful transcription does not save a recording, and a successful retry removes its saved recording.
 Recovery does not replace the draft; Add to message inserts recovered text only after an explicit action.
 Dismiss removes the recovery notice but does not delete the saved recording.
 

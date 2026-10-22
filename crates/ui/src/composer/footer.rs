@@ -243,33 +243,28 @@ impl Composer {
     fn recording_footer(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
         let active = self.dictation.as_ref().expect("active dictation");
         let transcribing = active.transcribing;
-        let mut waveform = Some(self.recording_waveform(t, cx).into_any_element());
-        let mut controls = div()
+        let middle = div()
+            .flex_1()
+            .min_w_0()
+            .h(px(28.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(if transcribing {
+                text("Transcribing", 14., 20., 400., t.text_tertiary).into_any_element()
+            } else {
+                self.recording_waveform(t, cx).into_any_element()
+            });
+        div()
             .flex()
             .items_center()
             .gap(px(8.))
             .px(px(8.))
-            .pb(px(8.));
-        for action in 0..3 {
-            if action == 1 {
-                controls = controls.child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .h(px(28.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(if transcribing {
-                            text("Transcribing", 14., 20., 400., t.text_tertiary).into_any_element()
-                        } else {
-                            waveform.take().expect("one waveform")
-                        }),
-                );
-            }
-            controls = controls.child(self.recording_button(action, t, cx));
-        }
-        controls
+            .pb(px(8.))
+            .child(self.recording_button(0, t, cx))
+            .child(middle)
+            .child(self.recording_button(1, t, cx))
+            .child(self.recording_button(2, t, cx))
     }
 
     fn recording_action(&mut self, action: usize, window: &mut Window, cx: &mut Context<Self>) {

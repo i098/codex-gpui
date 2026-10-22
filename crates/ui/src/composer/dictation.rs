@@ -133,6 +133,7 @@ impl Composer {
             }
         };
         self.dictation_error = None;
+        self.dictation_recovery = None;
         self.marked_range = None;
         self.focus_handle.focus(window, cx);
         let target = cx.weak_entity();
@@ -434,6 +435,27 @@ mod tests {
                 editor.insert_recovered_dictation(window, cx);
                 assert_eq!(editor.field_text(), "keep recovered");
                 assert!(editor.dictation_recovery.is_none());
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_new_dictation_replaces_failed_recovery_and_inserts_its_transcript() {
+        let mut cx = gpui::TestAppContext::single();
+        cx.update(install);
+        let window = cx.add_window(Composer::home);
+        window
+            .update(&mut cx, |editor, window, cx| {
+                editor.set_text("keep ", cx);
+                editor.dictate(window, cx);
+                editor.dictation_event(Event::Captured(None), window, cx);
+                editor.dictation_event(Event::Finished(Err("offline".into())), window, cx);
+                assert!(editor.dictation_recovery.is_some());
+                editor.dictate(window, cx);
+                assert!(editor.dictation_recovery.is_none());
+                editor.dictation_event(Event::Finished(Ok("new transcript".into())), window, cx);
+                assert_eq!(editor.field_text(), "keep new transcript");
+                assert!(!editor.has_active_dictation());
             })
             .unwrap();
     }

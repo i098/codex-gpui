@@ -224,20 +224,30 @@ fn session(
             if cancelled(&receiver) {
                 return;
             }
-            let path = host
-                .save_dictation(&audio)
-                .ok()
-                .and_then(|path| url::Url::from_file_path(path).ok())
-                .map(String::from);
-            if events.try_send(Event::Captured(path)).is_err() {
+            let mut path = None;
+            if events.try_send(Event::Captured(None)).is_err() {
                 return;
             }
             loop {
                 let _ = events.try_send(Event::Transcribing);
                 let result = transcribe(&*host, &audio, timeout).map_err(|error| error.to_string());
                 let succeeded = result.is_ok();
+                if succeeded
+                    && let Some(path) = &path
+                    && let Err(error) = std::fs::remove_file(path)
+                {
+                    eprintln!("Unable to remove the transcribed recording: {error}");
+                }
                 if cancelled(&receiver) {
                     return;
+                }
+                if !succeeded && path.is_none() {
+                    path = host.save_dictation(&audio).ok();
+                    let url = path
+                        .as_ref()
+                        .and_then(|path| url::Url::from_file_path(path).ok())
+                        .map(String::from);
+                    let _ = events.try_send(Event::Captured(url));
                 }
                 if events.try_send(Event::Finished(result)).is_err() || succeeded {
                     return;
@@ -337,4 +347,156 @@ pub fn audio_dispatcher(audio: Vec<u8>, timeout: Duration) -> Dispatcher {
             timeout,
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::host::LocalHost;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Instant;
+
+    struct RetryHost {
+        local: LocalHost,
+        calls: AtomicUsize,
+    }
+
+    impl Host for RetryHost {
+        fn fetch(&self, _: &Request) -> Result<serde_json::Value> {
+            let attempt = self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(json!({
+                "status": if attempt == 0 { 503 } else { 200 },
+                "body": "{\"text\":\"recovered\"}"
+            }))
+        }
+
+        fn save_dictation(&self, audio: &[u8]) -> Result<std::path::PathBuf> {
+            self.local.save_dictation(audio)
+        }
+    }
+
+    fn next(events: &async_channel::Receiver<Event>) -> Option<Event> {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            match events.try_recv() {
+                Ok(event) => return Some(event),
+                Err(async_channel::TryRecvError::Closed) => return None,
+                Err(async_channel::TryRecvError::Empty) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "dictation worker did not respond"
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+        }
+    }
+
+    fn audio() -> Vec<u8> {
+        let mut audio = vec![0; 46];
+        audio[..4].copy_from_slice(b"RIFF");
+        audio[8..12].copy_from_slice(b"WAVE");
+        audio
+    }
+
+    #[test]
+    fn successful_dictation_does_not_store_audio() {
+        let directory = tempfile::tempdir().unwrap();
+        let host = Arc::new(RetryHost {
+            local: LocalHost::new(directory.path()),
+            calls: AtomicUsize::new(1),
+        });
+        let session = session(host, |_, _| Ok(audio()), Duration::from_secs(1)).unwrap();
+        loop {
+            if let Event::Finished(result) =
+                next(&session.events).expect("worker closed before success")
+            {
+                assert_eq!(result.unwrap(), "recovered");
+                break;
+            }
+        }
+        assert!(!directory.path().join("codex-gpui-dictation").exists());
+        assert!(next(&session.events).is_none());
+    }
+
+    #[test]
+    fn failed_audio_is_private_and_retried_without_recapture() {
+        let directory = tempfile::tempdir().unwrap();
+        let host = Arc::new(RetryHost {
+            local: LocalHost::new(directory.path()),
+            calls: AtomicUsize::new(0),
+        });
+        let captures = Arc::new(AtomicUsize::new(0));
+        let observed = captures.clone();
+        let session = session(
+            host.clone(),
+            move |_, _| {
+                observed.fetch_add(1, Ordering::SeqCst);
+                Ok(audio())
+            },
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        let mut saved = None;
+        loop {
+            match next(&session.events).expect("worker closed before failure") {
+                Event::Captured(Some(url)) => {
+                    saved = Some(url::Url::parse(&url).unwrap().to_file_path().unwrap())
+                }
+                Event::Finished(Err(_)) => break,
+                _ => {}
+            }
+        }
+        let saved = saved.expect("failed audio was not saved");
+        assert_eq!(std::fs::read(&saved).unwrap(), audio());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(
+                std::fs::metadata(&saved).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        session.commands.send(Command::Retry).unwrap();
+        loop {
+            if let Event::Finished(result) =
+                next(&session.events).expect("worker closed before retry")
+            {
+                assert_eq!(result.unwrap(), "recovered");
+                break;
+            }
+        }
+        assert_eq!(captures.load(Ordering::SeqCst), 1);
+        assert_eq!(host.calls.load(Ordering::SeqCst), 2);
+        assert!(!saved.exists(), "successful retry retained private audio");
+        assert!(
+            next(&session.events).is_none(),
+            "successful worker did not exit"
+        );
+    }
+
+    #[test]
+    fn dropping_failed_session_stops_worker_and_preserves_recovery_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let host = Arc::new(RetryHost {
+            local: LocalHost::new(directory.path()),
+            calls: AtomicUsize::new(0),
+        });
+        let session = session(host.clone(), |_, _| Ok(audio()), Duration::from_secs(1)).unwrap();
+        let mut saved = None;
+        loop {
+            match next(&session.events).expect("worker closed before failure") {
+                Event::Captured(Some(url)) => {
+                    saved = Some(url::Url::parse(&url).unwrap().to_file_path().unwrap())
+                }
+                Event::Finished(Err(_)) => break,
+                _ => {}
+            }
+        }
+        let events = session.events.clone();
+        drop(session);
+        assert!(next(&events).is_none(), "cancelled worker did not exit");
+        assert_eq!(host.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(std::fs::read(saved.unwrap()).unwrap(), audio());
+    }
 }
