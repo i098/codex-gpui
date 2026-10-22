@@ -1,5 +1,5 @@
 use crate::*;
-use gpui::{MouseButton, NavigationDirection, prelude::FluentBuilder as _};
+use gpui::prelude::FluentBuilder as _;
 use ui::confirmation::{Confirmation, Outcome as ConfirmationOutcome};
 
 actions!(
@@ -130,14 +130,6 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
             this.new_special_chat(NewChatMode::Temporary, window, cx);
         }))
     })
-    .on_mouse_up(
-        MouseButton::Navigate(NavigationDirection::Back),
-        cx.listener(|_, _, window, cx| super::keymap::dispatch_mouse("MouseBack", window, cx)),
-    )
-    .on_mouse_up(
-        MouseButton::Navigate(NavigationDirection::Forward),
-        cx.listener(|_, _, window, cx| super::keymap::dispatch_mouse("MouseForward", window, cx)),
-    )
 }
 
 impl Root {
