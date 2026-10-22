@@ -19,6 +19,7 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(101);
     }));
     let output = std::env::args().nth(1).expect("output PNG path");
+    let legacy = std::env::args().nth(2).as_deref() == Some("legacy-editor");
     let mut cx = HeadlessAppContext::with_platform(
         textsys::text_system(),
         Arc::new(theme::Assets),
@@ -29,11 +30,16 @@ fn main() -> anyhow::Result<()> {
         theme::load_fonts(cx);
         ui::composer::bind_keys(cx);
     });
-    let window = cx.open_window(size(px(1280.), px(832.)), |_, cx| {
+    let window = cx.open_window(size(px(1280.), px(832.)), move |_, cx| {
         let config: bridge::types::ConfigReadResponse =
             ui::fixture::response("readback.jsonl", "config/read", 0);
         let skills: Value = ui::fixture::response("readback.jsonl", "skills/list", 0);
-        let (shell, settings) = settings::shell(&config.config, &skills, Some("Codex Cloud"), cx);
+        let section = if legacy {
+            "Legacy Codex Cloud"
+        } else {
+            "Codex Cloud"
+        };
+        let (shell, settings) = settings::shell(&config.config, &skills, Some(section), cx);
         shell.update(cx, |shell, _| shell.can_go_back = true);
         let cloud = cx.new(CloudPage::new);
         cloud.update(cx, |cloud, cx| {
@@ -48,14 +54,26 @@ fn main() -> anyhow::Result<()> {
         });
         settings.update(cx, |settings, cx| settings.set_cloud(cloud.clone(), cx));
         cloud.update(cx, |cloud, cx| {
-            cloud.apply(
-                &Request {
-                    serial: 1,
-                    operation: Operation::Configs,
-                },
-                Err("Couldn’t load saved environments".into()),
-                cx,
-            )
+            if legacy {
+                cloud.open_path("/settings/cloud-environments/new", cx);
+                cloud.apply(
+                    &Request {
+                        serial: 2,
+                        operation: Operation::Machines,
+                    },
+                    Err("Unable to load container images".into()),
+                    cx,
+                );
+            } else {
+                cloud.apply(
+                    &Request {
+                        serial: 1,
+                        operation: Operation::Configs,
+                    },
+                    Err("Couldn’t load saved environments".into()),
+                    cx,
+                );
+            }
         });
         cx.new(|_| Root(shell.into()))
     })?;

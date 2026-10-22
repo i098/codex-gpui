@@ -93,6 +93,7 @@ pub struct CloudPage {
     cursor: Option<String>,
     selected: Option<Environment>,
     machines: Vec<Value>,
+    machine_error: bool,
     repositories: Vec<Value>,
     query: Entity<Composer>,
     editor: Option<Editor>,
@@ -127,6 +128,7 @@ impl CloudPage {
             cursor: None,
             selected: None,
             machines: Vec::new(),
+            machine_error: false,
             repositories: Vec::new(),
             query,
             editor: None,
@@ -149,6 +151,9 @@ impl CloudPage {
     }
 
     pub fn load(&mut self, operation: Operation, cx: &mut Context<Self>) {
+        if matches!(operation, Operation::Machines) {
+            self.machine_error = false;
+        }
         self.serial += 1;
         self.pending = true;
         self.error = None;
@@ -201,6 +206,7 @@ impl CloudPage {
         self.pending = false;
         match result.and_then(|body| self.receive(&request.operation, body, cx)) {
             Ok(()) => {}
+            Err(_) if matches!(request.operation, Operation::Machines) => self.machine_error = true,
             Err(error) => self.error = Some(error),
         }
         cx.notify();
@@ -866,24 +872,51 @@ impl CloudPage {
             ),
             Self::row(
                 "Container image",
-                None,
-                div()
-                    .flex()
-                    .gap(px(8.))
-                    .child(self.select(Menu::Machine, machine, cx))
-                    .when(editor.draft.machine == UNIVERSAL, |d| {
-                        d.child(self.button(
-                            "cloud-packages",
-                            "Preinstalled packages",
+                self.machine_error
+                    .then_some("Unable to load container images"),
+                if self.machine_error {
+                    div()
+                        .flex()
+                        .gap(px(8.))
+                        .children(editor.original.as_ref().map(|environment| {
+                            text(
+                                environment.machine["label"]
+                                    .as_str()
+                                    .unwrap_or(&environment.machine_id)
+                                    .to_owned(),
+                                13.,
+                                18.,
+                                430.,
+                                t.text_secondary,
+                            )
+                        }))
+                        .child(self.button(
+                            "cloud-machine-retry",
+                            "Retry",
                             false,
                             cx,
-                            |this, _, cx| {
-                                this.packages = true;
-                                cx.notify();
-                            },
+                            |this, _, cx| this.load(Operation::Machines, cx),
                         ))
-                    })
-                    .into_any_element(),
+                        .into_any_element()
+                } else {
+                    div()
+                        .flex()
+                        .gap(px(8.))
+                        .child(self.select(Menu::Machine, machine, cx))
+                        .when(editor.draft.machine == UNIVERSAL, |d| {
+                            d.child(self.button(
+                                "cloud-packages",
+                                "Preinstalled packages",
+                                false,
+                                cx,
+                                |this, _, cx| {
+                                    this.packages = true;
+                                    cx.notify();
+                                },
+                            ))
+                        })
+                        .into_any_element()
+                },
                 &t,
             ),
             Self::row(
@@ -1624,5 +1657,45 @@ impl Render for CloudPage {
             .children(self.overlay(cx))
             .children(self.menu_overlay(cx))
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn machine_failure_stays_in_the_editor_and_retry_can_recover() {
+        let mut app = gpui::HeadlessAppContext::with_asset_source(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+        );
+        app.update(|cx| {
+            let page = cx.new(CloudPage::new);
+            page.update(cx, |page, cx| {
+                page.edit(None, cx);
+                let failed = Request {
+                    serial: page.serial,
+                    operation: Operation::Machines,
+                };
+                page.apply(&failed, Err("machine request failed".into()), cx);
+                assert!(page.machine_error);
+                assert!(page.error.is_none());
+                assert!(page.editor.is_some());
+                assert!(!page.pending);
+
+                page.load(Operation::Machines, cx);
+                let retried = Request {
+                    serial: page.serial,
+                    operation: Operation::Machines,
+                };
+                page.apply(&failed, Err("stale failure".into()), cx);
+                page.apply(&retried, Ok(json!([])), cx);
+                assert!(!page.machine_error);
+                assert!(page.error.is_none());
+                assert!(page.editor.is_some());
+                assert!(!page.pending);
+            });
+        });
     }
 }
