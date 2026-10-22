@@ -1932,10 +1932,21 @@ pub(crate) fn with_rounded_clip<R>(
 }
 
 /// The clip [`with_unsnapped_clip`] pushes: `bounds` and `radius` at their unsnapped device
-/// geometry.
+/// geometry. Blink holds the edges in LayoutUnits; an edge that is one up to the f32 noise of
+/// the logical-px round trip (114.37499 for 114.375) becomes it exactly, as that noise moves
+/// Skia's supersampled arc coverage. A float edge (an outset by a radius) stays.
 fn unsnapped_clip(bounds: Bounds<Pixels>, radius: gpui::Corners<Pixels>, s: f32) -> Contour {
-    let [l, t, r, b] =
-        [bounds.left(), bounds.top(), bounds.right(), bounds.bottom()].map(|v| f32::from(v) * s);
+    let layout_unit = |v: f32| {
+        let units = v * 64.;
+        let grid = units.round();
+        if (units - grid).abs() <= units.abs() * f32::EPSILON * 4. {
+            grid / 64.
+        } else {
+            v
+        }
+    };
+    let [l, t, r, b] = [bounds.left(), bounds.top(), bounds.right(), bounds.bottom()]
+        .map(|v| layout_unit(f32::from(v) * s));
     let radii = [
         radius.top_left,
         radius.top_right,
@@ -3023,6 +3034,8 @@ mod tests {
         for (got, want) in clip.rr.r.into_iter().zip(expected) {
             assert!((got - want).abs() < 1e-3, "edge {got} != {want}");
         }
+        // A LayoutUnit edge comes out exact: 2551.203125 / 2.2 * 2.2 is 2551.2034 in f32.
+        assert_eq!(clip.rr.r[0] + clip.rr.r[2], r);
         for [x, y] in clip.rr.radii {
             assert!(
                 (x - 26.4).abs() < 1e-4 && (y - 26.4).abs() < 1e-4,
