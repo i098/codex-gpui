@@ -1298,7 +1298,12 @@ impl Shell {
                             new_tab_focus.read(cx).handle.clone().focus(window, cx);
                             cx.stop_propagation();
                         })
-                        .child(icon::icon("new-tab", 16., t.text_tertiary)),
+                        // Chromium squashes it into the titlebar's overlap layer, at whole
+                        // device px (layer 44 at (380, 0) at 2x, layer 97 at (0, 0) at 110%).
+                        .child(
+                            icon::icon("new-tab", 16., t.text_tertiary)
+                                .own_layer(Some(Point::default())),
+                        ),
                 )
             })
     }
