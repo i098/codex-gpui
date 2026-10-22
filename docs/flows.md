@@ -842,6 +842,17 @@ The recurrence uses the vendored `rrule` 0.14.0 with the original limits: `INTER
 The `host` checks match the retained original oracle.
 
 AM-022, AM-023 and AM-028 use the existing sidebar task list.
+
+Task delete (AM-026, AM-027) is the last item of the row menu: the red trash `Delete` after `Run now` and `Pause` or `Resume`.
+The dialog `Delete {name}?` names the task the host lists, starts on `Cancel`, and sends nothing until `Delete scheduled task`.
+Escape and `Cancel` close it without a request and return focus to the row's button; both are ignored while the delete runs.
+Confirm sends `automation-delete` through `LocalHost`, which removes the definition directory, its cached `automations` row and its `automation_runs` like the original `aI`.
+The answer is `{item, success, status}`; `deleted` and `not_found` succeed, and account-owned rows are never touched.
+Success drops the row at once, reads the list again, and closes the deleted task's page to `Scheduled`.
+Failure closes the dialog like the original, shows the toast `Could not delete scheduled task` with `Copy error` for the host status, and keeps the task for another try.
+The failure toast shows `Try again` for an unsuccessful host response and the error message for a failed host request.
+The page-list row's inline delete icon and tooltip (AM-029) belong to the original page list, which the native route does not draw.
+`crates/app/tests/task_delete.rs` proves the host contract in disposable stores and, on macOS, the native Escape, Cancel, confirm, failed removal and retry path.
 The `Scheduled task actions` menu opens under the row button like the original (right edge 1 px inside the button, 220 px wide); its first item is `Pause` or `Resume`.
 The row status control shows `Pause` or `Resume` on hover or keyboard focus, with a named accessible action.
 Both send `automation-update` with the original cron or heartbeat request, block duplicate writes and refetch the list.
@@ -874,7 +885,7 @@ Run now calls `create_worktree` and `set_owner_thread` directly for worktree tas
 | 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (no host: `list-automations`) |
 | 6 | Status filter | click | All / Active / Paused. | — | NOT WIRED (no host: `list-automations`) |
 | 7 | Task row | click | Detail panel. | Selects the task and opens its thread. | PASS (`s037::task_row_hover_and_click_match_original`) |
-| 8 | Row actions | click | Edit, Run now, Pause, Delete. | `Run now` (through `automation-run-now`) and `Pause` / `Resume` in the row menu; the status control persists through `automation-update`. Edit and Delete remain outside this slice. | PARTIAL (`automation_run_now`; `s037::task_status_controls_persist_through_the_real_local_host`) |
+| 8 | Row actions | click | Edit, Run now, Pause, Delete. | `Run now` (through `automation-run-now`), `Pause` / `Resume` and `Delete` (through `automation-delete`, after its confirmation) in the row menu; the status control persists through `automation-update`. Edit remains outside this slice. | PARTIAL (`automation_run_now`; `s037::task_status_controls_persist_through_the_real_local_host`; `task_delete`) |
 | 9 | Editor fields | focus | Name, Prompt, schedule. | — | NOT WIRED (no host: `automation-create`) |
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
 | 11 | Row hover | hover | Row highlight. | The recorded row fill and actions match; the status icon changes to Pause on hover or keyboard focus. | PASS (`s037::task_row_hover_and_click_match_original`; suggestion hover: `s035::suggestion_hover_matches_original`) |
