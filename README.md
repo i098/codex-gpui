@@ -267,6 +267,15 @@ Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice ch
 It preserves line endings and the host's working-file fallback policy, with a 5 MiB object limit.
 Missing or oversized objects return `FullError::Unavailable`; invalid disk-fallback paths or reply structures return `FullError::Failed`.
 Run `cargo test -p app --test diff_content` for real Git object and repository-boundary checks.
+Thread and standalone Changes views load visible full files according to the saved `load-full-files` preference.
+They validate full text against the displayed patch and discard replies from an older content generation.
+Restored patches without object IDs use the HEAD file for the before version and apply the same patch validation.
+Select an unmodified-lines gap to expand it, or use its controls to add 20 lines from either edge.
+Expanding context preserves the reviewed line position, including wrapped rows, and enforces the normal diff display limits.
+File headers remain visible during scrolling.
+Diff code and context rows paint in their own opaque scroll layer, as in the original renderer.
+Failed reads retain the patch and provide Retry.
+Only Staged and Unstaged sources show staging actions. Uncommitted combines both states and does not expose those actions.
 
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
 Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
