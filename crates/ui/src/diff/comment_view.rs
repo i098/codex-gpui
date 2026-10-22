@@ -870,6 +870,8 @@ fn local_comment_frame(position: &Position, t: &Theme) -> Div {
         .font_family(SANS)
         .child(shapes::decoration(Decoration {
             radius: Corners::all(px(12.5)),
+            // `rounded-lg`: `corner-shape: var(--codex-corner-shape)`, `superellipse(1.5)`.
+            corner: shapes::Corner::Squircle,
             fill: Some(if t.appearance == Appearance::Dark {
                 gpui::white().opacity(0.03)
             } else {
