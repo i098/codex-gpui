@@ -46,6 +46,7 @@ pub struct Toast {
     title: SharedString,
     description: Option<SharedString>,
     actions: Vec<(SharedString, Click)>,
+    pending: bool,
 }
 
 impl Toast {
@@ -56,6 +57,15 @@ impl Toast {
             title: title.into(),
             description: None,
             actions: Vec::new(),
+            pending: false,
+        }
+    }
+
+    pub fn pending(title: impl Into<SharedString>) -> Self {
+        Self {
+            pending: true,
+            icon: Some("sidebar-cmd-spinner"),
+            ..Self::info(title)
         }
     }
 
@@ -101,6 +111,7 @@ impl Toast {
 
 struct Entry {
     id: u64,
+    key: Option<SharedString>,
     toast: Toast,
     /// Lifetime left when the clock last stopped.
     remaining: Duration,
@@ -145,6 +156,7 @@ impl Toaster {
         self.next += 1;
         self.toasts.push(Entry {
             id,
+            key: None,
             toast,
             remaining: LIFETIME,
             running: None,
@@ -155,6 +167,27 @@ impl Toaster {
             self.run(id, cx);
         }
         cx.notify();
+    }
+
+    pub fn push_keyed(
+        &mut self,
+        key: impl Into<SharedString>,
+        toast: Toast,
+        cx: &mut Context<Self>,
+    ) {
+        let key = key.into();
+        if let Some(id) = self
+            .toasts
+            .iter()
+            .find(|entry| entry.key.as_ref() == Some(&key))
+            .map(|entry| entry.id)
+        {
+            self.dismiss(id, cx);
+        }
+        self.push(toast, cx);
+        if let Some(entry) = self.toasts.last_mut() {
+            entry.key = Some(key);
+        }
     }
 
     fn dismiss(&mut self, id: u64, cx: &mut Context<Self>) {
@@ -171,6 +204,9 @@ impl Toaster {
         let Some(e) = self.toasts.iter_mut().find(|e| e.id == id) else {
             return;
         };
+        if e.toast.pending {
+            return;
+        }
         let (started, clock) = (executor.now(), executor.clone());
         e.running = Some(Rc::new(move || clock.now().duration_since(started)));
         let left = e.remaining;
@@ -416,21 +452,25 @@ impl Toaster {
                         d.child(div().flex().flex_none().gap(px(8.)).children(actions))
                     }),
             )
-            .child(
-                div()
-                    .id(("toast-close", id))
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .justify_center()
-                    .size(px(24.))
-                    .rounded_full()
-                    .hover(move |s| s.bg(ghost))
-                    .cursor_pointer()
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.dismiss(id, cx)))
-                    .child(crate::icon::icon("toast-close", 16., fg)),
-            )
+            .when(!e.toast.pending, |d| {
+                d.child(
+                    div()
+                        .id(("toast-close", id))
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .justify_center()
+                        .size(px(24.))
+                        .rounded_full()
+                        .hover(move |s| s.bg(ghost))
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(
+                            cx.listener(move |this, _: &ClickEvent, _, cx| this.dismiss(id, cx)),
+                        )
+                        .child(crate::icon::icon("toast-close", 16., fg)),
+                )
+            })
     }
 }
 

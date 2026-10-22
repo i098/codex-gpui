@@ -7,6 +7,26 @@ use gpui::{
 use std::sync::Arc;
 use ui::settings_kit::{Choice, MultiSelect};
 
+fn context() -> HeadlessAppContext {
+    #[cfg(target_os = "macos")]
+    {
+        static INSTALL: std::sync::Once = std::sync::Once::new();
+        INSTALL.call_once(|| {
+            std::panic::set_hook(Box::new(|info| {
+                eprintln!("{info}");
+                std::process::exit(101);
+            }));
+        });
+    }
+    let mut cx =
+        HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
+    cx.update(|cx| {
+        cx.set_global(theme::Theme::dark());
+        theme::load_fonts(cx);
+    });
+    cx
+}
+
 fn press(cx: &mut HeadlessAppContext, window: AnyWindowHandle, key: &str) {
     cx.update_window(window, |_, window, cx| {
         window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx);
@@ -27,12 +47,7 @@ fn press(cx: &mut HeadlessAppContext, window: AnyWindowHandle, key: &str) {
 
 #[test]
 fn keyboard_skips_locked_choices_and_restores_trigger_focus() {
-    let mut cx =
-        HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
-    cx.update(|cx| {
-        cx.set_global(theme::Theme::dark());
-        theme::load_fonts(cx);
-    });
+    let mut cx = context();
     let window = cx
         .open_window(size(px(500.), px(400.)), |window, cx| {
             let menu = cx.new(|cx| {
@@ -100,12 +115,19 @@ fn keyboard_skips_locked_choices_and_restores_trigger_focus() {
 
 #[test]
 fn destructive_confirmation_defaults_to_cancel_and_returns_focus() {
+    confirmation_defaults_to_cancel(false);
+}
+
+#[test]
+fn settings_confirmation_defaults_to_cancel_and_returns_focus() {
+    confirmation_defaults_to_cancel(true);
+}
+
+fn confirmation_defaults_to_cancel(settings: bool) {
     use std::{cell::RefCell, rc::Rc};
     use ui::confirmation::{Confirmation, Outcome};
 
-    let mut cx =
-        HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
-    cx.update(|cx| cx.set_global(theme::Theme::dark()));
+    let mut cx = context();
     let outcomes = Rc::new(RefCell::new(Vec::new()));
     let received = outcomes.clone();
     let previous = cx.update(|cx| cx.focus_handle());
@@ -114,14 +136,19 @@ fn destructive_confirmation_defaults_to_cancel_and_returns_focus() {
         .open_window(size(px(500.), px(400.)), |window, cx| {
             previous.focus(window, cx);
             let dialog = cx.new(|cx| {
-                Confirmation::new(
+                let dialog = Confirmation::new(
                     "Discard changes?",
                     "Your changes will be lost.",
                     "Discard changes",
                     window,
                     cx,
                 )
-                .destructive()
+                .destructive();
+                if settings {
+                    dialog.settings_dialog()
+                } else {
+                    dialog
+                }
             });
             cx.subscribe(&dialog, move |_, outcome: &Outcome, _| {
                 received.borrow_mut().push(*outcome)
@@ -156,9 +183,7 @@ impl Render for TestLink {
 
 #[test]
 fn link_opens_once_when_enter_is_released() {
-    let mut cx =
-        HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
-    cx.update(|cx| cx.set_global(theme::Theme::dark()));
+    let mut cx = context();
     let window = cx
         .open_window(size(px(500.), px(400.)), |_, cx| cx.new(|_| TestLink))
         .unwrap();
@@ -183,5 +208,75 @@ fn link_opens_once_when_enter_is_released() {
     assert_eq!(
         cx.take_opened_url().as_deref(),
         Some("https://example.com/docs")
+    );
+}
+
+#[test]
+fn page_search_keeps_enter_focus_and_returns_focus_after_clear() {
+    use ui::composer::Composer;
+
+    let mut cx = context();
+    cx.update(ui::composer::bind_keys);
+    let window = cx
+        .open_window(size(px(500.), px(400.)), |window, cx| {
+            let editor = cx.new(|cx| {
+                let mut editor = Composer::page_search("Search archived chats", cx);
+                editor.set_text("archived", cx);
+                editor
+            });
+            editor.read(cx).focus_handle(cx).focus(window, cx);
+            editor
+        })
+        .unwrap();
+    cx.run_until_parked();
+    press(&mut cx, window.into(), "enter");
+    window
+        .update(&mut cx, |editor, window, cx| {
+            assert_eq!(editor.field_text(), "archived");
+            assert!(editor.focus_handle(cx).is_focused(window));
+            window.focus_next(cx);
+            assert!(!editor.focus_handle(cx).is_focused(window));
+        })
+        .unwrap();
+    press(&mut cx, window.into(), "enter");
+    window
+        .update(&mut cx, |editor, window, cx| {
+            assert!(editor.field_text().is_empty());
+            assert!(editor.focus_handle(cx).is_focused(window));
+        })
+        .unwrap();
+}
+
+#[test]
+fn pending_toasts_remain_until_replaced_and_completion_expires() {
+    use ui::toast::{LIFETIME, Toast, Toaster};
+
+    let mut cx = context();
+    let toaster = cx.update(|cx| cx.new(|_| Toaster::new()));
+    toaster.update(&mut cx, |toaster, cx| {
+        toaster.push_keyed("archive", Toast::pending("Unarchiving chat"), cx);
+        toaster.push(Toast::info("Other operation"), cx);
+    });
+    cx.run_until_parked();
+    cx.advance_clock(LIFETIME + std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    assert_eq!(
+        toaster.read_with(&cx, |toaster, _| toaster.titles()),
+        vec![gpui::SharedString::from("Unarchiving chat")]
+    );
+    toaster.update(&mut cx, |toaster, cx| {
+        toaster.push_keyed("archive", Toast::info("Unarchived chat"), cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        toaster.read_with(&cx, |toaster, _| toaster.titles()),
+        vec![gpui::SharedString::from("Unarchived chat")]
+    );
+    cx.advance_clock(LIFETIME + std::time::Duration::from_secs(1));
+    cx.run_until_parked();
+    assert!(
+        toaster
+            .read_with(&cx, |toaster, _| toaster.titles())
+            .is_empty()
     );
 }

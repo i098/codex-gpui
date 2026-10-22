@@ -148,6 +148,11 @@ Thread replies retain the optional rollout `path` for archived-chat search.
 Run `cargo test -p app --test host global_state` for the filesystem and request checks.
 This support increment does not change the Archived chats page.
 
+`Composer::page_search` provides an editable search field with a keyboard-accessible clear button.
+`Confirmation::settings_dialog` selects the settings dialog style without changing confirmation or focus behavior.
+`Toast::pending` stays visible until replacement; `Toaster::push_keyed` replaces the toast for the same operation.
+Run `cargo test -p ui --test settings_kit` for search, toast lifetime, and both confirmation styles.
+
 Settings > Git stores branch, merge, push, draft, diff, and pull request instruction preferences in `host-settings.json`.
 Review delivery uses the existing app-server config store.
 Branch prefix saves on blur or Enter; multiline instructions save after three idle seconds or when the page closes.
