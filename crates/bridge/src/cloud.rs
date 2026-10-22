@@ -52,6 +52,53 @@ impl Bridge {
     ) -> Result<(Self, Receiver<super::Event>)> {
         connect(endpoint, token, account_id)
     }
+
+    /// Starts an onboarding thread for a saved environment on this cloud account.
+    /// Pass the expected account, configuration ID, and ordinary `thread/start` parameters.
+    /// Local connections, account mismatches, empty IDs, and non-object parameters fail before sending.
+    /// Call `initialize` first. This does not send a model turn or complete environment setup.
+    pub async fn start_cloud_environment_onboarding(
+        &self,
+        account_id: &str,
+        config_id: &str,
+        mut params: serde_json::Value,
+    ) -> Result<super::types::ThreadStartResponse> {
+        ensure!(
+            !account_id.is_empty() && self.cloud_account_id.as_deref() == Some(account_id),
+            "the saved environment account or cloud connection changed"
+        );
+        ensure!(
+            !config_id.trim().is_empty(),
+            "empty cloud environment configuration ID"
+        );
+        let params = params
+            .as_object_mut()
+            .context("cloud thread parameters must be an object")?;
+        params.remove("cwd");
+        params.remove("runtimeWorkspaceRoots");
+        params.remove("personality");
+        params.insert(
+            "environments".into(),
+            serde_json::json!([{"onboardingConfigId":config_id}]),
+        );
+        params.insert("deferredEnvironment".into(), true.into());
+        params.insert(
+            "pluginsMcp".into(),
+            serde_json::json!({"productSku":"codex"}),
+        );
+        match params.get("serviceTier") {
+            Some(serde_json::Value::String(tier)) if tier == "priority" => {
+                params.insert("serviceTier".into(), "fast".into());
+            }
+            None | Some(serde_json::Value::Null) => {}
+            Some(serde_json::Value::String(tier))
+                if matches!(tier.as_str(), "fast" | "flex" | "ultrafast") => {}
+            Some(_) => {
+                params.remove("serviceTier");
+            }
+        }
+        self.request("thread/start", params).await
+    }
 }
 
 fn handshake_request(endpoint: &str, token: &str, account_id: Option<&str>) -> Result<Request<()>> {
@@ -202,7 +249,9 @@ fn connect(
         })
         .context("start cloud transport")?;
     let backend = CloudBackend { sender, poller };
-    Ok((Bridge::new(Box::new(backend), sink, None, false), events))
+    let mut bridge = Bridge::new(Box::new(backend), sink, None, false);
+    bridge.cloud_account_id = account_id.map(str::to_owned);
+    Ok((bridge, events))
 }
 
 struct CloudBackend {

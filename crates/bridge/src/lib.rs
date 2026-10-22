@@ -188,6 +188,7 @@ pub struct Bridge {
     initialized: async_lock::Mutex<Option<InitializeResponse>>,
     child: Option<Child>,
     acp: bool,
+    cloud_account_id: Option<String>,
     automation_turns: Mutex<HashMap<String, Arc<AutomationTurn>>>,
     subscribers: Subscribers,
 }
@@ -288,6 +289,7 @@ impl Bridge {
             next_id: AtomicI64::new(1),
             child,
             acp,
+            cloud_account_id: None,
             automation_turns: Mutex::new(HashMap::new()),
             subscribers: sink.subscribers,
         }
