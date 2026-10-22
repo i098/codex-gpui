@@ -4,7 +4,11 @@ use bridge::imports::{
     Preferences, Provider,
 };
 use gpui::BorrowAppContext as _;
-use std::{collections::BTreeSet, time::Instant};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
+    time::Instant,
+};
 use ui::screens::settings::imports::{ImportAction, ImportState};
 
 pub fn bootstrap_request(session_id: &str, stable_id: &str, system_version: &str) -> host::Request {
@@ -104,20 +108,43 @@ pub async fn histories(bridge: &Bridge) -> Result<Vec<History>> {
     Ok(histories.data)
 }
 
-pub async fn import_items(bridge: &Bridge, selected: &[DetectedItem]) -> Result<Vec<Value>> {
+pub struct ImportOutcome {
+    pub completions: Vec<Value>,
+    pub project_roots: BTreeSet<String>,
+}
+
+pub async fn import_items(
+    bridge: &Bridge,
+    host: &dyn host::Host,
+    selected: &[DetectedItem],
+) -> Result<ImportOutcome> {
     ensure!(!selected.is_empty(), "no import items selected");
-    let mut completions = Vec::new();
+    ensure!(
+        selected
+            .iter()
+            .all(|item| item.provider_id != Provider::ClaudeCowork),
+        "the selected import provider is unavailable"
+    );
+    let mut outcome = ImportOutcome {
+        completions: Vec::new(),
+        project_roots: BTreeSet::new(),
+    };
     for provider in [Provider::ClaudeCode, Provider::Cursor] {
-        let items: Vec<&MigrationItem> = selected
+        let mut items: Vec<Cow<'_, MigrationItem>> = selected
             .iter()
             .filter(|item| item.provider_id == provider)
-            .map(|item| &item.item)
+            .map(|item| Cow::Borrowed(&item.item))
             .collect();
         if items.is_empty() {
             continue;
         }
+        let workspaces = if provider == Provider::Cursor {
+            prepare_projectless_imports(&mut items, host)?
+        } else {
+            BTreeMap::new()
+        };
         let events = bridge.subscribe();
-        let mut params = json!({"migrationItems":items,"providerId":provider.id(),"source":"app"});
+        let mut params = import_params(&items, provider);
         if provider == Provider::Cursor {
             params["migrationSource"] = json!("cursor");
         }
@@ -134,16 +161,182 @@ pub async fn import_items(bridge: &Bridge, selected: &[DetectedItem]) -> Result<
                 && method == "externalAgentConfig/import/completed"
                 && params["importId"] == id
             {
-                completions.push(params);
+                outcome.project_roots.extend(imported_project_roots(
+                    &params,
+                    &items,
+                    &workspaces,
+                    host,
+                )?);
+                outcome.completions.push(params);
                 break;
             }
         }
     }
-    ensure!(
-        !completions.is_empty(),
-        "the selected import provider is unavailable"
-    );
-    Ok(completions)
+    Ok(outcome)
+}
+
+fn import_params(items: &[Cow<'_, MigrationItem>], provider: Provider) -> Value {
+    let mut params = json!({"migrationItems": items, "providerId": provider.id(), "source": "app"});
+    for item in params["migrationItems"]
+        .as_array_mut()
+        .into_iter()
+        .flatten()
+    {
+        for session in item
+            .get_mut("details")
+            .and_then(|details| details.get_mut("sessions"))
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(session) = session.as_object_mut() {
+                session.retain(|field, _| matches!(field.as_str(), "cwd" | "path" | "title"));
+            }
+        }
+    }
+    params
+}
+
+fn projectless_source(source: &str) -> Option<Cow<'_, str>> {
+    let path = if source.contains('\\') {
+        Cow::Owned(source.replace('\\', "/"))
+    } else {
+        Cow::Borrowed(source)
+    };
+    let prefix = "projects/empty-window/agent-transcripts/";
+    let start = if path.starts_with(prefix) {
+        prefix.len()
+    } else {
+        path.find("/projects/empty-window/agent-transcripts/")? + 1 + prefix.len()
+    };
+    if start == path.len() {
+        return None;
+    }
+    Some(match path {
+        Cow::Borrowed(path) => Cow::Borrowed(&path[start..]),
+        Cow::Owned(mut path) => {
+            path.drain(..start);
+            Cow::Owned(path)
+        }
+    })
+}
+
+fn prepare_projectless_imports(
+    items: &mut [Cow<'_, MigrationItem>],
+    host: &dyn host::Host,
+) -> Result<BTreeMap<String, host::Workspace>> {
+    let mut workspaces = BTreeMap::new();
+    for item in items {
+        let has_projectless = item
+            .details
+            .as_ref()
+            .and_then(|details| details["sessions"].as_array())
+            .is_some_and(|sessions| {
+                sessions
+                    .iter()
+                    .any(|session| session["workspaceKind"] == "projectless")
+            });
+        if !has_projectless {
+            continue;
+        }
+        let sessions = item
+            .to_mut()
+            .details
+            .as_mut()
+            .and_then(|details| details["sessions"].as_array_mut())
+            .context("projectless import has no sessions")?;
+        for session in sessions
+            .iter_mut()
+            .filter(|session| session["workspaceKind"] == "projectless")
+        {
+            let source = session["path"]
+                .as_str()
+                .and_then(projectless_source)
+                .context("invalid Cursor projectless session path")?
+                .into_owned();
+            let workspace = host.prepare_projectless(session["title"].as_str().unwrap_or(""))?;
+            session["cwd"] = json!(workspace.cwd);
+            workspaces.insert(source, workspace);
+        }
+    }
+    Ok(workspaces)
+}
+
+fn imported_project_roots(
+    completion: &Value,
+    items: &[Cow<'_, MigrationItem>],
+    workspaces: &BTreeMap<String, host::Workspace>,
+    host: &dyn host::Host,
+) -> Result<BTreeSet<String>> {
+    let sessions: Vec<_> = items
+        .iter()
+        .flat_map(|item| {
+            item.details
+                .as_ref()
+                .and_then(|details| details["sessions"].as_array())
+                .into_iter()
+                .flatten()
+        })
+        .collect();
+    let roots: BTreeMap<_, _> = sessions
+        .iter()
+        .filter(|session| session["workspaceKind"] != "projectless")
+        .filter_map(|session| Some((session["path"].as_str()?, session["cwd"].as_str()?)))
+        .collect();
+    let mut projects = BTreeSet::new();
+    let mut imported_sessions = 0;
+    for category in completion["itemTypeResults"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        for success in category["successes"].as_array().into_iter().flatten() {
+            let workspace = success["source"]
+                .as_str()
+                .and_then(projectless_source)
+                .and_then(|source| workspaces.get(source.as_ref()))
+                .or_else(|| {
+                    workspaces
+                        .values()
+                        .find(|workspace| success["cwd"] == workspace.cwd)
+                });
+            if let Some(workspace) = workspace {
+                if success["itemType"] == "SESSIONS"
+                    && let Some(thread) = success["target"]
+                        .as_str()
+                        .filter(|thread| !thread.is_empty())
+                {
+                    host.record_projectless(thread, workspace)?;
+                }
+            } else if let Some(root) = success["cwd"]
+                .as_str()
+                .or_else(|| {
+                    (category["itemType"] == "SESSIONS")
+                        .then(|| {
+                            success["source"]
+                                .as_str()
+                                .and_then(|source| roots.get(source).copied())
+                        })
+                        .flatten()
+                })
+                .filter(|root| !root.is_empty())
+            {
+                projects.insert(root.to_owned());
+            }
+            if category["itemType"] == "SESSIONS"
+                && success["itemType"] == "SESSIONS"
+                && success["target"]
+                    .as_str()
+                    .is_some_and(|thread| !thread.is_empty())
+            {
+                imported_sessions += 1;
+            }
+        }
+    }
+    if imported_sessions == sessions.len() {
+        projects.extend(roots.values().map(|root| (*root).to_owned()));
+    }
+    Ok(projects)
 }
 
 async fn imported_mcp_auth(bridge: &Bridge, histories: &[History]) -> Result<Vec<String>> {
@@ -189,10 +382,8 @@ fn system_version() -> String {
 
 fn saved<T: serde::de::DeserializeOwned + Default>(cx: &App, key: &str) -> Result<T> {
     cx.try_global::<host_settings::Settings>()
-        .and_then(|settings| settings.read_all().get(key))
-        .map(|value| {
-            serde_json::from_value(value.clone()).with_context(|| format!("invalid {key}"))
-        })
+        .and_then(|settings| settings.read_all().get(key).cloned())
+        .map(|value| serde_json::from_value(value).with_context(|| format!("invalid {key}")))
         .unwrap_or_else(|| Ok(T::default()))
 }
 
@@ -433,40 +624,54 @@ impl Root {
                 }
             }
             ImportAction::SavePreferences(preferences) => {
-                let state = cx.global::<ImportState>();
-                if !state.policy.sync
-                    || !state.sync_state.connected()
-                    || !ItemType::ALL
-                        .iter()
-                        .any(|category| preferences.category_selected(*category, &state.sync_state))
-                {
-                    return;
-                }
-                let result = persist(cx, imports::SYNC_ITEM_TYPES, json!(preferences));
-                cx.update_global::<ImportState, _>(|state, _| match result {
-                    Ok(()) => {
-                        state.preferences = preferences;
-                        state.preferences_saved += 1;
-                        state.error = None;
-                    }
-                    Err(_) => {
-                        state.error = Some("Couldn’t save sync preferences. Try again".into())
-                    }
-                });
+                self.save_import_preferences(preferences, cx)
             }
-            ImportAction::OpenItem(category, target) => match category {
-                ItemType::Sessions => {
-                    if let Some(id) = imported_thread_id(&target) {
-                        self.navigate(Route::Thread(id), window, cx);
-                    }
+            ImportAction::OpenItem(category, target) => {
+                self.open_imported_item(category, &target, window, cx)
+            }
+        }
+    }
+
+    fn save_import_preferences(&self, preferences: Preferences, cx: &mut Context<Self>) {
+        let state = cx.global::<ImportState>();
+        if !state.policy.sync
+            || !state.sync_state.connected()
+            || !ItemType::ALL
+                .iter()
+                .any(|category| preferences.category_selected(*category, &state.sync_state))
+        {
+            return;
+        }
+        let result = persist(cx, imports::SYNC_ITEM_TYPES, json!(preferences));
+        cx.update_global::<ImportState, _>(|state, _| match result {
+            Ok(()) => {
+                state.preferences = preferences;
+                state.preferences_saved += 1;
+                state.error = None;
+            }
+            Err(_) => state.error = Some("Couldn’t save sync preferences. Try again".into()),
+        });
+    }
+
+    fn open_imported_item(
+        &mut self,
+        category: ItemType,
+        target: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match category {
+            ItemType::Sessions => {
+                if let Some(id) = imported_thread_id(target) {
+                    self.navigate(Route::Thread(id), window, cx);
                 }
-                ItemType::Hooks => self.open_settings_section("Hooks", window, cx),
-                ItemType::McpServerConfig => self.open_settings_section("Plugins", window, cx),
-                ItemType::Skills | ItemType::Commands | ItemType::Plugins => {
-                    self.open_settings_section("Plugins", window, cx)
-                }
-                ItemType::AgentsMd | ItemType::Config | ItemType::Subagents | ItemType::Memory => {}
-            },
+            }
+            ItemType::Hooks => self.open_settings_section("Hooks", window, cx),
+            ItemType::McpServerConfig => self.open_settings_section("Plugins", window, cx),
+            ItemType::Skills | ItemType::Commands | ItemType::Plugins => {
+                self.open_settings_section("Plugins", window, cx)
+            }
+            ItemType::AgentsMd | ItemType::Config | ItemType::Subagents | ItemType::Memory => {}
         }
     }
 
@@ -543,6 +748,24 @@ impl Root {
         }
     }
 
+    fn can_import(state: &ImportState, items: &[DetectedItem], automatic: bool) -> bool {
+        if !state.policy.enabled
+            || state.pending
+            || items.is_empty()
+            || (automatic && (!state.policy.sync || !state.sync_enabled))
+        {
+            return false;
+        }
+        let Load::Ready(detected) = &state.detected else {
+            return false;
+        };
+        items.iter().all(|item| {
+            detected.contains(item)
+                && item.provider_id != Provider::ClaudeCowork
+                && (item.provider_id != Provider::Cursor || state.policy.cursor)
+        })
+    }
+
     fn start_import(
         &self,
         items: Vec<DetectedItem>,
@@ -551,21 +774,7 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         let state = cx.global::<ImportState>();
-        if !state.policy.enabled
-            || state.pending
-            || items.is_empty()
-            || (automatic && (!state.policy.sync || !state.sync_enabled))
-        {
-            return;
-        }
-        let Load::Ready(detected) = &state.detected else {
-            return;
-        };
-        if items.iter().any(|item| {
-            !detected.contains(item)
-                || item.provider_id == Provider::ClaudeCowork
-                || (item.provider_id == Provider::Cursor && !state.policy.cursor)
-        }) {
+        if !Self::can_import(state, &items, automatic) {
             return;
         }
         let mut sync = state.sync_state.clone();
@@ -602,56 +811,92 @@ impl Root {
         let bridge = self.bridge.clone();
         let host = self.host.clone();
         let run = cx.background_spawn(async move {
-            let result = pollster::block_on(import_items(&bridge, &items));
-            let projects: Result<Vec<String>> = if let Ok(completions) = &result {
-                completions
-                    .iter()
-                    .flat_map(|completion| {
-                        completion["itemTypeResults"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                    })
-                    .flat_map(|category| category["successes"].as_array().into_iter().flatten())
-                    .filter_map(|success| success["cwd"].as_str().filter(|cwd| !cwd.is_empty()))
-                    .collect::<BTreeSet<_>>()
-                    .into_iter()
-                    .map(|root| host.add_project(std::path::Path::new(root)))
-                    .collect()
-            } else {
-                Ok(Vec::new())
-            };
+            let result = pollster::block_on(import_items(&bridge, host.as_ref(), &items));
+            let projects: Result<Vec<String>> = result.as_ref().map_or_else(
+                |_| Ok(Vec::new()),
+                |outcome| {
+                    outcome
+                        .project_roots
+                        .iter()
+                        .map(|root| host.add_project(std::path::Path::new(root)))
+                        .collect()
+                },
+            );
             let history = pollster::block_on(histories(&bridge));
             (result, history, projects)
         });
         cx.spawn(async move |root, cx| {
-            let (result, history, projects) = run.await;
-            root.update(cx, |root, cx| {
-                let failed = result.as_ref().map(|completions| completions.iter().any(|completion|
-                    completion["itemTypeResults"].as_array().into_iter().flatten().any(|category|
-                        category["failures"].as_array().is_some_and(|failures| !failures.is_empty()))));
-                let succeeded = matches!(failed, Ok(false));
-                cx.update_global::<ImportState, _>(|state, _| {
-                    state.pending = false;
-                    state.running = None;
-                    state.histories = match history { Ok(history) => Load::Ready(Arc::new(history)), Err(error) => Load::Failed(error.to_string()) };
-                    state.error = if succeeded { None } else { Some("Some config could not be imported. Check the selected items and try again".into()) };
-                    if succeeded { state.import_completed += 1; }
-                });
-                if let Err(error) = result { eprintln!("codex-gpui: external import: {error:#}"); }
-                if let Err(error) = projects {
-                    eprintln!("codex-gpui: imported project registration: {error:#}");
-                    root.toast(Toast::danger("Couldn’t add imported projects"), cx);
-                }
-                root.refresh_threads(cx);
-                root.load_projects(cx);
-                if automatic {
-                    root.finish_import_sync(cx);
-                    root.toast(if succeeded { Toast::success("Imports synced") } else { Toast::danger("Unable to sync imports") }, cx);
-                }
-                root.refresh_imports(cx);
-            }).ok();
-        }).detach();
+            let outcome = run.await;
+            root.update(cx, |root, cx| root.finish_import(outcome, automatic, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    fn finish_import(
+        &mut self,
+        (result, history, projects): (
+            Result<ImportOutcome>,
+            Result<Vec<History>>,
+            Result<Vec<String>>,
+        ),
+        automatic: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let failed = result.as_ref().map(|outcome| {
+            outcome.completions.iter().any(|completion| {
+                completion["itemTypeResults"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|category| {
+                        category["failures"]
+                            .as_array()
+                            .is_some_and(|failures| !failures.is_empty())
+                    })
+            })
+        });
+        let succeeded = matches!(failed, Ok(false));
+        cx.update_global::<ImportState, _>(|state, _| {
+            state.pending = false;
+            state.running = None;
+            state.histories = match history {
+                Ok(history) => Load::Ready(Arc::new(history)),
+                Err(error) => Load::Failed(error.to_string()),
+            };
+            state.error = if succeeded {
+                None
+            } else {
+                Some(
+                    "Some config could not be imported. Check the selected items and try again"
+                        .into(),
+                )
+            };
+            if succeeded {
+                state.import_completed += 1;
+            }
+        });
+        if let Err(error) = result {
+            eprintln!("codex-gpui: external import: {error:#}");
+        }
+        if let Err(error) = projects {
+            eprintln!("codex-gpui: imported project registration: {error:#}");
+            self.toast(Toast::danger("Couldn’t add imported projects"), cx);
+        }
+        self.refresh_threads(cx);
+        self.load_projects(cx);
+        if automatic {
+            self.finish_import_sync(cx);
+            self.toast(
+                if succeeded {
+                    Toast::success("Imports synced")
+                } else {
+                    Toast::danger("Unable to sync imports")
+                },
+                cx,
+            );
+        }
+        self.refresh_imports(cx);
     }
 }
 

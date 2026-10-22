@@ -2,7 +2,8 @@ use super::computer_use::Load;
 use super::{Layer, button, deco, on_card, probe, switch};
 use crate::{focus, icon::icon, rounded_clip, text};
 use bridge::imports::{
-    CategoryPreference, DetectedItem, History, ItemType, Policy, Preferences, Provider, SyncState,
+    CategoryPreference, DetectedItem, History, HistoryItem, ItemType, Policy, Preferences,
+    Provider, SyncState,
 };
 use gpui::{
     AnyElement, App, BorrowAppContext as _, Context, Div, FocusHandle, Global, InteractiveElement,
@@ -209,30 +210,7 @@ impl ImportPage {
         let state = Self::state(cx);
         match control {
             Control::Dispatch(action) => Self::dispatch(action, window, cx),
-            Control::Review(provider) => {
-                let Load::Ready(items) = &state.detected else {
-                    return;
-                };
-                let choices = review_choices(items, provider);
-                let selected = choices
-                    .iter()
-                    .flat_map(|choice| choice.keys.iter().cloned())
-                    .map(|key| (key, true))
-                    .collect();
-                self.modal = Some(Modal::Review {
-                    provider,
-                    items: items.clone(),
-                    selected,
-                    choices,
-                    tools_expanded: false,
-                });
-                cx.update_global::<ImportState, _>(|state, _| {
-                    state.reviewing = true;
-                    state.modal_open = true;
-                });
-                self.return_focus = window.focused(cx);
-                self.modal_focus.focus(window, cx);
-            }
+            Control::Review(provider) => self.open_review(provider, &state, window, cx),
             Control::Select(keys) => {
                 if let Some(Modal::Review { selected, .. }) = &mut self.modal {
                     let value = !keys.iter().all(|key| selected.get(key) == Some(&true));
@@ -246,31 +224,107 @@ impl ImportPage {
                     *tools_expanded = !*tools_expanded;
                 }
             }
-            Control::Import => {
-                if let Some(Modal::Review {
-                    provider,
-                    selected,
-                    items,
-                    ..
-                }) = &self.modal
-                {
-                    let chosen: Vec<_> = items
-                        .iter()
-                        .filter(|item| item.provider_id == *provider && item.selected(selected))
-                        .cloned()
-                        .collect();
-                    if !chosen.is_empty() && !state.pending {
-                        Self::dispatch(
-                            ImportAction::Import {
-                                items: chosen,
-                                selection: selected.clone(),
-                            },
-                            window,
-                            cx,
-                        );
-                    }
+            Control::Import => self.import_selection(&state, window, cx),
+            control @ (Control::Customize
+            | Control::Category(_)
+            | Control::AllCategories
+            | Control::ShowCategories
+            | Control::Save) => {
+                self.customization_control(control, state, window, cx);
+            }
+            Control::Close if !state.pending => self.close(window, cx),
+            Control::Close => {}
+            control @ (Control::History(_)
+            | Control::HistoryCategory(..)
+            | Control::MoreHistory
+            | Control::Attention(_)) => self.history_control(control),
+        }
+        cx.notify();
+    }
+
+    fn history_control(&mut self, control: Control) {
+        match control {
+            Control::History(id) => {
+                if !self.expanded.remove(&id) {
+                    self.expanded.insert(id);
                 }
             }
+            Control::HistoryCategory(id, category) => {
+                if !self.categories.remove(&(id.clone(), category)) {
+                    self.categories.insert((id, category));
+                }
+            }
+            Control::MoreHistory => self.show_all_history = true,
+            Control::Attention(category) => self.attention_tab = category,
+            _ => unreachable!("not a history control"),
+        }
+    }
+
+    fn open_review(
+        &mut self,
+        provider: Provider,
+        state: &ImportState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Load::Ready(items) = &state.detected else {
+            return;
+        };
+        let choices = review_choices(items, provider);
+        let selected = choices
+            .iter()
+            .flat_map(|choice| choice.keys.iter().cloned())
+            .map(|key| (key, true))
+            .collect();
+        self.modal = Some(Modal::Review {
+            provider,
+            items: items.clone(),
+            selected,
+            choices,
+            tools_expanded: false,
+        });
+        cx.update_global::<ImportState, _>(|state, _| {
+            state.reviewing = true;
+            state.modal_open = true;
+        });
+        self.return_focus = window.focused(cx);
+        self.modal_focus.focus(window, cx);
+    }
+
+    fn import_selection(&self, state: &ImportState, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(Modal::Review {
+            provider,
+            selected,
+            items,
+            ..
+        }) = &self.modal
+        {
+            let chosen: Vec<_> = items
+                .iter()
+                .filter(|item| item.provider_id == *provider && item.selected(selected))
+                .cloned()
+                .collect();
+            if !chosen.is_empty() && !state.pending {
+                Self::dispatch(
+                    ImportAction::Import {
+                        items: chosen,
+                        selection: selected.clone(),
+                    },
+                    window,
+                    cx,
+                );
+            }
+        }
+    }
+
+    fn customization_control(
+        &mut self,
+        control: Control,
+        state: ImportState,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match control {
             Control::Customize => {
                 self.modal = Some(Modal::Customize {
                     preferences: state.preferences,
@@ -316,22 +370,8 @@ impl ImportPage {
                     );
                 }
             }
-            Control::Close if !state.pending => self.close(window, cx),
-            Control::Close => {}
-            Control::History(id) => {
-                if !self.expanded.remove(&id) {
-                    self.expanded.insert(id);
-                }
-            }
-            Control::HistoryCategory(id, category) => {
-                if !self.categories.remove(&(id.clone(), category)) {
-                    self.categories.insert((id, category));
-                }
-            }
-            Control::MoreHistory => self.show_all_history = true,
-            Control::Attention(category) => self.attention_tab = category,
+            _ => unreachable!("not a customization control"),
         }
-        cx.notify();
     }
 
     fn bind_control(
@@ -386,7 +426,7 @@ impl ImportPage {
             .role(gpui::Role::Button)
             .aria_label(label)
             .aria_disabled(disabled)
-            .when(disabled, |d| d.opacity(0.4)),
+            .when(disabled, |d| d.layer().opacity(0.4)),
             &handle,
             px(12.5),
             px(2.),
@@ -679,6 +719,229 @@ impl ImportPage {
         )
     }
 
+    fn history_destination(item: &HistoryItem) -> Option<&str> {
+        match item.item_type {
+            ItemType::Sessions => item.target.as_deref(),
+            ItemType::Skills
+            | ItemType::Commands
+            | ItemType::McpServerConfig
+            | ItemType::Plugins => item
+                .source
+                .as_deref()
+                .map(|source| item.target.as_deref().unwrap_or(source)),
+            _ => None,
+        }
+    }
+
+    fn history_items(
+        &self,
+        history: &History,
+        category: ItemType,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Div> {
+        let mut rows = Vec::new();
+        let id = &history.import_id;
+        for (failed, item) in history
+            .successes
+            .iter()
+            .map(|item| (false, item))
+            .chain(history.failures.iter().map(|item| (true, item)))
+            .filter(|(_, item)| item.item_type == category)
+        {
+            let label = if category == ItemType::Sessions {
+                item.title.clone().unwrap_or_else(|| "Untitled chat".into())
+            } else {
+                item.source
+                    .clone()
+                    .unwrap_or_else(|| "Imported item".into())
+            };
+            let detail = if failed {
+                item.message.clone()
+            } else {
+                item.target
+                    .clone()
+                    .filter(|target| Some(target) != item.source.as_ref())
+            };
+            let control = if !failed {
+                Self::history_destination(item).map(|target| {
+                    self.action(
+                        format!("open-import-{id}-{target}"),
+                        match category {
+                            ItemType::Sessions => "Open chat",
+                            ItemType::Skills | ItemType::Commands => "Open in Skills",
+                            ItemType::McpServerConfig => "Open MCP settings",
+                            _ => "Open plugin",
+                        },
+                        Control::Dispatch(ImportAction::OpenItem(category, target.to_owned())),
+                        false,
+                        window,
+                        cx,
+                    )
+                })
+            } else {
+                None
+            };
+            rows.push(nested_row(
+                label,
+                detail,
+                control.unwrap_or_else(|| div().into_any_element()),
+                t,
+            ));
+        }
+        if category == ItemType::Hooks {
+            rows.push(nested_row(
+                "Manage imported hooks",
+                None,
+                self.action(
+                    format!("manage-hooks-{id}"),
+                    "Open hooks settings",
+                    Control::Dispatch(ImportAction::OpenItem(ItemType::Hooks, String::new())),
+                    false,
+                    window,
+                    cx,
+                ),
+                t,
+            ));
+        }
+        rows
+    }
+
+    fn history_category(
+        &self,
+        history: &History,
+        state: &ImportState,
+        category: ItemType,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Div> {
+        let mut rows = Vec::new();
+        let id = &history.import_id;
+        let count = history
+            .successes
+            .iter()
+            .filter(|item| item.item_type == category)
+            .count();
+        let failed = history
+            .failures
+            .iter()
+            .filter(|item| item.item_type == category)
+            .count();
+        let auth = imported_auth_count(history, state, category);
+        let expanded = self.categories.contains(&(id.clone(), category));
+        let detail = match category {
+            ItemType::Commands => Some("Converted into Codex skills".into()),
+            ItemType::Hooks if count > 0 => Some("Manage imported hooks in Hooks settings".into()),
+            ItemType::McpServerConfig if auth > 0 => Some(format!(
+                "{auth} {} authentication",
+                if auth == 1 {
+                    "server needs"
+                } else {
+                    "servers need"
+                }
+            )),
+            _ => None,
+        };
+        let status = div()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .child(category_status(category, count, failed, auth, t))
+            .child(history_arrow(expanded, RowKind::Nested, t));
+        rows.push(self.disclosure(
+            format!("history-{id}-{}", category.id()),
+            nested_row(category.label(), detail, status.into_any_element(), t),
+            expanded,
+            Control::HistoryCategory(id.clone(), category),
+            window,
+            cx,
+        ));
+        if expanded {
+            rows.extend(self.history_items(history, category, t, window, cx));
+        }
+        rows
+    }
+
+    fn history_entry(
+        &self,
+        history: &History,
+        state: &ImportState,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let mut rows = Vec::new();
+        let id = &history.import_id;
+        let expanded = self.expanded.contains(id);
+        let title = history.provider_id.map_or_else(
+            || "Import".into(),
+            |provider| format!("Imported from {}", provider.label()),
+        );
+        let warning_count = history_warning_count(history, state);
+        let mut summary = format!("{} imported", history.successes.len());
+        if !history.failures.is_empty() {
+            summary.push_str(&format!(" · {} did not import", history.failures.len()));
+        }
+        if warning_count > 0 {
+            summary.push_str(&format!(" · {warning_count} need review"));
+        }
+        let description = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(8.))
+            .child(text(
+                history_time(history.completed_at_ms),
+                12.,
+                16.,
+                430.,
+                t.text_secondary,
+            ))
+            .child(text(summary, 12., 16., 430., t.text_secondary));
+        let arrow = history_arrow(expanded, RowKind::Standard, t);
+        rows.push(
+            self.disclosure(
+                format!("history-{id}"),
+                row_content(
+                    title,
+                    Some(description.into_any_element()),
+                    history
+                        .provider_id
+                        .map(|provider| provider_icon(provider, 12.5, t)),
+                    arrow,
+                    t,
+                    RowKind::Standard,
+                ),
+                expanded,
+                Control::History(id.clone()),
+                window,
+                cx,
+            ),
+        );
+        if expanded {
+            let categories: BTreeSet<_> = history
+                .successes
+                .iter()
+                .chain(&history.failures)
+                .map(|item| item.item_type)
+                .collect();
+            if categories.is_empty() {
+                rows.push(nested_row(
+                    "No results recorded",
+                    None,
+                    div().into_any_element(),
+                    t,
+                ));
+            }
+            for category in categories {
+                rows.extend(self.history_category(history, state, category, t, window, cx));
+            }
+        }
+        card(rows, self.surface(t), t)
+    }
+
     fn history(
         &mut self,
         state: &ImportState,
@@ -766,194 +1029,7 @@ impl ImportPage {
             .filter(|history| self.show_all_history || newest - history.completed_at_ms <= 60_000)
         {
             visible_count += 1;
-            let mut rows = Vec::new();
-            let id = &history.import_id;
-            let expanded = self.expanded.contains(id);
-            let title = history.provider_id.map_or_else(
-                || "Import".into(),
-                |provider| format!("Imported from {}", provider.label()),
-            );
-            let warning_count = history_warning_count(history, state);
-            let mut summary = format!("{} imported", history.successes.len());
-            if !history.failures.is_empty() {
-                summary.push_str(&format!(" · {} did not import", history.failures.len()));
-            }
-            if warning_count > 0 {
-                summary.push_str(&format!(" · {warning_count} need review"));
-            }
-            let description = div()
-                .flex()
-                .flex_wrap()
-                .items_center()
-                .gap(px(8.))
-                .child(text(
-                    history_time(history.completed_at_ms),
-                    12.,
-                    16.,
-                    430.,
-                    t.text_secondary,
-                ))
-                .child(text(summary, 12., 16., 430., t.text_secondary));
-            let arrow = history_arrow(expanded, RowKind::Standard, &t);
-            rows.push(
-                self.disclosure(
-                    format!("history-{id}"),
-                    row_content(
-                        title,
-                        Some(description.into_any_element()),
-                        history
-                            .provider_id
-                            .map(|provider| provider_icon(provider, 12.5, &t)),
-                        arrow,
-                        &t,
-                        RowKind::Standard,
-                    ),
-                    expanded,
-                    Control::History(id.clone()),
-                    window,
-                    cx,
-                ),
-            );
-            if expanded {
-                let categories: BTreeSet<_> = history
-                    .successes
-                    .iter()
-                    .chain(&history.failures)
-                    .map(|item| item.item_type)
-                    .collect();
-                if categories.is_empty() {
-                    rows.push(nested_row(
-                        "No results recorded",
-                        None,
-                        div().into_any_element(),
-                        &t,
-                    ));
-                }
-                for category in categories {
-                    let count = history
-                        .successes
-                        .iter()
-                        .filter(|item| item.item_type == category)
-                        .count();
-                    let failed = history
-                        .failures
-                        .iter()
-                        .filter(|item| item.item_type == category)
-                        .count();
-                    let auth = imported_auth_count(history, state, category);
-                    let expanded = self.categories.contains(&(id.clone(), category));
-                    let detail = match category {
-                        ItemType::Commands => Some("Converted into Codex skills".into()),
-                        ItemType::Hooks if count > 0 => {
-                            Some("Manage imported hooks in Hooks settings".into())
-                        }
-                        ItemType::McpServerConfig if auth > 0 => Some(format!(
-                            "{auth} {} authentication",
-                            if auth == 1 {
-                                "server needs"
-                            } else {
-                                "servers need"
-                            }
-                        )),
-                        _ => None,
-                    };
-                    let status = div()
-                        .flex()
-                        .items_center()
-                        .gap(px(12.))
-                        .child(category_status(category, count, failed, auth, &t))
-                        .child(history_arrow(expanded, RowKind::Nested, &t));
-                    rows.push(self.disclosure(
-                        format!("history-{id}-{}", category.id()),
-                        nested_row(category.label(), detail, status.into_any_element(), &t),
-                        expanded,
-                        Control::HistoryCategory(id.clone(), category),
-                        window,
-                        cx,
-                    ));
-                    if expanded {
-                        for (failed, item) in history
-                            .successes
-                            .iter()
-                            .map(|item| (false, item))
-                            .chain(history.failures.iter().map(|item| (true, item)))
-                            .filter(|(_, item)| item.item_type == category)
-                        {
-                            let label = if category == ItemType::Sessions {
-                                item.title.clone().unwrap_or_else(|| "Untitled chat".into())
-                            } else {
-                                item.source
-                                    .clone()
-                                    .unwrap_or_else(|| "Imported item".into())
-                            };
-                            let detail = if failed {
-                                item.message.clone()
-                            } else {
-                                item.target
-                                    .clone()
-                                    .filter(|target| Some(target) != item.source.as_ref())
-                            };
-                            let control = if !failed
-                                && matches!(
-                                    category,
-                                    ItemType::Sessions
-                                        | ItemType::Skills
-                                        | ItemType::Commands
-                                        | ItemType::McpServerConfig
-                                        | ItemType::Plugins
-                                ) {
-                                item.target.as_ref().map(|target| {
-                                    self.action(
-                                        format!("open-import-{id}-{target}"),
-                                        match category {
-                                            ItemType::Sessions => "Open chat",
-                                            ItemType::Skills | ItemType::Commands => {
-                                                "Open in Skills"
-                                            }
-                                            ItemType::McpServerConfig => "Open MCP settings",
-                                            _ => "Open plugin",
-                                        },
-                                        Control::Dispatch(ImportAction::OpenItem(
-                                            category,
-                                            target.clone(),
-                                        )),
-                                        false,
-                                        window,
-                                        cx,
-                                    )
-                                })
-                            } else {
-                                None
-                            };
-                            rows.push(nested_row(
-                                label,
-                                detail,
-                                control.unwrap_or_else(|| div().into_any_element()),
-                                &t,
-                            ));
-                        }
-                        if category == ItemType::Hooks {
-                            rows.push(nested_row(
-                                "Manage imported hooks",
-                                None,
-                                self.action(
-                                    format!("manage-hooks-{id}"),
-                                    "Open hooks settings",
-                                    Control::Dispatch(ImportAction::OpenItem(
-                                        ItemType::Hooks,
-                                        String::new(),
-                                    )),
-                                    false,
-                                    window,
-                                    cx,
-                                ),
-                                &t,
-                            ));
-                        }
-                    }
-                }
-            }
-            entries.push(card(rows, self.surface(&t), &t));
+            entries.push(self.history_entry(history, state, &t, window, cx));
         }
         if visible_count < histories.len() {
             entries.push(div().flex().justify_center().child(self.action(
@@ -973,6 +1049,145 @@ impl ImportPage {
                 .child(div().flex().flex_col().gap(px(6.)).children(entries)),
         )
     }
+
+    fn attention_tabs(
+        &self,
+        active: ItemType,
+        hooks: bool,
+        names: &[String],
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<Div> {
+        let mut tabs = div()
+            .id("import-attention-tabs")
+            .px(px(16.))
+            .pt(px(12.))
+            .flex()
+            .gap(px(8.))
+            .role(gpui::Role::TabList)
+            .aria_label("Imported setup categories");
+        for (category, label) in [
+            (ItemType::McpServerConfig, format!("MCPs ({})", names.len())),
+            (ItemType::Hooks, "Hooks".into()),
+        ] {
+            if category == ItemType::Hooks && !hooks
+                || category == ItemType::McpServerConfig && names.is_empty()
+            {
+                continue;
+            }
+            let handle =
+                focus::handle(format!("import-attention-{}", category.id()), 0, window, cx);
+            tabs = tabs.child(
+                focus::ring(
+                    div()
+                        .id(SharedString::from(format!(
+                            "import-attention-{}",
+                            category.id()
+                        )))
+                        .role(gpui::Role::Tab)
+                        .aria_label(label.clone())
+                        .aria_selected(active == category)
+                        .px(px(8.))
+                        .py(px(6.))
+                        .rounded(px(12.))
+                        .when(active == category, |d| d.bg(t.text_alpha_5))
+                        .child(text(label, 13., 18., 500., t.text)),
+                    &handle,
+                    px(12.),
+                    px(2.),
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.activate(Control::Attention(category), window, cx)
+                }))
+                .on_key_down(cx.listener(
+                    move |this, event: &KeyDownEvent, window, cx| {
+                        if matches!(
+                            event.keystroke.key.as_str(),
+                            "enter" | "space" | "left" | "right"
+                        ) {
+                            this.activate(Control::Attention(category), window, cx);
+                            cx.stop_propagation();
+                        }
+                    },
+                )),
+            );
+        }
+        tabs
+    }
+
+    fn mcp_status_row(
+        &self,
+        state: &ImportState,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        match &state.mcp_auth {
+            Load::Failed(_) => row(
+                "Couldn't check imported MCP servers",
+                None,
+                None,
+                self.action(
+                    "retry-imported-mcps",
+                    "Retry",
+                    Control::Dispatch(ImportAction::Refresh),
+                    state.pending,
+                    window,
+                    cx,
+                ),
+                t,
+            ),
+            _ => row("Loading imported MCPs…", None, None, spinner(t), t),
+        }
+    }
+    fn attention_items(
+        &self,
+        active: ItemType,
+        names: &[String],
+        state: &ImportState,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Div> {
+        let mut rows = Vec::new();
+        if active == ItemType::Hooks {
+            rows.push(row(
+                "Imported hooks",
+                Some("Review imported hooks before allowing them to run".into()),
+                Some(icon("settings-hooks", 16., t.text_secondary).into_any_element()),
+                self.action(
+                    "review-imported-hooks",
+                    "Open settings",
+                    Control::Dispatch(ImportAction::OpenItem(ItemType::Hooks, String::new())),
+                    false,
+                    window,
+                    cx,
+                ),
+                t,
+            ));
+        } else {
+            for name in names {
+                rows.push(row(
+                    name.clone(),
+                    Some("Authentication is required before this MCP server can be used".into()),
+                    Some(icon("settings-configuration", 16., t.text_secondary).into_any_element()),
+                    self.action(
+                        format!("authenticate-import-{name}"),
+                        "Authenticate",
+                        Control::Dispatch(ImportAction::AuthenticateMcp(name.clone())),
+                        state.auth_urls.get(name).is_some_and(Option::is_none),
+                        window,
+                        cx,
+                    ),
+                    t,
+                ));
+            }
+        }
+        rows
+    }
+
     fn attention(
         &self,
         state: &ImportState,
@@ -1005,23 +1220,7 @@ impl ImportPage {
         }
         let mut rows = Vec::new();
         if checking {
-            rows.push(match &state.mcp_auth {
-                Load::Failed(_) => row(
-                    "Couldn't check imported MCP servers",
-                    None,
-                    None,
-                    self.action(
-                        "retry-imported-mcps",
-                        "Retry",
-                        Control::Dispatch(ImportAction::Refresh),
-                        state.pending,
-                        window,
-                        cx,
-                    ),
-                    &t,
-                ),
-                _ => row("Loading imported MCPs…", None, None, spinner(&t), &t),
-            });
+            rows.push(self.mcp_status_row(state, &t, window, cx));
         }
         let active = if self.attention_tab == ItemType::Hooks && hooks || names.is_empty() {
             ItemType::Hooks
@@ -1029,100 +1228,8 @@ impl ImportPage {
             ItemType::McpServerConfig
         };
         if hooks || !names.is_empty() {
-            let mut tabs = div()
-                .id("import-attention-tabs")
-                .px(px(16.))
-                .pt(px(12.))
-                .flex()
-                .gap(px(8.))
-                .role(gpui::Role::TabList)
-                .aria_label("Imported setup categories");
-            for (category, label) in [
-                (ItemType::McpServerConfig, format!("MCPs ({})", names.len())),
-                (ItemType::Hooks, "Hooks".into()),
-            ] {
-                if category == ItemType::Hooks && !hooks
-                    || category == ItemType::McpServerConfig && names.is_empty()
-                {
-                    continue;
-                }
-                let handle =
-                    focus::handle(format!("import-attention-{}", category.id()), 0, window, cx);
-                tabs = tabs.child(
-                    focus::ring(
-                        div()
-                            .id(SharedString::from(format!(
-                                "import-attention-{}",
-                                category.id()
-                            )))
-                            .role(gpui::Role::Tab)
-                            .aria_label(label.clone())
-                            .aria_selected(active == category)
-                            .px(px(8.))
-                            .py(px(6.))
-                            .rounded(px(12.))
-                            .when(active == category, |d| d.bg(t.text_alpha_5))
-                            .child(text(label, 13., 18., 500., t.text)),
-                        &handle,
-                        px(12.),
-                        px(2.),
-                        cx,
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.activate(Control::Attention(category), window, cx)
-                    }))
-                    .on_key_down(cx.listener(
-                        move |this, event: &KeyDownEvent, window, cx| {
-                            if matches!(
-                                event.keystroke.key.as_str(),
-                                "enter" | "space" | "left" | "right"
-                            ) {
-                                this.activate(Control::Attention(category), window, cx);
-                                cx.stop_propagation();
-                            }
-                        },
-                    )),
-                );
-            }
-            rows.push(div().child(tabs));
-            if active == ItemType::Hooks {
-                rows.push(row(
-                    "Imported hooks",
-                    Some("Review imported hooks before allowing them to run".into()),
-                    Some(icon("settings-hooks", 16., t.text_secondary).into_any_element()),
-                    self.action(
-                        "review-imported-hooks",
-                        "Open settings",
-                        Control::Dispatch(ImportAction::OpenItem(ItemType::Hooks, String::new())),
-                        false,
-                        window,
-                        cx,
-                    ),
-                    &t,
-                ));
-            } else {
-                for name in names {
-                    rows.push(row(
-                        name.clone(),
-                        Some(
-                            "Authentication is required before this MCP server can be used".into(),
-                        ),
-                        Some(
-                            icon("settings-configuration", 16., t.text_secondary)
-                                .into_any_element(),
-                        ),
-                        self.action(
-                            format!("authenticate-import-{name}"),
-                            "Authenticate",
-                            Control::Dispatch(ImportAction::AuthenticateMcp(name.clone())),
-                            state.auth_urls.get(name).is_some_and(Option::is_none),
-                            window,
-                            cx,
-                        ),
-                        &t,
-                    ));
-                }
-            }
+            rows.push(div().child(self.attention_tabs(active, hooks, names, &t, window, cx)));
+            rows.extend(self.attention_items(active, names, state, &t, window, cx));
         }
         Some(group(
             "Needs attention",
@@ -1294,6 +1401,168 @@ impl ImportPage {
             .into_any_element()
     }
 
+    fn customization_rows(
+        &self,
+        preferences: &Preferences,
+        show_all: bool,
+        state: &ImportState,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Vec<Div>, Vec<Div>, Vec<String>, bool) {
+        let mut rows = Vec::new();
+        let mut footer_rows = Vec::new();
+        let mut focus_ids = Vec::new();
+        let known = known_categories(state);
+        for category in ItemType::ALL
+            .into_iter()
+            .filter(|category| show_all || known.contains(category))
+        {
+            let detail = match category {
+                ItemType::Config
+                    if state
+                        .sync_state
+                        .provider_ids
+                        .contains(&Provider::ClaudeCowork) =>
+                {
+                    Some("Cowork tools sync together with Settings".into())
+                }
+                ItemType::Plugins => {
+                    Some("Bundled skills and MCP servers sync with their plugin".into())
+                }
+                ItemType::Commands => Some("Imported as skills".into()),
+                _ => None,
+            };
+            rows.push(
+                div().child(
+                    row(
+                        category.label(),
+                        detail,
+                        Some(icon(category.icon(), 20., t.text).into_any_element()),
+                        self.checkbox(
+                            (format!("sync-category-{}", category.id()), category.label()),
+                            preferences.category_checked(category, &state.sync_state),
+                            Control::Category(category),
+                            false,
+                            window,
+                            cx,
+                        ),
+                        t,
+                    )
+                    .id(format!("sync-row-{}", category.id()))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.activate(Control::Category(category), window, cx);
+                    })),
+                ),
+            );
+            focus_ids.push(format!("sync-category-{}", category.id()));
+        }
+        footer_rows.push(row(
+            "Sync all categories",
+            Some("Include categories found in the future".into()),
+            None,
+            self.toggle(
+                ("sync-all-categories", "Sync all categories"),
+                *preferences == Preferences::All,
+                Control::AllCategories,
+                false,
+                window,
+                cx,
+            ),
+            t,
+        ));
+        focus_ids.push("sync-all-categories".into());
+        if known.len() < ItemType::ALL.len() {
+            footer_rows.push(row(
+                "Show all categories",
+                Some("Choose what to sync when new categories become available".into()),
+                None,
+                self.toggle(
+                    ("show-sync-categories", "Show all categories"),
+                    show_all,
+                    Control::ShowCategories,
+                    false,
+                    window,
+                    cx,
+                ),
+                t,
+            ));
+            focus_ids.push("show-sync-categories".into());
+        }
+        footer_rows.push(
+            text(
+                "Changes apply to future syncs. Content already imported stays in ChatGPT",
+                13.,
+                16.,
+                430.,
+                t.text_secondary,
+            )
+            .whitespace_normal(),
+        );
+        let empty = !ItemType::ALL
+            .iter()
+            .any(|category| preferences.category_selected(*category, &state.sync_state));
+        if empty {
+            footer_rows.push(text("Select at least one category. To stop syncing, turn off “Keep imports in sync”", 13., 16., 430., t.text_secondary).whitespace_normal());
+        }
+        (rows, footer_rows, focus_ids, empty)
+    }
+
+    fn dialog_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        focus_order: &[FocusHandle],
+        pending: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.keystroke.key == "escape" && !pending {
+            self.close(window, cx);
+            cx.stop_propagation();
+        }
+        if event.keystroke.key == "tab" {
+            let current = focus_order
+                .iter()
+                .position(|handle| handle.is_focused(window));
+            let next = if event.keystroke.modifiers.shift {
+                current
+                    .filter(|index| *index > 0)
+                    .map_or(focus_order.len() - 1, |index| index - 1)
+            } else {
+                current.map_or(0, |index| (index + 1) % focus_order.len())
+            };
+            focus_order[next].focus(window, cx);
+            cx.stop_propagation();
+        }
+    }
+
+    fn review_rows(
+        &self,
+        choices: &[ReviewChoice],
+        selected: &BTreeMap<String, bool>,
+        tools_expanded: bool,
+        pending: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Vec<Div>, Vec<String>) {
+        let mut rows = Vec::new();
+        let mut focus_ids = Vec::new();
+        for choice in choices
+            .iter()
+            .filter(|choice| !choice.nested || tools_expanded)
+        {
+            rows.push(self.review_row(choice, selected, tools_expanded, pending, window, cx));
+            focus_ids.push(format!("import-choice-{}", choice.id));
+            if choice.expandable {
+                focus_ids.push("import-tools-details".into());
+            }
+            if choice.tooltip.is_some() {
+                focus_ids.push(format!("import-info-{}", choice.id));
+            }
+        }
+        (rows, focus_ids)
+    }
+
     fn dialog(
         &self,
         state: &ImportState,
@@ -1303,9 +1572,14 @@ impl ImportPage {
         let modal = self.modal.as_ref()?;
         let review = matches!(modal, Modal::Review { .. });
         let t = cx.theme().clone();
-        let mut rows = Vec::new();
+        let (width, content_gap, content_fill) = if review {
+            (520_f32, 16., gpui::transparent_black())
+        } else {
+            (680., 12., t.background_panel)
+        };
+        let rows;
         let mut footer_rows = Vec::new();
-        let mut focus_ids = Vec::new();
+        let mut focus_ids;
         let (title, subtitle, save, disabled): (SharedString, &str, Control, bool) = match modal {
             Modal::Review {
                 provider,
@@ -1314,26 +1588,16 @@ impl ImportPage {
                 choices,
                 tools_expanded,
             } => {
-                for choice in choices
-                    .iter()
-                    .filter(|choice| !choice.nested || *tools_expanded)
-                {
-                    rows.push(self.review_row(
-                        choice,
-                        selected,
-                        *tools_expanded,
-                        state.pending,
-                        window,
-                        cx,
-                    ));
-                    focus_ids.push(format!("import-choice-{}", choice.id));
-                    if choice.expandable {
-                        focus_ids.push("import-tools-details".into());
-                    }
-                    if choice.tooltip.is_some() {
-                        focus_ids.push(format!("import-info-{}", choice.id));
-                    }
-                }
+                let (content, focus) = self.review_rows(
+                    choices,
+                    selected,
+                    *tools_expanded,
+                    state.pending,
+                    window,
+                    cx,
+                );
+                rows = content;
+                focus_ids = focus;
                 (
                     "Select items to import".into(),
                     "Choose what to bring over. Your existing setup won’t be affected.",
@@ -1348,100 +1612,11 @@ impl ImportPage {
                 preferences,
                 show_all,
             } => {
-                let known = known_categories(state);
-                for category in ItemType::ALL
-                    .into_iter()
-                    .filter(|category| *show_all || known.contains(category))
-                {
-                    let detail = match category {
-                        ItemType::Config
-                            if state
-                                .sync_state
-                                .provider_ids
-                                .contains(&Provider::ClaudeCowork) =>
-                        {
-                            Some("Cowork tools sync together with Settings".into())
-                        }
-                        ItemType::Plugins => {
-                            Some("Bundled skills and MCP servers sync with their plugin".into())
-                        }
-                        ItemType::Commands => Some("Imported as skills".into()),
-                        _ => None,
-                    };
-                    rows.push(
-                        div().child(
-                            row(
-                                category.label(),
-                                detail,
-                                Some(icon(category.icon(), 20., t.text).into_any_element()),
-                                self.checkbox(
-                                    (format!("sync-category-{}", category.id()), category.label()),
-                                    preferences.category_checked(category, &state.sync_state),
-                                    Control::Category(category),
-                                    false,
-                                    window,
-                                    cx,
-                                ),
-                                &t,
-                            )
-                            .id(format!("sync-row-{}", category.id()))
-                            .on_click(cx.listener(
-                                move |this, _, window, cx| {
-                                    this.activate(Control::Category(category), window, cx);
-                                },
-                            )),
-                        ),
-                    );
-                    focus_ids.push(format!("sync-category-{}", category.id()));
-                }
-                footer_rows.push(row(
-                    "Sync all categories",
-                    Some("Include categories found in the future".into()),
-                    None,
-                    self.toggle(
-                        ("sync-all-categories", "Sync all categories"),
-                        *preferences == Preferences::All,
-                        Control::AllCategories,
-                        false,
-                        window,
-                        cx,
-                    ),
-                    &t,
-                ));
-                focus_ids.push("sync-all-categories".into());
-                if known.len() < ItemType::ALL.len() {
-                    footer_rows.push(row(
-                        "Show all categories",
-                        Some("Choose what to sync when new categories become available".into()),
-                        None,
-                        self.toggle(
-                            ("show-sync-categories", "Show all categories"),
-                            *show_all,
-                            Control::ShowCategories,
-                            false,
-                            window,
-                            cx,
-                        ),
-                        &t,
-                    ));
-                    focus_ids.push("show-sync-categories".into());
-                }
-                footer_rows.push(
-                    text(
-                        "Changes apply to future syncs. Content already imported stays in ChatGPT",
-                        13.,
-                        16.,
-                        430.,
-                        t.text_secondary,
-                    )
-                    .whitespace_normal(),
-                );
-                let empty = !ItemType::ALL
-                    .iter()
-                    .any(|category| preferences.category_selected(*category, &state.sync_state));
-                if empty {
-                    footer_rows.push(text("Select at least one category. To stop syncing, turn off “Keep imports in sync”", 13., 16., 430., t.text_secondary).whitespace_normal());
-                }
+                let (content, footer, focus, empty) =
+                    self.customization_rows(preferences, *show_all, state, &t, window, cx);
+                rows = content;
+                footer_rows = footer;
+                focus_ids = focus;
                 (
                     "Content to sync".into(),
                     "Applies to all connected sources and projects",
@@ -1535,28 +1710,9 @@ impl ImportPage {
             .track_focus(&self.modal_focus)
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-                if event.keystroke.key == "escape" && !pending {
-                    this.close(window, cx);
-                    cx.stop_propagation();
-                }
-                if event.keystroke.key == "tab" {
-                    let current = focus_order
-                        .iter()
-                        .position(|handle| handle.is_focused(window));
-                    let next = if event.keystroke.modifiers.shift {
-                        current
-                            .filter(|index| *index > 0)
-                            .map_or(focus_order.len() - 1, |index| index - 1)
-                    } else {
-                        current.map_or(0, |index| (index + 1) % focus_order.len())
-                    };
-                    focus_order[next].focus(window, cx);
-                    cx.stop_propagation();
-                }
+                this.dialog_key_down(event, &focus_order, pending, window, cx);
             }))
-            .w(px(
-                (if review { 520_f32 } else { 680. }).min(f32::from(viewport.width) * 0.92)
-            ))
+            .w(px(width.min(f32::from(viewport.width) * 0.92)))
             .max_h(px(720_f32.min(f32::from(viewport.height) - 64.)))
             .relative()
             .flex()
@@ -1574,27 +1730,18 @@ impl ImportPage {
             .child(
                 div()
                     .id("import-dialog-content")
-                    .pt(px(if review { 16. } else { 12. }))
+                    .pt(px(content_gap))
                     .min_h_0()
                     .overflow_y_scroll()
                     .child(card(
                         rows,
-                        on_card(
-                            20.,
-                            shapes::Corner::Squircle,
-                            if review {
-                                gpui::transparent_black()
-                            } else {
-                                t.background_panel
-                            },
-                            Some(t.border),
-                        ),
+                        on_card(20., shapes::Corner::Squircle, content_fill, Some(t.border)),
                         &t,
                     )),
             )
             .child(
                 div()
-                    .pt(px(if review { 16. } else { 12. }))
+                    .pt(px(content_gap))
                     .flex_none()
                     .flex()
                     .flex_col()

@@ -182,6 +182,7 @@ Settings > Import uses the original feature gates and the app-server's external-
 It shows detected providers and recorded import history.
 Automatic sync keeps the source selection and runs at the original 12-hour interval.
 Customize changes future imports only; disabling sync keeps saved selections.
+Cursor projectless imports keep their workspace and output-folder records without adding a named project.
 
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
