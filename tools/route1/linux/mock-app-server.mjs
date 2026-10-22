@@ -59,6 +59,7 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function pick(method, params) {
   const c = byMethod.get(method);
   if (!c) return null;
+  if (/^thread\/(archive|unarchive)$/.test(method)) return c.find(r => same(r.params, params)) ?? null;
   const score = (r) => {
     if (same(r.params, params)) return 1e6;
     const p = params ?? {};
