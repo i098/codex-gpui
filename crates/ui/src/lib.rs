@@ -43,6 +43,7 @@ actions!(
         OpenSettings,
         LogOut,
         ShowKeyboardShortcuts,
+        OpenMini,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
@@ -876,8 +877,7 @@ impl Shell {
 
     /// Profile avatar menu (`codex.profileDropdown.*`) above the avatar: `Settings`, then the
     /// `Help` submenu's `Set up mobile`, flattened under a `Help` heading.
-    /// ponytail: Profile, Usage and Show Mini open pages the port does not have; add
-    /// them with those pages.
+    /// Profile and Usage open pages that this menu does not yet expose.
     fn profile_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let hover = t.menu_item_hover;
         let item = |id: &'static str,
@@ -902,6 +902,7 @@ impl Shell {
             "Set up mobile",
             dispatch::<OpenMobileSetup>,
         );
+        let mini = item("profile-mini", "Show Mini", dispatch::<OpenMini>);
         div()
             .absolute()
             .left(px(8.))
@@ -914,6 +915,7 @@ impl Shell {
             }))
             .child(composer::popover(t, 220., |d| {
                 d.child(settings)
+                    .child(mini)
                     .child(item("profile-log-out", "Log out", dispatch::<LogOut>))
                     .child(div().px(px(8.)).pt(px(8.)).pb(px(4.)).child(text(
                         "Help",

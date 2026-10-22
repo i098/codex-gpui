@@ -2633,6 +2633,7 @@ impl Root {
             }
             CommandMenuEvent::Command(label) => match label.as_ref() {
                 "New chat" => window.dispatch_action(Box::new(NewChat), cx),
+                "Show Mini" => window.dispatch_action(Box::new(ui::OpenMini), cx),
                 "New standalone chat" => {
                     window.dispatch_action(Box::new(features::shortcuts::NewStandaloneChat), cx)
                 }
@@ -5132,7 +5133,7 @@ fn generation_instructions(context: &str) -> String {
 }
 
 impl Render for Root {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(login) = &self.login {
             return div()
                 .size_full()
@@ -5148,7 +5149,7 @@ impl Render for Root {
                 .children(self.dialog.clone())
                 .into_any_element();
         }
-        let content: AnyElement = if let Some(content) = hotkey::content(self, cx) {
+        let content: AnyElement = if let Some(content) = hotkey::content(self, window, cx) {
             content
         } else {
             match (&self.page, &self.split) {
