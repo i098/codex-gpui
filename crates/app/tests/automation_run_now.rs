@@ -2889,6 +2889,14 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
                 }
             }
         })?;
+        // The shared session-settings resumes belong to other threads. Without them, the heartbeat
+        // resume, whose app-tool config depends on the installed adapter, falls back to its own line.
+        let resumes: Vec<Value> = lines
+            .iter()
+            .filter(|line| line["msg"]["method"] == "thread/resume")
+            .map(|line| line["msg"]["id"].clone())
+            .collect();
+        lines.retain(|line| !resumes.contains(&line["msg"]["id"]));
         let mut add = |method: &str, params: Value, result: Value| {
             let mut pair = exchange(method, result);
             pair[0]["msg"]["params"] = params;

@@ -1,5 +1,5 @@
 use crate::{
-    composer::{Composer, Dismiss},
+    composer::{Composer, Dismiss, ModifiedSubmit},
     icon::icon,
     text,
     tooltip::{Side, tooltip},
@@ -762,6 +762,11 @@ impl Render for Editor {
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_key_down(cx.listener(Self::key))
             .on_action(cx.listener(|this, _: &Dismiss, _, cx| this.dismiss(cx)))
+            // Text fields bind Cmd-Enter to `ModifiedSubmit`; the binding runs before key listeners.
+            .capture_action(cx.listener(|this, _: &ModifiedSubmit, window, cx| {
+                this.submit(window, cx);
+                cx.stop_propagation();
+            }))
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let key = &event.keystroke;
                 if key.key == "enter" && (key.modifiers.platform || key.modifiers.control) {
