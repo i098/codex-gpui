@@ -231,7 +231,7 @@ impl Analytics {
                 if selected { t.text } else { t.text_secondary },
             ))
             .when(menu, |d| {
-                d.child(icon("chevron-down", 14., t.text_tertiary))
+                d.child(icon("chevron-down", 14., t.text_tertiary).runtime())
             })
             .when(disabled, |d| d.opacity(0.4));
         focus::ring(content, &handle, px(12.5), px(2.), cx)
@@ -430,7 +430,7 @@ impl Analytics {
                         .items_center()
                         .justify_center()
                         .when(disabled, |d| d.opacity(0.4))
-                        .child(icon(glyph, 16., t.text)),
+                        .child(icon(glyph, 16., t.text).runtime()),
                     &handle,
                     px(12.5),
                     px(0.),

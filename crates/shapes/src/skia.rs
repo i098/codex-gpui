@@ -2164,6 +2164,65 @@ pub(crate) fn paint_horizontal_stripes(
     );
 }
 
+pub(crate) fn paint_vertical_fade(
+    color: Rgba,
+    layer_offset_y: Pixels,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    use skia_safe::{TileMode, gradient};
+    let scale = window.scale_factor();
+    let floor = |value: Pixels| px((f32::from(value) * scale).floor() / scale);
+    let origin = point(floor(bounds.left()), floor(bounds.top() - layer_offset_y));
+    let layer = Layer::new(window, Some(origin)).for_bounds(bounds, scale);
+    let (contour, _) = ops(&Decoration::default(), layer.local(bounds, scale), scale);
+    let bbox = Op::Fill(contour).bbox();
+    if !shown(bbox, layer, window) {
+        return;
+    }
+    let clips = clips(window, layer);
+    let sprites = cached(
+        format!("fade{color:?}{contour:?}{clips:?}{:?}", layer.key(bbox)),
+        || {
+            let colors = [
+                Color4f::new(color.r, color.g, color.b, color.a),
+                Color4f::new(color.r, color.g, color.b, 0.),
+            ];
+            let gradient = gradient::Gradient::new(
+                gradient::Colors::new_evenly_spaced(&colors, TileMode::Clamp, None),
+                gradient::Interpolation {
+                    in_premul: gradient::interpolation::InPremul::Yes,
+                    color_space: gradient::interpolation::ColorSpace::OKLab,
+                    ..Default::default()
+                },
+            );
+            let [x, y, width, height] = contour.rr.r;
+            let shader =
+                gradient::shaders::linear_gradient(((x, y), (x, y + height)), &gradient, None)
+                    .expect("vertical fade shader");
+            let mut paint = Paint::default();
+            paint
+                .set_anti_alias(true)
+                .set_dither(true)
+                .set_shader(shader);
+            composited_sprites(bbox, layer, &|canvas| {
+                for clip in &clips {
+                    clip.clip(canvas, ClipOp::Intersect);
+                }
+                canvas.draw_rect(Rect::from_xywh(x, y, width, height), &paint);
+            })
+        },
+    );
+    paint_sprites(
+        &sprites,
+        gpui::rgb(0xffffff).into(),
+        layer.origin,
+        window,
+        cx,
+    );
+}
+
 // Chromium decodes to the smallest mip that still covers the rounded destination.
 fn image_decode_size(mut source: [i32; 2], target: [f32; 2]) -> Option<[i32; 2]> {
     let target = target.map(|side| side.abs().round() as i32);

@@ -1792,11 +1792,7 @@ impl Render for Usage {
                         .right_0()
                         .bottom(px(-32.))
                         .h(px(32.))
-                        .bg(gpui::linear_gradient(
-                            180.,
-                            gpui::linear_color_stop(t.surface, 0.),
-                            gpui::linear_color_stop(t.surface.opacity(0.), 1.),
-                        )),
+                        .child(shapes::vertical_fade(t.surface, px(20. + 28. + 8.))),
                 ));
             body = body.child(gpui::deferred(tabs));
         }
