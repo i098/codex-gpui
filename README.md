@@ -141,6 +141,22 @@ Model-driven computer use stays on the LCU relay and original native sockets.
 Do not grant SSH Automation access to test the separate Appshots Apple Event path.
 These native operations require macOS; Linux checks cover policy, capture-file boundaries, and request state only.
 
+## Security provider API
+
+`bridge::security::Client` uses the installed `codex-security` MCP provider through the existing app-server connection.
+It opens an ephemeral, read-only host thread and preserves its identity on tool calls.
+The bridge does not embed the Security SDK or install the provider.
+
+The API reads scans, repositories, findings, and target metadata.
+It also handles scan setup, continuation delivery, cancellation, and finding remediation.
+Failed or unconfirmed delivery keeps the ownership claim when another turn might still be active.
+Rejected or mismatched handoff claims never cancel a scan owned by another client.
+Gate resolution requires the rollout gate and an enabled, available `codex-security@` plugin.
+
+Run `cargo test -p bridge --lib security::tests` for gate, response-validation, pagination, and delivery-ownership checks.
+These tests use a local protocol peer and do not start a model turn.
+This increment does not add a native Security route or claim visual parity.
+
 ## Build and run
 
 ```sh

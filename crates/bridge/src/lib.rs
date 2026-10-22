@@ -19,6 +19,7 @@ pub use automation::AutomationTurn;
 mod cloud;
 pub use cloud::CLOUD_ENDPOINT;
 mod replay;
+pub mod security;
 pub mod types;
 
 use std::collections::HashMap;
