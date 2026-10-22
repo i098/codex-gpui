@@ -95,6 +95,11 @@ fn open_running(fx: &mut Fx) -> Result<()> {
         "turn/started",
         json!({"threadId": SUBTRACT, "turn": {"id": "queue-options-turn", "items": [], "status": "inProgress", "error": null}}),
     );
+    notify(
+        fx,
+        "thread/status/changed",
+        json!({"threadId": SUBTRACT, "status": {"type": "active", "activeFlags": []}}),
+    );
     fx.wait("running turn", |fx| {
         fx.read(|root, cx| {
             root.thread()
@@ -305,6 +310,20 @@ fn a_refused_queueing_switch_leaves_the_behavior_that_applies() -> Result<()> {
 /// The ephemeral fork `Open in side chat` makes of the subtract thread.
 const SIDE: &str = "01a13de9-51de-7c4a-8000-51de0c4a7000";
 
+fn fork_response(thread: Value) -> Value {
+    json!({
+        "thread": thread,
+        "model": "gpt-6-astra",
+        "reasoningEffort": "low",
+        "approvalPolicy": "on-request",
+        "approvalsReviewer": "user",
+        "sandbox": {
+            "type": "workspaceWrite", "writableRoots": [], "networkAccess": false,
+            "excludeTmpdirEnvVar": false, "excludeSlashTmp": false,
+        },
+    })
+}
+
 /// The selected side chat tab's `(turn ids and statuses, composer label)`.
 fn side_chat(fx: &mut Fx) -> Option<(Vec<(String, TurnStatus)>, &'static str)> {
     fx.read(|root, cx| {
@@ -365,7 +384,7 @@ fn open_in_side_chat_runs_the_queued_message_in_its_own_conversation() -> Result
     lines.extend(exchange("thread/resume", json!({})));
     lines.extend(list(&[&first, &second, &third]));
     lines.extend(exchange("thread/queue/delete", json!({ "deleted": true })));
-    lines.extend(exchange("thread/fork", json!({ "thread": fork })));
+    lines.extend(exchange("thread/fork", fork_response(fork)));
     lines.extend(exchange("thread/inject_items", json!({})));
     lines.extend(exchange(
         "turn/start",
@@ -443,18 +462,33 @@ fn open_in_side_chat_runs_the_queued_message_in_its_own_conversation() -> Result
         })
     );
     assert_eq!(fx.composer_text()?, "keep me");
+    assert!(fx.read(|root, cx| {
+        let SidePanel::SideChat(key) = root.side_panel().unwrap() else {
+            return false;
+        };
+        let (_, composer) = root.conversation(Some(key)).unwrap();
+        composer.read(cx).permission() == ui::composer::Permission::Ask
+            && root.composer(cx).read(cx).permission() == ui::composer::Permission::Custom
+    }));
     assert!(!fx.composer_focused()?);
 
     // Each conversation takes only its own thread's events.
-    let answer = json!([
-        {"type": "userMessage", "id": "side-user", "content": second["input"]},
-        {"type": "agentMessage", "id": "side-answer", "text": "It returns a - b."},
-    ]);
     notify(
         &mut fx,
         "turn/started",
-        json!({"threadId": SIDE, "turn": turn("side-turn", "inProgress", answer)}),
+        json!({"threadId": SIDE, "turn": turn("side-turn", "inProgress", json!([]))}),
     );
+    for item in [
+        json!({"type": "userMessage", "id": "side-user", "content": second["input"]}),
+        json!({"type": "agentMessage", "id": "side-answer", "text": "It returns a - b."}),
+    ] {
+        notify(
+            &mut fx,
+            "item/completed",
+            json!({"threadId": SIDE, "turnId": "side-turn", "item": item}),
+        );
+    }
+    fx.advance(std::time::Duration::from_secs(1))?;
     save(&mut fx, "side-chat-running")?;
     notify(
         &mut fx,
@@ -596,7 +630,7 @@ fn failed_side_chat(stage: &str) -> Result<()> {
     lines.extend(list(&[&first, &second, &third]));
     lines.extend(exchange("thread/queue/delete", json!({ "deleted": true })));
     if stage != "fork" {
-        lines.extend(exchange("thread/fork", json!({ "thread": fork })));
+        lines.extend(exchange("thread/fork", fork_response(fork)));
         lines.extend(exchange(
             "thread/unsubscribe",
             json!({ "status": "unsubscribed" }),

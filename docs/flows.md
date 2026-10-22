@@ -461,6 +461,12 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 | 20 | Resize | resize | Below 40rem the editor and footer stack. | Only the 475 px compact footer. | FAIL (`crates/ui/src/composer.rs`) |
 | 21 | `+` Add menu | click | Opens the mention list without inserting `@`; Escape keeps the draft. | Reuses the S019 query state; keys skip disabled actions, and a second click closes the list. | PASS (`s018::add_menu_replay`) |
 
+Queued side chats restore the fork response's model, effort, and permission settings without changing the primary composer.
+Their tab shows activity while a turn runs.
+Turns without a server start time measure elapsed time from their first notification without adding a message timestamp.
+The queue replay matches the retained running state at one second.
+The original/native pixel comparison still fails for transcript geometry, queue controls, and surface colors.
+
 S018 records CP-039 and CP-040 in `refs/interactions/s018.json`.
 Its Add replay checks local actions, selection, query text, focus, Escape, reopen, and the second trigger click.
 Its draft check covers a Unicode prefix, replacement before the query anchor, and typed `@` after dismissal.

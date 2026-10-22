@@ -8,7 +8,7 @@ mod mobile;
 mod settings;
 mod thread;
 
-pub(crate) use thread::load_thread;
+pub(crate) use thread::{forked_thread, load_thread};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Route {

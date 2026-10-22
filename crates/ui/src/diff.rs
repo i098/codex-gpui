@@ -11,10 +11,10 @@ use bridge::{
     types::{ThreadItem, ThreadReadResponse, ThreadStartResponse, Turn},
 };
 use gpui::{
-    Action, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context, Corners,
-    CursorStyle, Div, Entity, FocusHandle, Font, FontFeatures, FontWeight, Global, HighlightStyle,
-    Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString, Stateful,
+    Action, AnimationExt as _, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context,
+    Corners, CursorStyle, Div, Entity, FocusHandle, Font, FontFeatures, FontWeight, Global,
+    HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString, Stateful,
     StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black, combine_highlights,
     deferred, div, font, prelude::FluentBuilder as _, px, rgb,
 };
@@ -1466,7 +1466,38 @@ pub struct ActivateSideTab(pub usize);
 #[action(namespace = ui, no_json)]
 pub struct CloseSideTab(pub usize);
 
+fn side_tab_icon(name: &'static str, index: usize, color: Hsla) -> gpui::AnyElement {
+    let icon = icon(name, 16., color);
+    if name != "sidebar-cmd-spinner" {
+        return icon.into_any_element();
+    }
+    icon.with_animation(
+        ("side-chat-running", index),
+        gpui::Animation::new(std::time::Duration::from_secs(1)).repeat_synced(),
+        |icon, progress| {
+            icon.with_transformation(gpui::Transformation::rotate(gpui::radians(
+                progress * std::f32::consts::TAU,
+            )))
+        },
+    )
+    .into_any_element()
+}
+
 impl SplitScreen {
+    pub fn set_side_chat_running(&mut self, index: usize, running: bool, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get_mut(index) {
+            let icon = if running {
+                "sidebar-cmd-spinner"
+            } else {
+                "side-chat"
+            };
+            if tab.0 != icon {
+                tab.0 = icon;
+                cx.notify();
+            }
+        }
+    }
+
     /// Titlebar row over a side panel (`Task tabs`): every open tab in a 240 px slot (the
     /// selected one on its surface, the others `text-tertiary`, surface and `×` on hover),
     /// `New tab`, and the `Enter full view` / `Hide tabs` buttons. The caller places it from
@@ -1582,7 +1613,7 @@ impl SplitScreen {
                         .items_center()
                         .gap(px(8.))
                         .when(closable, |d| d.pr(px(20.)))
-                        .child(icon(tab_icon, 16., color))
+                        .child(side_tab_icon(tab_icon, ix, color))
                         .child(
                             div()
                                 .relative()

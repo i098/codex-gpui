@@ -2109,7 +2109,15 @@ impl Root {
             }
             SidePanel::SideChat(key) => {
                 let chat = side_chats.iter().find(|chat| chat.key == key)?;
-                Some(("side-chat", chat.title.clone()))
+                let running = chat.view.read(cx).is_running();
+                Some((
+                    if running {
+                        "sidebar-cmd-spinner"
+                    } else {
+                        "side-chat"
+                    },
+                    chat.title.clone(),
+                ))
             }
         }
     }
@@ -3470,14 +3478,15 @@ impl Root {
                 "excludeTurns": true,
             });
             let result = match bridge
-                .request::<_, ThreadReadResponse>("thread/fork", params)
+                .request::<_, Value>("thread/fork", params)
                 .await
+                .and_then(routes::forked_thread)
             {
                 Err(error) => Err(error),
-                Ok(fork) => {
-                    let fork_id = fork.thread.id.clone();
+                Ok((thread, settings)) => {
+                    let fork_id = thread.id.clone();
                     let key = this.update_in(cx, |this, window, cx| {
-                        this.add_side_chat(fork.thread, title, window, cx)
+                        this.add_side_chat(thread, settings, title, window, cx)
                     })?;
                     let boundary = json!([{
                         "type": "message",
@@ -3546,6 +3555,7 @@ impl Root {
     fn add_side_chat(
         &mut self,
         thread: Thread,
+        settings: host::run_now::heartbeat::RendererState,
         title: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -3556,6 +3566,7 @@ impl Root {
         let composer = cx.new(|cx| {
             let mut composer = Composer::thread(window, cx);
             composer.set_models(&self.models, &self.config, cx);
+            composer.restore_run_settings(&settings.collaboration_mode, settings.permission, cx);
             composer.set_slash_skills(&self.skills, cx);
             composer.set_search_roots(vec![thread.cwd.clone()], cx);
             composer.set_queue_pending(self.queue_pending, cx);
@@ -4657,12 +4668,20 @@ impl Root {
                 .iter()
                 .map(|chat| (&chat.view, &chat.composer));
             for (view, composer) in self.thread.iter().zip([&self.thread_composer]).chain(side) {
-                let running = view
-                    .read(cx)
-                    .turns()
-                    .iter()
-                    .any(|turn| turn.status == TurnStatus::InProgress);
+                let running = view.read(cx).is_running();
                 composer.update(cx, |c, cx| c.set_running(running, cx));
+            }
+            if let Some(split) = &self.split {
+                for (index, side) in self.tabs.iter().enumerate() {
+                    if let SidePanel::SideChat(key) = side
+                        && let Some(chat) = self.chat(*key)
+                    {
+                        let running = chat.view.read(cx).is_running();
+                        split.update(cx, |split, cx| {
+                            split.set_side_chat_running(index, running, cx)
+                        });
+                    }
+                }
             }
         }
         // Side chats are ephemeral: no Recents row, spinner, unread mark or automation run.
