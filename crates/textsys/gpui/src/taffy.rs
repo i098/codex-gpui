@@ -412,67 +412,88 @@ impl TaffyLayoutEngine {
     // ponytail: reverse directions and one-sided auto margins keep taffy's offsets (nothing
     // uses them); model them when a screen does.
     fn flex_center_correction(&self, parent: NodeId, child: NodeId) -> TaffyPoint<f32> {
-        use taffy::style::{
-            AlignContentKeyword, AlignItemsKeyword, Display, FlexDirection, FlexWrap, Position,
-        };
-        let mut correction = TaffyPoint { x: 0., y: 0. };
+        use taffy::style::{Display, FlexDirection, FlexWrap};
         let style = self.taffy.style(parent).expect(EXPECT_MESSAGE);
-        if style.display != Display::Flex || style.flex_wrap != FlexWrap::NoWrap {
-            return correction;
+        if style.display != Display::Flex
+            || style.flex_wrap != FlexWrap::NoWrap
+            || !self.in_flow(child)
+        {
+            return TaffyPoint { x: 0., y: 0. };
         }
-        let in_flow = |node: NodeId| {
-            self.taffy.style(node).expect(EXPECT_MESSAGE).position != Position::Absolute
-        };
-        if !in_flow(child) {
-            return correction;
-        }
-        let blink = |half: f32| ((half * 128.).round() as i64 / 2) as f32 / 64. - half;
         let row = matches!(
             style.flex_direction,
             FlexDirection::Row | FlexDirection::RowReverse
         );
-        let p = self.taffy.layout(parent).expect(EXPECT_MESSAGE);
-        let start = |l: &taffy::Layout| {
-            if row {
-                (l.location.x, l.margin.left, p.padding.left + p.border.left, l.location.y, l.margin.top, p.padding.top + p.border.top)
-            } else {
-                (l.location.y, l.margin.top, p.padding.top + p.border.top, l.location.x, l.margin.left, p.padding.left + p.border.left)
-            }
-        };
-        let c = self.taffy.layout(child).expect(EXPECT_MESSAGE);
-        let child_style = self.taffy.style(child).expect(EXPECT_MESSAGE);
-        let (_, _, _, cross, cross_margin, cross_start) = start(c);
-        let mut cross_fix = 0.;
-        if child_style.align_self.or(style.align_items).map(|a| a.keyword) == Some(AlignItemsKeyword::Center) {
-            cross_fix = blink(cross - cross_margin - cross_start);
-        }
-        let mut main_fix = 0.;
-        let (start_auto, end_auto) = if row {
-            (child_style.margin.left.is_auto(), child_style.margin.right.is_auto())
+        let cross = self.cross_center_fix(parent, child, row);
+        let main = self.main_center_fix(parent, child, row);
+        if row {
+            TaffyPoint { x: main, y: cross }
         } else {
-            (child_style.margin.top.is_auto(), child_style.margin.bottom.is_auto())
+            TaffyPoint { x: cross, y: main }
+        }
+    }
+
+    fn in_flow(&self, node: NodeId) -> bool {
+        let position = self.taffy.style(node).expect(EXPECT_MESSAGE).position;
+        position != taffy::style::Position::Absolute
+    }
+
+    /// `node`'s margin box offset from `parent`'s content box, along x (`horizontal`) or y.
+    fn content_offset(&self, parent: NodeId, node: NodeId, horizontal: bool) -> f32 {
+        let p = self.taffy.layout(parent).expect(EXPECT_MESSAGE);
+        let l = self.taffy.layout(node).expect(EXPECT_MESSAGE);
+        if horizontal {
+            l.location.x - l.margin.left - (p.padding.left + p.border.left)
+        } else {
+            l.location.y - l.margin.top - (p.padding.top + p.border.top)
+        }
+    }
+
+    /// The cross-axis fix: `align-items` or `align-self: center`.
+    fn cross_center_fix(&self, parent: NodeId, child: NodeId, row: bool) -> f32 {
+        let style = self.taffy.style(parent).expect(EXPECT_MESSAGE);
+        let align = self.taffy.style(child).expect(EXPECT_MESSAGE).align_self;
+        let centered = align.or(style.align_items).map(|a| a.keyword)
+            == Some(taffy::style::AlignItemsKeyword::Center);
+        if !centered {
+            return 0.;
+        }
+        blink_half(self.content_offset(parent, child, !row))
+    }
+
+    /// The main-axis fix: auto margins on both sides, else `justify-content: center` (the first
+    /// in-flow item's offset).
+    fn main_center_fix(&self, parent: NodeId, child: NodeId, row: bool) -> f32 {
+        let style = self.taffy.style(parent).expect(EXPECT_MESSAGE);
+        let margin = &self.taffy.style(child).expect(EXPECT_MESSAGE).margin;
+        let auto = if row {
+            margin.left.is_auto() && margin.right.is_auto()
+        } else {
+            margin.top.is_auto() && margin.bottom.is_auto()
         };
-        if start_auto && end_auto {
+        if auto {
+            let c = self.taffy.layout(child).expect(EXPECT_MESSAGE);
             let half = if row { c.margin.left } else { c.margin.top };
             let units = (half * 128.).round() as i64;
-            main_fix = ((units + 1) / 2) as f32 / 64. - half;
-        } else if style.justify_content.map(|j| j.keyword) == Some(AlignContentKeyword::Center)
-            && let Some(first) = (0..self.taffy.child_count(parent))
-                .map(|i| self.taffy.child_at_index(parent, i).expect(EXPECT_MESSAGE))
-                .find(|&n| in_flow(n))
+            return ((units + 1) / 2) as f32 / 64. - half;
+        }
+        if style.justify_content.map(|j| j.keyword)
+            != Some(taffy::style::AlignContentKeyword::Center)
         {
-            let (main, main_margin, main_start, ..) = start(self.taffy.layout(first).expect(EXPECT_MESSAGE));
-            main_fix = blink(main - main_margin - main_start);
+            return 0.;
         }
-        if row {
-            correction.x = main_fix;
-            correction.y = cross_fix;
-        } else {
-            correction.x = cross_fix;
-            correction.y = main_fix;
-        }
-        correction
+        (0..self.taffy.child_count(parent))
+            .map(|i| self.taffy.child_at_index(parent, i).expect(EXPECT_MESSAGE))
+            .find(|&n| self.in_flow(n))
+            .map_or(0., |first| {
+                blink_half(self.content_offset(parent, first, row))
+            })
     }
+}
+
+/// Blink's `free_space / 2` in LayoutUnits (truncated toward zero) minus taffy's exact `half`.
+fn blink_half(half: f32) -> f32 {
+    ((half * 128.).round() as i64 / 2) as f32 / 64. - half
 }
 
 /// A unique identifier for a layout node, generated when requesting a layout from Taffy
