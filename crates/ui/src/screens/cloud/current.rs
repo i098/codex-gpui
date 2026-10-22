@@ -429,7 +429,11 @@ impl CloudPage {
                         .left_0()
                         .right_0()
                         .h(px(32.))
-                        .child(shapes::vertical_fade(t.surface)),
+                        .bg(gpui::linear_gradient(
+                            180.,
+                            gpui::linear_color_stop(t.surface, 0.),
+                            gpui::linear_color_stop(gpui::Hsla { a: 0., ..t.surface }, 1.),
+                        )),
                 )
                 .with_priority(1),
             )

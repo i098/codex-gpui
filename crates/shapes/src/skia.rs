@@ -34,7 +34,7 @@ const CHUNK: i32 = 128;
 /// `blitAntiH2`/`blitAntiV2` (`SkBlendARGB32`), raster pipeline lowp srcover.
 pub(crate) const MASK: u8 = 0;
 pub(crate) const ARGB32: u8 = 1;
-pub(crate) const PIPELINE: u8 = 2;
+const PIPELINE: u8 = 2;
 /// Blit into the transparent tile of a composited layer, then the compositor's srcover.
 const LAYER: u8 = 3;
 /// A mask layer's alpha applied to the layer pixel (`DstIn` at the sprite's coverage).
