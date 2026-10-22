@@ -55,6 +55,15 @@ An in-flight JavaScript call can delay Interrupt cleanup; the original hook can 
 
 Run `cargo test -p app --test computer_use_lifecycle` on macOS for native Stop and thread-projection regression checks.
 
+## SSH connection discovery
+
+The host service supports `discover-remote-ssh-connections` and returns an `sshAliases` list.
+It reads `$HOME/.ssh/config` and its top-level `Include` files without running SSH or changing connection settings.
+Discovery follows the original literal-host, quote, and include rules.
+The Connections page and protected pairing flows remain separate work.
+
+Run `cargo test -p app --lib --test host ssh_discovery` for the parser and host-service checks.
+
 ## Background terminal output
 
 Background command output displays ANSI colors and supports text selection.

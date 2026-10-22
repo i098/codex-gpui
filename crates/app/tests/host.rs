@@ -83,6 +83,43 @@ fn wire_errors_and_binary_responses_are_not_empty_json_successes() -> Result<()>
     Ok(())
 }
 
+#[test]
+fn ssh_discovery_refreshes_the_selected_home_without_writes() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let storage = tempfile::tempdir()?;
+    let ssh = home.path().join(".ssh");
+    fs::create_dir(&ssh)?;
+    let config = ssh.join("config");
+    fs::write(
+        &config,
+        "Host capture-fixture\n  HostName 127.0.0.1\n  Port 1\n",
+    )?;
+    let host = LocalHost::new(storage.path()).with_ssh_home(home.path());
+    let request = Request::post("discover-remote-ssh-connections", None);
+    assert_eq!(
+        json_body(&host.fetch(&request)?)?,
+        json!({"sshAliases": ["capture-fixture"]})
+    );
+
+    let refreshed = b"Host updated-fixture\n  HostName 127.0.0.1\n  Port 1\n";
+    fs::write(&config, refreshed)?;
+    assert_eq!(
+        json_body(&host.fetch(&request)?)?,
+        json!({"sshAliases": ["updated-fixture"]})
+    );
+    assert_eq!(fs::read(&config)?, refreshed);
+    assert!(!storage.path().join(".codex-global-state.json").exists());
+
+    fs::write(&config, [0xff])?;
+    assert!(host.fetch(&request).is_err());
+    fs::remove_file(&config)?;
+    assert_eq!(
+        json_body(&host.fetch(&request)?)?,
+        json!({"sshAliases": []})
+    );
+    Ok(())
+}
+
 fn definition(id: &str, updated: i64) -> String {
     format!(
         r#"version = 1
