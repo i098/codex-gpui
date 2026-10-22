@@ -150,6 +150,7 @@ mod browser {
         state: &str,
         remaining: Duration,
     ) -> Result<Vec<BrowserProfile>> {
+        stream.set_nonblocking(false)?;
         let deadline = Instant::now() + remaining;
         let mut bytes = Vec::new();
         let header_end = loop {
@@ -316,6 +317,31 @@ mod browser {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[cfg(target_os = "macos")]
+        #[test]
+        fn callback_accepts_a_delayed_body() -> Result<()> {
+            let listener = TcpListener::bind(("127.0.0.1", 0))?;
+            listener.set_nonblocking(true)?;
+            let mut client = TcpStream::connect(listener.local_addr()?)?;
+            let (mut stream, _) = listener.accept()?;
+            stream.set_nonblocking(true)?;
+            let body = b"state=token&email=test%40example.com";
+            write!(
+                client,
+                "POST /browser-session HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            )?;
+            let profiles = std::thread::scope(|scope| {
+                scope.spawn(move || {
+                    std::thread::sleep(Duration::from_millis(50));
+                    client.write_all(body)
+                });
+                receive(&mut stream, "token", Duration::from_secs(2))
+            })?;
+            assert_eq!(profiles[0].email, "test@example.com");
+            Ok(())
+        }
 
         #[test]
         fn stalled_lookup_helper_is_stopped() {
@@ -772,5 +798,54 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn desktop_handoff_preserves_nested_provider_and_account_parameters() {
+        let raw = "https://auth.openai.com/authorize?state=fixture&login_hint=old&connection=old";
+        let mut wrapped = Url::parse("https://chatgpt.com/codex/desktop-auth").unwrap();
+        wrapped.query_pairs_mut().append_pair("authorize_url", raw);
+        let options = Options {
+            desktop_auth: true,
+            streamlined_login: true,
+            ..Options::default()
+        };
+        for source in [raw, wrapped.as_str()] {
+            let outer = browser_url(
+                source,
+                Provider::Google,
+                Some("test+fixture@example.com"),
+                &options,
+                None,
+            )
+            .unwrap();
+            assert_eq!(outer.path(), "/codex/desktop-auth");
+            let flags: Vec<_> = outer
+                .query_pairs()
+                .filter(|(key, _)| key == "codex_streamlined_login")
+                .map(|(_, value)| value.into_owned())
+                .collect();
+            assert_eq!(flags, ["true"]);
+            let authorization = outer
+                .query_pairs()
+                .find(|(key, _)| key == "authorize_url")
+                .unwrap()
+                .1;
+            let inner = Url::parse(&authorization).unwrap();
+            let pairs: Vec<_> = inner.query_pairs().collect();
+            for (key, expected) in [
+                ("state", "fixture"),
+                ("connection", "google-oauth2"),
+                ("login_hint", "test+fixture@example.com"),
+                ("codex_streamlined_login", "true"),
+            ] {
+                let values: Vec<_> = pairs
+                    .iter()
+                    .filter(|(name, _)| name == key)
+                    .map(|(_, value)| value.as_ref())
+                    .collect();
+                assert_eq!(values, [expected], "{key}");
+            }
+        }
     }
 }
