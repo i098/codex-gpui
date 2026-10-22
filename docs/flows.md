@@ -375,6 +375,8 @@ Transcription requests have a 60-second deadline; streaming requests keep their 
 Request text fields share the dispatcher; secret and numeric fields do not expose Dictate.
 The `app` integration test uses generated WAV bytes and a loopback HTTP response, not a microphone or speech recognition.
 Run `cargo test -p app --features test-support --test dictation -- --test-threads=1` for that controlled path.
+Set `CGX_DICTATION_EVIDENCE` to an output directory on macOS to capture the recording, transcription error, and inserted transcript.
+These offscreen frames do not prove original/native pixel parity.
 
 ## 14.4 Thread view
 

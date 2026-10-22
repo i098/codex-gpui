@@ -171,6 +171,7 @@ fn controlled_audio_reaches_only_the_live_editor() -> Result<()> {
     fx.wait("recording fixture input", |fx| {
         fx.read(|_, cx| composer.read(cx).dictation_label() == "Stop dictation")
     })?;
+    fx.capture_evidence("CGX_DICTATION_EVIDENCE", "native-recording")?;
     fx.click(at)?;
     backend.respond(200, "{\"text\":\"hello 🦀\"}")?;
     fx.wait("transcript insertion", |fx| {
@@ -205,12 +206,7 @@ fn controlled_audio_reaches_only_the_live_editor() -> Result<()> {
         fx.composer_text()? == "α hello 🦀 ω",
         "dictation redo failed"
     );
-    if let Some(directory) = std::env::var_os("CGX_DICTATION_EVIDENCE") {
-        fx.hover((1200., 200.))?;
-        std::fs::create_dir_all(&directory)?;
-        fx.shot()?
-            .save(std::path::Path::new(&directory).join("native-transcript.png"))?;
-    }
+    fx.capture_evidence("CGX_DICTATION_EVIDENCE", "native-transcript")?;
     fx.click(at)?;
     fx.wait("second fixture recording", |fx| {
         fx.read(|_, cx| composer.read(cx).dictation_label() == "Stop dictation")
@@ -247,6 +243,7 @@ fn controlled_audio_reaches_only_the_live_editor() -> Result<()> {
         fx.read(|_, cx| composer.read(cx).dictation_error() == Some("Unable to transcribe audio")),
         "transcription error was hidden"
     );
+    fx.capture_evidence("CGX_DICTATION_EVIDENCE", "native-error")?;
     ensure!(
         fx.composer_text()? == "α hello 🦀 safe ω",
         "error changed the draft"
