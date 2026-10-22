@@ -203,6 +203,18 @@ fn byte_labels_match_original_rounding_and_grouping() {
 }
 
 #[test]
+fn usage_segments_truncate_percentages_like_blink() {
+    // The original's measured 728 CSS px bar at scale 2, from x 444.25: Blink ends the last
+    // segment at 2344.484375 device px, so pixel 2344 keeps the bar background.
+    let edges = segment_edges(&[363_416, 0, 0, 0, 0, 438_272], 888.5, 1456.);
+    let units: Vec<_> = edges.iter().map(|&(l, r)| (l * 64., r * 64.)).collect();
+    assert_eq!(units[0], (56_864., 99_105.));
+    assert_eq!(units[5], (99_105., 150_047.));
+    assert!(edges[1..5].iter().all(|&(left, right)| left == right));
+    assert_eq!(segment_edges(&[0; 6], 10., 100.)[5], (10., 10.));
+}
+
+#[test]
 fn refreshed_categories_keep_cached_values_until_complete() {
     #[cfg(target_os = "macos")]
     std::panic::set_hook(Box::new(|info| {

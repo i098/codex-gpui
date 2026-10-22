@@ -155,6 +155,121 @@ impl IntoElement for PlacedOverlay {
     }
 }
 
+/// The usage bar's category segments. The original sizes each one with `width: N%` in a flex
+/// row. Blink truncates each resolved percentage to a LayoutUnit (1/64 device px) and places the
+/// segments end to end from the bar's unsnapped x; Taffy keeps the exact float instead.
+struct UsageBar {
+    bytes: [u64; 6],
+    colors: [gpui::Hsla; 6],
+    /// The bar's unsnapped device width, from the layout measure.
+    width: std::rc::Rc<std::cell::Cell<f32>>,
+}
+
+/// Each segment's unsnapped device `(left, right)`: `width: bytes / total * 100%` of the
+/// `width`-px bar, computed in float and truncated to a LayoutUnit as Blink does, laid end to
+/// end from `x`.
+fn segment_edges(bytes: &[u64], x: f32, width: f32) -> Vec<(f32, f32)> {
+    let total: u64 = bytes.iter().sum();
+    let mut left = x;
+    bytes
+        .iter()
+        .map(|&bytes| {
+            let percent = if total > 0 {
+                (bytes as f64 / total as f64 * 100.) as f32
+            } else {
+                0.
+            };
+            let right = left + (width * percent / 100. * 64.).trunc() / 64.;
+            (std::mem::replace(&mut left, right), right)
+        })
+        .collect()
+}
+
+impl gpui::Element for UsageBar {
+    type RequestLayoutState = gpui::LayoutId;
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        _: &mut App,
+    ) -> (gpui::LayoutId, gpui::LayoutId) {
+        let style = gpui::Style {
+            size: gpui::size(relative(1.).into(), relative(1.).into()),
+            ..Default::default()
+        };
+        let width = self.width.clone();
+        let id = window.request_measured_layout(style, move |known, available, window, _| {
+            let definite = |space| match space {
+                gpui::AvailableSpace::Definite(v) => v,
+                _ => px(0.),
+            };
+            let size = gpui::size(
+                known.width.unwrap_or_else(|| definite(available.width)),
+                known.height.unwrap_or_else(|| definite(available.height)),
+            );
+            width.set(f32::from(size.width) * window.scale_factor());
+            size
+        });
+        (id, id)
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: gpui::Bounds<gpui::Pixels>,
+        _: &mut gpui::LayoutId,
+        _: &mut Window,
+        _: &mut App,
+    ) {
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        id: &mut gpui::LayoutId,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let scale = window.scale_factor();
+        let x = f32::from(bounds.origin.x + window.layout_origin_residual_x(*id)) * scale;
+        // Blink snaps each painted edge to the nearest device pixel, half up.
+        let snap = |v: f32| px((v + 0.5).floor() / scale);
+        let edges = segment_edges(&self.bytes, x, self.width.get());
+        for ((left, right), color) in edges.into_iter().zip(self.colors) {
+            let segment = gpui::Bounds::from_corners(
+                point(snap(left), bounds.top()),
+                point(snap(right), bounds.bottom()),
+            );
+            let fill = shapes::Decoration {
+                fill: Some(color),
+                ..Default::default()
+            };
+            shapes::paint(&fill, None, segment, window, cx);
+        }
+    }
+}
+
+impl IntoElement for UsageBar {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
 pub struct StoragePage {
     settings: Entity<SettingsPage>,
     usage: Option<Usage>,
@@ -998,21 +1113,13 @@ impl StoragePage {
                 .child(refresh),
         );
         if let Some(usage) = &self.usage {
-            let mut bar = div().h(px(24.)).w_full().flex().overflow_hidden();
+            let bar = UsageBar {
+                bytes: usage.bytes,
+                colors,
+                width: Default::default(),
+            };
             let mut labels = div().flex().flex_wrap().gap_x(px(16.)).gap_y(px(6.));
             for (index, &bytes) in usage.bytes.iter().enumerate() {
-                if usage.total() > 0 {
-                    bar = bar.child(
-                        div()
-                            .h_full()
-                            .w(relative(bytes as f32 / usage.total() as f32))
-                            .relative()
-                            .child(shapes::decoration(shapes::Decoration {
-                                fill: Some(colors[index]),
-                                ..Default::default()
-                            })),
-                    );
-                }
                 let label = self.category_size(index, bytes);
                 labels = labels.child(
                     div()
