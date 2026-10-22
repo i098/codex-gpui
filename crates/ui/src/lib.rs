@@ -1114,8 +1114,13 @@ impl Shell {
                             point(left, top + shift),
                             point(bounds.right() + r, bottom),
                         );
-                        shapes::with_unsnapped_clip(clip, Corners::all(r), window, |window| {
-                            shapes::paint(&background, None, bounds, window, cx);
+                        // Blink clips to the paint-containment box (snapped, anti-aliased)
+                        // before the `clip-path`: Skia rasters the rounded clip within that
+                        // clip, which changes the arc's last rows above the box's bottom edge.
+                        shapes::with_unsnapped_clip(bounds, Corners::default(), window, |window| {
+                            shapes::with_unsnapped_clip(clip, Corners::all(r), window, |window| {
+                                shapes::paint(&background, None, bounds, window, cx);
+                            });
                         });
                     },
                 )
