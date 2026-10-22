@@ -2079,12 +2079,11 @@ fn image_decode_size(mut source: [i32; 2], target: [f32; 2]) -> Option<[i32; 2]>
     }
 }
 
-/// `crate::raster_images` on macOS.
+/// `crate::raster_decorated_images` on macOS.
 pub(crate) fn raster_images(
     images: &[(&image::RgbaImage, Bounds<Pixels>)],
     clip: Bounds<Pixels>,
-    radius: gpui::Corners<Pixels>,
-    corner: Corner,
+    d: &Decoration,
     composition: ImageComposition,
     window: &Window,
 ) -> gpui::RenderImage {
@@ -2104,12 +2103,8 @@ pub(crate) fn raster_images(
         page
     };
     let (layer, s) = (Layer::new(window, None), window.scale_factor());
-    let d = Decoration {
-        radius,
-        corner,
-        ..Default::default()
-    };
-    let (contour, _) = ops(&d, layer.local(clip, s), s);
+    // Blink paints the box's own shadows and fill, then clips its content to the contour.
+    let (contour, box_ops) = ops(d, layer.local(clip, s), s);
     let [x0, y0, w, h] = contour.rr.r.map(|v| v as i32);
     let dev = |v: Pixels| f32::from(v) * s;
     let mut group = Rect::new_empty();
@@ -2125,13 +2120,7 @@ pub(crate) fn raster_images(
                 dev(dst.bottom()),
             );
             let target = image_decode_size([iw, ih], [rect.width(), rect.height()])?;
-            let info = ImageInfo::new((iw, ih), ColorType::N32, AlphaType::Premul, None);
-            let image = skia_safe::images::raster_from_data(
-                &info,
-                Data::new_copy(img.as_raw()),
-                iw as usize * 4,
-            )
-            .expect("shapes: image");
+            let image = skia_image(img);
             let image = if target == [iw, ih] {
                 image
             } else {
@@ -2165,6 +2154,9 @@ pub(crate) fn raster_images(
     let mut out = vec![0; (w * h * 4) as usize];
     for (o, ts, [ox0, oy0, ox1, oy1]) in layer.tiles([x0, y0, x0 + w, y0 + h], layer.size()) {
         let (px, row) = tile_pixels(o, ts, clear, |c| {
+            for (op, color) in &box_ops {
+                op.draw(c, color4f(*color));
+            }
             contour.clip(c, ClipOp::Intersect);
             if grouped {
                 c.save_layer(&skia_safe::canvas::SaveLayerRec::default().bounds(&group));
@@ -2200,6 +2192,43 @@ pub(crate) fn raster_images(
     }
     let out = image::RgbaImage::from_raw(w as u32, h as u32, out).expect("shapes: raster");
     gpui::RenderImage::new([image::Frame::new(out)])
+}
+
+/// A premultiplied N32 image of `img`'s pixels.
+fn skia_image(img: &image::RgbaImage) -> skia_safe::Image {
+    let (w, h) = (img.width() as i32, img.height() as i32);
+    let info = ImageInfo::new((w, h), ColorType::N32, AlphaType::Premul, None);
+    skia_safe::images::raster_from_data(&info, Data::new_copy(img.as_raw()), w as usize * 4)
+        .expect("shapes: image")
+}
+
+/// `crate::canvas_images` on macOS.
+pub(crate) fn canvas_images(
+    width: u32,
+    height: u32,
+    draws: &[crate::CanvasDraw],
+) -> image::RgbaImage {
+    let white = Color4f::new(1., 1., 1., 1.);
+    let size = (width as i32, height as i32);
+    // A raster surface packs its rows, so its bytes are the image as is.
+    let (px, _) = tile_pixels([0, 0], size, white, |c| {
+        for draw in draws {
+            let filter = if draw.smooth {
+                FilterMode::Linear
+            } else {
+                FilterMode::Nearest
+            };
+            let [x, y, w, h] = draw.rect.map(|v| v as f32);
+            c.draw_image_rect_with_sampling_options(
+                skia_image(&draw.image),
+                None,
+                Rect::from_xywh(x, y, w, h),
+                SamplingOptions::new(filter, MipmapMode::None),
+                &Paint::default(),
+            );
+        }
+    });
+    image::RgbaImage::from_raw(width, height, px).expect("shapes: canvas")
 }
 
 /// Blink's paint ops for the decoration `d` of the border box `bounds` (window px at scale
@@ -3050,8 +3079,7 @@ mod tests {
                             let raster = raster_images(
                                 &[(&images[0], bounds), (&images[1], bounds)],
                                 bounds,
-                                gpui::Corners::default(),
-                                Corner::Round,
+                                &Decoration::default(),
                                 ImageComposition::Group(gpui::rgb(0x232323).into()),
                                 window,
                             );
@@ -3127,8 +3155,10 @@ mod tests {
                                     let image = raster_images(
                                         &[(&pixels, bounds)],
                                         bounds,
-                                        Corners::all(px(3.)),
-                                        Corner::Round,
+                                        &Decoration {
+                                            radius: Corners::all(px(3.)),
+                                            ..Default::default()
+                                        },
                                         ImageComposition::Composited(gpui::rgb(0x2d2d2d).into()),
                                         window,
                                     );

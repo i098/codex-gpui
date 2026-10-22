@@ -34,3 +34,10 @@ The commands read status, branch, diff statistics, diff text, commits, and remot
 The fixture branch has one committed `sample.txt` addition above its local `main`.
 These responses are reference data; replaying them does not execute Git commands.
 
+
+## Media PDF
+
+`media/guide.pdf` is the recorded three-page `guide.pdf` of the owned media repository (SHA-256 `7b225b54…5020`).
+Pillow wrote it: each page places one 180×240 4:2:0 JPEG.
+`media/guide-page-1-pdfjs.png` is its first page as the original app's PDF.js canvas drew it: the 314×418 device px under the revised preview of the retained Codex 26.1007 frame at 2x (`mediaPdf/dark@1280x832`, origin 1713, 440).
+Its corners show the rounded page clip over the canvas.

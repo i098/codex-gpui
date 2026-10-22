@@ -160,20 +160,48 @@ pub fn raster_images(
     composition: ImageComposition,
     window: &Window,
 ) -> Option<gpui::RenderImage> {
-    #[cfg(target_os = "macos")]
-    return Some(skia::raster_images(
-        images,
-        clip,
+    let d = Decoration {
         radius,
         corner,
-        composition,
-        window,
-    ));
+        ..Default::default()
+    };
+    raster_decorated_images(images, clip, &d, composition, window)
+}
+
+/// [`raster_images`] for a box that paints `d` (its outer `box-shadow`s and
+/// `background-color`) below its clipped content: inside the box's rect the raster holds
+/// Blink's whole paint, so the corners outside the clip keep the shadow and the fill's
+/// anti-aliased edge. Paint the same `d` with [`decoration`] for the shadow outside the rect.
+pub fn raster_decorated_images(
+    images: &[(&image::RgbaImage, Bounds<Pixels>)],
+    clip: Bounds<Pixels>,
+    d: &Decoration,
+    composition: ImageComposition,
+    window: &Window,
+) -> Option<gpui::RenderImage> {
+    #[cfg(target_os = "macos")]
+    return Some(skia::raster_images(images, clip, d, composition, window));
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (images, clip, radius, corner, composition, window);
+        let _ = (images, clip, d, composition, window);
         None
     }
+}
+
+/// One `drawImage` call on an opaque 2D canvas: the premultiplied image (see [`premultiply`])
+/// drawn whole into the device px rect `[x, y, width, height]`, with bilinear filtering when
+/// `imageSmoothingEnabled`, else nearest.
+pub struct CanvasDraw {
+    pub image: image::RgbaImage,
+    pub rect: [i32; 4],
+    pub smooth: bool,
+}
+
+/// A white `width`×`height` opaque canvas after `draws`, as Chromium's software 2D canvas
+/// rasterizes them (Skia's legacy bilinear); the pixels are premultiplied.
+#[cfg(target_os = "macos")]
+pub fn canvas_images(width: u32, height: u32, draws: &[CanvasDraw]) -> image::RgbaImage {
+    skia::canvas_images(width, height, draws)
 }
 
 /// Premultiplies `img` in place as Skia's N32 premul does: `round(c * a / 255)`.
