@@ -72,9 +72,16 @@ fn hidden_standalone_menu_allocates_its_own_workspace() -> Result<()> {
 fn temporary_menu_starts_ephemeral_and_never_enters_recents() -> Result<()> {
     const TEMPORARY: &str = "11111111-1111-4111-8111-111111111111";
     let mut recording = script(None, |_| {})?;
-    let original_length = recording.len();
     let extended = script(Some("sessions/greeting.jsonl"), |_| {})?;
-    for line in extended.into_iter().skip(original_length) {
+    // `script` puts the session between readback and the shared thread settings, so the
+    // session lines start where the two scripts differ.
+    let start = recording
+        .iter()
+        .zip(&extended)
+        .take_while(|(base, with_session)| base == with_session)
+        .count();
+    let session = extended[start..start + extended.len() - recording.len()].to_vec();
+    for line in session {
         let mut line: Value =
             serde_json::from_str(&serde_json::to_string(&line)?.replace(GREETING, TEMPORARY))?;
         for pointer in ["/msg/result/thread", "/msg/params/thread"] {

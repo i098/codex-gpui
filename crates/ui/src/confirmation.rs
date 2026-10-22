@@ -111,68 +111,33 @@ impl Confirmation {
         cx.notify();
     }
 
-    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let key = &event.keystroke;
-        match key.key.as_str() {
-            "escape" => self.finish(Outcome::Cancel, window, cx),
-            "tab" if !key.modifiers.platform && !key.modifiers.control && !key.modifiers.alt => {
-                let count = 2 + usize::from(self.opt_out.is_some());
-                let current = self
-                    .controls
-                    .iter()
-                    .position(|focus| focus.is_focused(window))
-                    .unwrap_or(2);
-                let next = if key.modifiers.shift {
-                    (current + count - 1) % count
-                } else {
-                    (current + 1) % count
-                };
-                if next < 2 {
-                    self.controls[next].focus(window, cx);
-                } else if let Some((_, _, focus)) = &self.opt_out {
-                    focus.focus(window, cx);
-                }
-                cx.notify();
-            }
-            "enter" | "space"
-                if !key.modifiers.platform && !key.modifiers.control && !key.modifiers.alt =>
-            {
-                if let Some((_, checked, focus)) = &mut self.opt_out
-                    && focus.is_focused(window)
-                {
-                    *checked = !*checked;
-                    cx.notify();
-                    cx.stop_propagation();
-                    return;
-                }
-                let outcome = if self.controls[1].is_focused(window) {
-                    Outcome::Confirm
-                } else {
-                    Outcome::Cancel
-                };
-                self.finish(outcome, window, cx);
-            }
-            _ => return,
-        }
-        cx.stop_propagation();
-    }
-}
-
-impl Render for Confirmation {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme().clone();
-        let width = 420_f32.min(f32::from(window.viewport_size().width) - 32.);
-        // The dialog's pills: `rounded-[12.5px]` squircles with a 1 px border, 32 px tall.
-        let pill = |fill: gpui::Hsla, border: gpui::Hsla| {
-            shapes::decoration(shapes::Decoration {
-                radius: Corners::all(px(12.5)),
-                corner: shapes::Corner::Squircle,
-                fill: Some(fill),
-                border: Some((px(1.), border)),
-                ..Default::default()
-            })
+    fn cycle_focus(&self, reverse: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let count = 2 + usize::from(self.opt_out.is_some());
+        let current = self
+            .controls
+            .iter()
+            .position(|focus| focus.is_focused(window))
+            .unwrap_or(2);
+        let next = if reverse {
+            (current + count - 1) % count
+        } else {
+            (current + 1) % count
         };
-        let checkbox = self.opt_out.as_ref().map(|(label, checked, focus)| {
+        if next < 2 {
+            self.controls[next].focus(window, cx);
+        } else if let Some((_, _, focus)) = &self.opt_out {
+            focus.focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn checkbox(
+        &self,
+        window: &Window,
+        t: &theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Div> {
+        self.opt_out.as_ref().map(|(label, checked, focus)| {
             let ringed = focus.is_focused(window) && window.last_input_was_keyboard();
             let blue: gpui::Hsla = rgba(0x3a83f7ff).into();
             let boxed = shapes::Decoration {
@@ -226,7 +191,55 @@ impl Render for Confirmation {
                         }
                     })),
             )
-        });
+        })
+    }
+
+    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let key = &event.keystroke;
+        match key.key.as_str() {
+            "escape" => self.finish(Outcome::Cancel, window, cx),
+            "tab" if !key.modifiers.platform && !key.modifiers.control && !key.modifiers.alt => {
+                self.cycle_focus(key.modifiers.shift, window, cx);
+            }
+            "enter" | "space"
+                if !key.modifiers.platform && !key.modifiers.control && !key.modifiers.alt =>
+            {
+                if let Some((_, checked, focus)) = &mut self.opt_out
+                    && focus.is_focused(window)
+                {
+                    *checked = !*checked;
+                    cx.notify();
+                    cx.stop_propagation();
+                    return;
+                }
+                let outcome = if self.controls[1].is_focused(window) {
+                    Outcome::Confirm
+                } else {
+                    Outcome::Cancel
+                };
+                self.finish(outcome, window, cx);
+            }
+            _ => return,
+        }
+        cx.stop_propagation();
+    }
+}
+
+impl Render for Confirmation {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
+        let width = 420_f32.min(f32::from(window.viewport_size().width) - 32.);
+        // The dialog's pills: `rounded-[12.5px]` squircles with a 1 px border, 32 px tall.
+        let pill = |fill: gpui::Hsla, border: gpui::Hsla| {
+            shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(12.5)),
+                corner: shapes::Corner::Squircle,
+                fill: Some(fill),
+                border: Some((px(1.), border)),
+                ..Default::default()
+            })
+        };
+        let checkbox = self.checkbox(window, &t, cx);
         let buttons = [self.cancel_label.clone(), self.confirm_label.clone()]
             .into_iter()
             .enumerate()

@@ -37,6 +37,7 @@ use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
+use ui::screens::diff::panel::ReviewRepository;
 use ui::screens::sidebar::Project;
 use url::Url;
 
@@ -45,8 +46,10 @@ pub mod computer_use;
 pub mod computer_use_native;
 mod context_files;
 mod diff_files;
+mod diff_repositories;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod directories;
+mod environments;
 mod git;
 pub mod git_pr;
 mod native_apps;
@@ -54,6 +57,9 @@ mod open_in;
 mod projectless;
 pub use projectless::Workspace;
 pub(crate) mod run_now;
+mod settings_git;
+mod skills;
+mod ssh_discovery;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
@@ -116,6 +122,10 @@ pub trait Host: Send + Sync {
         bail!("sidebar project state is unsupported by this host")
     }
 
+    fn review_repositories(&self, _thread: &str, _cwd: &str) -> Result<Vec<ReviewRepository>> {
+        bail!("review repositories are unsupported by this host")
+    }
+
     fn add_project(&self, _root: &Path) -> Result<String> {
         bail!("adding a local project is unsupported by this host")
     }
@@ -156,29 +166,6 @@ pub struct Identity {
     pub account_id: String,
     pub user_id: String,
     pub device_id: String,
-}
-
-/// The webview client's models read that starts a suggested task's guided conversation
-/// (`conversation-actions` `J`: `query.getOrFetch` of the TPP models before the conversation
-/// is prepared), as recorded in `refs/interactions/s035b.json`.
-pub fn tpp_models(identity: &Identity) -> Request {
-    Request::Http(json!({
-        "url": "/tpp/models/?iim=false&include_icons=false",
-        "method": "GET",
-        "headers": {
-            "x-openai-web-frontend": "codex_webview",
-            "x-oai-mcp-form-version": "2",
-            "x-openai-codex-window-type": "electron",
-            "OAI-Language": "en-US",
-            "oai-did": identity.device_id,
-            "X-OpenAI-Attach-Auth": "1",
-            "X-OpenAI-Attach-Desktop-Surface": "1",
-            "X-OpenAI-Attach-Integrity-State": "1",
-            "ChatGPT-Account-ID": identity.account_id,
-        },
-        "expectedIdentity": {"accountId": identity.account_id, "userId": identity.user_id},
-        "returnErrorResponse": true,
-    }))
 }
 
 /// The Scheduled page's read-only suggestion request.
@@ -505,6 +492,7 @@ pub fn json_body(response: &Value) -> Result<Value> {
 
 pub struct LocalHost {
     home: PathBuf,
+    ssh_home: Option<PathBuf>,
     /// The `codex app-server` that `automation-run-now` starts runs on; the original's main
     /// process holds the same connection.
     bridge: Option<Arc<Bridge>>,
@@ -522,6 +510,7 @@ impl LocalHost {
             computer_use_settings: None,
             native_computer_use: Arc::new(computer_use_native::NativeComputerUse::new(&home)),
             home,
+            ssh_home: std::env::var_os("HOME").map(PathBuf::from),
             bridge: None,
             opener: "/usr/bin/open".into(),
             settings: None,
@@ -547,6 +536,11 @@ impl LocalHost {
         self
     }
 
+    pub fn with_ssh_home(mut self, home: impl Into<PathBuf>) -> Self {
+        self.ssh_home = Some(home.into());
+        self
+    }
+
     /// Uses an alternate OS application opener with macOS `open` arguments.
     pub fn with_opener(mut self, opener: impl Into<PathBuf>) -> Self {
         self.opener = opener.into();
@@ -567,6 +561,22 @@ impl LocalHost {
             .filter(|home| home.is_absolute())
             .map(|home| computer_use::ComputerUseSettings::new(home, &host.home));
         host
+    }
+
+    fn read_global_state(&self) -> Result<Value> {
+        let path = self.home.join(".codex-global-state.json");
+        let contents = match fs::read(&path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(json!({})),
+            Err(error) => return Err(error).context("read original sidebar project state"),
+        };
+        let state: Value =
+            serde_json::from_slice(&contents).context("decode original sidebar project state")?;
+        ensure!(
+            state.is_object(),
+            "original sidebar project state must be an object"
+        );
+        Ok(state)
     }
 
     fn update_global_state(&self, update: impl FnOnce(&mut Value) -> Result<bool>) -> Result<()> {
@@ -707,8 +717,16 @@ impl LocalHost {
             "unsupported worktree starting state"
         );
         let environment = params["localEnvironmentConfigPath"].as_str().map(Path::new);
-        let worktree = git::create_worktree(&root, cwd, start["branchName"].as_str(), environment)?
-            .context("Not a git repository")?;
+        let worktree = if params["worktreesRoot"]
+            .as_str()
+            .is_some_and(|root| !root.trim().is_empty())
+        {
+            self.refresh_worktree_upstream(cwd);
+            git::create_worktree(&root, cwd, start["branchName"].as_str(), environment)?
+        } else {
+            self.managed_worktree(cwd, start["branchName"].as_str(), environment)?
+        }
+        .context("Not a git repository")?;
         Ok(json!({"worktreeGitRoot": worktree.git_root,
             "worktreeWorkspaceRoot": worktree.workspace_root, "setupError": null}))
     }
@@ -1083,21 +1101,14 @@ impl Host for LocalHost {
     }
 
     fn projects(&self) -> Result<Vec<Project>> {
-        let path = self.home.join(".codex-global-state.json");
-        let contents = match fs::read(&path) {
-            Ok(contents) => contents,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error).context("read original sidebar project state"),
-        };
-        let state: Value =
-            serde_json::from_slice(&contents).context("decode original sidebar project state")?;
-        ensure!(
-            state.is_object(),
-            "original sidebar project state must be an object"
-        );
+        let state = self.read_global_state()?;
         project_rows(&state, &self.home, |path, _| {
             Ok(Some(Path::new(path).exists()))
         })
+    }
+
+    fn review_repositories(&self, thread: &str, cwd: &str) -> Result<Vec<ReviewRepository>> {
+        diff_repositories::discover(&self.home, thread, cwd)
     }
 
     fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {
@@ -1174,12 +1185,45 @@ impl Host for LocalHost {
             "remote host is unsupported by LocalHost"
         );
         let body = match endpoint {
+            "get-global-state" => {
+                let key = params["key"].as_str().context("missing global state key")?;
+                let value = self
+                    .read_global_state()?
+                    .get_mut(key)
+                    .map(Value::take)
+                    .unwrap_or(Value::Null);
+                Value::Object(serde_json::Map::from_iter([("value".into(), value)]))
+            }
             "list-automations" => self.automations()?,
             "create-automation" => self.create_automation(&params)?,
             "automation-update" => self.update_automation(&params)?,
             "automation-run-now" => self.automation_run_now(&params)?,
             "inbox-items" => self.inbox(&params)?,
             "apply-patch" => git::apply_cloud_patch(&params)?,
+            "local-environments" => environments::list(Path::new(
+                params["workspaceRoot"]
+                    .as_str()
+                    .context("missing workspace root")?,
+            ))?,
+            "local-environment-config" => environments::read(Path::new(
+                params["configPath"]
+                    .as_str()
+                    .context("missing environment path")?,
+            ))?,
+            "local-environment-config-save" => environments::save(&params)?,
+            "local-environment-select" => self.select_environment(
+                params["workspaceRoot"]
+                    .as_str()
+                    .context("missing workspace root")?,
+                params["configPath"]
+                    .as_str()
+                    .context("missing environment path")?,
+            )?,
+            "codex-worktrees" => self.worktrees()?,
+            "worktree-delete" => {
+                self.delete_worktree(params["worktree"].as_str().context("missing worktree")?)?
+            }
+            "git-pr-watch-update" => self.update_pr_watchers(&params)?,
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-init-repo"
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
             | "git-checkout" | "git-cat-file" | "git-review-patch" | "git-file-url" => {
@@ -1198,9 +1242,18 @@ impl Host for LocalHost {
             "open-in" => self.open_in(&params)?,
             "add-context-file" => self.context_files.add(&params)?,
             "open-in-targets" => self.open_in_targets(&params)?,
+            "discover-remote-ssh-connections" => {
+                let home = self
+                    .ssh_home
+                    .as_deref()
+                    .context("Home directory is unavailable")?;
+                json!({"sshAliases": ssh_discovery::discover(home)?})
+            }
             "read-file" => diff_files::text(&params)?,
             "read-file-binary" => diff_files::binary(&params)?,
             "read-git-file-binary" => diff_files::git_binary(&params)?,
+            "recommended-skills" => skills::recommended(&self.home, &params),
+            "install-recommended-skill" => skills::install(&self.home, &params),
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             "workspace-directory-entries" => directories::read(&params)?,
             "native-desktop-apps" => json!({"apps": native_apps::list(&params)?}),
@@ -1611,6 +1664,10 @@ impl Host for CloudHost {
 
     fn projects(&self) -> Result<Vec<Project>> {
         self.local.projects()
+    }
+
+    fn review_repositories(&self, thread: &str, cwd: &str) -> Result<Vec<ReviewRepository>> {
+        self.local.review_repositories(thread, cwd)
     }
 
     fn add_project(&self, root: &Path) -> Result<String> {
