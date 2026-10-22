@@ -476,7 +476,7 @@ const CLOSE_OPTIONS: &[(&str, &str)] = &[
 const SEND_OPTIONS: &[(&str, &str)] = &[
     ("enter", "Enter"),
     ("cmdIfMultiline", "⌘ + Enter for multiline prompts"),
-    ("cmdEnter", "⌘ + Enter always"),
+    ("cmdAlways", "⌘ + Enter always"),
 ];
 
 impl SettingsPane {

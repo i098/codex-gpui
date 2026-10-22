@@ -175,6 +175,111 @@ fn cloud_socket_routes_replies_and_bidirectional_requests() {
 }
 
 #[test]
+fn cloud_onboarding_and_follow_up_use_original_request_rules() {
+    let (url, server) = fixture(|mut socket| {
+        let initialize = receive(&mut socket);
+        send(
+            &mut socket,
+            json!({"id": initialize["id"], "result": {
+                "userAgent":"fixture","codexHome":"/workspace","platformOs":"linux"
+            }}),
+        );
+        assert_eq!(receive(&mut socket)["method"], "initialized");
+        let start = receive(&mut socket);
+        assert_eq!(start["method"], "thread/start");
+        assert_eq!(
+            start["params"],
+            json!({
+                "model":"fixture-model",
+                "serviceTier":"fast",
+                "environments":[{"onboardingConfigId":"asenvcfg_fixture"}],
+                "deferredEnvironment":true,
+                "pluginsMcp":{"productSku":"codex"}
+            })
+        );
+        send(
+            &mut socket,
+            json!({"id": start["id"], "result": {
+                "thread":{"id":"durable-onboarding","cwd":null},
+                "environment":{"status":"pending"}
+            }}),
+        );
+        let turn = receive(&mut socket);
+        assert_eq!(turn["method"], "turn/start");
+        assert_eq!(
+            turn["params"],
+            json!({
+                "threadId":"durable-onboarding","serviceTier":"fast","input":[]
+            })
+        );
+        send(
+            &mut socket,
+            json!({"id":turn["id"],"result":{"turn":{"id":"next-turn"}}}),
+        );
+        let _ = socket.close(None);
+    });
+    let (bridge, _) = Bridge::connect_cloud(&url, TOKEN, Some("fixture-account")).unwrap();
+    futures_lite::future::block_on(async {
+        bridge.initialize("fixture", "1").await.unwrap();
+        assert!(
+            bridge
+                .start_cloud_environment_onboarding("other-account", "asenvcfg_fixture", json!({}))
+                .await
+                .is_err()
+        );
+        assert!(
+            bridge
+                .start_cloud_environment_onboarding("fixture-account", "", json!({}))
+                .await
+                .is_err()
+        );
+        assert!(
+            bridge
+                .start_cloud_environment_onboarding(
+                    "fixture-account",
+                    "asenvcfg_fixture",
+                    Value::Null
+                )
+                .await
+                .is_err()
+        );
+        let response = bridge
+            .start_cloud_environment_onboarding(
+                "fixture-account",
+                "asenvcfg_fixture",
+                json!({
+                    "model":"fixture-model","serviceTier":"priority",
+                    "cwd":"/home/local-project","runtimeWorkspaceRoots":["/home/local-project"],
+                    "environments":[{"environmentId":"local"}],
+                    "deferredEnvironment":false,"pluginsMcp":{"productSku":"other"},
+                    "personality":"friendly"
+                }),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response["thread"]["id"], "durable-onboarding");
+        assert!(response["thread"]["cwd"].is_null());
+        assert_eq!(response["environment"]["status"], "pending");
+        let turn: Value = bridge.request("turn/start", json!({
+            "threadId":"durable-onboarding","serviceTier":"priority","personality":"friendly","input":[]
+        })).await.unwrap();
+        assert_eq!(turn["turn"]["id"], "next-turn");
+    });
+    server.join().unwrap();
+}
+
+#[test]
+fn saved_environment_onboarding_rejects_local_connections() {
+    let (bridge, _) = Bridge::from_io(std::io::empty(), std::io::sink(), None);
+    let result = futures_lite::future::block_on(bridge.start_cloud_environment_onboarding(
+        "fixture-account",
+        "asenvcfg_fixture",
+        json!({}),
+    ));
+    assert!(result.is_err());
+}
+
+#[test]
 fn disconnect_fails_pending_requests_and_closes_subscribers() {
     let (url, server) = fixture(|mut socket| {
         assert_eq!(receive(&mut socket)["method"], "thread/read");

@@ -15,6 +15,8 @@ The app drives the real `codex app-server` over stdio, the same JSON-RPC transpo
   3. `codex` on `PATH`.
 
 The workspace also builds on Linux, with GPUI's no-op text system, for CI (fmt, clippy, tests).
+The self-hosted CI job disables dev/test debug information and incremental compilation.
+It uses only its own workspace's `target` directory and removes that directory after success or failure.
 
 ## Computer use runtime
 
@@ -111,6 +113,14 @@ Closing the socket fails pending requests, and dropping the bridge closes its co
 TLS uses an explicit Ring provider with standard and system trust roots.
 The vendored Tungstenite 0.28 package omits raw handshake-request trace output because it contains the authentication token.
 
+`Bridge::start_cloud_environment_onboarding(account_id, config_id, params)` starts a thread bound to a saved cloud environment.
+It rejects local connections and a different account before sending the request.
+It replaces local paths with the original deferred onboarding environment, service-tier rules, and plugin metadata.
+Cloud thread start/resume and turn start/add requests follow the original tier and personality rules.
+The onboarding API returns the server JSON without requiring local-thread fields.
+This API does not send the first model turn or finish setup.
+The environment UI and host-aware thread routing remain separate work.
+
 Run `cargo test -p bridge` for real loopback WebSocket exchanges, disconnect handling, and credential checks.
 
 ## Native Computer Use service
@@ -169,7 +179,14 @@ Changes uses it for aggregate patches, preserving quoted names and metadata-only
 File headers collapse display whitespace and show rename sources. Copy path keeps the decoded path unchanged.
 Metadata-only files show notices instead of raw Git headers.
 Unified deletions use source-sized striped markers. Split deletions keep solid markers.
+View changes selects Last Turn and opens only the matching requested path.
+File expansion follows exact response paths; collapsed rows retain their file contents.
+Expand all resets the path overrides.
 Run `cargo test -p ui --lib screens::diff::panel::patch` for its boundary checks.
+
+`Host::review_repositories(thread, cwd)` reads the assigned project roots and worktrees owned by that thread.
+It returns each repository root, working directory, and display name without changing a rendered control.
+Run `cargo test -p app --test diff_repositories` for the real-Git ownership and path checks.
 
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
@@ -317,6 +334,13 @@ Home, Thread, Settings, Automations, Mobile, and Archive each own their action r
 `app::Route` and its saved values stay unchanged.
 Shared RPC handlers and state remain on `Root` in `lib.rs`.
 
+Opening an unloaded chat reads its history and resumes the thread before showing it.
+The composer restores that thread's returned model, reasoning effort, and permissions instead of using startup defaults.
+An unset effort stays unset in requests; the picker shows Medium.
+The composer labels modified workspace policies as Custom.
+The default pinned-summary layout hides the thread identity in a single pane.
+Opening a right pane restores the header identity; the toolbar actions stay available.
+
 `LocalHost` serves `native-desktop-apps` and `native-desktop-app-by-bundle-id` through the desktop fetch boundary.
 On macOS, the adapter reads Spotlight metadata, applies the original app exclusions, and supports usage or display-name ordering.
 It returns each app's path, bundle ID, and display name without launching the app.
@@ -353,7 +377,8 @@ Command text sent to an interactive terminal rejects control characters.
 ACP connections use built-in targets without requesting Codex-only configuration.
 
 On macOS, `textsys::show_definition(window, selection, baseline)` opens AppKit's native Look Up popover.
-The baseline uses window-local logical pixels from the top left; the adapter handles both view orientations.
+The baseline uses window-local logical pixels from the top left.
+The adapter applies window magnification and handles both view orientations.
 Call it on the main thread with the unchanged selection.
 Headless windows return their native-handle error; the adapter has no URL or clipboard fallback.
 
@@ -368,7 +393,7 @@ These hooks use `TestPlatform` without opening an OS dialog; normal app behavior
 
 `gpui` and `gpui_apple` come from Zed at a fixed revision and are vendored in `crates/textsys`.
 The workspace `[patch]` replaces the upstream crates with these copies.
-Stock GPUI cannot match Chromium's pixels, so the copies change three things:
+Stock GPUI cannot match Chromium's pixels. The local copies include these changes:
 
 - Blink snapping: layout in Blink `LayoutUnit`s (1/64 device px), device-pixel rounding half up, and text at fractional x positions.
 - Skia blends: glyph and sprite blending as Skia's 8-bit raster does it, and `SkPaint::setAlphaf` alpha rounded to a byte.
@@ -376,6 +401,9 @@ Stock GPUI cannot match Chromium's pixels, so the copies change three things:
 
 `Window::layout_origin_residual_y` returns the fractional vertical origin removed by layout rounding.
 Use it when placing multiline field glyphs to retain Blink's baseline positions.
+
+`Window::set_ui_scale` scales layout, painting, pointer input, and IME geometry without resizing the native window.
+Text layouts use each window's effective device scale and discard stale cached metrics when that scale changes.
 
 Inline-code backgrounds use both snapped label edges, so fractional text widths do not expand their right edge.
 
