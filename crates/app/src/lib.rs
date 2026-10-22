@@ -16,6 +16,7 @@ mod routes;
 pub use routes::Route;
 mod search;
 mod section_actions;
+mod settings_subtrees;
 pub mod updater;
 pub mod windows;
 
@@ -830,6 +831,7 @@ impl Root {
                     });
                 }
                 this.config = config.config;
+                this.refresh_enter_behavior(cx);
                 this.config["host"]["confirm-before-close"] =
                     serde_json::to_value(this.state.confirm_before_close)
                         .expect("close preference");
@@ -1711,7 +1713,6 @@ impl Root {
             return;
         };
         page.update(cx, |page, cx| {
-            page.set_pending(None, cx);
             page.set_suggestions(Vec::new(), cx);
         });
         let host = self.host.clone();
@@ -1852,37 +1853,6 @@ impl Root {
         self.suggestions.as_ref()
     }
 
-    /// A suggestion card click (`refs/interactions/s035b.json`): the card is already
-    /// `Starting…` and every card disabled. The original's guided start first reads the TPP
-    /// models through the desktop host, then prepares and streams the conversation and
-    /// navigates into it; when any step fails it shows `Couldn’t start this suggested task`
-    /// and re-enables the cards.
-    fn start_suggested_task(&mut self, cx: &mut Context<Self>) {
-        let host = self.host.clone();
-        let read = cx.background_spawn(async move {
-            let identity = host.identity().context("no ChatGPT sign-in")?;
-            host.fetch(&host::tpp_models(&identity))
-                .and_then(|response| host::json_body(&response))
-        });
-        cx.spawn(async move |this, cx| {
-            let result = read.await;
-            this.update(cx, |this, cx| {
-                if let Some(page) = &this.suggestions {
-                    page.update(cx, |page, cx| page.set_pending(None, cx));
-                }
-                // ponytail: with the models in hand the original prepares the ChatGPT
-                // conversation (`/f/conversation/prepare`) and streams it; neither is recorded
-                // (the oracle refuses the start), so the port stops here and reports it.
-                if result.is_ok() {
-                    eprintln!("codex-gpui: suggested task: the conversation stream is not wired");
-                }
-                this.toast(Toast::danger("Couldn’t start this suggested task"), cx);
-            })
-            .ok();
-        })
-        .detach();
-    }
-
     /// Mobile `Get started` (`codex-mobile-setup-flow` `P`, `XNn`): the initial step shows its
     /// loading button while the host reads the account's MFA requirement. A non-`required`
     /// answer opens the allow-host step (whose `Allow` is disabled); `required` also reads
@@ -1981,20 +1951,6 @@ impl Root {
         self.threads.retain(|t| t.id != thread.id);
         self.threads.insert(0, thread.clone());
         self.sidebar.update(cx, |s, cx| s.add_thread(thread, cx));
-    }
-
-    /// `⌘N`, the `New chat` row and rail Home: Home with an empty, focused composer.
-    fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.shortcut_state.new_chat_mode = features::shortcuts::NewChatMode::Project;
-        self.home.update(cx, |home, cx| {
-            home.project = self.state.project_root.as_deref().map(project_name);
-            cx.notify();
-        });
-        self.new_chat_section = None;
-        self.navigate(Route::Home, window, cx);
-        let composer = self.home.read(cx).composer.clone();
-        composer.update(cx, |c, cx| c.set_text("", cx));
-        window.focus(&composer.focus_handle(cx), cx);
     }
 
     /// Opens the Recents row `delta` rows from the open thread; from any other route,
@@ -2730,7 +2686,7 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// `thread/read` with turns, then shows it if the route still points at it.
+    /// Loads history and resumes its settings before showing the selected thread.
     fn load_thread(
         &mut self,
         id: String,
@@ -2750,11 +2706,18 @@ impl Root {
         })
         .detach();
         let bridge = self.bridge.clone();
+        let resume = (!self.loaded.contains(&id)).then(|| {
+            let mut params = json!({"threadId": id, "excludeTurns": true});
+            if let Some(config) = computer_use_overrides(&self.config) {
+                params["config"] = config;
+            }
+            params
+        });
         let loading_view = view.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let result = bridge.thread_read(&id, true).await;
+            let result = routes::load_thread(&bridge, &id, resume).await;
             this.update_in(cx, |this, window, cx| {
-                if this.state.route != Route::Thread(id)
+                if !matches!(&this.state.route, Route::Thread(current) if current == &id)
                     || !this
                         .history
                         .as_ref()
@@ -2763,9 +2726,15 @@ impl Root {
                     return;
                 }
                 match result {
-                    Ok(read) => this.show_thread(read.thread, window, cx),
+                    Ok((thread, settings)) => {
+                        if let Some(settings) = settings {
+                            this.loaded.insert(id.clone());
+                            this.thread_run_settings.entry(id).or_insert(settings);
+                        }
+                        this.show_thread(thread, window, cx);
+                    }
                     Err(error) => {
-                        eprintln!("codex-gpui: thread/read: {error:#}");
+                        eprintln!("codex-gpui: thread/load: {error:#}");
                         loading_view.update(cx, |view, cx| view.fail(format!("{error:#}"), cx));
                     }
                 }
@@ -2878,35 +2847,33 @@ impl Root {
         let mode = self.shortcut_state.new_chat_mode;
         let host = self.host.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let workspace = if mode == features::shortcuts::NewChatMode::Standalone {
-                let prepare = host.clone();
-                let prompt = s.text.clone();
-                match cx.background_executor().spawn(async move { prepare.prepare_projectless(&prompt) }).await {
-                    Ok(workspace) => Some(workspace),
-                    Err(error) => {
-                        this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
-                        return Err(error);
-                    }
+            // A failure before the chat exists keeps the draft, its attachments and the chosen
+            // project as they were.
+            let started = async {
+                let workspace = if mode == features::shortcuts::NewChatMode::Standalone {
+                    let prepare = host.clone();
+                    let prompt = s.text.clone();
+                    let task = async move { prepare.prepare_projectless(&prompt) };
+                    Some(cx.background_executor().spawn(task).await?)
+                } else {
+                    None
+                };
+                let params = thread_start_params(&cwd, &s, workspace.as_ref(), mode, computer_use);
+                let started = bridge
+                    .request::<_, ThreadStartResponse>("thread/start", params)
+                    .await?;
+                if let Some(workspace) = workspace {
+                    let record = host.clone();
+                    let thread_id = started.thread.id.clone();
+                    let task = async move { record.record_projectless(&thread_id, &workspace) };
+                    cx.background_executor().spawn(task).await?;
                 }
-            } else { None };
-            let mut params = json!({ "cwd": workspace.as_ref().map(|workspace| workspace.cwd.as_str()).unwrap_or(&cwd), "model": model(&s) });
-            if let Some(workspace) = &workspace {
-                params["developerInstructions"] = json!(workspace.instructions());
+                anyhow::Ok(started.thread)
             }
-            if mode == features::shortcuts::NewChatMode::Temporary {
-                params["ephemeral"] = json!(true);
-            }
-            apply_permissions(&mut params, s.permission);
-            if let Some(config) = computer_use {
-                params["config"] = config;
-            }
-            let mut thread = match bridge
-                .request::<_, ThreadStartResponse>("thread/start", params)
-                .await
-            {
-                Ok(started) => started.thread,
+            .await;
+            let mut thread = match started {
+                Ok(thread) => thread,
                 Err(error) => {
-                    // The draft, its attachments and the chosen project stay as they were.
                     this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
                     return Err(error);
                 }
@@ -2916,14 +2883,6 @@ impl Root {
                 thread.preview = s.text.clone();
             }
             let id = thread.id.clone();
-            if let Some(workspace) = workspace {
-                let record = host.clone();
-                let thread_id = id.clone();
-                if let Err(error) = cx.background_executor().spawn(async move { record.record_projectless(&thread_id, &workspace) }).await {
-                    this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
-                    return Err(error);
-                }
-            }
             let section = if let Some(section) = section {
                 match bridge
                     .request::<_, Value>(
@@ -3917,6 +3876,7 @@ impl Root {
                 });
                 if let Ok(Some(config)) = result {
                     this.config = config;
+                    this.refresh_enter_behavior(cx);
                 }
                 if success {
                     this.load_computer_use(cx);
@@ -4129,9 +4089,20 @@ impl Root {
                 }
                 return Err(error);
             }
-            this.update(cx, |this, _| apply(&mut this.config))
+            this.update(cx, |this, cx| {
+                apply(&mut this.config);
+                this.refresh_enter_behavior(cx);
+            })
         });
         log_err(task, cx);
+    }
+
+    fn refresh_enter_behavior(&self, cx: &mut Context<Self>) {
+        cx.set_global(ui::composer::EnterBehavior::from_setting(
+            self.config["desktop"]["composerEnterBehavior"]
+                .as_str()
+                .unwrap_or("enter"),
+        ));
     }
 
     /// Settles only the request whose card produced the answer.
@@ -4323,7 +4294,7 @@ impl Root {
                     && params["threadId"].as_str() == Some(view.id())
                 {
                     panel.update(cx, |panel, cx| {
-                        panel.apply(&event, &self.cwd, view.turns(), cx);
+                        panel.apply(&event, view.cwd(), view.turns(), cx);
                     });
                 }
             });
@@ -4611,6 +4582,30 @@ fn computer_use_overrides(config: &Value) -> Option<Value> {
 /// `None` (the server's default) when `model/list` gave the picker nothing.
 fn model(s: &Submission) -> Option<&str> {
     (!s.model.is_empty()).then_some(s.model.as_str())
+}
+
+/// `thread/start` parameters for a new chat. A standalone workspace replaces the project
+/// directory and adds its instructions; a temporary chat is ephemeral.
+fn thread_start_params(
+    cwd: &str,
+    s: &Submission,
+    workspace: Option<&host::Workspace>,
+    mode: features::shortcuts::NewChatMode,
+    computer_use: Option<Value>,
+) -> Value {
+    let cwd = workspace.map_or(cwd, |workspace| workspace.cwd.as_str());
+    let mut params = json!({ "cwd": cwd, "model": model(s) });
+    if let Some(workspace) = workspace {
+        params["developerInstructions"] = json!(workspace.instructions());
+    }
+    if mode == features::shortcuts::NewChatMode::Temporary {
+        params["ephemeral"] = json!(true);
+    }
+    apply_permissions(&mut params, s.permission);
+    if let Some(config) = computer_use {
+        params["config"] = config;
+    }
+    params
 }
 fn apply_permissions(params: &mut Value, permission: Permission) {
     let (policy, profile, reviewer) = match permission {

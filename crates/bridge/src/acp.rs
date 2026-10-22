@@ -83,7 +83,7 @@ impl Acp {
 }
 
 impl Backend for Acp {
-    fn send(&mut self, msg: &Value) -> Result<()> {
+    fn send(&mut self, msg: Value) -> Result<()> {
         let mut state = self.0.lock();
         match (msg["method"].as_str(), msg["id"].as_i64()) {
             (Some(method), Some(id)) => state.request(id, method, &msg["params"]),
@@ -97,7 +97,7 @@ impl Backend for Acp {
 impl State {
     fn write(&mut self, mut msg: Value) -> Result<()> {
         msg["jsonrpc"] = "2.0".into();
-        self.out.send(&msg)
+        self.out.send(msg)
     }
 
     fn call(&mut self, call: Call, method: &str, params: Value) -> Result<()> {

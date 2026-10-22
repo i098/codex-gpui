@@ -1,5 +1,5 @@
 use crate::*;
-use gpui::{ClipboardItem, MouseButton, NavigationDirection, prelude::FluentBuilder as _};
+use gpui::{ClipboardItem, prelude::FluentBuilder as _};
 use ui::confirmation::{Confirmation, Outcome as ConfirmationOutcome};
 
 actions!(
@@ -63,6 +63,45 @@ pub(crate) enum AppEdit {
 
 pub(super) fn init(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("ctrl-`", OpenBackgroundTerminal, None)]);
+}
+
+impl AppEdit {
+    fn request(&self, undo: bool) -> (&'static str, Value) {
+        match self {
+            Self::Rename { id, before, after } => (
+                "thread/name/set",
+                json!({"threadId": id, "name": if undo { before } else { after }}),
+            ),
+            Self::Section { id, before, after } => (
+                "thread/section/move",
+                json!({"threadId": id, "sectionId": if undo { before } else { after }, "beforeThreadId": null}),
+            ),
+            Self::Archive { thread, .. } => (
+                if undo {
+                    "thread/unarchive"
+                } else {
+                    "thread/archive"
+                },
+                json!({"threadId": thread.id}),
+            ),
+        }
+    }
+
+    fn completion_message(&self, undo: bool) -> &'static str {
+        match (self, undo) {
+            (Self::Archive { .. }, true) => "Chat restored",
+            (
+                Self::Section {
+                    before: None,
+                    after: Some(_),
+                    ..
+                },
+                true,
+            ) => "Chat unpinned",
+            (_, true) => "Action undone",
+            (_, false) => "Action redone",
+        }
+    }
 }
 
 pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> gpui::Div {
@@ -136,14 +175,6 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
             this.new_special_chat(NewChatMode::Temporary, window, cx);
         }))
     })
-    .on_mouse_up(
-        MouseButton::Navigate(NavigationDirection::Back),
-        cx.listener(|_, _, window, cx| super::keymap::dispatch_mouse("MouseBack", window, cx)),
-    )
-    .on_mouse_up(
-        MouseButton::Navigate(NavigationDirection::Forward),
-        cx.listener(|_, _, window, cx| super::keymap::dispatch_mouse("MouseForward", window, cx)),
-    )
 }
 
 impl Root {
@@ -247,6 +278,50 @@ impl Root {
             .update(cx, |sidebar, cx| sidebar.set_threads(&self.threads, cx));
     }
 
+    fn apply_completed_edit(
+        &mut self,
+        edit: &AppEdit,
+        undo: bool,
+        result: &Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match edit {
+            AppEdit::Rename { id, before, after } => {
+                self.apply_thread_title(id, if undo { before } else { after }, cx);
+            }
+            AppEdit::Section { id, before, after } => {
+                let section = if undo { before } else { after };
+                if let Some(thread) = self.threads.iter_mut().find(|thread| &thread.id == id) {
+                    thread.section = section.as_ref().map(|id| ThreadSection { id: id.clone() });
+                }
+                self.sidebar.update(cx, |sidebar, cx| {
+                    sidebar.remove_section_thread(id, cx);
+                    if let Some(section) = section {
+                        sidebar.assign_section(id, section, cx);
+                    }
+                    sidebar.set_threads(&self.threads, cx);
+                });
+            }
+            AppEdit::Archive { thread, index } => {
+                self.threads.retain(|row| row.id != thread.id);
+                if undo {
+                    let restored = serde_json::from_value::<Thread>(result["thread"].clone())
+                        .unwrap_or_else(|_| thread.as_ref().clone());
+                    self.threads
+                        .insert((*index).min(self.threads.len()), restored);
+                    if let Some(page) = &self.archive_page {
+                        page.update(cx, |page, cx| page.unarchived(&thread.id, cx));
+                    }
+                } else if self.state.route == Route::Thread(thread.id.clone()) {
+                    self.new_chat(window, cx);
+                }
+                self.sidebar
+                    .update(cx, |sidebar, cx| sidebar.set_threads(&self.threads, cx));
+            }
+        }
+    }
+
     pub(crate) fn undo_app_edit(
         &mut self,
         undo: bool,
@@ -267,24 +342,7 @@ impl Root {
         let index = source.len();
         let generation = self.shortcut_state.history_generation;
         self.shortcut_state.undo_pending = true;
-        let (method, params) = match &edit {
-            AppEdit::Rename { id, before, after } => (
-                "thread/name/set",
-                json!({"threadId": id, "name": if undo { before } else { after }}),
-            ),
-            AppEdit::Section { id, before, after } => (
-                "thread/section/move",
-                json!({"threadId": id, "sectionId": if undo { before } else { after }, "beforeThreadId": null}),
-            ),
-            AppEdit::Archive { thread, .. } => (
-                if undo {
-                    "thread/unarchive"
-                } else {
-                    "thread/archive"
-                },
-                json!({"threadId": thread.id}),
-            ),
-        };
+        let (method, params) = edit.request(undo);
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let result = bridge.request::<_, Value>(method, params).await;
@@ -307,61 +365,8 @@ impl Root {
                     );
                     return;
                 }
-                match &edit {
-                    AppEdit::Rename { id, before, after } => {
-                        this.apply_thread_title(id, if undo { before } else { after }, cx);
-                    }
-                    AppEdit::Section { id, before, after } => {
-                        let section = if undo { before } else { after };
-                        if let Some(thread) =
-                            this.threads.iter_mut().find(|thread| &thread.id == id)
-                        {
-                            thread.section =
-                                section.as_ref().map(|id| ThreadSection { id: id.clone() });
-                        }
-                        this.sidebar.update(cx, |sidebar, cx| {
-                            sidebar.remove_section_thread(id, cx);
-                            if let Some(section) = section {
-                                sidebar.assign_section(id, section, cx);
-                            }
-                            sidebar.set_threads(&this.threads, cx);
-                        });
-                    }
-                    AppEdit::Archive { thread, index } => {
-                        this.threads.retain(|row| row.id != thread.id);
-                        if undo {
-                            let restored = result
-                                .as_ref()
-                                .ok()
-                                .and_then(|value| {
-                                    serde_json::from_value::<Thread>(value["thread"].clone()).ok()
-                                })
-                                .unwrap_or_else(|| thread.as_ref().clone());
-                            this.threads
-                                .insert((*index).min(this.threads.len()), restored);
-                            if let Some(page) = &this.archive_page {
-                                page.update(cx, |page, cx| page.unarchived(&thread.id, cx));
-                            }
-                        } else if this.state.route == Route::Thread(thread.id.clone()) {
-                            this.new_chat(window, cx);
-                        }
-                        this.sidebar
-                            .update(cx, |sidebar, cx| sidebar.set_threads(&this.threads, cx));
-                    }
-                }
-                let message = match (&edit, undo) {
-                    (AppEdit::Archive { .. }, true) => "Chat restored",
-                    (
-                        AppEdit::Section {
-                            before: None,
-                            after: Some(_),
-                            ..
-                        },
-                        true,
-                    ) => "Chat unpinned",
-                    (_, true) => "Action undone",
-                    (_, false) => "Action redone",
-                };
+                this.apply_completed_edit(&edit, undo, result.as_ref().unwrap(), window, cx);
+                let message = edit.completion_message(undo);
                 if undo {
                     if this.shortcut_state.history_generation == generation {
                         this.shortcut_state.redo.push(edit);
