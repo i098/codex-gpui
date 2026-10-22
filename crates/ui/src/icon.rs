@@ -113,6 +113,19 @@ impl Icon {
     }
 }
 
+fn with_saved_opacity<R>(
+    alpha: Option<u8>,
+    bounds: Option<Bounds<Pixels>>,
+    window: &mut Window,
+    paint: impl FnOnce(&mut Window) -> R,
+) -> R {
+    match (alpha, bounds) {
+        (Some(alpha), Some(bounds)) => shapes::with_layer(alpha, bounds, window, paint),
+        (Some(alpha), None) => window.with_skia_layer(alpha, paint),
+        (None, _) => paint(window),
+    }
+}
+
 /// Decoded images by asset path; `None` = no image for that path.
 /// ponytail: misses are cached per device position too, so scrolling icons add entries; bound
 /// it (or list the position variants once) if that ever shows up in memory.
@@ -290,14 +303,12 @@ impl Element for Icon {
                             )
                         }
                     };
-                    let painted = if let Some(alpha) = saved_opacity {
-                        let ink =
-                            shapes::icon_paint_bounds(&src, &path, ink_bounds, flip_x, window)
-                                .unwrap_or(bounds);
-                        shapes::with_layer(alpha, ink, window, |window| paint(window, cx))
-                    } else {
-                        paint(window, cx)
-                    };
+                    let ink = saved_opacity.map(|_| {
+                        shapes::icon_paint_bounds(&src, &path, ink_bounds, flip_x, window)
+                            .unwrap_or(bounds)
+                    });
+                    let painted =
+                        with_saved_opacity(saved_opacity, ink, window, |window| paint(window, cx));
                     if painted {
                         return;
                     }
@@ -313,11 +324,7 @@ impl Element for Icon {
                 let paint = |window: &mut Window| {
                     window.paint_svg(bounds, path.into(), None, matrix, color, cx)
                 };
-                if let Some(alpha) = saved_opacity {
-                    window.with_skia_layer(alpha, paint).ok();
-                } else {
-                    paint(window).ok();
-                }
+                with_saved_opacity(saved_opacity, None, window, paint).ok();
             },
         )
     }
