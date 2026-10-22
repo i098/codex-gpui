@@ -121,6 +121,9 @@ pub struct ThreadView {
     /// The view fills the main surface (no side panel): it draws its px at the surface's
     /// rounded right corners through the clip (`Shell::main_clips_right`).
     pub clip_right: bool,
+    /// With `clip_right`, the sidebar is closed: the surface's top-left corner is rounded too,
+    /// and the view draws its top fade's px there as well (`Shell::sidebar_open`).
+    clip_top_left: bool,
     /// A bottom panel (the terminal) shares the main surface below the view, so the page's
     /// composited layer is one tile tall.
     pub docked_below: bool,
@@ -288,6 +291,15 @@ impl ThreadView {
     ) {
         self.git_repository = repository;
         cx.notify();
+    }
+
+    /// The main surface's rounded corners the view draws (`clip_right`, `clip_top_left`).
+    pub fn set_clips(&mut self, right: bool, top_left: bool, cx: &mut Context<Self>) {
+        if (self.clip_right, self.clip_top_left) != (right, top_left) {
+            self.clip_right = right;
+            self.clip_top_left = top_left;
+            cx.notify();
+        }
     }
 
     pub fn set_git_phase(&mut self, phase: Option<&'static str>, cx: &mut Context<Self>) {
@@ -594,6 +606,7 @@ impl ThreadView {
             cwd: thread.cwd,
             summary_open: false,
             clip_right: false,
+            clip_top_left: false,
             docked_below: false,
             turns: thread.turns,
             render_errors: RefCell::default(),
@@ -2093,6 +2106,11 @@ impl Render for ThreadView {
             .fold(1., f32::max);
         let surface = Rgba::from(t.surface);
         let surface = [surface.r, surface.g, surface.b, 1.].map(|v| (v * 255.).round() as u8);
+        let top_left = if self.clip_top_left {
+            Theme::RADIUS_XL_BASE
+        } else {
+            Pixels::ZERO
+        };
         let corners = gpui::canvas(
             |_, _, _| {},
             move |bounds, (), window, cx| {
@@ -2106,6 +2124,7 @@ impl Render for ThreadView {
                     gradient_px(&stops, h, (0, 0), false, true, i, j)
                 };
                 let top = Corners {
+                    top_left,
                     top_right: Theme::RADIUS_XL_BASE,
                     ..Default::default()
                 };
@@ -2393,7 +2412,7 @@ fn width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>)
         .width
 }
 
-/// Text of a known run width (see [`width`]).
+/// Text of a known run width (see [`width`]) as one text item (`markdown::ItemPen`).
 fn measured(
     window: &Window,
     s: impl Into<SharedString>,
@@ -2404,7 +2423,7 @@ fn measured(
     family: Option<&'static str>,
 ) -> Div {
     let s = s.into();
-    let w = width(window, &s, size, weight, family);
+    let w = markdown::ItemPen::new(window).share(width(window, &s, size, weight, family), true);
     let label = text(s, size, line_height, weight, color);
     div().flex_none().w(w).child(match family {
         Some(f) => label.font_family(f),
