@@ -336,6 +336,8 @@ The capture regression checks live-state restoration, another window, a closed-w
 The focused project-control crop now matches the original, including the tooltip shadow over the ring.
 The original recordings, masks and strict gates stay unchanged; remaining tooltip and rail differences are tracked separately.
 
+New chat adds a Back entry even when Home is already open.
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Launch to `/` | entry | Hero, announcement slot and composer. | Route Home, rail Home selected, composer focused, Recents loaded. | PASS (`launch_home`, `parity_home`) |
@@ -440,7 +442,7 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 |---|---|---|---|---|---|
 | 1 | Composer in thread | entry | `Work with Codex` (idle) or `Working…`. | Docked thread composer, focused on open; `Working…` not checked. | PASS (`shift_enter_newline`, `parity_thread`) |
 | 2 | Type text | focus | Editor grows to a max height, then scrolls. | Lines add; height growth not measured. | FAIL (no flow checks the max height) |
-| 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Enter sends; no `Send shortcut` setting. | PASS (`submit_enter_starts_thread`) |
+| 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Reads `desktop.composerEnterBehavior` at startup and after successful writes. `cmdAlways` requires Command+Enter; `cmdIfMultiline` requires it for multiline drafts. Shift+Enter inserts a line break. | PASS (`submit_enter_starts_thread`, `send_shortcut_controls_enter_without_changing_shift_enter`) |
 | 4 | Shift+Enter | shortcut | New line. | New line in the Home and thread composers. | PASS (`shift_enter_newline`) |
 | 5 | `@` | shortcut | Mention list. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 6 | `/` | shortcut | Slash command menu. | Matches the recorded menu, filtering, selected row, editor focus, arrows, Escape, Enter, and Tab. | PASS (`s021::slash_menu_keyboard_replay`) |
@@ -1276,3 +1278,17 @@ The default hover delay and `side_offset` geometry remain unchanged.
 This API does not complete Home focus behavior or add the separate F1d overflow predicate.
 The original Home inputs and edge probes remain unchanged.
 The scoped issue is [Add an opt-in focus API to the shared tooltip](https://github.com/i098/codex-gpui/issues/186).
+
+## Shortcut navigation (SH-044, SH-058, SH-069)
+
+Control-Tab and Control-Shift-Tab open the command menu in `Recently viewed` mode.
+The picker omits the search field and number labels.
+Repeated shortcuts move the selection without changing the open chat.
+Releasing Control opens the selected chat; Escape cancels.
+The picker keeps viewed order separate from the updated order used by Command-Option-number.
+
+Mouse Back and Forward use the same route history as Command-[ and Command-].
+Control-Shift-G opens the existing Changes tab.
+`crates/app/tests/shortcut_navigation.rs` checks these paths on recorded threads.
+The [original/native picker pair](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/9a2941014013a3237d6c7389b13d9c4a3a00e15a0eba9abb/report.html) uses a 520×134 CSS-pixel crop at scale 2.
+It has zero outside-text differences and 45 differing pixels inside 147631 text pixels (0.0305%).
