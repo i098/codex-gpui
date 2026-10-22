@@ -107,9 +107,10 @@ impl ThreadView {
         .with_priority(1)
     }
 
-    /// The thread titlebar actions and optional identity.
-    /// The default pinned summary owns the identity unless a side pane is open.
-    pub fn titlebar_header(&self, show_identity: bool, cx: &Context<Self>) -> Div {
+    /// The thread titlebar actions and identity. A titled thread shows its identity, as in
+    /// every retained single-pane original; an untitled thread (the original `mediaExplore`
+    /// empty thread) shows it only beside a side pane.
+    pub fn titlebar_header(&self, side_pane: bool, cx: &Context<Self>) -> Div {
         div()
             .absolute()
             .top_0()
@@ -118,7 +119,7 @@ impl ThreadView {
             // Chromium composites the `group/titlebar` (it overlaps composited layers): text
             // blits into its transparent tile.
             .layer()
-            .child(self.header(show_identity, cx))
+            .child(self.header(side_pane || !self.title.is_empty(), cx))
     }
 
     pub(super) fn header(&self, show_identity: bool, cx: &Context<Self>) -> Div {
