@@ -272,32 +272,7 @@ impl Render for HomeMain {
                     .items_end()
                     .justify_center()
                     .pb(px(96.))
-                    // The original's chain: `flex w-full justify-center`, `mx-auto flex
-                    // w-[min(100%,768px)] justify-center px-panel`, `flex min-h-28 w-full items-end
-                    // justify-center`, then the hero `flex w-full flex-col items-center`. The outer
-                    // `justify-center` has no effect: the child's auto margins take the free space
-                    // first (taffy would apply both).
-                    .child(
-                        div().w_full().flex().child(
-                            div()
-                                .mx_auto()
-                                .flex()
-                                .w_full()
-                                .max_w(px(768.))
-                                .min_w_0()
-                                .justify_center()
-                                .px(px(20.))
-                                .child(
-                                    div()
-                                        .flex()
-                                        .min_h(px(112.))
-                                        .w_full()
-                                        .items_end()
-                                        .justify_center()
-                                        .child(hero.w_full()),
-                                ),
-                        ),
-                    ),
+                    .child(hero),
             )
             .child(
                 div()

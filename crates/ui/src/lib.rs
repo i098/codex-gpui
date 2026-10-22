@@ -317,7 +317,6 @@ pub fn rounded_clip(
         corner,
         child: child.into_any_element(),
         layers: true,
-        outset_left: px(0.),
     }
 }
 
@@ -325,9 +324,6 @@ pub struct RoundedClip {
     radius: Pixels,
     corner: shapes::Corner,
     child: AnyElement,
-    /// How far the clip reaches left of the child's bounds (a `clip-path: inset()` with a
-    /// negative left inset); layout is unchanged.
-    outset_left: Pixels,
     /// See `shapes::with_rounded_clip`.
     layers: bool,
 }
@@ -377,10 +373,6 @@ impl gpui::Element for RoundedClip {
         cx: &mut App,
     ) {
         let child = &mut self.child;
-        let bounds = Bounds::from_corners(
-            point(bounds.left() - self.outset_left, bounds.top()),
-            bounds.bottom_right(),
-        );
         shapes::with_rounded_clip(
             Corners::all(self.radius),
             self.corner,
@@ -629,9 +621,6 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
             .items_center()
             .gap(px(8.))
             .px(px(8.))
-            // `py-[5px]`: the 21 px line overflows the content box and centers with negative
-            // free space.
-            .py(px(5.))
             .rounded(RADIUS_BUTTON_XL)
             .hover(move |s| s.bg(hover_bg))
             .child(leading)
@@ -1011,12 +1000,11 @@ impl Shell {
             return panel.left(if open { left + MAIN_HAIRLINE } else { left });
         }
         // The `clip-path` box (its left corners under the open sidebar): Skia rasters main's
-        // draws under that anti-aliased clip, but not its composited layers. The panel lays out
-        // at `left` as in Blink; the clip reaches r under the sidebar at paint time.
-        let (outset, inset) = if open {
-            (r, MAIN_HAIRLINE)
+        // draws under that anti-aliased clip, but not its composited layers.
+        let (left, inset) = if open {
+            (left - r, r + MAIN_HAIRLINE)
         } else {
-            (px(0.), px(0.))
+            (left, px(0.))
         };
         div()
             .absolute()
@@ -1027,7 +1015,6 @@ impl Shell {
             .child(RoundedClip {
                 radius: r,
                 corner: shapes::Corner::Round,
-                outset_left: outset,
                 child: div()
                     .size_full()
                     .relative()
