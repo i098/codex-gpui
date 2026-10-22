@@ -2,6 +2,7 @@
 //! refs/terminal share, and the Changes panel with the unified diff of the last turn's file
 //! changes. All numbers are the spec's CSS px.
 
+use crate::workspace::WorkspaceLayout;
 use crate::{
     MONO, SANS, Shell, composer::shadow, drag_layer, fixture, icon::icon, layout_color, over,
     screens::thread::view::ThreadView, text,
@@ -290,6 +291,7 @@ pub struct DiffPanel {
     cwd: String,
     full_files: bool,
     content_generation: u64,
+    full_view: Option<gpui::WeakEntity<Shell>>,
 }
 
 impl DiffPanel {
@@ -423,6 +425,7 @@ impl DiffPanel {
             cwd: cwd.to_owned(),
             full_files: false,
             content_generation: 0,
+            full_view: None,
         }
     }
 
@@ -666,6 +669,21 @@ impl DiffPanel {
 
     pub fn search(&self) -> Option<(&str, usize)> {
         self.query.as_deref().map(|query| (query, self.matches))
+    }
+
+    pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let focus = self.focus.get_or_insert_with(|| cx.focus_handle());
+        window.focus(focus, cx);
+    }
+
+    fn available_width(&self, window: &Window, cx: &App) -> Pixels {
+        if self.standalone {
+            window.viewport_size().width
+        } else if let Some(shell) = self.full_view.as_ref().and_then(|shell| shell.upgrade()) {
+            shell.read(cx).main_width(window, cx)
+        } else {
+            panel_width(window, cx) - px(1.)
+        }
     }
 
     pub fn open_find(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
@@ -1182,13 +1200,14 @@ impl Render for DiffPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.request_visible_full_files(cx);
         let t = cx.theme().clone();
-        let width = self.container_width.unwrap_or_else(|| {
-            if self.standalone {
-                window.viewport_size().width
-            } else {
-                panel_width(window, cx) - px(1.)
-            }
-        });
+        let width = self
+            .container_width
+            .unwrap_or_else(|| self.available_width(window, cx));
+        let clamped = if self.full_view.is_some() {
+            width < px(STORED_WIDTH)
+        } else {
+            panel_clamped(window, cx)
+        };
         let wide = width >= px(625.);
         let tree = self.show_tree.then(|| self.file_tree(width, window, cx));
         let code_width = width
@@ -1438,7 +1457,7 @@ impl Render for DiffPanel {
                     .child(if self.standalone {
                         self.standalone_header(&t, cx)
                     } else {
-                        self.header(&t, wide, panel_clamped(window, cx), cx)
+                        self.header(&t, wide, clamped, cx)
                     }),
             )
             .children(status)
@@ -1739,26 +1758,6 @@ impl SplitScreen {
                 });
             crate::focus::ring(control, &focus, Theme::RADIUS_MD, px(0.), cx)
         };
-        // 28 px `_Button`: 12.5 px `--codex-corner-shape` squircle, `border border-transparent`.
-        // Blink's clip layer for its fill composites onto the titlebar layer's transparent tile
-        // unchanged, so the fill paints straight into the strip's layer.
-        let button = |name: &str, color: Hsla, fill: Option<Hsla>| {
-            div()
-                .relative()
-                .size(px(28.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .when_some(fill, |d, fill| {
-                    d.child(shapes::decoration(Decoration {
-                        radius: Corners::all(px(12.5)),
-                        corner: shapes::Corner::Squircle,
-                        fill: Some(fill),
-                        ..Default::default()
-                    }))
-                })
-                .child(icon(name, 16., color))
-        };
         // `_strip` is `[contain:layout_paint]`.
         div()
             .relative()
@@ -1792,25 +1791,85 @@ impl SplitScreen {
             .child(
                 div()
                     .pl(px(6.))
-                    .child(button("diff-new-tab", t.text_tertiary, None)),
+                    .child(strip_button("diff-new-tab", t.text_tertiary, None)),
+            )
+            .child(self.layout_controls(t))
+    }
+
+    fn layout_controls(&self, t: &Theme) -> Div {
+        let full = self.layout == WorkspaceLayout::Full;
+        let (glyph, label, step_label) = if full {
+            (
+                "workspace-exit-full-view",
+                "Exit full view",
+                "Enter split view",
+            )
+        } else {
+            ("diff-full-view", "Enter full view", "Hide tabs")
+        };
+        div()
+            .absolute()
+            .top(px(8.))
+            .right(px(8.))
+            .flex()
+            .gap(px(6.))
+            .child(
+                strip_button(glyph, t.text_tertiary, full.then_some(t.text_alpha_5))
+                    .id("workspace-full-view")
+                    .role(gpui::Role::Button)
+                    .aria_label(label)
+                    .focusable()
+                    .tab_index(0)
+                    .on_key_down(dispatch_key(crate::ShowWorkspaceTabView))
+                    .focus_visible(|style| style.border_2().border_color(rgb(0x3a83f7)))
+                    .on_click(dispatch_action(crate::ShowWorkspaceTabView)),
             )
             .child(
-                div()
-                    .absolute()
-                    .top(px(8.))
-                    .right(px(8.))
-                    .flex()
-                    .gap(px(6.))
-                    .child(button("diff-full-view", t.text_tertiary, None))
-                    // `bg-text/5` (dark: a float color, see `Theme::text_alpha_5`).
-                    .child(button("diff-hide-tabs", t.text, Some(t.text_alpha_5))),
+                strip_button("diff-hide-tabs", t.text, Some(t.text_alpha_5))
+                    .id("workspace-step-layout")
+                    .role(gpui::Role::Button)
+                    .aria_label(step_label)
+                    .focusable()
+                    .tab_index(0)
+                    .on_key_down(dispatch_key(crate::StepWorkspaceLayout))
+                    .focus_visible(|style| style.border_2().border_color(rgb(0x3a83f7)))
+                    .on_click(dispatch_action(crate::StepWorkspaceLayout)),
             )
     }
+}
+
+// Paint the fill directly into the titlebar layer's transparent tile.
+fn strip_button(name: &str, color: Hsla, fill: Option<Hsla>) -> Div {
+    div()
+        .relative()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .size(px(28.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .when_some(fill, |d, fill| {
+            d.child(shapes::decoration(Decoration {
+                radius: Corners::all(px(12.5)),
+                corner: shapes::Corner::Squircle,
+                fill: Some(fill),
+                ..Default::default()
+            }))
+        })
+        .child(icon(name, 16., color))
 }
 
 /// Click handler dispatching `action`.
 fn dispatch_action(action: impl Action) -> impl Fn(&ClickEvent, &mut Window, &mut App) {
     move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx)
+}
+
+fn dispatch_key(action: impl Action) -> impl Fn(&KeyDownEvent, &mut Window, &mut App) {
+    move |event, window, cx| {
+        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+            window.dispatch_action(action.boxed_clone(), cx);
+            cx.stop_propagation();
+        }
+    }
 }
 
 /// Main panel of a thread with a side panel open: the thread, then the panel behind its 1 px
@@ -1822,10 +1881,18 @@ struct SplitMain {
     panel: AnyView,
     /// Width at press plus the pointer x at press, while the divider is dragged.
     drag_anchor: Option<Pixels>,
+    layout: WorkspaceLayout,
+    focus: FocusHandle,
 }
 
 impl Render for SplitMain {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.layout == WorkspaceLayout::Full {
+            return div()
+                .size_full()
+                .track_focus(&self.focus)
+                .child(self.panel.clone());
+        }
         let t = cx.theme();
         let width = panel_width(window, cx);
         div()
@@ -1837,6 +1904,7 @@ impl Render for SplitMain {
                 div()
                     .w(width)
                     .flex_none()
+                    .track_focus(&self.focus)
                     .border_l_1()
                     // The panel content's `[contain:layout_paint]`.
                     .snap_origin()
@@ -1893,14 +1961,31 @@ pub struct SplitScreen {
     active: usize,
     /// The tab under the pointer.
     hovered: Option<usize>,
+    layout: WorkspaceLayout,
+    panel_focus: FocusHandle,
+}
+
+impl gpui::Focusable for SplitScreen {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.panel_focus.clone()
+    }
 }
 
 impl Render for SplitScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The panel ends at the main panel's right edge, 4 px
         // (`--app-shell-page-inline-end-inset`) from the window's.
-        let left = (!self.tabs.is_empty())
-            .then(|| window.viewport_size().width - px(4.) - panel_width(window, cx));
+        let left = match self.layout {
+            WorkspaceLayout::Chat => None,
+            WorkspaceLayout::Split => {
+                Some(window.viewport_size().width - px(4.) - panel_width(window, cx))
+            }
+            WorkspaceLayout::Full => Some(if self.shell.read(cx).sidebar_open {
+                self.shell.read(cx).sidebar_width
+            } else {
+                crate::RAIL_WIDTH
+            }),
+        };
         // ponytail: like refs/thread, the header only follows the open-sidebar titlebar layout.
         let open = self.shell.read(cx).sidebar_open;
         let sidebar_width = self.shell.read(cx).sidebar_width;
@@ -1910,7 +1995,7 @@ impl Render for SplitScreen {
             .font_family(SANS)
             .on_key_down(crate::focus::tab)
             .child(self.shell.clone())
-            .when(open, |d| {
+            .when(open && self.layout != WorkspaceLayout::Full, |d| {
                 d.child(titlebar_layer(
                     Some(sidebar_width),
                     self.thread
@@ -1932,6 +2017,31 @@ impl Render for SplitScreen {
                         .bg(over(t.border, layout_color(t))),
                 )
             })
+            .when(
+                self.layout == WorkspaceLayout::Chat && !self.tabs.is_empty(),
+                |d| {
+                    d.child(
+                        div()
+                            .id("workspace-show-tabs")
+                            .role(gpui::Role::Button)
+                            .aria_label("Show tabs")
+                            .focusable()
+                            .tab_index(0)
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .absolute()
+                            .top(px(8.))
+                            .right(px(8.))
+                            .size(px(28.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .on_click(dispatch_action(crate::StepWorkspaceLayout))
+                            .on_key_down(dispatch_key(crate::StepWorkspaceLayout))
+                            .focus_visible(|style| style.border_2().border_color(rgb(0x3a83f7)))
+                            .child(icon("diff-hide-tabs", 16., cx.theme().text_tertiary)),
+                    )
+                },
+            )
             .when_some(left, |d, left| {
                 d.child(
                     // In the composited `group/titlebar`, like the thread's header: the
@@ -2040,7 +2150,7 @@ pub fn with_side_panel(
             0,
         )
     });
-    with_side_tabs(shell, thread, panel, cx)
+    with_side_tabs(shell, thread, panel, WorkspaceLayout::Split, cx)
 }
 
 /// `shell`'s thread route: `thread` in its main panel and, with `panel`, the view of tab
@@ -2049,18 +2159,20 @@ pub fn with_side_tabs(
     shell: Entity<Shell>,
     thread: Entity<ThreadView>,
     panel: Option<(AnyView, Vec<Tab>, usize)>,
+    layout: WorkspaceLayout,
     cx: &mut App,
 ) -> Entity<SplitScreen> {
-    let main = match &panel {
-        Some((panel, ..)) => cx
-            .new(|_| SplitMain {
-                thread: thread.clone().into(),
-                panel: panel.clone(),
-                drag_anchor: None,
-            })
-            .into(),
-        None => thread.clone().into(),
-    };
+    let layout = panel.as_ref().map_or(WorkspaceLayout::Chat, |_| layout);
+    if let Some((panel, ..)) = &panel
+        && let Ok(panel) = panel.clone().downcast::<DiffPanel>()
+    {
+        panel.update(cx, |panel, cx| {
+            panel.full_view = (layout == WorkspaceLayout::Full).then(|| shell.downgrade());
+            cx.notify();
+        });
+    }
+    let (main, panel_focus) =
+        workspace_content(&thread, panel.as_ref().map(|(view, ..)| view), layout, cx);
     shell.update(cx, |shell, cx| {
         // A panel's tab strip brings its own `New tab`.
         shell.new_tab = panel.is_none();
@@ -2077,10 +2189,12 @@ pub fn with_side_tabs(
                 .as_ref()
                 .is_some_and(|(view, ..)| view.clone().downcast::<FileView>().is_ok());
         // A lone thread draws its own px at the surface's right corners.
-        shell.main_clips_right = panel.is_none();
+        shell.main_clips_right = layout == WorkspaceLayout::Chat;
         shell.set_main(main, cx);
     });
-    thread.update(cx, |thread, _| thread.clip_right = panel.is_none());
+    thread.update(cx, |thread, _| {
+        thread.clip_right = layout == WorkspaceLayout::Chat
+    });
     let (tabs, active) = panel
         .map(|(_, tabs, active)| (tabs, active))
         .unwrap_or_default();
@@ -2092,8 +2206,32 @@ pub fn with_side_tabs(
             tabs,
             active,
             hovered: None,
+            layout,
+            panel_focus,
         }
     })
+}
+
+fn workspace_content(
+    thread: &Entity<ThreadView>,
+    panel: Option<&AnyView>,
+    layout: WorkspaceLayout,
+    cx: &mut App,
+) -> (AnyView, FocusHandle) {
+    let focus = cx.focus_handle();
+    let main = match panel.filter(|_| layout != WorkspaceLayout::Chat) {
+        Some(panel) => cx
+            .new(|_| SplitMain {
+                thread: thread.clone().into(),
+                panel: panel.clone(),
+                drag_anchor: None,
+                layout,
+                focus: focus.clone(),
+            })
+            .into(),
+        None => thread.clone().into(),
+    };
+    (main, focus)
 }
 
 /// A file link in an answer (`data-file-reference`): open the file viewer tab at `line`.
@@ -3309,6 +3447,41 @@ mod tests {
         assert!(!DiffSource::Uncommitted.mutable());
         assert!(DiffSource::Unstaged.mutable());
         assert!(DiffSource::Staged.mutable());
+    }
+    #[test]
+    fn full_view_uses_workspace_width_for_auto_diff() {
+        use gpui::{AppContext as _, HeadlessAppContext};
+        let mut context = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            || Ok(None),
+        );
+        context.update(|cx| cx.set_global(Theme::dark()));
+        let _window = context
+            .open_window(gpui::size(px(1280.), px(832.)), |window, cx| {
+                let empty: AnyView = cx.new(|_| crate::EmptyMain).into();
+                let shell = cx.new(|_| Shell::new(empty.clone(), empty));
+                let mut panel = DiffPanel::from_patch(
+                    "/repo",
+                    "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n",
+                );
+                panel.standalone = false;
+                panel.layout = DiffLayout::Auto;
+                panel.full_view = Some(shell.downgrade());
+                assert!(
+                    panel
+                        .layout
+                        .split(&panel.files[0], panel.available_width(window, cx))
+                );
+                panel.full_view = None;
+                assert!(
+                    !panel
+                        .layout
+                        .split(&panel.files[0], panel.available_width(window, cx))
+                );
+                shell
+            })
+            .unwrap();
     }
 
     #[test]
