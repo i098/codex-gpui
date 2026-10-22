@@ -300,6 +300,22 @@ pub(super) use contents::read_file_version;
 mod file_url;
 #[path = "git/review_patch.rs"]
 mod review_patch;
+#[path = "worktrees.rs"]
+mod worktrees;
+pub(super) use worktrees::{managed_worktrees, remove_managed_worktree};
+
+pub(super) fn refresh_upstream(root: &Path) -> Result<()> {
+    checked(run(root, &["fetch", "--all", "--prune"])?)?;
+    Ok(())
+}
+
+pub(super) fn select_worktree_environment(root: &Path, path: &str) -> Result<bool> {
+    if !linked_root(root)? {
+        return Ok(false);
+    }
+    store_environment(root, path)?;
+    Ok(true)
+}
 
 /// Git in `root` without pathspec options: `check-ignore` rejects `--literal-pathspecs`, and
 /// the original's `ls-files` calls use pathspec magic.
@@ -1288,7 +1304,7 @@ const MARKER: &str = ".codex-worktree-name";
 const OWNER: &str = "codex-thread.json";
 const SHELL_ENVIRONMENT: &str = "codex-shell-environment.json";
 const OVERRIDE: &str = "AGENTS.override.md";
-const NO_ENVIRONMENT: &str = "__none__";
+pub(super) const NO_ENVIRONMENT: &str = "__none__";
 /// Variables a setup script never hands on (`Ewe`).
 const UNSHARED: [&str; 9] = [
     "CODEX_SOURCE_TREE_PATH",

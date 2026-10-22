@@ -95,13 +95,7 @@ fn drain(fx: &mut Fx) -> Result<()> {
 }
 
 fn evidence(fx: &mut Fx, name: &str) -> Result<()> {
-    let Some(out) = std::env::var_os("CGX_SETTINGS_ACTIONS_EVIDENCE") else {
-        return Ok(());
-    };
-    let out = std::path::PathBuf::from(out);
-    std::fs::create_dir_all(&out)?;
-    fx.reference_shot()?.save(out.join(format!("{name}.png")))?;
-    Ok(())
+    fx.capture_evidence("CGX_SETTINGS_ACTIONS_EVIDENCE", name)
 }
 
 #[test]
@@ -445,6 +439,34 @@ fn source_and_preview_keep_the_same_unsaved_instructions() -> Result<()> {
         std::fs::read_to_string(&path).ok().as_deref()
             == Some("# Updated rules\r\n\r\nKeep this **draft**.\r\n")
     })?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn the_instructions_grip_resizes_the_field_down_to_its_minimum() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    std::fs::write(home.path().join("AGENTS.md"), "Use spaces.\n")?;
+    let host = std::sync::Arc::new(app::host::LocalHost::new(home.path()));
+    let mut fx = Fx::new()?;
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
+    open_instructions(&mut fx)?;
+    // The focused field's blue bottom border, at a device row of the 2x shot.
+    let border = |fx: &mut Fx, css_y: f32| -> Result<bool> {
+        let pixel = *fx.shot()?.get_pixel(1600, (css_y * 2.) as u32);
+        Ok(pixel[0] == 58 && pixel[1] == 131 && pixel[2] == 247)
+    };
+    ensure!(
+        border(&mut fx, 471.5)?,
+        "the field starts at its loaded height"
+    );
+    // Far above the field: the 96 px `min-h-24` box ends at 212.59 + 96 CSS px.
+    fx.drag((1164., 464.), (1164., 100.), 4)?;
+    ensure!(!border(&mut fx, 471.5)? && border(&mut fx, 308.)?);
+    // From the minimum, 100 px down: the box ends at 308.59 + 100 CSS px.
+    fx.drag((1164., 300.), (1164., 400.), 4)?;
+    ensure!(border(&mut fx, 408.)? && !border(&mut fx, 308.)?);
     Ok(())
 }
 

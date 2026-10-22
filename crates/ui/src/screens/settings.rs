@@ -46,10 +46,11 @@ pub mod personalization;
 pub mod workspace {
     use crate::{SANS, composer::popover, focus, icon::icon, text};
     use gpui::{
-        Anchor, Context, EventEmitter, InteractiveElement as _, IntoElement, ParentElement as _,
-        Render, StatefulInteractiveElement as _, Styled as _, Window, anchored, deferred, div,
-        point, px,
+        Anchor, Context, Corners, EventEmitter, InteractiveElement as _, IntoElement,
+        ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Window, anchored,
+        deferred, div, point, px,
     };
+    use shapes::Corner::Round;
     use theme::ActiveTheme as _;
 
     pub enum Event {
@@ -124,9 +125,13 @@ pub mod workspace {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .bg(t.button_primary_solid)
-                    .border_1()
-                    .border_color(t.border)
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(9999.)),
+                        corner: Round,
+                        fill: Some(t.button_primary_solid),
+                        border: Some((px(1.), t.border)),
+                        ..Default::default()
+                    }))
                     .child(text("Add project", 13., 18., 430., button_text)),
                 &add_focus,
                 theme::Theme::RADIUS_FULL,
@@ -233,7 +238,8 @@ pub mod workspace {
                 if event.keystroke.key == "escape" { this.menu = false; cx.notify(); }
             }))
             .flex().items_center().justify_center().pt(px(12.)).px(px(20.))
-            .child(div().w_full().max_w(px(330.)).flex().flex_col().items_center().gap(px(24.))
+            // Chromium paints the content into a transparent composited layer, then blends it.
+            .child(div().w_full().max_w(px(330.)).flex().flex_col().items_center().gap(px(24.)).layer()
                 .child(icon("folder-add", 40., t.text))
                 .child(div().w_full().flex().flex_col().gap(px(24.))
                     .child(div().flex().flex_col().gap(px(24.)).items_center()
@@ -247,6 +253,9 @@ pub mod workspace {
         }
     }
 }
+
+#[path = "settings_subtrees.rs"]
+pub mod subtrees;
 
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
@@ -384,6 +393,7 @@ const EXTERNAL: &str = "Profile";
 ///   access menu visibility, Bottom panel, Show predictions); session only.
 pub struct SettingsPage {
     section: &'static str,
+    subtree: Option<AnyView>,
     query: String,
     /// `config/read` config, plus a `host` object for host settings.
     values: Value,
@@ -410,6 +420,7 @@ impl SettingsPage {
         let values = config.clone();
         Self {
             section: "General",
+            subtree: None,
             query: String::new(),
             values,
             projectless_root,
@@ -444,6 +455,11 @@ impl SettingsPage {
 
     pub fn refresh_host(&mut self, values: Value, cx: &mut Context<Self>) {
         self.values["host"] = values;
+        cx.notify();
+    }
+
+    pub fn show_subtree(&mut self, view: AnyView, cx: &mut Context<Self>) {
+        self.subtree = Some(view);
         cx.notify();
     }
 
@@ -614,7 +630,16 @@ impl SettingsNav {
         focus::ring(control, &focus, Theme::RADIUS_LG, px(2.), cx)
             .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
             .when(label != EXTERNAL, |d| {
-                d.on_click(cx.listener(move |this, _, _, cx| {
+                d.on_click(cx.listener(move |this, _, window, cx| {
+                    if this.page.read(cx).subtree.is_some() {
+                        window.dispatch_action(
+                            Box::new(subtrees::OpenSection {
+                                label: label.into(),
+                            }),
+                            cx,
+                        );
+                        return;
+                    }
                     this.page.update(cx, |p, cx| {
                         p.select_section(label, cx);
                     });
@@ -1269,7 +1294,17 @@ impl SettingsPane {
                     row(
                         "Open source licenses",
                         Some("Third-party notices for bundled dependencies"),
-                        button("View", t.text_alpha_5, None, t).into_any_element(),
+                        button("View", t.text_alpha_5, None, t)
+                            .id("open-source-licenses")
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(subtrees::OpenSubtree {
+                                        path: subtrees::LICENSES_PATH.into(),
+                                    }),
+                                    cx,
+                                );
+                            })
+                            .into_any_element(),
                     ),
                     row(
                         "Plugins",
@@ -1416,6 +1451,9 @@ impl SettingsPane {
 impl Render for SettingsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        if let Some(view) = &self.page.read(cx).subtree {
+            return view.clone().into_any_element();
+        }
         let section = self.page.read(cx).section;
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
@@ -2064,11 +2102,13 @@ impl Login {
     }
 }
 
-/// 46 px outlined pill button of the sign-in screen.
+/// 46 px outlined pill button of the sign-in screen. Skia paints its fill and border, as
+/// Chromium does in the page's composited layer; the hover fill lies inside the border.
 fn login_button(id: &'static str, label: &'static str, color: Hsla, t: &Theme) -> Stateful<Div> {
     let hover = over(t.ghost_hover, t.surface);
     div()
         .id(id)
+        .group(id)
         .relative()
         .h(px(46.))
         .w_full()
@@ -2076,15 +2116,20 @@ fn login_button(id: &'static str, label: &'static str, color: Hsla, t: &Theme) -
         .items_center()
         .justify_center()
         .gap(px(8.))
-        .rounded_full()
-        .bg(t.surface)
-        .hover(move |s| s.bg(hover))
         .child(shapes::decoration(shapes::Decoration {
             radius: Corners::all(px(9999.)),
             corner: Round,
+            fill: Some(t.surface),
             border: Some((px(1.), t.border)),
             ..Default::default()
         }))
+        .child(
+            div()
+                .absolute()
+                .inset(px(1.))
+                .rounded_full()
+                .group_hover(id, move |s| s.bg(hover)),
+        )
         .child(text(label, 14., 20., 500., color))
 }
 
@@ -2295,6 +2340,8 @@ impl Render for Login {
                     .flex_col()
                     .items_center()
                     .gap(px(if requirements { 12. } else { 32. }))
+                    // As on the workspace page: a transparent composited layer.
+                    .layer()
                     .when(!requirements, |d| {
                         d.child(icon(
                             "login-logo",

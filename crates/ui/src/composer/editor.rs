@@ -758,11 +758,12 @@ impl Composer {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             // `--opacity-composer-placeholder: .5` on the placeholder. The text blends like
             // Chromium's: blitted into a transparent layer (`_ComposerLayoutInput`'s
-            // `overflow-y: auto` contents), then composited onto the card.
+            // `overflow-y: auto` contents), then composited onto the card. A settings textarea
+            // never scrolls here, so it has no such layer: its text blends onto the field's fill.
             .child(
                 div()
                     .when(self.content.is_empty(), |d| d.opacity(0.5))
-                    .when(self.plain_field != Some(true), |content| content.layer())
+                    .when(self.plain_field != Some(true), |d| d.layer())
                     .child(Editor(cx.entity())),
             )
     }

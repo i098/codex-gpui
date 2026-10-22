@@ -7,6 +7,8 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.navigate(Route::Settings, window, cx)
         }),
     )
+    .on_action(cx.listener(Root::open_settings_subtree))
+    .on_action(cx.listener(Root::open_settings_parent))
     .on_action(cx.listener(|this, _: &LogOut, window, cx| {
         if this.instructions_changed(cx) {
             this.confirm_instructions_leave(SettingsLeave::LogOut, window, cx);
@@ -38,6 +40,11 @@ pub(super) fn page(root: &mut Root, window: &mut Window, cx: &mut Context<Root>)
     let section = root.settings_section.take();
     let (shell, page) = settings::shell(&config, &root.skills, section, cx);
     root.settings_page = Some(page.clone());
+    if let Route::SettingsSubtree(path) = &root.state.route
+        && let Some(view) = root.settings_subtree(path, cx)
+    {
+        page.update(cx, |page, cx| page.show_subtree(view, cx));
+    }
     cx.subscribe(&page, |this, page, e: &SettingChanged, cx| {
         this.write_setting(e, cx);
         if e.path.starts_with("host.") && e.path != settings::THEME {
@@ -70,6 +77,7 @@ pub(super) fn page(root: &mut Root, window: &mut Window, cx: &mut Context<Root>)
     .detach();
     shell
 }
+/// Quit asks about an unsaved instructions draft first, then runs the shell's guarded quit.
 pub(crate) fn request_quit(cx: &mut App) {
     for window in cx.windows() {
         let Some(window) = window.downcast::<Root>() else {
@@ -88,5 +96,5 @@ pub(crate) fn request_quit(cx: &mut App) {
             return;
         }
     }
-    cx.quit();
+    crate::window_shell::request_quit(cx);
 }
