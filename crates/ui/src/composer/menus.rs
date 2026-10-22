@@ -457,13 +457,19 @@ impl Composer {
             }))
             .child(menu);
         let slot = div().absolute().bottom(px(36.)).flex();
+        // The original's popper places the menu with `transform: translate()` rounded to device
+        // px (floating-ui `roundByDPR`), so its origin keeps no fraction of the anchor's.
         deferred(match center_width {
-            Some(w) => slot
-                .left_0()
-                .right_0()
-                .justify_center()
-                .child(div().flex_none().w(px(w)).pl(px(1.)).pb(px(1.)).child(menu)),
-            None => slot.left_0().child(menu),
+            Some(w) => slot.left_0().right_0().justify_center().child(
+                div()
+                    .flex_none()
+                    .w(px(w))
+                    .pl(px(1.))
+                    .pb(px(1.))
+                    .snap_origin()
+                    .child(menu),
+            ),
+            None => slot.left_0().child(menu.snap_origin()),
         })
         .with_priority(1)
         .into_any_element()
