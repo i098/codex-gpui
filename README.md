@@ -260,6 +260,7 @@ Analytics refreshes keep the selected period; credit speed groups use the record
 The input fields reuse `Composer::settings_field`, including selection, clipboard access, and input methods.
 The renderer paints each limit card within the scroll layer and paints the sticky tabs in a separate layer.
 The sticky fade uses the original compositor layer's pixel origin to preserve gradient dithering.
+Disabled Analytics arrows use their painted bounds for the opacity layer.
 Run `cargo test -p ui -p app --lib usage` for the protocol and validation checks.
 Run `cargo run -p ui --example usage -- /path/to/usage.png` for the recorded native screen.
 Add `confirm-reset` after the output path to capture the confirmation state without redeeming a reset.

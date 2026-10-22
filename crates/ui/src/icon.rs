@@ -36,8 +36,10 @@ pub fn icon_sized(name: &str, width: f32, height: f32, color: Hsla) -> Icon {
         height,
         flip_x: false,
         composited: None,
+        parent_composited: false,
         own_layer: false,
         runtime: false,
+        saved_opacity: None,
         transformation: None,
         interactivity: Interactivity::new(),
     }
@@ -54,8 +56,10 @@ pub struct Icon {
     height: f32,
     flip_x: bool,
     composited: Option<Point<Pixels>>,
+    parent_composited: bool,
     own_layer: bool,
     runtime: bool,
+    saved_opacity: Option<u8>,
     transformation: Option<Transformation>,
     interactivity: Interactivity,
 }
@@ -70,8 +74,11 @@ impl Icon {
     /// Chromium paints this icon into the transparent tile of the composited layer whose
     /// origin is `layer` (a scroll container's contents, window coordinates) and composites
     /// the tile, instead of blending into the page (`shapes::paint`'s `layer`).
+    /// `None` uses the current compositor layer and rasterizes the SVG at its actual position.
     pub fn composited(mut self, layer: Option<Point<Pixels>>) -> Self {
         self.composited = layer;
+        self.parent_composited = layer.is_none();
+        self.runtime |= self.parent_composited;
         self
     }
 
@@ -93,6 +100,12 @@ impl Icon {
         self
     }
 
+    /// Applies CSS opacity to the SVG's painted bounds, preserving its fill and stroke composition.
+    pub fn saved_opacity(mut self, alpha: u8) -> Self {
+        self.saved_opacity = Some(alpha);
+        self.runtime = true;
+        self
+    }
     /// Transforms the rendered icon without changing its layout or hitbox.
     pub fn with_transformation(mut self, transformation: Transformation) -> Self {
         self.transformation = Some(transformation);
@@ -127,7 +140,7 @@ fn color_key(color: Hsla) -> String {
 }
 
 impl Element for Icon {
-    type RequestLayoutState = ();
+    type RequestLayoutState = LayoutId;
     type PrepaintState = Option<Hitbox>;
 
     fn id(&self) -> Option<ElementId> {
@@ -144,7 +157,7 @@ impl Element for Icon {
         inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
-    ) -> (LayoutId, ()) {
+    ) -> (LayoutId, LayoutId) {
         let layout_id = self.interactivity.request_layout(
             global_id,
             inspector_id,
@@ -152,7 +165,7 @@ impl Element for Icon {
             cx,
             |style, window, cx| window.request_layout(style, None, cx),
         );
-        (layout_id, ())
+        (layout_id, layout_id)
     }
 
     fn prepaint(
@@ -160,7 +173,7 @@ impl Element for Icon {
         global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut (),
+        _: &mut LayoutId,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Hitbox> {
@@ -180,7 +193,7 @@ impl Element for Icon {
         global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut (),
+        layout_id: &mut LayoutId,
         hitbox: &mut Option<Hitbox>,
         window: &mut Window,
         cx: &mut App,
@@ -189,8 +202,15 @@ impl Element for Icon {
         let opacity = self.interactivity.base_style.opacity.take().unwrap_or(1.);
         let (name, flip_x, own_layer) = (self.name.clone(), self.flip_x, self.own_layer);
         let (composited, runtime) = (self.composited, self.runtime);
+        let parent_composited = self.parent_composited;
+        let saved_opacity = self.saved_opacity;
         let transformation = self.transformation;
         let css = size(px(self.width), px(self.height));
+        let mut ink_bounds = Bounds::new(bounds.origin, css);
+        if saved_opacity.is_some() {
+            ink_bounds.origin.x += window.layout_origin_residual_x(*layout_id);
+            ink_bounds.origin.y += window.layout_origin_residual_y(*layout_id);
+        }
         self.interactivity.paint(
             global_id,
             inspector_id,
@@ -237,30 +257,46 @@ impl Element for Icon {
                 }
                 let path = format!("icons/{name}.svg");
                 if let Ok(Some(src)) = cx.asset_source().load(&path) {
-                    let layer = composited.or(own_layer.then_some(bounds.origin));
-                    let painted = if transformation.is_some() {
-                        shapes::paint_icon_transformed(
-                            &src,
-                            &path,
-                            Bounds::new(bounds.origin, css),
-                            flip_x,
-                            color,
-                            layer,
-                            transform,
-                            window,
-                            cx,
-                        )
+                    let layer = composited
+                        .or(own_layer.then_some(bounds.origin))
+                        .or_else(|| {
+                            parent_composited
+                                .then(|| window.composited_layer().map(|(bounds, _)| bounds.origin))
+                                .flatten()
+                        });
+                    let paint = |window: &mut Window, cx: &mut App| {
+                        if transformation.is_some() {
+                            shapes::paint_icon_transformed(
+                                &src,
+                                &path,
+                                Bounds::new(bounds.origin, css),
+                                flip_x,
+                                color,
+                                layer,
+                                transform,
+                                window,
+                                cx,
+                            )
+                        } else {
+                            shapes::paint_icon(
+                                &src,
+                                &path,
+                                Bounds::new(bounds.origin, css),
+                                flip_x,
+                                color,
+                                layer,
+                                window,
+                                cx,
+                            )
+                        }
+                    };
+                    let painted = if let Some(alpha) = saved_opacity {
+                        let ink =
+                            shapes::icon_paint_bounds(&src, &path, ink_bounds, flip_x, window)
+                                .unwrap_or(bounds);
+                        shapes::with_layer(alpha, ink, window, |window| paint(window, cx))
                     } else {
-                        shapes::paint_icon(
-                            &src,
-                            &path,
-                            Bounds::new(bounds.origin, css),
-                            flip_x,
-                            color,
-                            layer,
-                            window,
-                            cx,
-                        )
+                        paint(window, cx)
                     };
                     if painted {
                         return;
@@ -274,9 +310,14 @@ impl Element for Icon {
                         .scale(size(-1., 1.))
                         .translate(center.scale(-scale));
                 }
-                window
-                    .paint_svg(bounds, path.into(), None, matrix, color, cx)
-                    .ok();
+                let paint = |window: &mut Window| {
+                    window.paint_svg(bounds, path.into(), None, matrix, color, cx)
+                };
+                if let Some(alpha) = saved_opacity {
+                    window.with_skia_layer(alpha, paint).ok();
+                } else {
+                    paint(window).ok();
+                }
             },
         )
     }

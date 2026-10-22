@@ -2748,7 +2748,6 @@ pub(crate) fn icon_paint_bounds(
     let icon = cached_icon(src, key)?;
     let ink = icon.paint_bounds()?;
     let s = window.scale_factor();
-    let snap = |value: Pixels| f64::from((f32::from(value) * s + 0.5).floor());
     let (w, h) = (
         f64::from(f32::from(bounds.size.width) * s),
         f64::from(f32::from(bounds.size.height) * s),
@@ -2767,13 +2766,14 @@ pub(crate) fn icon_paint_bounds(
     if flip_x {
         (left, right) = (w - right, w - left);
     }
-    let (x, y) = (snap(bounds.left()), snap(bounds.top()));
-    let left = (x + left).floor().max(x);
-    let top = (y + f64::from(ink.top) * scale + ty).floor().max(y);
-    let right = (x + right).ceil().min(snap(bounds.right()));
+    let x = f64::from(f32::from(bounds.left()) * s);
+    let y = f64::from(f32::from(bounds.top()) * s);
+    let left = (x + left).floor().max(x.floor());
+    let top = (y + f64::from(ink.top) * scale + ty).floor().max(y.floor());
+    let right = (x + right).ceil().min((x + w).ceil());
     let bottom = (y + f64::from(ink.bottom) * scale + ty)
         .ceil()
-        .min(snap(bounds.bottom()));
+        .min((y + h).ceil());
     if left >= right || top >= bottom {
         return None;
     }
@@ -2950,6 +2950,40 @@ mod tests {
         prelude::FluentBuilder, px, size,
     };
     use std::sync::Arc;
+
+    #[test]
+    fn icon_opacity_bounds_keep_the_fractional_layout_origin() -> anyhow::Result<()> {
+        struct Empty;
+        impl Render for Empty {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx.open_window(size(px(100.), px(100.)), |_, cx| cx.new(|_| Empty))?;
+        cx.update_window(window.into(), |_, window, _| {
+            let scale = window.scale_factor();
+            let bounds = Bounds::new(
+                point(px(20.5 / scale), px(40.5 / scale)),
+                size(px(32. / scale), px(32. / scale)),
+            );
+            let svg = br#"<svg viewBox="0 0 16 16"><path d="M5.5 3.25H11V12.75H5.5Z"/></svg>"#;
+            let actual =
+                icon_paint_bounds(svg, "fractional-opacity-origin", bounds, false, window).unwrap();
+            assert_eq!(
+                actual,
+                Bounds::from_corners(
+                    point(px(31. / scale), px(47. / scale)),
+                    point(px(43. / scale), px(66. / scale)),
+                )
+            );
+        })?;
+        Ok(())
+    }
 
     #[test]
     fn horizontal_stripes_keep_fractional_period_and_hard_stop() {
