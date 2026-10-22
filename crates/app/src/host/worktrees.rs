@@ -15,39 +15,47 @@ pub(in crate::host) fn managed_worktrees(roots: &[PathBuf]) -> Result<Value> {
             if !entry.file_type()?.is_dir() {
                 continue;
             }
-            let reservation = entry.path();
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            let legacy = name.len() == 4 && name.bytes().all(|byte| byte.is_ascii_hexdigit());
-            let modern = valid_name(&name) && reservation.join(MARKER).is_file();
-            for entry in fs::read_dir(&reservation)? {
-                let entry = entry?;
-                if !entry.file_type()?.is_dir() {
-                    continue;
-                }
-                let path = entry.path();
-                if !legacy && !modern && !legacy_directory(&entry.file_name().to_string_lossy()) {
-                    continue;
-                }
-                if !seen.insert(path.canonicalize()?) {
-                    continue;
-                }
-                let git_dir = answer(&path, &["rev-parse", "--absolute-git-dir"])?;
-                if !legacy && modern && (git_dir.is_none() || !path.join(".git").is_file()) {
-                    continue;
-                }
-                let common = answer(
-                    &path,
-                    &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-                )?;
-                let repository = common.as_deref().and_then(|path| Path::new(path).parent());
-                worktrees
-                    .push(json!({"dir": path, "gitDir": git_dir, "repositoryRoot": repository}));
-            }
+            append_reservation(entry, &mut seen, &mut worktrees)?;
         }
     }
     worktrees.sort_by(|a, b| a["dir"].as_str().cmp(&b["dir"].as_str()));
     Ok(json!({"worktrees": worktrees}))
+}
+
+fn append_reservation(
+    entry: fs::DirEntry,
+    seen: &mut HashSet<PathBuf>,
+    worktrees: &mut Vec<Value>,
+) -> Result<()> {
+    let reservation = entry.path();
+    let name = entry.file_name();
+    let name = name.to_string_lossy();
+    let legacy = name.len() == 4 && name.bytes().all(|byte| byte.is_ascii_hexdigit());
+    let modern = valid_name(&name) && reservation.join(MARKER).is_file();
+    for entry in fs::read_dir(&reservation)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let path = entry.path();
+        if !legacy && !modern && !legacy_directory(&entry.file_name().to_string_lossy()) {
+            continue;
+        }
+        if !seen.insert(path.canonicalize()?) {
+            continue;
+        }
+        let git_dir = answer(&path, &["rev-parse", "--absolute-git-dir"])?;
+        if !legacy && modern && (git_dir.is_none() || !path.join(".git").is_file()) {
+            continue;
+        }
+        let common = answer(
+            &path,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?;
+        let repository = common.as_deref().and_then(|path| Path::new(path).parent());
+        worktrees.push(json!({"dir": path, "gitDir": git_dir, "repositoryRoot": repository}));
+    }
+    Ok(())
 }
 
 fn valid_name(name: &str) -> bool {
