@@ -615,7 +615,7 @@ impl CloudPage {
                 Some(t.border),
             ))
             .child(text(label.clone(), 13., 18., 430., t.text))
-            .child(crate::icon::icon("chevron-down", 14., t.text_tertiary));
+            .child(crate::icon::icon("chevron-down", 14., t.text_tertiary).own_layer(None));
         self.wire_button(id.into(), label, content, cx, action)
     }
 
@@ -1294,6 +1294,12 @@ impl CloudPage {
                 "Setup script",
                 Some("Runs the install commands like npm install for common package managers"),
                 div()
+                    .id("cloud-setup-mode")
+                    .min_w_0()
+                    .max_w_full()
+                    .overflow_x_scroll()
+                    .overflow_y_hidden()
+                    .layer()
                     .flex()
                     .gap(px(2.))
                     .children([(true, "Automatic"), (false, "Manual")].into_iter().map(
