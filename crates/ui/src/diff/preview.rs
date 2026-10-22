@@ -114,7 +114,7 @@ pub(super) fn enabled(path: &str, rich_preview: bool) -> bool {
         || image_format(path).is_some_and(|format| format != ImageFormat::Svg || rich_preview)
 }
 
-type Raster = Rc<RefCell<Option<(Bounds<Pixels>, f32, Hsla, Arc<RenderImage>)>>>;
+type Raster = Rc<RefCell<Option<(Bounds<Pixels>, f32, Arc<RenderImage>)>>>;
 
 struct Side {
     source: Option<PreviewSource>,
@@ -423,7 +423,7 @@ impl DiffPanel {
                         .h(image_height)
                         .into_any_element()
                 } else {
-                    picture(content, value.raster.clone(), t.surface, preview)
+                    picture(content, value.raster.clone(), preview)
                         .w(image_width)
                         .h(image_height)
                         .into_any_element()
@@ -575,12 +575,7 @@ impl DiffPanel {
     }
 }
 
-fn picture(
-    content: &PreviewContent,
-    cache: Raster,
-    page: Hsla,
-    preview: &Preview,
-) -> gpui::Canvas<()> {
+fn picture(content: &PreviewContent, cache: Raster, preview: &Preview) -> gpui::Canvas<()> {
     let (svg, pdf) = (preview.svg, preview.pdf);
     let pixels = content.pixels.clone();
     let fallback = content.image.clone();
@@ -591,8 +586,8 @@ fn picture(
             let cached = cache
                 .borrow()
                 .as_ref()
-                .filter(|(b, s, p, _)| *b == bounds && *s == scale && *p == page)
-                .map(|(_, _, _, image)| image.clone());
+                .filter(|(b, s, _)| *b == bounds && *s == scale)
+                .map(|(_, _, image)| image.clone());
             let image = cached.or_else(|| {
                 let padding = if svg { px(12.) } else { px(0.) };
                 let mut destination = Bounds::new(
@@ -607,10 +602,14 @@ fn picture(
                     bounds,
                     Corners::all(px(7.5)),
                     shapes::Corner::Round,
-                    shapes::ImageComposition::Direct(if svg || pdf { gpui::white() } else { page }),
+                    if svg || pdf {
+                        shapes::ImageComposition::Direct(gpui::white())
+                    } else {
+                        shapes::ImageComposition::Group(gpui::transparent_black())
+                    },
                     window,
                 )?);
-                *cache.borrow_mut() = Some((bounds, scale, page, image.clone()));
+                *cache.borrow_mut() = Some((bounds, scale, image.clone()));
                 Some(image)
             });
             if let Some(image) = image {

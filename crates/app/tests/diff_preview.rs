@@ -168,6 +168,22 @@ fn changed_images_and_pdf_pages_use_real_file_reads() -> Result<()> {
         "The working image was not blue"
     );
 
+    let mut translucent = image::RgbaImage::from_pixel(128, 64, image::Rgba([0, 0, 255, 128]));
+    translucent.put_pixel(0, 0, image::Rgba([0, 0, 255, 255]));
+    translucent.save(&image_path)?;
+    let translucent_patch = git(repo.path(), &["diff", "--full-index", "--", "picture.png"])?;
+    set_patch(&mut fx, &translucent_patch)?;
+    fx.wait("translucent image", |fx| {
+        page(fx, 0) == Some((1, 1)) && page(fx, 1) == Some((1, 1))
+    })?;
+    let image = fx.reference_shot()?;
+    image.save(output.join("image-translucent.png"))?;
+    let [red, green, blue, alpha] = image.get_pixel(1118 * 2, 209 * 2).0;
+    ensure!(
+        red > 0 && red < 24 && green == red && blue > 128 && alpha == 255,
+        "The translucent pixel did not blend onto the diff surface: {red}, {green}, {blue}, {alpha}"
+    );
+
     toggle_preview(&mut fx)?;
     set_patch(&mut fx, &pdf_patch)?;
     fx.wait("first PDF page", |fx| page(fx, 1) == Some((1, 2)))?;
