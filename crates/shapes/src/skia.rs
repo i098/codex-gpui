@@ -2951,7 +2951,12 @@ pub(crate) fn paint_icon(
         c.restore();
         c.restore();
     };
-    if layer.composited && !wide(color) {
+    // A masked path draws into a transparent layer of its own, which Skia restores with
+    // srcover. Inside a `with_layer` that restore keeps the pixel, so the real color's raster
+    // holds it exactly; the coverage probes, drawn in white, round the mask's `DstIn`
+    // differently for other colors.
+    let masked = DEVICE.get().is_some() && icon.paths.iter().any(|p| !p.mask.is_empty());
+    if (layer.composited || masked) && !wide(color) {
         let rgba = Rgba::from(color);
         let sprites = cached(
             format!(
@@ -2990,29 +2995,6 @@ pub(crate) fn paint_icon(
         let a = alpha_byte(a);
         let black = is_black(color, a);
         let wide = p.color.is_none() && wide(color);
-        // A masked path draws into a transparent layer of its own, which Skia restores with
-        // srcover. Inside a `with_layer` that restore keeps the pixel, so the real color's
-        // raster holds it exactly; the coverage probes, drawn in white, round the mask's
-        // `DstIn` differently for other colors.
-        if !p.mask.is_empty() && !wide && DEVICE.get().is_some() {
-            let rgba = Rgba::from(color);
-            let sprites = cached(
-                format!(
-                    "{key}#{n}masked{flip_x}{clip:?}{w}x{h}{rgba:?}{:?}{clips:?}",
-                    layer.key(bbox)
-                ),
-                || {
-                    composited_sprites(bbox, layer, &|c| {
-                        for clip in &clips {
-                            clip.clip(c, ClipOp::Intersect);
-                        }
-                        draw(c, Color4f::new(rgba.r, rgba.g, rgba.b, rgba.a));
-                    })
-                },
-            );
-            paint_transformed_sprites(&sprites, color, paint_origin, transformation, window, cx);
-            continue;
-        }
         let sprites = sprites(
             format!(
                 "{key}#{n}{flip_x}{clip:?}{w}x{h}{:?}{a}{black}{wide}{clips:?}",
