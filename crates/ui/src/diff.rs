@@ -3236,7 +3236,8 @@ fn hunk(
                                 .border_color(t.surface)
                                 .bg(gutter_color),
                         )
-                        .with_priority(1),
+                        .with_priority(1)
+                        .clipped(),
                     )
                     .child(
                         deferred(
@@ -3246,7 +3247,10 @@ fn hunk(
                                 .flex_none()
                                 .child(comment),
                         )
-                        .with_priority(0),
+                        .with_priority(0)
+                        // Deferred only for paint order: the card stays inside the surface's
+                        // `overflow: hidden` and the scroller, as in Chromium.
+                        .clipped(),
                     )
             }))
     };
