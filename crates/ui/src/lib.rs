@@ -7,7 +7,7 @@
 
 use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, Bounds, ClickEvent, ContentMask, Context,
-    Corners, CursorStyle, DispatchPhase, Div, FontWeight, Hsla, Image, ImageFormat,
+    Corners, CursorStyle, DispatchPhase, Div, Entity, FontWeight, Hsla, Image, ImageFormat,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful, StatefulInteractiveElement,
     Styled, Svg, Window, actions, canvas, div, fill, img, point, prelude::FluentBuilder as _, px,
@@ -135,6 +135,11 @@ pub struct Shell {
     /// With `main_composited`: the main view draws its right corners' px of partial clip
     /// coverage itself, after the shell (a lone thread: `shapes::paint_clipped_tile`).
     pub main_clips_right: bool,
+    /// With `main_layer`: the Changes panel. While its files overflow their scroller, Chromium
+    /// composites that scroller into an opaque layer, and cc's occlusion, blind to the main
+    /// surface's rounded clip, culls the page layer's tiles that it spans: the window's
+    /// background shows at the main surface's bottom-right corner ([`culled_corner_edge`]).
+    pub changes_panel: Option<Entity<screens::diff::panel::DiffPanel>>,
     /// A chat needs attention (unread): the rail's Home item carries the unread dot.
     pub attention: bool,
     /// The profile avatar's menu is open.
@@ -182,6 +187,7 @@ impl Shell {
             main_composited: false,
             main_layer: false,
             main_clips_right: false,
+            changes_panel: None,
             attention: false,
             profile_menu: false,
             avatar_hovered: false,
@@ -1256,6 +1262,7 @@ impl Render for Shell {
         let main_layer = composited && self.main_layer;
         let clip_twice = main_layer && screens::diff::panel::panel_clamped(window, cx);
         let clips_right = composited && self.main_clips_right;
+        let changes = self.changes_panel.clone().filter(|_| main_layer);
         let fills = if composited {
             1
         } else {
@@ -1373,6 +1380,22 @@ impl Render for Shell {
                         let mask = ContentMask {
                             bounds: square + bounds.origin,
                         };
+                        // The page layer's px resume at `kept`'s left: an overflowing Changes
+                        // scroller culls its tiles left of there.
+                        let kept = changes
+                            .as_ref()
+                            .filter(|_| dx < 0. && dy < 0.)
+                            .and_then(|panel| panel.read(cx).overflowing_files())
+                            .and_then(|files| {
+                                culled_corner_edge(files, bounds.origin, s, (x, y), rd)
+                            })
+                            .map_or(x0, |edge| edge.max(x0));
+                        let kept = ContentMask {
+                            bounds: Bounds::from_corners(
+                                point(px(kept / s), px(y0 / s)),
+                                point(px((x0 + rd) / s), px((y0 + rd) / s)),
+                            ) + bounds.origin,
+                        };
                         window.with_content_mask(Some(mask), |window| {
                             window.with_skia_layer(255, |window| {
                                 let fill = shapes::Decoration {
@@ -1380,7 +1403,9 @@ impl Render for Shell {
                                     ..Default::default()
                                 };
                                 shapes::paint(&fill, None, bounds, window, cx);
-                                main = frame(bounds, u8::from(!main_layer), false, window, cx);
+                                main = window.with_content_mask(Some(kept), |window| {
+                                    frame(bounds, u8::from(!main_layer), false, window, cx)
+                                });
                                 let own = clips_right || main_layer;
                                 let own = Corners {
                                     top_right: own,
@@ -1542,6 +1567,47 @@ pub(crate) fn drag_layer(
     .size_full()
 }
 
+/// The start (device px) of the cc raster tile that holds device px `v` of a layer: 512 px
+/// tiles step 510 px, and the first one holds one px more.
+fn tile_start(v: f32) -> f32 {
+    if v < 511. {
+        0.
+    } else {
+        ((v - 1.) / 510.).floor() * 510. + 1.
+    }
+}
+
+/// Where the page layer's px resume (device x) in the main surface's bottom-right corner, the
+/// `rd` px square up and left of `corner` (device px from the page's `origin`), under an
+/// overflowing scroller with window bounds `occluder`. Reaching the corner, that scroller is
+/// an opaque composited layer: cc culls each page tile it spans in width, from the tile's top,
+/// regardless of the main surface's rounded clip, so the window's background shows there
+/// through the clip's partial px. `None` if it does not reach the corner.
+/// ponytail: one occluder over a page layer at the window origin; the original contextExpanded
+/// at 1280 px shows the culled px end at tile edge 2551. Add others as captures show them.
+fn culled_corner_edge(
+    occluder: Bounds<Pixels>,
+    origin: Point<Pixels>,
+    scale: f32,
+    (x, y): (f32, f32),
+    rd: f32,
+) -> Option<f32> {
+    let dev = |v: Pixels| f32::from(v) * scale;
+    let (left, top) = (
+        dev(occluder.left() - origin.x),
+        dev(occluder.top() - origin.y),
+    );
+    let (right, bottom) = (
+        dev(occluder.right() - origin.x),
+        dev(occluder.bottom() - origin.y),
+    );
+    let spans = left <= tile_start(x - rd)
+        && top <= tile_start(y - rd)
+        && right >= x - 0.5
+        && bottom >= y - 0.5;
+    spans.then(|| tile_start(x))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1553,5 +1619,31 @@ mod tests {
         // refs/home/dark@1280x832.png: titlebar and rail 36, sidebar 29.
         assert_eq!(red(layout_color(&t)), 36);
         assert_eq!(red(over(t.sidebar_background, layout_color(&t))), 29);
+    }
+
+    #[test]
+    fn overflowing_scroller_culls_page_tiles_it_spans() {
+        let origin = Point::default();
+        let files = |left: f32, top: f32, right: f32, bottom: f32| {
+            Bounds::from_corners(point(px(left), px(top)), point(px(right), px(bottom)))
+        };
+        let edge = |occluder, w: f32, h: f32| {
+            culled_corner_edge(occluder, origin, 2., (2. * (w - 4.), 2. * (h - 4.)), 24.)
+        };
+        // contextExpanded at 1280x832: the original's window background ends at device x 2551,
+        // where the page tile at its corner starts.
+        assert_eq!(
+            edge(files(661., 130., 1276., 828.), 1280., 832.),
+            Some(2551.)
+        );
+        assert_eq!(tile_start(2550.), 2041.);
+        assert_eq!(tile_start(511.), 511.);
+        assert_eq!(tile_start(510.), 0.);
+        // At 1440x900 the corner square (from x 2848) lies in the tile the scroller ends in.
+        assert!(edge(files(661., 130., 1436., 896.), 1440., 900.).unwrap() <= 2848.);
+        // A file tree beside the scroller: it stops short of the corner.
+        assert_eq!(edge(files(661., 130., 1036., 828.), 1280., 832.), None);
+        // A scroller that starts below the corner tile's top covers none of that tile in full.
+        assert_eq!(edge(files(661., 780., 1276., 828.), 1280., 832.), None);
     }
 }

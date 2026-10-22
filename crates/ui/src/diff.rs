@@ -11,7 +11,7 @@ use bridge::{
     types::{ThreadItem, ThreadReadResponse, ThreadStartResponse, Turn},
 };
 use gpui::{
-    Action, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context, Corners,
+    Action, AnyView, App, AppContext as _, Bounds, ClickEvent, ClipboardItem, Context, Corners,
     CursorStyle, Div, Entity, FocusHandle, Font, FontFeatures, FontWeight, Global, HighlightStyle,
     Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
     ParentElement, Pixels, Render, ScrollHandle, SharedString, Stateful,
@@ -368,6 +368,13 @@ impl DiffPanel {
             fixture::response("sessions/subtract.jsonl", "thread/start", 0);
         let read: ThreadReadResponse = fixture::response("readback.jsonl", "thread/read", 1);
         Self::last_turn(&start.cwd, &read.thread.cwd, &read.thread.turns)
+    }
+
+    /// The files scroller's window bounds while it shows files that overflow it: Chromium then
+    /// composites it into an opaque layer (`Shell::changes_panel`).
+    pub fn overflowing_files(&self) -> Option<Bounds<Pixels>> {
+        let max = self.scroll.max_offset();
+        (!self.files.is_empty() && (max.x > px(0.) || max.y > px(0.))).then(|| self.scroll.bounds())
     }
 
     /// "Last Turn" source: every file change of the last of `turns`, a thread in `cwd`. Paths
@@ -2358,9 +2365,11 @@ pub fn with_side_tabs(
         // The thread route's main surface is a composited layer; with the Changes panel,
         // Chromium composites the surface itself too.
         shell.main_composited = true;
-        shell.main_layer = panel
+        let diff = panel
             .as_ref()
-            .is_some_and(|(view, ..)| view.clone().downcast::<DiffPanel>().is_ok());
+            .and_then(|(view, ..)| view.clone().downcast::<DiffPanel>().ok());
+        shell.main_layer = diff.is_some();
+        shell.changes_panel = diff;
         // A lone thread draws its own px at the surface's right corners.
         shell.main_clips_right = panel.is_none();
         shell.set_main(main, cx);
