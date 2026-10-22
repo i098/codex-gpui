@@ -77,9 +77,9 @@ fn environment_conflicts_inheritance_selection_and_worktree_snapshots() -> Resul
     let settings_path = dir.path().join("settings.json");
     let mut settings = Settings::load(settings_path.clone())?;
     let worktrees = dir.path().join("custom-worktrees");
+    let host = LocalHost::new(&home).with_settings(Some(settings.clone()));
     settings.write("git-worktree-root", json!(worktrees))?;
     settings.write("worktree-upstream-refresh-mode", json!("best-effort"))?;
-    let host = LocalHost::new(&home).with_settings(Some(settings));
     let config = project.join(".codex/environments/local.toml");
     let raw = "version = 1\nname = 'local'\n[setup]\nscript = 'printf configured > setup-result'\n[[actions]]\nname = 'Run'\ncommand = 'printf action'\nicon = 'run'\nplatform = 'linux'\n";
     let saved = call(
@@ -142,6 +142,13 @@ fn environment_conflicts_inheritance_selection_and_worktree_snapshots() -> Resul
     )?;
     let catalog = call(&host, "codex-worktrees", json!({}))?;
     ensure!(catalog["worktrees"][0]["dir"] == json!(root));
+    ensure!(call(&host, "worktree-delete", json!({"worktree": project})).is_err());
+    let nested_repository = root.join("nested");
+    fs::create_dir(&nested_repository)?;
+    git(&nested_repository, &["init", "-q"])?;
+    ensure!(call(&host, "worktree-delete", json!({"worktree": root})).is_err());
+    ensure!(root.exists());
+    fs::remove_dir_all(&nested_repository)?;
     fs::write(root.join("tracked.txt"), "changed\n")?;
     fs::write(root.join("untracked.txt"), "preserved\n")?;
     call(&host, "worktree-delete", json!({"worktree": root}))?;

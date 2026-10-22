@@ -33,9 +33,7 @@ impl LocalHost {
                 .and_then(Value::as_str)
                 == Some("best-effort")
         });
-        if refresh
-            && let Err(error) = git::refresh_upstream(cwd)
-        {
+        if refresh && let Err(error) = git::refresh_upstream(cwd) {
             eprintln!("codex-gpui: upstream refresh: {error:#}");
         }
         Ok(())
