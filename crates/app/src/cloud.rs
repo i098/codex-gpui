@@ -9,6 +9,20 @@ use ui::screens::{
 };
 use url::Url;
 
+const GITHUB_CONNECTOR: &str = "connector_76869538009648d5b282a4bb21c3d157";
+const GITHUB_ENTERPRISE_TEMPLATE: &str = "templated_apps_GitHubEnterprise";
+
+#[derive(Debug)]
+struct HttpStatus(u64);
+
+impl std::fmt::Display for HttpStatus {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "Cloud HTTP status {}", self.0)
+    }
+}
+
+impl std::error::Error for HttpStatus {}
+
 pub struct CloudTaskRequest {
     pub prompt: String,
     pub branch: String,
@@ -172,6 +186,9 @@ fn request(
     if path.starts_with("https://codex-cloud-backend.chatgpt.com/") {
         request["headers"]["X-OpenAI-Product-Sku"] = "codex".into();
     }
+    if path.starts_with("/aip/") || path.starts_with("/ps/") {
+        request["headers"]["OAI-Product-Sku"] = "CODEX".into();
+    }
     if let Some(body) = body {
         request["body"] = body.to_string().into();
     }
@@ -185,11 +202,14 @@ fn request(
     );
     let response = response.get("value").unwrap_or(&response);
     let response = response.pointer("/response/__response").unwrap_or(response);
-    if response["status"] == 204 {
-        return Ok(Value::Null);
+    let status = response["status"]
+        .as_u64()
+        .context("Cloud response has no status")?;
+    if !(200..300).contains(&status) {
+        return Err(HttpStatus(status).into());
     }
-    if method == "GET" && path == "/wham/environments" && response["status"] == 404 {
-        return Ok(json!([]));
+    if status == 204 {
+        return Ok(Value::Null);
     }
     host::json_body(response)
 }
@@ -302,19 +322,44 @@ pub(crate) fn execute(
             None,
         ),
         Operation::Machines => ("GET", "/wham/machines".into(), None),
-        Operation::Names => ("GET", "/wham/environments".into(), None),
-        Operation::Repositories(query) => {
+        Operation::Names => {
+            return request(host, identity, "GET", "/wham/environments", None).or_else(|error| {
+                if error
+                    .downcast_ref::<HttpStatus>()
+                    .is_some_and(|status| status.0 == 404)
+                {
+                    Ok(json!([]))
+                } else {
+                    Err(error)
+                }
+            });
+        }
+        Operation::Connections => return github_connections(host, identity),
+        Operation::Repositories {
+            query,
+            connector,
+            link,
+        } => {
             let mut url = Url::parse("https://chatgpt.com/wham/github/list-repositories")?;
             if !query.is_empty() {
                 url.set_path("/wham/github/repositories/search/all-installations");
             }
-            url.query_pairs_mut()
-                .append_pair("page", "1")
-                .append_pair("per_page", "20");
-            if !query.is_empty() {
-                url.query_pairs_mut()
-                    .append_pair("query", query)
-                    .append_pair("limit", "20");
+            {
+                let mut params = url.query_pairs_mut();
+                params.append_pair("page", "1");
+                if query.is_empty() {
+                    params.append_pair("per_page", "20");
+                } else {
+                    params
+                        .append_pair("query", query)
+                        .append_pair("limit", "20");
+                }
+                if let Some(connector) = connector {
+                    params.append_pair("connector_id", connector);
+                }
+                if let Some(link) = link {
+                    params.append_pair("link_id", link);
+                }
             }
             (
                 "GET",
@@ -504,13 +549,122 @@ fn save_config(
     Ok(current)
 }
 
+fn github_connections(host: &dyn host::Host, identity: &host::Identity) -> Result<Value> {
+    let primary = request(
+        host,
+        identity,
+        "GET",
+        &format!(
+            "/aip/connectors/{GITHUB_CONNECTOR}?include_actions=false&apply_eligibility_filter=false"
+        ),
+        None,
+    );
+    let mut providers = match primary {
+        Ok(provider) => vec![provider],
+        Err(error)
+            if error
+                .downcast_ref::<HttpStatus>()
+                .is_some_and(|status| matches!(status.0, 403 | 404)) =>
+        {
+            Vec::new()
+        }
+        Err(error) => return Err(error),
+    };
+    let mut enterprise = request(
+        host,
+        identity,
+        "GET",
+        &format!("/ps/connectors/by-template?template_id={GITHUB_ENTERPRISE_TEMPLATE}"),
+        None,
+    )?;
+    let Value::Array(enterprise) = enterprise["connectors"].take() else {
+        anyhow::bail!("Invalid GitHub connector response");
+    };
+    providers.extend(enterprise);
+    providers.retain(|provider| {
+        (provider["id"] == GITHUB_CONNECTOR
+            || provider["template_id"] == GITHUB_ENTERPRISE_TEMPLATE)
+            && provider["labels"]["admin_only_connector"] != "true"
+    });
+    for provider in &providers {
+        ensure!(
+            provider["id"].is_string() && provider["name"].is_string(),
+            "Invalid GitHub connector"
+        );
+    }
+    providers.sort_by(|a, b| {
+        (b["id"] == GITHUB_CONNECTOR)
+            .cmp(&(a["id"] == GITHUB_CONNECTOR))
+            .then_with(|| a["name"].as_str().cmp(&b["name"].as_str()))
+    });
+    let links = request(
+        host,
+        identity,
+        "POST",
+        "/aip/connectors/links/list_accessible",
+        Some(json!({"principals":[],"link_refresh_strategy":"BLOCKING"})),
+    );
+    ensure!(
+        host.identity().as_ref() == Some(identity),
+        "Cloud authentication changed"
+    );
+    let links = links
+        .ok()
+        .and_then(|mut response| match response["links"].take() {
+            Value::Array(links) => Some(links),
+            _ => None,
+        });
+    let failed = links.is_none();
+    let mut links = links.unwrap_or_default();
+    let mut connections = Vec::new();
+    for mut provider in providers {
+        let mut remaining = links
+            .iter()
+            .filter(|link| link_matches(&provider, link))
+            .count();
+        if remaining == 0 {
+            connections.push(connection_row(provider, None, failed));
+            continue;
+        }
+        for link in &mut links {
+            if link_matches(&provider, link) {
+                remaining -= 1;
+                let row = if remaining == 0 {
+                    provider.take()
+                } else {
+                    provider.clone()
+                };
+                connections.push(connection_row(row, Some(link.take()), failed));
+            }
+        }
+    }
+    Ok(json!({"connections":connections,"failed":failed}))
+}
+
+fn link_matches(provider: &Value, link: &Value) -> bool {
+    link["connector_id"].as_str().is_some()
+        && link["connector_id"] == provider["id"]
+        && link["visibility"] != "HIDDEN"
+        && link["id"]
+            .as_str()
+            .is_some_and(|id| !id.starts_with("implicit_link::"))
+}
+
+fn connection_row(mut provider: Value, link: Option<Value>, failed: bool) -> Value {
+    provider["linkId"] = link.as_ref().map_or(Value::Null, |link| link["id"].clone());
+    provider["link"] = link.unwrap_or(Value::Null);
+    provider["loadFailed"] = failed.into();
+    provider
+}
+
 fn error_label(operation: &Operation) -> &'static str {
     match operation {
         Operation::List { .. } => "Unable to load cloud environments",
         Operation::Detail(_) => "Unable to load this cloud environment",
         Operation::Machines => "Unable to load container images",
         Operation::Names => "Couldn’t check existing names. Retry",
-        Operation::Repositories(_) => "Unable to load repositories",
+        Operation::Connections => "GitHub connections couldn't load",
+        Operation::Repositories { .. } => "Unable to load repositories",
         Operation::Save { original: None, .. } => "Unable to create cloud environment",
         Operation::Save { .. } => "Unable to update cloud environment. Reload and try again",
         Operation::Delete(_) => "Unable to delete cloud environment",
@@ -559,6 +713,39 @@ mod tests {
             assert!(enabled.cloud);
             assert!(enabled.legacy);
         }
+    }
+
+    #[test]
+    fn github_connections_hide_admin_and_implicit_links() {
+        struct ConnectionsHost(std::sync::Mutex<std::collections::VecDeque<Value>>);
+        impl host::Host for ConnectionsHost {
+            fn fetch(&self, _: &host::Request) -> Result<Value> {
+                let body = self.0.lock().unwrap().pop_front().unwrap();
+                Ok(json!({"status":200,"body":body.to_string()}))
+            }
+            fn identity(&self) -> Option<host::Identity> {
+                host::Host::identity(&StatusHost(200))
+            }
+        }
+        let host = ConnectionsHost(std::sync::Mutex::new(std::collections::VecDeque::from([
+            json!({"id":GITHUB_CONNECTOR,"name":"GitHub"}),
+            json!({"connectors":[
+                {"id":"work","name":"Enterprise","template_id":GITHUB_ENTERPRISE_TEMPLATE},
+                {"id":"admin","template_id":GITHUB_ENTERPRISE_TEMPLATE,
+                 "labels":{"admin_only_connector":"true"}}
+            ]}),
+            json!({"links":[
+                {"id":"visible","connector_id":GITHUB_CONNECTOR},
+                {"id":"hidden","connector_id":GITHUB_CONNECTOR,"visibility":"HIDDEN"},
+                {"id":"implicit_link::system","connector_id":GITHUB_CONNECTOR}
+            ]}),
+        ])));
+        let identity = host::Host::identity(&host).unwrap();
+        let result = execute(&host, &identity, &Operation::Connections).unwrap();
+        assert_eq!(result["connections"].as_array().unwrap().len(), 2);
+        assert_eq!(result["connections"][0]["linkId"], "visible");
+        assert_eq!(result["connections"][1]["id"], "work");
+        assert!(result["connections"][1]["link"].is_null());
     }
 
     struct StatusHost(u16);

@@ -206,6 +206,9 @@ Cloud access follows the original account policy and feature gates; Cloud comput
 Each Cloud page keeps the account and user identity used by its first access request.
 An identity change stops later environment operations before the host sends them.
 Container-image errors remain inside the editor row; name checks can complete independently.
+Repository selection loads GitHub connectors and visible account links before requesting repositories.
+Connection retries preserve the saved-environment list state and keep keyboard dismissal available while loading.
+The create dialog uses the original setup artwork and a full-window native overlay.
 The `375130565` feature gate also hides legacy environments when the account otherwise permits cloud access.
 Run `cargo test -p app --lib cloud::tests` for the account and feature-gate checks.
 Run `cargo test -p ui --lib screens::cloud::model::tests` for secret updates and `.env` parsing.

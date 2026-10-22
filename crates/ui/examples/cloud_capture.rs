@@ -29,7 +29,9 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(101);
     }));
     let output = std::env::args().nth(1).expect("output PNG path");
-    let legacy = std::env::args().nth(2).as_deref() == Some("legacy-editor");
+    let mode = std::env::args().nth(2);
+    let legacy = mode.as_deref() == Some("legacy-editor");
+    let create = mode.as_deref() == Some("current-create");
     let mut cx = HeadlessAppContext::with_platform(
         textsys::text_system(),
         Arc::new(theme::Assets),
@@ -83,6 +85,17 @@ fn main() -> anyhow::Result<()> {
                     Err("Couldn’t load saved environments".into()),
                     cx,
                 );
+                if create {
+                    cloud.open_path("/cloud-environments/new", cx);
+                    cloud.apply(
+                        &Request {
+                            serial: 1,
+                            operation: Operation::Connections,
+                        },
+                        Err("GitHub connections couldn’t load".into()),
+                        cx,
+                    );
+                }
             }
         });
         let modal = cx.new(|cx| CloudModal::new(cloud, cx));
@@ -92,6 +105,16 @@ fn main() -> anyhow::Result<()> {
         })
     })?;
     cx.run_until_parked();
+    if create {
+        println!(
+            "dialog bounds: {:?}",
+            cx.debug_bounds(window.into(), "cloud-create-dialog")?
+        );
+        println!(
+            "form bounds: {:?}",
+            cx.debug_bounds(window.into(), "cloud-create-form")?
+        );
+    }
     cx.capture_screenshot(window.into())?.save(&output)?;
     println!("{output}");
     Ok(())

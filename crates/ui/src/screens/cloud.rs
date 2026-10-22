@@ -35,7 +35,12 @@ pub enum Operation {
     Detail(String),
     Machines,
     Names,
-    Repositories(String),
+    Connections,
+    Repositories {
+        query: String,
+        connector: Option<String>,
+        link: Option<String>,
+    },
     Save {
         original: Option<String>,
         body: Value,
@@ -82,6 +87,20 @@ struct Editor {
     initial: Draft,
 }
 
+#[derive(Clone, Copy)]
+enum RepositoryStage {
+    Connections,
+    Repositories,
+}
+
+fn connection_ready(connection: &Value) -> bool {
+    connection["status"] != "DISABLED_BY_ADMIN"
+        && connection["loadFailed"] != true
+        && connection["link"].is_object()
+        && connection["link"]["auth_status"] != "REAUTH_REQUIRED"
+        && connection["link"]["unavailable_reason"].is_null()
+}
+
 pub struct CloudPage {
     access: Access,
     pub access_loaded: bool,
@@ -99,6 +118,12 @@ pub struct CloudPage {
     names: Option<Vec<EnvironmentName>>,
     names_error: bool,
     repositories: Vec<Value>,
+    connections: Vec<Value>,
+    connection: Option<usize>,
+    repository_serial: u64,
+    repository_pending: bool,
+    repository_stage: RepositoryStage,
+    repository_error: bool,
     query: Entity<Composer>,
     editor: Option<Editor>,
     menu: Option<Menu>,
@@ -139,6 +164,12 @@ impl CloudPage {
             names: None,
             names_error: false,
             repositories: Vec::new(),
+            connections: Vec::new(),
+            connection: None,
+            repository_serial: 0,
+            repository_pending: false,
+            repository_stage: RepositoryStage::Connections,
+            repository_error: false,
             query,
             editor: None,
             menu: None,
@@ -182,7 +213,58 @@ impl CloudPage {
         cx.notify();
     }
 
+    fn open_repositories(&mut self, cx: &mut Context<Self>) {
+        self.repository_picker = true;
+        self.current.repositories.clear();
+        self.repositories.clear();
+        self.connections.clear();
+        self.connection = None;
+        self.load(Operation::Connections, cx);
+    }
+
+    fn load_repositories(&mut self, query: String, cx: &mut Context<Self>) {
+        let Some(connection) = self
+            .connection
+            .and_then(|index| self.connections.get(index))
+        else {
+            return;
+        };
+        if !connection_ready(connection) {
+            return;
+        }
+        let Some(connector) = connection["id"].as_str() else {
+            return;
+        };
+        self.load(
+            Operation::Repositories {
+                query,
+                connector: Some(connector.into()),
+                link: connection["linkId"].as_str().map(str::to_owned),
+            },
+            cx,
+        );
+    }
+
     pub fn load(&mut self, operation: Operation, cx: &mut Context<Self>) {
+        if matches!(
+            operation,
+            Operation::Connections | Operation::Repositories { .. }
+        ) {
+            self.repository_serial += 1;
+            self.repository_pending = true;
+            self.repository_error = false;
+            self.repository_stage = if matches!(operation, Operation::Connections) {
+                RepositoryStage::Connections
+            } else {
+                RepositoryStage::Repositories
+            };
+            cx.emit(Request {
+                serial: self.repository_serial,
+                operation,
+            });
+            cx.notify();
+            return;
+        }
         if matches!(operation, Operation::Names) {
             self.names_serial += 1;
             self.names_error = false;
@@ -205,7 +287,6 @@ impl CloudPage {
                 | Operation::List { .. }
                 | Operation::Detail(_)
                 | Operation::Machines
-                | Operation::Repositories(_)
                 | Operation::Configs
                 | Operation::Vault
                 | Operation::Config(_)
@@ -242,6 +323,23 @@ impl CloudPage {
         result: Result<Value, String>,
         cx: &mut Context<Self>,
     ) {
+        if matches!(
+            request.operation,
+            Operation::Connections | Operation::Repositories { .. }
+        ) {
+            if request.serial != self.repository_serial {
+                return;
+            }
+            self.repository_pending = false;
+            if result
+                .and_then(|body| self.receive(&request.operation, body, cx))
+                .is_err()
+            {
+                self.repository_error = true;
+            }
+            cx.notify();
+            return;
+        }
         if matches!(request.operation, Operation::Names) {
             if request.serial != self.names_serial {
                 return;
@@ -322,7 +420,29 @@ impl CloudPage {
                     serde_json::from_value(body).map_err(|_| "Unable to load environment names")?,
                 );
             }
-            Operation::Repositories(_) => {
+            Operation::Connections => {
+                self.connections = body["connections"]
+                    .as_array()
+                    .ok_or("Unable to load GitHub connections")?
+                    .clone();
+                self.repository_error = body["failed"] == true;
+                let preferred = self
+                    .editor
+                    .as_ref()
+                    .and_then(|editor| editor.draft.connector.as_deref());
+                self.connection = self
+                    .connections
+                    .iter()
+                    .position(|connection| {
+                        connection_ready(connection) && connection["id"].as_str() == preferred
+                    })
+                    .or_else(|| self.connections.iter().position(connection_ready))
+                    .or_else(|| (!self.connections.is_empty()).then_some(0));
+                if self.repository_picker && !self.repository_error {
+                    self.load_repositories(String::new(), cx);
+                }
+            }
+            Operation::Repositories { .. } => {
                 self.repositories = body["repositories"]
                     .as_array()
                     .or_else(|| body["items"].as_array())
@@ -732,10 +852,8 @@ impl CloudPage {
             .entry(id.clone())
             .or_insert_with(|| cx.focus_handle().tab_stop(true))
             .clone();
-        if !disabled {
-            if let Some(controls) = self.modal_focus.borrow_mut().as_mut() {
-                controls.push(handle.clone());
-            }
+        if !disabled && let Some(controls) = self.modal_focus.borrow_mut().as_mut() {
+            controls.push(handle.clone());
         }
         content
             .id(id)
@@ -1238,8 +1356,8 @@ impl CloudPage {
                 },
                 cx,
                 |this, _, cx| {
-                    this.repository_picker = true;
-                    this.load(Operation::Repositories(String::new()), cx);
+                    this.current.creating = false;
+                    this.open_repositories(cx);
                 },
             )
         };
@@ -1420,7 +1538,7 @@ impl CloudPage {
                 "Domain-scoped secrets",
                 Some("During tasks, secrets are sent only to their configured domain. Secrets without a domain are available only to setup scripts."),
                 self.button("cloud-scoped-secrets", if editor.draft.authtranslator {"On"} else {"Off"}, false, cx, |this,_,cx|{
-                    if let Some(editor)=&mut this.editor { editor.draft.authtranslator=!editor.draft.authtranslator; }
+                    if let Some(editor) = &mut this.editor { editor.draft.authtranslator = !editor.draft.authtranslator; }
                     cx.notify();
                 }),
                 &t,
@@ -1553,16 +1671,16 @@ impl CloudPage {
                 false,
                 cx,
                 move |this, _, cx| {
-                    if let Some(draft) = this.draft(cx) {
-                        if let Some(e) = &mut this.editor {
-                            e.draft = draft;
-                            if secret {
-                                e.draft.secrets.remove(index);
-                            } else {
-                                e.draft.variables.remove(index);
-                            }
-                            e.fields.retain(|k, _| !k.starts_with(prefix));
+                    if let Some(draft) = this.draft(cx)
+                        && let Some(e) = &mut this.editor
+                    {
+                        e.draft = draft;
+                        if secret {
+                            e.draft.secrets.remove(index);
+                        } else {
+                            e.draft.variables.remove(index);
                         }
+                        e.fields.retain(|k, _| !k.starts_with(prefix));
                     }
                     cx.notify();
                 },
@@ -1667,7 +1785,85 @@ impl CloudPage {
         }
     }
 
+    fn repository_contents(&self, cx: &mut Context<Self>) -> AnyElement {
+        let message = if self.repository_pending {
+            Some("Loading repositories…")
+        } else if self.repository_error {
+            Some(match self.repository_stage {
+                RepositoryStage::Connections => "GitHub connections couldn’t load",
+                RepositoryStage::Repositories => "Repositories couldn’t load",
+            })
+        } else if !self
+            .connection
+            .and_then(|i| self.connections.get(i))
+            .is_some_and(connection_ready)
+        {
+            Some("Connect GitHub to see your repositories")
+        } else if self.repositories.is_empty() {
+            Some("No repositories are available to this connection")
+        } else {
+            None
+        };
+        if let Some(message) = message {
+            return self.repository_notice(message, cx);
+        }
+        div()
+            .flex()
+            .flex_col()
+            .children(self.repositories.iter().filter_map(|repo| {
+                let id = repo["id"].as_str()?.to_owned();
+                let name = repo["repository_full_name"]
+                    .as_str()
+                    .or_else(|| repo["full_name"].as_str())?
+                    .to_owned();
+                Some(
+                    self.button(format!("repo-{id}"), name, false, cx, move |this, _, cx| {
+                        this.choose_repository(&id, cx);
+                    }),
+                )
+            }))
+            .into_any_element()
+    }
+
+    fn choose_repository(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(repository) = self.repositories.iter().find(|repo| repo["id"] == id) else {
+            return;
+        };
+        if self.current.creating {
+            if self
+                .current
+                .repositories
+                .iter()
+                .any(|repo| repo["id"] == id)
+            {
+                self.current.repositories.retain(|repo| repo["id"] != id);
+            } else {
+                self.current.repositories.push(repository.clone());
+            }
+        } else if let Some(editor) = &mut self.editor {
+            let Some(name) = repository["repository_full_name"]
+                .as_str()
+                .or_else(|| repository["full_name"].as_str())
+            else {
+                return;
+            };
+            editor.draft.repository = id.into();
+            editor.draft.repository_name = name.into();
+            if let Some(connection) = self.connection.and_then(|i| self.connections.get(i)) {
+                editor.draft.connector = connection["id"].as_str().map(str::to_owned);
+            }
+            if editor.fields["name"].read(cx).field_text().is_empty() {
+                editor.fields["name"].update(cx, |field, cx| field.set_text(name, cx));
+            }
+            self.repository_picker = false;
+        }
+        cx.notify();
+    }
+
     fn overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.repository_picker && self.current.creating {
+            return Some(self.creation_dialog(cx));
+        }
         let t = cx.theme().clone();
         let content = if self.unavailable {
             div()
@@ -1814,48 +2010,7 @@ impl CloudPage {
                 .flex_col()
                 .gap(px(12.))
                 .child(text("Select repository", 20., 28., 600., t.text))
-                .children(self.repositories.iter().filter_map(|repo| {
-                    let id = repo["id"].as_str()?.to_owned();
-                    let name = repo["repository_full_name"]
-                        .as_str()
-                        .or_else(|| repo["full_name"].as_str())?
-                        .to_owned();
-                    let repository = repo.clone();
-                    Some(self.button(
-                        format!("repo-{id}"),
-                        name.clone(),
-                        false,
-                        cx,
-                        move |this, _, cx| {
-                            if this.current.creating {
-                                if this.current.repositories.iter().any(|r| r["id"] == id) {
-                                    this.current.repositories.retain(|r| r["id"] != id);
-                                } else {
-                                    this.current.repositories.push(repository.clone());
-                                }
-                            } else {
-                                if let Some(e) = &mut this.editor {
-                                    e.draft.repository = id.clone();
-                                    e.draft.repository_name = name.clone();
-                                    if e.fields["name"].read(cx).field_text().is_empty() {
-                                        e.fields["name"]
-                                            .update(cx, |field, cx| field.set_text(&name, cx));
-                                    }
-                                }
-                                this.repository_picker = false;
-                            }
-                            cx.notify();
-                        },
-                    ))
-                }))
-                .when(self.current.creating, |d| {
-                    d.child(
-                        self.button("config-start", "Get started", true, cx, |this, _, cx| {
-                            this.repository_picker = false;
-                            this.current_create(cx);
-                        }),
-                    )
-                })
+                .child(self.repository_contents(cx))
                 .child(
                     self.button("repository-cancel", "Cancel", false, cx, |this, _, cx| {
                         this.repository_picker = false;
@@ -1924,24 +2079,24 @@ impl CloudPage {
                 false,
                 cx,
                 move |this, _, cx| {
-                    if let Some(draft) = this.draft(cx) {
-                        if let Some(e) = &mut this.editor {
-                            e.draft = draft;
-                            match target {
-                                Menu::Machine => e.draft.machine = value.clone(),
-                                Menu::Sharing => e.draft.sharing = value.clone(),
-                                Menu::Network => {
-                                    e.draft.network["mode"] = value.clone().into();
-                                    e.draft.network["preset_allowlist"] =
-                                        if value == "on" { "all" } else { "none" }.into();
-                                }
-                                Menu::Runtime(index) => {
-                                    e.draft.set_runtime(
-                                        &RUNTIMES[index],
-                                        (!value.is_empty()).then_some(value.as_str()),
-                                    );
-                                    e.fields.retain(|k, _| !k.starts_with("variable-"));
-                                }
+                    if let Some(draft) = this.draft(cx)
+                        && let Some(e) = &mut this.editor
+                    {
+                        e.draft = draft;
+                        match target {
+                            Menu::Machine => e.draft.machine = value.clone(),
+                            Menu::Sharing => e.draft.sharing = value.clone(),
+                            Menu::Network => {
+                                e.draft.network["mode"] = value.clone().into();
+                                e.draft.network["preset_allowlist"] =
+                                    if value == "on" { "all" } else { "none" }.into();
+                            }
+                            Menu::Runtime(index) => {
+                                e.draft.set_runtime(
+                                    &RUNTIMES[index],
+                                    (!value.is_empty()).then_some(value.as_str()),
+                                );
+                                e.fields.retain(|k, _| !k.starts_with("variable-"));
                             }
                         }
                     }
@@ -2126,10 +2281,10 @@ impl CloudModal {
 impl Render for CloudModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.is_open(cx) {
-            if self.open {
-                if let Some(focus) = self.return_focus.take() {
-                    focus.focus(window, cx);
-                }
+            if self.open
+                && let Some(focus) = self.return_focus.take()
+            {
+                focus.focus(window, cx);
             }
             self.open = false;
             return div().into_any_element();
@@ -2139,6 +2294,7 @@ impl Render for CloudModal {
         let (content, controls) = self.page.update(cx, |page, cx| {
             *page.modal_focus.borrow_mut() = Some(reusable);
             let content = div()
+                .size_full()
                 .children(page.overlay(cx))
                 .children(page.menu_overlay(cx));
             let controls = page.modal_focus.borrow_mut().take().unwrap_or_default();
@@ -2147,36 +2303,118 @@ impl Render for CloudModal {
         self.controls = controls;
         if !self.open {
             self.return_focus = window.focused(cx);
+        }
+        if !self.open || !self.controls.iter().any(|focus| focus.is_focused(window)) {
             self.controls
                 .first()
                 .unwrap_or(&self.focus)
                 .focus(window, cx);
         }
         self.open = true;
-        div()
-            .id("cloud-modal-root")
-            .absolute()
-            .inset_0()
-            .occlude()
-            .font_family(crate::SANS)
-            .role(gpui::Role::Dialog)
-            .aria_label("Cloud environment dialog")
-            .track_focus(&self.focus)
-            .capture_key_down(cx.listener(Self::key))
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.page.update(cx, |page, cx| page.dismiss_modal(cx));
-                }),
-            )
-            .child(content)
-            .into_any_element()
+        gpui::deferred(
+            div()
+                .id("cloud-modal-root")
+                .absolute()
+                .inset_0()
+                .occlude()
+                .font_family(crate::SANS)
+                .role(gpui::Role::Dialog)
+                .aria_label("Cloud environment dialog")
+                .track_focus(&self.focus)
+                .capture_key_down(cx.listener(Self::key))
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.page.update(cx, |page, cx| page.dismiss_modal(cx));
+                    }),
+                )
+                .child(content),
+        )
+        .with_priority(4)
+        .into_any_element()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connection_retry_keeps_catalog_errors_and_ignores_stale_results() {
+        let mut app = gpui::HeadlessAppContext::with_asset_source(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+        );
+        app.update(|cx| {
+            let page = cx.new(CloudPage::new);
+            page.update(cx, |page, cx| {
+                page.error = Some("Couldn’t load saved environments".into());
+                page.current.creating = true;
+                page.open_repositories(cx);
+                let failed = Request {
+                    serial: page.repository_serial,
+                    operation: Operation::Connections,
+                };
+                page.apply(&failed, Err("Connection lookup failed".into()), cx);
+                assert!(page.repository_error);
+                assert!(!page.pending);
+                page.load(Operation::Connections, cx);
+                let retried = Request {
+                    serial: page.repository_serial,
+                    operation: Operation::Connections,
+                };
+                page.apply(&failed, Ok(json!({"connections":[],"failed":false})), cx);
+                assert!(page.repository_pending);
+                page.apply(
+                    &retried,
+                    Ok(json!({"connections":[{
+                    "id":"github","name":"GitHub","linkId":"account-link",
+                    "link":{"auth_status":"VALID","unavailable_reason":null}
+                }],"failed":false})),
+                    cx,
+                );
+                assert!(!page.repository_error);
+                assert!(page.repository_pending);
+                assert_eq!(
+                    page.error.as_deref(),
+                    Some("Couldn’t load saved environments")
+                );
+                let repositories = Request {
+                    serial: page.repository_serial,
+                    operation: Operation::Repositories {
+                        query: String::new(),
+                        connector: Some("github".into()),
+                        link: Some("account-link".into()),
+                    },
+                };
+                page.apply(&repositories, Ok(json!({"repositories":[{
+                    "id":"github::1","repository_full_name":"owner/project","default_branch":"main"
+                }]})), cx);
+                page.choose_repository("github::1", cx);
+                assert_eq!(
+                    page.current.repositories[0]["repository_full_name"],
+                    "owner/project"
+                );
+                page.current_create(cx);
+                let created = Request {
+                    serial: page.serial,
+                    operation: Operation::ConfigCreate(json!({"name":"owner/project"})),
+                };
+                page.apply(
+                    &created,
+                    Ok(json!({"id":"created","name":"owner/project"})),
+                    cx,
+                );
+                assert!(!page.has_modal());
+                page.dismiss_modal(cx);
+                assert!(!page.repository_picker);
+                assert!(!page.current.creating);
+                page.current.creating = true;
+                page.open_repositories(cx);
+                assert!(page.current.repositories.is_empty());
+            });
+        });
+    }
 
     #[test]
     fn machine_failure_stays_in_the_editor_and_retry_can_recover() {
@@ -2319,5 +2557,28 @@ mod tests {
             assert!(background.is_focused(window));
         })
         .unwrap();
+        page.update(&mut app, |page, cx| {
+            page.current.creating = true;
+            page.open_repositories(cx);
+            let failed = Request {
+                serial: page.repository_serial,
+                operation: Operation::Connections,
+            };
+            page.apply(&failed, Err("Connections unavailable".into()), cx);
+        });
+        app.run_until_parked();
+        let bounds = app
+            .debug_bounds(window.into(), "cloud-create-dialog")
+            .unwrap()
+            .unwrap();
+        assert!(bounds.left() >= px(0.) && bounds.right() <= px(800.));
+        assert!(bounds.top() >= px(0.) && bounds.bottom() <= px(600.));
+        press(&mut app, "enter");
+        app.update(|cx| {
+            assert!(page.read(cx).repository_pending);
+            assert!(!page.read(cx).repository_error);
+        });
+        press(&mut app, "escape");
+        app.update(|cx| assert!(!modal.read(cx).is_open(cx)));
     }
 }

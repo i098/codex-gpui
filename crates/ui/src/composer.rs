@@ -555,6 +555,7 @@ type CancelEditHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 type ApprovalHandler = Rc<dyn Fn(Value, String, Value, &mut Window, &mut App)>;
 /// `(model id, effort)` after the user picks them.
 type ModelHandler = Rc<dyn Fn(&str, &str, &mut App)>;
+type SettingsPasteHandler = Rc<dyn Fn(&str, &mut App) -> bool>;
 
 /// What a queued row's buttons and `Queued message actions` menu ask of the app.
 #[derive(Clone)]
@@ -665,7 +666,7 @@ pub struct Composer {
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
     plain_layout: PlainFieldLayout,
-    on_settings_paste: Option<Rc<dyn Fn(&str, &mut App) -> bool>>,
+    on_settings_paste: Option<SettingsPasteHandler>,
 }
 
 impl Composer {

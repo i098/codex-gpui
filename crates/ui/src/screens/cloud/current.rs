@@ -1,10 +1,85 @@
 use super::*;
+use gpui::{Bounds, Corners, Pixels, RenderImage, StyledImage as _, canvas, point, size};
+use std::{
+    rc::Rc,
+    sync::{Arc, LazyLock},
+};
+
+type ArtworkCache = Rc<RefCell<Option<(Bounds<Pixels>, f32, Bounds<Pixels>, Arc<RenderImage>)>>>;
+
+static SETUP_ARTWORK: LazyLock<image::RgbaImage> = LazyLock::new(|| {
+    let asset = theme::Assets::get("ui/cloud-setup.png").expect("bundled Cloud setup artwork");
+    let mut image = image::load_from_memory(&asset.data)
+        .expect("original Cloud setup PNG")
+        .to_rgba8();
+    shapes::premultiply(&mut image);
+    image
+});
+
+fn setup_artwork(cache: ArtworkCache) -> AnyElement {
+    if !cfg!(target_os = "macos") {
+        return gpui::img("ui/cloud-setup.png")
+            .w(px(144.))
+            .h(px(96.))
+            .object_fit(gpui::ObjectFit::Contain)
+            .into_any_element();
+    }
+    canvas(
+        move |bounds, window, _| {
+            let scale = window.scale_factor();
+            let mut cached = cache.borrow_mut();
+            if let Some((previous, previous_scale, at, image)) = &*cached
+                && *previous == bounds
+                && *previous_scale == scale
+            {
+                return (*at, image.clone());
+            }
+            if let Some((_, _, _, image)) = cached.take() {
+                window.drop_image(image).ok();
+            }
+            let image = Arc::new(
+                shapes::raster_images(
+                    &[(&SETUP_ARTWORK, bounds)],
+                    bounds,
+                    Corners::default(),
+                    shapes::Corner::Round,
+                    shapes::ImageComposition::Direct(gpui::rgba(0).into()),
+                    window,
+                )
+                .expect("macOS image rasterizer"),
+            );
+            let device = |value: Pixels| (f32::from(value) * scale).round();
+            let x = device(bounds.left());
+            let y = device(bounds.top());
+            let at = Bounds::new(
+                point(px(x / scale), px(y / scale)),
+                size(
+                    px((device(bounds.right()) - x) / scale),
+                    px((device(bounds.bottom()) - y) / scale),
+                ),
+            );
+            *cached = Some((bounds, scale, at, image.clone()));
+            (at, image)
+        },
+        |_, (at, image), window, _| {
+            window
+                .paint_image(at, at, Corners::default(), image, 0, false)
+                .ok();
+        },
+    )
+    .w(px(144.))
+    .h(px(96.))
+    .into_any_element()
+}
 
 #[derive(Clone, Copy)]
 enum CurrentControl {
     Create,
     Retry,
     Tab(bool),
+    DialogAccent,
+    DialogSecondary,
+    DialogPrimary { disabled: bool },
 }
 
 #[derive(Default)]
@@ -19,6 +94,7 @@ pub(super) struct Current {
     pub deleting: Option<String>,
     pub vault: bool,
     pub vault_entries: Vec<Value>,
+    artwork: ArtworkCache,
 }
 
 impl CloudPage {
@@ -32,8 +108,7 @@ impl CloudPage {
             self.unavailable = !self.access.cloud;
             if !self.unavailable {
                 self.current.creating = true;
-                self.repository_picker = true;
-                self.load(Operation::Repositories(String::new()), cx);
+                self.open_repositories(cx);
             }
         } else if path == "/settings/codex-cloud" {
             self.current_mode = Some(true);
@@ -241,6 +316,7 @@ impl CloudPage {
         if self.pending || self.current.repositories.is_empty() {
             return;
         }
+        self.repository_picker = false;
         let repositories:Vec<_>=self.current.repositories.iter().filter_map(|repo|Some(json!({"repository_id":repo["id"].as_str()?,"ref":repo["default_branch"].as_str()?}))).collect();
         if repositories.len() != self.current.repositories.len() {
             self.error = Some("Could not start cloud environment setup".into());
@@ -316,6 +392,39 @@ impl CloudPage {
                 10.,
                 None,
             ),
+            CurrentControl::DialogAccent => (
+                36.,
+                13.,
+                13.,
+                18.571428,
+                500.,
+                gpui::black(),
+                t.info_solid,
+                9999.,
+                Some(clear),
+            ),
+            CurrentControl::DialogSecondary => (
+                36.,
+                13.,
+                13.,
+                18.571428,
+                500.,
+                t.text,
+                t.text_alpha_5,
+                9999.,
+                Some(clear),
+            ),
+            CurrentControl::DialogPrimary { .. } => (
+                36.,
+                13.,
+                13.,
+                18.571428,
+                500.,
+                t.control_background,
+                t.button_primary_solid,
+                9999.,
+                Some(t.border),
+            ),
         };
         let content = div()
             .h(px(height))
@@ -327,7 +436,16 @@ impl CloudPage {
             .gap(px(4.))
             .child(super::super::settings::on_card(
                 radius,
-                shapes::Corner::Squircle,
+                if matches!(
+                    kind,
+                    CurrentControl::DialogAccent
+                        | CurrentControl::DialogSecondary
+                        | CurrentControl::DialogPrimary { .. }
+                ) {
+                    shapes::Corner::Round
+                } else {
+                    shapes::Corner::Squircle
+                },
                 fill,
                 border,
             ))
@@ -335,7 +453,193 @@ impl CloudPage {
                 d.child(crate::icon::icon("cloud-create", 16., color))
             })
             .child(text(label, size, line, weight, color));
+        if matches!(kind, CurrentControl::DialogPrimary { disabled: true }) {
+            return content
+                .id(id)
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .aria_disabled(true)
+                .opacity(0.4)
+                .into_any_element();
+        }
         self.wire_button(id.into(), label.into(), content, cx, action)
+    }
+
+    pub(super) fn repository_notice(&self, message: &str, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        div()
+            .w_full()
+            .px(px(12.))
+            .py(px(24.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(text(
+                        message.to_owned(),
+                        13.,
+                        18.571428,
+                        430.,
+                        gpui::Hsla { a: 0.65, ..t.text },
+                    ))
+                    .when(self.repository_error && !self.repository_pending, |d| {
+                        d.child(self.current_button(
+                            "repository-retry",
+                            "Try again",
+                            CurrentControl::DialogAccent,
+                            cx,
+                            |this, _, cx| match this.repository_stage {
+                                RepositoryStage::Connections => {
+                                    this.load(Operation::Connections, cx)
+                                }
+                                RepositoryStage::Repositories => {
+                                    this.load_repositories(String::new(), cx)
+                                }
+                            },
+                        ))
+                    }),
+            )
+            .into_any_element()
+    }
+
+    pub(super) fn creation_dialog(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let secondary = gpui::Hsla { a: 0.65, ..t.text };
+        let header = div().flex().flex_col().items_center().gap(px(8.)).text_center()
+            .child(text("Create a cloud environment", 24., 28.8, 600., t.text))
+            .child(text("Select repositories so Codex can work out what to install and how to configure your environment",
+                14., 21., 430., secondary).w_full().whitespace_normal())
+            .child(div().min_h(px(28.)).flex().items_center().justify_center().gap(px(4.))
+                .child(crate::icon::icon("cloud-github", 16., secondary))
+                .child(text("GitHub", 14., 21., 430., secondary)));
+        let count = if self.current.repositories.is_empty() {
+            "None selected".into()
+        } else {
+            format!("{} selected", self.current.repositories.len())
+        };
+        let form = div()
+            .debug_selector(|| "cloud-create-form".into())
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex()
+                    .justify_center()
+                    .child(setup_artwork(self.current.artwork.clone())),
+            )
+            .child(
+                div()
+                    .pt(px(24.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(20.))
+                    .child(
+                        div().flex().flex_col().gap(px(32.)).child(header).child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(8.))
+                                .child(text("Select repositories", 14., 21., 500., t.text))
+                                .child(self.repository_contents(cx)),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .gap(px(12.))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .child(text(count, 13., 18.571428, 430., secondary)),
+                            )
+                            .child(self.current_button(
+                                "repository-cancel",
+                                "Cancel",
+                                CurrentControl::DialogSecondary,
+                                cx,
+                                |this, _, cx| this.dismiss_modal(cx),
+                            ))
+                            .child(self.current_button(
+                                "config-start",
+                                "Get started",
+                                CurrentControl::DialogPrimary {
+                                    disabled: self.current.repositories.is_empty(),
+                                },
+                                cx,
+                                |this, _, cx| this.current_create(cx),
+                            )),
+                    ),
+            );
+        let close = self.wire_button(
+            "repository-close".into(),
+            "Close dialog".into(),
+            div()
+                .absolute()
+                .top(px(16.))
+                .right(px(16.))
+                .size(px(24.))
+                .p(px(4.))
+                .child(crate::icon::icon(
+                    "cloud-close",
+                    16.,
+                    gpui::Hsla { a: 0.8, ..t.text },
+                )),
+            cx,
+            |this, _, cx| this.dismiss_modal(cx),
+        );
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::rgba(0x00000022))
+            .child(
+                div()
+                    .w(px(480.))
+                    .max_w(gpui::relative(0.92))
+                    .relative()
+                    .layer()
+                    .debug_selector(|| "cloud-create-dialog".into())
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(shapes::backdrop_blur(
+                        px(24.),
+                        shapes::Fill::Color,
+                        false,
+                        shapes::Decoration {
+                            radius: gpui::Corners::all(px(25.)),
+                            corner: shapes::Corner::Squircle,
+                            fill: Some(gpui::Hsla {
+                                a: 0.9,
+                                ..t.menu_background
+                            }),
+                            shadows: vec![
+                                crate::composer::shadow(t.border, 0., 0., 0.5, false),
+                                crate::composer::shadow(
+                                    gpui::rgba(0x0000001a).into(),
+                                    4.,
+                                    8.,
+                                    -2.,
+                                    false,
+                                ),
+                            ],
+                            ..Default::default()
+                        },
+                    ))
+                    .child(form)
+                    .child(close),
+            )
+            .into_any_element()
     }
 
     fn current_toolbar(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -413,9 +717,7 @@ impl CloudPage {
                                     cx,
                                     |this, _, cx| {
                                         this.current.creating = true;
-                                        this.current.repositories.clear();
-                                        this.repository_picker = true;
-                                        this.load(Operation::Repositories(String::new()), cx);
+                                        this.open_repositories(cx);
                                     },
                                 ))
                             }),
