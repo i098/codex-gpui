@@ -365,6 +365,10 @@ Success follows transcript processing; failure and cancellation remain distinct.
 Consumers can wait before submitting a draft. A closed event stream fails instead of leaving the session active.
 `cargo test -p ui --lib composer::dictation` checks completion order, cancellation, and closed streams without microphone access.
 
+`Dispatcher::new` receives the initiating `Window` and `App`, so a capture service can select that window's host.
+Typing, IME edits, mentions, and slash commands cancel dictation and emit `Completion::Cancelled`.
+Comment owners call `finish_dictation` and wait for `Completion::Succeeded` before saving the inserted transcript.
+
 ## 14.4 Thread view
 
 | # | Item | Kind | Original | Port | Status |

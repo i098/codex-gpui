@@ -759,6 +759,7 @@ impl EntityInputHandler for Composer {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.cancel_dictation(cx);
         let single_line;
         let new_text = if self.plain_field == Some(false) && new_text.contains(['\n', '\r']) {
             single_line = new_text.replace(['\n', '\r'], "");
