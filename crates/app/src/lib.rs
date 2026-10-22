@@ -329,6 +329,7 @@ pub struct Root {
     sidebar: Entity<HomeSidebar>,
     /// Recents in sidebar order, for `⌘1`…`⌘9`, Previous/Next Chat and the command menu.
     threads: Vec<Thread>,
+    recent_chats: Vec<String>,
     new_chat_section: Option<String>,
     /// `thread/list` cursor of the page after `threads`, while the sidebar's end asks for it.
     next_cursor: Option<String>,
@@ -631,6 +632,7 @@ impl Root {
             shell,
             sidebar,
             threads: Vec::new(),
+            recent_chats: Vec::new(),
             new_chat_section: None,
             next_cursor: None,
             loading_more: false,
@@ -851,6 +853,7 @@ impl Root {
                     });
                 }
                 this.config = config.config;
+                this.refresh_enter_behavior(cx);
                 this.config["host"]["confirm-before-close"] =
                     serde_json::to_value(this.state.confirm_before_close)
                         .expect("close preference");
@@ -2004,15 +2007,6 @@ impl Root {
         self.sidebar.update(cx, |s, cx| s.add_thread(thread, cx));
     }
 
-    /// `⌘N`, the `New chat` row and rail Home: Home with an empty, focused composer.
-    fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.new_chat_section = None;
-        self.navigate(Route::Home, window, cx);
-        let composer = self.home.read(cx).composer.clone();
-        composer.update(cx, |c, cx| c.set_text("", cx));
-        window.focus(&composer.focus_handle(cx), cx);
-    }
-
     /// Opens the Recents row `delta` rows from the open thread; from any other route,
     /// the first row.
     fn step_chat(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
@@ -2722,7 +2716,7 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// `thread/read` with turns, then shows it if the route still points at it.
+    /// Loads history and resumes its settings before showing the selected thread.
     fn load_thread(
         &mut self,
         id: String,
@@ -2742,11 +2736,18 @@ impl Root {
         })
         .detach();
         let bridge = self.bridge.clone();
+        let resume = (!self.loaded.contains(&id)).then(|| {
+            let mut params = json!({"threadId": id, "excludeTurns": true});
+            if let Some(config) = computer_use_overrides(&self.config) {
+                params["config"] = config;
+            }
+            params
+        });
         let loading_view = view.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let result = bridge.thread_read(&id, true).await;
+            let result = routes::load_thread(&bridge, &id, resume).await;
             this.update_in(cx, |this, window, cx| {
-                if this.state.route != Route::Thread(id)
+                if !matches!(&this.state.route, Route::Thread(current) if current == &id)
                     || !this
                         .history
                         .as_ref()
@@ -2755,9 +2756,15 @@ impl Root {
                     return;
                 }
                 match result {
-                    Ok(read) => this.show_thread(read.thread, window, cx),
+                    Ok((thread, settings)) => {
+                        if let Some(settings) = settings {
+                            this.loaded.insert(id.clone());
+                            this.thread_run_settings.entry(id).or_insert(settings);
+                        }
+                        this.show_thread(thread, window, cx);
+                    }
                     Err(error) => {
-                        eprintln!("codex-gpui: thread/read: {error:#}");
+                        eprintln!("codex-gpui: thread/load: {error:#}");
                         loading_view.update(cx, |view, cx| view.fail(format!("{error:#}"), cx));
                     }
                 }
@@ -3856,6 +3863,7 @@ impl Root {
                 });
                 if let Ok(Some(config)) = result {
                     this.config = config;
+                    this.refresh_enter_behavior(cx);
                 }
                 if success {
                     this.load_computer_use(cx);
@@ -4068,9 +4076,20 @@ impl Root {
                 }
                 return Err(error);
             }
-            this.update(cx, |this, _| apply(&mut this.config))
+            this.update(cx, |this, cx| {
+                apply(&mut this.config);
+                this.refresh_enter_behavior(cx);
+            })
         });
         log_err(task, cx);
+    }
+
+    fn refresh_enter_behavior(&self, cx: &mut Context<Self>) {
+        cx.set_global(ui::composer::EnterBehavior::from_setting(
+            self.config["desktop"]["composerEnterBehavior"]
+                .as_str()
+                .unwrap_or("enter"),
+        ));
     }
 
     /// Settles only the request whose card produced the answer.
@@ -4262,7 +4281,7 @@ impl Root {
                     && params["threadId"].as_str() == Some(view.id())
                 {
                     panel.update(cx, |panel, cx| {
-                        panel.apply(&event, &self.cwd, view.turns(), cx);
+                        panel.apply(&event, view.cwd(), view.turns(), cx);
                     });
                 }
             });

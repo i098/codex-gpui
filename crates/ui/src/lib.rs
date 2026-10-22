@@ -52,7 +52,7 @@ actions!(
         OpenMobileSetup,
         /// `⌥⌘B`: show or hide the Changes side panel.
         ToggleChangesPanel,
-        /// A file change card's `View changes`, the thread summary's `Changes` row.
+        /// The thread summary's `Changes` row and generic Changes navigation.
         OpenChangesPanel,
         /// Thread summary ▸ `Background processes` row: the command's terminal tab.
         OpenBackgroundTerminal,
@@ -65,6 +65,11 @@ actions!(
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = shell, no_json)]
 pub struct SetTheme(pub &'static str);
+
+/// A change card opens review with an override for this exact requested path.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = shell, no_json)]
+pub struct ViewChanges(pub String);
 
 // Edit menu commands; text inputs handle them.
 actions!(
@@ -1142,6 +1147,7 @@ impl Shell {
         open: bool,
         focus: &gpui::FocusHandle,
         window: &Window,
+        hairline_width: Pixels,
     ) -> Div {
         let r = Theme::RADIUS_XL_BASE;
         let panel = div()
@@ -1156,14 +1162,14 @@ impl Shell {
             .overflow_hidden()
             .child(self.main.clone());
         if self.main_composited {
-            return panel.left(if open { left + MAIN_HAIRLINE } else { left });
+            return panel.left(if open { left + hairline_width } else { left });
         }
         // The `clip-path` box (its left corners under the open sidebar), unsnapped as for the
         // fill in `render`: Skia rasters main's draws under that anti-aliased clip, but not its
         // composited layers. The panel lays out at `left` as in Blink; the clip reaches r under
         // the sidebar at paint time.
         let (outset, inset) = if open {
-            (r, MAIN_HAIRLINE)
+            (r, hairline_width)
         } else {
             (px(0.), px(0.))
         };
@@ -1412,6 +1418,8 @@ impl Render for Shell {
         // of progress; its hairline fades out over 0.2 to 0.05 while closing.
         let open = progress > 0.1;
         let main_left = RAIL_WIDTH + (self.sidebar_width - RAIL_WIDTH) * progress;
+        let scale = window.scale_factor();
+        let hairline_width = px((f32::from(MAIN_HAIRLINE) * scale).floor().max(1.) / scale);
         let hairline_alpha = if self.sidebar_open {
             1.
         } else {
@@ -1477,9 +1485,9 @@ impl Render for Shell {
             let clip_left = if open { main.left() - r } else { main.left() };
             let clip = Bounds::from_corners(point(clip_left, main.top()), main.bottom_right());
             let line = open.then(|| {
-                let line = Bounds::new(main.origin, size(MAIN_HAIRLINE, main.size.height));
-                main.origin.x += MAIN_HAIRLINE;
-                main.size.width -= MAIN_HAIRLINE;
+                let line = Bounds::new(main.origin, size(hairline_width, main.size.height));
+                main.origin.x += hairline_width;
+                main.size.width -= hairline_width;
                 line
             });
             // `clip-path: inset(0 -r 0 0 round r)` rounds every corner at its fractional edges.
@@ -1646,7 +1654,7 @@ impl Render for Shell {
                         .child(self.sidebar_panel(&t, progress)),
                 )
             })
-            .child(self.main_panel(main_left, open, &main_focus, window))
+            .child(self.main_panel(main_left, open, &main_focus, window, hairline_width))
             .when(composited || self.main_backgrounds > 0, |d| {
                 d.child(corners)
             })

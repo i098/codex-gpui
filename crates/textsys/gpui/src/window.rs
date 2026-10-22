@@ -68,6 +68,7 @@ use uuid::Uuid;
 
 pub(crate) mod a11y;
 mod prompts;
+mod ui_scale;
 
 pub use a11y::A11ySubtreeBuilder;
 
@@ -1287,6 +1288,8 @@ pub struct Window {
     modifiers: Modifiers,
     capslock: Capslock,
     scale_factor: f32,
+    device_scale_factor: f32,
+    ui_scale: f32,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
@@ -1666,6 +1669,7 @@ impl Window {
         let scale_factor = platform_window.scale_factor();
         let appearance = platform_window.appearance();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
+        text_system.set_scale_factor(scale_factor);
         let invalidator = WindowInvalidator::new(handle.window_id());
         let active = Rc::new(Cell::new(platform_window.is_active()));
         let visibility = platform_window.visibility();
@@ -2197,6 +2201,8 @@ impl Window {
             modifiers,
             capslock,
             scale_factor,
+            device_scale_factor: scale_factor,
+            ui_scale: 1.,
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
@@ -2823,9 +2829,17 @@ impl Window {
     /// the platform window, then notifies observers. Normally called automatically
     /// by the platform's resize callback, but exposed publicly for test infrastructure.
     pub fn bounds_changed(&mut self, cx: &mut App) {
-        self.scale_factor = self.platform_window.scale_factor();
-        self.viewport_size = self.platform_window.content_size();
-        self.mouse_position = self.platform_window.mouse_position();
+        self.device_scale_factor = self.platform_window.scale_factor();
+        self.scale_factor = self.device_scale_factor * self.ui_scale;
+        self.text_system.set_scale_factor(self.scale_factor);
+        self.viewport_size = self
+            .platform_window
+            .content_size()
+            .map(|value| value / self.ui_scale);
+        self.mouse_position = self
+            .platform_window
+            .mouse_position()
+            .map(|value| value / self.ui_scale);
 
         self.refresh();
 
@@ -3169,9 +3183,7 @@ impl Window {
         self.platform_window.show_character_palette();
     }
 
-    /// The scale factor of the display associated with the window. For example, it could
-    /// return 2.0 for a "retina" display, indicating that each logical pixel should actually
-    /// be rendered as two pixels on screen.
+    /// Returns display pixels per logical UI pixel, including the current UI magnification.
     pub fn scale_factor(&self) -> f32 {
         self.scale_factor
     }
@@ -3179,7 +3191,9 @@ impl Window {
     /// Overrides the display scale factor for tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_scale_factor(&mut self, scale_factor: f32) {
-        self.scale_factor = scale_factor;
+        self.device_scale_factor = scale_factor;
+        self.scale_factor = scale_factor * self.ui_scale;
+        self.text_system.set_scale_factor(self.scale_factor);
         self.refresh();
     }
 
@@ -5879,6 +5893,10 @@ impl Window {
     /// Dispatch a mouse, keyboard, or touch event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
+        self.dispatch_ui_event(ui_scale::input(event, self.ui_scale), cx)
+    }
+
+    fn dispatch_ui_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
         #[cfg(feature = "profiler")]
         self.window_profiler.begin_input(event.kind_name());
         let update_count_before = self.invalidator.update_count();
@@ -7357,8 +7375,8 @@ impl Window {
                         modifiers: Modifiers::default(),
                         click_count: 1,
                     });
-                    self.dispatch_event(mouse_down, cx);
-                    self.dispatch_event(mouse_up, cx);
+                    self.dispatch_ui_event(mouse_down, cx);
+                    self.dispatch_ui_event(mouse_up, cx);
                 }
             }
             accesskit::Action::Focus => {
