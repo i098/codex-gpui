@@ -650,6 +650,7 @@ dependencies = [
  "anyhow",
  "async-channel",
  "async-lock",
+ "chrono",
  "futures-lite",
  "log",
  "parking_lot",
@@ -659,6 +660,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tungstenite",
+ "uuid",
  "webpki-roots",
 ]
 
