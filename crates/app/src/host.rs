@@ -13,7 +13,7 @@
 //! (`getAuthStatus` with `includeToken`) plus the account route from `account/read`, retries once
 //! after a 401 with a refreshed token, and answers the original wire shapes, including errors.
 //! The token never reaches logs, errors, or `Debug` output.
-//! Local fetches support automations, Git, native app discovery, and open-in requests.
+//! Local fetches support automations, Git, scoped file reads, native app discovery, and open-in requests.
 //! Unsupported endpoints return errors.
 //! `Root` loads the automation list off the UI thread when the Scheduled route opens.
 //! Consumers read the result through `Root::automations`; this service slice does not change the static screens.
@@ -37,12 +37,18 @@ use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
+use ui::screens::diff::panel::ReviewRepository;
 use ui::screens::sidebar::Project;
 use url::Url;
 
 mod automation_schedule;
 pub mod computer_use;
 pub mod computer_use_native;
+mod context_files;
+mod diff_files;
+mod diff_repositories;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod directories;
 mod git;
 pub mod git_pr;
 mod native_apps;
@@ -74,7 +80,14 @@ impl Request {
 
 pub trait Host: Send + Sync {
     /// Returns the original wire response. Call this off the UI thread for a local host.
+    /// Only trusted native UI code calls this service.
+    /// Derive `cwd` from the active workspace, never from model-provided input.
     fn fetch(&self, request: &Request) -> Result<Value>;
+
+    /// Binds context-file events to this host's view, replacing any prior binding.
+    fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
+        None
+    }
 
     fn stream(
         &self,
@@ -103,6 +116,10 @@ pub trait Host: Send + Sync {
     /// Reads the original sidebar project state off the UI thread.
     fn projects(&self) -> Result<Vec<Project>> {
         bail!("sidebar project state is unsupported by this host")
+    }
+
+    fn review_repositories(&self, _thread: &str, _cwd: &str) -> Result<Vec<ReviewRepository>> {
+        bail!("review repositories are unsupported by this host")
     }
 
     fn add_project(&self, _root: &Path) -> Result<String> {
@@ -497,6 +514,7 @@ pub struct LocalHost {
     settings: Option<crate::host_settings::Settings>,
     computer_use_settings: Option<computer_use::ComputerUseSettings>,
     native_computer_use: Arc<computer_use_native::NativeComputerUse>,
+    context_files: context_files::ContextFiles,
 }
 
 impl LocalHost {
@@ -509,6 +527,7 @@ impl LocalHost {
             bridge: None,
             opener: "/usr/bin/open".into(),
             settings: None,
+            context_files: context_files::ContextFiles::default(),
         }
     }
 
@@ -1031,6 +1050,10 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
+        Some(self.context_files.bind())
+    }
+
     fn prepare_projectless(&self, prompt: &str) -> Result<Workspace> {
         self.create_projectless_workspace(prompt)
     }
@@ -1065,6 +1088,10 @@ impl Host for LocalHost {
         project_rows(&state, &self.home, |path, _| {
             Ok(Some(Path::new(path).exists()))
         })
+    }
+
+    fn review_repositories(&self, thread: &str, cwd: &str) -> Result<Vec<ReviewRepository>> {
+        diff_repositories::discover(&self.home, thread, cwd)
     }
 
     fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {
@@ -1149,7 +1176,9 @@ impl Host for LocalHost {
             "apply-patch" => git::apply_cloud_patch(&params)?,
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-init-repo"
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
-            | "git-checkout" => git::fetch(endpoint, &params)?,
+            | "git-checkout" | "git-cat-file" | "git-review-patch" | "git-file-url" => {
+                git::fetch(endpoint, &params)?
+            }
             "create-worktree" => self.create_worktree(&params)?,
             "set-worktree-owner-thread" | "worktree-set-owner-thread" => {
                 let worktree = params["worktree"].as_str().context("missing worktree")?;
@@ -1161,7 +1190,13 @@ impl Host for LocalHost {
                 json!({"success": true})
             }
             "open-in" => self.open_in(&params)?,
+            "add-context-file" => self.context_files.add(&params)?,
             "open-in-targets" => self.open_in_targets(&params)?,
+            "read-file" => diff_files::text(&params)?,
+            "read-file-binary" => diff_files::binary(&params)?,
+            "read-git-file-binary" => diff_files::git_binary(&params)?,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            "workspace-directory-entries" => directories::read(&params)?,
             "native-desktop-apps" => json!({"apps": native_apps::list(&params)?}),
             "native-desktop-app-by-bundle-id" => {
                 json!({"app": native_apps::by_bundle_id(&params)?})
@@ -1536,6 +1571,10 @@ impl CloudHost {
 }
 
 impl Host for CloudHost {
+    fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
+        self.local.bind_context_files()
+    }
+
     fn prepare_projectless(&self, prompt: &str) -> Result<Workspace> {
         self.local.prepare_projectless(prompt)
     }
@@ -1562,6 +1601,10 @@ impl Host for CloudHost {
 
     fn projects(&self) -> Result<Vec<Project>> {
         self.local.projects()
+    }
+
+    fn review_repositories(&self, thread: &str, cwd: &str) -> Result<Vec<ReviewRepository>> {
+        self.local.review_repositories(thread, cwd)
     }
 
     fn add_project(&self, root: &Path) -> Result<String> {

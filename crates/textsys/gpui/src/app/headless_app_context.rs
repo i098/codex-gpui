@@ -192,6 +192,19 @@ impl HeadlessAppContext {
         app.update_window(window, f)
     }
 
+    /// Returns an element's last rendered bounds for a debug selector.
+    /// Release builds do not record debug selectors.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn debug_bounds(
+        &mut self,
+        window: AnyWindowHandle,
+        selector: &str,
+    ) -> Result<Option<Bounds<Pixels>>> {
+        self.update_window(window, |_, window, _| {
+            window.rendered_frame.debug_bounds.get(selector).copied()
+        })
+    }
+
     /// Captures a screenshot from a window.
     ///
     /// Requires that the context was created with a renderer factory that

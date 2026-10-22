@@ -15,6 +15,8 @@ The app drives the real `codex app-server` over stdio, the same JSON-RPC transpo
   3. `codex` on `PATH`.
 
 The workspace also builds on Linux, with GPUI's no-op text system, for CI (fmt, clippy, tests).
+The self-hosted CI job disables dev/test debug information and incremental compilation.
+It uses only its own workspace's `target` directory and removes that directory after success or failure.
 
 ## Computer use runtime
 
@@ -54,6 +56,16 @@ LCU and the trusted app-server hooks own cleanup, including reset; the native ap
 An in-flight JavaScript call can delay Interrupt cleanup; the original hook can report a timeout before cleanup completes.
 
 Run `cargo test -p app --test computer_use_lifecycle` on macOS for native Stop and thread-projection regression checks.
+
+## Background terminal output
+
+Background command output displays ANSI colors and supports text selection.
+Copy preserves the selected text without ANSI control bytes.
+Like the original app, the view keeps 1,000 scrollback rows plus the visible screen.
+The terminal fixture in `fixtures/terminal-depth.json` contains recorded `thread/shellCommand` output.
+
+Run `cargo test -p ui --lib terminal` for parser and command-label checks.
+Run `cargo test -p app --test terminal_states background_ansi_output_supports_selection_and_copy` on macOS for the native selection check.
 
 ## ACP backend
 
@@ -101,6 +113,14 @@ Closing the socket fails pending requests, and dropping the bridge closes its co
 TLS uses an explicit Ring provider with standard and system trust roots.
 The vendored Tungstenite 0.28 package omits raw handshake-request trace output because it contains the authentication token.
 
+`Bridge::start_cloud_environment_onboarding(account_id, config_id, params)` starts a thread bound to a saved cloud environment.
+It rejects local connections and a different account before sending the request.
+It replaces local paths with the original deferred onboarding environment, service-tier rules, and plugin metadata.
+Cloud thread start/resume and turn start/add requests follow the original tier and personality rules.
+The onboarding API returns the server JSON without requiring local-thread fields.
+This API does not send the first model turn or finish setup.
+The environment UI and host-aware thread routing remain separate work.
+
 Run `cargo test -p bridge` for real loopback WebSocket exchanges, disconnect handling, and credential checks.
 
 ## Native Computer Use service
@@ -121,6 +141,22 @@ Model-driven computer use stays on the LCU relay and original native sockets.
 Do not grant SSH Automation access to test the separate Appshots Apple Event path.
 These native operations require macOS; Linux checks cover policy, capture-file boundaries, and request state only.
 
+## Security provider API
+
+`bridge::security::Client` uses the installed `codex-security` MCP provider through the existing app-server connection.
+It opens an ephemeral, read-only host thread and preserves its identity on tool calls.
+The bridge does not embed the Security SDK or install the provider.
+
+The API reads scans, repositories, findings, and target metadata.
+It also handles scan setup, continuation delivery, cancellation, and finding remediation.
+Failed or unconfirmed delivery keeps the ownership claim when another turn might still be active.
+Rejected or mismatched handoff claims never cancel a scan owned by another client.
+Gate resolution requires the rollout gate and an enabled, available `codex-security@` plugin.
+
+Run `cargo test -p bridge --lib security::tests` for gate, response-validation, pagination, and delivery-ownership checks.
+These tests use a local protocol peer and do not start a model turn.
+This increment does not add a native Security route or claim visual parity.
+
 ## Build and run
 
 ```sh
@@ -138,11 +174,46 @@ Branch prefix saves on blur or Enter; multiline instructions save after three id
 The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
 This page does not implement Git operations or active pull request watchers, and it does not complete other settings pages.
 
+The desktop host exposes `git-review-patch` for complete, binary-capable patches from the selected review source.
+The response uses `contentsBase64` to preserve patch bytes, including non-UTF-8 text.
+`git-changes` accepts `hideWhitespace`; raw patch export never applies that display filter.
+Stage, Unstage, and Revert accept the same filter while retaining hidden whitespace edits and the stale-snapshot check.
+Revision exports use `beforeRef` and `afterRef`; staged and working-tree exports retain their separate Git states.
+Raw export omits untracked files above the original 256-file limit but keeps tracked changes. This does not limit the existing Changes list.
+Run `cargo test -p app --test diff_file_reads` for real Git apply round trips and source-boundary checks.
+
+`ui::screens::diff::panel::word::changes` returns removed and added UTF-8 byte ranges for the original `word-alt` comparison.
+It ignores a final LF or CRLF and returns no highlights above 1,000 UTF-16 units per line.
+The API preserves the original edit-path order and final-span boundaries. It does not change rendered controls.
+Run `cargo test -p ui --lib screens::diff::panel::word` for its boundary checks.
+
+`ui::screens::diff::panel::patch::file_path` reads the target path from one Git file patch.
+It decodes quoted names and handles rename, copy, binary, empty-file, and deleted-file metadata.
+Complete file headers preserve filenames under no-prefix and mnemonic-prefix settings. Hunk contents never supply a path.
+The parser does not access or authorize filesystem paths.
+Changes uses it for aggregate patches, preserving quoted names and metadata-only file entries through the file headers and Copy path action.
+File headers collapse display whitespace and show rename sources. Copy path keeps the decoded path unchanged.
+Metadata-only files show notices instead of raw Git headers.
+Unified deletions use source-sized striped markers. Split deletions keep solid markers.
+View changes selects Last Turn and opens only the matching requested path.
+File expansion follows exact response paths; collapsed rows retain their file contents.
+Expand all resets the path overrides.
+Run `cargo test -p ui --lib screens::diff::panel::patch` for its boundary checks.
+
+`Host::review_repositories(thread, cwd)` reads the assigned project roots and worktrees owned by that thread.
+It returns each repository root, working directory, and display name without changing a rendered control.
+Run `cargo test -p app --test diff_repositories` for the real-Git ownership and path checks.
+
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
 Use `Composer::settings_field` for multiline text and `Toast` for existing information, error, and success messages.
 Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice check.
+
+`app::diff_content::read_full_file` loads typed before/after data through the existing Git object host.
+It preserves line endings and the host's working-file fallback policy, with a 5 MiB object limit.
+Missing or oversized objects return `FullError::Unavailable`; invalid disk-fallback paths or reply structures return `FullError::Failed`.
+Run `cargo test -p app --test diff_content` for real Git object and repository-boundary checks.
 
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
 Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
@@ -279,10 +350,29 @@ Home, Thread, Settings, Automations, Mobile, and Archive each own their action r
 `app::Route` and its saved values stay unchanged.
 Shared RPC handlers and state remain on `Root` in `lib.rs`.
 
+Opening an unloaded chat reads its history and resumes the thread before showing it.
+The composer restores that thread's returned model, reasoning effort, and permissions instead of using startup defaults.
+An unset effort stays unset in requests; the picker shows Medium.
+The composer labels modified workspace policies as Custom.
+The default pinned-summary layout hides the thread identity in a single pane.
+Opening a right pane restores the header identity; the toolbar actions stay available.
+
 `LocalHost` serves `native-desktop-apps` and `native-desktop-app-by-bundle-id` through the desktop fetch boundary.
 On macOS, the adapter reads Spotlight metadata, applies the original app exclusions, and supports usage or display-name ordering.
 It returns each app's path, bundle ID, and display name without launching the app.
 Linux returns an empty native app list, as the original host does.
+
+On macOS and Linux, `workspace-directory-entries` lists workspace children with relative paths and directories first.
+`includeHidden` and `directoriesOnly` filter the reply.
+Directory requests reject lexical and symlink paths outside the workspace.
+Enumeration uses the validated directory handle, so replacing a symlink cannot redirect a listing.
+
+`add-context-file` sends a file reference to the host's bound view.
+The composer shows a file card without changing the draft text or selection.
+Repeated context files stay attached once; replacing the host disconnects its previous context channel.
+Submission lists these paths in the original `Files mentioned by the user` section, separate from image uploads.
+Editing a queued message restores its file cards and request text.
+Failed thread submissions restore the request and file cards.
 
 `open-in-targets` returns the original editor and terminal catalog, installed targets, and the preferred target.
 It reads `open-in-target-preferences` from the same shared host settings store as the UI.
@@ -303,7 +393,8 @@ Command text sent to an interactive terminal rejects control characters.
 ACP connections use built-in targets without requesting Codex-only configuration.
 
 On macOS, `textsys::show_definition(window, selection, baseline)` opens AppKit's native Look Up popover.
-The baseline uses window-local logical pixels from the top left; the adapter handles both view orientations.
+The baseline uses window-local logical pixels from the top left.
+The adapter applies window magnification and handles both view orientations.
 Call it on the main thread with the unchanged selection.
 Headless windows return their native-handle error; the adapter has no URL or clipboard fallback.
 
@@ -326,7 +417,7 @@ These hooks use `TestPlatform` without opening an OS dialog; normal app behavior
 
 `gpui` and `gpui_apple` come from Zed at a fixed revision and are vendored in `crates/textsys`.
 The workspace `[patch]` replaces the upstream crates with these copies.
-Stock GPUI cannot match Chromium's pixels, so the copies change three things:
+Stock GPUI cannot match Chromium's pixels. The local copies include these changes:
 
 - Blink snapping: layout in Blink `LayoutUnit`s (1/64 device px), device-pixel rounding half up, and text at fractional x positions.
 - Skia blends: glyph and sprite blending as Skia's 8-bit raster does it, and `SkPaint::setAlphaf` alpha rounded to a byte.
@@ -335,10 +426,21 @@ Stock GPUI cannot match Chromium's pixels, so the copies change three things:
 `Window::layout_origin_residual_y` returns the fractional vertical origin removed by layout rounding.
 Use it when placing multiline field glyphs to retain Blink's baseline positions.
 
+`Window::set_ui_scale` scales layout, painting, pointer input, and IME geometry without resizing the native window.
+Text layouts use each window's effective device scale and discard stale cached metrics when that scale changes.
+
 Inline-code backgrounds use both snapped label edges, so fractional text widths do not expand their right edge.
 
 Monochrome glyphs and SVGs keep their paint alpha.
 Element opacity is applied once when the enclosing layer is restored.
+
+Native sprite state retains four nested layer devices within Metal's eight color targets.
+Each device restores into its parent before a parent opacity mask is applied.
+Deeper alpha is combined in the innermost device.
+
+Character-unit widths use the raw glyph advance at the requested font size.
+They exclude tracking; text layout still includes it.
+Use `TextSystem::ch_advance` for CSS `ch` columns, not glyph ink bounds.
 
 Canvas callbacks honor their `opacity`, `layer`, and `top_layer` styles.
 These styles use the same compositor boundary as other elements.
@@ -352,6 +454,9 @@ An extra layer changes glyph edge bytes even when its opacity is one.
 
 `shapes` links Skia binaries built with Chromium's `SkUserConfig.h` legacy defines.
 `.cargo/config.toml` points `SKIA_BINARIES_URL` to these binaries.
+
+Raster output buffers stop at the visible viewport.
+Compositor tiles keep their original size, so long scrollers preserve edge rasterization.
 
 On macOS, popup backdrops capture the current frame's scene before the popup.
 The capture includes text, images, clipping, and opacity.
@@ -490,6 +595,8 @@ Recorded command rows, ranking, and keyboard-editing checks remain unchanged.
 The native menu lives in `crates/app/src/native_menus.rs`.
 Edit supports plain-text Paste and Match Style and selection-only Delete, including undo.
 View contains Find; Help opens the Codex changelog, troubleshooting guide, and service status page.
+View > Toggle Pinned Summary opens and closes the current thread summary.
+Home, sign-in, and pending thread loads keep this command disabled.
 The `native_menus` and `s013` tests check the edit actions and Find navigation on macOS.
 About shows this build's version in a separate window; Escape closes it.
 The Window menu has Bring All to Front, and Control+Command+F toggles the active window's fullscreen state.

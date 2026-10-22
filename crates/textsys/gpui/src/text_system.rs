@@ -429,16 +429,14 @@ impl TextSystem {
         }))
     }
 
-    /// Get the advance width for the given character, in the given font and size.
+    /// Get the glyph advance at the given font size, without tracking or letter spacing.
     pub fn advance(&self, font_id: FontId, font_size: Pixels, ch: char) -> Result<Size<Pixels>> {
         let glyph_id = self
             .platform_text_system
             .glyph_for_char(font_id, ch)
             .with_context(|| format!("glyph not found for character '{ch}'"))?;
-        let result = self.platform_text_system.advance(font_id, glyph_id)?
-            / self.units_per_em(font_id) as f32;
-
-        Ok(result * font_size)
+        self.platform_text_system
+            .advance_at_size(font_id, glyph_id, font_size)
     }
 
     // Consider removing this?
@@ -615,6 +613,10 @@ impl WindowTextSystem {
             ),
             text_system,
         }
+    }
+
+    pub(crate) fn set_scale_factor(&self, scale: f32) {
+        self.line_layout_cache.set_scale_factor(scale);
     }
 
     pub(crate) fn layout_index(&self) -> LineLayoutIndex {

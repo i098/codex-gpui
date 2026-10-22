@@ -848,6 +848,7 @@ impl Composer {
                                             && event.keystroke.modifiers
                                                 == gpui::Modifiers::default()
                                         {
+                                            this.cancel_dictation(cx);
                                             this.request_draft.index = target;
                                             this.request_draft.error = None;
                                             this.request_focus_pending = true;
@@ -858,6 +859,7 @@ impl Composer {
                                     },
                                 ))
                                 .on_click(self.request_listener(cx, move |this, _, window, cx| {
+                                    this.cancel_dictation(cx);
                                     this.request_draft.index = target;
                                     this.request_draft.error = None;
                                     this.request_focus_pending = true;
@@ -1583,6 +1585,7 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.cancel_dictation(cx);
         if let Some(form) = self
             .approval
             .as_ref()

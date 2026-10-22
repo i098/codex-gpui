@@ -285,9 +285,11 @@ impl Root {
         };
         let host = self.host.clone();
         let prompt = submission.text.clone();
+        let context_prompt =
+            crate::native_menus::context_files::prompt(submission.text, &submission.context_files);
         let work = cx.background_spawn(async move {
             let identity = host.identity().context("Cloud tasks require a ChatGPT account")?;
-            let mut input = vec![json!({"type":"message","role":"user","content":[{"content_type":"text","text":submission.text}]})];
+            let mut input = vec![json!({"type":"message","role":"user","content":[{"content_type":"text","text":context_prompt}]})];
             for attachment in &submission.attachments {
                 input.push(upload_image(&*host, &identity, attachment)?);
             }
