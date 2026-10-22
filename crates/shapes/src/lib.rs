@@ -500,6 +500,30 @@ pub fn paint_icon(
     }
 }
 
+/// Paints the svg icon `src` with CSS `opacity` inside the innermost [`backdrop_blur`] box
+/// painted around `bounds`, as Chromium rasters a non-composited opacity group on that box's
+/// composited layer and composites the layer over the blurred backdrop; `clip`: the box clips
+/// its content to its contour (`overflow: hidden`). Draw nothing else in the icon's box after
+/// the backdrop box. False when no such box holds `bounds`, or off macOS: paint it another way
+/// then.
+pub fn paint_icon_in_backdrop(
+    src: &[u8],
+    key: &str,
+    bounds: Bounds<Pixels>,
+    color: Hsla,
+    opacity: f32,
+    clip: bool,
+    window: &mut Window,
+) -> bool {
+    #[cfg(target_os = "macos")]
+    return backdrop::paint_icon(src, key, bounds, color, opacity, clip, window);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (src, key, bounds, color, opacity, clip, window);
+        false
+    }
+}
+
 /// Paints an icon as [`paint_icon`] does, then transforms its cached raster in device pixels.
 /// The transform does not change layout, hitboxes, or the raster cache key.
 #[allow(clippy::too_many_arguments)]

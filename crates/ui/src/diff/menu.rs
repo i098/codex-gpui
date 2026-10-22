@@ -24,30 +24,61 @@ pub(super) fn source_glyph(
 ) -> impl IntoElement + Styled {
     gpui::canvas(
         |_, _, _| {},
+        move |bounds, (), window, cx| paint_glyph(data, id, color, opacity, bounds, window, cx),
+    )
+    .size(px(16.))
+    .flex_none()
+}
+
+/// [`source_glyph`] inside a `backdrop-filter` box: Chromium rasters its opacity group on the
+/// box's own layer.
+pub(super) fn backdrop_glyph(
+    data: &'static [u8],
+    id: &'static str,
+    color: Hsla,
+    opacity: u8,
+) -> impl IntoElement + Styled {
+    gpui::canvas(
+        |_, _, _| {},
         move |bounds, (), window, cx| {
-            let paint = |window: &mut Window| {
-                if !shapes::paint_icon(data, id, bounds, false, color, None, window, cx) {
-                    window
-                        .paint_svg(
-                            bounds,
-                            id.into(),
-                            Some(data),
-                            gpui::TransformationMatrix::default(),
-                            color,
-                            cx,
-                        )
-                        .ok();
-                }
-            };
-            if opacity == 255 {
-                paint(window);
-            } else {
-                shapes::with_composited_opacity(opacity, bounds, window, cx, paint);
+            let alpha = f32::from(opacity) / 255.;
+            if !shapes::paint_icon_in_backdrop(data, id, bounds, color, alpha, true, window) {
+                paint_glyph(data, id, color, opacity, bounds, window, cx);
             }
         },
     )
     .size(px(16.))
     .flex_none()
+}
+
+fn paint_glyph(
+    data: &'static [u8],
+    id: &'static str,
+    color: Hsla,
+    opacity: u8,
+    bounds: gpui::Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    let paint = |window: &mut Window| {
+        if !shapes::paint_icon(data, id, bounds, false, color, None, window, cx) {
+            window
+                .paint_svg(
+                    bounds,
+                    id.into(),
+                    Some(data),
+                    gpui::TransformationMatrix::default(),
+                    color,
+                    cx,
+                )
+                .ok();
+        }
+    };
+    if opacity == 255 {
+        paint(window);
+    } else {
+        shapes::with_composited_opacity(opacity, bounds, window, cx, paint);
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]

@@ -2187,7 +2187,7 @@ impl FileView {
                                         .items_center()
                                         .pl(px(2.))
                                         .child(
-                                            menu::source_glyph(
+                                            menu::backdrop_glyph(
                                                 include_bytes!(
                                                     "../../../assets/icons/chevron-down.svg"
                                                 ),
