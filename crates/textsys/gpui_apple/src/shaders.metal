@@ -902,6 +902,14 @@ vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
+float2 clamp_tile_position(float2 position, AtlasTile tile, texture2d<float> texture) {
+  float2 atlas_size(texture.get_width(), texture.get_height());
+  float2 origin(tile.bounds.origin.x, tile.bounds.origin.y);
+  float2 size(tile.bounds.size.width, tile.bounds.size.height);
+  return clamp(position, (origin + 0.5) / atlas_size,
+               (origin + size - 0.5) / atlas_size);
+}
+
 fragment float4 polychrome_sprite_fragment(
     PolychromeSpriteFragmentInput input [[stage_in]],
     constant PolychromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
@@ -911,7 +919,8 @@ fragment float4 polychrome_sprite_fragment(
   constexpr sampler atlas_texture_sampler(mag_filter::linear,
                                           min_filter::linear);
   float4 sample =
-      atlas_texture.sample(atlas_texture_sampler, input.tile_position);
+      atlas_texture.sample(atlas_texture_sampler,
+                           clamp_tile_position(input.tile_position, sprite.tile, atlas_texture));
   float distance =
       quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
 
@@ -945,7 +954,8 @@ fragment SpriteLayerTargets polychrome_sprite_layer_fragment(
     float4 third [[color(5)]], float4 fourth [[color(6)]], float4 alphas [[color(7)]]) {
   PolychromeSprite sprite = sprites[input.sprite_id];
   constexpr sampler image_sampler(mag_filter::linear, min_filter::linear);
-  float4 sample = atlas_texture.sample(image_sampler, input.tile_position);
+  float4 sample = atlas_texture.sample(
+      image_sampler, clamp_tile_position(input.tile_position, sprite.tile, atlas_texture));
   float coverage = saturate(0.5 - quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii));
   if (coverage == 0.0 || sample.a == 0.0) {
     discard_fragment();

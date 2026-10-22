@@ -274,6 +274,70 @@ fn screenshot_routes_and_discards_stale_results() -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn enlarged_images_keep_their_edge_colors() -> Result<()> {
+    use gpui::{Context, IntoElement, ParentElement as _, Render, Styled as _, Window};
+
+    struct Thumbnails(Arc<gpui::Image>);
+    impl Render for Thumbnails {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            gpui::div()
+                .flex()
+                .gap(px(6.))
+                .child(gpui::img(self.0.clone()).size(px(122.)))
+                .child(
+                    gpui::div()
+                        .layer()
+                        .child(gpui::img(self.0.clone()).size(px(122.))),
+                )
+        }
+    }
+
+    let recording: serde_json::Value =
+        serde_json::from_str(include_str!("../../../../refs/interactions/s017.json"))?;
+    let bytes: Vec<u8> =
+        serde_json::from_value(recording["steps"][1]["clipboard"]["pngBytes"].clone())?;
+    let image = Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, bytes));
+    let mut cx = HeadlessAppContext::with_platform(
+        textsys::text_system(),
+        Arc::new(theme::Assets),
+        gpui_platform::current_headless_renderer,
+    );
+    let window = cx.open_window(size(px(250.), px(122.)), |_, cx| {
+        cx.new(|_| Thumbnails(image))
+    })?;
+    cx.test_window(window.into())
+        .simulate_scale_factor_change(1.);
+    cx.allow_parking();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let frame = loop {
+        cx.run_until_parked();
+        let frame = cx.capture_screenshot(window.into())?;
+        if frame.get_pixel(30, 30).0 == [255, 0, 0, 255] {
+            break frame;
+        }
+        ensure!(Instant::now() < deadline, "thumbnail did not load");
+        std::thread::sleep(Duration::from_millis(1));
+    };
+    for offset in [0, 128] {
+        for (x, y, expected) in [
+            (0, 0, [255, 0, 0, 255]),
+            (121, 0, [0, 255, 0, 255]),
+            (0, 121, [0, 0, 255, 255]),
+            (121, 121, [255, 255, 255, 255]),
+        ] {
+            assert_eq!(
+                frame.get_pixel(offset + x, y).0,
+                expected,
+                "image edge at ({}, {y})",
+                offset + x,
+            );
+        }
+    }
+    Ok(())
+}
+
 fn settle(cx: &mut HeadlessAppContext, owner: WindowHandle<Root>) -> Result<()> {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {

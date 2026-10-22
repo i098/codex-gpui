@@ -717,9 +717,10 @@ On macOS, Control+Shift+4 attaches a selected screen region to the primary windo
 Control+Option+Shift+4 opens a new chat before selection.
 Starting a new chat clears the previous Home draft, including its attachments.
 Both shortcuts use the native selection tool and leave the screenshot unsent.
+Enlarged image previews retain their edge colors instead of sampling adjacent texture data.
 Escape cancels selection without an error; changing the chat or account discards an unfinished capture.
 The shortcuts use `codex-command-keybindings` overrides and never change Screen Recording permissions.
-Run `cargo test -p app --lib screenshot:: -- --test-threads=1` for isolated capture and attachment checks.
+Run `cargo test -p app --lib screenshot:: -- --test-threads=1` for isolated capture, attachment, and macOS image-edge checks.
 
 ```sh
 tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'
