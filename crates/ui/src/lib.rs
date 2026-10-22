@@ -1097,14 +1097,16 @@ impl Shell {
                     |_, _, _| {},
                     move |bounds, (), window, cx| {
                         // The `clip-path` box keeps a zoomed left edge's fraction, in
-                        // `#app-shell-sidebar`'s space: its top is rounded to device px, and its
+                        // `#app-shell-sidebar`'s space: its left is the inset in LayoutUnits
+                        // (1/64 device px, truncated), its top is rounded to device px, and its
                         // bottom stays at the layout edge.
                         let s = window.scale_factor();
+                        let left = px((f32::from(RAIL_WIDTH) * s * 64.).trunc() / 64. / s);
                         let top = Theme::TITLEBAR_HEIGHT;
                         let shift = px((f32::from(top) * s).round() / s) - top;
                         let bottom = window.viewport_size().height - PAGE_INSET;
                         let clip = Bounds::from_corners(
-                            point(RAIL_WIDTH, top + shift),
+                            point(left, top + shift),
                             point(bounds.right() + r, bottom),
                         );
                         shapes::with_unsnapped_clip(clip, Corners::all(r), window, |window| {
