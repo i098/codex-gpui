@@ -5,6 +5,12 @@ use std::collections::{BTreeMap, HashSet};
 pub const UNIVERSAL: &str = "wham-public/wham-universal";
 const REDACTED: &str = "<REDACTED>";
 
+#[derive(Deserialize)]
+pub struct EnvironmentName {
+    pub id: String,
+    pub label: String,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 pub struct Environment {
     pub id: String,
@@ -309,7 +315,7 @@ fn normalized_domain(domain: Option<&str>) -> Option<String> {
 impl Draft {
     pub fn errors(
         &self,
-        environments: &[Environment],
+        environments: &[EnvironmentName],
         current: Option<&str>,
     ) -> BTreeMap<&'static str, &'static str> {
         let mut errors = BTreeMap::new();

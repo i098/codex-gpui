@@ -10,7 +10,7 @@ use gpui::{
     InteractiveElement, IntoElement, ParentElement, Render, SharedString,
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
-use model::{Draft, Environment, RUNTIMES, Secret, UNIVERSAL};
+use model::{Draft, Environment, EnvironmentName, RUNTIMES, Secret, UNIVERSAL};
 use serde_json::{Value, json};
 use std::{cell::RefCell, collections::BTreeMap};
 use theme::{ActiveTheme as _, Theme};
@@ -34,6 +34,7 @@ pub enum Operation {
     },
     Detail(String),
     Machines,
+    Names,
     Repositories(String),
     Save {
         original: Option<String>,
@@ -94,6 +95,9 @@ pub struct CloudPage {
     selected: Option<Environment>,
     machines: Vec<Value>,
     machine_error: bool,
+    names_serial: u64,
+    names: Option<Vec<EnvironmentName>>,
+    names_error: bool,
     repositories: Vec<Value>,
     query: Entity<Composer>,
     editor: Option<Editor>,
@@ -130,6 +134,9 @@ impl CloudPage {
             selected: None,
             machines: Vec::new(),
             machine_error: false,
+            names_serial: 0,
+            names: None,
+            names_error: false,
             repositories: Vec::new(),
             query,
             editor: None,
@@ -153,6 +160,16 @@ impl CloudPage {
     }
 
     pub fn load(&mut self, operation: Operation, cx: &mut Context<Self>) {
+        if matches!(operation, Operation::Names) {
+            self.names_serial += 1;
+            self.names_error = false;
+            cx.emit(Request {
+                serial: self.names_serial,
+                operation,
+            });
+            cx.notify();
+            return;
+        }
         if matches!(operation, Operation::Machines) {
             self.machine_error = false;
         }
@@ -202,6 +219,16 @@ impl CloudPage {
         result: Result<Value, String>,
         cx: &mut Context<Self>,
     ) {
+        if matches!(request.operation, Operation::Names) {
+            if request.serial != self.names_serial {
+                return;
+            }
+            self.names_error = result
+                .and_then(|body| self.receive(&request.operation, body, cx))
+                .is_err();
+            cx.notify();
+            return;
+        }
         if request.serial != self.serial {
             return;
         }
@@ -266,6 +293,11 @@ impl CloudPage {
                 self.machines.retain(|m| m["id"] != UNIVERSAL);
                 self.machines
                     .push(json!({"id":UNIVERSAL,"label":"Universal"}));
+            }
+            Operation::Names => {
+                self.names = Some(
+                    serde_json::from_value(body).map_err(|_| "Unable to load environment names")?,
+                );
             }
             Operation::Repositories(_) => {
                 self.repositories = body["repositories"]
@@ -378,6 +410,7 @@ impl CloudPage {
         self.menu = None;
         self.error = None;
         self.load(Operation::Machines, cx);
+        self.load(Operation::Names, cx);
     }
 
     fn field(
@@ -449,8 +482,16 @@ impl CloudPage {
             return;
         };
         let original = self.editor.as_ref().and_then(|e| e.original.as_ref());
+        if self.names.is_none()
+            && original.is_none_or(|environment| environment.label != draft.label.trim())
+        {
+            return;
+        }
         if let Some(error) = draft
-            .errors(&self.environments, original.map(|e| e.id.as_str()))
+            .errors(
+                self.names.as_deref().unwrap_or_default(),
+                original.map(|e| e.id.as_str()),
+            )
             .values()
             .next()
         {
@@ -518,21 +559,129 @@ impl CloudPage {
         let id = id.into();
         let label = label.into();
         let fill = if primary {
-            t.text
+            t.button_primary_solid
         } else {
-            t.primary_soft_alpha
+            t.text_alpha_5
         };
-        let color = if primary { t.background_panel } else { t.text };
+        let color = if primary {
+            t.control_background
+        } else {
+            t.text
+        };
         let content = div()
-            .h(px(32.))
-            .px(px(12.))
-            .rounded(px(12.))
-            .bg(fill)
+            .h(px(if primary { 36. } else { 28. }))
+            .px(px(if primary { 13. } else { 9. }))
+            .relative()
             .flex()
             .items_center()
-            .gap(px(6.))
-            .child(text(label.clone(), 13., 18., 500., color));
+            .gap(px(4.))
+            .child(super::settings::on_card(
+                12.5,
+                shapes::Corner::Squircle,
+                fill,
+                None,
+            ))
+            .child(text(
+                label.clone(),
+                13.,
+                if primary { 18.571_428 } else { 18. },
+                if primary { 500. } else { 430. },
+                color,
+            ));
         self.wire_button(id, label, content, cx, action)
+    }
+
+    fn dropdown(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        let t = cx.theme().clone();
+        let label = label.into();
+        let content = div()
+            .h(px(28.))
+            .px(px(13.))
+            .relative()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(4.))
+            .child(super::settings::on_card(
+                12.5,
+                shapes::Corner::Squircle,
+                t.primary_soft_alpha,
+                Some(t.border),
+            ))
+            .child(text(label.clone(), 13., 18., 430., t.text))
+            .child(crate::icon::icon("chevron-down", 14., t.text_tertiary));
+        self.wire_button(id.into(), label, content, cx, action)
+    }
+
+    fn toggle(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        on: bool,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        let t = cx.theme().clone();
+        let content = div()
+            .w(px(32.))
+            .h(px(20.))
+            .child(super::settings::switch(id, on, false, &t));
+        self.wire_button(
+            id.into(),
+            format!("{label}: {}", if on { "On" } else { "Off" }).into(),
+            content,
+            cx,
+            action,
+        )
+    }
+
+    fn segment(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        selected: bool,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        let t = cx.theme().clone();
+        let content = div()
+            .h(px(24.))
+            .px(px(9.))
+            .relative()
+            .flex()
+            .items_center()
+            .when(selected, |d| {
+                d.child(super::settings::on_card(
+                    9999.,
+                    shapes::Corner::Round,
+                    crate::over(t.text_alpha_5, t.background_panel),
+                    None,
+                ))
+            })
+            .child(text(
+                label,
+                13.,
+                18.,
+                430.,
+                if selected { t.text } else { t.text_tertiary },
+            ));
+        self.wire_button(
+            id.into(),
+            if selected {
+                format!("{label}, selected").into()
+            } else {
+                label.into()
+            },
+            content,
+            cx,
+            action,
+        )
     }
 
     fn wire_button(
@@ -556,13 +705,14 @@ impl CloudPage {
             .id(id)
             .role(gpui::Role::Button)
             .aria_label(label.clone())
+            .aria_disabled(disabled)
             .when(!disabled, |d| d.track_focus(&handle))
             .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
                 if !disabled {
                     handle.focus(window, cx);
                 }
             })
-            .when(disabled, |d| d.opacity(0.5))
+            .when(disabled, |d| d.opacity(0.4))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if !disabled {
                     click(this, window, cx);
@@ -689,10 +839,9 @@ impl CloudPage {
 
     fn select(&self, target: Menu, value: String, cx: &mut Context<Self>) -> AnyElement {
         let shown = self.menu.as_ref() == Some(&target);
-        self.button(
+        self.dropdown(
             format!("cloud-select-{value}"),
-            format!("{value}  ⌄"),
-            false,
+            value,
             cx,
             move |this, _, cx| {
                 this.menu = (!shown).then(|| target.clone());
@@ -921,6 +1070,100 @@ impl CloudPage {
         )
     }
 
+    fn name_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let detail = self.names.is_none().then(|| {
+            if self.names_error {
+                self.wire_button(
+                    "cloud-names-retry".into(),
+                    "Couldn’t check existing names. Retry".into(),
+                    text(
+                        "Couldn’t check existing names. Retry",
+                        12.,
+                        16.,
+                        430.,
+                        t.text_secondary,
+                    ),
+                    cx,
+                    |this, _, cx| this.load(Operation::Names, cx),
+                )
+            } else {
+                text(
+                    "Checking existing environment names…",
+                    12.,
+                    16.,
+                    430.,
+                    t.text_secondary,
+                )
+                .into_any_element()
+            }
+        });
+        super::settings::settings_row_content(
+            "Name",
+            detail,
+            div()
+                .w(px(288.))
+                .child(self.editor.as_ref().expect("open editor").fields["name"].clone())
+                .into_any_element(),
+            &t,
+        )
+        .into_any_element()
+    }
+
+    fn workspace_description(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let editor = self.editor.as_ref().expect("open editor");
+        let workspace = editor.fields["workspace"].read(cx).field_text().trim();
+        let repository = editor
+            .draft
+            .repository_name
+            .rsplit('/')
+            .next()
+            .unwrap_or_default();
+        let summary = if repository.is_empty() {
+            format!("The repository will be cloned to {workspace}. ")
+        } else {
+            format!(
+                "The repository will be cloned to {}. ",
+                std::path::Path::new(workspace).join(repository).display()
+            )
+        };
+        div()
+            .flex()
+            .flex_col()
+            .when(self.machine_error, |d| {
+                d.child(text(
+                    "Unable to load container images",
+                    12.,
+                    16.,
+                    430.,
+                    t.text_secondary,
+                ))
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_baseline()
+                    .child(text(summary, 12., 16., 430., t.text_secondary))
+                    .child(
+                        self.wire_button(
+                            "cloud-workspace".into(),
+                            "Edit workspace directory".into(),
+                            text("Edit workspace directory", 12., 16., 430., t.text_secondary)
+                                .underline(),
+                            cx,
+                            |this, _, cx| {
+                                this.expanded_workspace = !this.expanded_workspace;
+                                cx.notify();
+                            },
+                        ),
+                    )
+                    .child(text(".", 12., 16., 430., t.text_secondary)),
+            )
+            .into_any_element()
+    }
+
     fn editor(&self, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme().clone();
         let Some(editor) = &self.editor else {
@@ -936,14 +1179,13 @@ impl CloudPage {
         let repository = if editor.original.is_some() {
             text(editor.draft.repository_name.clone(), 13., 18., 430., t.text).into_any_element()
         } else {
-            self.button(
+            self.dropdown(
                 "cloud-repository",
                 if editor.draft.repository_name.is_empty() {
                     "Select a repository".into()
                 } else {
                     editor.draft.repository_name.clone()
                 },
-                false,
                 cx,
                 |this, _, cx| {
                     this.repository_picker = true;
@@ -953,17 +1195,16 @@ impl CloudPage {
         };
         let mut identity = vec![
             Self::row("Repository", None, repository, &t),
-            self.input_row("name", "Name", None, &t),
+            self.name_row(cx),
             self.input_row(
                 "description",
                 "Description",
                 Some("Explain to members of your organization what this environment is for"),
                 &t,
             ),
-            Self::row(
+            super::settings::settings_row_content(
                 "Container image",
-                self.machine_error
-                    .then_some("Unable to load container images"),
+                Some(self.workspace_description(cx)),
                 if self.machine_error {
                     div()
                         .flex()
@@ -1008,22 +1249,8 @@ impl CloudPage {
                         .into_any_element()
                 },
                 &t,
-            ),
-            Self::row(
-                "",
-                None,
-                self.button(
-                    "cloud-workspace",
-                    "Edit workspace directory",
-                    false,
-                    cx,
-                    |this, _, cx| {
-                        this.expanded_workspace = !this.expanded_workspace;
-                        cx.notify();
-                    },
-                ),
-                &t,
-            ),
+            )
+            .into_any_element(),
         ];
         if self.expanded_workspace {
             identity.push(self.input_row("workspace","Workspace directory",Some("Directory where the repository is cloned; change this only when setup requires an absolute path"),&t));
@@ -1034,14 +1261,10 @@ impl CloudPage {
                 Some(
                     "Speed up container start by caching state after running the setup script. Maintenance scripts are run before every task.",
                 ),
-                self.button(
+                self.toggle(
                     "cloud-cache",
-                    if editor.draft.cache["post_setup_cache_enabled"] == true {
-                        "On"
-                    } else {
-                        "Off"
-                    },
-                    false,
+                    "Container Caching",
+                    editor.draft.cache["post_setup_cache_enabled"] == true,
                     cx,
                     |this, _, cx| {
                         if let Some(e) = &mut this.editor {
@@ -1055,24 +1278,32 @@ impl CloudPage {
             ),
             Self::row(
                 "Setup script",
-                None,
-                self.button(
-                    "cloud-auto-setup",
-                    if editor.draft.auto_setup["use_auto_setup"] == true {
-                        "Automatic"
-                    } else {
-                        "Manual"
-                    },
-                    false,
-                    cx,
-                    |this, _, cx| {
-                        if let Some(e) = &mut this.editor {
-                            e.draft.auto_setup["use_auto_setup"] =
-                                json!(e.draft.auto_setup["use_auto_setup"] != true);
-                        }
-                        cx.notify();
-                    },
-                ),
+                Some("Runs the install commands like npm install for common package managers"),
+                div()
+                    .flex()
+                    .gap(px(2.))
+                    .children([(true, "Automatic"), (false, "Manual")].into_iter().map(
+                        |(automatic, label)| {
+                            self.segment(
+                                if automatic {
+                                    "cloud-auto-setup"
+                                } else {
+                                    "cloud-manual-setup"
+                                },
+                                label,
+                                (editor.draft.auto_setup["use_auto_setup"] == true) == automatic,
+                                cx,
+                                move |this, _, cx| {
+                                    if let Some(editor) = &mut this.editor {
+                                        editor.draft.auto_setup["use_auto_setup"] =
+                                            json!(automatic);
+                                    }
+                                    cx.notify();
+                                },
+                            )
+                        },
+                    ))
+                    .into_any_element(),
                 &t,
             ),
         ];
@@ -1725,6 +1956,10 @@ impl Render for CloudPage {
                                     .max_w(px(768.))
                                     .px(px(20.))
                                     .py(px(12.))
+                                    .min_h(px(60.))
+                                    .flex()
+                                    .flex_col()
+                                    .justify_center()
                                     .child(text(title, 28., 33.6, 500., t.text)),
                             ),
                     )
@@ -1808,6 +2043,44 @@ mod tests {
                 assert!(page.error.is_none());
                 assert!(page.editor.is_some());
                 assert!(!page.pending);
+            });
+        });
+    }
+
+    #[test]
+    fn name_retry_does_not_drop_the_in_flight_machine_result() {
+        let mut app = gpui::HeadlessAppContext::with_asset_source(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+        );
+        app.update(|cx| {
+            let page = cx.new(CloudPage::new);
+            page.update(cx, |page, cx| {
+                page.edit(None, cx);
+                let machine = Request {
+                    serial: page.serial,
+                    operation: Operation::Machines,
+                };
+                let old_names = Request {
+                    serial: page.names_serial,
+                    operation: Operation::Names,
+                };
+                page.apply(&old_names, Err("names unavailable".into()), cx);
+                assert!(page.names_error);
+                page.load(Operation::Names, cx);
+                let names = Request {
+                    serial: page.names_serial,
+                    operation: Operation::Names,
+                };
+                page.apply(&old_names, Ok(json!([{"id":"stale","label":"Old"}])), cx);
+                assert!(page.names.is_none());
+                page.apply(&machine, Err("machine unavailable".into()), cx);
+                page.apply(&names, Ok(json!([{"id":"current","label":"Current"}])), cx);
+                assert!(page.machine_error);
+                assert!(!page.pending);
+                assert!(!page.names_error);
+                assert_eq!(page.names.as_ref().unwrap()[0].label, "Current");
+                assert!(page.error.is_none());
             });
         });
     }

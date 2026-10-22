@@ -1315,6 +1315,20 @@ pub(crate) fn settings_row(
     control: AnyElement,
     t: &Theme,
 ) -> Div {
+    settings_row_content(
+        title,
+        detail.map(|value| description(value, t).into_any_element()),
+        control,
+        t,
+    )
+}
+
+pub(crate) fn settings_row_content(
+    title: &'static str,
+    detail: Option<AnyElement>,
+    control: AnyElement,
+    t: &Theme,
+) -> Div {
     div()
         .relative()
         .flex()
@@ -1331,7 +1345,7 @@ pub(crate) fn settings_row(
                 .flex_col()
                 .gap(px(2.))
                 .child(text(title, 13., 18.571_428, 500., t.text))
-                .children(detail.map(|s| description(s, t))),
+                .children(detail),
         )
         .child(
             div()

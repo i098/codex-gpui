@@ -167,6 +167,9 @@ fn request(
     if response["status"] == 204 {
         return Ok(Value::Null);
     }
+    if method == "GET" && path == "/wham/environments" && response["status"] == 404 {
+        return Ok(json!([]));
+    }
     host::json_body(response)
 }
 
@@ -276,6 +279,7 @@ pub(crate) fn execute(host: &dyn host::Host, operation: &Operation) -> Result<Va
             None,
         ),
         Operation::Machines => ("GET", "/wham/machines".into(), None),
+        Operation::Names => ("GET", "/wham/environments".into(), None),
         Operation::Repositories(query) => {
             let mut url = Url::parse("https://chatgpt.com/wham/github/list-repositories")?;
             if !query.is_empty() {
@@ -482,6 +486,7 @@ fn error_label(operation: &Operation) -> &'static str {
         Operation::List { .. } => "Unable to load cloud environments",
         Operation::Detail(_) => "Unable to load this cloud environment",
         Operation::Machines => "Unable to load container images",
+        Operation::Names => "Couldn’t check existing names. Retry",
         Operation::Repositories(_) => "Unable to load repositories",
         Operation::Save { original: None, .. } => "Unable to create cloud environment",
         Operation::Save { .. } => "Unable to update cloud environment. Reload and try again",
@@ -531,5 +536,32 @@ mod tests {
             assert!(enabled.cloud);
             assert!(enabled.legacy);
         }
+    }
+
+    struct StatusHost(u16);
+
+    impl host::Host for StatusHost {
+        fn fetch(&self, _: &host::Request) -> Result<Value> {
+            Ok(json!({"status":self.0,"body":"[]"}))
+        }
+
+        fn identity(&self) -> Option<host::Identity> {
+            Some(host::Identity {
+                account_id: "account".into(),
+                user_id: "user".into(),
+                device_id: "device".into(),
+            })
+        }
+    }
+
+    #[test]
+    fn name_lookup_only_treats_not_found_as_empty() {
+        assert_eq!(
+            execute(&StatusHost(404), &Operation::Names).unwrap(),
+            json!([])
+        );
+        assert!(execute(&StatusHost(403), &Operation::Names).is_err());
+        assert!(execute(&StatusHost(500), &Operation::Names).is_err());
+        assert!(execute(&StatusHost(404), &Operation::Machines).is_err());
     }
 }

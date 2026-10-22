@@ -2025,7 +2025,7 @@ impl Render for Composer {
                                 .child(shapes::decoration(shapes::Decoration {
                                     radius: Corners::all(px(10.)),
                                     corner: shapes::Corner::Squircle,
-                                    fill: Some(t.primary_soft_alpha),
+                                    fill: Some(t.control_background.opacity(0.96)),
                                     border: Some((px(1.), t.border_strong)),
                                     ..Default::default()
                                 }))
