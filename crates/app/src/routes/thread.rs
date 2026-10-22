@@ -43,9 +43,7 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
         // refresh would move it to the composer.
         let focused = window.focused(cx);
         this.set_side(SidePanel::Changes, window, cx);
-        if let Some(focused) = focused {
-            window.focus(&focused, cx);
-        }
+        restore_focus(focused, window, cx);
     }))
     .on_action(cx.listener(Root::open_file))
     .on_action(cx.listener(|this, _: &OpenBackgroundTerminal, window, cx| {
@@ -100,4 +98,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             .update(cx, |sidebar, cx| sidebar.set_read(&a.0, cx));
     }))
     .on_action(cx.listener(|this, a: &GoToChat, window, cx| this.go_to_chat(Some(a.0), window, cx)))
+}
+
+/// Gives `focused` its focus back once the route refresh, which moves it to the composer, has run.
+fn restore_focus(focused: Option<gpui::FocusHandle>, window: &mut Window, cx: &mut Context<Root>) {
+    if let Some(focused) = focused {
+        window.defer(cx, move |window, cx| window.focus(&focused, cx));
+    }
 }
