@@ -30,6 +30,7 @@ pub(crate) fn install_shortcuts(cx: &mut App) {
 
 /// Called by `Root::render` on the root element, after the app's own actions.
 pub(crate) fn actions(root: Div, owner: &Root, cx: &mut Context<Root>) -> Div {
+    let root = keymap::actions(root, cx);
     shortcuts::actions(
         command_destinations::actions(crate::windows::actions(root, cx), cx),
         owner,
