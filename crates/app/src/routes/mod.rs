@@ -99,6 +99,7 @@ impl Root {
         self.suggestion_load = None;
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
+        self.archived_settings = None;
         self.mobile_page = None;
         self.cloud = None;
         self.page = match self.state.route.clone() {

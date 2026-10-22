@@ -146,12 +146,17 @@ The local `get-global-state` host request reads a named value from `.codex-globa
 Missing files and keys return `{"value": null}`; malformed files and invalid requests return errors.
 Thread replies retain the optional rollout `path` for archived-chat search.
 Run `cargo test -p app --test host global_state` for the filesystem and request checks.
-This support increment does not change the Archived chats page.
 
 `Composer::page_search` provides an editable search field with a keyboard-accessible clear button.
 `Confirmation::settings_dialog` selects the settings dialog style without changing confirmation or focus behavior.
 `Toast::pending` stays visible until replacement; `Toaster::push_keyed` replaces the toast for the same operation.
 Run `cargo test -p ui --test settings_kit` for search, toast lifetime, and both confirmation styles.
+
+Settings > Archived chats lists local archives and account-authorized cloud tasks.
+Search, project filters, and sorting keep the archive on one page.
+Unarchive offers View; local deletion asks for confirmation.
+Delete all uses the current local archived inventory, regardless of the active search or type filter.
+Run `cargo test -p app --test archived_chats -- --test-threads=1` for restore, View, Retry, and individual, project, and bulk deletion.
 
 Settings > Git stores branch, merge, push, draft, diff, and pull request instruction preferences in `host-settings.json`.
 Review delivery uses the existing app-server config store.

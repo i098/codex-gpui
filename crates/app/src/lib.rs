@@ -3,6 +3,7 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+mod archived_chats;
 mod cloud_task;
 pub use cloud_task::parse_task_response;
 pub mod computer_use_requests;
@@ -52,6 +53,7 @@ use ui::screens::diff::panel::{
     with_side_tabs,
 };
 use ui::screens::home::{HomeMain, OpenFolder};
+use ui::screens::settings::archived_chats::ArchivedChats as ArchivedSettings;
 use ui::screens::settings::{self, AppServer, Login, SettingChanged};
 use ui::screens::sidebar::{
     ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
@@ -358,6 +360,7 @@ pub struct Root {
     /// The route's own shell.
     page: Option<Entity<Shell>>,
     archive_page: Option<Entity<ArchivedChats>>,
+    archived_settings: Option<Entity<ArchivedSettings>>,
     /// The Mobile route's setup page.
     mobile_page: Option<Entity<mobile::MobileSetupPage>>,
     cloud: Option<cloud_task::Session>,
@@ -653,6 +656,7 @@ impl Root {
             side: None,
             page: None,
             archive_page: None,
+            archived_settings: None,
             mobile_page: None,
             cloud: None,
             settings_section: None,
@@ -931,6 +935,10 @@ impl Root {
 
     pub fn archived_chats(&self) -> Option<&Entity<ArchivedChats>> {
         self.archive_page.as_ref()
+    }
+
+    pub fn archived_settings(&self) -> Option<&Entity<ArchivedSettings>> {
+        self.archived_settings.as_ref()
     }
 
     pub fn mobile_page(&self) -> Option<&Entity<mobile::MobileSetupPage>> {
@@ -5264,8 +5272,13 @@ impl Render for Root {
             }))
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
-            .children(self.dialog.clone());
-        let root = routes::actions(root, cx);
+            .children(self.dialog.clone())
+            .children(
+                self.archived_settings
+                    .as_ref()
+                    .and_then(|page| page.read(cx).confirmation()),
+            );
+        let root = routes::actions(archived_chats::actions(root, cx), cx);
         native_menus::actions(
             section_actions::actions(features::actions(root, cx), cx),
             self,
