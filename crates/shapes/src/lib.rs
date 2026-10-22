@@ -47,7 +47,9 @@
 //! with its float raster pipeline. Limits: inset shadows paint apart from Blink's clip layer.
 //! Use [`with_composited_opacity`] for compositor opacity; [`with_layer`] retains Skia's save-layer rounding.
 
-use gpui::{App, Bounds, Corners, Hsla, IntoElement, Pixels, Point, Styled as _, Window, canvas};
+use gpui::{
+    App, Bounds, Corners, Hsla, IntoElement, Pixels, Point, Styled as _, Window, canvas, point, px,
+};
 
 #[cfg(target_os = "macos")]
 mod backdrop;
