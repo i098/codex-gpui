@@ -192,6 +192,8 @@ Run `cargo test -p app --test diff_content` for real Git object and repository-b
 Cloud environment routes use `Root::open_cloud_environment` and the existing authenticated host transport.
 The legacy editor preserves unchanged secret values and keeps package version choices in the environment draft.
 Cloud access follows the original account policy and feature gates; Cloud computer stays hidden on the Codex surface.
+The `375130565` feature gate also hides legacy environments when the account otherwise permits cloud access.
+Run `cargo test -p app --lib cloud::tests` for the account and feature-gate checks.
 Run `cargo test -p ui --lib screens::cloud::model::tests` for secret updates and `.env` parsing.
 Cloud v2 setup still needs the durable app-server connection; configuration creation alone does not prove that setup completed.
 Original-versus-native pixel validation for these pages remains pending.

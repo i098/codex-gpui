@@ -226,7 +226,7 @@ fn evaluate_access(gates: &Value, policy: &Value, consumer: bool) -> Access {
     };
     Access {
         cloud: enabled && cloud,
-        legacy: consumer || policy["beta_settings"]["wham_access"] == true,
+        legacy: enabled && (consumer || policy["beta_settings"]["wham_access"] == true),
         workspace: !consumer,
         manage_workspace: !consumer
             && cloud
@@ -514,5 +514,22 @@ mod tests {
         assert!(allowed.cloud);
         assert!(!allowed.manage_workspace);
         assert!(evaluate_access(&gates, &Value::Null, true).cloud);
+    }
+
+    #[test]
+    fn disabled_cloud_gate_hides_legacy_environments_for_every_plan() {
+        let policy = json!({"beta_settings":{"wham_access":true}});
+        for consumer in [true, false] {
+            let disabled = evaluate_access(&json!({}), &policy, consumer);
+            assert!(!disabled.cloud);
+            assert!(!disabled.legacy);
+            let enabled = evaluate_access(
+                &json!({"feature_gates":{"375130565":{"value":true}}}),
+                &policy,
+                consumer,
+            );
+            assert!(enabled.cloud);
+            assert!(enabled.legacy);
+        }
     }
 }
