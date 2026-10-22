@@ -8,4 +8,4 @@ There is no release yet.
 
 ### Added
 
-- A contributing guide, issue and pull request templates, and this changelog.
+- A contributing guide, issue and pull request templates, a security policy, and this changelog.

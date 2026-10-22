@@ -62,6 +62,7 @@ fix(diff): preserve decoded Changes file paths
 Use the [bug report](.github/ISSUE_TEMPLATE/bug_report.yml) or [feature request](.github/ISSUE_TEMPLATE/feature_request.yml) form.
 Write a plain sentence-case title, without a commit prefix such as `fix:`.
 For a visual difference, attach screenshots of the original app and of codex-gpui in the same state and at the same window size.
+Report a vulnerability in private, as the [security policy](.github/SECURITY.md) tells; never in an issue.
 
 ## Pull requests
 
