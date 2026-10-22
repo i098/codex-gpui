@@ -156,18 +156,7 @@ impl Page {
         );
         if !more {
             self.generation += 1;
-            let sections: Vec<_> = if explicit_relation {
-                vec![("all", "Results")]
-            } else if self.view == View::Authored {
-                vec![("authored", "Authored")]
-            } else {
-                model::SECTION_KEYS
-                    .iter()
-                    .zip(model::SECTION_TITLES)
-                    .take(if self.view == View::Reviewing { 3 } else { 4 })
-                    .map(|(key, title)| (*key, title))
-                    .collect()
-            };
+            let sections = self.query_sections(explicit_relation);
             if self.last_filters.as_ref() != Some(&filters)
                 || self
                     .streams
@@ -199,6 +188,22 @@ impl Page {
         }
         cx.notify();
         requests
+    }
+
+    fn query_sections(&self, explicit_relation: bool) -> Vec<(&'static str, &'static str)> {
+        let sections: Vec<_> = if explicit_relation {
+            vec![("all", "Results")]
+        } else if self.view == View::Authored {
+            vec![("authored", "Authored")]
+        } else {
+            model::SECTION_KEYS
+                .iter()
+                .zip(model::SECTION_TITLES)
+                .take(if self.view == View::Reviewing { 3 } else { 4 })
+                .map(|(key, title)| (*key, title))
+                .collect()
+        };
+        sections
     }
 
     pub fn apply_search(
@@ -658,7 +663,6 @@ impl Page {
     }
 
     fn inbox(&mut self, _window: &Window, cx: &mut Context<Self>) -> Div {
-        let t = cx.theme().clone();
         let mut navigation = div().h(px(40.)).flex().items_center().gap(px(4.));
         for (index, (view, label)) in [
             (View::All, "All"),
@@ -698,6 +702,20 @@ impl Page {
         if self.filter_open {
             toolbar = toolbar.child(gpui::deferred(self.filters(cx)).with_priority(2));
         }
+        let body = self.inbox_body(cx);
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .p(px(24.))
+            .child(navigation)
+            .child(toolbar)
+            .child(body)
+    }
+
+    fn inbox_body(&self, cx: &Context<Self>) -> Div {
+        let t = cx.theme();
         let rows = model::section_items(&self.streams);
         let has_rows = rows.iter().any(|rows| !rows.is_empty());
         let loading = self.streams.iter().any(|s| s.loading && !s.loaded);
@@ -759,86 +777,83 @@ impl Page {
                 )
             });
         } else {
-            let mut list = div()
-                .id("pull-request-list")
-                .overflow_y_scroll()
-                .track_scroll(&self.scroll)
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .flex_col()
-                .gap(px(16.));
-            for (index, stream) in self.streams.iter().enumerate() {
-                if rows[index].is_empty() && !stream.loading {
-                    continue;
-                }
-                let mut section = div().flex().flex_col().gap(px(2.)).child(
-                    div()
-                        .id(("section", index))
-                        .role(gpui::Role::Button)
-                        .aria_label(stream.title)
-                        .aria_expanded(stream.expanded)
-                        .track_focus(&self.control(("section", index), cx))
-                        .px(px(12.))
-                        .pb(px(4.))
-                        .flex()
-                        .gap(px(4.))
-                        .cursor_pointer()
-                        .child(text(stream.title, 12., 18., 500., t.text_secondary))
-                        .child(icon(
-                            if stream.expanded {
-                                "chevron-down"
-                            } else {
-                                "thread-chevron-right"
-                            },
-                            12.,
-                            t.text_secondary,
-                        ))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.streams[index].expanded = !this.streams[index].expanded;
-                            cx.notify();
-                        })),
-                );
-                if stream.expanded {
-                    if stream.loading && !stream.loaded {
-                        section = section.child(
-                            loading_rows("Loading pull requests", cx)
-                                .max_h(px(112.))
-                                .overflow_hidden(),
-                        );
-                    } else {
-                        for item in &rows[index] {
-                            section = section.child(self.row(item, stream.key != "authored", cx));
-                        }
-                    }
-                }
-                list = list.child(section);
-            }
-            if self.streams.iter().any(|s| s.cursor.is_some()) {
-                list = list.child(
-                    self.button(
-                        "load-more",
-                        if self.streams.iter().any(|s| s.loading) {
-                            "Loading…"
-                        } else {
-                            "Load more"
-                        },
-                        cx,
-                    )
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::More))),
-                );
-            }
-            body = body.child(list);
+            body = body.child(self.request_list(&rows, cx));
         }
-        div()
-            .size_full()
+        body
+    }
+
+    fn request_list(&self, rows: &[Vec<&model::Item>], cx: &Context<Self>) -> Div {
+        let t = cx.theme();
+        let mut list = div()
+            .id("pull-request-list")
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            .flex_1()
+            .min_h_0()
             .flex()
             .flex_col()
-            .gap(px(16.))
-            .p(px(24.))
-            .child(navigation)
-            .child(toolbar)
-            .child(body)
+            .gap(px(16.));
+        for (index, stream) in self.streams.iter().enumerate() {
+            if rows[index].is_empty() && !stream.loading {
+                continue;
+            }
+            let mut section = div().flex().flex_col().gap(px(2.)).child(
+                div()
+                    .id(("section", index))
+                    .role(gpui::Role::Button)
+                    .aria_label(stream.title)
+                    .aria_expanded(stream.expanded)
+                    .track_focus(&self.control(("section", index), cx))
+                    .px(px(12.))
+                    .pb(px(4.))
+                    .flex()
+                    .gap(px(4.))
+                    .cursor_pointer()
+                    .child(text(stream.title, 12., 18., 500., t.text_secondary))
+                    .child(icon(
+                        if stream.expanded {
+                            "chevron-down"
+                        } else {
+                            "thread-chevron-right"
+                        },
+                        12.,
+                        t.text_secondary,
+                    ))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.streams[index].expanded = !this.streams[index].expanded;
+                        cx.notify();
+                    })),
+            );
+            if stream.expanded {
+                if stream.loading && !stream.loaded {
+                    section = section.child(
+                        loading_rows("Loading pull requests", cx)
+                            .max_h(px(112.))
+                            .overflow_hidden(),
+                    );
+                } else {
+                    for item in &rows[index] {
+                        section = section.child(self.row(item, stream.key != "authored", cx));
+                    }
+                }
+            }
+            list = list.child(section);
+        }
+        if self.streams.iter().any(|s| s.cursor.is_some()) {
+            list = list.child(
+                self.button(
+                    "load-more",
+                    if self.streams.iter().any(|s| s.loading) {
+                        "Loading…"
+                    } else {
+                        "Load more"
+                    },
+                    cx,
+                )
+                .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::More))),
+            );
+        }
+        list
     }
 
     fn row(&self, item: &model::Item, show_author: bool, cx: &Context<Self>) -> Stateful<Div> {
@@ -1300,14 +1315,7 @@ fn status_icon(item: &model::Item, t: &theme::Theme) -> Div {
         .flex_none()
         .child(icon(glyph, 20., color));
     if item.state == "open" && !item.is_draft {
-        let color =
-            if item.merge_blocker.as_deref() == Some("conflicts") || item.ci_status == "failing" {
-                t.text_error
-            } else if item.can_merge || item.ci_status == "passing" {
-                t.text_success
-            } else {
-                gpui::rgb(if dark { 0xffd240 } else { 0xffc300 }).into()
-            };
+        let color = status_color(item, t);
         icon_box = icon_box.child(
             div()
                 .absolute()
@@ -1319,6 +1327,19 @@ fn status_icon(item: &model::Item, t: &theme::Theme) -> Div {
         );
     }
     icon_box
+}
+
+fn status_color(item: &model::Item, t: &theme::Theme) -> gpui::Hsla {
+    let dark = t.appearance == theme::Appearance::Dark;
+    let color = if item.merge_blocker.as_deref() == Some("conflicts") || item.ci_status == "failing"
+    {
+        t.text_error
+    } else if item.can_merge || item.ci_status == "passing" {
+        t.text_success
+    } else {
+        gpui::rgb(if dark { 0xffd240 } else { 0xffc300 }).into()
+    };
+    color
 }
 
 fn loading_rows(label: &'static str, cx: &Context<Page>) -> Div {

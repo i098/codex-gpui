@@ -32,24 +32,7 @@ impl Root {
             });
             let page = cx.new(|cx| Page::new(clock, cx));
             cx.subscribe_in(&page, window, |this, page, event: &Event, window, cx| {
-                let page = page.clone();
-                match event {
-                    Event::Query => this.load_pull_requests(page, false, cx),
-                    Event::More => this.load_pull_requests(page, true, cx),
-                    Event::Retry => {
-                        if page.read(cx).account().is_some() {
-                            this.load_pull_requests(page.clone(), false, cx);
-                            this.load_pull_request_detail(page, cx);
-                        } else {
-                            this.check_pull_request_access(page, cx);
-                        }
-                    }
-                    Event::Select(selected) => {
-                        this.navigate(Route::PullRequests(selected.clone()), window, cx)
-                    }
-                    Event::AskCodex(prompt) => this.prefill_pull_request_chat(prompt, window, cx),
-                    Event::Media(url) => this.load_pull_request_media(page, url.clone(), cx),
-                }
+                this.pull_request_event(page.clone(), event, window, cx);
             })
             .detach();
             self.pull_requests_page = Some(page.clone());
@@ -70,6 +53,32 @@ impl Root {
             self.load_pull_request_detail(page.clone(), cx);
         }
         screen::shell(page, cx)
+    }
+
+    fn pull_request_event(
+        &mut self,
+        page: Entity<Page>,
+        event: &Event,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            Event::Query => self.load_pull_requests(page, false, cx),
+            Event::More => self.load_pull_requests(page, true, cx),
+            Event::Retry => {
+                if page.read(cx).account().is_some() {
+                    self.load_pull_requests(page.clone(), false, cx);
+                    self.load_pull_request_detail(page, cx);
+                } else {
+                    self.check_pull_request_access(page, cx);
+                }
+            }
+            Event::Select(selected) => {
+                self.navigate(Route::PullRequests(selected.clone()), window, cx)
+            }
+            Event::AskCodex(prompt) => self.prefill_pull_request_chat(prompt, window, cx),
+            Event::Media(url) => self.load_pull_request_media(page, url.clone(), cx),
+        }
     }
 
     fn prefill_pull_request_chat(

@@ -121,7 +121,7 @@ Media requests validate HTTPS hosts and stop at the size limit.
 Video attachments show the original `Preview unavailable` card and `Open in GitHub` action instead of an inline player.
 `fixtures/pull-requests.json` retains scoped GitHub reads for `i098/codex-gpui`, with original response normalization and no credential tokens.
 
-Implementation: `crates/app/src/pull_requests.rs`, `crates/app/src/host/pull_requests.rs`, and `crates/ui/src/screens/pull_requests.rs`.
+Implementation: `crates/app/src/pull_requests.rs`, `crates/app/src/host/github_pull_requests.rs`, and `crates/ui/src/screens/pull_requests.rs`.
 
 ## 4. Screen: Sidebar (thread list and search)
 

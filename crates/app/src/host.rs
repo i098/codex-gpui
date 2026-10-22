@@ -55,7 +55,7 @@ mod native_apps;
 mod open_in;
 mod projectless;
 pub use projectless::Workspace;
-mod pull_requests;
+mod github_pull_requests;
 pub(crate) mod run_now;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

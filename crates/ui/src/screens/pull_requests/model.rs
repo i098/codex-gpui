@@ -240,21 +240,22 @@ impl Filters {
         if let Some(repo) = &self.repository {
             query.push(format!("repo:{}/{}", repo.owner, repo.repository));
         }
-        if let Some(raw) = &self.raw_query {
-            query.push(raw.trim().to_owned());
-        } else {
-            let text = self.text.split_whitespace().collect::<Vec<_>>().join(" ");
-            if !text.is_empty() {
-                query.push(format!(
-                    "\"{}\"",
-                    text.replace('\\', "\\\\").replace('"', "\\\"")
-                ));
-            }
+        if let Some(text) = self.query_text() {
+            query.push(text);
         }
         if !has("sort") {
             query.push("sort:updated-desc".into());
         }
         query.join(" ")
+    }
+
+    fn query_text(&self) -> Option<String> {
+        if let Some(raw) = &self.raw_query {
+            return Some(raw.trim().to_owned());
+        }
+        let text = self.text.split_whitespace().collect::<Vec<_>>().join(" ");
+        (!text.is_empty())
+            .then(|| format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\"")))
     }
 }
 
