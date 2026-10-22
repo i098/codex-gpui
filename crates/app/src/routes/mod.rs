@@ -156,7 +156,6 @@ impl Root {
         } else {
             self.shell.clone()
         };
-        window.focus(&self.route_focus(cx), cx);
         let home = matches!(
             self.state.route,
             Route::Home | Route::Thread(_) | Route::Remote { .. }
@@ -176,8 +175,9 @@ impl Root {
         });
         self.split = view.map(|view| {
             let panel = self.side_tabs_view(&view, cx);
-            with_side_tabs(shell.clone(), view, panel, cx)
+            with_side_tabs(shell.clone(), view, panel, self.workspace_layout(), cx)
         });
+        window.focus(&self.route_focus(cx), cx);
         if let Some(id) = thread_id
             && self
                 .thread
@@ -208,7 +208,15 @@ impl Root {
                     }
                 })
                 .unwrap_or_else(|| self.focus.clone()),
-            Route::Thread(id) if open(id) => self.thread_composer.focus_handle(cx),
+            Route::Thread(id) if open(id) => {
+                if self.workspace_layout() == WorkspaceLayout::Full
+                    && let Some(split) = &self.split
+                {
+                    split.focus_handle(cx)
+                } else {
+                    self.thread_composer.focus_handle(cx)
+                }
+            }
             _ if self.page.is_some() => self.focus.clone(),
             Route::Thread(_) => self.focus.clone(),
             _ => self.home.read(cx).composer.focus_handle(cx),
