@@ -25,8 +25,7 @@ fn dates(now: Option<i64>, days: i64, offset: i64) -> Result<(String, String)> {
     Ok((start.to_string(), end.to_string()))
 }
 
-fn read(host: &dyn Host, identity: &Identity, query: Query, now: Option<i64>) -> Result<Value> {
-    let (start, end) = dates(now, query.days, query.offset_days)?;
+fn request_path(query: Query, start: &str, end: &str) -> Result<String> {
     let endpoint = match query.metric {
         Metric::Usage => "/wham/usage/daily-token-usage-breakdown",
         Metric::Credits => "/wham/usage/credit-usage-events",
@@ -44,8 +43,8 @@ fn read(host: &dyn Host, identity: &Identity, query: Query, now: Option<i64>) ->
         Metric::Credits => {}
         _ => {
             url.query_pairs_mut()
-                .append_pair("start_date", &start)
-                .append_pair("end_date", &end)
+                .append_pair("start_date", start)
+                .append_pair("end_date", end)
                 .append_pair("group_by", "day");
             match query.metric {
                 Metric::Plugins => {
@@ -65,10 +64,15 @@ fn read(host: &dyn Host, identity: &Identity, query: Query, now: Option<i64>) ->
             }
         }
     }
-    let path = match url.query() {
+    Ok(match url.query() {
         Some(query) => format!("{}?{query}", url.path()),
         None => url.path().into(),
-    };
+    })
+}
+
+fn read(host: &dyn Host, identity: &Identity, query: Query, now: Option<i64>) -> Result<Value> {
+    let (start, end) = dates(now, query.days, query.offset_days)?;
+    let path = request_path(query, &start, &end)?;
     let result = http(host, identity, "GET", &path, None);
     let mut value = match result {
         Err(error)

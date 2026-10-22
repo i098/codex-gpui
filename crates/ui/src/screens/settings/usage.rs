@@ -166,6 +166,47 @@ impl Usage {
         match control {
             Control::Action(action) => self.dispatch(action, cx),
             Control::Tab(analytics) => self.analytics = analytics,
+            Control::EditReload
+            | Control::CloseReload
+            | Control::SaveReload
+            | Control::ConfirmDisable => self.reload_control(control, cx),
+            Control::RequestForm(open) => {
+                self.request_open = open;
+                self.field_error = None;
+                if open {
+                    let justification = pending_request(cx.global::<State>())
+                        .and_then(|v| v["justification"].as_str())
+                        .unwrap_or_default()
+                        .to_owned();
+                    self.fields[3].update(cx, |field, cx| field.set_text(&justification, cx));
+                }
+            }
+            Control::SubmitRequest => {
+                let justification = self.fields[3].read(cx).field_text().trim().to_owned();
+                if justification.is_empty() {
+                    self.field_error = Some("Enter a justification to submit your request".into());
+                } else {
+                    self.dispatch(Action::RequestMore(justification), cx);
+                }
+            }
+            Control::Reset(id) => {
+                if self.confirm_reset.as_ref() == Some(&id) {
+                    self.dispatch(Action::Reset(id), cx);
+                } else {
+                    self.confirm_reset = Some(id);
+                }
+            }
+            Control::ResetHistory(history) => self.reset_history = history,
+            Control::AppLimitMenu(_)
+            | Control::AppLimitValue(..)
+            | Control::AppLimitToggle(..)
+            | Control::SaveAppLimits => self.app_limit_control(control, cx),
+        }
+        cx.notify();
+    }
+
+    fn reload_control(&mut self, control: Control, cx: &mut Context<Self>) {
+        match control {
             Control::EditReload => {
                 if let Load::Ready(settings) = &cx.global::<State>().reload {
                     let draft = ReloadDraft::from_settings(settings);
@@ -207,33 +248,12 @@ impl Usage {
                     self.disable_confirmation = true;
                 }
             }
-            Control::RequestForm(open) => {
-                self.request_open = open;
-                self.field_error = None;
-                if open {
-                    let justification = pending_request(cx.global::<State>())
-                        .and_then(|v| v["justification"].as_str())
-                        .unwrap_or_default()
-                        .to_owned();
-                    self.fields[3].update(cx, |field, cx| field.set_text(&justification, cx));
-                }
-            }
-            Control::SubmitRequest => {
-                let justification = self.fields[3].read(cx).field_text().trim().to_owned();
-                if justification.is_empty() {
-                    self.field_error = Some("Enter a justification to submit your request".into());
-                } else {
-                    self.dispatch(Action::RequestMore(justification), cx);
-                }
-            }
-            Control::Reset(id) => {
-                if self.confirm_reset.as_ref() == Some(&id) {
-                    self.dispatch(Action::Reset(id), cx);
-                } else {
-                    self.confirm_reset = Some(id);
-                }
-            }
-            Control::ResetHistory(history) => self.reset_history = history,
+            _ => unreachable!(),
+        }
+    }
+
+    fn app_limit_control(&mut self, control: Control, cx: &mut Context<Self>) {
+        match control {
             Control::AppLimitMenu(id) => {
                 self.app_limit_menu = (self.app_limit_menu.as_ref() != Some(&id)).then_some(id);
             }
@@ -271,8 +291,8 @@ impl Usage {
                     self.dispatch(Action::SaveAppLimits(values), cx);
                 }
             }
+            _ => unreachable!(),
         }
-        cx.notify();
     }
 
     fn action(
@@ -661,6 +681,16 @@ impl Usage {
         if limit["enforcement_mode"] != "HARD_CAP" {
             return content;
         }
+        self.enterprise_requests(content, state, window, cx)
+    }
+
+    fn enterprise_requests(
+        &self,
+        content: Div,
+        state: &State,
+        window: &mut AppWindow,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let policy = match &state.request_policy {
             Load::Ready(value) => value,
             Load::Loading => {
@@ -680,6 +710,17 @@ impl Usage {
                 ));
             }
         };
+        self.request_controls(content, state, policy, window, cx)
+    }
+
+    fn request_controls(
+        &self,
+        mut content: Div,
+        state: &State,
+        policy: &Value,
+        window: &mut AppWindow,
+        cx: &mut Context<Self>,
+    ) -> Div {
         if policy["kind"] == "custom" {
             if let Some(instructions) = policy["instructions"].as_str() {
                 content = content.child(
@@ -819,7 +860,7 @@ impl Usage {
         } else {
             div().into_any_element()
         };
-        let mut content = div().flex().flex_col().child(
+        let content = div().flex().flex_col().child(
             div()
                 .p(px(16.))
                 .flex()
@@ -843,6 +884,16 @@ impl Usage {
                 )
                 .child(control),
         );
+        Some(self.credit_content(content, state, window, cx))
+    }
+
+    fn credit_content(
+        &self,
+        mut content: Div,
+        state: &State,
+        window: &mut AppWindow,
+        cx: &mut Context<Self>,
+    ) -> Div {
         if state.access.manage_credits && state.has_saved_payment_method {
             content = content.child(match &state.reload {
                 Load::Loading => {
@@ -871,9 +922,9 @@ impl Usage {
                 }
             });
         }
-        Some(self.group("Credits", Some(if state.access.manage_credits {
+        self.group("Credits", Some(if state.access.manage_credits {
             if state.has_saved_payment_method { "Buy credits or turn on automatic reload to continue using Work and Codex when you reach usage limits." } else { "Buy credits to continue using Work and Codex when you reach usage limits" }
-        } else { "Your remaining credits" }), content, cx.theme()))
+        } else { "Your remaining credits" }), content, cx.theme())
     }
 
     fn switch(
@@ -1063,11 +1114,23 @@ impl Usage {
         } else {
             header
         };
-        let mut cards = div()
+        let cards = div()
             .flex()
             .flex_col()
             .gap(px(16.))
             .child(self.card(rows, &t));
+        let cards = self.app_credit_cards(cards, t, state, window, cx);
+        Some(div().flex().flex_col().child(header).child(cards))
+    }
+
+    fn app_credit_cards(
+        &self,
+        mut cards: Div,
+        t: Theme,
+        state: &State,
+        window: &mut AppWindow,
+        cx: &mut Context<Self>,
+    ) -> Div {
         if state.access.view_credits
             && matches!(&state.app_limits, Load::Ready(apps) if !apps.is_null())
         {
@@ -1103,7 +1166,7 @@ impl Usage {
             };
             cards = cards.child(self.card(row, &t));
         }
-        Some(div().flex().flex_col().child(header).child(cards))
+        cards
     }
 
     fn reset_failure(&self, window: &mut AppWindow, cx: &mut Context<Self>) -> Div {
@@ -1168,96 +1231,9 @@ impl Usage {
                     );
                 }
                 if self.reset_history && resets.history_enabled {
-                    content = content.child(match &state.reset_history {
-                        Load::Loading => {
-                            self.status("Loading banked reset history…", None, window, cx)
-                        }
-                        Load::Failed(_) => self.status(
-                            "Couldn’t load banked reset history",
-                            Some(Action::Refresh),
-                            window,
-                            cx,
-                        ),
-                        Load::Ready(value) => {
-                            let mut rows = div().flex().flex_col();
-                            for event in value["events"].as_array().into_iter().flatten() {
-                                let label = if event["kind"] == "granted" {
-                                    "Reset received"
-                                } else {
-                                    "Reset used"
-                                };
-                                let time = event["occurred_at"].as_str().unwrap_or_default();
-                                rows = rows.child(row(
-                                    label,
-                                    None,
-                                    text(
-                                        time.to_owned(),
-                                        12.,
-                                        16.,
-                                        430.,
-                                        cx.theme().text_secondary,
-                                    )
-                                    .into_any_element(),
-                                    cx.theme(),
-                                ));
-                            }
-                            if value["events"].as_array().is_none_or(Vec::is_empty) {
-                                rows = rows.child(self.status(
-                                    "No banked reset activity in the past 30 days",
-                                    None,
-                                    window,
-                                    cx,
-                                ));
-                            }
-                            rows
-                        }
-                    });
-                } else if resets.available_count == 0 {
-                    content = content.child(self.status("No resets available", None, window, cx));
+                    content = content.child(self.reset_activity(state, window, cx));
                 } else {
-                    let available: Vec<_> = resets
-                        .credits
-                        .iter()
-                        .filter(|credit| credit.status == "available")
-                        .collect();
-                    if available.is_empty() {
-                        let control = self.action(
-                            "usage-reset-auto",
-                            if self.confirm_reset == Some(None) {
-                                "Confirm"
-                            } else {
-                                "Use reset"
-                            },
-                            Control::Reset(None),
-                            state.busy,
-                            window,
-                            cx,
-                        );
-                        content = content.child(row("Usage reset", None, control, cx.theme()));
-                    }
-                    for credit in available {
-                        let id = Some(credit.id.clone());
-                        let label = if self.confirm_reset.as_ref() == Some(&id) {
-                            "Confirm"
-                        } else {
-                            "Use reset"
-                        };
-                        let control = self.action(
-                            format!("usage-reset-{}", credit.id),
-                            label,
-                            Control::Reset(id),
-                            state.busy,
-                            window,
-                            cx,
-                        );
-                        let expiry = credit.expires_at.map(|at| format!("Expires {}", date(at)));
-                        content = content.child(row(
-                            credit.title.as_deref().unwrap_or("Usage reset"),
-                            expiry.as_deref(),
-                            control,
-                            cx.theme(),
-                        ));
-                    }
+                    content = self.available_resets(content, resets, state, window, cx);
                 }
             }
         }
@@ -1269,8 +1245,108 @@ impl Usage {
         )
     }
 
-    fn history(&self, state: &State, window: &mut AppWindow, cx: &mut Context<Self>) -> Div {
-        let mut content = div().flex().flex_col().gap(px(12.));
+    fn reset_activity(&self, state: &State, window: &mut AppWindow, cx: &mut Context<Self>) -> Div {
+        match &state.reset_history {
+            Load::Loading => self.status("Loading banked reset history…", None, window, cx),
+            Load::Failed(_) => self.status(
+                "Couldn’t load banked reset history",
+                Some(Action::Refresh),
+                window,
+                cx,
+            ),
+            Load::Ready(value) => {
+                let mut rows = div().flex().flex_col();
+                for event in value["events"].as_array().into_iter().flatten() {
+                    let label = if event["kind"] == "granted" {
+                        "Reset received"
+                    } else {
+                        "Reset used"
+                    };
+                    let time = event["occurred_at"].as_str().unwrap_or_default();
+                    rows = rows.child(row(
+                        label,
+                        None,
+                        text(time.to_owned(), 12., 16., 430., cx.theme().text_secondary)
+                            .into_any_element(),
+                        cx.theme(),
+                    ));
+                }
+                if value["events"].as_array().is_none_or(Vec::is_empty) {
+                    rows = rows.child(self.status(
+                        "No banked reset activity in the past 30 days",
+                        None,
+                        window,
+                        cx,
+                    ));
+                }
+                rows
+            }
+        }
+    }
+
+    fn available_resets(
+        &self,
+        mut content: Div,
+        resets: &ResetCredits,
+        state: &State,
+        window: &mut AppWindow,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        if resets.available_count == 0 {
+            return content.child(self.status("No resets available", None, window, cx));
+        }
+        let available: Vec<_> = resets
+            .credits
+            .iter()
+            .filter(|credit| credit.status == "available")
+            .collect();
+        if available.is_empty() {
+            let control = self.action(
+                "usage-reset-auto",
+                if self.confirm_reset == Some(None) {
+                    "Confirm"
+                } else {
+                    "Use reset"
+                },
+                Control::Reset(None),
+                state.busy,
+                window,
+                cx,
+            );
+            content = content.child(row("Usage reset", None, control, cx.theme()));
+        }
+        for credit in available {
+            let id = Some(credit.id.clone());
+            let label = if self.confirm_reset.as_ref() == Some(&id) {
+                "Confirm"
+            } else {
+                "Use reset"
+            };
+            let control = self.action(
+                format!("usage-reset-{}", credit.id),
+                label,
+                Control::Reset(id),
+                state.busy,
+                window,
+                cx,
+            );
+            let expiry = credit.expires_at.map(|at| format!("Expires {}", date(at)));
+            content = content.child(row(
+                credit.title.as_deref().unwrap_or("Usage reset"),
+                expiry.as_deref(),
+                control,
+                cx.theme(),
+            ));
+        }
+        content
+    }
+
+    fn history_controls(
+        &self,
+        state: &State,
+        window: &mut AppWindow,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let mut controls = div().flex().gap(px(8.));
         if let Load::Ready(limits) = &state.limits {
             for limit in limits
@@ -1291,7 +1367,15 @@ impl Usage {
                 }
             }
         }
-        content = content.child(controls);
+        controls
+    }
+
+    fn history(&self, state: &State, window: &mut AppWindow, cx: &mut Context<Self>) -> Div {
+        let mut content = div()
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(self.history_controls(state, window, cx));
         content = content.child(match &state.history {
             Load::Loading => self.status("Loading…", None, window, cx),
             Load::Failed(_) => self.status(
@@ -1457,6 +1541,17 @@ impl Usage {
             body =
                 body.child(text(error.clone(), 13., 19., 430., t.text_error).whitespace_normal());
         }
+        self.reload_overlay(body, enabled, state, window, cx)
+    }
+
+    fn reload_overlay(
+        &self,
+        mut body: Div,
+        enabled: bool,
+        state: &State,
+        window: &mut AppWindow,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let mut actions = div().flex().justify_end().gap(px(8.));
         if enabled {
             actions = actions.child(self.action(
@@ -1513,6 +1608,58 @@ impl Usage {
             .into_any_element()
     }
 
+    fn groups(
+        &self,
+        state: &State,
+        t: &Theme,
+        window: &mut AppWindow,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let mut groups = div().w_full().pt(px(20.)).flex().flex_col().gap(px(40.));
+        if let Some(error) = &state.error {
+            groups =
+                groups.child(text(error.clone(), 13., 19., 430., t.text_error).whitespace_normal());
+        }
+        if let Some(notice) = &state.notice {
+            groups = groups.child(text(notice.clone(), 13., 19., 430., t.text));
+        }
+        if !state.access.visible {
+            let message = match &state.limits {
+                Load::Failed(message) => message.as_str(),
+                _ => "Loading usage settings…",
+            };
+            groups = groups.child(self.status(
+                message,
+                (!state.unavailable).then_some(Action::Refresh),
+                window,
+                cx,
+            ));
+        } else if self.analytics && state.access.analytics {
+            groups = groups.child(self.analytics_view.clone());
+        } else {
+            if let Some(plan) = self.plan(state, window, cx) {
+                groups = groups.child(plan);
+            }
+            groups = groups.child(self.limits(state, window, cx));
+            if state.access.balance_history {
+                groups = groups.child(self.history(state, window, cx));
+            }
+            if let Some(credits) = self.credits(state, window, cx) {
+                groups = groups.child(credits);
+            }
+            if state.access.app_limits
+                && let Some(apps) = self.app_limits(state, window, cx)
+            {
+                groups = groups.child(apps);
+            }
+            if !state.access.enterprise {
+                groups = groups.child(self.agent_reset(state, window, cx));
+                groups = groups.child(self.resets(state, window, cx));
+            }
+        }
+        groups
+    }
+
     fn group(
         &self,
         title: &'static str,
@@ -1561,50 +1708,7 @@ impl Render for Usage {
             }
         }
         let t = cx.theme().clone();
-        let mut groups = div().w_full().pt(px(20.)).flex().flex_col().gap(px(40.));
-        if let Some(error) = &state.error {
-            groups =
-                groups.child(text(error.clone(), 13., 19., 430., t.text_error).whitespace_normal());
-        }
-        if let Some(notice) = &state.notice {
-            groups = groups.child(text(notice.clone(), 13., 19., 430., t.text));
-        }
-        if !state.access.visible {
-            let message = match &state.limits {
-                Load::Failed(message) => message.as_str(),
-                _ => "Loading usage settings…",
-            };
-            groups = groups.child(self.status(
-                message,
-                (!state.unavailable).then_some(Action::Refresh),
-                window,
-                cx,
-            ));
-        } else if self.analytics && state.access.analytics {
-            groups = groups.child(self.analytics_view.clone());
-        } else {
-            if let Some(plan) = self.plan(&state, window, cx) {
-                groups = groups.child(plan);
-            }
-            groups = groups.child(self.limits(&state, window, cx));
-            if state.access.balance_history {
-                groups = groups.child(self.history(&state, window, cx));
-            }
-            if let Some(credits) = self.credits(&state, window, cx) {
-                groups = groups.child(credits);
-            }
-            if state.access.app_limits
-                && let Some(apps) = self.app_limits(&state, window, cx)
-            {
-                groups = groups.child(apps);
-            }
-            if !state.access.enterprise {
-                groups = groups.child(self.agent_reset(&state, window, cx));
-            }
-            if !state.access.enterprise {
-                groups = groups.child(self.resets(&state, window, cx));
-            }
-        }
+        let groups = self.groups(&state, &t, window, cx);
         let title = div()
             .w_full()
             .max_w(px(768.))

@@ -126,21 +126,24 @@ impl Analytics {
         }
     }
 
+    fn select_period(&mut self, metric: Metric, days: i64, cx: &mut Context<Self>) {
+        match metric {
+            Metric::Usage => {
+                self.usage_days = days;
+                self.offset_days = 0;
+            }
+            Metric::Credits => self.credits_days = days,
+            Metric::Plugins | Metric::Skills => self.tools_days = days,
+            Metric::Messages => self.messages_days = days,
+            _ => return,
+        }
+        self.fetch(metric, cx);
+        cx.notify();
+    }
+
     fn activate(&mut self, control: Control, cx: &mut Context<Self>) {
         match control {
-            Control::Period(metric, days) => {
-                match metric {
-                    Metric::Usage => {
-                        self.usage_days = days;
-                        self.offset_days = 0;
-                    }
-                    Metric::Credits => self.credits_days = days,
-                    Metric::Plugins | Metric::Skills => self.tools_days = days,
-                    Metric::Messages => self.messages_days = days,
-                    _ => return,
-                }
-                self.fetch(metric, cx);
-            }
+            Control::Period(metric, days) => return self.select_period(metric, days, cx),
             Control::Move(direction) => {
                 self.offset_days = (self.offset_days + direction * self.usage_days).max(0);
                 self.fetch(Metric::Usage, cx);
@@ -181,18 +184,22 @@ impl Analytics {
         let period = matches!(control, Control::Period(..));
         let menu = matches!(control, Control::Menu(..));
         let compact = compact || period;
+        let (height, font_size, line_height) = if compact {
+            (24., 12., 16.)
+        } else {
+            (28., 13., 18.)
+        };
+        let (padding, fill, weight) = match control {
+            Control::Period(..) => (8., t.surface, 500.),
+            Control::Menu(..) => (13., t.text.opacity(0.03), 430.),
+            _ => (9., t.text_alpha_5, 430.),
+        };
         let content = div()
             .id(id)
             .role(gpui::Role::Button)
             .aria_label(label.clone())
-            .h(px(if compact { 24. } else { 28. }))
-            .px(px(if period {
-                8.
-            } else if menu {
-                13.
-            } else {
-                9.
-            }))
+            .h(px(height))
+            .px(px(padding))
             .relative()
             .flex()
             .gap(px(4.))
@@ -202,13 +209,7 @@ impl Analytics {
                 d.child(shapes::decoration(shapes::Decoration {
                     radius: gpui::Corners::all(px(12.5)),
                     corner: shapes::Corner::Squircle,
-                    fill: Some(if period {
-                        t.surface
-                    } else if menu {
-                        t.text.opacity(0.03)
-                    } else {
-                        t.text_alpha_5
-                    }),
+                    fill: Some(fill),
                     border: menu.then_some((px(1.), t.border)),
                     shadows: if period {
                         vec![shapes::Shadow {
@@ -226,9 +227,9 @@ impl Analytics {
             })
             .child(text(
                 label,
-                if compact { 12. } else { 13. },
-                if compact { 16. } else { 18. },
-                if period { 500. } else { 430. },
+                font_size,
+                line_height,
+                weight,
                 if selected { t.text } else { t.text_secondary },
             ))
             .when(menu, |d| {
@@ -361,66 +362,7 @@ impl Analytics {
             .flex_col()
             .gap(px(8.));
         if metric == Metric::Usage {
-            let mut arrows = div().flex();
-            for (direction, glyph, label) in [
-                (-1, "chevron-right", "Next period"),
-                (1, "chevron-left", "Previous period"),
-            ]
-            .into_iter()
-            .rev()
-            {
-                let disabled = (direction == -1 && self.offset_days == 0) || state.busy;
-                let handle = focus::handle(label, 0, window, cx);
-                arrows = arrows.child(
-                    focus::ring(
-                        div()
-                            .id(label)
-                            .role(gpui::Role::Button)
-                            .aria_label(label)
-                            .size(px(32.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .when(disabled, |d| d.opacity(0.4))
-                            .child(icon(glyph, 16., t.text)),
-                        &handle,
-                        px(12.5),
-                        px(0.),
-                        cx,
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if !disabled {
-                            this.activate(Control::Move(direction), cx);
-                        }
-                    }))
-                    .on_key_down(cx.listener(
-                        move |this, event: &KeyDownEvent, _, cx| {
-                            if !disabled
-                                && matches!(event.keystroke.key.as_str(), "enter" | "space")
-                            {
-                                this.activate(Control::Move(direction), cx);
-                                cx.stop_propagation();
-                            }
-                        },
-                    )),
-                );
-            }
-            body = body.child(
-                div()
-                    .h(px(32.))
-                    .mb(px(8.))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(text(
-                        date_range(state.reference_time, self.usage_days, self.offset_days),
-                        12.,
-                        16.,
-                        430.,
-                        t.text,
-                    ))
-                    .child(arrows),
-            );
+            body = body.child(self.period_navigation(state, &t, window, cx));
         } else {
             let label = match metric {
                 Metric::Credits => "Credits used",
@@ -460,6 +402,71 @@ impl Analytics {
             Load::Ready(value) => self.bars(metric, value, group, &t),
         };
         self.card(body.child(content), &t)
+    }
+
+    fn period_navigation(
+        &self,
+        state: &State,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let mut arrows = div().flex();
+        for (direction, glyph, label) in [
+            (-1, "chevron-right", "Next period"),
+            (1, "chevron-left", "Previous period"),
+        ]
+        .into_iter()
+        .rev()
+        {
+            let disabled = (direction == -1 && self.offset_days == 0) || state.busy;
+            let handle = focus::handle(label, 0, window, cx);
+            arrows = arrows.child(
+                focus::ring(
+                    div()
+                        .id(label)
+                        .role(gpui::Role::Button)
+                        .aria_label(label)
+                        .size(px(32.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .when(disabled, |d| d.opacity(0.4))
+                        .child(icon(glyph, 16., t.text)),
+                    &handle,
+                    px(12.5),
+                    px(0.),
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if !disabled {
+                        this.activate(Control::Move(direction), cx);
+                    }
+                }))
+                .on_key_down(cx.listener(
+                    move |this, event: &KeyDownEvent, _, cx| {
+                        if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            this.activate(Control::Move(direction), cx);
+                            cx.stop_propagation();
+                        }
+                    },
+                )),
+            );
+        }
+        div()
+            .h(px(32.))
+            .mb(px(8.))
+            .flex()
+            .items_center()
+            .justify_between()
+            .child(text(
+                date_range(state.reference_time, self.usage_days, self.offset_days),
+                12.,
+                16.,
+                430.,
+                t.text,
+            ))
+            .child(arrows)
     }
 
     fn bars(&self, metric: Metric, value: &Value, group: &str, t: &Theme) -> Div {
@@ -909,6 +916,38 @@ pub fn date_range(now: Option<i64>, days: i64, offset: i64) -> String {
     }
 }
 
+fn attribution_field(metric: Metric, group: &str) -> &'static str {
+    match metric {
+        Metric::Usage => "attribution",
+        Metric::Plugins => "plugin_usage_overviews",
+        Metric::Skills => "skill_usage_overviews",
+        Metric::Messages if group != "model" => "clients",
+        _ => "models",
+    }
+}
+
+fn attribution<'a>(item: &'a Value, metric: Metric, group: &str) -> Option<(&'a str, f64)> {
+    let key = match metric {
+        Metric::Usage => match group {
+            "model" => item["model"].as_str(),
+            "surface" => item["surface"].as_str(),
+            "turn-start" => item["turn_trigger"].as_str(),
+            _ => item["thread_source"].as_str(),
+        },
+        Metric::Plugins | Metric::Skills => item["display_name"].as_str(),
+        Metric::Messages if group != "model" => item["client_id"].as_str(),
+        _ => item["model"].as_str(),
+    }
+    .unwrap_or("Other");
+    let amount = match metric {
+        Metric::Usage => item["value"].as_f64()?,
+        Metric::Plugins | Metric::Skills => item["invocation_counts"].as_f64()?,
+        Metric::Messages => item["turns"].as_f64().unwrap_or(0.),
+        _ => item["on_demand_credits"].as_f64().unwrap_or(0.),
+    };
+    amount.is_finite().then_some((key, amount))
+}
+
 fn series(
     value: &Value,
     metric: Metric,
@@ -934,38 +973,12 @@ fn series(
                     *values.entry(key.clone()).or_insert(0.) += amount.as_f64()?;
                 }
             }
-            let field = match metric {
-                Metric::Usage => "attribution",
-                Metric::Plugins => "plugin_usage_overviews",
-                Metric::Skills => "skill_usage_overviews",
-                Metric::Messages if group != "model" => "clients",
-                _ => "models",
-            };
+            let field = attribution_field(metric, group);
             if metric == Metric::Usage && bucket[field].is_null() {
                 return None;
             }
             for item in bucket[field].as_array().into_iter().flatten() {
-                let key = match metric {
-                    Metric::Usage => match group {
-                        "model" => item["model"].as_str(),
-                        "surface" => item["surface"].as_str(),
-                        "turn-start" => item["turn_trigger"].as_str(),
-                        _ => item["thread_source"].as_str(),
-                    },
-                    Metric::Plugins | Metric::Skills => item["display_name"].as_str(),
-                    Metric::Messages if group != "model" => item["client_id"].as_str(),
-                    _ => item["model"].as_str(),
-                }
-                .unwrap_or("Other");
-                let amount = match metric {
-                    Metric::Usage => item["value"].as_f64()?,
-                    Metric::Plugins | Metric::Skills => item["invocation_counts"].as_f64()?,
-                    Metric::Messages => item["turns"].as_f64().unwrap_or(0.),
-                    _ => item["on_demand_credits"].as_f64().unwrap_or(0.),
-                };
-                if !amount.is_finite() {
-                    return None;
-                }
+                let (key, amount) = attribution(item, metric, group)?;
                 *values.entry(key.to_owned()).or_insert(0.) += amount;
             }
             if metric == Metric::Credits && !bucket["credit_amount"].is_null() {

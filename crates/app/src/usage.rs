@@ -245,11 +245,15 @@ fn access(plan: &str, account: Option<&Value>, gates: &Value, has_balance: bool)
         gates["dynamic_configs"]["3291298264"]["value"]["allow_free_users_to_use_credits"] == true;
     let manage = consumer || (free && free_purchase);
     let analytics = (free || consumer || business) && gate("4027330399");
-    let visible = consumer
-        || free && (has_balance || free_purchase || gate("3909937021"))
-        || enterprise && gate("3909937021")
-        || business && gate("1014047933")
-        || analytics;
+    let visible = usage_visible(
+        consumer,
+        free,
+        business,
+        enterprise,
+        has_balance || free_purchase,
+        analytics,
+        gates,
+    );
     let workspace_owner = account.is_some_and(|a| {
         a["structure"] == "workspace" && a["account_user_role"] == "account-owner"
     });
@@ -268,6 +272,23 @@ fn access(plan: &str, account: Option<&Value>, gates: &Value, has_balance: bool)
                 .as_u64()
                 .unwrap_or(250_000),
     }
+}
+
+fn usage_visible(
+    consumer: bool,
+    free: bool,
+    business: bool,
+    enterprise: bool,
+    credits_available: bool,
+    analytics: bool,
+    gates: &Value,
+) -> bool {
+    let gate = |key: &str| gates["feature_gates"][key]["value"] == true;
+    consumer
+        || free && (credits_available || gate("3909937021"))
+        || enterprise && gate("3909937021")
+        || business && gate("1014047933")
+        || analytics
 }
 
 fn payload_gates(value: Value) -> Result<Value> {
@@ -367,6 +388,17 @@ async fn snapshot(bridge: Arc<Bridge>, host: Arc<dyn Host>) -> (State, Option<Id
     if let Load::Ready(limits) = &mut state.limits {
         Arc::make_mut(limits).rate_limit_reset_credits = credits.ok();
     }
+    load_account_details(&mut state, &bridge, &host, &identity, entry).await;
+    (state, Some(identity))
+}
+
+async fn load_account_details(
+    state: &mut State,
+    bridge: &Arc<Bridge>,
+    host: &Arc<dyn Host>,
+    identity: &Identity,
+    entry: Option<&Value>,
+) {
     if state.access.manage_credits {
         state.reload = load(read_reload(host.as_ref(), &identity));
         state.has_saved_payment_method = http(
@@ -474,7 +506,6 @@ async fn snapshot(bridge: Arc<Bridge>, host: Arc<dyn Host>) -> (State, Option<Id
             state.access.balance_history = false;
         }
     }
-    (state, Some(identity))
 }
 
 fn requests(host: &dyn Host, identity: &Identity) -> Result<Value> {
@@ -552,6 +583,287 @@ fn history(host: &dyn Host, identity: &Identity, minutes: i64) -> Result<Option<
     }
 }
 
+async fn usage_operation(
+    action: Action,
+    snapshot: &State,
+    attempt: Option<ResetAttempt>,
+    host: &dyn Host,
+    bridge: &Bridge,
+    identity: &Identity,
+) -> Result<(Action, Value)> {
+    ensure!(
+        host.identity().as_ref() == Some(identity),
+        "Account changed before usage operation"
+    );
+    let value = match &action {
+        Action::History(minutes) => history(host, identity, *minutes)?
+            .map(serde_json::to_value)
+            .transpose()?
+            .unwrap_or(Value::Null),
+        Action::Reset(_) => {
+            let attempt = attempt.context("Missing reset request identity")?;
+            let result = bridge
+                .request::<_, Value>(
+                    "account/rateLimitResetCredit/consume",
+                    json!({
+                        "creditId": attempt.credit_id, "idempotencyKey": attempt.request_id,
+                    }),
+                )
+                .await?;
+            let limits = bridge
+                .request::<_, Value>("account/rateLimits/read", json!({}))
+                .await;
+            json!({
+                "outcome": result["outcome"],
+                "limits": limits.as_ref().ok(),
+                "refreshError": limits.err().map(|error| error.to_string()),
+            })
+        }
+        Action::SaveReload(draft) => save_reload(draft, snapshot, host, identity)?,
+        Action::DisableReload => {
+            ensure!(
+                snapshot.access.manage_credits,
+                "Credit changes are unavailable"
+            );
+            let result = http(
+                host,
+                identity,
+                "POST",
+                "/subscriptions/auto_top_up/disable",
+                None,
+            )?;
+            ensure!(
+                result["is_enabled"] == false,
+                "Auto-reload was not disabled"
+            );
+            result
+        }
+        Action::SaveAppLimits(values) => {
+            ensure!(snapshot.access.app_limits, "App limits are unavailable");
+            let Load::Ready(apps) = &snapshot.app_limits else {
+                bail!("App limits have not loaded")
+            };
+            let items = apps["items"]
+                .as_array()
+                .context("App limits have no items")?;
+            ensure!(
+                values.len() == items.len()
+                    && items.iter().all(|item| item["id"]
+                        .as_str()
+                        .is_some_and(|id| values.contains_key(id))),
+                "App limits changed; reload before saving"
+            );
+            ensure!(
+                values.values().all(|value| *value <= 100),
+                "Invalid app limit"
+            );
+            http(
+                host,
+                identity,
+                "PUT",
+                "/wham/usage/chatpass/limits",
+                Some(json!({"global_percentage":100,"per_app_percentage":values})),
+            )?;
+            read_app_limits(host, identity)?
+        }
+        Action::SetAppCreditPreference(enabled) => {
+            ensure!(
+                snapshot.access.app_limits && snapshot.access.view_credits,
+                "Credit preference is unavailable"
+            );
+            http(
+                host,
+                identity,
+                "PATCH",
+                &format!(
+                    "/settings/account_user_setting?feature=can_consume_personal_credits_chatpass&value={enabled}"
+                ),
+                None,
+            )?;
+            http(host, identity, "GET", "/settings/user", None)?
+        }
+        Action::RequestMore(justification) => {
+            request_more(justification, snapshot, host, identity)?
+        }
+        _ => bail!("Unsupported usage operation"),
+    };
+    Ok((action, value))
+}
+
+fn save_reload(
+    draft: &view::ReloadDraft,
+    snapshot: &State,
+    host: &dyn Host,
+    identity: &Identity,
+) -> Result<Value> {
+    ensure!(
+        snapshot.access.manage_credits,
+        "Credit changes are unavailable"
+    );
+    let settings = read_reload(host, identity)?;
+    draft
+        .validate(&settings, snapshot.access.maximum_credits)
+        .map_err(anyhow::Error::msg)?;
+    if settings.is_enabled && draft == &view::ReloadDraft::from_settings(&settings) {
+        return Ok(serde_json::to_value(settings)?);
+    }
+    ensure!(
+        snapshot.has_saved_payment_method,
+        "A saved payment method is required"
+    );
+    let mut payload = draft.payload(&settings);
+    if !settings.is_enabled {
+        let Load::Ready(pricing) = &snapshot.reload_pricing else {
+            bail!("Could not load credit pricing. Try again to continue.")
+        };
+        let config = &pricing["currency_config"];
+        ensure!(
+            config["amount_per_credit"]
+                .as_f64()
+                .is_some_and(|amount| amount > 0.),
+            "Credit price is unavailable"
+        );
+        let currency = config["symbol_code"]
+            .as_str()
+            .context("Billing currency is unavailable")?;
+        payload["billing_details"] = json!({"currency": currency});
+    }
+    let endpoint = if settings.is_enabled {
+        "update"
+    } else {
+        "enable"
+    };
+    let result = http(
+        host,
+        identity,
+        "POST",
+        &format!("/subscriptions/auto_top_up/{endpoint}"),
+        Some(payload),
+    )?;
+    ensure!(
+        result["mandate_setup"].is_null(),
+        "Auto-reload mandate confirmation requires a supported client"
+    );
+    ensure!(result["is_enabled"] == true, "Auto-reload was not enabled");
+    if let Some(status) = result["immediate_top_up_status"].as_str() {
+        ensure!(
+            matches!(status, "succeeded" | "not_required"),
+            "Initial top-up was not confirmed: {status}"
+        );
+    }
+    Ok(result)
+}
+
+fn request_more(
+    justification: &str,
+    snapshot: &State,
+    host: &dyn Host,
+    identity: &Identity,
+) -> Result<Value> {
+    ensure!(
+        snapshot.access.enterprise,
+        "Workspace usage requests are unavailable"
+    );
+    ensure!(
+        matches!(&snapshot.request_policy, Load::Ready(policy) if policy["kind"] == "openai_native"),
+        "Workspace requests are not enabled"
+    );
+    ensure!(
+        !justification.trim().is_empty(),
+        "Enter a justification to submit your request"
+    );
+    let mut path = format!("/accounts/{}/workspace_admin_requests", identity.account_id);
+    let latest = requests(host, identity)?;
+    let method = if let Some(id) = view::pending_request_in(&latest).and_then(|v| v["id"].as_str())
+    {
+        path.push('/');
+        path.push_str(&url::form_urlencoded::byte_serialize(id.as_bytes()).collect::<String>());
+        "PATCH"
+    } else {
+        "POST"
+    };
+    http(
+        host,
+        identity,
+        method,
+        &path,
+        Some(json!({"justification":justification.trim()})),
+    )?;
+    requests(host, identity)
+}
+
+fn apply_reset_response(state: &mut State, value: &Value) -> bool {
+    let completed = match value["outcome"].as_str() {
+        Some("reset" | "alreadyRedeemed") => {
+            state.notice = Some("Usage limits reset".into());
+            true
+        }
+        Some("nothingToReset") => {
+            state.error = Some("No current usage limit is eligible for a reset.".into());
+            true
+        }
+        Some("noCredit") => {
+            state.error = Some("No resets available".into());
+            true
+        }
+        _ => {
+            state.error = Some("Couldn’t confirm the usage reset. Retry the same reset.".into());
+            false
+        }
+    };
+    if !value["limits"].is_null() {
+        state.limits = load(serde_json::from_value(value["limits"].clone()).map_err(Into::into));
+    } else if let Some(error) = value["refreshError"].as_str() {
+        state.error = Some(error.into());
+    }
+    completed
+}
+
+fn apply_usage_response(
+    state: &mut State,
+    action: Action,
+    value: Value,
+    reload_confirmed: bool,
+) -> bool {
+    match action {
+        Action::History(_) => {
+            state.history = load_history(if value.is_null() {
+                Ok(None)
+            } else {
+                serde_json::from_value(value).map(Some).map_err(Into::into)
+            })
+        }
+        Action::Reset(_) => return apply_reset_response(state, &value),
+        Action::SaveReload(_) | Action::DisableReload => {
+            if reload_confirmed {
+                let enabled = matches!(&state.reload, Load::Ready(reload) if reload.is_enabled);
+                state.notice = Some(
+                    if enabled {
+                        "Updated auto reload settings"
+                    } else {
+                        "Disabled auto reload"
+                    }
+                    .into(),
+                );
+            }
+        }
+        Action::RequestMore(_) => {
+            state.requests = Load::Ready(Arc::new(value));
+            state.notice = Some("Request submitted".into());
+        }
+        Action::SaveAppLimits(_) => {
+            state.app_limits = Load::Ready(Arc::new(value));
+            state.notice = Some("App limits updated".into());
+        }
+        Action::SetAppCreditPreference(_) => {
+            state.app_credit_preference = Load::Ready(Arc::new(value));
+            state.notice = Some("Credit preference updated".into());
+        }
+        _ => {}
+    }
+    false
+}
+
 impl Root {
     fn usage_action(&mut self, action: Action, cx: &mut Context<Self>) {
         if let Action::SetAgentResetEnabled(enabled) = action {
@@ -580,90 +892,98 @@ impl Root {
         if cx.global::<State>().busy {
             return;
         }
-        if let Action::Analytics(request) = action {
-            if !cx.global::<State>().access.analytics {
-                return;
-            }
-            let Some(identity) = cx.global::<Runtime>().identity.clone() else {
-                return;
-            };
-            let previous = cx.global::<State>().analytics.clone();
-            let now = cx.global::<State>().reference_time;
-            let generation = cx.global::<Runtime>().generation;
-            cx.update_global::<State, _>(|state, _| {
-                state.busy = true;
-                state.analytics.set(request.metric, Load::Loading);
-            });
-            let bridge = self.bridge.clone();
-            let host = self.host.clone();
-            let read = cx.background_executor().spawn(async move {
-                analytics_api::query(
-                    bridge.as_ref(),
-                    host.as_ref(),
-                    &identity,
-                    request,
-                    now,
-                    previous,
-                )
-                .await
-            });
-            cx.spawn(async move |_, cx| {
-                let data = read.await;
-                cx.update(|cx| {
-                    if cx.global::<Runtime>().generation == generation {
-                        cx.update_global::<State, _>(|state, _| {
-                            state.analytics = data;
-                            state.busy = false;
-                        });
-                    }
-                });
-            })
-            .detach();
+        match action {
+            Action::Analytics(request) => self.load_usage_analytics(request, cx),
+            Action::Refresh => self.refresh_usage(cx),
+            action => self.update_usage(action, cx),
+        }
+    }
+
+    fn load_usage_analytics(&mut self, request: view::analytics::Query, cx: &mut Context<Self>) {
+        if !cx.global::<State>().access.analytics {
             return;
         }
-        if matches!(action, Action::Refresh) {
-            let generation = cx.update_global::<Runtime, _>(|runtime, _| {
-                runtime.generation += 1;
-                runtime.generation
-            });
-            cx.update_global::<State, _>(|state, _| {
-                state.busy = true;
-                state.error = None;
-                state.notice = None;
-            });
-            let bridge = self.bridge.clone();
-            let host = self.host.clone();
-            let task = cx.background_executor().spawn(snapshot(bridge, host));
-            cx.spawn(async move |_, cx| {
-                let (mut state, identity) = task.await;
-                cx.update(|cx| {
-                    if cx.global::<Runtime>().generation != generation {
-                        return;
-                    }
-                    state.dispatch = cx.global::<State>().dispatch.clone();
-                    state.page_open = cx.global::<State>().page_open;
-                    state.agent_reset_enabled = cx
-                        .try_global::<crate::host_settings::Settings>()
-                        .and_then(|settings| {
-                            settings
-                                .read_all()
-                                .get("agent-usage-reset-enabled")
-                                .and_then(Value::as_bool)
-                        })
-                        .unwrap_or(false);
-                    state.revision = cx.global::<State>().revision + 1;
-                    cx.update_global::<Runtime, _>(|runtime, _| {
-                        if runtime.identity != identity {
-                            runtime.reset = None;
-                        }
-                        runtime.identity = identity;
+        let Some(identity) = cx.global::<Runtime>().identity.clone() else {
+            return;
+        };
+        let previous = cx.global::<State>().analytics.clone();
+        let now = cx.global::<State>().reference_time;
+        let generation = cx.global::<Runtime>().generation;
+        cx.update_global::<State, _>(|state, _| {
+            state.busy = true;
+            state.analytics.set(request.metric, Load::Loading);
+        });
+        let bridge = self.bridge.clone();
+        let host = self.host.clone();
+        let read = cx.background_executor().spawn(async move {
+            analytics_api::query(
+                bridge.as_ref(),
+                host.as_ref(),
+                &identity,
+                request,
+                now,
+                previous,
+            )
+            .await
+        });
+        cx.spawn(async move |_, cx| {
+            let data = read.await;
+            cx.update(|cx| {
+                if cx.global::<Runtime>().generation == generation {
+                    cx.update_global::<State, _>(|state, _| {
+                        state.analytics = data;
+                        state.busy = false;
                     });
-                    cx.set_global(state);
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn refresh_usage(&mut self, cx: &mut Context<Self>) {
+        let generation = cx.update_global::<Runtime, _>(|runtime, _| {
+            runtime.generation += 1;
+            runtime.generation
+        });
+        cx.update_global::<State, _>(|state, _| {
+            state.busy = true;
+            state.error = None;
+            state.notice = None;
+        });
+        let bridge = self.bridge.clone();
+        let host = self.host.clone();
+        let task = cx.background_executor().spawn(snapshot(bridge, host));
+        cx.spawn(async move |_, cx| {
+            let (mut state, identity) = task.await;
+            cx.update(|cx| {
+                if cx.global::<Runtime>().generation != generation {
+                    return;
+                }
+                state.dispatch = cx.global::<State>().dispatch.clone();
+                state.page_open = cx.global::<State>().page_open;
+                state.agent_reset_enabled = cx
+                    .try_global::<crate::host_settings::Settings>()
+                    .and_then(|settings| {
+                        settings
+                            .read_all()
+                            .get("agent-usage-reset-enabled")
+                            .and_then(Value::as_bool)
+                    })
+                    .unwrap_or(false);
+                state.revision = cx.global::<State>().revision + 1;
+                cx.update_global::<Runtime, _>(|runtime, _| {
+                    if runtime.identity != identity {
+                        runtime.reset = None;
+                    }
+                    runtime.identity = identity;
                 });
-            })
-            .detach();
-            return;
-        }
+                cx.set_global(state);
+            });
+        })
+        .detach();
+    }
+
+    fn update_usage(&mut self, action: Action, cx: &mut Context<Self>) {
         let Some(identity) = cx.global::<Runtime>().identity.clone() else {
             cx.update_global::<State, _>(|state, _| {
                 state.error = Some("Usage changes require a ChatGPT account".into())
@@ -692,141 +1012,43 @@ impl Root {
         let generation = cx.global::<Runtime>().generation;
         let billing = matches!(action, Action::SaveReload(_) | Action::DisableReload);
         let task = cx.background_executor().spawn(async move {
-            let result: Result<(Action, Value)> = async {
-            ensure!(host.identity().as_ref() == Some(&identity), "Account changed before usage operation");
-            match &action {
-                Action::History(minutes) => Ok((action.clone(), history(host.as_ref(), &identity, *minutes)?.map(serde_json::to_value).transpose()?.unwrap_or(Value::Null))),
-                Action::Reset(_) => {
-                    let attempt = attempt.context("Missing reset request identity")?;
-                    let result = bridge.request::<_, Value>("account/rateLimitResetCredit/consume", json!({
-                        "creditId": attempt.credit_id, "idempotencyKey": attempt.request_id,
-                    })).await?;
-                    let limits = bridge.request::<_, Value>("account/rateLimits/read", json!({})).await;
-                    Ok((action.clone(), json!({
-                        "outcome": result["outcome"],
-                        "limits": limits.as_ref().ok(),
-                        "refreshError": limits.err().map(|error| error.to_string()),
-                    })))
-                }
-                Action::SaveReload(draft) => {
-                    ensure!(snapshot.access.manage_credits, "Credit changes are unavailable");
-                    let settings = read_reload(host.as_ref(), &identity)?;
-                    draft.validate(&settings, snapshot.access.maximum_credits).map_err(anyhow::Error::msg)?;
-                    if settings.is_enabled && draft == &view::ReloadDraft::from_settings(&settings) {
-                        return Ok((action.clone(), serde_json::to_value(settings)?));
-                    }
-                    ensure!(snapshot.has_saved_payment_method, "A saved payment method is required");
-                    let mut payload = draft.payload(&settings);
-                    if !settings.is_enabled {
-                        let Load::Ready(pricing) = &snapshot.reload_pricing else { bail!("Could not load credit pricing. Try again to continue.") };
-                        let config = &pricing["currency_config"];
-                        ensure!(config["amount_per_credit"].as_f64().is_some_and(|amount| amount > 0.), "Credit price is unavailable");
-                        let currency = config["symbol_code"].as_str().context("Billing currency is unavailable")?;
-                        payload["billing_details"] = json!({"currency": currency});
-                    }
-                    let endpoint = if settings.is_enabled { "update" } else { "enable" };
-                    let result = http(host.as_ref(), &identity, "POST", &format!("/subscriptions/auto_top_up/{endpoint}"), Some(payload))?;
-                    ensure!(result["mandate_setup"].is_null(), "Auto-reload mandate confirmation requires a supported client");
-                    ensure!(result["is_enabled"] == true, "Auto-reload was not enabled");
-                    if let Some(status) = result["immediate_top_up_status"].as_str() {
-                        ensure!(matches!(status, "succeeded" | "not_required"), "Initial top-up was not confirmed: {status}");
-                    }
-                    Ok((action.clone(), result))
-                }
-                Action::DisableReload => {
-                    ensure!(snapshot.access.manage_credits, "Credit changes are unavailable");
-                    let result = http(host.as_ref(), &identity, "POST", "/subscriptions/auto_top_up/disable", None)?;
-                    ensure!(result["is_enabled"] == false, "Auto-reload was not disabled");
-                    Ok((action.clone(), result))
-                }
-                Action::SaveAppLimits(values) => {
-                    ensure!(snapshot.access.app_limits, "App limits are unavailable");
-                    let Load::Ready(apps) = &snapshot.app_limits else { bail!("App limits have not loaded") };
-                    let items = apps["items"].as_array().context("App limits have no items")?;
-                    ensure!(values.len() == items.len() && items.iter().all(|item| item["id"].as_str().is_some_and(|id| values.contains_key(id))), "App limits changed; reload before saving");
-                    ensure!(values.values().all(|value| *value <= 100), "Invalid app limit");
-                    http(host.as_ref(), &identity, "PUT", "/wham/usage/chatpass/limits",
-                        Some(json!({"global_percentage":100,"per_app_percentage":values})))?;
-                    Ok((action.clone(), read_app_limits(host.as_ref(), &identity)?))
-                }
-                Action::SetAppCreditPreference(enabled) => {
-                    ensure!(snapshot.access.app_limits && snapshot.access.view_credits, "Credit preference is unavailable");
-                    http(host.as_ref(), &identity, "PATCH",
-                        &format!("/settings/account_user_setting?feature=can_consume_personal_credits_chatpass&value={enabled}"), None)?;
-                    Ok((action.clone(), http(host.as_ref(), &identity, "GET", "/settings/user", None)?))
-                }
-                Action::RequestMore(justification) => {
-                    ensure!(snapshot.access.enterprise, "Workspace usage requests are unavailable");
-                    ensure!(matches!(&snapshot.request_policy, Load::Ready(policy) if policy["kind"] == "openai_native"), "Workspace requests are not enabled");
-                    ensure!(!justification.trim().is_empty(), "Enter a justification to submit your request");
-                    let mut path = format!("/accounts/{}/workspace_admin_requests", identity.account_id);
-                    let latest = requests(host.as_ref(), &identity)?;
-                    let method = if let Some(id) = view::pending_request_in(&latest).and_then(|v| v["id"].as_str()) {
-                        path.push('/'); path.push_str(&url::form_urlencoded::byte_serialize(id.as_bytes()).collect::<String>()); "PATCH"
-                    } else { "POST" };
-                    http(host.as_ref(), &identity, method, &path, Some(json!({"justification":justification.trim()})))?;
-                    Ok((action.clone(), requests(host.as_ref(), &identity)?))
-                }
-                _ => bail!("Unsupported usage operation"),
-            }
-            }.await;
+            let result = usage_operation(
+                action,
+                &snapshot,
+                attempt,
+                host.as_ref(),
+                bridge.as_ref(),
+                &identity,
+            )
+            .await;
             let reloaded = billing.then(|| read_reload(host.as_ref(), &identity));
             (result, reloaded)
         });
         cx.spawn(async move |_, cx| {
             let (result, reloaded) = task.await;
             cx.update(|cx| {
-            if cx.global::<Runtime>().generation != generation { return; }
-            let mut reset_completed = false;
-            cx.update_global::<State, _>(|state, _| {
-                state.busy = false;
-                let reload_confirmed = reconcile_reload(state, reloaded);
-                match result {
-                    Err(error) => state.error = Some(error.to_string()),
-                    Ok((action, value)) => {
-                        state.revision += 1;
-                        match action {
-                            Action::History(_) => state.history = load_history(if value.is_null() { Ok(None) } else { serde_json::from_value(value).map(Some).map_err(Into::into) }),
-                            Action::Reset(_) => {
-                                reset_completed = true;
-                                match value["outcome"].as_str() {
-                                    Some("reset" | "alreadyRedeemed") => state.notice = Some("Usage limits reset".into()),
-                                    Some("nothingToReset") => state.error = Some("No current usage limit is eligible for a reset.".into()),
-                                    Some("noCredit") => state.error = Some("No resets available".into()),
-                                    _ => {
-                                        reset_completed = false;
-                                        state.error = Some("Couldn’t confirm the usage reset. Retry the same reset.".into());
-                                    }
-                                }
-                                if !value["limits"].is_null() {
-                                    state.limits = load(serde_json::from_value(value["limits"].clone()).map_err(Into::into));
-                                } else if let Some(error) = value["refreshError"].as_str() {
-                                    state.error = Some(error.into());
-                                }
-                            }
-                            Action::SaveReload(_) | Action::DisableReload => {
-                                if reload_confirmed {
-                                    let enabled = matches!(&state.reload, Load::Ready(reload) if reload.is_enabled);
-                                    state.notice = Some(if enabled { "Updated auto reload settings" } else { "Disabled auto reload" }.into());
-                                }
-                            }
-                            Action::RequestMore(_) => { state.requests = Load::Ready(Arc::new(value)); state.notice = Some("Request submitted".into()); }
-                            Action::SaveAppLimits(_) => {
-                                state.app_limits = Load::Ready(Arc::new(value));
-                                state.notice = Some("App limits updated".into());
-                            }
-                            Action::SetAppCreditPreference(_) => {
-                                state.app_credit_preference = Load::Ready(Arc::new(value));
-                                state.notice = Some("Credit preference updated".into());
-                            }
-                            _ => {}
+                if cx.global::<Runtime>().generation != generation {
+                    return;
+                }
+                let mut reset_completed = false;
+                cx.update_global::<State, _>(|state, _| {
+                    state.busy = false;
+                    let reload_confirmed = reconcile_reload(state, reloaded);
+                    match result {
+                        Err(error) => state.error = Some(error.to_string()),
+                        Ok((action, value)) => {
+                            state.revision += 1;
+                            reset_completed =
+                                apply_usage_response(state, action, value, reload_confirmed);
                         }
                     }
+                });
+                if reset_completed {
+                    cx.global_mut::<Runtime>().reset = None;
                 }
             });
-            if reset_completed { cx.global_mut::<Runtime>().reset = None; }
-            });
-        }).detach();
+        })
+        .detach();
     }
 }
 
