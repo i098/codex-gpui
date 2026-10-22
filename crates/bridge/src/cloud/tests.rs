@@ -175,7 +175,7 @@ fn cloud_socket_routes_replies_and_bidirectional_requests() {
 }
 
 #[test]
-fn saved_environment_onboarding_replaces_local_execution_parameters() {
+fn cloud_onboarding_and_follow_up_use_original_request_rules() {
     let (url, server) = fixture(|mut socket| {
         let initialize = receive(&mut socket);
         send(
@@ -200,12 +200,21 @@ fn saved_environment_onboarding_replaces_local_execution_parameters() {
         send(
             &mut socket,
             json!({"id": start["id"], "result": {
-                "thread":{
-                    "id":"durable-onboarding","preview":"","modelProvider":"openai",
-                    "cwd":"/workspace","createdAt":0,"updatedAt":0,"status":{"type":"idle"}
-                },
-                "model":"fixture-model","cwd":"/workspace"
+                "thread":{"id":"durable-onboarding","cwd":null},
+                "environment":{"status":"pending"}
             }}),
+        );
+        let turn = receive(&mut socket);
+        assert_eq!(turn["method"], "turn/start");
+        assert_eq!(
+            turn["params"],
+            json!({
+                "threadId":"durable-onboarding","serviceTier":"fast","input":[]
+            })
+        );
+        send(
+            &mut socket,
+            json!({"id":turn["id"],"result":{"turn":{"id":"next-turn"}}}),
         );
         let _ = socket.close(None);
     });
@@ -248,8 +257,13 @@ fn saved_environment_onboarding_replaces_local_execution_parameters() {
             )
             .await
             .unwrap();
-        assert_eq!(response.thread.id, "durable-onboarding");
-        assert_eq!(response.thread.cwd, "/workspace");
+        assert_eq!(response["thread"]["id"], "durable-onboarding");
+        assert!(response["thread"]["cwd"].is_null());
+        assert_eq!(response["environment"]["status"], "pending");
+        let turn: Value = bridge.request("turn/start", json!({
+            "threadId":"durable-onboarding","serviceTier":"priority","personality":"friendly","input":[]
+        })).await.unwrap();
+        assert_eq!(turn["turn"]["id"], "next-turn");
     });
     server.join().unwrap();
 }

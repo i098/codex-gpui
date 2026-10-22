@@ -114,6 +114,8 @@ The vendored Tungstenite 0.28 package omits raw handshake-request trace output b
 `Bridge::start_cloud_environment_onboarding(account_id, config_id, params)` starts a thread bound to a saved cloud environment.
 It rejects local connections and a different account before sending the request.
 It replaces local paths with the original deferred onboarding environment, service-tier rules, and plugin metadata.
+Cloud thread start/resume and turn start/add requests follow the original tier and personality rules.
+The onboarding API returns the server JSON without requiring local-thread fields.
 This API does not send the first model turn or finish setup.
 The environment UI and host-aware thread routing remain separate work.
 

@@ -2,6 +2,7 @@ use super::{Backend, Bridge, Incoming, Sink};
 use anyhow::{Context as _, Result, anyhow, bail, ensure};
 use async_channel::{Receiver, Sender, TryRecvError};
 use polling::{Event as Ready, Events, Poller};
+use serde_json::{Value, json};
 use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
@@ -57,18 +58,19 @@ impl Bridge {
     /// Pass the expected account, configuration ID, and ordinary `thread/start` parameters.
     /// Local connections, account mismatches, empty IDs, and non-object parameters fail before sending.
     /// Call `initialize` first. This does not send a model turn or complete environment setup.
+    /// Returns the server JSON unchanged, including cloud-only fields and nullable local fields.
     pub async fn start_cloud_environment_onboarding(
         &self,
         account_id: &str,
         config_id: &str,
-        mut params: serde_json::Value,
-    ) -> Result<super::types::ThreadStartResponse> {
+        mut params: Value,
+    ) -> Result<Value> {
         ensure!(
             !account_id.is_empty() && self.cloud_account_id.as_deref() == Some(account_id),
             "the saved environment account or cloud connection changed"
         );
         ensure!(
-            !config_id.trim().is_empty(),
+            !config_id.is_empty(),
             "empty cloud environment configuration ID"
         );
         let params = params
@@ -76,27 +78,11 @@ impl Bridge {
             .context("cloud thread parameters must be an object")?;
         params.remove("cwd");
         params.remove("runtimeWorkspaceRoots");
-        params.remove("personality");
         params.insert(
             "environments".into(),
-            serde_json::json!([{"onboardingConfigId":config_id}]),
+            json!([{"onboardingConfigId":config_id}]),
         );
         params.insert("deferredEnvironment".into(), true.into());
-        params.insert(
-            "pluginsMcp".into(),
-            serde_json::json!({"productSku":"codex"}),
-        );
-        match params.get("serviceTier") {
-            Some(serde_json::Value::String(tier)) if tier == "priority" => {
-                params.insert("serviceTier".into(), "fast".into());
-            }
-            None | Some(serde_json::Value::Null) => {}
-            Some(serde_json::Value::String(tier))
-                if matches!(tier.as_str(), "fast" | "flex" | "ultrafast") => {}
-            Some(_) => {
-                params.remove("serviceTier");
-            }
-        }
         self.request("thread/start", params).await
     }
 }
@@ -259,9 +245,42 @@ struct CloudBackend {
     poller: Arc<Poller>,
 }
 
+fn normalize_request(message: &mut Value) {
+    let method = message["method"].as_str().unwrap_or_default();
+    let start = method == "thread/start";
+    if !matches!(
+        method,
+        "thread/start"
+            | "thread/startAeon"
+            | "thread/resume"
+            | "turn/start"
+            | "turn/addUserMessage"
+    ) {
+        return;
+    }
+    let Some(params) = message.get_mut("params").and_then(Value::as_object_mut) else {
+        return;
+    };
+    params.remove("personality");
+    match params.get("serviceTier") {
+        Some(Value::String(tier)) if tier == "priority" => {
+            params.insert("serviceTier".into(), "fast".into());
+        }
+        None | Some(Value::Null) => {}
+        Some(Value::String(tier)) if matches!(tier.as_str(), "fast" | "flex" | "ultrafast") => {}
+        Some(_) => {
+            params.remove("serviceTier");
+        }
+    }
+    if start {
+        params.insert("pluginsMcp".into(), json!({"productSku":"codex"}));
+    }
+}
+
 impl Backend for CloudBackend {
-    fn send(&mut self, message: &serde_json::Value) -> Result<()> {
-        let message = serde_json::to_string(message)?;
+    fn send(&mut self, mut message: Value) -> Result<()> {
+        normalize_request(&mut message);
+        let message = serde_json::to_string(&message)?;
         self.sender
             .try_send(message)
             .map_err(|_| anyhow!("cloud app-server closed"))?;
