@@ -91,6 +91,7 @@ Run the regression checks without a browser or an account:
 TMPDIR="$scratch" python3 tools/route1/test_lease.py
 node --experimental-vm-modules tools/route1/test_preload.mjs
 TMPDIR="$scratch" node tools/route1/test_resume.mjs
+TMPDIR="$scratch" node tools/route1/test_archive.mjs
 ```
 
 For a renderer without the Mac fonts (Linux Chrome), start the server with `R1_SF_FONTS=1`:
@@ -112,7 +113,8 @@ For a renderer without the Mac fonts (Linux Chrome), start the server with `R1_S
     It reads `fixtures/readback.jsonl` and `fixtures/sessions`.
     Live mode instead uses the prepared scratch app-server on the Mac.
     Only reads (`*/read`, `*/list`, `*/get*`, `*/search`, `thread/resume`, ...) pass.
-    `thread/start`, `turn/start`, archive, delete and other writes get a JSON-RPC error.
+    Local offline `thread/archive` and `thread/unarchive` requests replay [recorded actions](../../fixtures/README.md#recorded-archive-actions) only when their parameters match exactly.
+    Live archive actions, other hosts, `thread/start`, `turn/start`, delete, and other writes still return a JSON-RPC error.
   - Everything else (vscode:// host fetches, persisted atoms, shared objects, cloud host
     requests, git worker, app-host service calls) comes from `oracle.json`.
     A miss is asked from the live scratch app only outside offline mode.

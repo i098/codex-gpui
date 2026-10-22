@@ -16,6 +16,7 @@ mod routes;
 pub use routes::Route;
 mod search;
 mod section_actions;
+mod settings_subtrees;
 mod signin;
 pub mod updater;
 pub mod windows;
@@ -855,6 +856,7 @@ impl Root {
                     });
                 }
                 this.config = config.config;
+                this.refresh_enter_behavior(cx);
                 this.config["host"]["confirm-before-close"] =
                     serde_json::to_value(this.state.confirm_before_close)
                         .expect("close preference");
@@ -1736,7 +1738,6 @@ impl Root {
             return;
         };
         page.update(cx, |page, cx| {
-            page.set_pending(None, cx);
             page.set_suggestions(Vec::new(), cx);
         });
         let host = self.host.clone();
@@ -1877,37 +1878,6 @@ impl Root {
         self.suggestions.as_ref()
     }
 
-    /// A suggestion card click (`refs/interactions/s035b.json`): the card is already
-    /// `Starting…` and every card disabled. The original's guided start first reads the TPP
-    /// models through the desktop host, then prepares and streams the conversation and
-    /// navigates into it; when any step fails it shows `Couldn’t start this suggested task`
-    /// and re-enables the cards.
-    fn start_suggested_task(&mut self, cx: &mut Context<Self>) {
-        let host = self.host.clone();
-        let read = cx.background_spawn(async move {
-            let identity = host.identity().context("no ChatGPT sign-in")?;
-            host.fetch(&host::tpp_models(&identity))
-                .and_then(|response| host::json_body(&response))
-        });
-        cx.spawn(async move |this, cx| {
-            let result = read.await;
-            this.update(cx, |this, cx| {
-                if let Some(page) = &this.suggestions {
-                    page.update(cx, |page, cx| page.set_pending(None, cx));
-                }
-                // ponytail: with the models in hand the original prepares the ChatGPT
-                // conversation (`/f/conversation/prepare`) and streams it; neither is recorded
-                // (the oracle refuses the start), so the port stops here and reports it.
-                if result.is_ok() {
-                    eprintln!("codex-gpui: suggested task: the conversation stream is not wired");
-                }
-                this.toast(Toast::danger("Couldn’t start this suggested task"), cx);
-            })
-            .ok();
-        })
-        .detach();
-    }
-
     /// Mobile `Get started` (`codex-mobile-setup-flow` `P`, `XNn`): the initial step shows its
     /// loading button while the host reads the account's MFA requirement. A non-`required`
     /// answer opens the allow-host step (whose `Allow` is disabled); `required` also reads
@@ -2006,15 +1976,6 @@ impl Root {
         self.threads.retain(|t| t.id != thread.id);
         self.threads.insert(0, thread.clone());
         self.sidebar.update(cx, |s, cx| s.add_thread(thread, cx));
-    }
-
-    /// `⌘N`, the `New chat` row and rail Home: Home with an empty, focused composer.
-    fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.new_chat_section = None;
-        self.navigate(Route::Home, window, cx);
-        let composer = self.home.read(cx).composer.clone();
-        composer.update(cx, |c, cx| c.set_text("", cx));
-        window.focus(&composer.focus_handle(cx), cx);
     }
 
     /// Opens the Recents row `delta` rows from the open thread; from any other route,
@@ -3873,6 +3834,7 @@ impl Root {
                 });
                 if let Ok(Some(config)) = result {
                     this.config = config;
+                    this.refresh_enter_behavior(cx);
                 }
                 if success {
                     this.load_computer_use(cx);
@@ -4085,9 +4047,20 @@ impl Root {
                 }
                 return Err(error);
             }
-            this.update(cx, |this, _| apply(&mut this.config))
+            this.update(cx, |this, cx| {
+                apply(&mut this.config);
+                this.refresh_enter_behavior(cx);
+            })
         });
         log_err(task, cx);
+    }
+
+    fn refresh_enter_behavior(&self, cx: &mut Context<Self>) {
+        cx.set_global(ui::composer::EnterBehavior::from_setting(
+            self.config["desktop"]["composerEnterBehavior"]
+                .as_str()
+                .unwrap_or("enter"),
+        ));
     }
 
     /// Settles only the request whose card produced the answer.
