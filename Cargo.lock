@@ -156,6 +156,7 @@ dependencies = [
  "bridge",
  "chrono",
  "chrono-tz",
+ "glob",
  "gpui",
  "gpui_platform",
  "iana-time-zone",

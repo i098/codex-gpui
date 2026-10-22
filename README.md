@@ -60,6 +60,15 @@ An in-flight JavaScript call can delay Interrupt cleanup; the original hook can 
 
 Run `cargo test -p app --test computer_use_lifecycle` on macOS for native Stop and thread-projection regression checks.
 
+## SSH connection discovery
+
+The host service supports `discover-remote-ssh-connections` and returns an `sshAliases` list.
+It reads `$HOME/.ssh/config` and its top-level `Include` files without running SSH or changing connection settings.
+Discovery follows the original literal-host, quote, and include rules.
+The Connections page and protected pairing flows remain separate work.
+
+Run `cargo test -p app --lib --test host ssh_discovery` for the parser and host-service checks.
+
 ## Background terminal output
 
 Background command output displays ANSI colors and supports text selection.
@@ -69,6 +78,17 @@ The terminal fixture in `fixtures/terminal-depth.json` contains recorded `thread
 
 Run `cargo test -p ui --lib terminal` for parser and command-label checks.
 Run `cargo test -p app --test terminal_states background_ansi_output_supports_selection_and_copy` on macOS for the native selection check.
+
+## Recommended skills
+
+The local host supports `recommended-skills` and `install-recommended-skill`.
+The catalog uses `CODEX_HOME/vendor_imports/skills` and a ten-minute cache in `skills-curated-cache.json`.
+Installation writes to `CODEX_HOME/skills`, or `<installRoot>/.codex/skills` for a selected workspace.
+Existing skills remain unchanged unless the request explicitly replaces them or supplies a Markdown override.
+The host rejects remote host IDs and paths that leave the source or installation root.
+This service does not enable the Plugin or Skill directory UI.
+
+Run `cargo test -p app --lib host::skills::tests` for the catalog and installation checks.
 
 ## ACP backend
 
