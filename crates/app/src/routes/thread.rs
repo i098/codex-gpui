@@ -18,8 +18,34 @@ pub(crate) async fn load_thread(
     Ok((thread, settings))
 }
 
+pub(crate) fn forked_thread(mut response: Value) -> Result<(Thread, RendererState)> {
+    let thread: Thread = serde_json::from_value(
+        response
+            .get_mut("thread")
+            .context("missing forked thread")?
+            .take(),
+    )?;
+    let collaboration_mode = json!({
+        "mode": "default",
+        "settings": {
+            "model": response["model"],
+            "reasoning_effort": response["reasoningEffort"],
+        },
+    });
+    let settings = run_settings(&response, collaboration_mode)?;
+    Ok((thread, settings))
+}
+
 fn resumed_settings(mut response: Value, id: &str) -> Result<RendererState> {
     ensure!(response["thread"]["id"] == id, "resumed a different thread");
+    let mode = response
+        .get_mut("collaborationMode")
+        .context("missing resumed model settings")?
+        .take();
+    run_settings(&response, mode)
+}
+
+fn run_settings(response: &Value, collaboration_mode: Value) -> Result<RendererState> {
     let sandbox = match response["sandbox"]["type"].as_str() {
         Some("readOnly") => "read-only",
         Some("workspaceWrite") => "workspace-write",
@@ -46,7 +72,6 @@ fn resumed_settings(mut response: Value, id: &str) -> Result<RendererState> {
             "sandbox_mode": sandbox,
         }))
     };
-    let collaboration_mode = response["collaborationMode"].take();
     ensure!(
         collaboration_mode["mode"].is_string()
             && collaboration_mode["settings"]["model"]
@@ -207,6 +232,13 @@ mod tests {
                 Permission::Custom,
                 "{field}"
             );
+        }
+    }
+
+    #[test]
+    fn malformed_fork_reply_returns_an_error() {
+        for response in [Value::Null, json!("invalid"), json!([]), json!({})] {
+            assert!(forked_thread(response).is_err());
         }
     }
 
