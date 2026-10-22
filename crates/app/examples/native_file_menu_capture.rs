@@ -36,17 +36,35 @@ fn main() -> anyhow::Result<()> {
         eprintln!("file-menu: watchdog exit");
         std::process::exit(102);
     });
+    // Owned capture workspace; the runner sets HOME/CODEX_HOME/TMPDIR under the same owned root.
+    let workspace = std::env::var("MENU_CAPTURE_WORKSPACE")?;
     let recording = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/readback.jsonl");
     let (bridge, events) = bridge::Bridge::replay(&recording)?;
+    // Observe the frontmost app without changing focus.
+    fn frontmost(label: &str) {
+        unsafe {
+            let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+            let app: *mut AnyObject = msg_send![workspace, frontmostApplication];
+            if app.is_null() { println!("{label}: none"); return; }
+            let pid: i32 = msg_send![app, processIdentifier];
+            let bundle: *mut AnyObject = msg_send![app, bundleIdentifier];
+            let bundle = if bundle.is_null() { String::new() } else {
+                let utf8: *const std::ffi::c_char = msg_send![bundle, UTF8String];
+                std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned()
+            };
+            println!("{label}: pid={pid} bundle={bundle}");
+        }
+    }
     gpui_platform::application().with_assets(theme::Assets).run(move |cx| {
         theme::load_fonts(cx);
         cx.set_global(theme::Theme::dark());
         app::init(cx);
+        frontmost("foreground_before_activation");
         cx.set_menus(app::menus());
         let root = cx.open_window(WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size(px(1280.), px(832.)), cx))),
             ..Default::default()
-        }, |window, cx| cx.new(|cx| app::Root::new(app::State::default(), bridge, events, "/tmp/cgx-menu-project".into(), window, cx))).expect("open owned fixture window");
+        }, |window, cx| cx.new(|cx| app::Root::new(app::State::default(), bridge, events, workspace, window, cx))).expect("open owned fixture window");
         cx.activate(true);
         cx.spawn(async move |cx| {
             cx.background_executor().timer(Duration::from_secs(2)).await;
@@ -60,6 +78,7 @@ fn main() -> anyhow::Result<()> {
                         if list.is_null() { return false; }
                         let count: usize = msg_send![list, count];
                         let mut captured = false;
+                        // Capture at most one owned popup window (first owned nonzero layer).
                         for position in 0..count {
                             let row: *mut AnyObject = msg_send![list, objectAtIndex: position];
                             let owner: *mut AnyObject = msg_send![row, objectForKey: &*NSString::from_str("kCGWindowOwnerPID")];
@@ -71,7 +90,7 @@ fn main() -> anyhow::Result<()> {
                             let number: u32 = msg_send![number, unsignedIntValue];
                             let bounds = objc2_foundation::NSRect::new(NSPoint::new(f64::INFINITY, f64::INFINITY), objc2_foundation::NSSize::new(0., 0.));
                             let image = CGWindowListCreateImage(bounds, 8, number, 1);
-                            if image.is_null() { continue; }
+                            if image.is_null() { println!("file: create_image=null window={number}"); break; }
                             let bitmap: *mut AnyObject = msg_send![class!(NSBitmapImageRep), alloc];
                             let bitmap: *mut AnyObject = msg_send![bitmap, initWithCGImage: image];
                             let properties: *mut AnyObject = msg_send![class!(NSDictionary), dictionary];
@@ -79,7 +98,9 @@ fn main() -> anyhow::Result<()> {
                             let ok: bool = msg_send![data, writeToFile: &*NSString::from_str(&file.to_string_lossy()), atomically: true];
                             let _: () = msg_send![bitmap, release];
                             CFRelease(image.cast());
-                            captured |= ok;
+                            captured = ok;
+                            println!("file: window={number} layer={layer}");
+                            break;
                         }
                         CFRelease(list.cast());
                         captured
@@ -103,6 +124,7 @@ fn main() -> anyhow::Result<()> {
                 }
                 println!("{name}: captured={}", capture.join().expect("capture worker"));
             }
+            frontmost("foreground_after_capture");
             cx.update(|cx| cx.quit());
         }).detach();
     });
