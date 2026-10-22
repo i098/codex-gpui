@@ -78,12 +78,18 @@ pub fn show_definition(
     );
     view.showDefinitionForAttributedString_atPoint(
         Some(&text),
-        definition_baseline(view.bounds(), view.isFlipped(), baseline),
+        definition_baseline(view.bounds(), view.isFlipped(), baseline, window.ui_scale()),
     );
     Ok(())
 }
 
-fn definition_baseline(bounds: NSRect, flipped: bool, baseline: gpui::Point<Pixels>) -> NSPoint {
+fn definition_baseline(
+    bounds: NSRect,
+    flipped: bool,
+    baseline: gpui::Point<Pixels>,
+    ui_scale: f32,
+) -> NSPoint {
+    let baseline = baseline.map(|value| value * ui_scale);
     let x = bounds.origin.x + f64::from(baseline.x);
     let y = if flipped {
         bounds.origin.y + f64::from(baseline.y)
@@ -111,7 +117,7 @@ struct State {
     added: Vec<CTFontDescriptor>,
     /// `(face, size bits)` -> font at that layout size, with `opsz` at its CSS size.
     sized: HashMap<(usize, u32), CTFont>,
-    shapers: HashMap<(usize, u32), shape::HbFont>,
+    shapers: HashMap<(usize, u32, u32), shape::HbFont>,
     /// Per face: CSS `letter-spacing` (from [`crate::letter_spacing`]) and the other
     /// `FontFeatures` as OpenType (tag, value) pairs for HarfBuzz.
     shaping: HashMap<usize, (f32, Vec<(u32, u32)>)>,
@@ -129,8 +135,7 @@ enum Face {
     Fixed(CTFont),
 }
 
-/// `layout_line` gets no scale factor; Blink rounds line metrics in device px.
-/// ponytail: fixed 2x (the reference displays); pass the window scale if 1x parity matters.
+/// Default device scale for text queries that do not belong to a window.
 const DEVICE_SCALE: f64 = 2.;
 
 /// GPUI rounds glyph origins half toward zero (x to 1/4 device px, y to 1 px), Skia rounds ties
@@ -162,12 +167,14 @@ impl State {
         self.css_scale.get(&id.0).map_or(size, |scale| size * scale)
     }
 
-    fn hb(&mut self, id: FontId, size: f32) -> &shape::HbFont {
+    fn hb(&mut self, id: FontId, size: f32, scale_factor: f32) -> &shape::HbFont {
         let font = self.font(id, size);
         let css = f64::from(self.css_size(id, size));
         self.shapers
-            .entry((id.0, size.to_bits()))
-            .or_insert_with(|| shape::HbFont::new(&font, f64::from(size), css, DEVICE_SCALE))
+            .entry((id.0, size.to_bits(), scale_factor.to_bits()))
+            .or_insert_with(|| {
+                shape::HbFont::new(&font, f64::from(size), css, f64::from(scale_factor))
+            })
     }
 
     fn face_id(&mut self, face: Face, postscript_name: Option<String>) -> FontId {
@@ -460,7 +467,7 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
         let width = self
             .0
             .lock()
-            .hb(font_id, f32::from(font_size))
+            .hb(font_id, f32::from(font_size), DEVICE_SCALE as f32)
             .advance(glyph_id.0, DEVICE_SCALE as f32);
         Ok(size(px(width), px(0.)))
     }
@@ -554,6 +561,17 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+        self.layout_line_with_scale(text, font_size, runs, DEVICE_SCALE as f32)
+    }
+
+    fn layout_line_with_scale(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+        scale_factor: f32,
+    ) -> LineLayout {
+        let device_scale = f64::from(scale_factor);
         let mut state = self.0.lock();
         let css = f32::from(font_size);
         let mut string = CFMutableAttributedString::new();
@@ -570,10 +588,10 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
             let font = state.font(run.font_id, css);
             // Blink lays out in device px (zoom for DSF) and rounds the primary font's
             // ascent and descent there.
-            let device = |v: CGFloat| (v * DEVICE_SCALE).round();
+            let device = |v: CGFloat| (v * device_scale).round();
             let (a, d) = (device(font.ascent()), device(font.descent()));
-            ascent = ascent.max((a / DEVICE_SCALE) as f32);
-            descent = descent.max((d / DEVICE_SCALE) as f32);
+            ascent = ascent.max((a / device_scale) as f32);
+            descent = descent.max((d / device_scale) as f32);
             // Alternate a 1-ulp size change so CoreText never forms ligatures across runs.
             let font = if i % 2 == 0 {
                 let opsz = f64::from(state.css_size(run.font_id, css));
@@ -638,9 +656,9 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
                 let (spacing, features) = covering
                     .and_then(|(_, id, _)| state.shaping.get(&id.0).cloned())
                     .unwrap_or_default();
-                let (hb_glyphs, width) = state.hb(font_id, css).shape(
+                let (hb_glyphs, width) = state.hb(font_id, css, scale_factor).shape(
                     &text[start..end],
-                    DEVICE_SCALE as f32,
+                    scale_factor,
                     spacing,
                     &features,
                 );
@@ -716,18 +734,24 @@ mod tests {
     use objc2_foundation::NSSize;
 
     #[test]
-    fn definition_baseline_preserves_bounds_origin_and_view_orientation() {
+    fn definition_baseline_applies_zoom_bounds_and_view_orientation() {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
         let bounds = NSRect::new(NSPoint::new(11., 13.), NSSize::new(200., 120.));
         let baseline = point(px(17.5), px(23.25));
-
-        assert_eq!(
-            definition_baseline(bounds, true, baseline),
-            NSPoint::new(28.5, 36.25)
-        );
-        assert_eq!(
-            definition_baseline(bounds, false, baseline),
-            NSPoint::new(28.5, 109.75)
-        );
+        for (scale, flipped, expected) in [
+            (1., true, NSPoint::new(28.5, 36.25)),
+            (1., false, NSPoint::new(28.5, 109.75)),
+            (2., true, NSPoint::new(46., 59.5)),
+            (2., false, NSPoint::new(46., 86.5)),
+        ] {
+            assert_eq!(
+                definition_baseline(bounds, flipped, baseline, scale),
+                expected
+            );
+        }
     }
 
     #[test]
