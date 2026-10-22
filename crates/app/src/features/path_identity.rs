@@ -115,19 +115,10 @@ fn mnt_form(path: &str) -> String {
 /// `GM`: the canonical spelling.
 fn canonical(path: &str) -> String {
     let slashed = backslashes_to_slashes(&strip_verbatim(path));
-    let local = {
-        let bytes = slashed.as_bytes();
-        if bytes.len() >= 4
-            && bytes[0] == b'/'
-            && bytes[1].is_ascii_alphabetic()
-            && bytes[2] == b':'
-            && bytes[3] == b'/'
-        {
-            &slashed[1..]
-        } else {
-            &slashed[..]
-        }
-    };
+    let local = slashed
+        .strip_prefix('/')
+        .filter(|path| starts_with_drive_separator(path))
+        .unwrap_or(&slashed);
     let spelled = if let Some((host, tail)) = wsl_parts(&slashed) {
         let tail = format!("/{tail}");
         if is_mnt_drive(&tail) {
