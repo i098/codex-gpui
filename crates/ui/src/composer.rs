@@ -209,6 +209,8 @@ const SM_WIDTH: f32 = 440.;
 const XS_WIDTH: f32 = 300.;
 const FONT_SIZE: Pixels = px(14.);
 const LINE_HEIGHT: Pixels = px(20.);
+/// Smallest content height the textarea grip resizes to: the original's `min-h-24` (96 px)
+/// border box less its 1 px borders and 8 px vertical padding.
 const MIN_TEXTAREA_CONTENT_HEIGHT: Pixels = px(78.);
 
 /// Composer keys (inventory §7.2): Enter sends, Shift+Enter inserts a newline. Edit menu
@@ -681,6 +683,7 @@ pub struct Composer {
     field_min_height: Pixels,
     field_scroll: Option<ScrollHandle>,
     field_autoscroll: bool,
+    /// The grip drag of a plain multiline field: pointer y and field height at its start.
     field_resize: Option<(Pixels, Pixels)>,
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,

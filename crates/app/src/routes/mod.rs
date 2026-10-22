@@ -21,6 +21,7 @@ pub enum Route {
         hotkey: bool,
     },
     Settings,
+    SettingsSubtree(String),
     /// Rail `Scheduled` (`/scheduled`): the Automations page.
     Scheduled,
     /// A sidebar task row (`/scheduled?automationId=<id>`): the task's thread.
@@ -131,7 +132,7 @@ impl Root {
                 self.load_cloud_task(task_id, hotkey, window, cx);
                 None
             }
-            Route::Settings => Some(settings::page(self, window, cx)),
+            Route::Settings | Route::SettingsSubtree(_) => Some(settings::page(self, window, cx)),
             Route::Scheduled => Some(automations::scheduled(self, cx)),
             Route::Automation(id) => Some(automations::automation(self, id, window, cx)),
             Route::Archive => Some(archive::page(self, cx)),
