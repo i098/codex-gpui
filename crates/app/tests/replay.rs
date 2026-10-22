@@ -413,7 +413,8 @@ fn check_pixels(
 // --- State ---
 
 /// `result.state`: port-side facts after the last step. Keys: `route` (`home`, `settings`,
-/// `scheduled`, `mobile`, `thread:<id>`, `remote/<id>`, `hotkey-window/remote/<id>`),
+/// `scheduled`, `mobile`, `archive`, `pull-requests`, `thread:<id>`, `remote/<id>`,
+/// `hotkey-window/remote/<id>`),
 /// `selectedRail` (id or null), `sidebarOpen`,
 /// `canGoBack`, `canGoForward`, `commandMenu` (open), `composerFocused`. A slice that needs
 /// another fact adds its key here.
@@ -432,6 +433,7 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
                 Route::Automation(id) => format!("scheduled?automationId={id}"),
                 Route::Mobile => "mobile".to_owned(),
                 Route::Archive => "archive".to_owned(),
+                Route::PullRequests(_) => "pull-requests".to_owned(),
             }
             .into(),
             "selectedRail" => fx.shell(|s| s.selected_rail).into(),

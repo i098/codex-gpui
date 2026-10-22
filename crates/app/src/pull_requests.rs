@@ -301,6 +301,27 @@ impl Route {
     }
 }
 
+fn repository_error(login: &str, error: String) -> String {
+    let Some((_, rest)) = error.split_once("Could not resolve to a Repository with the name '")
+    else {
+        return error;
+    };
+    let Some((repository, _)) = rest.split_once('\'') else {
+        return error;
+    };
+    let mut parts = repository.split('/');
+    if parts.next().is_some_and(screen::model::valid_component)
+        && parts.next().is_some_and(screen::model::valid_component)
+        && parts.next().is_none()
+    {
+        format!(
+            "GitHub account {login} can’t access {repository}. Switch accounts or request access, then try again."
+        )
+    } else {
+        error
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,26 +348,5 @@ mod tests {
                 "{path}"
             );
         }
-    }
-}
-
-fn repository_error(login: &str, error: String) -> String {
-    let Some((_, rest)) = error.split_once("Could not resolve to a Repository with the name '")
-    else {
-        return error;
-    };
-    let Some((repository, _)) = rest.split_once('\'') else {
-        return error;
-    };
-    let mut parts = repository.split('/');
-    if parts.next().is_some_and(screen::model::valid_component)
-        && parts.next().is_some_and(screen::model::valid_component)
-        && parts.next().is_none()
-    {
-        format!(
-            "GitHub account {login} can’t access {repository}. Switch accounts or request access, then try again."
-        )
-    } else {
-        error
     }
 }
