@@ -25,8 +25,8 @@ fn dates(now: Option<i64>, days: i64, offset: i64) -> Result<(String, String)> {
     Ok((start.to_string(), end.to_string()))
 }
 
-fn request_path(query: Query, start: &str, end: &str) -> Result<String> {
-    let endpoint = match query.metric {
+fn endpoint(metric: Metric) -> Result<&'static str> {
+    Ok(match metric {
         Metric::Usage => "/wham/usage/daily-token-usage-breakdown",
         Metric::Credits => "/wham/usage/credit-usage-events",
         Metric::Plugins => "/wham/analytics/daily-plugin-usage-metrics",
@@ -34,7 +34,11 @@ fn request_path(query: Query, start: &str, end: &str) -> Result<String> {
         Metric::Messages => "/wham/analytics/daily-workspace-usage-counts",
         Metric::Plan => "/wham/usage/plan_limit_history",
         Metric::Chats => anyhow::bail!("Chat usage requires local thread identities"),
-    };
+    })
+}
+
+fn request_path(query: Query, start: &str, end: &str) -> Result<String> {
+    let endpoint = endpoint(query.metric)?;
     let mut url = url::Url::parse(&format!("https://chatgpt.com{endpoint}"))?;
     match query.metric {
         Metric::Plan => {

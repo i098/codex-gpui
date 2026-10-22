@@ -177,10 +177,8 @@ impl Analytics {
         let handle = focus::handle(id.clone(), 0, window, cx);
         let disabled = cx.global::<State>().busy;
         let t = cx.theme();
-        let selected = match control {
-            Control::Period(metric, days) => self.days(metric) == days,
-            _ => true,
-        };
+        let selected =
+            !matches!(control, Control::Period(metric, days) if self.days(metric) != days);
         let period = matches!(control, Control::Period(..));
         let menu = matches!(control, Control::Menu(..));
         let compact = compact || period;
