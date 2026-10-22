@@ -317,11 +317,11 @@ fn install_skill(home: &Path, params: &Value) -> Result<PathBuf> {
     ensure_contained(&root, &destination)?;
     ensure_contained(&root, &destination.join("SKILL.md"))?;
     if markdown.is_some() && params["source"].is_null() {
-        fs::create_dir_all(&destination)?;
-        fs::write(
-            destination.join("SKILL.md"),
-            markdown.context("Missing skill override")?,
+        let staging = stage_skill(
+            &destination,
+            destination.exists().then_some(destination.as_path()),
         )?;
+        finish_install(staging, &destination, markdown)?;
         return Ok(destination);
     }
     install_from_repository(home, params, &destination, markdown)?;
@@ -353,21 +353,62 @@ fn install_from_repository(
     if destination.exists() && params["forceReinstall"] != true && markdown.is_none() {
         return Ok(());
     }
-    if params["forceReinstall"] == true && destination.symlink_metadata().is_ok() {
-        if destination.is_dir() && !destination.is_symlink() {
-            fs::remove_dir_all(destination)?;
-        } else {
-            fs::remove_file(destination)?;
-        }
-    }
+    let staging = stage_skill(
+        destination,
+        (destination.exists() && params["forceReinstall"] != true).then_some(destination),
+    )?;
     if source.is_dir() {
-        copy_directory(&source, destination)?;
+        copy_directory(&source, staging.path())?;
     } else {
-        fs::create_dir_all(destination)?;
-        fs::copy(source, destination.join("SKILL.md"))?;
+        fs::copy(source, staging.path().join("SKILL.md"))?;
     }
+    finish_install(staging, destination, markdown)?;
+    Ok(())
+}
+
+fn stage_skill(destination: &Path, existing: Option<&Path>) -> Result<tempfile::TempDir> {
+    let parent = destination
+        .parent()
+        .context("Skill destination has no parent")?;
+    fs::create_dir_all(parent)?;
+    let staging = tempfile::tempdir_in(parent)?;
+    if let Some(existing) = existing {
+        copy_directory(existing, staging.path())?;
+    }
+    Ok(staging)
+}
+
+fn finish_install(
+    staging: tempfile::TempDir,
+    destination: &Path,
+    markdown: Option<&str>,
+) -> Result<()> {
+    validate_links(staging.path(), staging.path())?;
     if let Some(markdown) = markdown {
-        fs::write(destination.join("SKILL.md"), markdown)?;
+        fs::write(staging.path().join("SKILL.md"), markdown)?;
+    }
+    publish_skill(staging.path(), destination)
+}
+
+fn publish_skill(staging: &Path, destination: &Path) -> Result<()> {
+    if destination.symlink_metadata().is_err() {
+        return Ok(fs::rename(staging, destination)?);
+    }
+    let parent = destination
+        .parent()
+        .context("Skill destination has no parent")?;
+    let backup = tempfile::tempdir_in(parent)?;
+    let previous = backup.path().join("previous");
+    fs::rename(destination, &previous)?;
+    if let Err(error) = fs::rename(staging, destination) {
+        if let Err(restore) = fs::rename(&previous, destination) {
+            let saved = backup.keep().join("previous");
+            bail!(
+                "Skill publication failed: {error}; restore failed: {restore}. Previous skill is preserved at {}",
+                saved.display()
+            );
+        }
+        return Err(error.into());
     }
     Ok(())
 }
@@ -391,7 +432,7 @@ fn confined(root: &Path, relative: &str) -> Result<PathBuf> {
 fn ensure_contained(root: &Path, path: &Path) -> Result<()> {
     let root = root.canonicalize()?;
     let mut parent = path;
-    while !parent.exists() {
+    while parent.symlink_metadata().is_err() {
         parent = parent
             .parent()
             .context("Skill path has no existing parent")?;
@@ -423,6 +464,19 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<()> {
             }
         } else {
             fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_links(root: &Path, directory: &Path) -> Result<()> {
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_symlink() {
+            ensure_contained(root, &entry.path())?;
+        } else if kind.is_dir() {
+            validate_links(root, &entry.path())?;
         }
     }
     Ok(())
@@ -489,6 +543,18 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(&protected)?, "Keep this file");
 
+        fs::remove_file(override_path.join("SKILL.md"))?;
+        let missing = outside.path().join("missing.md");
+        std::os::unix::fs::symlink(&missing, override_path.join("SKILL.md"))?;
+        assert!(
+            install_skill(
+                home.path(),
+                &json!({"skillId":"override","skillStatsigOverride":"New instructions"})
+            )
+            .is_err()
+        );
+        assert!(!missing.exists());
+
         let source = home
             .path()
             .join("vendor_imports/skills/skills/.curated/merge");
@@ -506,6 +572,79 @@ mod tests {
             .is_err()
         );
         assert_eq!(fs::read_to_string(&protected)?, "Keep this file");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_links_cannot_escape_the_installed_skill() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        let protected = outside.path().join("instructions.md");
+        fs::write(&protected, "Keep these instructions")?;
+        let source = home
+            .path()
+            .join("vendor_imports/skills/skills/.curated/linked");
+        fs::create_dir_all(&source)?;
+        std::os::unix::fs::symlink(&protected, source.join("SKILL.md"))?;
+        let params = json!({"skillId":"linked","repoPath":"skills/.curated/linked",
+            "skillStatsigOverride":"New instructions","source":"catalog"});
+        assert!(install_skill(home.path(), &params).is_err());
+        assert_eq!(fs::read_to_string(&protected)?, "Keep these instructions");
+        assert!(!home.path().join("skills/linked").exists());
+
+        fs::remove_file(source.join("SKILL.md"))?;
+        fs::write(source.join("instructions.md"), "Internal instructions")?;
+        std::os::unix::fs::symlink("instructions.md", source.join("SKILL.md"))?;
+        let destination = install_skill(home.path(), &params)?;
+        assert_eq!(
+            fs::read_to_string(destination.join("SKILL.md"))?,
+            "New instructions"
+        );
+        assert_eq!(
+            fs::read_to_string(source.join("instructions.md"))?,
+            "Internal instructions"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_failures_preserve_installed_skills_and_never_publish_partial_skills() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let source = home
+            .path()
+            .join("vendor_imports/skills/skills/.curated/failing");
+        fs::create_dir_all(&source)?;
+        fs::write(source.join("SKILL.md"), "New instructions")?;
+        let socket_path = source.join("socket");
+        let socket = std::os::unix::net::UnixListener::bind(&socket_path)?;
+        let destination = home.path().join("skills/existing");
+        fs::create_dir_all(&destination)?;
+        fs::write(destination.join("SKILL.md"), "Old instructions")?;
+        let replacement = json!({"skillId":"existing","repoPath":"skills/.curated/failing","forceReinstall":true});
+        assert!(install_skill(home.path(), &replacement).is_err());
+        assert_eq!(
+            fs::read_to_string(destination.join("SKILL.md"))?,
+            "Old instructions"
+        );
+        let fresh = json!({"skillId":"fresh","repoPath":"skills/.curated/failing"});
+        for _ in 0..2 {
+            assert!(install_skill(home.path(), &fresh).is_err());
+            assert!(!home.path().join("skills/fresh").exists());
+        }
+        drop(socket);
+        fs::remove_file(socket_path)?;
+        install_skill(home.path(), &replacement)?;
+        assert_eq!(
+            fs::read_to_string(destination.join("SKILL.md"))?,
+            "New instructions"
+        );
+        let fresh_path = install_skill(home.path(), &fresh)?;
+        assert_eq!(
+            fs::read_to_string(fresh_path.join("SKILL.md"))?,
+            "New instructions"
+        );
         Ok(())
     }
 
