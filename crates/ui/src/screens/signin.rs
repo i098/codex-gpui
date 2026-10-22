@@ -1225,7 +1225,7 @@ impl Login {
     ) -> Div {
         let t = login_theme(cx);
         let retry = self.policy != Policy::Loading;
-        return frame.child(
+        frame.child(
             div()
                 .flex()
                 .flex_col()
@@ -1251,7 +1251,7 @@ impl Login {
                         cx,
                     ))
                 }),
-        );
+        )
     }
 
     fn browser_pending_view(&self, frame: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -1300,7 +1300,7 @@ impl Login {
                         ),
                 )
             });
-        return frame.pb(px(48.)).child(
+        frame.pb(px(48.)).child(
             div()
                 .w(px(340.))
                 .flex()
@@ -1316,7 +1316,7 @@ impl Login {
                     t.text_description,
                 ))
                 .child(controls),
-        );
+        )
     }
 
     fn login_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -1354,7 +1354,7 @@ impl Login {
             px(2.),
             cx,
         );
-        let header = div()
+        div()
             .flex()
             .flex_col()
             .items_center()
@@ -1377,8 +1377,7 @@ impl Login {
                         t.text_description,
                     ))
                 },
-            );
-        header
+            )
     }
 
     fn api_controls(&self, mut body: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
