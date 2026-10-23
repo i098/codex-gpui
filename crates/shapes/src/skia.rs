@@ -35,6 +35,8 @@ const CHUNK: i32 = 128;
 pub(crate) const MASK: u8 = 0;
 pub(crate) const ARGB32: u8 = 1;
 const PIPELINE: u8 = 2;
+/// Opaque paired edges use `SkFastFourByteInterp`, with coverage scaled at the halfway point.
+const FAST_INTERP: u8 = 10;
 /// Blit into the transparent tile of a composited layer, then the compositor's srcover.
 const LAYER: u8 = 3;
 /// A mask layer's alpha applied to the layer pixel (`DstIn` at the sprite's coverage).
@@ -844,6 +846,10 @@ fn blend(mode: u8, c: u8, a: u8, d: u8, m: u8) -> u8 {
             ((src * scale + d * ((inv + (inv >> 8)) >> 8)) >> 8) & 0xFF
         }
         PIPELINE => div255(src * m) + div255(d * (255 - div255(a * m))),
+        FAST_INTERP => {
+            let scale = m + (m >> 7);
+            (src * scale + d * (256 - scale)) >> 8
+        }
         _ => ((src * scale) >> 8) + ((d * (256 - ((a * scale) >> 8))) >> 8),
     }) as u8
 }
@@ -1200,7 +1206,7 @@ fn raster(
                 bg,
             }));
             if alpha == 255 {
-                &[MASK, ARGB32]
+                &[MASK, ARGB32, FAST_INTERP]
             } else {
                 probes.push(Probe {
                     fg: [255; 3],
@@ -1589,6 +1595,11 @@ fn solve(probes: &[Probe], px: &[[u8; 3]], m: u8, modes: &[u8]) -> Option<Blits>
         [MASK, ARGB32],
         [ARGB32, MASK],
         [ARGB32, ARGB32],
+        [MASK, FAST_INTERP],
+        [ARGB32, FAST_INTERP],
+        [FAST_INTERP, MASK],
+        [FAST_INTERP, ARGB32],
+        [FAST_INTERP, FAST_INTERP],
     ];
     let opaque = probes[1].a == 255;
     let rest = |b: Blits| {
@@ -1610,6 +1621,10 @@ fn solve(probes: &[Probe], px: &[[u8; 3]], m: u8, modes: &[u8]) -> Option<Blits>
     let single = |c: u8| modes.iter().map(move |&mode| [c, mode, 0, MASK]);
     single(m)
         .find(|&b| fits(b))
+        .or_else(|| {
+            m.checked_add(1)
+                .and_then(|coverage| single(coverage).find(|&b| fits(b)))
+        })
         // A translucent paint's AAA may blit an edge px once at another coverage than the
         // opaque probe shows (nearest first): one blit is tried before two.
         .or_else(|| {
@@ -1673,7 +1688,17 @@ pub(crate) fn sprites(
         let (rect, blits) = make();
         let mut out = Vec::new();
         for (blit, mode) in [0, 2].into_iter().flat_map(|b| {
-            [MASK, ARGB32, PIPELINE, LAYER, DST_IN, OPACITY, ARGB32_ZERO].map(|m| (b, m))
+            [
+                MASK,
+                ARGB32,
+                PIPELINE,
+                LAYER,
+                DST_IN,
+                OPACITY,
+                ARGB32_ZERO,
+                FAST_INTERP,
+            ]
+            .map(|m| (b, m))
         }) {
             if !blits.iter().any(|b| b[blit + 1] == mode && b[blit] != 0) {
                 continue;
@@ -2058,10 +2083,12 @@ fn shown([x0, y0, x1, y1]: [i32; 4], layer: Layer, window: &Window) -> bool {
         && ((y1 + ly) as f32) > dev(m.top())
 }
 
-/// `crate::paint` on macOS: Blink's box decoration painting, op by op.
+/// `crate::paint` on macOS: Blink's box decoration painting, op by op, moved by `offset`
+/// (CSS px) after snapping.
 pub(crate) fn paint(
     d: &Decoration,
     composited: Option<gpui::Point<Pixels>>,
+    offset: gpui::Point<Pixels>,
     bounds: Bounds<Pixels>,
     window: &mut Window,
     cx: &App,
@@ -2071,8 +2098,9 @@ pub(crate) fn paint(
     }
     let s = window.scale_factor();
     let layer = Layer::new(window, composited).for_bounds(bounds, s);
+    let offset = [f32::from(offset.x) * s, f32::from(offset.y) * s];
     for (op, color) in ops(d, layer.local(bounds, s), s).1 {
-        paint_op(op, color, layer, window, cx);
+        paint_op(op.moved(offset), color, layer, window, cx);
     }
 }
 
@@ -2523,6 +2551,26 @@ impl IconPath {
         }
         paint
     }
+
+    // SkDraw lowers AA strokes up to one device pixel to a hairline.
+    // Its legacy alpha scale truncates coverage * 256 before multiplying the byte alpha.
+    fn hairline_scale(&self, view: &Matrix) -> Option<u16> {
+        let (width, _, _) = self.stroke?;
+        if width <= 0. {
+            return None;
+        }
+        let matrix = Matrix::concat(view, &self.transform);
+        if matrix.has_perspective() {
+            return None;
+        }
+        let length = |vector: Vector| {
+            let (x, y) = (vector.x.abs(), vector.y.abs());
+            x.max(y) + x.min(y) * 0.5
+        };
+        let x = length(matrix.map_vector((width, 0.)));
+        let y = length(matrix.map_vector((0., width)));
+        (x <= 1. && y <= 1.).then_some(((x + y) * 0.5 * 256.) as u16)
+    }
 }
 
 /// A parsed icon: viewBox and drawables, in document order.
@@ -2553,6 +2601,32 @@ fn cached_icon(src: &[u8], key: &str) -> Option<std::rc::Rc<IconSvg>> {
 }
 
 impl IconSvg {
+    /// The viewBox fitted into `w` x `h` device px (`xMidYMid meet`): scale and translation.
+    fn fit(&self, w: f64, h: f64) -> (f64, f64, f64) {
+        let [vx, vy, vw, vh] = self.view_box.map(f64::from);
+        let scale = (w / vw).min(h / vh);
+        (
+            scale,
+            (w - vw * scale) / 2. - vx * scale,
+            (h - vh * scale) / 2. - vy * scale,
+        )
+    }
+
+    fn view(&self, w: f64, h: f64) -> Matrix {
+        let (scale, tx, ty) = self.fit(w, h);
+        Matrix::new_all(
+            scale as f32,
+            0.,
+            tx as f32,
+            0.,
+            scale as f32,
+            ty as f32,
+            0.,
+            0.,
+            1.,
+        )
+    }
+
     fn paint_bounds(&self) -> Option<Rect> {
         *self.paint_bounds.get_or_init(|| {
             let mut bounds = Rect::new_empty();
@@ -2753,15 +2827,10 @@ pub(crate) fn icon_paint_bounds(
         f64::from(f32::from(bounds.size.width) * s),
         f64::from(f32::from(bounds.size.height) * s),
     );
-    let [vx, vy, vw, vh] = icon.view_box.map(f64::from);
-    if w <= 0. || h <= 0. || vw <= 0. || vh <= 0. {
+    if w <= 0. || h <= 0. || icon.view_box[2] <= 0. || icon.view_box[3] <= 0. {
         return None;
     }
-    let scale = (w / vw).min(h / vh);
-    let (tx, ty) = (
-        (w - vw * scale) / 2. - vx * scale,
-        (h - vh * scale) / 2. - vy * scale,
-    );
+    let (scale, tx, ty) = icon.fit(w, h);
     let mut left = f64::from(ink.left) * scale + tx;
     let mut right = f64::from(ink.right) * scale + tx;
     if flip_x {
@@ -2837,23 +2906,7 @@ pub(crate) fn paint_icon(
         layer.local(bounds, s)
     };
     let origin = [snap(b.origin.x), snap(b.origin.y)];
-    let [vx, vy, vw, vh] = icon.view_box.map(f64::from);
-    let scale = (w / vw).min(h / vh);
-    let (tx, ty) = (
-        (w - vw * scale) / 2. - vx * scale,
-        (h - vh * scale) / 2. - vy * scale,
-    );
-    let view = Matrix::new_all(
-        scale as f32,
-        0.,
-        tx as f32,
-        0.,
-        scale as f32,
-        ty as f32,
-        0.,
-        0.,
-        1.,
-    );
+    let view = icon.view(w, h);
     // Blink clips the svg (or `<img>`) to its pixel-snapped box; at a path extreme on the
     // box edge that clip changes AAA's edge px.
     let clip = Rect::new(
@@ -2917,14 +2970,28 @@ pub(crate) fn paint_icon(
         return true;
     }
     for (n, p) in icon.paths.iter().enumerate() {
+        let hairline = p.hairline_scale(&view);
         let draw = |c: &Canvas, col: Color4f| {
             prepare(c);
-            draw_path(c, p, col);
+            c.concat(&p.transform);
+            let mut paint = p.paint(col);
+            if hairline.is_some() {
+                paint.set_stroke_width(0.);
+            }
+            c.draw_path(&p.path, &paint);
         };
         // Keep the CSS color outside the sRGB gamut; conversion to Rgba clamps its channels.
         let c = p.color.map(Hsla::from).unwrap_or(color);
         // Noncomposited paths fold the SVG opacity into their paint.
-        let a = if p.color.is_some() { 1. } else { color.a } * p.opacity * p.layer;
+        let mut a = if p.color.is_some() { 1. } else { color.a } * p.opacity * p.layer;
+        if let Some(scale) = hairline
+            && scale < 256
+        {
+            a = f32::from(((u16::from(alpha_byte(a)) * scale) >> 8) as u8) / 255.;
+        }
+        if a == 0. {
+            continue;
+        }
         let color = c.alpha(a);
         let a = alpha_byte(a);
         let black = is_black(color, a);
@@ -2941,6 +3008,49 @@ pub(crate) fn paint_icon(
     true
 }
 
+/// Draws the svg icon `src` on `c` (window device px) with [`paint_icon`]'s geometry: the box
+/// `bounds` snaps like Blink's svg root and clips the paths. False if the svg is unsupported.
+pub(crate) fn draw_icon(
+    c: &Canvas,
+    src: &[u8],
+    key: &str,
+    bounds: Bounds<Pixels>,
+    color: Hsla,
+    s: f32,
+) -> bool {
+    let Some(icon) = cached_icon(src, key) else {
+        return false;
+    };
+    let snap = |v: Pixels| (f32::from(v) * s + 0.5).floor();
+    let (w, h) = (
+        f64::from(f32::from(bounds.size.width) * s),
+        f64::from(f32::from(bounds.size.height) * s),
+    );
+    let (x, y) = (snap(bounds.left()), snap(bounds.top()));
+    c.save();
+    c.clip_rect(
+        Rect::new(x, y, snap(bounds.right()), snap(bounds.bottom())),
+        ClipOp::Intersect,
+        true,
+    );
+    c.translate((x, y));
+    c.concat(&icon.view(w, h));
+    let rgba = Rgba::from(color);
+    for p in &icon.paths {
+        let color = p.color.unwrap_or(rgba);
+        let a = if p.color.is_some() { 1. } else { rgba.a } * p.opacity * p.layer;
+        c.save();
+        c.concat(&p.transform);
+        c.draw_path(
+            &p.path,
+            &p.paint(Color4f::new(color.r, color.g, color.b, a)),
+        );
+        c.restore();
+    }
+    c.restore();
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2950,6 +3060,39 @@ mod tests {
         prelude::FluentBuilder, px, size,
     };
     use std::sync::Arc;
+
+    #[test]
+    fn opaque_pair_interpolation_uses_halfway_coverage_scaling() {
+        assert_eq!(blend(FAST_INTERP, 255, 255, 60, 127), 156);
+        assert_eq!(blend(FAST_INTERP, 255, 255, 60, 128), 158);
+        assert_eq!(blend(FAST_INTERP, 26, 255, 200, 100), 132);
+        assert_eq!(blend(FAST_INTERP, 26, 255, 200, 0), 200);
+        assert_eq!(blend(FAST_INTERP, 26, 255, 200, 255), 26);
+    }
+
+    #[test]
+    fn normalized_thin_stroke_matches_skia_hairline_paint() {
+        let source = br#"<svg viewBox="0 0 16 16"><path d="M2 4C4 1 8 1 10 4L2 4Z" fill="none" stroke="black" stroke-width="0.6"/></svg>"#;
+        let icon = cached_icon(source, "thin-stroke-regression").unwrap();
+        let drawable = &icon.paths[0];
+        let view = Matrix::scale((4. / 3., 4. / 3.));
+        let scale = drawable.hairline_scale(&view).unwrap();
+        assert_eq!(scale, 204);
+        let alpha = ((127u16 * scale) >> 8) as u8;
+        assert_eq!(alpha, 101);
+        assert!(drawable.hairline_scale(&Matrix::scale((2., 2.))).is_none());
+        let original = drawable.paint(Color4f::new(1., 1., 1., 127. / 255.));
+        let mut normalized = drawable.paint(Color4f::new(1., 1., 1., f32::from(alpha) / 255.));
+        normalized.set_stroke_width(0.);
+        let render = |paint: &Paint| {
+            tile_pixels([0, 0], (32, 32), Color4f::new(0., 0., 0., 0.), |canvas| {
+                canvas.concat(&view);
+                canvas.draw_path(&drawable.path, paint);
+            })
+            .0
+        };
+        assert_eq!(render(&normalized), render(&original));
+    }
 
     #[test]
     fn horizontal_stripes_keep_fractional_period_and_hard_stop() {
@@ -3441,7 +3584,7 @@ mod tests {
                             },
                             |bounds, (decoration, recorded), window, cx| {
                                 with_recorded_bounds(recorded, || {
-                                    paint(&decoration, None, bounds, window, cx);
+                                    shapes::paint(&decoration, None, bounds, window, cx);
                                 });
                             },
                         )
@@ -3507,7 +3650,7 @@ mod tests {
                             },
                             |bounds, (decoration, recorded), window, cx| {
                                 with_composited_bounds(recorded, || {
-                                    paint(&decoration, None, bounds, window, cx);
+                                    shapes::paint(&decoration, None, bounds, window, cx);
                                 });
                             },
                         )
