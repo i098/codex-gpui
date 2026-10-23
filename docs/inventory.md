@@ -113,7 +113,21 @@ Each search stream retains its rows and cursor after a failed page request.
 Retry reloads the failed data without creating a GitHub write.
 Retry reads the active GitHub account again before reloading.
 The search field stays on one line and keeps the caret visible during horizontal editing.
-The default detail width adapts to the window and preserves room for the request list.
+The detail pane keeps its width ratio when its measured content width changes.
+Each route mount computes its reset width from the current shell size and the preceding measured inline inset.
+The original `VIi`, `CPt`, `DPt`, and `OPt` functions in `app-initial-6350d04672d0.js` define this lifecycle.
+The original `GIi` ResizeObserver updates the inline inset after layout without replacing the ratio or reset width.
+The native shell records its inset during prepaint, after layout assigns the content bounds.
+The route reads the preceding shell measurement before it replaces that shell.
+The pane records its own content width during prepaint and requests another frame only when that width changes.
+The shell measurement does not request a frame; the pane width cannot change its parent bounds.
+Thus a settled layout does not create a repaint loop.
+Selecting a request or returning through Home mounts a new reset default.
+Explicit drag and keyboard resizing retain the user ratio across these mounts.
+Double-clicking the divider restores the mount default, not a new viewport-only default.
+The original uses the shared `app-shell:right-panel-width:v3` storage key when no pane-specific configuration overrides it.
+Reset replay cases start with separate page contexts, as the original capture driver does.
+Each case checks the width before reset; the selected-detail case requires 724 px before and after reset.
 The inbox uses the original compact toolbar, row spacing, and grouped change counts.
 
 The executable also accepts `/pull-requests` and `/pull-requests/<host>/<owner>/<repository>/<number>` as its first argument.

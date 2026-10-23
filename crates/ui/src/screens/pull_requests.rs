@@ -275,6 +275,9 @@ pub struct Page {
     pub code: Option<Result<Entity<DiffPanel>, String>>,
     code_loading: bool,
     detail_fullscreen: bool,
+    pane_width: Option<PaneWidth>,
+    pane_drag_offset: Option<gpui::Pixels>,
+    saved_pane_ratio: Option<f64>,
     media_images: HashMap<String, Option<Result<Arc<gpui::RenderImage>, String>>>,
     media_queue: VecDeque<String>,
     media_inflight: bool,
@@ -339,6 +342,9 @@ impl Page {
             code: None,
             code_loading: false,
             detail_fullscreen: false,
+            pane_width: None,
+            pane_drag_offset: None,
+            saved_pane_ratio: None,
             media_images: HashMap::new(),
             media_queue: VecDeque::new(),
             media_inflight: false,
@@ -355,6 +361,87 @@ impl Page {
             controls: RefCell::new(HashMap::new()),
             clock,
         }
+    }
+
+    pub fn mount_pane_width(
+        &mut self,
+        viewport: gpui::Size<gpui::Pixels>,
+        inline_inset: gpui::Pixels,
+    ) {
+        let mut pane = PaneWidth::new(
+            f64::from(f32::from(
+                viewport.width - crate::RAIL_WIDTH - crate::PAGE_INSET - inline_inset,
+            )),
+            f64::from(f32::from(viewport.height)),
+        );
+        if let Some(ratio) = self.saved_pane_ratio {
+            pane.ratio = ratio;
+        }
+        self.pane_width = Some(pane);
+    }
+
+    pub fn detail_width(&self) -> f32 {
+        self.pane_width
+            .as_ref()
+            .map_or(0., |pane| pane.width() as f32)
+    }
+
+    pub fn reset_detail_width(&mut self, cx: &mut Context<Self>) {
+        if let Some(pane) = &mut self.pane_width {
+            pane.set_width(pane.default_width);
+            self.saved_pane_ratio = Some(pane.ratio);
+        }
+        self.pane_drag_offset = None;
+        cx.notify();
+    }
+
+    fn set_detail_width(&mut self, width: f64) {
+        if let Some(pane) = &mut self.pane_width {
+            pane.set_width(width);
+            self.saved_pane_ratio = Some(pane.ratio);
+        }
+    }
+
+    fn pane_divider(&self, pane_width: gpui::Pixels, cx: &Context<Self>) -> Stateful<Div> {
+        div()
+            .id("pull-request-resize")
+            .role(gpui::Role::Splitter)
+            .aria_label("Resize workspace panes")
+            .track_focus(&self.control("pull-request-resize", cx))
+            .tab_index(0)
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                let Some(pane) = &this.pane_width else {
+                    return;
+                };
+                let width = match event.keystroke.key.as_str() {
+                    "left" => pane.width() + 10.,
+                    "right" => pane.width() - 10.,
+                    "home" => 320.,
+                    "end" => 320. + pane.width_range(),
+                    _ => return,
+                };
+                this.set_detail_width(width);
+                cx.stop_propagation();
+                cx.notify();
+            }))
+            .absolute()
+            .right(pane_width - px(8.))
+            .top_0()
+            .bottom_0()
+            .w(px(16.))
+            .cursor(gpui::CursorStyle::ResizeLeftRight)
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                    if event.click_count == 2 {
+                        this.reset_detail_width(cx);
+                    } else {
+                        this.pane_drag_offset = Some(event.position.x + px(this.detail_width()));
+                        cx.notify();
+                    }
+                    cx.stop_propagation();
+                }),
+            )
     }
 
     pub fn account(&self) -> Option<&Account> {
@@ -475,6 +562,8 @@ impl Page {
             return false;
         }
         self.selected = identity;
+        self.pane_width = None;
+        self.pane_drag_offset = None;
         self.detail = None;
         self.code = None;
         self.code_loading = false;
@@ -1012,10 +1101,9 @@ impl Page {
 
     fn inbox(&mut self, window: &Window, cx: &mut Context<Self>) -> Div {
         let t = cx.theme();
-        let viewport = window.viewport_size();
-        let width = (f32::from(viewport.width - crate::RAIL_WIDTH - crate::PAGE_INSET)
-            - default_detail_width(viewport))
-        .max(0.);
+        let width = self.pane_width.as_ref().map_or(0., |pane| {
+            (pane.available_width - pane.width()).max(0.) as f32
+        });
         let mut navigation = div()
             .h(px(46.))
             .flex_none()
@@ -1993,11 +2081,17 @@ fn request_status(state: &str, draft: bool, t: &theme::Theme) -> (&'static str, 
 
 impl Render for Page {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.pane_width.is_none() {
+            self.mount_pane_width(window.viewport_size(), px(0.));
+        }
         let ready = self.account().is_some();
         let pane_width = if self.detail_fullscreen {
-            window.viewport_size().width - crate::RAIL_WIDTH - crate::PAGE_INSET
+            px(self
+                .pane_width
+                .as_ref()
+                .map_or(0., |pane| pane.available_width) as f32)
         } else {
-            px(default_detail_width(window.viewport_size()))
+            px(self.detail_width())
         };
         if let Some(Ok(panel)) = &self.code {
             panel.update(cx, |panel, cx| {
@@ -2032,6 +2126,28 @@ impl Render for Page {
             .size_full()
             .flex()
             .bg(cx.theme().surface)
+            .child(
+                gpui::canvas(
+                    {
+                        let page = cx.entity().downgrade();
+                        move |bounds, _, cx| {
+                            page.update(cx, |page, cx| {
+                                if let Some(pane) = &mut page.pane_width {
+                                    let width = f64::from(f32::from(bounds.size.width));
+                                    if pane.available_width != width {
+                                        pane.available_width = width;
+                                        cx.notify();
+                                    }
+                                }
+                            })
+                            .ok();
+                        }
+                    },
+                    |_, (), _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
             .when(!self.detail_fullscreen, |d| {
                 d.child(div().flex_1().min_w_0().child(main))
             })
@@ -2047,6 +2163,29 @@ impl Render for Page {
                         .child(self.detail(window, cx)),
                 )
             })
+            .when(ready && !self.detail_fullscreen, |d| {
+                d.child(self.pane_divider(pane_width, cx))
+            })
+            .when_some(self.pane_drag_offset, |d, offset| {
+                let page = cx.entity().downgrade();
+                let released = page.clone();
+                d.child(crate::drag_layer(
+                    move |x, _, cx| {
+                        page.update(cx, |page, _| {
+                            page.set_detail_width(f64::from(f32::from(offset - x)));
+                        })
+                        .ok();
+                    },
+                    move |cx| {
+                        released
+                            .update(cx, |page, cx| {
+                                page.pane_drag_offset = None;
+                                cx.notify();
+                            })
+                            .ok();
+                    },
+                ))
+            })
     }
 }
 
@@ -2060,14 +2199,42 @@ fn grouped_count(value: u64) -> String {
     text
 }
 
-fn default_detail_width(viewport: gpui::Size<gpui::Pixels>) -> f32 {
-    let width = f32::from(viewport.width - crate::RAIL_WIDTH - crate::PAGE_INSET);
-    let height = f32::from(viewport.height - theme::Theme::TITLEBAR_HEIGHT - crate::PAGE_INSET);
-    let maximum = (width - 352.).max(320.);
-    (height * 1.6)
-        .min(width - 500.)
-        .max(640_f32.min(width - 352.))
-        .clamp(320., maximum)
+struct PaneWidth {
+    available_width: f64,
+    default_width: f64,
+    ratio: f64,
+}
+
+impl PaneWidth {
+    fn new(available_width: f64, height: f64) -> Self {
+        let mut pane = Self {
+            available_width,
+            default_width: (height * 1.6)
+                .min(available_width - 500.)
+                .max(640_f64.min(available_width - 352.))
+                .max(320.),
+            ratio: 0.,
+        };
+        pane.set_width(pane.default_width);
+        pane
+    }
+
+    fn width_range(&self) -> f64 {
+        (self.available_width - 352. - 320.).max(0.)
+    }
+
+    fn width(&self) -> f64 {
+        320. + self.ratio * self.width_range()
+    }
+
+    fn set_width(&mut self, width: f64) {
+        let range = self.width_range();
+        self.ratio = if range == 0. {
+            0.
+        } else {
+            ((width - 320.) / range).clamp(0., 1.)
+        };
+    }
 }
 
 fn relative_age(date: &str, clock: Clock) -> String {
@@ -2392,11 +2559,123 @@ mod tests {
             (1024., 832., 616.),
             (1440., 300., 640.),
         ] {
-            assert_eq!(
-                default_detail_width(gpui::size(px(width), px(height))),
-                expected,
-            );
+            assert_eq!(PaneWidth::new(width - 56., height).width(), expected);
         }
+    }
+
+    #[test]
+    fn pane_ratio_keeps_the_mount_default_after_inset_and_viewport_changes() {
+        let mut pane = PaneWidth::new(1223.5, 832.);
+        assert_eq!(pane.default_width, 723.5);
+        pane.available_width = 1224.;
+        assert!((pane.width() - 723.8658204895739).abs() < 1e-9);
+        pane.set_width(pane.default_width);
+        assert_eq!(pane.width(), 723.5);
+
+        for (available, height, inset) in [(968., 832., 1.), (1224., 832., 0.5), (1544., 560., 2.)]
+        {
+            let mut pane = PaneWidth::new(available - inset, height);
+            let default_width = pane.default_width;
+            let ratio = pane.ratio;
+            pane.available_width = available + 160.;
+            assert_eq!(pane.default_width, default_width);
+            assert_eq!(pane.ratio, ratio);
+            assert_eq!(pane.width(), 320. + ratio * (available + 160. - 672.));
+            pane.set_width(500.);
+            pane.available_width += 80.;
+            assert!(pane.width() > 500.);
+            pane.set_width(default_width);
+            assert!((pane.width() - default_width).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn pane_remount_uses_new_geometry_and_keeps_only_explicit_resize_ratios() {
+        let mut app = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            let page = cx.new(|cx| {
+                Page::new(
+                    Clock {
+                        utc_offset: 0,
+                        pinned_now: Some(0),
+                        elapsed_since: None,
+                    },
+                    cx,
+                )
+            });
+            page.update(cx, |page, cx| {
+                let viewport = gpui::size(px(1280.), px(832.));
+                page.mount_pane_width(viewport, px(0.5));
+                assert_eq!(page.detail_width(), 723.5);
+                let selected = Identity {
+                    hostname: "github.com".into(),
+                    owner: "owner".into(),
+                    repository: "repository".into(),
+                    number: 1,
+                };
+                page.select(Some(selected), cx);
+                page.mount_pane_width(viewport, px(0.));
+                assert_eq!(page.detail_width(), 724.);
+                page.mount_pane_width(gpui::size(px(1024.), px(700.)), px(1.));
+                assert_eq!(page.detail_width(), 615.);
+                page.set_detail_width(500.);
+                let ratio = page.pane_width.as_ref().unwrap().ratio;
+                page.select(None, cx);
+                page.mount_pane_width(viewport, px(0.5));
+                assert_eq!(page.pane_width.as_ref().unwrap().ratio, ratio);
+                page.pane_width.as_mut().unwrap().available_width = 1224.;
+                page.reset_detail_width(cx);
+                assert_eq!(page.detail_width(), 723.5);
+            });
+        });
+    }
+
+    #[test]
+    fn pane_reset_ratio_survives_selected_detail_remount_in_the_same_session() {
+        let mut app = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            let page = cx.new(|cx| {
+                Page::new(
+                    Clock {
+                        utc_offset: 0,
+                        pinned_now: Some(0),
+                        elapsed_since: None,
+                    },
+                    cx,
+                )
+            });
+            page.update(cx, |page, cx| {
+                let viewport = gpui::size(px(1280.), px(832.));
+                page.mount_pane_width(viewport, px(0.5));
+                page.pane_width.as_mut().unwrap().available_width = 1224.;
+                page.reset_detail_width(cx);
+                let expected_ratio = (723.5 - 320.) / (1224. - 352. - 320.);
+                assert_eq!(page.saved_pane_ratio, Some(expected_ratio));
+                page.select(
+                    Some(Identity {
+                        hostname: "github.com".into(),
+                        owner: "owner".into(),
+                        repository: "repository".into(),
+                        number: 1,
+                    }),
+                    cx,
+                );
+                page.mount_pane_width(viewport, px(0.));
+                assert_eq!(page.pane_width.as_ref().unwrap().ratio, expected_ratio);
+                assert_eq!(page.detail_width(), 723.5);
+                assert_eq!(page.pane_width.as_ref().unwrap().default_width, 724.);
+                page.reset_detail_width(cx);
+                assert_eq!(page.detail_width(), 724.);
+            });
+        });
     }
 
     #[test]

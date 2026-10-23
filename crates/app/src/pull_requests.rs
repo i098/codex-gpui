@@ -22,6 +22,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<ui::Shell> {
+        let inline_inset = self.shell().read(cx).main_content_inline_inset();
         let page = if let Some(page) = &self.pull_requests_page {
             page.clone()
         } else {
@@ -38,7 +39,11 @@ impl Root {
             self.pull_requests_page = Some(page.clone());
             page
         };
-        let changed = page.update(cx, |page, cx| page.select(selected, cx));
+        let changed = page.update(cx, |page, cx| {
+            let changed = page.select(selected, cx);
+            page.mount_pane_width(window.viewport_size(), inline_inset);
+            changed
+        });
         let changed_host = page
             .read(cx)
             .selected
