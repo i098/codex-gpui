@@ -1850,13 +1850,12 @@ impl ThreadView {
             });
         col.child(self.activity(work, running, window, t, cx))
             .when(waiting, |col| {
-                col.child(div().mt(px(if has_work { 16. } else { 0. })).child(text(
-                    "Thinking",
-                    14.,
-                    21.,
-                    430.,
-                    t.text_tertiary,
-                )))
+                col.child(
+                    div()
+                        .min_h(px(24.))
+                        .mt(px(if has_work { 16. } else { 0. }))
+                        .child(text("Thinking", 14., 21., 430., t.text_alpha_60)),
+                )
             })
     }
 
@@ -1933,9 +1932,23 @@ impl ThreadView {
 
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.scroll.offset().y <= -self.scroll.max_offset().y + px(1.) {
-            self.scroll.scroll_to_bottom();
-        }
+        let follow_bottom = self.scroll.offset().y <= -self.scroll.max_offset().y + px(1.);
+        let reserve_response_space = self.turns.last().is_some_and(|turn| {
+            turn.status == TurnStatus::InProgress
+                && turn
+                    .items
+                    .iter()
+                    .any(|item| matches!(item, ThreadItem::UserMessage { .. }))
+        });
+        let available =
+            (self.scroll.bounds().size.height - self.footer_height.get() - px(16.)).max(px(0.));
+        let response_space = if reserve_response_space {
+            (available * (2. / 3.))
+                .min(available - px(240.))
+                .max(px(0.))
+        } else {
+            px(0.)
+        };
         let now = cx.background_executor().now();
         self.stream_fades.retain(|_, segments| {
             segments.retain_mut(|segment| {
@@ -2046,6 +2059,21 @@ impl Render for ThreadView {
                 .zip(&bounds)
                 .map(|(id, b)| (id.clone(), (b.top() - origin, b.size.height)))
                 .collect();
+            if follow_bottom && find_scroll.is_none() {
+                let distance = if reserve_response_space {
+                    px(1.)
+                } else {
+                    px(0.)
+                };
+                let offset = gpui::point(
+                    scroll.offset().x,
+                    (distance - scroll.max_offset().y).min(px(0.)),
+                );
+                if scroll.offset() != offset {
+                    scroll.set_offset(offset);
+                    window.defer(cx, move |_, cx| cx.notify(view_id));
+                }
+            }
             if let Some((target, pending)) = &find_scroll
                 && pending.replace(false)
                 && let Some((layout, index)) = target.borrow().as_ref()
@@ -2257,12 +2285,11 @@ impl Render for ThreadView {
                                     .flex_col()
                                     .gap(px(12.))
                                     .children(turns)
+                                    .child(div().flex_none().h(response_space))
                                     .on_children_prepainted(measure),
                             )
                             .child(div().flex_none().h(self.footer_height.get())),
-                    )
-                    // Running turns keep the original footer's extra scroll-padding reserve.
-                    .when(self.is_running(), |d| d.child(div().h(px(16.)))),
+                    ),
             )
             .when(self.clip_right, |d| d.child(gpui::deferred(corners)))
             // A portal in the original: its shadow spills over the titlebar and the sidebar.

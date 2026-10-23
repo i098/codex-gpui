@@ -1216,7 +1216,7 @@ impl Composer {
                 .focus_visible(menu::trigger_focus)
                 .opacity(if self.queue_pending { 0.4 } else { 1. })
                 .when(!self.queue_pending, |d| d.hover(|s| s.bg(t.ghost_hover)))
-                .child(icon("diff-more", 14., t.text_tertiary))
+                .child(icon("thread-summary-actions", 14., t.text_tertiary))
                 // Enter would submit the draft: the key belongs to the button.
                 .on_key_down(cx.listener(|_, event: &gpui::KeyDownEvent, _, cx| {
                     if matches!(event.keystroke.key.as_str(), "enter" | "space") {
@@ -2287,11 +2287,31 @@ impl Render for Composer {
         let tray = (!self.queued.is_empty()).then(|| {
             div()
                 .mx(px(13.))
-                .border_t_1()
-                .border_x_1()
-                .border_color(t.border)
-                .rounded_t(px(12.))
-                .bg(t.surface_elevated_secondary)
+                .relative()
+                .pt(px(1.))
+                .px(px(1.))
+                .pb(px(4.))
+                .mb(px(-4.))
+                .overflow_hidden()
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom(px(-1.))
+                        .child(shapes::decoration(shapes::Decoration {
+                            radius: Corners {
+                                top_left: px(20.),
+                                top_right: px(20.),
+                                ..Default::default()
+                            },
+                            corner: shapes::Corner::Squircle,
+                            fill: Some(t.surface_elevated_secondary),
+                            border: Some((px(1.), t.border.opacity(0.8))),
+                            ..Default::default()
+                        })),
+                )
                 .flex()
                 .flex_col()
                 .gap(px(1.))
@@ -2303,7 +2323,7 @@ impl Render for Composer {
                         .flex()
                         .items_center()
                         .gap(px(8.))
-                        .child(icon("queue-handle", 14., t.text_tertiary))
+                        .child(icon("queue-handle", 14., t.text_tertiary.opacity(0.7)))
                         .child(div().flex_1().min_w_0().overflow_hidden().child(text(
                             row.text.clone(),
                             14.,

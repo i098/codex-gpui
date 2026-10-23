@@ -36,6 +36,9 @@ pub(super) fn wrap_row() -> Div {
     div().flex().flex_wrap().mr(px(-4.))
 }
 
+static WORK_NUMERALS: LazyLock<gpui::FontFeatures> =
+    LazyLock::new(|| gpui::FontFeatures(Arc::new(vec![("tnum".into(), 1)])));
+
 /// `Worked for 17s ›` over a hairline (turn disclosure); `angle` turns the chevron clockwise
 /// in degrees (90 = open). At rest it is the fitted icon; while it turns, the svg path is
 /// rotated about its viewBox centre and rasterized like any icon (no clipping: the path stays
@@ -43,6 +46,7 @@ pub(super) fn wrap_row() -> Div {
 /// `None` draws the running status without a disclosure control.
 pub(super) fn disclosure(label: String, angle: Option<f32>, window: &Window, t: &Theme) -> Div {
     let color = t.text_tertiary;
+    let running = angle.is_none();
     let chevron = angle.map(|angle| {
         if angle == 0. {
             icon("thread-chevron-right", 14., color).into_any_element()
@@ -103,18 +107,25 @@ pub(super) fn disclosure(label: String, angle: Option<f32>, window: &Window, t: 
         .flex()
         .flex_col()
         .child(
-            div().h(px(22.3)).pt(px(1.3)).child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(4.))
-                    .child(measured(window, label, 14., 21., 430., color, None))
-                    .children(chevron),
-            ),
+            div()
+                .h(px(if running { 21. } else { 22.3 }))
+                .pt(px(if running { 0. } else { 1.3 }))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(if running {
+                            text(label, 14., 21., 430., color).font_features(WORK_NUMERALS.clone())
+                        } else {
+                            measured(window, label, 14., 21., 430., color, None)
+                        })
+                        .children(chevron),
+                ),
         )
         .child(
             div()
-                .pt(px(4.))
+                .pt(px(if running { 8. } else { 4. }))
                 .child(div().h(px(1.)).bg(over(t.border, t.surface))),
         )
 }

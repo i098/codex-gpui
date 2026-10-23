@@ -475,8 +475,10 @@ The queue dropdown sizes itself to its icon labels and opens below the measured 
 Editor context menus keep their existing minimum width.
 The transcript follows its bottom while already at the bottom and measures its composer reserve, including queued rows.
 Scrolling up keeps the current position instead of following new content.
-Running turns reserve the original footer scroll padding; the top fade paints behind the transcript.
-Queue controls use the original Steer and Delete icons.
+Running user turns reserve response space from the viewport and measured footer; completed turns release that space.
+The turn list keeps its trailing gap, and the top fade paints behind the transcript.
+Live dividers use a 21 px label and 8 px gap; Thinking keeps a 24 px wrapper.
+Queue controls use the original Steer, Delete, and menu icons, with the original tray corners and border opacity.
 The original/native pixel comparison still fails for transcript geometry, queue controls, and surface colors.
 
 S018 records CP-039 and CP-040 in `refs/interactions/s018.json`.
