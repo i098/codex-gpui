@@ -1538,7 +1538,21 @@ impl Render for Editor {
                     this.dismiss(cx);
                 }),
             )
-            .child(form)
+            // Chromium composites the dialog as a layer of its own, whose tiles start at its
+            // shadows' ink (1.5 x blur + spread, moved by the offset): `0 20px 25px -5px`
+            // reaches 32.5 px left and right, 12.5 px above and 52.5 px below the box. The
+            // original's tile seams and squircle border raster match this origin.
+            .child(
+                div()
+                    .top_layer()
+                    .px(px(32.5))
+                    .pt(px(12.5))
+                    .pb(px(52.5))
+                    .mx(px(-32.5))
+                    .mt(px(-12.5))
+                    .mb(px(-52.5))
+                    .child(form),
+            )
     }
 }
 
