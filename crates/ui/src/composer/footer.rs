@@ -274,13 +274,9 @@ impl Composer {
                         ),
                         size(px(3.), px(height)),
                     );
-                    shapes::paint(
-                        &deco(
-                            1.5,
-                            color.opacity(if sample.is_some() { 0.5 } else { 0.2 }),
-                            vec![],
-                        ),
-                        None,
+                    shapes::paint_canvas_round_rect(
+                        px(1.5),
+                        color.opacity(if sample.is_some() { 0.5 } else { 0.2 }),
                         rect,
                         window,
                         cx,
