@@ -1443,10 +1443,14 @@ impl Composer {
                 .opacity(if self.queue_pending { 0.4 } else { 1. })
                 .when(!self.queue_pending, |d| d.hover(|s| s.bg(t.ghost_hover)))
                 .child(match action {
-                    QueueAction::Steer(_) => {
-                        text("Steer", 12., 20., 400., t.text).into_any_element()
-                    }
-                    _ => icon("close", 14., t.text_tertiary).into_any_element(),
+                    QueueAction::Steer(_) => div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(icon("queue-steer", 14., t.text_tertiary))
+                        .child(text("Steer", 12., 20., 400., t.text_tertiary))
+                        .into_any_element(),
+                    _ => icon("queue-delete", 14., t.text_tertiary).into_any_element(),
                 })
                 .on_key_down(
                     cx.listener(move |this, event: &gpui::KeyDownEvent, window, cx| {
