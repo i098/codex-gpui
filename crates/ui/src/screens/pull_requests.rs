@@ -192,7 +192,7 @@ fn missing_avatar() -> gpui::AnyElement {
                         bounds,
                         gpui::Corners::all(px(9.)),
                         shapes::Corner::Round,
-                        shapes::ImageComposition::Direct(page),
+                        shapes::ImageComposition::Composited(page),
                         window,
                     )
                     .expect("Mac image rasterizer"),
