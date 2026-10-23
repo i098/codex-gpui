@@ -1654,4 +1654,3 @@ fn mobile_get_started_follows_the_recorded_mfa_status() -> Result<()> {
     assert_eq!(step(&fx), SetupStep::AllowHost);
     Ok(())
 }
-
