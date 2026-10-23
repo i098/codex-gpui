@@ -624,7 +624,7 @@ struct MonochromeSpriteVertexOutput {
   float4 color [[flat]];
   float4 clip_distance;
   uint skia_mode [[flat]];
-  uint layers [[flat]];
+  uint4 layers [[flat]];
 };
 
 struct MonochromeSpriteFragmentInput {
@@ -633,7 +633,7 @@ struct MonochromeSpriteFragmentInput {
   float4 color [[flat]];
   float4 clip_distance;
   uint skia_mode [[flat]];
-  uint layers [[flat]];
+  uint4 layers [[flat]];
 };
 
 vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
@@ -659,9 +659,10 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
   // the sprite's (viz drawing a clipped layer's content over the layer). For a color outside
   // [0, 1] the fragment picks the float pipeline's blends: 4 = raster pipeline highp srcover
   // (for modes 0 and 2), 6 = highp blit into a composited layer (for mode 3).
-  // 8 scales compositor opacity with integer truncation.
+  // 8 scales compositor opacity with integer truncation. 9 = mode 1 at coverage 0 (AAA's
+  // alpha-0 run px); its sprite coverage only marks the px.
   Hsla hsla = sprite.color;
-  uint skia_mode = uint(clamp(floor(hsla.h / 2.0), 0.0, 8.0));
+  uint skia_mode = uint(clamp(floor(hsla.h / 2.0), 0.0, 9.0));
   hsla.h -= 2.0 * skia_mode;
   float4 color = hsla_to_rgba(hsla);
   return MonochromeSpriteVertexOutput{
@@ -670,7 +671,7 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
       color,
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w},
       skia_mode,
-      sprite.layers};
+      uint4(sprite.layers[0], sprite.layers[1], sprite.layers[2], sprite.layers[3])};
 }
 
 // Skia's 8-bit blit of the premultiplied color `src` (alpha `ca`) at mask coverage `m` onto the
@@ -736,66 +737,85 @@ uint4 skia_layer(uint4 l, uint4 d, uint a) {
   return ((l * a256 + d * dst_scale) & 0xFFFF) >> 8;
 }
 
+uint4 layer_pixel(thread uint4 *pixels, uint4 ids, uint4 alphas) {
+  uint4 result = pixels[3];
+  for (int index = 3; index > 0; --index) {
+    result = ids[index] == 0 ? pixels[index - 1]
+                            : skia_layer(result, pixels[index - 1], alphas[index]);
+  }
+  return result;
+}
+
 struct SpriteLayerTargets {
   float4 color [[color(0)]];
-  // Per-pixel state of the layers (scene.rs `MonochromeSprite::layers`): the outer and inner
-  // layer pixels, what is under the outer layer, and (outer id, inner id, inner alpha).
+  // Four layer pixels, their backdrop, and each layer's identifier and alpha.
   float4 outer [[color(1)]];
   float4 inner [[color(2)]];
   float4 backdrop [[color(3)]];
   float4 ids [[color(4)]];
+  float4 third [[color(5)]];
+  float4 fourth [[color(6)]];
+  float4 alphas [[color(7)]];
 };
 
 SpriteLayerTargets composite_sprite(
-    uint mode, uint m, uint4 src, float4 fsrc, uint layers,
-    float4 target, float4 outer, float4 inner, float4 backdrop, float4 ids) {
+    uint mode, uint m, uint4 src, float4 fsrc, uint4 layers,
+    float4 target, float4 outer, float4 inner, float4 backdrop, float4 ids,
+    float4 third, float4 fourth, float4 alphas) {
   uint4 d = uint4(round(target * 255.0));
-  uint4 l1 = uint4(round(outer * 255.0));
-  uint4 l2 = uint4(round(inner * 255.0));
+  uint4 pixels[4] = {uint4(round(outer * 255.0)), uint4(round(inner * 255.0)),
+                     uint4(round(third * 255.0)), uint4(round(fourth * 255.0))};
   uint4 b = uint4(round(backdrop * 255.0));
-  uint4 s = uint4(round(ids * 255.0));
-  if (layers == 0) {
+  uint4 previous_ids = uint4(round(ids * 255.0));
+  uint4 previous_alphas = uint4(round(alphas * 255.0));
+  if (all(layers == uint4(0))) {
     d = skia_blit(mode, m, src, src.a, d, fsrc);
-    s.x = 0;
+    previous_ids = 0;
   } else {
-    // Blit into the layer's pixel and blend the layers onto their backdrop, as Chromium
-    // composites them once at the end. The state is resumed if this outer layer left it and
-    // the target still shows it (nothing else painted over it); else the layer starts here,
-    // transparent, over the target.
-    uint id1 = (layers >> 8) & 0xFF, a1 = layers & 0xFF;
-    uint id2 = layers >> 24, a2 = (layers >> 16) & 0xFF;
-    bool resume = s.x == id1 &&
-        all(skia_layer(s.y != 0 ? skia_layer(l2, l1, s.z) : l1, b, a1) == d);
+    uint4 next_ids = layers >> 8, next_alphas = layers & 0xFF;
+    bool resume = previous_ids.x == next_ids.x &&
+        all(skia_layer(layer_pixel(pixels, previous_ids, previous_alphas),
+                       b, next_alphas.x) == d);
     if (!resume) {
       b = d;
-      l1 = 0;
-      s.y = 0;
+      previous_ids = 0;
     }
-    if (s.y != 0 && s.y != id2) {
-      // The inner layer ended: Chromium restores it into the outer one.
-      l1 = skia_layer(l2, l1, s.z);
-      s.y = 0;
+    int shared = 0;
+    while (shared < 4 && next_ids[shared] != 0 &&
+           previous_ids[shared] == next_ids[shared]) {
+      ++shared;
     }
-    if (id2 == 0 && mode == 7) {
-      // viz's software renderer blits a clipped quad's px at partial coverage `cov` with
-      // `SkBlendARGB32` (`blitAntiH`); at 0 the layer's pixel stays. The layer is kept.
-      uint cov = 255 - m;
-      d = cov == 0 ? l1 : skia_blit(1, cov, b, b.a, l1, float4(0.0));
-    } else if (id2 == 0) {
-      l1 = skia_blit(mode, m, src, src.a, l1, fsrc);
-      d = skia_layer(l1, b, a1);
-    } else {
-      if (s.y == 0) {
-        l2 = 0;
-        s.yz = uint2(id2, a2);
+    // Restore ended children before painting their surviving parent.
+    for (int index = 3; index >= max(shared, 1); --index) {
+      if (previous_ids[index] != 0) {
+        pixels[index - 1] = skia_layer(pixels[index], pixels[index - 1],
+                                     previous_alphas[index]);
       }
-      l2 = skia_blit(mode, m, src, src.a, l2, fsrc);
-      d = skia_layer(skia_layer(l2, l1, a2), b, a1);
     }
-    s.x = id1;
+    int innermost = 0;
+    for (int index = 0; index < 4; ++index) {
+      if (next_ids[index] != 0) {
+        innermost = index;
+        if (index >= shared) {
+          pixels[index] = 0;
+        }
+      }
+    }
+    if (innermost == 0 && mode == 7) {
+      uint coverage = 255 - m;
+      d = coverage == 0 ? pixels[0]
+                       : skia_blit(1, coverage, b, b.a, pixels[0], float4(0.0));
+    } else {
+      pixels[innermost] = skia_blit(mode, m, src, src.a, pixels[innermost], fsrc);
+      d = skia_layer(layer_pixel(pixels, next_ids, next_alphas), b, next_alphas.x);
+    }
+    previous_ids = next_ids;
+    previous_alphas = next_alphas;
   }
-  return SpriteLayerTargets{float4(d) / 255.0, float4(l1) / 255.0, float4(l2) / 255.0,
-                                 float4(b) / 255.0, float4(s) / 255.0};
+  return SpriteLayerTargets{
+      float4(d) / 255.0, float4(pixels[0]) / 255.0, float4(pixels[1]) / 255.0,
+      float4(b) / 255.0, float4(previous_ids) / 255.0, float4(pixels[2]) / 255.0,
+      float4(pixels[3]) / 255.0, float4(previous_alphas) / 255.0};
 }
 
 fragment SpriteLayerTargets monochrome_sprite_fragment(
@@ -803,7 +823,8 @@ fragment SpriteLayerTargets monochrome_sprite_fragment(
     constant MonochromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
     texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]],
     float4 target [[color(0)]], float4 outer [[color(1)]], float4 inner [[color(2)]],
-    float4 backdrop [[color(3)]], float4 ids [[color(4)]]) {
+    float4 backdrop [[color(3)]], float4 ids [[color(4)]],
+    float4 third [[color(5)]], float4 fourth [[color(6)]], float4 alphas [[color(7)]]) {
   if (any(input.clip_distance < float4(0.0))) {
     discard_fragment();
   }
@@ -815,11 +836,16 @@ fragment SpriteLayerTargets monochrome_sprite_fragment(
   // Chromium's (Skia) 8-bit blits: premultiplied 8-bit color, each mode's integer formula.
   // Reads the targets by framebuffer fetch; blending is off for this pipeline.
   uint m = uint(round(sample.a * 255.0));
-  uint mode = input.skia_mode, layers = input.layers;
+  uint mode = input.skia_mode;
+  uint4 layers = input.layers;
   bool scales = mode == 7 || mode == 5 || mode == 8;
-  if ((m == 0 && !scales) || (scales && layers == 0)) {
+  if ((m == 0 && !scales) || (scales && all(layers == uint4(0)))) {
     // Every ordinary blit at coverage 0 leaves the pixel unchanged; mask modes need a layer.
     discard_fragment();
+  }
+  if (mode == 9) {
+    mode = 1;
+    m = 0;
   }
   uint4 c = uint4(round(saturate(input.color) * 255.0));
   uint3 prod = c.rgb * c.a + 128;
@@ -831,7 +857,8 @@ fragment SpriteLayerTargets monochrome_sprite_fragment(
   if (any(input.color.rgb > 1.0)) {
     mode = mode == 0 || mode == 2 ? 4 : mode == 3 ? 6 : mode;
   }
-  return composite_sprite(mode, m, src, fsrc, layers, target, outer, inner, backdrop, ids);
+  return composite_sprite(mode, m, src, fsrc, layers, target, outer, inner, backdrop,
+                          ids, third, fourth, alphas);
 }
 
 struct PolychromeSpriteVertexOutput {
@@ -909,7 +936,8 @@ fragment SpriteLayerTargets polychrome_sprite_layer_fragment(
     constant PolychromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
     texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]],
     float4 target [[color(0)]], float4 outer [[color(1)]], float4 inner [[color(2)]],
-    float4 backdrop [[color(3)]], float4 ids [[color(4)]]) {
+    float4 backdrop [[color(3)]], float4 ids [[color(4)]],
+    float4 third [[color(5)]], float4 fourth [[color(6)]], float4 alphas [[color(7)]]) {
   PolychromeSprite sprite = sprites[input.sprite_id];
   constexpr sampler image_sampler(mag_filter::linear, min_filter::linear);
   float4 sample = atlas_texture.sample(image_sampler, input.tile_position);
@@ -922,8 +950,9 @@ fragment SpriteLayerTargets polychrome_sprite_layer_fragment(
   }
   sample.a *= sprite.opacity * coverage;
   float4 src = float4(sample.rgb * sample.a, sample.a);
-  return composite_sprite(4, 255, uint4(round(saturate(src) * 255.0)), src, sprite.layers,
-                          target, outer, inner, backdrop, ids);
+  uint4 layers(sprite.layers[0], sprite.layers[1], sprite.layers[2], sprite.layers[3]);
+  return composite_sprite(4, 255, uint4(round(saturate(src) * 255.0)), src, layers,
+                          target, outer, inner, backdrop, ids, third, fourth, alphas);
 }
 
 struct PathRasterizationVertexOutput {
@@ -1361,6 +1390,8 @@ GradientColor prepare_fill_color(uint tag, uint color_space, Hsla solid,
       out.color0 = srgb_to_oklab(out.color0);
       out.color1 = srgb_to_oklab(out.color1);
     }
+    out.color0.rgb *= out.color0.a;
+    out.color1.rgb *= out.color1.a;
   }
 
   return out;
@@ -1413,28 +1444,23 @@ float4 fill_color(Background background,
         - background.colors[0].percentage);
       t = clamp(t, 0.0, 1.0);
 
-      switch (background.color_space) {
-        case 0:
-          color = mix(color0, color1, t);
-          break;
-        case 1: {
-          float4 oklab_color = mix(color0, color1, t);
-          color = oklab_to_srgb(oklab_color);
-          break;
-        }
+      color = mix(color0, color1, t);
+      if (color.a > 0.0) {
+        color.rgb /= color.a;
+      }
+      if (background.color_space == 1) {
+        color = oklab_to_srgb(color);
       }
 
-      // Dither to reduce banding in gradients (especially dark/alpha).
-      // Triangular-distributed noise breaks up 8-bit quantization steps.
-      // ±2/255 for RGB (enough for dark-on-dark compositing),
-      // ±3/255 for alpha (needs more because alpha × dark color = tiny steps).
-      {
-        float2 seed = position * 0.6180339887; // golden ratio spread
-        float r1 = fract(sin(dot(seed, float2(12.9898, 78.233))) * 43758.5453);
-        float r2 = fract(sin(dot(seed, float2(39.3460, 11.135))) * 24634.6345);
-        float tri = r1 + r2 - 1.0; // triangular PDF, range [-1, +1]
-        color.rgb += tri * 2.0 / 255.0;
-        color.a   += tri * 3.0 / 255.0;
+      // Skia dithers premultiplied RGB with its ordered 8x8 matrix, not alpha.
+      uint2 pixel = uint2(position);
+      uint row = pixel.y ^ pixel.x;
+      uint value = ((row & 1) << 5) | ((pixel.x & 1) << 4) |
+                   ((row & 2) << 2) | ((pixel.x & 2) << 1) |
+                   ((row & 4) >> 1) | ((pixel.x & 4) >> 2);
+      float dither = (float(value) / 64.0 - 63.0 / 128.0) / 255.0;
+      if (color.a > 0.0) {
+        color.rgb = clamp(color.rgb * color.a + dither, float3(0.0), float3(color.a)) / color.a;
       }
 
       break;

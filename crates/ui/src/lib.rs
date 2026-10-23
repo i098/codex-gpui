@@ -24,11 +24,14 @@ pub mod dialog;
 pub mod fixture;
 pub mod focus;
 pub mod icon;
+mod image_context;
 pub mod motion;
+pub mod native_text;
 pub mod screens;
 pub mod settings_kit;
 pub mod toast;
 pub mod tooltip;
+pub mod updater;
 
 actions!(
     shell,
@@ -49,7 +52,7 @@ actions!(
         OpenMobileSetup,
         /// `⌥⌘B`: show or hide the Changes side panel.
         ToggleChangesPanel,
-        /// A file change card's `View changes`, the thread summary's `Changes` row.
+        /// The thread summary's `Changes` row and generic Changes navigation.
         OpenChangesPanel,
         /// Thread summary ▸ `Background processes` row: the command's terminal tab.
         OpenBackgroundTerminal,
@@ -63,8 +66,27 @@ actions!(
 #[action(namespace = shell, no_json)]
 pub struct SetTheme(pub &'static str);
 
+/// A change card opens review with an override for this exact requested path.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = shell, no_json)]
+pub struct ViewChanges(pub String);
+
 // Edit menu commands; text inputs handle them.
-actions!(edit, [Undo, Redo, Cut, Copy, Paste, SelectAll]);
+actions!(
+    edit,
+    [
+        Undo,
+        Redo,
+        Cut,
+        Copy,
+        Paste,
+        PasteAndMatchStyle,
+        DeleteSelection,
+        SelectAll,
+        StartSpeaking,
+        StopSpeaking,
+    ]
+);
 
 /// `--app-shell-navigation-rail-width`
 pub const RAIL_WIDTH: Pixels = px(52.);
@@ -111,6 +133,8 @@ pub struct Shell {
     /// composited layer (Chromium's layer tree of refs/diff), not part of the page's; the shell
     /// draws its right corners' px of partial clip coverage.
     pub main_layer: bool,
+    /// The opaque accelerated scroller that can occlude the page frame.
+    pub main_opaque_scroll: Option<gpui::ScrollHandle>,
     /// With `main_composited`: the main view draws its right corners' px of partial clip
     /// coverage itself, after the shell (a lone thread: `shapes::paint_clipped_tile`).
     pub main_clips_right: bool,
@@ -160,6 +184,7 @@ impl Shell {
             main_backgrounds: 0,
             main_composited: false,
             main_layer: false,
+            main_opaque_scroll: None,
             main_clips_right: false,
             attention: false,
             profile_menu: false,
@@ -962,7 +987,13 @@ impl Shell {
     /// (`background-clip: padding-box`) paint with the page in `render`: with the sidebar open
     /// the left edge is square and the right corners are rounded by its `clip-path`; with it
     /// closed it is a plain 12 px rounded box. `left` is its edge, `open` its shape.
-    fn main_panel(&self, left: Pixels, open: bool, focus: &gpui::FocusHandle) -> Div {
+    fn main_panel(
+        &self,
+        left: Pixels,
+        open: bool,
+        focus: &gpui::FocusHandle,
+        hairline_width: Pixels,
+    ) -> Div {
         let r = Theme::RADIUS_XL_BASE;
         let panel = div()
             .tab_group()
@@ -976,12 +1007,12 @@ impl Shell {
             .overflow_hidden()
             .child(self.main.clone());
         if self.main_composited {
-            return panel.left(if open { left + MAIN_HAIRLINE } else { left });
+            return panel.left(if open { left + hairline_width } else { left });
         }
         // The `clip-path` box (its left corners under the open sidebar): Skia rasters main's
         // draws under that anti-aliased clip, but not its composited layers.
         let (left, inset) = if open {
-            (left - r, r + MAIN_HAIRLINE)
+            (left - r, r + hairline_width)
         } else {
             (left, px(0.))
         };
@@ -1004,6 +1035,11 @@ impl Shell {
     }
 
     fn titlebar(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let fullscreen_shift = if window.is_fullscreen() {
+            px(80.)
+        } else {
+            px(0.)
+        };
         // The header is the window drag region (`-webkit-app-region: drag`, macOS hiddenInset);
         // its buttons are `no-drag`: each stops the press before the move handler below.
         // Disabled history controls do not participate in keyboard navigation.
@@ -1058,13 +1094,16 @@ impl Shell {
                 }
             })
             .child(tooltip(
-                back.left(px(88.)).on_click(dispatch::<GoBack>),
+                back.left(px(88.) - fullscreen_shift)
+                    .on_click(dispatch::<GoBack>),
                 "Back",
                 Some("⌘["),
                 Side::Bottom,
             ))
             .child(tooltip(
-                forward.left(px(122.)).on_click(dispatch::<GoForward>),
+                forward
+                    .left(px(122.) - fullscreen_shift)
+                    .on_click(dispatch::<GoForward>),
                 "Forward",
                 Some("⌘]"),
                 Side::Bottom,
@@ -1089,7 +1128,7 @@ impl Shell {
                         "Show sidebar"
                     })
                     .absolute()
-                    .left(px(156.))
+                    .left(px(156.) - fullscreen_shift)
                     .top(px(8.))
                     .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                         sidebar_focus.read(cx).handle.clone().focus(window, cx);
@@ -1218,6 +1257,8 @@ impl Render for Shell {
         // of progress; its hairline fades out over 0.2 to 0.05 while closing.
         let open = progress > 0.1;
         let main_left = RAIL_WIDTH + (self.sidebar_width - RAIL_WIDTH) * progress;
+        let scale = window.scale_factor();
+        let hairline_width = px((f32::from(MAIN_HAIRLINE) * scale).floor().max(1.) / scale);
         let hairline_alpha = if self.sidebar_open {
             1.
         } else {
@@ -1261,6 +1302,8 @@ impl Render for Shell {
             let c = gpui::Rgba::from(t.surface);
             [c.r, c.g, c.b, 1.].map(|v| (v * 255.).round() as u8)
         };
+        #[cfg(target_os = "macos")]
+        let opaque_scroll = self.main_opaque_scroll.clone();
         // The page frame over the root `bounds`.
         let frame = move |bounds: Bounds<Pixels>,
                           fills: u8,
@@ -1277,9 +1320,9 @@ impl Render for Shell {
                 page_surface.bottom_right(),
             );
             let line = open.then(|| {
-                let line = Bounds::new(main.origin, size(MAIN_HAIRLINE, main.size.height));
-                main.origin.x += MAIN_HAIRLINE;
-                main.size.width -= MAIN_HAIRLINE;
+                let line = Bounds::new(main.origin, size(hairline_width, main.size.height));
+                main.origin.x += hairline_width;
+                main.size.width -= hairline_width;
                 line
             });
             let main_surface = |window: &mut Window, cx: &mut App| {
@@ -1293,6 +1336,13 @@ impl Render for Shell {
             window.with_skia_layer(255, |window| {
                 shapes::paint(&layout, None, bounds, window, cx);
                 shapes::paint(&surface, None, page_surface, window, cx);
+                #[cfg(target_os = "macos")]
+                if main_layer
+                    && let Some(scroll) = &opaque_scroll
+                    && scroll.max_offset().y > px(0.)
+                {
+                    shapes::paint_page_occlusion(bounds, scroll.bounds(), under, window, cx);
+                }
                 if !main_layer {
                     main_surface(window, cx);
                 }
@@ -1430,7 +1480,7 @@ impl Render for Shell {
             .bg(under)
             .child(page)
             .when(progress > 0., |d| d.child(self.sidebar_panel(&t, progress)))
-            .child(self.main_panel(main_left, open, &main_focus))
+            .child(self.main_panel(main_left, open, &main_focus, hairline_width))
             .when(composited || self.main_backgrounds > 0, |d| {
                 d.child(corners)
             })

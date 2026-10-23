@@ -2,6 +2,7 @@
 // Mac's chrome-headless-shell through an ssh tunnel, see README) and returns {send, evaluate, close};
 // close() disposes the context.
 const CDP = process.env.R1_CDP || "http://127.0.0.1:19444";
+const HIDDEN_RUNNER = /^https:\/\/cdn\.platform\.openai\.com\/deployments\/dil\/v\d+\/runner\.html(?:[?#]|$)/;
 
 export async function openPage() {
   const { webSocketDebuggerUrl } = await (await fetch(`${CDP}/json/version`)).json();
@@ -39,4 +40,36 @@ export async function openPage() {
     ws.close();
   };
   return { send, evaluate, on, close, sessionId };
+}
+
+export async function navigate(page, path, { state, replace = false, timeoutMs = 90000 } = {}) {
+  if (typeof path !== "string" || !path.startsWith("/") || new URL(path, "http://route1.invalid").origin !== "http://route1.invalid")
+    throw new TypeError("Use an application route starting with /");
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new RangeError("Invalid navigation timeout");
+  // The original uses a memory router, not window.location or browser history.
+  await page.evaluate(`(async () => {
+    const deadline = performance.now() + ${JSON.stringify(timeoutMs)};
+    const wait = async (ready) => {
+      while (!ready()) {
+        if (performance.now() >= deadline) throw new Error("Original route handler did not become ready");
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+    };
+    await wait(() => window.__R1__?.appShared);
+    let importTimer;
+    const shared = await Promise.race([
+      import(window.__R1__.appShared),
+      new Promise((_, reject) => {
+        importTimer = setTimeout(() => reject(new Error("Original module exceeded the navigation timeout")), Math.max(0, deadline - performance.now()));
+      }),
+    ]).finally(() => clearTimeout(importTimer));
+    if (!("Nvn" in shared)) throw new Error("Pinned original host-message bus is unavailable");
+    await wait(() => shared.Nvn?.handlers.get("navigate-to-route")?.size);
+    shared.Nvn.dispatchHostMessage(${JSON.stringify({ type: "navigate-to-route", path, state, replace })});
+  })()`);
+}
+
+export function isCaptureRequest({ type, loaderId, request }) {
+  return type !== "EventSource" && !!loaderId && /^https?:/.test(request.url)
+    && !(type === "Document" && HIDDEN_RUNNER.test(request.url));
 }

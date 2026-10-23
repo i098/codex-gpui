@@ -19,11 +19,15 @@ Stop and fix the cause if a new report appears.
 - **PASS (flow)**: the named flow or slice test in `crates/app/tests/` passes.
 - **FAIL (why)**: the port behaves differently, or no flow can reach the row yet (the reason tells which).
 - **NOT WIRED (owner)**: the port has no handler for the row; the owner file must add it.
+- **BOUNDARY (original)**: the accepted original fixture does not expose the action or screen.
 
 The "Original" column gives the behavior from the inventory.
-The rows were not clicked again on the original through `tools/route1`: its `server.mjs` starts a live `codex app-server` with `CODEX_HOME=/tmp/cgx-mac/home`, and this lane must not touch that directory.
+Section 14.7 also uses owned, offline captures of the original renderer.
+These captures do not use a live account or change a normal profile.
 
-## Totals
+## Historical totals before the Settings action work
+
+This table preserves the earlier audit totals; section 14.7 records the later Settings work.
 
 | Screen | Rows | PASS | FAIL | NOT WIRED |
 |---|---|---|---|---|
@@ -31,14 +35,14 @@ The rows were not clicked again on the original through `tools/route1`: its `ser
 | 14.1 Left rail | 12 | 4 | 1 | 7 |
 | 14.2 Sidebar | 23 | 12 | 4 | 7 |
 | 14.3 Home | 21 | 10 | 3 | 8 |
-| 14.4 Thread view | 20 | 6 | 3 | 11 |
+| 14.4 Thread view | 20 | 11 | 2 | 7 |
 | 14.5 Composer | 20 | 6 | 5 | 9 |
 | 14.6 Diff view | 20 | 14 | 5 | 1 |
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 10 | 0 | 0 |
 | 15.3 Mobile setup | 10 | 3 | 2 | 5 |
-| **All** | **192** | **75** | **32** | **85** |
+| **All** | **192** | **92** | **35** | **65** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -325,6 +329,19 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 
 ## 14.3 Home
 
+The retained native Home input capture reaches `Choose project` and `This computer` with Tab and Shift-Tab.
+Pointer movement keeps the keyboard ring; a pointer press clears it.
+Tab and Shift-Tab scroll an overflowing utility bar to the focused control.
+`Choose project` keeps the existing native folder picker; `This computer` still has no location-menu handler.
+The original `⌥⇧⌘O` shortcut and `⌘O` open that same picker.
+Home derives live fades from the scroll range and captures the finished-animation mask for static references.
+Both utility icons use the runtime path so the scroll masks affect their pixels.
+The capture regression checks live-state restoration, another window, a closed-window error, and the reduced-motion preference.
+The focused project-control crop now matches the original, including the tooltip shadow over the ring.
+The original recordings, masks and strict gates stay unchanged; remaining tooltip and rail differences are tracked separately.
+
+New chat adds a Back entry even when Home is already open.
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Launch to `/` | entry | Hero, announcement slot and composer. | Route Home, rail Home selected, composer focused, Recents loaded. | PASS (`launch_home`, `parity_home`) |
@@ -343,20 +360,25 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 | 14 | `Start new voice chat` | click | Starts realtime voice. | With an empty draft the button calls `submit`, which does nothing. | NOT WIRED (`crates/ui/src/composer.rs`, `send`) |
 | 15 | Submit with Enter | shortcut | `thread/start`, `turn/start`, navigates to the thread. | Same; the turn streams in; the draft clears; also by clicking Send. | PASS (`submit_enter_starts_thread`, `submit_click_send`) |
 | 16 | Hover on every button | hover | Ghost background fades in. | Hover fill on composer buttons (checked on `Dictate`). | PASS (`composer_button_hover`) |
-| 17 | Tab through controls | focus ring | 2 px ring. | No tab stops. | NOT WIRED (`crates/ui/src/composer.rs`, `crates/ui/src/screens/home.rs`) |
+| 17 | Tab through controls | focus ring | 2 px ring. | `Choose project` and `This computer` have tab stops; the native capture proves focus traversal, not menu activation. | NOT WIRED (remaining composer controls) |
 | 18 | No projects / no chats | empty | `No projects`, `No chats`, `What should we build?`. | Same with an empty `thread/list`. | PASS (`sidebar_empty_lists`) |
 | 19 | Model list loading | loading | `Loading model…`. | Empty `model/list` shows `Loading model…` (the pill repaints). | PASS (`model_list_loading`) |
 | 20 | Account load failure | error | `We couldn’t load your account`, `Reload`, `Sign out`. | An `account/read` error stops `Root::connect`; the window stays empty. | FAIL (`crates/app/src/lib.rs` `connect`; no error page in `crates/ui`) |
 | 21 | Resize | resize | Below 768 px the sidebar is an overlay; below 40rem the composer stacks. | Sidebar hides (row 14.2/23); composer does not stack. | FAIL (`crates/ui/src/composer.rs`: only the 475 px compact footer) |
+
+The shared Composer session API includes `finish_dictation(window, cx)` and `Completion` events.
+Success follows transcript processing; failure and cancellation remain distinct.
+Consumers can wait before submitting a draft. A closed event stream fails instead of leaving the session active.
+`cargo test -p ui --lib composer::dictation` checks completion order, cancellation, and closed streams without microphone access.
 
 ## 14.4 Thread view
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Open `/local/:conversationId` | entry | `thread/resume`, turns render, scroll to bottom. | `thread/read` with turns (resume on the first send); parity: see `parity_thread`. | PASS (`thread_row_opens_thread`, `parity_thread`) |
-| 2 | History loading | loading | `Loading task…`. | The main panel is empty while `thread/read` runs. | NOT WIRED (`crates/ui/src/thread.rs`: no loading view; `crates/app/src/lib.rs` `sync` shows `EmptyMain`) |
-| 3 | History failure | error | `Couldn't load messages` + `Retry`. | The error is logged; the panel stays empty. | FAIL (`crates/app/src/lib.rs` `load_thread` only logs; no error view in `crates/ui/src/thread.rs`) |
-| 4 | Turn render failure | error | `This turn couldn't render`. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
+| 2 | History loading | loading | Spinner; `Loading task…` for assistive technology. | The loading view remains visible during `thread/read`. The spinner uses the original SVG in its own raster layer and retains its rotation timing. The composer stays unmounted, so hidden bindings cannot send or approve in another chat. | PASS (`thread_recovery`: hidden-composer regression and zero differences over the 3600-pixel spinner region; `native_icon_rotation_preserves_its_raster`) |
+| 3 | History failure | error | `Couldn't load messages` + `Retry`. | The squircle warning shares its opaque footer's compositor layer above the original fade. Its Retry tooltip and accessibility label retain the source error. Retry reads the same thread again. Late responses cannot replace another route. | PASS (`thread_recovery`: button-bound retry and route change; complete 123984-pixel warning comparison: zero differences) |
+| 4 | Turn render failure | error | `This turn couldn't render`. | A failed turn leaves other turns visible. Try again rebuilds that turn from current data. Its tooltip and accessibility label retain the source error. The squircle card and Retry fill use the original viewport layer; Retry keeps its hover behavior and border-box size. | PASS (`thread_recovery`: Linux render failure and retry without a graphics adapter; original-context component: zero differences over 233208 pixels, hover and restoration checked without a Mac panic) |
 | 5 | Streaming agent message | loading | Text grows by deltas; new segments fade over 700 ms; `Working` shimmer. | New glyphs use the recorded adaptive fade. Later deltas do not restart older glyphs. Reduced motion shows the end state immediately. Shimmer belongs to S5. | PASS (`submit_enter_starts_thread`, `stream_fade`) |
 | 6 | Reasoning item | click | Toggles `Thought for {elapsed}`. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 7 | Command card | click | Expands output; copy buttons. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
@@ -369,8 +391,8 @@ The existing replay checks the original colors, row actions, tooltips, canceled 
 | 14 | `⌘⇧A` | shortcut | Archives the chat. | `ArchiveChat`: `thread/archive`, the row leaves Recents, the route goes to Home. | PASS (`archive_chat`) |
 | 15 | `⌘⌥R` | shortcut | Rename dialog. | — | NOT WIRED (`crates/ui`: no rename dialog) |
 | 16 | Approval card | click | Approve, Allow similar, Allow all edits, Deny. | `Root::on_event` keeps each pending request by its request id and thread. The open thread shows its oldest request. Command, file-change, permission, user-input, standard MCP elicitation, and supported dynamic-tool forms use this queue. Responses retain the displayed card's identity. Explicit resolution removes requests without answering them. Turn completion removes only turn-bound requests. | PASS (`approval_queue.rs`: command/file-change queue order, withdrawal, thread isolation and turn end; non-command release gates remain open below) |
-| 17 | Stream error | error | `Reconnecting {progress}`. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
-| 18 | Usage limit | error | Usage limit banner. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
+| 17 | Stream error | error | `Reconnecting {progress}`. | Thread-bound notices show reconnect progress or busy status for `serverOverloaded` and HTTP 429 stream disconnects. Each digit uses the original character width and a separate layer. The suffix keeps its fractional position. Progress updates replace the current retry count. Later activity and completion retain source notices with their turn. | PASS (`thread_recovery`: thread and turn isolation, progress, busy status, retained notices, and zero pixel differences in both counter regions) |
+| 18 | Usage limit | error | Usage limit banner. | `usageLimitExceeded` shows the divider and the advice for the plan reported by `account/read`. Unknown plans use the retry-later fallback. Source details remain available, and completion retains terminal errors. | PASS (`thread_recovery`: account-plan advice and source-error retention) |
 | 19 | Focus ring on cards | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 20 | Resize | resize | The side panel yields width before the chat column. | `panel_width` keeps 320 px for the chat; no flow checks the 3 widths with the panel open. | FAIL (no flow; `crates/ui/src/diff.rs` `panel_width` assumes the sidebar open) |
 
@@ -396,6 +418,11 @@ MCP responses use `action`, optional empty `content`, and the selected `_meta.pe
 The host retains the disclosure choice only after an accepted response enters the bridge.
 Run `cargo test -p app --test computer_use_approvals`; the native replay and captures require macOS.
 
+The native recovery replay runs with `cargo test -p app --test thread_recovery -- --test-threads=1`.
+It exercises Root, ThreadView, the replayed JSON-RPC bridge and the Metal renderer on macOS.
+The deliberate render-panic case runs only on Linux. The Mac suite exits on unexpected panics to prevent system crash dialogs.
+Set `CGX_THREAD_RECOVERY_PROOF` to an output directory to retain native captures.
+
 MO-36 uses `refs/interactions/ms4.json`, recorded with the original CSS classes in an isolated route1 Chrome context.
 The recording appends synthetic markdown spans and seeks their animations; it does not measure live model segmentation.
 Run `tools/mac.sh -l ms4 'cargo test -p app --test stream_fade'` for native glyph-alpha checks.
@@ -419,7 +446,7 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 |---|---|---|---|---|---|
 | 1 | Composer in thread | entry | `Work with Codex` (idle) or `Working…`. | Docked thread composer, focused on open; `Working…` not checked. | PASS (`shift_enter_newline`, `parity_thread`) |
 | 2 | Type text | focus | Editor grows to a max height, then scrolls. | Lines add; height growth not measured. | FAIL (no flow checks the max height) |
-| 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Enter sends; no `Send shortcut` setting. | PASS (`submit_enter_starts_thread`) |
+| 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Reads `desktop.composerEnterBehavior` at startup and after successful writes. `cmdAlways` requires Command+Enter; `cmdIfMultiline` requires it for multiline drafts. Shift+Enter inserts a line break. | PASS (`submit_enter_starts_thread`, `send_shortcut_controls_enter_without_changing_shift_enter`) |
 | 4 | Shift+Enter | shortcut | New line. | New line in the Home and thread composers. | PASS (`shift_enter_newline`) |
 | 5 | `@` | shortcut | Mention list. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 6 | `/` | shortcut | Slash command menu. | Matches the recorded menu, filtering, selected row, editor focus, arrows, Escape, Enter, and Tab. | PASS (`s021::slash_menu_keyboard_replay`) |
@@ -562,6 +589,10 @@ Paired replacement lines mark the changed text range.
 The header and context menu share the same word-wrap state.
 The file viewer handles `⌘L`, clamps line numbers, and counts negative numbers from the end.
 The line input stays closed until file contents are available.
+The `git-file-url` host read uses the current branch for a GitHub origin, as in the original.
+It encodes path segments and can include a line anchor.
+Other origins return no link.
+A detached HEAD returns no link.
 The parser stops above 2,000,000 input bytes, 20,000 input lines, or 10,000 bytes per input line.
 Invalid hunk numbers show `Diff failed to render` instead of overflowing a line counter.
 File boundaries must start a line; a `diff --git` string inside changed code does not split the file.
@@ -666,6 +697,25 @@ The scenario checks real branch refs, retained file contents, commit recovery, a
 It also checks an exact tag checkout followed by native reattachment, a real `heads/main` branch, and committing dirty detached work.
 Its thread data uses replay fixtures, not a live installed-account session.
 
+### Native worktree ownership and GitHub process transport
+
+`LocalHost` accepts the native `worktree-set-owner-thread` request and the Git worker's `set-worktree-owner-thread` request.
+Both persist the original `codex-thread.json` format in a linked worktree's Git directory.
+The main checkout is not a valid ownership target.
+`automation_worktree::creates_the_automation_worktree_at_the_remote_default_without_touching_the_source` checks both request names against the same fixture.
+
+`host::git_pr::execute` runs an argv vector through the connected app-server's `process/spawn` method.
+It subscribes before spawning, matches `process/exited` by handle, and returns the exit code, stdout, stderr, and capture-limit flags.
+The caller supplies an absolute working directory and a timeout in milliseconds.
+One deadline bounds the spawn reply and process exit.
+Timeout cleanup sends `process/kill` without waiting for its reply.
+Dropped requests release their pending reply slots.
+The deadline regression delays spawn and cleanup replies; neither delay extends the caller's timeout.
+The transport disables Git and GitHub prompts and does not run a local shell.
+These trusted UI commands run without a Codex sandbox.
+Connection failures and process-spawn failures remain errors.
+The original bundled app-server smoke checked concurrent handles, separate stdout and stderr, and a nonzero exit code.
+
 ## 14.7 Settings, login and onboarding
 
 A settings row reports its change to `Root`.
@@ -678,7 +728,9 @@ S034 covers ST-003 and ST-026 with the unchanged off/on samples in `refs/interac
 The replay advances the virtual clock by the original 150 ms transition before checking settled pixels.
 Enabled switches use the existing GPUI native click path for Enter and Space, without duplicate key handlers.
 The replay checks pointer focus without a ring, the blue keyboard ring, saved values, reload, and Back navigation.
-S034b still checks the recorded sign-in path; no account or authentication changes are part of this repair.
+S034b checks the recorded sign-in request, browser URL, pending view, and Home after completion.
+Managed sign-in requirements finish before the app reports startup readiness.
+The unmanaged-policy fallback uses the already loaded configuration instead of reading it again.
 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
@@ -687,21 +739,47 @@ S034b still checks the recorded sign-in path; no account or authentication chang
 | 3 | Nav item | click | Navigates to `/settings/:section`. | The page changes (1488938 px repainted). | PASS (`settings_nav_click`) |
 | 4 | Search settings | focus | Filters; `No results found`. | Typing filters the nav to `No results found`; Escape clears. | PASS (`settings_search`) |
 | 5 | Theme Light/Dark/System | click | Applies the theme at once. | Appearance ▸ Theme (`Light`, `Dark`, `System`) dispatches `SetTheme`; `Root::set_theme` applies and persists it. | PASS (`appearance_theme_control`) |
-| 6 | Collapse nav | click | `Collapse settings navigation`. | — | NOT WIRED (`crates/ui/src/screens/settings.rs` `SettingsNav`) |
+| 6 | Collapse nav | click | The captured Settings route passes `canCollapse:false`. | No collapse control is added. | BOUNDARY (`settings-page-50e3fab957b6.js`) |
 | 7 | Row hover | hover | Row highlight. | Highlight shows. | PASS (`settings_nav_hover`) |
-| 8 | Keyboard nav | focus ring | Ring on rows and controls. | S034 proves pointer focus, Enter/Space activation, and the keyboard ring on switches. Other rows remain unwired. | NOT WIRED (remaining rows and controls) |
-| 9 | Section loading | loading | Skeleton row. | — | NOT WIRED (`crates/ui/src/screens/settings.rs`) |
-| 10 | Save failure | error | Toast. | The error is logged. | FAIL (`crates/ui/src/screens/settings.rs` `send` only logs; no toast) |
+| 8 | Keyboard nav | focus ring | Ring on rows and controls. | Search, nav rows, selects, segments, and switches use native focus and complete key presses. | PASS (`settings_search_and_theme_work_from_the_keyboard`, S034) |
+| 9 | Section loading | loading | Status row with a spinner and text. | Personal instructions show loading, load failure, and Retry states. | PASS (`instruction_load_failure_can_retry_without_losing_the_page`) |
+| 10 | Save failure | error | Toast. | Failed config writes show an error toast and keep the saved config unchanged. | PASS (`a_failed_setting_write_keeps_the_saved_value_and_shows_an_error`) |
 | 11 | Login `/login` | entry | Sign-in screen. | A signed-out `account/read` shows the sign-in view. | PASS (`signed_out_shows_login`) |
-| 12 | `Continue with ChatGPT` | click | `account/login/start`, waits for `account/login/completed`. | Handler in `Login`. | FAIL (no flow: the fixtures hold no `account/login/*` exchange) |
-| 13 | `Cancel sign-in` | click | `account/login/cancel`. | Handler in `Login`. | FAIL (no flow: no recorded exchange) |
-| 14 | `Copy sign-in link` | click | Copies the URL; toast. | Handler in `Login`. | FAIL (no flow: needs a recorded login URL) |
-| 15 | API key form | focus | `sk-…`; `Continue` when non-empty. | Handler in `Login`. | FAIL (no flow: no recorded `account/login/start` with an API key) |
-| 16 | Login error | error | `Sign-in failed: {rawMessage}`. | `Login::apply` shows it. | FAIL (no flow: no recorded failure) |
-| 17 | Sign-in requirements loading | loading | `Loading sign-in requirements…`. | — | NOT WIRED (`crates/ui/src/screens/settings.rs` `Login`) |
-| 18 | Welcome `/welcome` | entry | Onboarding then Home. | — | NOT WIRED (`crates/app/src/lib.rs`: no onboarding route; no onboarding view in `crates/ui`) |
-| 19 | Select workspace | click | Pick a folder or skip. | — | FAIL (the port takes its project from `$CODEX_GPUI_CWD` or the launch directory, `crates/app/src/main.rs`) |
+| 12 | `Continue with ChatGPT` | click | `account/login/start`, waits for `account/login/completed`. | The recorded request and pending view work; only the active login can complete. | PASS (S034b, `foreign_and_cancelled_browser_logins_cannot_authenticate`) |
+| 13 | `Cancel sign-in` | click | `account/login/cancel`. | Cancel sends the active login ID and ignores its later completion. | PASS (`foreign_and_cancelled_browser_logins_cannot_authenticate`) |
+| 14 | `Copy sign-in link` | click | The original gates this control with `2502927686`; it is absent in the accepted fixture. | The control remains absent. | BOUNDARY (`login-route-27ff39de87da.js`, owned pending-login capture) |
+| 15 | API key form | focus | `sk-…`; `Continue` when non-empty. | A permitted, non-empty key submits; a successful API reply enters Home without opening a browser. | PASS (`a_successful_api_key_reply_enters_the_app_without_a_browser`) |
+| 16 | Login error | error | `Sign-in failed: {rawMessage}`. | The active login failure keeps the raw message and allows a new attempt. | PASS (`a_failed_browser_login_preserves_the_error_and_allows_retry`) |
+| 17 | Sign-in requirements loading | loading | `Loading sign-in requirements…`. | The app gates methods on managed requirements; failed or empty policies cannot start authentication. | PASS (`a_policy_with_no_login_methods_never_starts_authentication`, S034b) |
+| 18 | Welcome `/welcome` | entry | The owned original override renders an empty body. | No welcome screen is invented for this state. | BOUNDARY (owned original capture; instruction004) |
+| 19 | Select workspace | click | Pick a folder or Skip. | A new profile opens workspace selection. Picker cancel stays there; selection or a successful Skip enters Home. | PASS (`workspace_picker_cancel_stays_then_selection_enters_home`, `workspace_skip_creates_a_distinct_project_before_entering_home`) |
 | 20 | Resize | resize | [INFERENCE] The nav collapses on narrow widths. | The settings nav stays at all widths. | FAIL (`crates/app/src/lib.rs` `fit` covers the main shell only; the original behavior is an inference) |
+
+### Personal instructions and workspace storage
+
+ST-093 opens the personal instructions editor from Personalization.
+The host reads `AGENTS.md` under `CODEX_HOME`, or `~/.codex` by default, through `codex-agents-md`.
+The editor shows `Loading instructions…`, or `Unable to load instructions` with Retry.
+Late replies from an earlier instruction load cannot replace a reopened editor or its current draft.
+The editor provides a keyboard-accessible Learn more link to the original instructions guide.
+Its textarea grip resizes the field vertically, down to the original's 96 px `min-h-24` box.
+ST-094 saves through `codex-agents-md-save`; the host replaces the file atomically and preserves its permissions.
+Success shows `Instructions updated`; failure shows `Unable to save instructions` and retains the draft.
+Cancel discards the draft.
+Navigation, Back, window close, and Quit ask `Discard changes?` while edits remain.
+Application-wide Quit checks every open Root window before it exits.
+After discard, native close uses the existing window lifecycle and retains the final primary window on macOS.
+The instructions tests use owned files and cover save, cancel, discard, load failure, and save retry.
+The coordinate-based instructions cases run on macOS because Linux uses the no-op text system.
+The remaining action and host tests also run on Linux.
+
+Existing profiles keep their saved route.
+A missing or unreadable window state starts at `SelectWorkspace`.
+Skip creates an unused `New project` folder under `~/Documents/ChatGPT`, registers it, then enters Home.
+Existing names get a numeric suffix; the host does not overwrite an existing project.
+The workspace tests use an owned host root and the native path-prompt test hook.
+They do not create folders in the normal profile.
+
 
 ## 15.1 Automations ("Scheduled")
 
@@ -724,11 +802,15 @@ Slice S035 proves suggestion hover (AM-037) with `refs/interactions/s035.json` a
 The test replays pointer entry and exit on the existing fixture screen with the original server suggestions.
 It checks the card fill, the adjacent card, and the icon colors against the Linux route1 recording.
 The existing hover implementation already matches; no production code changes are needed.
-Slice S035b proves suggestion click (AM-036) with `refs/interactions/s035b.json` and `crates/app/tests/s035b.rs`.
-The click puts the card in `Starting…` (rays spinner, status text) and disables every card at opacity 0.4.
-`Root` then reads the TPP models through the desktop host like the original's guided start (`conversation-actions` `J`).
-The oracle answers that read with the host's 499, so the recorded outcome is the toast `Couldn’t start this suggested task` and the cards enabled again.
-The conversation prepare, its stream, and the navigation into the started conversation are not recorded and not wired.
+Slice S035b covers the suggestion click (AM-036) with `refs/interactions/s035b.json` and `crates/app/tests/s035b.rs`.
+The original recording shows a failed models read, not a successful guided start.
+The retained live capture reached the Apple DeviceCheck requirement before any conversation or automation write.
+Captain decision 110 selects an unsupported state for this release.
+The click shows `Starting suggested tasks isn’t supported in this version` through the existing danger toast.
+It sends no host request, creates no conversation or task, and keeps the route and every card enabled.
+The native click test checks these effects without changing the recorded fixture.
+Set `S035B_SHOTS` to retain the before and after screenshots outside the Cargo target.
+Ordinary local task creation and the existing draft remain unchanged.
 
 `Run now` (AM-021) is the first item of the row `Scheduled task actions` menu, as in `run-now-11e55df28c95.js`.
 Choosing it sends `automation-run-now` with `{id, collaborationMode, permissions}` and disables duplicate starts until the host answers.
@@ -761,6 +843,7 @@ All native project-state writers use the same locked, atomic `.codex-global-stat
 An assignment failure archives the pending row and sends no turn; the started thread keeps its worktree.
 Legacy folder targets do not receive a project assignment, even when a saved project contains the folder.
 Projectless tasks use the original `nl`/`Ct` allocation under `projectlessWorkspaceRoot`, or `~/Documents/Codex` when that setting is absent.
+The host reads `desktop.projectlessWorkspaceRoot` through `config/read`, matching the General page's configuration write.
 Each run gets a local-date folder and a unique prompt-derived folder with `work` and `outputs` subfolders.
 The host rejects relative roots and symlinks at the root or local-date folder.
 It saves `projectless-thread-ids`, `thread-workspace-root-hints`, and `thread-projectless-output-directories` through the shared atomic global-state writer.
@@ -1124,7 +1207,7 @@ The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/f
 
 ## Native project selection and chat directories
 
-`Choose project`, the selected Home title, `⌘O`, File > Open Folder, and the `Open folder` command use GPUI's folder picker.
+`Choose project`, the selected Home title, `⌘O`, `⌥⇧⌘O`, File > Open Folder, and the `Open folder` command use GPUI's folder picker.
 The picker accepts one folder and does not change the selection or the current chat when canceled.
 The local host adds the folder to the existing `local-projects` and `project-order` records.
 It retains other projects and unrelated values in `.codex-global-state.json`.
@@ -1231,3 +1314,17 @@ The default hover delay and `side_offset` geometry remain unchanged.
 This API does not complete Home focus behavior or add the separate F1d overflow predicate.
 The original Home inputs and edge probes remain unchanged.
 The scoped issue is [Add an opt-in focus API to the shared tooltip](https://github.com/i098/codex-gpui/issues/186).
+
+## Shortcut navigation (SH-044, SH-058, SH-069)
+
+Control-Tab and Control-Shift-Tab open the command menu in `Recently viewed` mode.
+The picker omits the search field and number labels.
+Repeated shortcuts move the selection without changing the open chat.
+Releasing Control opens the selected chat; Escape cancels.
+The picker keeps viewed order separate from the updated order used by Command-Option-number.
+
+Mouse Back and Forward use the same route history as Command-[ and Command-].
+Control-Shift-G opens the existing Changes tab.
+`crates/app/tests/shortcut_navigation.rs` checks these paths on recorded threads.
+The [original/native picker pair](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/9a2941014013a3237d6c7389b13d9c4a3a00e15a0eba9abb/report.html) uses a 520×134 CSS-pixel crop at scale 2.
+It has zero outside-text differences and 45 differing pixels inside 147631 text pixels (0.0305%).

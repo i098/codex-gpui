@@ -68,6 +68,7 @@ use uuid::Uuid;
 
 pub(crate) mod a11y;
 mod prompts;
+mod ui_scale;
 
 pub use a11y::A11ySubtreeBuilder;
 
@@ -1286,6 +1287,8 @@ pub struct Window {
     modifiers: Modifiers,
     capslock: Capslock,
     scale_factor: f32,
+    device_scale_factor: f32,
+    ui_scale: f32,
     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
     appearance: WindowAppearance,
     pub(crate) appearance_observers: SubscriberSet<(), AnyObserver>,
@@ -1665,6 +1668,7 @@ impl Window {
         let scale_factor = platform_window.scale_factor();
         let appearance = platform_window.appearance();
         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
+        text_system.set_scale_factor(scale_factor);
         let invalidator = WindowInvalidator::new(handle.window_id());
         let active = Rc::new(Cell::new(platform_window.is_active()));
         let visibility = platform_window.visibility();
@@ -2196,6 +2200,8 @@ impl Window {
             modifiers,
             capslock,
             scale_factor,
+            device_scale_factor: scale_factor,
+            ui_scale: 1.,
             bounds_observers: SubscriberSet::new(),
             appearance,
             appearance_observers: SubscriberSet::new(),
@@ -2822,9 +2828,17 @@ impl Window {
     /// the platform window, then notifies observers. Normally called automatically
     /// by the platform's resize callback, but exposed publicly for test infrastructure.
     pub fn bounds_changed(&mut self, cx: &mut App) {
-        self.scale_factor = self.platform_window.scale_factor();
-        self.viewport_size = self.platform_window.content_size();
-        self.mouse_position = self.platform_window.mouse_position();
+        self.device_scale_factor = self.platform_window.scale_factor();
+        self.scale_factor = self.device_scale_factor * self.ui_scale;
+        self.text_system.set_scale_factor(self.scale_factor);
+        self.viewport_size = self
+            .platform_window
+            .content_size()
+            .map(|value| value / self.ui_scale);
+        self.mouse_position = self
+            .platform_window
+            .mouse_position()
+            .map(|value| value / self.ui_scale);
 
         self.refresh();
 
@@ -3168,9 +3182,7 @@ impl Window {
         self.platform_window.show_character_palette();
     }
 
-    /// The scale factor of the display associated with the window. For example, it could
-    /// return 2.0 for a "retina" display, indicating that each logical pixel should actually
-    /// be rendered as two pixels on screen.
+    /// Returns display pixels per logical UI pixel, including the current UI magnification.
     pub fn scale_factor(&self) -> f32 {
         self.scale_factor
     }
@@ -3178,7 +3190,9 @@ impl Window {
     /// Overrides the display scale factor for tests.
     #[cfg(any(test, feature = "test-support"))]
     pub fn set_scale_factor(&mut self, scale_factor: f32) {
-        self.scale_factor = scale_factor;
+        self.device_scale_factor = scale_factor;
+        self.scale_factor = scale_factor * self.ui_scale;
+        self.text_system.set_scale_factor(self.scale_factor);
         self.refresh();
     }
 
@@ -4400,27 +4414,26 @@ impl Window {
     /// None under an opacity of 0: Chromium paints nothing there, and a sprite outside the
     /// layers would reset the layer state of the pixels it covers (a hidden hover fill would
     /// detach the text painted over it from its composited layer).
-    fn sprite_layers(&self) -> Option<u32> {
+    fn sprite_layers(&self) -> Option<[u16; 4]> {
         if self.element_opacity <= 0. {
             return None;
         }
-        let mut layers = self.element_layers.iter();
-        Some(match layers.next() {
-            Some(&(id, alpha)) => {
-                // ponytail: two layers; deeper ones multiply their alpha into the second.
-                let inner = layers.next().map_or(0, |&(id, alpha)| {
-                    let alpha = layers.fold(u32::from(alpha), |a, &(_, b)| {
-                        (a * u32::from(b) + 127) / 255
-                    });
-                    u32::from(id) << 8 | alpha
-                });
-                u32::from(id) << 8 | u32::from(alpha) | inner << 16
+        let mut ancestors = self.element_layers.iter();
+        let mut layers = [0u16; 4];
+        for layer in &mut layers {
+            if let Some(&(id, alpha)) = ancestors.next() {
+                *layer = u16::from(id) << 8 | u16::from(alpha);
             }
-            _ => 0,
-        })
+        }
+        // ponytail: four layer pixels fill Metal's color targets. Deeper alpha folds until a separate pass is needed.
+        for &(_, alpha) in ancestors {
+            let alpha = (u32::from(layers[3] & 255) * u32::from(alpha) + 127) / 255;
+            layers[3] = layers[3] & 0xff00 | alpha as u16;
+        }
+        Some(layers)
     }
 
-    fn sprite_color_and_layers(&self, color: Hsla) -> Option<(Hsla, u32)> {
+    fn sprite_color_and_layers(&self, color: Hsla) -> Option<(Hsla, [u16; 4])> {
         self.sprite_layers().map(|layers| (color, layers))
     }
 
@@ -5172,7 +5185,7 @@ impl Window {
                 order: 0,
                 skia: 1,
                 #[cfg(target_vendor = "apple")]
-                layers: 0,
+                layers: [0; 4],
                 grayscale: false.into(),
                 bounds,
                 corner_radii: Default::default(),
@@ -5348,7 +5361,7 @@ impl Window {
             .scale(self.scale_factor());
         let opacity = self.element_opacity();
         #[cfg(target_vendor = "apple")]
-        let opacity = if layers == 0 { opacity } else { 1. };
+        let opacity = if layers == [0; 4] { opacity } else { 1. };
 
         self.next_frame.scene.insert_primitive(PolychromeSprite {
             order: 0,
@@ -5878,6 +5891,10 @@ impl Window {
     /// Dispatch a mouse, keyboard, or touch event on the window.
     #[profiling::function]
     pub fn dispatch_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
+        self.dispatch_ui_event(ui_scale::input(event, self.ui_scale), cx)
+    }
+
+    fn dispatch_ui_event(&mut self, event: PlatformInput, cx: &mut App) -> DispatchEventResult {
         #[cfg(feature = "profiler")]
         self.window_profiler.begin_input(event.kind_name());
         let update_count_before = self.invalidator.update_count();
@@ -7356,8 +7373,8 @@ impl Window {
                         modifiers: Modifiers::default(),
                         click_count: 1,
                     });
-                    self.dispatch_event(mouse_down, cx);
-                    self.dispatch_event(mouse_up, cx);
+                    self.dispatch_ui_event(mouse_down, cx);
+                    self.dispatch_ui_event(mouse_up, cx);
                 }
             }
             accesskit::Action::Focus => {

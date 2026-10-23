@@ -44,6 +44,8 @@ pub(crate) const DST_IN: u8 = 5;
 pub(crate) const CLIP: u8 = 7;
 /// A compositor opacity mask; coverage stores the inverse byte opacity.
 pub(crate) const OPACITY: u8 = 8;
+/// AAA's `SkBlendARGB32` blit at run alpha 0 (scale 1); the coverage only marks the px.
+const ARGB32_ZERO: u8 = 9;
 
 /// gfx::SizeF's clamp: dimensions at or below 8 epsilon are 0.
 fn clamp(v: f32) -> f32 {
@@ -871,8 +873,8 @@ pub(crate) struct Layer {
     /// cc tile size of the layer ([`cc_tile`]).
     pub(crate) tile: [i32; 2],
     pub(crate) composited: bool,
-    /// The device origin (layer px) of the enclosing [`with_layer`].
-    pub(crate) device: Option<[i32; 2]>,
+    /// The device bounds (layer px) of the enclosing [`with_layer`].
+    pub(crate) device: Option<[i32; 4]>,
     /// Sparse recording's tiling rect, in these coordinates.
     recorded: Option<[i32; 4]>,
 }
@@ -906,14 +908,20 @@ impl Layer {
             };
         // The innermost `with_layer`, else a `saved_layer` div: Skia's layer device.
         let floor = |v: Pixels| (f32::from(v) * s).floor() as i32;
+        let ceil = |v: Pixels| (f32::from(v) * s).ceil() as i32;
         let device = DEVICE
             .get()
             .or_else(|| {
-                window
-                    .saved_layer()
-                    .map(|b| [floor(b.origin.x), floor(b.origin.y)])
+                window.saved_layer().map(|b| {
+                    [
+                        floor(b.left()),
+                        floor(b.top()),
+                        ceil(b.right()),
+                        ceil(b.bottom()),
+                    ]
+                })
             })
-            .map(|[x, y]| [x - origin[0], y - origin[1]]);
+            .map(|[l, t, r, b]| [l - origin[0], t - origin[1], r - origin[0], b - origin[1]]);
         let window = [dev(vp.width), dev(vp.height)];
         let sparse = recorded_bounds.is_none_or(|recording| recording.sparse);
         let recorded = recorded_bounds.map(|recording| {
@@ -984,7 +992,9 @@ impl Layer {
                     r[3] - offset[1],
                 ]
             });
-            self.device = self.device.map(|p| [p[0] - offset[0], p[1] - offset[1]]);
+            self.device = self
+                .device
+                .map(|[l, t, r, b]| [l - offset[0], t - offset[1], r - offset[0], b - offset[1]]);
         }
         self
     }
@@ -1012,13 +1022,18 @@ impl Layer {
     }
 
     fn clip_bounds(&self, [x0, y0, x1, y1]: [i32; 4]) -> [i32; 4] {
-        let min = self.recorded.map_or(self.tile_origin, |r| [r[0], r[1]]);
-        let max = self.clamp();
+        let mut min = self.recorded.map_or(self.tile_origin, |r| [r[0], r[1]]);
+        let mut max = self.clamp();
+        if let Some([l, t, r, b]) = self.device {
+            min = [min[0].max(l), min[1].max(t)];
+            max = [max[0].min(r), max[1].min(b)];
+        }
+        let [right, bottom] = self.size();
         [
-            x0.max(min[0]),
-            y0.max(min[1]),
-            x1.min(max[0]),
-            y1.min(max[1]),
+            x0.max(min[0]).max(-self.origin[0]),
+            y0.max(min[1]).max(-self.origin[1]),
+            x1.min(max[0]).min(right),
+            y1.min(max[1]).min(bottom),
         ]
     }
 
@@ -1054,9 +1069,9 @@ impl Layer {
         })
     }
 
-    /// Raster inputs besides the recorded operations. Local recordings can reuse sprites
-    /// while scrolling; window-space recordings also depend on the tile grid's origin.
-    fn key(&self) -> impl std::fmt::Debug {
+    /// Unclipped local drawings can reuse sprites while scrolling.
+    /// Clipped drawings include the visible rectangle in their cache key.
+    fn key(&self, bounds: [i32; 4]) -> impl std::fmt::Debug {
         (
             self.tile,
             self.tile_origin,
@@ -1064,6 +1079,7 @@ impl Layer {
             self.composited,
             self.device,
             self.recorded,
+            self.clip_bounds(bounds),
         )
     }
 }
@@ -1220,7 +1236,10 @@ fn raster(
         // A `with_layer` draws on a device of the layer's bounds within the tile, whose origin
         // moves the float geometry of curves.
         let lo = layer.device.map_or(o, |d| [o[0].max(d[0]), o[1].max(d[1])]);
-        let ls = (o[0] + ts.0 - lo[0], o[1] + ts.1 - lo[1]);
+        let hi = layer.device.map_or([o[0] + ts.0, o[1] + ts.1], |d| {
+            [(o[0] + ts.0).min(d[2]), (o[1] + ts.1).min(d[3])]
+        });
+        let ls = (hi[0] - lo[0], hi[1] - lo[1]);
         if ls.0 <= 0 || ls.1 <= 0 {
             continue;
         }
@@ -1246,6 +1265,17 @@ fn raster(
                 // inverse black on white.
                 let m = if black { 255 - px[0][1] } else { px[0][1] };
                 if m == 0 {
+                    // AAA's run blitter also blits alpha 0: `SkBlendARGB32` at scale 1 still
+                    // drops each channel's `>> 8` remainder, which the probes show.
+                    let zero = |(p, v): (&Probe, &[u8; 3])| {
+                        (0..3).all(|k| blend(ARGB32, p.fg[k], p.a, p.bg[k], 0) == v[k])
+                    };
+                    if fixed.is_none()
+                        && probes.iter().zip(px).all(zero)
+                        && probes.iter().zip(px).any(|(p, v)| p.bg != *v)
+                    {
+                        out[((y - y0) * w + x - x0) as usize] = [255, ARGB32_ZERO, 0, MASK];
+                    }
                     continue;
                 }
                 let blits = match (fixed, last) {
@@ -1289,8 +1319,7 @@ fn composited_sprites(
     draw: &dyn Fn(&Canvas),
 ) -> Vec<Sprite> {
     let size = layer.clamp();
-    let (x0, y0) = (x0.max(0), y0.max(0));
-    let (x1, y1) = (x1.min(size[0]), y1.min(size[1]));
+    let [x0, y0, x1, y1] = layer.clip_bounds([x0, y0, x1, y1]);
     if x0 >= x1 || y0 >= y1 {
         return Vec::new();
     }
@@ -1298,7 +1327,10 @@ fn composited_sprites(
     let mut pixels = vec![0u8; (w * h * 4) as usize];
     for (o, ts, [ox0, oy0, ox1, oy1]) in tiles([x0, y0, x1, y1], size, layer.tile) {
         let lo = layer.device.map_or(o, |d| [o[0].max(d[0]), o[1].max(d[1])]);
-        let ls = (o[0] + ts.0 - lo[0], o[1] + ts.1 - lo[1]);
+        let hi = layer.device.map_or([o[0] + ts.0, o[1] + ts.1], |d| {
+            [(o[0] + ts.0).min(d[2]), (o[1] + ts.1).min(d[3])]
+        });
+        let ls = (hi[0] - lo[0], hi[1] - lo[1]);
         let rect = [ox0.max(lo[0]), oy0.max(lo[1]), ox1, oy1];
         if ls.0 <= 0 || ls.1 <= 0 || rect[0] >= rect[2] || rect[1] >= rect[3] {
             continue;
@@ -1640,10 +1672,9 @@ pub(crate) fn sprites(
     cached(key, || {
         let (rect, blits) = make();
         let mut out = Vec::new();
-        for (blit, mode) in [0, 2]
-            .into_iter()
-            .flat_map(|b| [MASK, ARGB32, PIPELINE, LAYER, DST_IN, OPACITY].map(|m| (b, m)))
-        {
+        for (blit, mode) in [0, 2].into_iter().flat_map(|b| {
+            [MASK, ARGB32, PIPELINE, LAYER, DST_IN, OPACITY, ARGB32_ZERO].map(|m| (b, m))
+        }) {
             if !blits.iter().any(|b| b[blit + 1] == mode && b[blit] != 0) {
                 continue;
             }
@@ -1715,13 +1746,31 @@ pub(crate) fn paint_sprites(
     window: &mut Window,
     cx: &App,
 ) {
+    paint_transformed_sprites(
+        sprites,
+        color,
+        origin,
+        TransformationMatrix::unit(),
+        window,
+        cx,
+    );
+}
+
+fn paint_transformed_sprites(
+    sprites: &[Sprite],
+    color: Hsla,
+    origin: [i32; 2],
+    transformation: TransformationMatrix,
+    window: &mut Window,
+    cx: &App,
+) {
     // An op's opaque-layer sprites cover disjoint px: one GPUI layer holds them all. A layer
     // per sprite burns layer ids, which wrap at 255, and a px whose last layer had the same id
     // would resume that unrelated layer.
-    paint_each(sprites, false, color, origin, window, cx);
+    paint_each(sprites, false, color, origin, transformation, window, cx);
     if sprites.iter().any(|s| s.opaque_layer) {
         window.with_skia_layer(255, |window| {
-            paint_each(sprites, true, color, origin, window, cx)
+            paint_each(sprites, true, color, origin, transformation, window, cx)
         });
     }
 }
@@ -1731,6 +1780,7 @@ fn paint_each(
     layered: bool,
     color: Hsla,
     [ox, oy]: [i32; 2],
+    transformation: TransformationMatrix,
     window: &mut Window,
     cx: &App,
 ) {
@@ -1745,7 +1795,7 @@ fn paint_each(
             ),
             size(px(sp.size[0] as f32 / s), px(sp.size[1] as f32 / s)),
         );
-        if !bounds.intersects(&mask) {
+        if transformation == TransformationMatrix::unit() && !bounds.intersects(&mask) {
             continue;
         }
         let color: Hsla = sp.color.map_or(color, |[r, g, b, a]| {
@@ -1767,7 +1817,7 @@ fn paint_each(
                 bounds,
                 sp.path.clone(),
                 Some(sp.svg.as_bytes()),
-                TransformationMatrix::unit(),
+                transformation,
                 color,
                 cx,
             )
@@ -1789,8 +1839,8 @@ thread_local! {
     /// The anti-aliased clips of [`with_rounded_clip`], window device px, outermost first;
     /// with `layers: false`, the origin of the layer they apply in.
     static CLIPS: RefCell<Vec<(Contour, Option<[i32; 2]>)>> = const { RefCell::new(Vec::new()) };
-    /// The device origin of the innermost [`with_layer`], window device px.
-    static DEVICE: Cell<Option<[i32; 2]>> = const { Cell::new(None) };
+    /// The device bounds of the innermost [`with_layer`], window device px.
+    static DEVICE: Cell<Option<[i32; 4]>> = const { Cell::new(None) };
     static COLLECTED_BOUNDS: Cell<(bool, Option<[i32; 4]>)> = const { Cell::new((false, None)) };
     static RECORDED_BOUNDS: Cell<Option<RecordingBounds>> = const { Cell::new(None) };
 }
@@ -1916,7 +1966,33 @@ pub(crate) fn with_layer<R>(
         c.retain(|(clip, _)| !corners.iter().all(|&p| clip.path().contains(p)));
         outer
     });
-    let device = DEVICE.replace(Some([l.floor() as i32, t.floor() as i32]));
+    let mut bounds = [
+        l.floor() as i32,
+        t.floor() as i32,
+        r.ceil() as i32,
+        b.ceil() as i32,
+    ];
+    let parent = DEVICE.get().or_else(|| {
+        window.saved_layer().map(|bounds| {
+            let [l, t, r, b] = [bounds.left(), bounds.top(), bounds.right(), bounds.bottom()]
+                .map(|value| f32::from(value) * s);
+            [
+                l.floor() as i32,
+                t.floor() as i32,
+                r.ceil() as i32,
+                b.ceil() as i32,
+            ]
+        })
+    });
+    if let Some([l, t, r, b]) = parent {
+        bounds = [
+            bounds[0].max(l),
+            bounds[1].max(t),
+            bounds[2].min(r),
+            bounds[3].min(b),
+        ];
+    }
+    let device = DEVICE.replace(Some(bounds));
     let out = window.with_skia_layer(alpha, paint);
     DEVICE.set(device);
     CLIPS.with_borrow_mut(|c| *c = outer);
@@ -1948,7 +2024,7 @@ fn paint_op(op: Op, color: Hsla, layer: Layer, window: &mut Window, cx: &App) {
     if matches!(op, Op::ClipLayer { .. }) || op.restored(a) {
         // ponytail: restored layers ignore the ancestors' AA clips.
         let col = color4f(color);
-        let sprites = cached(format!("{op:?}{:?}{col:?}", layer.key()), || {
+        let sprites = cached(format!("{op:?}{:?}{col:?}", layer.key(op.bbox())), || {
             restore_sprites(&op, col, layer)
         });
         return paint_sprites(&sprites, color, layer.origin, window, cx);
@@ -1960,7 +2036,7 @@ fn paint_op(op: Op, color: Hsla, layer: Layer, window: &mut Window, cx: &App) {
     let clips = clips(window, layer);
     let black = is_black(color, a);
     let wide = wide(color);
-    let key = format!("{op:?}{:?}{a}{black}{wide}{clips:?}", layer.key());
+    let key = format!("{op:?}{:?}{a}{black}{wide}{clips:?}", layer.key(bbox));
     let sprites = sprites(key, || {
         raster(bbox, layer, a, black, wide, &clips, &|c, col| {
             op.draw(c, col)
@@ -1982,10 +2058,12 @@ fn shown([x0, y0, x1, y1]: [i32; 4], layer: Layer, window: &Window) -> bool {
         && ((y1 + ly) as f32) > dev(m.top())
 }
 
-/// `crate::paint` on macOS: Blink's box decoration painting, op by op.
+/// `crate::paint` on macOS: Blink's box decoration painting, op by op, moved by `offset`
+/// (CSS px) after snapping.
 pub(crate) fn paint(
     d: &Decoration,
     composited: Option<gpui::Point<Pixels>>,
+    offset: gpui::Point<Pixels>,
     bounds: Bounds<Pixels>,
     window: &mut Window,
     cx: &App,
@@ -1995,9 +2073,110 @@ pub(crate) fn paint(
     }
     let s = window.scale_factor();
     let layer = Layer::new(window, composited).for_bounds(bounds, s);
+    let offset = [f32::from(offset.x) * s, f32::from(offset.y) * s];
     for (op, color) in ops(d, layer.local(bounds, s), s).1 {
-        paint_op(op, color, layer, window, cx);
+        paint_op(op.moved(offset), color, layer, window, cx);
     }
+}
+
+// Match Blink's padded stops and the fixed-scale tile used by generated images.
+fn stripe_paint(period: f32, colors: [Rgba; 2]) -> Paint {
+    use skia_safe::{PictureRecorder, TileMode, gradient, images};
+    let colors = colors.map(|color| Color4f::new(color.r, color.g, color.b, color.a));
+    let stops = [colors[0], colors[0], colors[1], colors[1]];
+    let gradient = gradient::Gradient::new(
+        gradient::Colors::new(
+            &stops,
+            Some(&[0., 0.5, 0.5, 1.]),
+            TileMode::Clamp,
+            ColorSpace::new_srgb(),
+        ),
+        gradient::Interpolation {
+            in_premul: gradient::interpolation::InPremul::Yes,
+            color_space: gradient::interpolation::ColorSpace::Lab,
+            ..Default::default()
+        },
+    );
+    let shader = gradient::shaders::linear_gradient(((0., period), (0., 0.)), &gradient, None)
+        .expect("positive stripe period");
+    let tile = Rect::from_wh(period, period);
+    let mut recorder = PictureRecorder::new();
+    let mut paint = Paint::default();
+    paint
+        .set_anti_alias(true)
+        .set_dither(true)
+        .set_shader(shader);
+    recorder
+        .begin_recording(tile, false)
+        .draw_rect(tile, &paint);
+    let picture = recorder
+        .finish_recording_as_picture(None)
+        .expect("stripe recording");
+    let side = period.ceil() as i32;
+    let image = images::deferred_from_picture(
+        picture,
+        (side, side),
+        Some(&Matrix::scale((side as f32 / period, side as f32 / period))),
+        None,
+        images::BitDepth::U8,
+        ColorSpace::new_srgb(),
+        None,
+    )
+    .expect("stripe tile");
+    let shader = image
+        .to_shader(
+            (TileMode::Repeat, TileMode::Repeat),
+            SamplingOptions::new(FilterMode::Linear, MipmapMode::Linear),
+            &Matrix::scale((period / side as f32, period / side as f32)),
+        )
+        .expect("stripe shader");
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true).set_shader(shader);
+    paint
+}
+
+pub(crate) fn paint_horizontal_stripes(
+    period: Pixels,
+    colors: [Rgba; 2],
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    let scale = window.scale_factor();
+    // Blink stores the used background tile in device-space LayoutUnits.
+    let period = (f32::from(period) * scale * 64.).floor() / 64.;
+    let layer = Layer::new(window, None).for_bounds(bounds, scale);
+    let (contour, _) = ops(&Decoration::default(), layer.local(bounds, scale), scale);
+    let bbox = Op::Fill(contour).bbox();
+    if !shown(bbox, layer, window) {
+        return;
+    }
+    let clips = clips(window, layer);
+    let sprites = cached(
+        format!(
+            "stripes{period:?}{colors:?}{bbox:?}{clips:?}{:?}",
+            layer.key(bbox)
+        ),
+        || {
+            let paint = stripe_paint(period, colors);
+            composited_sprites(bbox, layer, &|canvas| {
+                for clip in &clips {
+                    clip.clip(canvas, ClipOp::Intersect);
+                }
+                canvas.save();
+                canvas.translate((contour.rr.r[0], contour.rr.r[1]));
+                canvas.draw_rect(Rect::from_wh(contour.rr.r[2], contour.rr.r[3]), &paint);
+                canvas.restore();
+            })
+        },
+    );
+    paint_sprites(
+        &sprites,
+        gpui::rgb(0xffffff).into(),
+        layer.origin,
+        window,
+        cx,
+    );
 }
 
 // Chromium decodes to the smallest mip that still covers the rounded destination.
@@ -2276,16 +2455,106 @@ struct IconPath {
     layer: f32,
 }
 
+impl IconPath {
+    fn paint(&self, color: Color4f) -> Paint {
+        let mut paint = fill_paint(color);
+        if let Some((width, cap, join)) = self.stroke {
+            paint
+                .set_style(PaintStyle::Stroke)
+                .set_stroke_width(width)
+                .set_stroke_cap(cap)
+                .set_stroke_join(join);
+        }
+        paint
+    }
+}
+
 /// A parsed icon: viewBox and drawables, in document order.
 struct IconSvg {
     view_box: [f32; 4],
     paths: Vec<IconPath>,
+    paint_bounds: std::cell::OnceCell<Option<Rect>>,
 }
 
 thread_local! {
     /// Parsed icons by asset key (skia paths are not `Sync`; GPUI paints on one thread).
     static ICONS: std::cell::RefCell<HashMap<String, Option<std::rc::Rc<IconSvg>>>> =
         Default::default();
+}
+
+fn cached_icon(src: &[u8], key: &str) -> Option<std::rc::Rc<IconSvg>> {
+    ICONS.with_borrow_mut(|icons| {
+        if let Some(icon) = icons.get(key) {
+            return icon.clone();
+        }
+        let icon = std::str::from_utf8(src)
+            .ok()
+            .and_then(parse_icon)
+            .map(std::rc::Rc::new);
+        icons.insert(key.to_owned(), icon.clone());
+        icon
+    })
+}
+
+impl IconSvg {
+    /// The viewBox fitted into `w` x `h` device px (`xMidYMid meet`): scale and translation.
+    fn fit(&self, w: f64, h: f64) -> (f64, f64, f64) {
+        let [vx, vy, vw, vh] = self.view_box.map(f64::from);
+        let scale = (w / vw).min(h / vh);
+        (
+            scale,
+            (w - vw * scale) / 2. - vx * scale,
+            (h - vh * scale) / 2. - vy * scale,
+        )
+    }
+
+    fn view(&self, w: f64, h: f64) -> Matrix {
+        let (scale, tx, ty) = self.fit(w, h);
+        Matrix::new_all(
+            scale as f32,
+            0.,
+            tx as f32,
+            0.,
+            scale as f32,
+            ty as f32,
+            0.,
+            0.,
+            1.,
+        )
+    }
+
+    fn paint_bounds(&self) -> Option<Rect> {
+        *self.paint_bounds.get_or_init(|| {
+            let mut bounds = Rect::new_empty();
+            for drawable in &self.paths {
+                if drawable.opacity <= 0. || drawable.layer <= 0. {
+                    continue;
+                }
+                let outlined = if drawable.stroke.is_some() {
+                    let stroke = skia_safe::StrokeRec::from_paint(
+                        &drawable.paint(Color4f::new(1., 1., 1., 1.)),
+                        None,
+                        None,
+                    );
+                    let mut path = PathBuilder::new();
+                    if !stroke.apply_to_path(&mut path, &drawable.path) {
+                        return None;
+                    }
+                    Some(path.detach())
+                } else {
+                    None
+                };
+                let path = outlined.as_ref().unwrap_or(&drawable.path);
+                bounds.join(if drawable.transform.is_identity() {
+                    path.compute_tight_bounds()
+                } else {
+                    path.with_transform(&drawable.transform)
+                        .compute_tight_bounds()
+                });
+            }
+            (!bounds.is_empty()).then_some(bounds)
+        })
+    }
 }
 
 fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
@@ -2435,7 +2704,49 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
     Some(IconSvg {
         view_box: [v[0], v[1], *v.get(2)?, *v.get(3)?],
         paths,
+        paint_bounds: Default::default(),
     })
+}
+
+pub(crate) fn icon_paint_bounds(
+    src: &[u8],
+    key: &str,
+    bounds: Bounds<Pixels>,
+    flip_x: bool,
+    window: &Window,
+) -> Option<Bounds<Pixels>> {
+    let icon = cached_icon(src, key)?;
+    let ink = icon.paint_bounds()?;
+    let s = window.scale_factor();
+    let snap = |value: Pixels| f64::from((f32::from(value) * s + 0.5).floor());
+    let (w, h) = (
+        f64::from(f32::from(bounds.size.width) * s),
+        f64::from(f32::from(bounds.size.height) * s),
+    );
+    if w <= 0. || h <= 0. || icon.view_box[2] <= 0. || icon.view_box[3] <= 0. {
+        return None;
+    }
+    let (scale, tx, ty) = icon.fit(w, h);
+    let mut left = f64::from(ink.left) * scale + tx;
+    let mut right = f64::from(ink.right) * scale + tx;
+    if flip_x {
+        (left, right) = (w - right, w - left);
+    }
+    let (x, y) = (snap(bounds.left()), snap(bounds.top()));
+    let left = (x + left).floor().max(x);
+    let top = (y + f64::from(ink.top) * scale + ty).floor().max(y);
+    let right = (x + right).ceil().min(snap(bounds.right()));
+    let bottom = (y + f64::from(ink.bottom) * scale + ty)
+        .ceil()
+        .min(snap(bounds.bottom()));
+    if left >= right || top >= bottom {
+        return None;
+    }
+    let css = |value: f64| px(value as f32 / s);
+    Some(Bounds::new(
+        point(css(left), css(top)),
+        size(css(right - left), css(bottom - top)),
+    ))
 }
 
 /// `crate::paint_icon` on macOS.
@@ -2447,50 +2758,51 @@ pub(crate) fn paint_icon(
     flip_x: bool,
     color: Hsla,
     composited: Option<gpui::Point<Pixels>>,
+    transformation: Option<TransformationMatrix>,
     window: &mut Window,
     cx: &App,
 ) -> bool {
     if window.element_opacity() <= 0. {
         return true;
     }
-    let icon = ICONS.with_borrow_mut(|icons| {
-        icons
-            .entry(key.to_string())
-            .or_insert_with(|| parse_icon(std::str::from_utf8(src).ok()?).map(std::rc::Rc::new))
-            .clone()
-    });
+    let icon = cached_icon(src, key);
     let Some(icon) = icon else {
         return false;
     };
     let s = window.scale_factor();
-    let layer = Layer::new(window, composited);
-    // The svg root snaps to the nearest device px (half up); the viewBox maps onto its
-    // unsnapped CSS size (`xMidYMid meet`), in doubles like Blink's AffineTransform.
+    let transformed = transformation.is_some();
+    let transformation = transformation.unwrap_or_default();
     let snap = |v: Pixels| (f32::from(v) * s + 0.5).floor();
-    // In layer space, like the decorations.
-    let b = layer.local(bounds, s);
-    let origin = [snap(b.origin.x), snap(b.origin.y)];
     let (w, h) = (
         f64::from(f32::from(bounds.size.width) * s),
         f64::from(f32::from(bounds.size.height) * s),
     );
-    let [vx, vy, vw, vh] = icon.view_box.map(f64::from);
-    let scale = (w / vw).min(h / vh);
-    let (tx, ty) = (
-        (w - vw * scale) / 2. - vx * scale,
-        (h - vh * scale) / 2. - vy * scale,
-    );
-    let view = Matrix::new_all(
-        scale as f32,
-        0.,
-        tx as f32,
-        0.,
-        scale as f32,
-        ty as f32,
-        0.,
-        0.,
-        1.,
-    );
+    let layer = if transformed {
+        Layer {
+            origin: [0, 0],
+            tile_origin: [0, 0],
+            window: [w.ceil() as i32, h.ceil() as i32],
+            tile: [TILE; 2],
+            composited: true,
+            device: None,
+            recorded: None,
+        }
+    } else {
+        Layer::new(window, composited)
+    };
+    let paint_origin = if transformed {
+        [snap(bounds.left()) as i32, snap(bounds.top()) as i32]
+    } else {
+        layer.origin
+    };
+    // A transformed SVG is rasterized in its own viewport before scene clipping.
+    let b = if transformed {
+        Bounds::new(point(px(0.), px(0.)), bounds.size)
+    } else {
+        layer.local(bounds, s)
+    };
+    let origin = [snap(b.origin.x), snap(b.origin.y)];
+    let view = icon.view(w, h);
     // Blink clips the svg (or `<img>`) to its pixel-snapped box; at a path extreme on the
     // box edge that clip changes AAA's edge px.
     let clip = Rect::new(
@@ -2499,14 +2811,18 @@ pub(crate) fn paint_icon(
         snap(b.origin.x + bounds.size.width),
         snap(b.origin.y + bounds.size.height),
     );
-    let clips = clips(window, layer);
+    let clips = if transformed {
+        Vec::new()
+    } else {
+        clips(window, layer)
+    };
     let bbox = [
         origin[0] as i32 - 2,
         origin[1] as i32 - 2,
         (origin[0] as f64 + w).ceil() as i32 + 2,
         (origin[1] as f64 + h).ceil() as i32 + 2,
     ];
-    if !shown(bbox, layer, window) {
+    if !transformed && !shown(bbox, layer, window) {
         return true;
     }
     let prepare = |c: &Canvas| {
@@ -2521,22 +2837,14 @@ pub(crate) fn paint_icon(
     };
     let draw_path = |c: &Canvas, p: &IconPath, col: Color4f| {
         c.concat(&p.transform);
-        let mut paint = fill_paint(col);
-        if let Some((width, cap, join)) = p.stroke {
-            paint
-                .set_style(PaintStyle::Stroke)
-                .set_stroke_width(width)
-                .set_stroke_cap(cap)
-                .set_stroke_join(join);
-        }
-        c.draw_path(&p.path, &paint);
+        c.draw_path(&p.path, &p.paint(col));
     };
     if layer.composited && !wide(color) {
         let rgba = Rgba::from(color);
         let sprites = cached(
             format!(
                 "{key}#composited{flip_x}{clip:?}{w}x{h}{rgba:?}{:?}{clips:?}",
-                layer.key()
+                layer.key(bbox)
             ),
             || {
                 composited_sprites(bbox, layer, &|c| {
@@ -2554,7 +2862,7 @@ pub(crate) fn paint_icon(
                 })
             },
         );
-        paint_sprites(&sprites, color, layer.origin, window, cx);
+        paint_transformed_sprites(&sprites, color, paint_origin, transformation, window, cx);
         return true;
     }
     for (n, p) in icon.paths.iter().enumerate() {
@@ -2573,12 +2881,55 @@ pub(crate) fn paint_icon(
         let sprites = sprites(
             format!(
                 "{key}#{n}{flip_x}{clip:?}{w}x{h}{:?}{a}{black}{wide}{clips:?}",
-                layer.key()
+                layer.key(bbox)
             ),
             || raster(bbox, layer, a, black, wide, &clips, &draw),
         );
-        paint_sprites(&sprites, color, layer.origin, window, cx);
+        paint_transformed_sprites(&sprites, color, paint_origin, transformation, window, cx);
     }
+    true
+}
+
+/// Draws the svg icon `src` on `c` (window device px) with [`paint_icon`]'s geometry: the box
+/// `bounds` snaps like Blink's svg root and clips the paths. False if the svg is unsupported.
+pub(crate) fn draw_icon(
+    c: &Canvas,
+    src: &[u8],
+    key: &str,
+    bounds: Bounds<Pixels>,
+    color: Hsla,
+    s: f32,
+) -> bool {
+    let Some(icon) = cached_icon(src, key) else {
+        return false;
+    };
+    let snap = |v: Pixels| (f32::from(v) * s + 0.5).floor();
+    let (w, h) = (
+        f64::from(f32::from(bounds.size.width) * s),
+        f64::from(f32::from(bounds.size.height) * s),
+    );
+    let (x, y) = (snap(bounds.left()), snap(bounds.top()));
+    c.save();
+    c.clip_rect(
+        Rect::new(x, y, snap(bounds.right()), snap(bounds.bottom())),
+        ClipOp::Intersect,
+        true,
+    );
+    c.translate((x, y));
+    c.concat(&icon.view(w, h));
+    let rgba = Rgba::from(color);
+    for p in &icon.paths {
+        let color = p.color.unwrap_or(rgba);
+        let a = if p.color.is_some() { 1. } else { rgba.a } * p.opacity * p.layer;
+        c.save();
+        c.concat(&p.transform);
+        c.draw_path(
+            &p.path,
+            &p.paint(Color4f::new(color.r, color.g, color.b, a)),
+        );
+        c.restore();
+    }
+    c.restore();
     true
 }
 
@@ -2591,6 +2942,36 @@ mod tests {
         prelude::FluentBuilder, px, size,
     };
     use std::sync::Arc;
+
+    #[test]
+    fn horizontal_stripes_keep_fractional_period_and_hard_stop() {
+        let colors = [
+            Rgba {
+                r: 0.232724,
+                g: 0.120283,
+                b: 0.103232,
+                a: 1.,
+            },
+            gpui::rgba(0xfa423eff),
+        ];
+        let paint = stripe_paint(251. / 64., colors);
+        let (pixels, row) = tile_pixels([0, 0], (8, 43), Color4f::new(0., 0., 0., 0.), |canvas| {
+            canvas.draw_rect(Rect::from_wh(8., 43.), &paint);
+        });
+        for (y, expected) in [
+            (0, [250, 66, 62, 255]),
+            (1, [244, 65, 61, 255]),
+            (3, [72, 33, 29, 255]),
+            (37, [108, 40, 36, 255]),
+            (38, [59, 31, 26, 255]),
+        ] {
+            assert_eq!(
+                &pixels[y * row + 4..y * row + 8],
+                &expected,
+                "stripe row {y}"
+            );
+        }
+    }
 
     struct ImageLayers {
         scope_backdrop: bool,
@@ -3052,7 +3433,7 @@ mod tests {
                             },
                             |bounds, (decoration, recorded), window, cx| {
                                 with_recorded_bounds(recorded, || {
-                                    paint(&decoration, None, bounds, window, cx);
+                                    shapes::paint(&decoration, None, bounds, window, cx);
                                 });
                             },
                         )
@@ -3118,7 +3499,7 @@ mod tests {
                             },
                             |bounds, (decoration, recorded), window, cx| {
                                 with_composited_bounds(recorded, || {
-                                    paint(&decoration, None, bounds, window, cx);
+                                    shapes::paint(&decoration, None, bounds, window, cx);
                                 });
                             },
                         )

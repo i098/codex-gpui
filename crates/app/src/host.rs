@@ -13,9 +13,10 @@
 //! (`getAuthStatus` with `includeToken`) plus the account route from `account/read`, retries once
 //! after a 401 with a refreshed token, and answers the original wire shapes, including errors.
 //! The token never reaches logs, errors, or `Debug` output.
-//! Local fetches support `list-automations`, `create-automation`, `automation-update`, `automation-run-now`, `inbox-items`, the `git-*` endpoints, `create-worktree`, `set-worktree-owner-thread`, and `paths-exist`; other endpoints return errors.
+//! Local fetches support automations, Git, scoped file reads, native app discovery, open-in requests, personal instructions, and first-run workspace creation.
+//! Unsupported endpoints return errors.
 //! `Root` loads the automation list off the UI thread when the Scheduled route opens.
-//! Consumers read the result through `Root::automations`; this service slice does not change the static screens.
+//! `Root` owns the loading state and displays failures from these services.
 //!
 //! Storage evidence: Codex 26.1007.30912, `src-BJv5Mk7n.js` functions `jF`, `NF`, `QF`,
 //! `Z$`, `Q$`, and `$$`. HTTP evidence: `main-CqEoQDOU.js` `performDesktopFetch`, `fetchHttp`,
@@ -36,15 +37,29 @@ use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
+use ui::screens::diff::panel::ReviewRepository;
 use ui::screens::sidebar::Project;
 use url::Url;
 
 mod automation_schedule;
 pub mod computer_use;
 pub mod computer_use_native;
+mod context_files;
+mod diff_files;
+mod diff_repositories;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod directories;
+mod environments;
 mod git;
+pub mod git_pr;
+mod native_apps;
+mod open_in;
 mod projectless;
+pub use projectless::Workspace;
 pub(crate) mod run_now;
+mod settings_git;
+mod skills;
+mod ssh_discovery;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
@@ -69,8 +84,28 @@ impl Request {
 
 pub trait Host: Send + Sync {
     /// Returns the original wire response. Call this off the UI thread for a local host.
+    /// Only trusted native UI code calls this service.
+    /// Derive `cwd` from the active workspace, never from model-provided input.
     fn fetch(&self, request: &Request) -> Result<Value>;
 
+    /// Binds context-file events to this host's view, replacing any prior binding.
+    fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
+        None
+    }
+
+    fn stream(
+        &self,
+        request: &Request,
+        cancelled: &std::sync::atomic::AtomicBool,
+        on_event: &mut dyn FnMut(Value) -> bool,
+    ) -> Result<()> {
+        let response = self.fetch(request)?;
+        let wire = response_wire(&response);
+        let status = wire["status"].as_u64().context("missing stream status")?;
+        ensure!((200..300).contains(&status), "stream HTTP status {status}");
+        let body = wire["body"].as_str().context("missing stream body")?;
+        event_stream(std::io::Cursor::new(body), cancelled, on_event)
+    }
     fn computer_use_native(&self) -> Option<Arc<computer_use_native::NativeComputerUse>> {
         None
     }
@@ -87,8 +122,20 @@ pub trait Host: Send + Sync {
         bail!("sidebar project state is unsupported by this host")
     }
 
+    fn review_repositories(&self, _thread: &str, _cwd: &str) -> Result<Vec<ReviewRepository>> {
+        bail!("review repositories are unsupported by this host")
+    }
+
     fn add_project(&self, _root: &Path) -> Result<String> {
         bail!("adding a local project is unsupported by this host")
+    }
+
+    fn prepare_projectless(&self, _prompt: &str) -> Result<Workspace> {
+        bail!("projectless workspaces are unsupported by this host")
+    }
+
+    fn record_projectless(&self, _thread: &str, _workspace: &Workspace) -> Result<()> {
+        bail!("projectless thread storage is unsupported by this host")
     }
 
     /// Returns the trusted native Settings service, never a model-callable tool.
@@ -115,29 +162,6 @@ pub struct Identity {
     pub account_id: String,
     pub user_id: String,
     pub device_id: String,
-}
-
-/// The webview client's models read that starts a suggested task's guided conversation
-/// (`conversation-actions` `J`: `query.getOrFetch` of the TPP models before the conversation
-/// is prepared), as recorded in `refs/interactions/s035b.json`.
-pub fn tpp_models(identity: &Identity) -> Request {
-    Request::Http(json!({
-        "url": "/tpp/models/?iim=false&include_icons=false",
-        "method": "GET",
-        "headers": {
-            "x-openai-web-frontend": "codex_webview",
-            "x-oai-mcp-form-version": "2",
-            "x-openai-codex-window-type": "electron",
-            "OAI-Language": "en-US",
-            "oai-did": identity.device_id,
-            "X-OpenAI-Attach-Auth": "1",
-            "X-OpenAI-Attach-Desktop-Surface": "1",
-            "X-OpenAI-Attach-Integrity-State": "1",
-            "ChatGPT-Account-ID": identity.account_id,
-        },
-        "expectedIdentity": {"accountId": identity.account_id, "userId": identity.user_id},
-        "returnErrorResponse": true,
-    }))
 }
 
 /// The Scheduled page's read-only suggestion request.
@@ -441,13 +465,17 @@ fn is_worktree_path(path: &str, managed_root: &str, windows: bool) -> bool {
     })
 }
 
+pub fn response_wire(response: &Value) -> &Value {
+    let response = response.get("value").unwrap_or(response);
+    response.pointer("/response/__response").unwrap_or(response)
+}
+
 /// Decodes a JSON response without turning HTTP errors or binary bodies into empty data.
 pub fn json_body(response: &Value) -> Result<Value> {
-    let response = response.get("value").unwrap_or(response);
+    let response = response_wire(response);
     if response["responseType"] == "error" {
         bail!("host error {}: {}", response["status"], response["error"]);
     }
-    let response = response.pointer("/response/__response").unwrap_or(response);
     let status = response["status"].as_u64().context("missing host status")?;
     ensure!((200..300).contains(&status), "host HTTP status {status}");
     let body = response
@@ -460,13 +488,16 @@ pub fn json_body(response: &Value) -> Result<Value> {
 
 pub struct LocalHost {
     home: PathBuf,
+    workspace_parent: PathBuf,
+    ssh_home: Option<PathBuf>,
     /// The `codex app-server` that `automation-run-now` starts runs on; the original's main
     /// process holds the same connection.
     bridge: Option<Arc<Bridge>>,
     opener: PathBuf,
-    host_settings_path: PathBuf,
+    settings: Option<crate::host_settings::Settings>,
     computer_use_settings: Option<computer_use::ComputerUseSettings>,
     native_computer_use: Arc<computer_use_native::NativeComputerUse>,
+    context_files: context_files::ContextFiles,
 }
 
 impl LocalHost {
@@ -475,11 +506,13 @@ impl LocalHost {
         Self {
             computer_use_settings: None,
             native_computer_use: Arc::new(computer_use_native::NativeComputerUse::new(&home)),
+            workspace_parent: home.join("projects"),
             home,
+            ssh_home: std::env::var_os("HOME").map(PathBuf::from),
             bridge: None,
             opener: "/usr/bin/open".into(),
-            host_settings_path: PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                .join("Library/Application Support/codex-gpui/host-settings.json"),
+            settings: None,
+            context_files: context_files::ContextFiles::default(),
         }
     }
 
@@ -488,8 +521,8 @@ impl LocalHost {
         self
     }
 
-    pub fn with_host_settings_path(mut self, path: impl Into<PathBuf>) -> Self {
-        self.host_settings_path = path.into();
+    pub fn with_settings(mut self, settings: Option<crate::host_settings::Settings>) -> Self {
+        self.settings = settings;
         self
     }
 
@@ -501,7 +534,12 @@ impl LocalHost {
         self
     }
 
-    /// Launches editors through `opener`, which takes macOS `open`'s `[-a App] file` arguments.
+    pub fn with_ssh_home(mut self, home: impl Into<PathBuf>) -> Self {
+        self.ssh_home = Some(home.into());
+        self
+    }
+
+    /// Uses an alternate OS application opener with macOS `open` arguments.
     pub fn with_opener(mut self, opener: impl Into<PathBuf>) -> Self {
         self.opener = opener.into();
         self
@@ -520,7 +558,25 @@ impl LocalHost {
             .map(PathBuf::from)
             .filter(|home| home.is_absolute())
             .map(|home| computer_use::ComputerUseSettings::new(home, &host.home));
+        host.workspace_parent =
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("Documents/ChatGPT");
         host
+    }
+
+    fn read_global_state(&self) -> Result<Value> {
+        let path = self.home.join(".codex-global-state.json");
+        let contents = match fs::read(&path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(json!({})),
+            Err(error) => return Err(error).context("read original sidebar project state"),
+        };
+        let state: Value =
+            serde_json::from_slice(&contents).context("decode original sidebar project state")?;
+        ensure!(
+            state.is_object(),
+            "original sidebar project state must be an object"
+        );
+        Ok(state)
     }
 
     fn update_global_state(&self, update: impl FnOnce(&mut Value) -> Result<bool>) -> Result<()> {
@@ -560,6 +616,71 @@ impl LocalHost {
             assignments.insert(thread_id.to_owned(), assignment);
             Ok(true)
         })
+    }
+
+    fn agents_md_path(&self) -> Result<PathBuf> {
+        fs::create_dir_all(&self.home)?;
+        let path = self.home.join("AGENTS.md");
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error).context("create personal instructions"),
+        }
+        Ok(path)
+    }
+
+    fn agents_md(&self) -> Result<Value> {
+        let path = self.agents_md_path()?;
+        let contents = fs::read_to_string(&path).context("read personal instructions")?;
+        Ok(json!({"path": path, "contents": contents}))
+    }
+
+    fn save_agents_md(&self, contents: &str) -> Result<Value> {
+        let path = self.agents_md_path()?;
+        let target = path.canonicalize()?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&target)
+            .context("open personal instructions for writing")?;
+        let mut file =
+            tempfile::NamedTempFile::new_in(target.parent().context("instructions parent")?)?;
+        file.as_file()
+            .set_permissions(fs::metadata(&target)?.permissions())?;
+        file.write_all(contents.as_bytes())?;
+        file.as_file().sync_all()?;
+        file.persist(target).context("save personal instructions")?;
+        Ok(json!({"path": path}))
+    }
+
+    fn onboarding_workspace(&self) -> Result<Value> {
+        fs::create_dir_all(&self.workspace_parent)?;
+        for index in 1usize.. {
+            let name = if index == 1 {
+                "New project".to_owned()
+            } else {
+                format!("New project {index}")
+            };
+            let path = self.workspace_parent.join(name);
+            match fs::create_dir(&path) {
+                Ok(()) => {
+                    let root = match self.add_project(&path) {
+                        Ok(root) => root,
+                        Err(error) => {
+                            let _ = fs::remove_dir(&path);
+                            return Err(error);
+                        }
+                    };
+                    return Ok(json!({"success": true, "root": root}));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error).context("create onboarding project"),
+            }
+        }
+        unreachable!()
     }
 
     fn database(&self, flags: OpenFlags) -> Result<Option<Connection>> {
@@ -661,8 +782,16 @@ impl LocalHost {
             "unsupported worktree starting state"
         );
         let environment = params["localEnvironmentConfigPath"].as_str().map(Path::new);
-        let worktree = git::create_worktree(&root, cwd, start["branchName"].as_str(), environment)?
-            .context("Not a git repository")?;
+        let worktree = if params["worktreesRoot"]
+            .as_str()
+            .is_some_and(|root| !root.trim().is_empty())
+        {
+            self.refresh_worktree_upstream(cwd);
+            git::create_worktree(&root, cwd, start["branchName"].as_str(), environment)?
+        } else {
+            self.managed_worktree(cwd, start["branchName"].as_str(), environment)?
+        }
+        .context("Not a git repository")?;
         Ok(json!({"worktreeGitRoot": worktree.git_root,
             "worktreeWorkspaceRoot": worktree.workspace_root, "setupError": null}))
     }
@@ -1002,6 +1131,18 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
+        Some(self.context_files.bind())
+    }
+
+    fn prepare_projectless(&self, prompt: &str) -> Result<Workspace> {
+        self.create_projectless_workspace(prompt)
+    }
+
+    fn record_projectless(&self, thread: &str, workspace: &Workspace) -> Result<()> {
+        self.record_projectless_thread(thread, workspace)
+    }
+
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.computer_use_settings
             .as_ref()
@@ -1013,21 +1154,14 @@ impl Host for LocalHost {
     }
 
     fn projects(&self) -> Result<Vec<Project>> {
-        let path = self.home.join(".codex-global-state.json");
-        let contents = match fs::read(&path) {
-            Ok(contents) => contents,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error).context("read original sidebar project state"),
-        };
-        let state: Value =
-            serde_json::from_slice(&contents).context("decode original sidebar project state")?;
-        ensure!(
-            state.is_object(),
-            "original sidebar project state must be an object"
-        );
+        let state = self.read_global_state()?;
         project_rows(&state, &self.home, |path, _| {
             Ok(Some(Path::new(path).exists()))
         })
+    }
+
+    fn review_repositories(&self, thread: &str, cwd: &str) -> Result<Vec<ReviewRepository>> {
+        diff_repositories::discover(&self.home, thread, cwd)
     }
 
     fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {
@@ -1104,16 +1238,59 @@ impl Host for LocalHost {
             "remote host is unsupported by LocalHost"
         );
         let body = match endpoint {
+            "codex-agents-md" => self.agents_md()?,
+            "codex-agents-md-save" => self.save_agents_md(
+                params["contents"]
+                    .as_str()
+                    .context("missing instructions contents")?,
+            )?,
+            "electron-onboarding-skip-workspace" => self.onboarding_workspace()?,
+            "get-global-state" => {
+                let key = params["key"].as_str().context("missing global state key")?;
+                let value = self
+                    .read_global_state()?
+                    .get_mut(key)
+                    .map(Value::take)
+                    .unwrap_or(Value::Null);
+                Value::Object(serde_json::Map::from_iter([("value".into(), value)]))
+            }
             "list-automations" => self.automations()?,
             "create-automation" => self.create_automation(&params)?,
             "automation-update" => self.update_automation(&params)?,
             "automation-run-now" => self.automation_run_now(&params)?,
             "inbox-items" => self.inbox(&params)?,
+            "apply-patch" => git::apply_cloud_patch(&params)?,
+            "local-environments" => environments::list(Path::new(
+                params["workspaceRoot"]
+                    .as_str()
+                    .context("missing workspace root")?,
+            ))?,
+            "local-environment-config" => environments::read(Path::new(
+                params["configPath"]
+                    .as_str()
+                    .context("missing environment path")?,
+            ))?,
+            "local-environment-config-save" => environments::save(&params)?,
+            "local-environment-select" => self.select_environment(
+                params["workspaceRoot"]
+                    .as_str()
+                    .context("missing workspace root")?,
+                params["configPath"]
+                    .as_str()
+                    .context("missing environment path")?,
+            )?,
+            "codex-worktrees" => self.worktrees()?,
+            "worktree-delete" => {
+                self.delete_worktree(params["worktree"].as_str().context("missing worktree")?)?
+            }
+            "git-pr-watch-update" => self.update_pr_watchers(&params)?,
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-init-repo"
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
-            | "git-checkout" => git::fetch(endpoint, &params)?,
+            | "git-checkout" | "git-cat-file" | "git-review-patch" | "git-file-url" => {
+                git::fetch(endpoint, &params)?
+            }
             "create-worktree" => self.create_worktree(&params)?,
-            "set-worktree-owner-thread" => {
+            "set-worktree-owner-thread" | "worktree-set-owner-thread" => {
                 let worktree = params["worktree"].as_str().context("missing worktree")?;
                 let thread = params["conversationId"]
                     .as_str()
@@ -1122,7 +1299,27 @@ impl Host for LocalHost {
                     .context("Failed to set thread worktree owner")?;
                 json!({"success": true})
             }
-            "open-file" => open_file(&self.opener, &params)?,
+            "open-in" => self.open_in(&params)?,
+            "add-context-file" => self.context_files.add(&params)?,
+            "open-in-targets" => self.open_in_targets(&params)?,
+            "discover-remote-ssh-connections" => {
+                let home = self
+                    .ssh_home
+                    .as_deref()
+                    .context("Home directory is unavailable")?;
+                json!({"sshAliases": ssh_discovery::discover(home)?})
+            }
+            "read-file" => diff_files::text(&params)?,
+            "read-file-binary" => diff_files::binary(&params)?,
+            "read-git-file-binary" => diff_files::git_binary(&params)?,
+            "recommended-skills" => skills::recommended(&self.home, &params),
+            "install-recommended-skill" => skills::install(&self.home, &params),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            "workspace-directory-entries" => directories::read(&params)?,
+            "native-desktop-apps" => json!({"apps": native_apps::list(&params)?}),
+            "native-desktop-app-by-bundle-id" => {
+                json!({"app": native_apps::by_bundle_id(&params)?})
+            }
             "paths-exist" => {
                 let paths: Vec<String> =
                     serde_json::from_value(params.get("paths").cloned().unwrap_or(json!([])))?;
@@ -1143,6 +1340,8 @@ impl Host for LocalHost {
     }
 }
 
+<<<<<<< origin/main
+=======
 /// The original's editor targets (`openIn.getTargets` ids) and their macOS application names.
 const EDITORS: [(&str, &str); 11] = [
     ("vscode", "Visual Studio Code"),
@@ -1210,6 +1409,7 @@ fn open_file(opener: &Path, params: &Value) -> Result<Value> {
     Ok(json!({"path": file}))
 }
 
+>>>>>>> db0f0e1f
 /// The sign-in the cloud transport attaches: the ChatGPT token and the workspace route.
 #[derive(Clone)]
 pub struct Credentials {
@@ -1313,6 +1513,11 @@ impl CloudHost {
         self
     }
 
+    pub fn with_settings(mut self, settings: Option<crate::host_settings::Settings>) -> Self {
+        self.local = self.local.with_settings(settings);
+        self
+    }
+
     /// Cached sign-in, reloaded on `refresh`. Failures carry the original's messages only.
     fn credentials(&self, refresh: bool) -> std::result::Result<Credentials, Refusal> {
         let mut cached = self.cached.lock().unwrap_or_else(PoisonError::into_inner);
@@ -1345,11 +1550,29 @@ impl CloudHost {
 
     /// The original's `performDesktopFetch` for one request, with its single 401 retry.
     fn send(&self, url: &str, request: &Value) -> std::result::Result<Value, Refusal> {
+        self.send_response(url, request, None)
+            .and_then(|response| wire(response, request["returnErrorResponse"] == true))
+    }
+
+    fn send_response(
+        &self,
+        url: &str,
+        request: &Value,
+        body_timeout: Option<Duration>,
+    ) -> std::result::Result<ureq::http::Response<ureq::Body>, Refusal> {
         let method = request["method"]
             .as_str()
             .unwrap_or("GET")
             .to_ascii_uppercase();
         let body = request["body"].as_str().map(str::to_owned);
+        let binary_body = request["bodyBase64"]
+            .as_str()
+            .map(|body| {
+                STANDARD
+                    .decode(body)
+                    .map_err(|error| (400, error.to_string()))
+            })
+            .transpose()?;
         let mut headers: Headers = request["headers"]
             .as_object()
             .map(|h| {
@@ -1413,7 +1636,6 @@ impl CloudHost {
                 set_header(&mut headers, "User-Agent", user_agent());
             }
         }
-        let return_error_response = request["returnErrorResponse"] == true;
         let expected_identity = request.get("expectedIdentity").filter(|v| v.is_object());
         let mut retry = request["retry"] != "never";
         let mut credentials = attach_auth.then(|| self.credentials(false)).transpose()?;
@@ -1477,9 +1699,14 @@ impl CloudHost {
                 builder = builder.header(name.as_str(), value.as_str());
             }
             let bad = |e: ureq::http::Error| (400, e.to_string());
-            let response = match &body {
-                Some(body) => self.agent.run(builder.body(body.clone()).map_err(bad)?),
-                None => self.agent.run(builder.body(()).map_err(bad)?),
+            let response = match (&binary_body, &body) {
+                (Some(body), _) => {
+                    self.run_request(builder.body(body.clone()).map_err(bad)?, body_timeout)
+                }
+                (None, Some(body)) => {
+                    self.run_request(builder.body(body.clone()).map_err(bad)?, body_timeout)
+                }
+                (None, None) => self.run_request(builder.body(()).map_err(bad)?, body_timeout),
             }
             .map_err(|e| (500, e.to_string()))?;
             if integrity {
@@ -1490,8 +1717,22 @@ impl CloudHost {
                 credentials = Some(self.credentials(true)?);
                 continue;
             }
-            return wire(response, return_error_response);
+            return Ok(response);
         }
+    }
+
+    fn run_request<B: ureq::AsSendBody>(
+        &self,
+        request: ureq::http::Request<B>,
+        body_timeout: Option<Duration>,
+    ) -> std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+        use ureq::RequestExt as _;
+        request
+            .with_agent(&self.agent)
+            .configure()
+            .timeout_recv_body(body_timeout)
+            .build()
+            .run()
     }
 
     /// Keeps `X-OAI-IS-Update` only when the state it answers is the one this host sent.
@@ -1519,6 +1760,18 @@ impl CloudHost {
 }
 
 impl Host for CloudHost {
+    fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
+        self.local.bind_context_files()
+    }
+
+    fn prepare_projectless(&self, prompt: &str) -> Result<Workspace> {
+        self.local.prepare_projectless(prompt)
+    }
+
+    fn record_projectless(&self, thread: &str, workspace: &Workspace) -> Result<()> {
+        self.local.record_projectless(thread, workspace)
+    }
+
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.local.computer_use_settings()
     }
@@ -1539,6 +1792,10 @@ impl Host for CloudHost {
         self.local.projects()
     }
 
+    fn review_repositories(&self, thread: &str, cwd: &str) -> Result<Vec<ReviewRepository>> {
+        self.local.review_repositories(thread, cwd)
+    }
+
     fn add_project(&self, root: &Path) -> Result<String> {
         self.local.add_project(root)
     }
@@ -1554,6 +1811,46 @@ impl Host for CloudHost {
         }
     }
 
+    fn stream(
+        &self,
+        request: &Request,
+        cancelled: &std::sync::atomic::AtomicBool,
+        on_event: &mut dyn FnMut(Value) -> bool,
+    ) -> Result<()> {
+        let Request::Http(request) = request else {
+            bail!("streams require HTTP transport");
+        };
+        let url = request["url"].as_str().context("HTTP request has no url")?;
+        let mut response = self
+            // ponytail: renew streams after 30 seconds; asynchronous I/O can replace this bounded blocking read.
+            .send_response(url, request, Some(Duration::from_secs(30)))
+            .map_err(|(status, message)| {
+                anyhow::anyhow!("stream HTTP status {status}: {message}")
+            })?;
+        ensure!(
+            response.status().is_success(),
+            "stream HTTP status {}",
+            response.status()
+        );
+        match event_stream(
+            std::io::BufReader::new(response.body_mut().as_reader()),
+            cancelled,
+            on_event,
+        ) {
+            Err(error)
+                if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ureq::Error>(),
+                        Some(ureq::Error::Timeout(ureq::Timeout::RecvBody))
+                    )
+                }) =>
+            {
+                Ok(())
+            }
+            result => result,
+        }
+    }
+
     fn supports_cloud_search(&self) -> bool {
         true
     }
@@ -1566,6 +1863,42 @@ impl Host for CloudHost {
             device_id: self.device_id.clone(),
         })
     }
+}
+
+fn event_stream(
+    reader: impl std::io::BufRead,
+    cancelled: &std::sync::atomic::AtomicBool,
+    on_event: &mut dyn FnMut(Value) -> bool,
+) -> Result<()> {
+    if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        return Ok(());
+    }
+    let mut data = String::new();
+    for line in reader.lines() {
+        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            return Ok(());
+        }
+        let line = line?;
+        if line.is_empty() {
+            if !data.is_empty() {
+                if data.trim() == "[DONE]" {
+                    return Ok(());
+                }
+                let event = serde_json::from_str(data.trim_end())?;
+                if !on_event(event) {
+                    return Ok(());
+                }
+                data.clear();
+            }
+        } else if let Some(value) = line.strip_prefix("data:") {
+            data.push_str(value.strip_prefix(' ').unwrap_or(value));
+            data.push('\n');
+        }
+    }
+    if !data.is_empty() && data.trim() != "[DONE]" {
+        on_event(serde_json::from_str(data.trim_end())?);
+    }
+    Ok(())
 }
 
 /// A random v4 UUID from the standard library's hasher keys.
@@ -1850,4 +2183,55 @@ fn definition(id: &str, contents: &str) -> Result<Value> {
         };
     }
     Ok(item)
+}
+
+#[cfg(test)]
+mod cloud_stream_tests {
+    use super::event_stream;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn events_join_data_lines_and_stop_before_later_messages() {
+        let input = b": keepalive\r\ndata: {\"item_type\":\"log\",\r\ndata: \"line\":\"ready\"}\r\n\r\ndata: {\"line\":\"ignored\"}\n\n";
+        let mut received = Vec::<Value>::new();
+        event_stream(
+            std::io::Cursor::new(input),
+            &std::sync::atomic::AtomicBool::new(false),
+            &mut |event| {
+                received.push(event);
+                false
+            },
+        )
+        .unwrap();
+        assert_eq!(received, [json!({"item_type":"log","line":"ready"})]);
+    }
+
+    #[test]
+    fn invalid_event_is_an_error_not_a_successful_empty_stream() {
+        assert!(
+            event_stream(
+                std::io::Cursor::new(b"data: invalid\n\n"),
+                &std::sync::atomic::AtomicBool::new(false),
+                &mut |_| true
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn cancelled_stream_does_not_deliver_buffered_events() {
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let mut received = Vec::new();
+        event_stream(
+            std::io::Cursor::new(b"data: 1\n\n: keepalive\n\ndata: 2\n\n"),
+            &cancelled,
+            &mut |event| {
+                received.push(event);
+                cancelled.store(true, std::sync::atomic::Ordering::Release);
+                true
+            },
+        )
+        .unwrap();
+        assert_eq!(received, [json!(1)]);
+    }
 }
