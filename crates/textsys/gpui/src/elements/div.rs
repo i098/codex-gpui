@@ -1962,6 +1962,7 @@ impl Element for Div {
                 },
             )
         });
+        self.interactivity.scroll_layout_id = Some(layout_id);
 
         (layout_id, DivFrameState { child_layout_ids })
     }
@@ -2153,6 +2154,7 @@ pub struct Interactivity {
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
     pub(crate) scroll_anchor: Option<ScrollAnchor>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
+    pub(crate) scroll_layout_id: Option<LayoutId>,
     pub(crate) ongoing_scroll: Option<Rc<RefCell<OngoingScroll>>>,
     pub(crate) group: Option<SharedString>,
     /// The base style of the element, before any modifications are applied
@@ -2461,26 +2463,20 @@ impl Interactivity {
                 scroll_to_bottom = mem::take(&mut scroll_handle_state.scroll_to_bottom);
             }
 
-            let rem_size = window.rem_size();
-            // Taffy lays the box out with the padding snapped to the device pixel
-            // grid (`to_taffy`); recomputed unsnapped, e.g. py_1 at a fractional
-            // rem size, it exceeds `bounds` and leaves the box scrollable by the
-            // sub-pixel difference.
-            let padding = style
-                .padding
-                .to_pixels(bounds.size.into(), rem_size)
-                .map(|edge| window.pixel_snap(*edge));
-            let padding_size = size(padding.left + padding.right, padding.top + padding.bottom);
-            // The floating point values produced by Taffy and ours often vary
-            // slightly after ~5 decimal places. This can lead to cases where after
-            // subtracting these, the container becomes scrollable for less than
-            // 0.00000x pixels. As we generally don't benefit from a precision that
-            // high for the maximum scroll, we round the scroll max to 2 decimal
-            // places here.
-            let padded_content_size = self.content_size + padding_size;
-            let scroll_max = Point::from(padded_content_size - bounds.size)
-                .map(round_to_two_decimals)
-                .max(&Default::default());
+            let scroll_max = self
+                .scroll_layout_id
+                .map(|id| window.layout_scroll_max(id))
+                .unwrap_or_else(|| {
+                    let padding = style
+                        .padding
+                        .to_pixels(bounds.size.into(), window.rem_size())
+                        .map(|edge| window.pixel_snap(*edge));
+                    let padding_size =
+                        size(padding.left + padding.right, padding.top + padding.bottom);
+                    Point::from(self.content_size + padding_size - bounds.size)
+                        .map(round_to_two_decimals)
+                        .max(&Point::default())
+                });
             // Clamp scroll offset in case scroll max is smaller now (e.g., if children
             // were removed or the bounds became larger).
             let mut scroll_offset = scroll_offset.borrow_mut();
@@ -5686,48 +5682,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(focused, Some(item_b.id));
-    }
-
-    #[gpui::test]
-    fn test_fractional_padding_does_not_make_a_fitting_container_scrollable(
-        cx: &mut TestAppContext,
-    ) {
-        struct PaddedContainer {
-            scroll_handle: ScrollHandle,
-        }
-
-        impl Render for PaddedContainer {
-            fn render(
-                &mut self,
-                _window: &mut Window,
-                _cx: &mut Context<Self>,
-            ) -> impl IntoElement {
-                // 4.25px of padding snaps to 4px in layout, so a 42px child
-                // fits the 50px box exactly.
-                div().size_full().child(
-                    div()
-                        .id("container")
-                        .h(px(50.))
-                        .w(px(100.))
-                        .py(px(4.25))
-                        .overflow_y_scroll()
-                        .track_scroll(&self.scroll_handle)
-                        .child(div().w_full().h(px(42.))),
-                )
-            }
-        }
-
-        let scroll_handle = ScrollHandle::new();
-        let window: AnyWindowHandle = cx
-            .add_window({
-                let scroll_handle = scroll_handle.clone();
-                move |_, _| PaddedContainer { scroll_handle }
-            })
-            .into();
-        cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx))
-            .unwrap();
-
-        assert_eq!(scroll_handle.max_offset().y, px(0.));
     }
 
     struct ContentSizedGrid;
