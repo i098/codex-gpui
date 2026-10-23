@@ -2079,6 +2079,39 @@ pub(crate) fn paint(
     }
 }
 
+fn canvas_round_rect(bounds: Bounds<Pixels>, radius: Pixels, scale: f32) -> Op {
+    let rr = Rounded {
+        r: [
+            f32::from(bounds.left()) * scale,
+            f32::from(bounds.top()) * scale,
+            f32::from(bounds.size.width) * scale,
+            f32::from(bounds.size.height) * scale,
+        ],
+        radii: [[f32::from(radius) * scale; 2]; 4],
+    };
+    Op::Fill(Contour {
+        rr,
+        k: [2.; 4],
+        origin: rr,
+    })
+}
+
+pub(crate) fn paint_canvas_round_rect(
+    radius: Pixels,
+    color: Hsla,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    if window.element_opacity() <= 0. {
+        return;
+    }
+    let scale = window.scale_factor();
+    let layer = Layer::new(window, None).for_bounds(bounds, scale);
+    let op = canvas_round_rect(layer.local(bounds, scale), radius, scale);
+    paint_op(op, color, layer, window, cx);
+}
+
 // Match Blink's padded stops and the fixed-scale tile used by generated images.
 fn stripe_paint(period: f32, colors: [Rgba; 2]) -> Paint {
     use skia_safe::{PictureRecorder, TileMode, gradient, images};
@@ -2942,6 +2975,85 @@ mod tests {
         prelude::FluentBuilder, px, size,
     };
     use std::sync::Arc;
+
+    #[test]
+    fn canvas_round_rect_preserves_fractional_geometry() {
+        let bounds = Bounds::new(point(px(10.25), px(20.125)), size(px(3.), px(13.375)));
+        let fill = canvas_round_rect(bounds, px(1.5), 2.);
+        let clear = Color4f::new(0., 0., 0., 0.);
+        let white = Color4f::new(1., 1., 1., 1.);
+        let actual = tile_pixels([0, 0], (80, 80), clear, |c| fill.draw(c, white));
+        let expected = tile_pixels([0, 0], (80, 80), clear, |c| {
+            let rect = Rect::from_xywh(20.5, 40.25, 6., 26.75);
+            c.draw_rrect(
+                RRect::new_rect_radii(rect, &[Vector::new(3., 3.); 4]),
+                &fill_paint(white),
+            );
+        });
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn canvas_round_rect_keeps_content_and_rounded_clips() -> anyhow::Result<()> {
+        struct Clipped;
+        impl Render for Clipped {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                div().size_full().bg(gpui::rgb(0)).child(
+                    canvas(
+                        |_, _, _| (),
+                        |_, (), window, cx| {
+                            window.with_content_mask(
+                                Some(gpui::ContentMask {
+                                    bounds: Bounds::new(
+                                        point(px(12.), px(0.)),
+                                        size(px(32.), px(64.)),
+                                    ),
+                                }),
+                                |window| {
+                                    shapes::with_rounded_clip(
+                                        Corners::all(px(8.)),
+                                        Corner::Round,
+                                        Bounds::new(point(px(8.), px(8.)), size(px(32.), px(32.))),
+                                        true,
+                                        window,
+                                        |window| {
+                                            shapes::paint_canvas_round_rect(
+                                                px(1.5),
+                                                gpui::rgb(0xffffff).into(),
+                                                Bounds::new(
+                                                    point(px(0.25), px(0.125)),
+                                                    size(px(60.), px(60.)),
+                                                ),
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    );
+                                },
+                            );
+                        },
+                    )
+                    .size_full(),
+                )
+            }
+        }
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx.open_window(size(px(64.), px(64.)), |_, cx| cx.new(|_| Clipped))?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        let scale = image.width() / 64;
+        for (x, y, color) in [(10, 20, 0), (12, 8, 0), (20, 20, 255), (44, 20, 0)] {
+            assert_eq!(
+                image.get_pixel(x * scale, y * scale).0,
+                [color, color, color, 255]
+            );
+        }
+        Ok(())
+    }
 
     #[test]
     fn horizontal_stripes_keep_fractional_period_and_hard_stop() {
