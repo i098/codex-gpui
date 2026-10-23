@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, ensure};
 use bridge::{Bridge, Event};
-use gpui::{AppContext as _, BorrowAppContext as _, Context};
+use gpui::{AppContext as _, Context};
 use serde_json::{Value, json};
 use std::{collections::HashSet, sync::Arc};
 use ui::{
