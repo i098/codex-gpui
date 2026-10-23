@@ -115,7 +115,8 @@ fn a_successful_api_key_reply_enters_the_app_without_a_browser() -> Result<()> {
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     drain(&mut fx)?;
     ensure!(fx.read(|root, _| root.signed_out()));
-    fx.keys("tab")?;
+    // API-only sign-in shows `Sign in with an API key`, which opens the key field.
+    fx.keys("tab tab enter")?;
     fx.type_text("sk-owned-fixture-not-a-real-key")?;
     evidence(&mut fx, "api-key-form")?;
     fx.keys("enter")?;
