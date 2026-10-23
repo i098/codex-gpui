@@ -812,7 +812,7 @@ The native click test checks these effects without changing the recorded fixture
 Set `S035B_SHOTS` to retain the before and after screenshots outside the Cargo target.
 Ordinary local task creation and the existing draft remain unchanged.
 
-`Run now` (AM-021) is the first item of the row `Scheduled task actions` menu, as in `run-now-11e55df28c95.js`.
+`Run now` (AM-021) is the second item of the row `Scheduled task actions` menu, after `Pause` / `Resume`. The original sidebar menu is `q` in `menu-items-19a7bd2f5b31.js`, called with `statusFirst: true` from `actions-b3b1b77c618b.js`; `run-now-11e55df28c95.js` holds only the run action.
 Choosing it sends `automation-run-now` with `{id, collaborationMode, permissions}` and disables duplicate starts until the host answers.
 The information toast and row show `Starting run…` until the host answers.
 `LocalHost` starts one app-server thread per task folder, titles it with the task name, and sends the original's run preamble and the prompt as the first turn.
@@ -868,6 +868,15 @@ It also checks account isolation, recoverable restore writes, and retained workt
 Its native window proof also checks pending state, duplicate suppression, success navigation, failure, Back/Forward, and navigation away.
 On macOS, its native row-menu replay starts a task, then displays the real app-server refusal through the same toast component.
 
+`Share` (AM-024) follows `Pause` / `Resume` and `Run now` in the same task menu. The original then adds `Edit` before `Share` and `Delete` after it; those items come with the editor and delete changes.
+It uses the original `link-light-20` icon and copies `https://chatgpt.com/scheduled?automationId=<id>&automationSource=local`.
+The URL encoder protects reserved characters and Unicode in the task ID.
+The app shows `Link copied` only when the clipboard reads back the link.
+Sharing closes the menu and returns focus to its button without opening the task or sending a network request.
+Arrow keys move through the menu; Home and End select its first and last items.
+The `automation_share` check uses the headless platform's private clipboard for mouse and keyboard input.
+Suggested tasks retain their existing unsupported failure result and never create a task through this action.
+
 `LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
 It accepts `{id, status}` or the original full cron or heartbeat body, including edits to `name`, `prompt`, and `rrule`.
 Like the original `ugi`, a task without a target sends its first cwd as `projectId`; the host compares that value with the stored cwd.
@@ -880,7 +889,8 @@ The recurrence uses the vendored `rrule` 0.14.0 with the original limits: `INTER
 The `host` checks match the retained original oracle.
 
 AM-022, AM-023 and AM-028 use the existing sidebar task list.
-The `Scheduled task actions` menu opens under the row button like the original (right edge 1 px inside the button, 220 px wide); its first item is `Pause` or `Resume`.
+The `Scheduled task actions` menu opens under the row button like the original (right edge 1 px inside the button, 220 px wide).
+`Pause` or `Resume` is the first item, before `Run now`, as in the original.
 The row status control shows `Pause` or `Resume` on hover or keyboard focus, with a named accessible action.
 Both send `automation-update` with the original cron or heartbeat request, block duplicate writes and refetch the list.
 Success shows `Successfully paused automation` or `Successfully resumed automation`; the row shows `Paused` only after the host reports PAUSED.
@@ -930,7 +940,7 @@ A profile without the original database saves the definition without creating a 
 | 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (no host: `list-automations`) |
 | 6 | Status filter | click | All / Active / Paused. | — | NOT WIRED (no host: `list-automations`) |
 | 7 | Task row | click | Detail panel. | Selects the task and opens its thread. | PASS (`s037::task_row_hover_and_click_match_original`) |
-| 8 | Row actions | click | Edit, Run now, Pause, Delete. | Edit opens the stored definition in the full editor; Run now and Pause / Resume retain their existing host paths. Delete has a separate owner. | PARTIAL (`task_create::editor`, `automation_run_now`, `s037`) |
+| 8 | Row actions | click | Pause / Resume, Run now, Edit, Share, Delete. | Edit, Run now, Pause / Resume, and Share use the existing host paths. Delete has a separate owner. | PARTIAL (`task_create::editor`, `automation_run_now`, `automation_share`, `s037`) |
 | 9 | Editor fields | focus | Name, Prompt, schedule. | Editable Name and multiline Prompt, six schedule modes, custom frequencies, time presets, and day fields persist through the existing host. | PASS (`task_create::editor`, `host`) |
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
 | 11 | Row hover | hover | Row highlight. | The recorded row fill and actions match; the status icon changes to Pause on hover or keyboard focus. | PASS (`s037::task_row_hover_and_click_match_original`; suggestion hover: `s035::suggestion_hover_matches_original`) |
