@@ -2976,7 +2976,9 @@ pub(crate) fn paint_icon(
         let c = p.color.map(Hsla::from).unwrap_or(color);
         // Noncomposited paths fold the SVG opacity into their paint.
         let mut a = if p.color.is_some() { 1. } else { color.a } * p.opacity * p.layer;
-        if let Some(scale) = hairline {
+        if let Some(scale) = hairline
+            && scale < 256
+        {
             a = f32::from(((u16::from(alpha_byte(a)) * scale) >> 8) as u8) / 255.;
         }
         if a == 0. {
