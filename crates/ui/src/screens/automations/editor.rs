@@ -1076,7 +1076,7 @@ impl Editor {
     fn picker_color(picker: Picker, t: &Theme) -> gpui::Hsla {
         match picker {
             Picker::Notifications | Picker::Project | Picker::Thread => t.text,
-            Picker::Trigger | Picker::Effort => t.text_tertiary,
+            Picker::Trigger => t.text_tertiary,
             _ => t.text_secondary,
         }
     }
