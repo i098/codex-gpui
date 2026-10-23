@@ -2485,12 +2485,16 @@ fn capsule(t: &Theme, clamped: bool) -> Div {
         ))
 }
 
+pub(crate) fn stats_features(size: f32) -> FontFeatures {
+    let mut features = vec![("tnum".into(), 1), ("cv01".into(), 1), ("cv02".into(), 1)];
+    features.extend(textsys::letter_spacing(-0.025 * size).0.iter().cloned());
+    FontFeatures(Arc::new(features))
+}
+
 /// `+N -M` in git colors, `size` px with `tracking-tight` (-0.025em letter spacing),
 /// `tabular-nums` and `disambiguated-digits` (`cv01`, `cv02`).
 pub fn stats(added: usize, removed: usize, size: f32, t: &Theme) -> Div {
-    let mut features = vec![("tnum".into(), 1), ("cv01".into(), 1), ("cv02".into(), 1)];
-    features.extend(textsys::letter_spacing(-0.025 * size).0.iter().cloned());
-    let features = FontFeatures(Arc::new(features));
+    let features = stats_features(size);
     let tracked =
         |s: String, color: Hsla| text(s, size, size, 430., color).font_features(features.clone());
     div()

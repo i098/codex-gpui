@@ -1108,7 +1108,7 @@ impl Page {
             .min_h_0()
             .child(navigation)
             .child(toolbar)
-            .child(body.px(px(30.)).pt(px(20.)).pb(px(20.)))
+            .child(body.px(px(30.)).pt(px(20.)))
             .child(
                 crate::screens::thread::view::skia_gradient(
                     &[(t.surface, 0.), (t.surface.opacity(0.), 1.)],
@@ -1203,6 +1203,7 @@ impl Page {
             .flex()
             .flex_col()
             .layer()
+            .pb(px(20.))
             .gap(px(16.));
         for (index, stream) in self.streams.iter().enumerate() {
             if rows[index].is_empty() && !stream.loading {
@@ -1287,6 +1288,8 @@ impl Page {
     }
 
     fn row(&self, item: &model::Item, show_author: bool, cx: &Context<Self>) -> Stateful<Div> {
+        static STATS_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
+            std::sync::LazyLock::new(|| crate::diff::stats_features(12.));
         let t = cx.theme();
         let identity = item.pull_request.clone();
         let selected = self.selected.as_ref() == Some(&identity);
@@ -1384,6 +1387,7 @@ impl Page {
                                     div()
                                         .flex_none()
                                         .flex()
+                                        .font_features(STATS_FEATURES.clone())
                                         .gap(px(4.))
                                         .child(text(
                                             format!("+{}", grouped_count(item.additions)),
