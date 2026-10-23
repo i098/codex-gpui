@@ -1025,9 +1025,9 @@ impl Editor {
                 )
             })
             .when(picker == Picker::Trigger, |d| {
-                d.child(icon("automation-scheduled", 16., color).runtime())
+                d.child(icon("automation-scheduled", 16., color))
             })
-            .child(icon(icon_name, icon_size, icon_color).runtime())
+            .child(icon(icon_name, icon_size, icon_color))
             .on_click(cx.listener(move |this, _, window, cx| {
                 if !this.saving && !disabled {
                     this.controls[control].focus(window, cx);
