@@ -389,6 +389,25 @@ impl TaffyLayoutEngine {
         bounds
     }
 
+    /// Scroll limits use logical layout sizes, not device-snapped paint edges.
+    pub(crate) fn scroll_max_offset(&self, id: LayoutId, scale_factor: f32) -> Point<Pixels> {
+        let layout = self.taffy.layout(id.into()).expect(EXPECT_MESSAGE);
+        let client = size(
+            layout.size.width
+                - layout.border.left
+                - layout.border.right
+                - layout.scrollbar_size.width.min(layout.size.width),
+            layout.size.height
+                - layout.border.top
+                - layout.border.bottom
+                - layout.scrollbar_size.height.min(layout.size.height),
+        );
+        let logical = |value: f32| (value / scale_factor).round();
+        Point::from(Size::from(layout.content_size).map(logical) - client.map(logical))
+            .map(Pixels)
+            .max(&Point::default())
+    }
+
     /// `layout_bounds(id)`'s unsnapped minus snapped origin x, in pixels.
     pub fn layout_origin_residual_x(&mut self, id: LayoutId, scale_factor: f32) -> Pixels {
         self.layout_bounds(id, scale_factor);
