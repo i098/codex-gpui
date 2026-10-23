@@ -473,6 +473,10 @@ Turns without a server start time measure elapsed time from their first notifica
 The queue replay matches the retained running state at one second.
 The queue dropdown sizes itself to its icon labels and opens below the measured button, including keyboard activation.
 Editor context menus keep their existing minimum width.
+The transcript follows its bottom while already at the bottom and measures its composer reserve, including queued rows.
+Scrolling up keeps the current position instead of following new content.
+Running turns reserve the original footer scroll padding; the top fade paints behind the transcript.
+Queue controls use the original Steer and Delete icons.
 The original/native pixel comparison still fails for transcript geometry, queue controls, and surface colors.
 
 S018 records CP-039 and CP-040 in `refs/interactions/s018.json`.

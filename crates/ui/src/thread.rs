@@ -147,6 +147,7 @@ pub struct ThreadView {
     expanded: HashSet<String>,
     pending_question: Option<String>,
     scroll: ScrollHandle,
+    footer_height: Rc<Cell<Pixels>>,
     /// The turns as last laid out, to stand in for the ones far off screen.
     laid_out: Rc<RefCell<LaidOut>>,
     /// Focused while the transcript holds the text selection: `Copy` then copies it.
@@ -601,6 +602,7 @@ impl ThreadView {
             expanded: HashSet::new(),
             pending_question: None,
             scroll: ScrollHandle::new(),
+            footer_height: Rc::new(Cell::new(px(114.))),
             laid_out: Rc::default(),
             focus: None,
             carets: Carets::default(),
@@ -1931,6 +1933,9 @@ impl ThreadView {
 
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.scroll.offset().y <= -self.scroll.max_offset().y + px(1.) {
+            self.scroll.scroll_to_bottom();
+        }
         let now = cx.background_executor().now();
         self.stream_fades.retain(|_, segments| {
             segments.retain_mut(|segment| {
@@ -2188,12 +2193,15 @@ impl Render for ThreadView {
         let native_approval = composer
             .as_ref()
             .is_some_and(|composer| composer.read(cx).is_computer_use_request());
+        let footer_height = self.footer_height.clone();
+        let owner = cx.entity().entity_id();
         let page = div()
             .size_full()
             .relative()
             .overflow_hidden()
             .bg(t.surface)
             .on_mouse_down(gpui::MouseButton::Right, cx.listener(Self::right_click))
+            .child(top_fade.absolute().top_0().left_0())
             .child(
                 div()
                     .id("conversation")
@@ -2234,21 +2242,28 @@ impl Render for ThreadView {
                     .children(tracker)
                     .child(
                         div()
-                            .mx_auto()
-                            .w_full()
-                            .max_w(CONTENT_MAX_WIDTH)
-                            .px(px(16.))
-                            .pb(px(32.))
+                            .min_h_full()
                             .flex()
                             .flex_col()
-                            .gap(px(12.))
-                            .children(turns)
-                            .on_children_prepainted(measure),
+                            .child(
+                                div()
+                                    .mx_auto()
+                                    .w_full()
+                                    .max_w(CONTENT_MAX_WIDTH)
+                                    .px(px(16.))
+                                    .pb(px(32.))
+                                    .flex()
+                                    .flex_1()
+                                    .flex_col()
+                                    .gap(px(12.))
+                                    .children(turns)
+                                    .on_children_prepainted(measure),
+                            )
+                            .child(div().flex_none().h(self.footer_height.get())),
                     )
-                    // Room for the docked composer.
-                    .child(div().h(px(114.))),
+                    // Running turns keep the original footer's extra scroll-padding reserve.
+                    .when(self.is_running(), |d| d.child(div().h(px(16.)))),
             )
-            .child(top_fade.absolute().top_0().left_0())
             .when(self.clip_right, |d| d.child(gpui::deferred(corners)))
             // A portal in the original: its shadow spills over the titlebar and the sidebar.
             .when(self.summary_open, |d| {
@@ -2273,6 +2288,13 @@ impl Render for ThreadView {
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .layer()
                     .when(native_approval, |d| d.cc_tiles().window_space_recording())
+                    .on_children_prepainted(move |bounds, window, cx| {
+                        if let Some(bounds) = bounds.first()
+                            && footer_height.replace(bounds.size.height) != bounds.size.height
+                        {
+                            window.defer(cx, move |_, cx| cx.notify(owner));
+                        }
+                    })
                     .child(
                         div()
                             .relative()
