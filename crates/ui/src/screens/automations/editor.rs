@@ -11,6 +11,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 use serde_json::Value;
+use std::collections::HashMap;
 use theme::{ActiveTheme as _, Theme};
 
 const MODES: &[&str] = &[
@@ -145,27 +146,13 @@ impl Editor {
     }
 
     fn load_rule(&mut self, rule: &str, cx: &mut Context<Self>) {
-        let parts: std::collections::HashMap<_, _> = rule
+        let parts: HashMap<_, _> = rule
             .trim_start_matches("RRULE:")
             .split(';')
             .filter_map(|s| s.split_once('='))
             .collect();
         let frequency = parts.get("FREQ").copied().unwrap_or("");
-        let rule_fields: &[&str] = match frequency {
-            "MINUTELY" => &[],
-            "HOURLY" => &["BYMINUTE"],
-            "DAILY" => &["BYHOUR", "BYMINUTE"],
-            "WEEKLY" => &["BYDAY", "BYHOUR", "BYMINUTE"],
-            "MONTHLY" => &["BYMONTHDAY", "BYHOUR", "BYMINUTE"],
-            "YEARLY" => &["BYMONTH", "BYMONTHDAY", "BYHOUR", "BYMINUTE"],
-            _ => &[],
-        };
-        // Keep uneditable fields verbatim; BYSECOND=0 can still change heartbeat timing.
-        self.raw_rule = rule.contains('\n')
-            || parts
-                .keys()
-                .any(|key| !["FREQ", "INTERVAL"].contains(key) && !rule_fields.contains(key))
-            || rule_fields.iter().any(|key| !parts.contains_key(key));
+        self.raw_rule = Self::has_uneditable_fields(rule, &parts);
         self.frequency = ["HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"]
             .iter()
             .position(|s| *s == frequency)
@@ -174,29 +161,7 @@ impl Editor {
         let interval = parts.get("INTERVAL").copied().unwrap_or("1");
         let weekdays = parts.get("BYDAY").copied().unwrap_or("MO");
         self.weekdays = std::array::from_fn(|i| weekdays.split(',').any(|day| day == DAYS[i]));
-        self.raw_rule |= !["MINUTELY", "HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"]
-            .contains(&frequency)
-            || parts
-                .get("BYDAY")
-                .is_some_and(|days| days.split(',').any(|day| !DAYS.contains(&day)))
-            || ["BYHOUR", "BYMINUTE", "BYMONTH"]
-                .iter()
-                .any(|key| parts.get(key).is_some_and(|s| s.contains(',')));
-        self.mode = Some(if self.raw_rule {
-            5
-        } else if self.minutes || frequency == "HOURLY" && parts.get("BYMINUTE") == Some(&"0") {
-            0
-        } else if frequency == "HOURLY" || interval != "1" || frequency == "YEARLY" {
-            5
-        } else {
-            match frequency {
-                "DAILY" => 1,
-                "WEEKLY" if weekdays == "MO,TU,WE,TH,FR" => 2,
-                "WEEKLY" => 3,
-                "MONTHLY" => 4,
-                _ => 5,
-            }
-        });
+        self.mode = Some(self.mode_for_rule(&parts));
         for (index, value) in [
             (INTERVAL, interval.to_owned()),
             (
@@ -227,6 +192,54 @@ impl Editor {
             ),
         ] {
             self.fields[index].update(cx, |field, cx| field.set_text(&value, cx));
+        }
+    }
+
+    fn has_uneditable_fields(rule: &str, parts: &HashMap<&str, &str>) -> bool {
+        let frequency = parts.get("FREQ").copied().unwrap_or("");
+        let rule_fields: &[&str] = match frequency {
+            "MINUTELY" => &[],
+            "HOURLY" => &["BYMINUTE"],
+            "DAILY" => &["BYHOUR", "BYMINUTE"],
+            "WEEKLY" => &["BYDAY", "BYHOUR", "BYMINUTE"],
+            "MONTHLY" => &["BYMONTHDAY", "BYHOUR", "BYMINUTE"],
+            "YEARLY" => &["BYMONTH", "BYMONTHDAY", "BYHOUR", "BYMINUTE"],
+            _ => &[],
+        };
+        // Keep uneditable fields verbatim; BYSECOND=0 can still change heartbeat timing.
+        rule.contains('\n')
+            || parts
+                .keys()
+                .any(|key| !["FREQ", "INTERVAL"].contains(key) && !rule_fields.contains(key))
+            || rule_fields.iter().any(|key| !parts.contains_key(key))
+            || !["MINUTELY", "HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"].contains(&frequency)
+            || parts
+                .get("BYDAY")
+                .is_some_and(|days| days.split(',').any(|day| !DAYS.contains(&day)))
+            || ["BYHOUR", "BYMINUTE", "BYMONTH"]
+                .iter()
+                .any(|key| parts.get(key).is_some_and(|s| s.contains(',')))
+    }
+
+    fn mode_for_rule(&self, parts: &HashMap<&str, &str>) -> usize {
+        let frequency = parts.get("FREQ").copied().unwrap_or("");
+        let interval = parts.get("INTERVAL").copied().unwrap_or("1");
+        let weekdays = parts.get("BYDAY").copied().unwrap_or("MO");
+        if self.raw_rule {
+            return 5;
+        }
+        if self.minutes || frequency == "HOURLY" && parts.get("BYMINUTE") == Some(&"0") {
+            return 0;
+        }
+        if frequency == "HOURLY" || interval != "1" || frequency == "YEARLY" {
+            return 5;
+        }
+        match frequency {
+            "DAILY" => 1,
+            "WEEKLY" if weekdays == "MO,TU,WE,TH,FR" => 2,
+            "WEEKLY" => 3,
+            "MONTHLY" => 4,
+            _ => 5,
         }
     }
 
@@ -283,15 +296,14 @@ impl Editor {
                 if self.minutes { "" } else { ";BYMINUTE=0" }
             ));
         }
+        self.calendar_rule(mode, interval, cx)
+    }
+
+    fn calendar_rule(&self, mode: usize, interval: u16, cx: &App) -> Option<String> {
         let frequency = if mode == 5 {
             self.frequency
         } else {
-            match mode {
-                1 => 1,
-                2 | 3 => 2,
-                4 => 3,
-                _ => return None,
-            }
+            *[1, 2, 2, 3].get(mode.checked_sub(1)?)?
         };
         let mut rule = format!(
             "FREQ={};INTERVAL={}",
@@ -595,15 +607,7 @@ impl Editor {
             ));
         }
         for index in self.visible_fields() {
-            let label = match index {
-                TIME => "Time (local, HH:MM)",
-                INTERVAL => "Every",
-                MONTH_DAYS => "On days (1-31)",
-                MONTH => "Month (1-12)",
-                MINUTE => "Minute past the hour",
-                _ => "Schedule rule",
-            };
-            content = content.child(self.field(index, label, t, cx));
+            content = content.child(self.schedule_field(index, t, cx));
         }
         if self.mode == Some(0) {
             content = content.child(self.picker(
@@ -616,56 +620,7 @@ impl Editor {
             ));
         }
         if self.mode == Some(3) || self.mode == Some(5) && self.frequency == 2 && !self.raw_rule {
-            content = content.child(
-                div()
-                    .id("automation-weekdays")
-                    .role(Role::Group)
-                    .aria_label("Days of the week")
-                    .flex()
-                    .gap(px(4.))
-                    .children(DAYS.iter().enumerate().map(|(i, day)| {
-                        div()
-                            .id(("automation-weekday", i))
-                            .anchor_scroll(Some(self.control_anchors[4 + i].clone()))
-                            .role(Role::Button)
-                            .aria_label(DAY_LABELS[i])
-                            .aria_toggled(if self.weekdays[i] {
-                                gpui::Toggled::True
-                            } else {
-                                gpui::Toggled::False
-                            })
-                            .track_focus(&self.controls[4 + i])
-                            .size(px(34.))
-                            .rounded(px(8.))
-                            .bg(if self.weekdays[i] {
-                                t.text_alpha_10
-                            } else {
-                                gpui::transparent_black()
-                            })
-                            .focus_visible(|s| s.border_2().border_color(gpui::rgb(0x3a83f7)))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(text(*day, 12., 20., 430., t.text))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if !this.saving {
-                                    this.weekdays[i] = !this.weekdays[i];
-                                    this.schedule_dirty = true;
-                                    cx.notify();
-                                }
-                            }))
-                            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _, cx| {
-                                if !this.saving
-                                    && matches!(e.keystroke.key.as_str(), "enter" | "space")
-                                {
-                                    this.weekdays[i] = !this.weekdays[i];
-                                    this.schedule_dirty = true;
-                                    cx.notify();
-                                    cx.stop_propagation();
-                                }
-                            }))
-                    })),
-            );
+            content = content.child(self.weekday_controls(t, cx));
         }
         if self.visible_fields().contains(&TIME) {
             content =
@@ -712,32 +667,116 @@ impl Editor {
                 }
             }))
     }
+
+    fn schedule_field(&self, index: usize, t: &Theme, cx: &App) -> Stateful<Div> {
+        let label = match index {
+            TIME => "Time (local, HH:MM)",
+            INTERVAL => "Every",
+            MONTH_DAYS => "On days (1-31)",
+            MONTH => "Month (1-12)",
+            MINUTE => "Minute past the hour",
+            _ => "Schedule rule",
+        };
+        self.field(index, label, t, cx)
+    }
+
+    fn weekday_controls(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        div()
+            .id("automation-weekdays")
+            .role(Role::Group)
+            .aria_label("Days of the week")
+            .flex()
+            .gap(px(4.))
+            .children(DAYS.iter().enumerate().map(|(i, day)| {
+                div()
+                    .id(("automation-weekday", i))
+                    .anchor_scroll(Some(self.control_anchors[4 + i].clone()))
+                    .role(Role::Button)
+                    .aria_label(DAY_LABELS[i])
+                    .aria_toggled(if self.weekdays[i] {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .track_focus(&self.controls[4 + i])
+                    .size(px(34.))
+                    .rounded(px(8.))
+                    .bg(if self.weekdays[i] {
+                        t.text_alpha_10
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .focus_visible(|s| s.border_2().border_color(gpui::rgb(0x3a83f7)))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(text(*day, 12., 20., 430., t.text))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !this.saving {
+                            this.weekdays[i] = !this.weekdays[i];
+                            this.schedule_dirty = true;
+                            cx.notify();
+                        }
+                    }))
+                    .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _, cx| {
+                        if !this.saving && matches!(e.keystroke.key.as_str(), "enter" | "space") {
+                            this.weekdays[i] = !this.weekdays[i];
+                            this.schedule_dirty = true;
+                            cx.notify();
+                            cx.stop_propagation();
+                        }
+                    }))
+            }))
+    }
+
+    fn footer(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let name_empty = self.value(NAME, cx).is_empty();
+        let prompt_empty = self.value(PROMPT, cx).is_empty();
+        let valid = !self.saving && !name_empty && !prompt_empty && self.rule(cx).is_some();
+        let reason = match (name_empty, prompt_empty, self.mode.is_none()) {
+            (true, _, _) => "Enter a name",
+            (false, true, _) => "Enter a prompt",
+            (false, false, true) => "Choose a schedule",
+            _ => "Enter valid schedule fields",
+        };
+        div()
+            .flex()
+            .justify_end()
+            .gap(px(8.))
+            .child(self.button(13, "Cancel", t, cx))
+            .child(tooltip(
+                self.button(
+                    14,
+                    match (self.saving, self.editing) {
+                        (true, _) => "Saving…",
+                        (false, true) => "Save",
+                        (false, false) => "Create",
+                    },
+                    t,
+                    cx,
+                )
+                .bg(t.text_alpha_10)
+                .aria_disabled(!valid)
+                .opacity(if valid { 1. } else { 0.4 }),
+                if valid { "Save scheduled task" } else { reason },
+                None,
+                Side::Top,
+            ))
+    }
 }
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
-        let valid = !self.saving
-            && !self.value(NAME, cx).is_empty()
-            && !self.value(PROMPT, cx).is_empty()
-            && self.rule(cx).is_some();
-        let reason = if self.value(NAME, cx).is_empty() {
-            "Enter a name"
-        } else if self.value(PROMPT, cx).is_empty() {
-            "Enter a prompt"
-        } else if self.mode.is_none() {
-            "Choose a schedule"
+        let title = if self.editing {
+            "Edit scheduled task"
         } else {
-            "Enter valid schedule fields"
+            "Create scheduled task"
         };
         let mut form = div()
             .id("automation-editor-form")
             .role(Role::Dialog)
-            .aria_label(if self.editing {
-                "Edit scheduled task"
-            } else {
-                "Create scheduled task"
-            })
+            .aria_label(title)
             .relative()
             .w(px(640.).min(window.viewport_size().width * 0.92))
             .max_h(window.viewport_size().height * 0.9)
@@ -763,17 +802,7 @@ impl Render for Editor {
                     .flex()
                     .justify_between()
                     .items_center()
-                    .child(text(
-                        if self.editing {
-                            "Edit scheduled task"
-                        } else {
-                            "Create scheduled task"
-                        },
-                        16.,
-                        24.,
-                        590.,
-                        t.text,
-                    ))
+                    .child(text(title, 16., 24., 590., t.text))
                     .child(self.button(12, "Close", t, cx)),
             )
             .child(
@@ -792,33 +821,7 @@ impl Render for Editor {
             .when_some(self.error.as_ref(), |d, error| {
                 d.child(text(error.clone(), 13., 20., 430., t.text_error).whitespace_normal())
             })
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap(px(8.))
-                    .child(self.button(13, "Cancel", t, cx))
-                    .child(tooltip(
-                        self.button(
-                            14,
-                            if self.saving {
-                                "Saving…"
-                            } else if self.editing {
-                                "Save"
-                            } else {
-                                "Create"
-                            },
-                            t,
-                            cx,
-                        )
-                        .bg(t.text_alpha_10)
-                        .aria_disabled(!valid)
-                        .opacity(if valid { 1. } else { 0.4 }),
-                        if valid { "Save scheduled task" } else { reason },
-                        None,
-                        Side::Top,
-                    )),
-            );
+            .child(self.footer(t, cx));
         if let Some((picker, selected)) = self.menu {
             form = form.child(
                 div()
@@ -923,6 +926,19 @@ impl CreateMenu {
         window.dispatch_action(Box::new(super::CreateAutomation { mode }), cx);
         cx.notify();
     }
+
+    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event.keystroke.key.as_str() {
+            "up" if self.open => self.selected = (self.selected + 2) % 3,
+            "down" if self.open => self.selected = (self.selected + 1) % 3,
+            "enter" | "space" if self.open => self.select(window, cx),
+            "enter" | "space" | "down" => self.open = true,
+            "escape" | "tab" if self.open => self.open = false,
+            _ => return,
+        }
+        cx.notify();
+        cx.stop_propagation();
+    }
 }
 
 impl Render for CreateMenu {
@@ -977,18 +993,7 @@ impl Render for CreateMenu {
             .relative()
             .track_focus(&self.focus)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                match event.keystroke.key.as_str() {
-                    "up" if this.open => this.selected = (this.selected + 2) % 3,
-                    "down" if this.open => this.selected = (this.selected + 1) % 3,
-                    "enter" | "space" if this.open => this.select(window, cx),
-                    "enter" | "space" | "down" => this.open = true,
-                    "escape" | "tab" if this.open => this.open = false,
-                    _ => return,
-                }
-                cx.notify();
-                cx.stop_propagation();
-            }))
+            .on_key_down(cx.listener(Self::key))
             .child(
                 div()
                     .id("automation-create-trigger")
