@@ -172,7 +172,7 @@ fn missing_avatar() -> gpui::AnyElement {
                 .expect("Mac image rasterizer");
                 let size = inner.size(0);
                 let mut bytes = inner.as_bytes(0).expect("raster frame").to_vec();
-                for pixel in bytes.chunks_exact_mut(4) {
+                for pixel in bytes.as_chunks_mut::<4>().0 {
                     pixel.swap(0, 2);
                 }
                 let clipped =
