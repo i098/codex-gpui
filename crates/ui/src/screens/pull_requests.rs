@@ -292,7 +292,8 @@ pub fn shell(page: Entity<Page>, cx: &mut App) -> Entity<Shell> {
 
 impl Page {
     pub fn new(clock: Clock, cx: &mut Context<Self>) -> Self {
-        let search = cx.new(|cx| Composer::search_field("Search pull requests", cx));
+        let search =
+            cx.new(|cx| Composer::embedded_field("Search pull requests", "", px(14.), px(20.), cx));
         cx.observe(&search, |this, editor, cx| {
             let query = model::limit_query(editor.read(cx).field_text()).to_owned();
             if editor.read(cx).field_text() != query {

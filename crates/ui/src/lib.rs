@@ -133,6 +133,8 @@ pub struct Shell {
     /// composited layer (Chromium's layer tree of refs/diff), not part of the page's; the shell
     /// draws its right corners' px of partial clip coverage.
     pub main_layer: bool,
+    /// The opaque accelerated scroller that can occlude the page frame.
+    pub main_opaque_scroll: Option<gpui::ScrollHandle>,
     /// With `main_composited`: the main view draws its right corners' px of partial clip
     /// coverage itself, after the shell (a lone thread: `shapes::paint_clipped_tile`).
     pub main_clips_right: bool,
@@ -182,6 +184,7 @@ impl Shell {
             main_backgrounds: 0,
             main_composited: false,
             main_layer: false,
+            main_opaque_scroll: None,
             main_clips_right: false,
             attention: false,
             profile_menu: false,
@@ -1302,6 +1305,8 @@ impl Render for Shell {
             let c = gpui::Rgba::from(t.surface);
             [c.r, c.g, c.b, 1.].map(|v| (v * 255.).round() as u8)
         };
+        #[cfg(target_os = "macos")]
+        let opaque_scroll = self.main_opaque_scroll.clone();
         // The page frame over the root `bounds`.
         let frame = move |bounds: Bounds<Pixels>,
                           fills: u8,
@@ -1334,6 +1339,13 @@ impl Render for Shell {
             window.with_skia_layer(255, |window| {
                 shapes::paint(&layout, None, bounds, window, cx);
                 shapes::paint(&surface, None, page_surface, window, cx);
+                #[cfg(target_os = "macos")]
+                if main_layer
+                    && let Some(scroll) = &opaque_scroll
+                    && scroll.max_offset().y > px(0.)
+                {
+                    shapes::paint_page_occlusion(bounds, scroll.bounds(), under, window, cx);
+                }
                 if !main_layer {
                     main_surface(window, cx);
                 }

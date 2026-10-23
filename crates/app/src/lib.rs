@@ -1246,7 +1246,7 @@ impl Root {
                     None => change.path.clone(),
                 }),
             ),
-            DiffRequest::Open(_) => return,
+            DiffRequest::Open(_) | DiffRequest::LoadFullFile(_) => return,
         };
         if let Some(review) = panel.read(cx).review_params().as_object() {
             params.as_object_mut().unwrap().extend(review.clone());
@@ -2150,8 +2150,8 @@ impl Root {
         cx.stop_propagation();
     }
 
-    /// The strip tab of `side` in the open thread `view`: `(icon, label)`. No terminal tab
-    /// without a background command, no file tab without a file viewer.
+    /// The strip tab of `side` in the open thread `view`.
+    /// No terminal tab without a background command; no file tab without a file viewer.
     fn side_tab(
         side: SidePanel,
         view: &Entity<ThreadView>,
@@ -2159,14 +2159,26 @@ impl Root {
         cx: &App,
     ) -> Option<Tab> {
         match side {
-            SidePanel::Changes => Some(("diff-tab-changes", "Changes".into())),
+            SidePanel::Changes => Some(Tab {
+                icon: "diff-tab-changes",
+                label: "Changes".into(),
+                preview: false,
+            }),
             SidePanel::Terminal => {
                 let (_, command, _) = view.read(cx).terminal()?;
-                Some(("thread-terminal", command.into()))
+                Some(Tab {
+                    icon: "thread-terminal",
+                    label: command.into(),
+                    preview: false,
+                })
             }
             SidePanel::File => {
                 let file = file?.read(cx);
-                Some((file.tab_icon(), file.name()))
+                Some(Tab {
+                    icon: file.tab_icon(),
+                    label: file.name(),
+                    preview: file.is_preview(),
+                })
             }
         }
     }
@@ -2225,52 +2237,6 @@ impl Root {
         self.sync(window, cx);
     }
 
-    /// A file link in an answer: the file viewer tab, filled with the local file.
-    fn open_file(&mut self, action: &OpenFile, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = &self.thread else { return };
-        let cwd = std::path::Path::new(view.read(cx).cwd())
-            .components()
-            .as_path()
-            .to_string_lossy()
-            .into_owned();
-        let path = if action.path.starts_with('/') {
-            action.path.clone()
-        } else {
-            format!("{cwd}/{}", action.path.trim_start_matches("./"))
-        };
-        let file = cx.new(|_| FileView::new(&cwd, path.clone(), action.line));
-        // The original asks its Electron main for `vscode://codex/read-file`; the port's local
-        // host is this process, so it reads the file itself.
-        // ponytail: FileView loads the whole file; add paging there instead of a command-only size limit.
-        let read = cx.background_spawn(async move {
-            let contents = std::fs::read_to_string(&path).map_err(|error| error.to_string());
-            (path, contents)
-        });
-        let target = file.clone();
-        cx.spawn(async move |this, cx| {
-            let (path, contents) = read.await;
-            let failed = contents.is_err();
-            target.update(cx, |file, cx| file.set_contents(contents, cx));
-            if failed {
-                this.update(cx, |this, cx| {
-                    this.toast(Toast::danger("Could not open file"), cx)
-                })
-                .ok();
-            } else {
-                this.update(cx, |this, cx| this.remember_file(&cwd, &path, cx))
-                    .ok();
-            }
-        })
-        .detach();
-        self.file = Some(file);
-        if self.side == Some(SidePanel::File) {
-            // The tab is selected already: show the new file in it.
-            self.sync(window, cx);
-        } else {
-            self.set_side(SidePanel::File, window, cx);
-        }
-    }
-
     /// `⌘K`, `⌘⇧P` and the sidebar `Search`: the command menu over live Recents, focused.
     fn open_command_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(thread) = &self.thread {
@@ -2279,9 +2245,11 @@ impl Root {
         let unread = self.sidebar.read(cx).unread.clone();
         let thread_open = matches!(self.state.route, Route::Thread(_));
         let cloud = self.chatgpt_account && self.host.supports_cloud_search();
+        let navigation = native_menus::navigation::available(self, cx);
         let menu = cx.new(|cx| {
             CommandMenu::with_threads(&self.threads, &unread, thread_open, "", cx)
                 .with_cloud_search(cloud)
+                .with_navigation_panel(navigation)
         });
         cx.subscribe_in(&menu, window, |this, _, event, window, cx| {
             this.run_command(event, window, cx)
@@ -2687,6 +2655,9 @@ impl Root {
                 "Open Changes tab" => window.dispatch_action(Box::new(OpenChangesPanel), cx),
                 "New tab" => window.dispatch_action(Box::new(ToggleChangesPanel), cx),
                 "Open terminal" => window.dispatch_action(Box::new(OpenBackgroundTerminal), cx),
+                "Toggle navigation panel" => {
+                    window.dispatch_action(Box::new(native_menus::ToggleNavigationPanel), cx)
+                }
                 "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 "Log out" => window.dispatch_action(Box::new(LogOut), cx),
@@ -2905,7 +2876,7 @@ impl Root {
             elapsed_since: None,
         });
         let composer = self.thread_composer.clone().into();
-        let diff = cx.new(|_| DiffPanel::last_turn(&self.cwd, &thread.cwd, &thread.turns));
+        let diff = diff_content::new_panel(&self.cwd, &thread.cwd, &thread.turns, cx);
         let cwd = thread.cwd.clone();
         cx.subscribe_in(
             &diff,
@@ -2918,6 +2889,12 @@ impl Root {
                     action: "revert", ..
                 } => this.confirm_revert(panel.clone(), &cwd, request, window, cx),
                 DiffRequest::Open(path) => this.open_in_editor(&cwd, path, cx),
+                DiffRequest::LoadFullFile(request) => diff_content::load_requested(
+                    panel.clone(),
+                    this.host.clone(),
+                    request.clone(),
+                    cx,
+                ),
                 _ => this.repository_request(panel.clone(), &cwd, request, cx),
             },
         )

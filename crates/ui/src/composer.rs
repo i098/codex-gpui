@@ -96,7 +96,7 @@ pub mod dictation;
 mod editor;
 mod footer;
 mod requests;
-mod menu {
+pub(crate) mod menu {
     //! Focus rules for the recorded Radix menus: arrows stop at the ends, Escape returns
     //! focus to the trigger, and Enter or Space activates the focused item.
 
@@ -185,7 +185,7 @@ mod menu {
         }
     }
 
-    pub(super) fn trigger_focus(style: StyleRefinement) -> StyleRefinement {
+    pub(crate) fn trigger_focus(style: StyleRefinement) -> StyleRefinement {
         style.shadow(vec![BoxShadow {
             color: rgb(0x3a83f7).into(),
             offset: point(px(0.), px(0.)),
@@ -604,6 +604,13 @@ const QUEUE_ACTIONS: &str = "Queued message actions";
 const QUEUE_EDIT: &str = "queuedEdit";
 const QUEUE_SWITCH: &str = "queuedQueueing";
 const QUEUE_MENU_WIDTH: f32 = 220.;
+
+#[derive(Clone, Copy)]
+struct EmbeddedField {
+    font_size: Pixels,
+    line_height: Pixels,
+}
+
 pub struct Composer {
     focus_handle: FocusHandle,
     placeholder: SharedString,
@@ -679,12 +686,12 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
-    compact_field: bool,
     field_min_height: Pixels,
     /// The grip drag of a plain multiline field: pointer y and field height at its start.
     field_resize: Option<(Pixels, Pixels)>,
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
+    embedded_field: Option<EmbeddedField>,
 }
 
 impl Composer {
@@ -763,11 +770,11 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
-            compact_field: false,
             field_min_height: px(48.),
             field_resize: None,
             dictation: None,
             dictation_error: None,
+            embedded_field: None,
         }
     }
 
@@ -783,9 +790,18 @@ impl Composer {
         editor
     }
 
-    pub(crate) fn search_field(placeholder: &'static str, cx: &mut Context<Self>) -> Self {
-        let mut editor = Self::settings_field(placeholder, "", false, cx);
-        editor.compact_field = true;
+    pub fn embedded_field(
+        placeholder: &'static str,
+        value: &str,
+        text_size: Pixels,
+        line_height: Pixels,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut editor = Self::settings_field(placeholder, value, false, cx);
+        editor.embedded_field = Some(EmbeddedField {
+            font_size: text_size,
+            line_height,
+        });
         editor
     }
 
@@ -795,7 +811,9 @@ impl Composer {
     }
 
     fn editor_font_size(&self) -> Pixels {
-        if self.plain_field == Some(true) || (self.request_compact && !self.secret) {
+        if let Some(field) = self.embedded_field {
+            field.font_size
+        } else if self.plain_field == Some(true) || (self.request_compact && !self.secret) {
             px(13.)
         } else {
             FONT_SIZE
@@ -803,7 +821,9 @@ impl Composer {
     }
 
     fn editor_line_height(&self) -> Pixels {
-        if self.plain_field == Some(true) {
+        if let Some(field) = self.embedded_field {
+            field.line_height
+        } else if self.plain_field == Some(true) {
             px(130. / 7.)
         } else {
             LINE_HEIGHT
@@ -2021,15 +2041,15 @@ impl Render for Composer {
             .on_action(cx.listener(Self::next_command))
             .on_action(cx.listener(Self::previous_command))
             .relative();
-        if self.compact_field {
+        if self.embedded_field.is_some() {
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)
                     .role(gpui::Role::TextInput)
                     .aria_label(self.placeholder.clone())
                     .aria_value(self.content.clone())
-                    .h(LINE_HEIGHT)
+                    .h(self.editor_line_height())
                     .overflow_hidden()
-                    .child(self.editor(cx).px_0().pb_0().min_h(LINE_HEIGHT)),
+                    .child(self.editor(cx)),
             );
         }
         if self.plain_field.is_some() {

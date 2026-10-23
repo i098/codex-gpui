@@ -662,6 +662,9 @@ impl Composer {
                 48.
             }))
             .cursor(CursorStyle::IBeam)
+            .when(self.embedded_field.is_some(), |d| {
+                d.px_0().pb_0().min_h(self.editor_line_height())
+            })
             .text_size(self.editor_font_size())
             .line_height(self.editor_line_height())
             .font_weight(gpui::FontWeight(430.))
@@ -676,12 +679,14 @@ impl Composer {
             // never scrolls here, so it has no such layer: its text blends onto the field's fill.
             .child(
                 div()
-                    .when(self.content.is_empty() && !self.compact_field, |d| {
-                        d.opacity(0.5)
-                    })
-                    .when(!self.compact_field && self.plain_field != Some(true), |d| {
-                        d.layer()
-                    })
+                    .when(
+                        self.content.is_empty() && self.embedded_field.is_none(),
+                        |d| d.opacity(0.5),
+                    )
+                    .when(
+                        self.embedded_field.is_none() && self.plain_field != Some(true),
+                        |d| d.layer(),
+                    )
                     .child(Editor(cx.entity())),
             )
     }
@@ -909,7 +914,11 @@ pub(super) fn shape(
             s.into(),
             composer.editor_font_size(),
             &runs,
-            if composer.compact_field { None } else { width },
+            if composer.embedded_field.is_some() {
+                None
+            } else {
+                width
+            },
             None,
         )
         .map(|lines| lines.into_iter().collect())
@@ -982,7 +991,7 @@ impl gpui::Element for Editor {
         let changed = self.0.update(cx, |c, _| {
             c.lines = lines;
             let mut bounds = bounds;
-            if c.compact_field {
+            if c.embedded_field.is_some() {
                 let cursor = c
                     .point_for_index(c.cursor())
                     .map_or(px(0.), |point| point.x);
@@ -1012,7 +1021,7 @@ impl gpui::Element for Editor {
         let selection_color = cx.theme().text_selection;
         let caret_color = cx.theme().text;
         let c = self.0.read(cx);
-        let bounds = if c.compact_field {
+        let bounds = if c.embedded_field.is_some() {
             c.bounds.unwrap_or(bounds)
         } else {
             bounds

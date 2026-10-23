@@ -9,3 +9,7 @@ There is no release yet.
 ### Added
 
 - A contributing guide, issue and pull request templates, a security policy, and this changelog.
+
+### Fixed
+
+- Preserve page-frame occlusion under opaque scrolling content at rounded surface corners.
