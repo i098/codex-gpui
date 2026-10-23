@@ -123,6 +123,7 @@ Ask Codex fills a new chat draft; it does not install software or start a turn.
 Summary shows the author, branches, reviewers, review-comment counts, checks, status, and description.
 Descriptions preserve source line breaks and render Markdown tables with copy controls.
 List counts use the original tabular digits, disambiguation features, and tight tracking.
+Section chevrons use the original vector with its settled rotation applied before rasterization.
 The list keeps its bottom padding inside the scroll area so the viewport does not clip the final visible row early.
 Code loads the authenticated read-only patch into the existing diff view; a failed load preserves Summary and offers retry.
 The detail toolbar expands the workspace pane without changing the operating system's fullscreen state.
