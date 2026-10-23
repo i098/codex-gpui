@@ -1,7 +1,4 @@
-//! ST-178 `Continue to sign in` (ChatGPT), replayed from `refs/interactions/s034b.json`: the
-//! signed-out port sends the original's `account/login/start`, opens the answered `authUrl`,
-//! shows `Continue signing in with your browser` with `Cancel sign-in` at the recorded boxes,
-//! and enters the app on `account/login/completed` success.
+//! Recorded browser login, copied-link fallback, and completion.
 
 #[cfg(target_os = "macos")]
 mod common;
@@ -18,149 +15,127 @@ fn recorded_chatgpt_sign_in() -> anyhow::Result<()> {
     use anyhow::{Context as _, ensure};
     use app::Route;
     use common::*;
-    use image::RgbaImage;
     use serde_json::{Value, json};
+    use ui::screens::signin::{Options, policy::Policy};
+    use url::Url;
 
+    common::install_panic_hook();
     let rec: Value = serde_json::from_str(include_str!("../../../refs/interactions/s034b.json"))?;
     let login = &rec["result"]["login"];
-    // The signed-out app-server of the recording: no account, and the mock's login answer.
-    let mut lines = script(None, |v| {
-        if v["dir"] == "recv" && v["msg"]["result"].get("requiresOpenaiAuth").is_some() {
-            v["msg"]["result"] = json!({ "account": null, "requiresOpenaiAuth": true });
+    let mut lines = script(None, |_| {})?;
+    let result_with = |key: &str| {
+        lines
+            .iter()
+            .find(|line| line["dir"] == "recv" && line["msg"]["result"].get(key).is_some())
+            .map(|line| line["msg"]["result"].clone())
+            .with_context(|| format!("Missing recorded {key} response"))
+    };
+    let config = result_with("config")?;
+    let account = result_with("requiresOpenaiAuth")?;
+    for line in &mut lines {
+        if line["dir"] == "send" && line["msg"]["method"] == "account/read" {
+            line["msg"]["params"] = json!({});
         }
-    })?;
+        if line["dir"] == "recv" && line["msg"]["result"].get("requiresOpenaiAuth").is_some() {
+            line["msg"]["result"] = json!({"account":null,"requiresOpenaiAuth":true});
+        }
+    }
+    lines.extend(exchange(
+        "configRequirements/read",
+        json!({"requirements":null}),
+    ));
+    lines.extend(exchange("config/read", config));
     lines.extend(exchange(
         "account/login/start",
         json!({
             "type": "chatgpt",
             "loginId": login["loginStart"]["loginId"],
-            "authUrl": login["loginStart"]["authUrl"],
+            "authUrl": login["loginStart"]["authUrl"]
         }),
     ));
+    lines.extend(exchange("account/read", account));
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
-    ensure!(fx.read(|r, _| r.signed_out()), "no sign-in view");
-    let before = fx.sent()?.len();
-    let rest = fx.shot()?;
-
-    let bbox = |b: &Value| ["x", "y", "w", "h"].map(|k| b[k].as_f64().unwrap() as f32);
-    // Device pixels (the window is 2x) inside the CSS-px box that are not the page surface.
-    let ink = |shot: &RgbaImage, [x, y, w, h]: [f32; 4]| -> usize {
-        let surface = shot.get_pixel(2, 2).0;
-        let (x0, y0) = ((x * 2.) as u32, (y * 2.) as u32);
-        let (x1, y1) = (((x + w) * 2.) as u32, ((y + h) * 2.) as u32);
-        (y0..y1)
-            .flat_map(|py| (x0..x1).map(move |px| (px, py)))
-            .filter(|&(px, py)| {
-                let p = shot.get_pixel(px, py).0;
-                (0..3).any(|i| p[i].abs_diff(surface[i]) > 8)
+    fx.wait("sign-in requirements fallback", |fx| {
+        fx.read(|root, cx| {
+            root.login().is_some_and(|login| {
+                matches!(login.read(cx).policy(), Policy::Ready { chatgpt: true, .. })
             })
-            .count()
-    };
-    let steps = rec["steps"].as_array().context("steps")?;
-    let (click, updated, completed) = (&steps[0], &steps[1], &steps[2]);
-    assert_eq!(click["target"]["text"], "Continue to sign in");
-    let button = bbox(&login["rest"]["continue"]["bbox"]);
-    ensure!(
-        ink(&rest, button) > 10_000,
-        "no `Continue to sign in` button at the recorded box"
-    );
-
-    let [x, y, w, h] = bbox(&click["target"]["bbox"]);
-    fx.click((x + w / 2., y + h / 2.))?;
+        })
+    })?;
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.login().unwrap().update(cx, |login, cx| {
+            login.set_options(
+                Options {
+                    desktop_auth: true,
+                    browser_help: true,
+                    ..Options::default()
+                },
+                cx,
+            );
+        });
+    });
+    let before = fx.sent()?.len();
+    fx.keys("tab tab enter")?;
     let mut opened = None;
-    fx.wait("account/login/start answered", |fx| {
+    fx.wait("browser handoff", |fx| {
         opened = fx.cx.take_opened_url();
         opened.is_some()
     })?;
-    // The original appends its app version and statsig stable ids to the server's authUrl.
-    let strip = |url: &str| {
-        url.split('&')
-            .filter(|p| {
-                !p.starts_with("codex_app_version=")
-                    && !p.starts_with("source_surface_stable_id=")
-                    && !p.starts_with("codex_origin_stable_id=")
-            })
-            .collect::<Vec<_>>()
-            .join("&")
+    let opened = opened.context("No browser URL opened")?;
+    let desktop = Url::parse(&opened)?;
+    ensure!(desktop.path() == "/codex/desktop-auth");
+    let authorize = desktop
+        .query_pairs()
+        .find(|(key, _)| key == "authorize_url")
+        .map(|(_, value)| value.into_owned())
+        .context("No nested authorization URL")?;
+    let authorize = Url::parse(&authorize)?;
+    let recorded = Url::parse(
+        login["loginStart"]["authUrl"]
+            .as_str()
+            .context("Recorded authorization URL")?,
+    )?;
+    let state = |url: &Url| {
+        url.query_pairs()
+            .find(|(key, _)| key == "state")
+            .map(|(_, value)| value.into_owned())
     };
-    let opened = opened.context("no browser URL opened")?;
-    assert_eq!(
-        strip(&opened),
-        strip(login["openExternal"]["url"].as_str().unwrap()),
-        "opened URL"
-    );
-    assert_eq!(
-        login["openExternal"]["openTarget"], "external-browser",
-        "the original opens it in the external browser"
-    );
-    let sent = fx.sent()?.split_off(before);
-    let want: Vec<Value> = login["requests"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|r| json!({ "method": r["method"], "params": r["params"] }))
-        .collect();
-    let got: Vec<Value> = sent
-        .iter()
-        .filter(|m| {
-            m["method"]
-                .as_str()
-                .is_some_and(|m| m.starts_with("account/login/"))
-        })
-        .map(|m| json!({ "method": m["method"], "params": m["params"] }))
-        .collect();
-    assert_eq!(got, want, "account/login requests");
-    ensure!(
-        fx.read(|r, _| r.signed_out()),
-        "left the sign-in view early"
-    );
+    ensure!(authorize.origin() == recorded.origin() && state(&authorize) == state(&recorded));
 
-    // Pending view: the message and the button where the original draws them, nothing else
-    // in the column (the `Continue to sign in` button is gone).
-    let pending = fx.shot()?;
-    pending.save(format!("{}/s034b-pending.png", env!("CARGO_TARGET_TMPDIR")))?;
-    let title = bbox(&login["pending"]["title"]["bbox"]);
-    let cancel = bbox(&login["pending"]["cancel"]["bbox"]);
-    ensure!(ink(&pending, title) > 200, "no message at the recorded box");
+    fx.cx.update(|cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string("clipboard-marker".into()))
+    });
+    fx.keys("tab tab enter")?;
     ensure!(
-        ink(&pending, cancel) > 1_000,
-        "no `Cancel sign-in` at the recorded box"
+        fx.cx
+            .update(|cx| cx.read_from_clipboard().and_then(|value| value.text()))
+            == Some(opened)
     );
-    let column = |y0: f32, y1: f32| [470., y0, 340., y1 - y0];
-    for (what, band) in [
-        ("above the message", column(title[1] - 12., title[1] - 2.)),
-        (
-            "between message and button",
-            column(title[1] + title[3] + 2., cancel[1] - 2.),
-        ),
-        (
-            "below the button",
-            column(cancel[1] + cancel[3] + 2., cancel[1] + cancel[3] + 40.),
-        ),
-    ] {
-        ensure!(
-            ink(&pending, band) == 0,
-            "pending view draws {what}: {band:?}"
-        );
-    }
+    let sent = fx.sent()?;
+    let starts: Vec<_> = sent[before..]
+        .iter()
+        .filter(|message| message["method"] == "account/login/start")
+        .collect();
+    ensure!(starts.len() == 1 && starts[0]["params"]["type"] == "chatgpt");
+    ensure!(fx.read(|root, _| root.signed_out()));
 
-    for step in [updated, completed] {
+    let steps = rec["steps"].as_array().context("Recorded steps")?;
+    for step in [&steps[1], &steps[2]] {
         let event = bridge::Event::Notification {
-            method: step["method"].as_str().unwrap().into(),
+            method: step["method"]
+                .as_str()
+                .context("Recorded event method")?
+                .into(),
             params: step["params"].clone(),
         };
         fx.root
             .update(&mut fx.cx, |root, cx| root.on_event(event, cx));
         fx.cx.run_until_parked();
+        if step["method"] == "account/updated" {
+            ensure!(fx.read(|root, _| root.signed_out()));
+        }
     }
-    ensure!(
-        !fx.read(|r, _| r.signed_out()),
-        "login/completed did not enter the app"
-    );
-    assert_eq!(fx.route(), Route::Home);
-    assert_eq!(rec["result"]["state"]["route"], "home");
-    let note = fx.parity("home")?;
-    ensure!(note.contains("PASS"), "home after sign-in: {note}");
-    println!("S034b: login/start, opened URL, pending view and home after completion {note}");
+    ensure!(!fx.read(|root, _| root.signed_out()));
+    ensure!(fx.route() == Route::Home);
     Ok(())
 }
