@@ -326,12 +326,34 @@ impl Composer {
             Some(active) if active.transcribing => "Transcribing",
             Some(active) if active.starting => "Starting dictation",
             Some(_) => "Stop dictation",
+            None if self
+                .dictation_recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.retrying) =>
+            {
+                "Finishing dictation"
+            }
+            None if self
+                .dictation_recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.text.is_none()) =>
+            {
+                "Retry dictation"
+            }
             None => "Dictate",
         }
     }
 
     pub fn dictation_error(&self) -> Option<&str> {
         self.dictation_error.as_deref()
+    }
+
+    pub(super) fn invoke_dictation_button(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match &self.dictation_recovery {
+            Some(recovery) if recovery.retrying => {}
+            Some(recovery) if recovery.text.is_none() => self.retry_dictation(cx),
+            _ => self.dictate(window, cx),
+        }
     }
 
     pub(super) fn retry_dictation(&mut self, cx: &mut Context<Self>) {
@@ -424,7 +446,7 @@ mod tests {
                 editor.dictation_event(Event::Finished(Err("offline".into())), window, cx);
                 assert!(!editor.has_active_dictation());
                 assert_eq!(editor.field_text(), "keep");
-                editor.retry_dictation(cx);
+                editor.invoke_dictation_button(window, cx);
                 assert!(matches!(commands.try_recv(), Ok(Command::Retry)));
                 editor.dictation_event(Event::Finished(Ok("recovered".into())), window, cx);
                 assert_eq!(editor.field_text(), "keep");

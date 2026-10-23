@@ -55,7 +55,7 @@ fn loading_send(background: Hsla, foreground: Hsla) -> impl IntoElement {
     .size_full()
 }
 
-fn loading_model(color: Hsla) -> impl IntoElement {
+fn loading_model(color: Hsla) -> impl IntoElement + Styled {
     gpui::canvas(
         |_, _, _| {},
         move |bounds, (), window, cx| {
@@ -380,7 +380,13 @@ impl Composer {
         let label = self.dictation_label();
         pill("dictate", t)
             .justify_center()
-            .child(if self.dictation.is_some() {
+            .child(if label == "Finishing dictation" {
+                loading_model(t.text).size(px(16.)).into_any_element()
+            } else if label == "Retry dictation" {
+                icon("diff-refresh", 16., t.text)
+                    .when(self.docked, |i| i.own_layer(None))
+                    .into_any_element()
+            } else if self.dictation.is_some() {
                 div()
                     .size(px(8.8))
                     .rounded(px(1.))
@@ -393,17 +399,17 @@ impl Composer {
             })
             .role(gpui::Role::Button)
             .aria_label(label)
-            .aria_disabled(label == "Transcribing")
+            .aria_disabled(matches!(label, "Transcribing" | "Finishing dictation"))
             .tab_index(0)
             .focus_visible(menu::trigger_focus)
             .size(px(28.))
             .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    this.dictate(window, cx);
+                    this.invoke_dictation_button(window, cx);
                     cx.stop_propagation();
                 }
             }))
-            .on_click(cx.listener(|this, _, window, cx| this.dictate(window, cx)))
+            .on_click(cx.listener(|this, _, window, cx| this.invoke_dictation_button(window, cx)))
     }
 
     pub(super) fn footer(&self, window: &Window, t: &Theme, cx: &mut Context<Self>) -> Div {
