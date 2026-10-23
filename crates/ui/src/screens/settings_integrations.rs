@@ -1931,7 +1931,7 @@ impl Manager {
     }
 
     fn select_available_tab(&mut self, state: &State) {
-        let counts = self.tab_counts(&state);
+        let counts = self.tab_counts(state);
         let plugins_enabled = state.configuration["config"]["features"]["plugins"] != false;
         if !plugins_enabled {
             self.tab = Tab::Mcps;
