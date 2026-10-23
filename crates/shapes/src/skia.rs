@@ -35,6 +35,8 @@ const CHUNK: i32 = 128;
 pub(crate) const MASK: u8 = 0;
 pub(crate) const ARGB32: u8 = 1;
 const PIPELINE: u8 = 2;
+/// Opaque paired edges use `SkFastFourByteInterp`, with coverage scaled at the halfway point.
+const FAST_INTERP: u8 = 10;
 /// Blit into the transparent tile of a composited layer, then the compositor's srcover.
 const LAYER: u8 = 3;
 /// A mask layer's alpha applied to the layer pixel (`DstIn` at the sprite's coverage).
@@ -844,6 +846,10 @@ fn blend(mode: u8, c: u8, a: u8, d: u8, m: u8) -> u8 {
             ((src * scale + d * ((inv + (inv >> 8)) >> 8)) >> 8) & 0xFF
         }
         PIPELINE => div255(src * m) + div255(d * (255 - div255(a * m))),
+        FAST_INTERP => {
+            let scale = m + (m >> 7);
+            (src * scale + d * (256 - scale)) >> 8
+        }
         _ => ((src * scale) >> 8) + ((d * (256 - ((a * scale) >> 8))) >> 8),
     }) as u8
 }
@@ -1200,7 +1206,7 @@ fn raster(
                 bg,
             }));
             if alpha == 255 {
-                &[MASK, ARGB32]
+                &[MASK, ARGB32, FAST_INTERP]
             } else {
                 probes.push(Probe {
                     fg: [255; 3],
@@ -1589,6 +1595,11 @@ fn solve(probes: &[Probe], px: &[[u8; 3]], m: u8, modes: &[u8]) -> Option<Blits>
         [MASK, ARGB32],
         [ARGB32, MASK],
         [ARGB32, ARGB32],
+        [MASK, FAST_INTERP],
+        [ARGB32, FAST_INTERP],
+        [FAST_INTERP, MASK],
+        [FAST_INTERP, ARGB32],
+        [FAST_INTERP, FAST_INTERP],
     ];
     let opaque = probes[1].a == 255;
     let rest = |b: Blits| {
@@ -1610,6 +1621,10 @@ fn solve(probes: &[Probe], px: &[[u8; 3]], m: u8, modes: &[u8]) -> Option<Blits>
     let single = |c: u8| modes.iter().map(move |&mode| [c, mode, 0, MASK]);
     single(m)
         .find(|&b| fits(b))
+        .or_else(|| {
+            m.checked_add(1)
+                .and_then(|coverage| single(coverage).find(|&b| fits(b)))
+        })
         // A translucent paint's AAA may blit an edge px once at another coverage than the
         // opaque probe shows (nearest first): one blit is tried before two.
         .or_else(|| {
@@ -1673,7 +1688,17 @@ pub(crate) fn sprites(
         let (rect, blits) = make();
         let mut out = Vec::new();
         for (blit, mode) in [0, 2].into_iter().flat_map(|b| {
-            [MASK, ARGB32, PIPELINE, LAYER, DST_IN, OPACITY, ARGB32_ZERO].map(|m| (b, m))
+            [
+                MASK,
+                ARGB32,
+                PIPELINE,
+                LAYER,
+                DST_IN,
+                OPACITY,
+                ARGB32_ZERO,
+                FAST_INTERP,
+            ]
+            .map(|m| (b, m))
         }) {
             if !blits.iter().any(|b| b[blit + 1] == mode && b[blit] != 0) {
                 continue;
@@ -2523,6 +2548,26 @@ impl IconPath {
         }
         paint
     }
+
+    // SkDraw lowers AA strokes up to one device pixel to a hairline.
+    // Its legacy alpha scale truncates coverage * 256 before multiplying the byte alpha.
+    fn hairline_scale(&self, view: &Matrix) -> Option<u16> {
+        let (width, _, _) = self.stroke?;
+        if width <= 0. {
+            return None;
+        }
+        let matrix = Matrix::concat(view, &self.transform);
+        if matrix.has_perspective() {
+            return None;
+        }
+        let length = |vector: Vector| {
+            let (x, y) = (vector.x.abs(), vector.y.abs());
+            x.max(y) + x.min(y) * 0.5
+        };
+        let x = length(matrix.map_vector((width, 0.)));
+        let y = length(matrix.map_vector((0., width)));
+        (x <= 1. && y <= 1.).then_some(((x + y) * 0.5 * 256.) as u16)
+    }
 }
 
 /// A parsed icon: viewBox and drawables, in document order.
@@ -2917,14 +2962,26 @@ pub(crate) fn paint_icon(
         return true;
     }
     for (n, p) in icon.paths.iter().enumerate() {
+        let hairline = p.hairline_scale(&view);
         let draw = |c: &Canvas, col: Color4f| {
             prepare(c);
-            draw_path(c, p, col);
+            c.concat(&p.transform);
+            let mut paint = p.paint(col);
+            if hairline.is_some() {
+                paint.set_stroke_width(0.);
+            }
+            c.draw_path(&p.path, &paint);
         };
         // Keep the CSS color outside the sRGB gamut; conversion to Rgba clamps its channels.
         let c = p.color.map(Hsla::from).unwrap_or(color);
         // Noncomposited paths fold the SVG opacity into their paint.
-        let a = if p.color.is_some() { 1. } else { color.a } * p.opacity * p.layer;
+        let mut a = if p.color.is_some() { 1. } else { color.a } * p.opacity * p.layer;
+        if let Some(scale) = hairline {
+            a = f32::from(((u16::from(alpha_byte(a)) * scale) >> 8) as u8) / 255.;
+        }
+        if a == 0. {
+            continue;
+        }
         let color = c.alpha(a);
         let a = alpha_byte(a);
         let black = is_black(color, a);
@@ -2950,6 +3007,39 @@ mod tests {
         prelude::FluentBuilder, px, size,
     };
     use std::sync::Arc;
+
+    #[test]
+    fn opaque_pair_interpolation_uses_halfway_coverage_scaling() {
+        assert_eq!(blend(FAST_INTERP, 255, 255, 60, 127), 156);
+        assert_eq!(blend(FAST_INTERP, 255, 255, 60, 128), 158);
+        assert_eq!(blend(FAST_INTERP, 26, 255, 200, 100), 132);
+        assert_eq!(blend(FAST_INTERP, 26, 255, 200, 0), 200);
+        assert_eq!(blend(FAST_INTERP, 26, 255, 200, 255), 26);
+    }
+
+    #[test]
+    fn normalized_thin_stroke_matches_skia_hairline_paint() {
+        let source = br#"<svg viewBox="0 0 16 16"><path d="M2 4C4 1 8 1 10 4L2 4Z" fill="none" stroke="black" stroke-width="0.6"/></svg>"#;
+        let icon = cached_icon(source, "thin-stroke-regression").unwrap();
+        let drawable = &icon.paths[0];
+        let view = Matrix::scale((4. / 3., 4. / 3.));
+        let scale = drawable.hairline_scale(&view).unwrap();
+        assert_eq!(scale, 204);
+        let alpha = ((127u16 * scale) >> 8) as u8;
+        assert_eq!(alpha, 101);
+        assert!(drawable.hairline_scale(&Matrix::scale((2., 2.))).is_none());
+        let original = drawable.paint(Color4f::new(1., 1., 1., 127. / 255.));
+        let mut normalized = drawable.paint(Color4f::new(1., 1., 1., f32::from(alpha) / 255.));
+        normalized.set_stroke_width(0.);
+        let render = |paint: &Paint| {
+            tile_pixels([0, 0], (32, 32), Color4f::new(0., 0., 0., 0.), |canvas| {
+                canvas.concat(&view);
+                canvas.draw_path(&drawable.path, paint);
+            })
+            .0
+        };
+        assert_eq!(render(&normalized), render(&original));
+    }
 
     #[test]
     fn icon_opacity_bounds_keep_the_fractional_layout_origin() -> anyhow::Result<()> {

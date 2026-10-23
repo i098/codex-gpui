@@ -1720,7 +1720,11 @@ impl Usage {
                 t.background_panel,
                 Some(t.border),
             ))
-            .child(content)
+            .child(crate::rounded_clip(
+                px(19.),
+                shapes::Corner::Squircle,
+                content,
+            ))
     }
 }
 

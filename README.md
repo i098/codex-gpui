@@ -261,6 +261,8 @@ The input fields reuse `Composer::settings_field`, including selection, clipboar
 The renderer paints each limit card within the scroll layer and paints the sticky tabs in a separate layer.
 The sticky fade uses the original compositor layer's pixel origin to preserve gradient dithering.
 Disabled Analytics arrows use their painted bounds for the opacity layer.
+Card contents keep the original rounded overflow clip.
+Thin SVG strokes use Skia's original hairline alpha adjustment before rasterization.
 Run `cargo test -p ui -p app --lib usage` for the protocol and validation checks.
 Run `cargo run -p ui --example usage -- /path/to/usage.png` for the recorded native screen.
 Add `confirm-reset` after the output path to capture the confirmation state without redeeming a reset.

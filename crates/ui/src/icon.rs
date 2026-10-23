@@ -36,7 +36,6 @@ pub fn icon_sized(name: &str, width: f32, height: f32, color: Hsla) -> Icon {
         height,
         flip_x: false,
         composited: None,
-        parent_composited: false,
         own_layer: false,
         runtime: false,
         saved_opacity: None,
@@ -56,7 +55,6 @@ pub struct Icon {
     height: f32,
     flip_x: bool,
     composited: Option<Point<Pixels>>,
-    parent_composited: bool,
     own_layer: bool,
     runtime: bool,
     saved_opacity: Option<u8>,
@@ -74,11 +72,8 @@ impl Icon {
     /// Chromium paints this icon into the transparent tile of the composited layer whose
     /// origin is `layer` (a scroll container's contents, window coordinates) and composites
     /// the tile, instead of blending into the page (`shapes::paint`'s `layer`).
-    /// `None` uses the current compositor layer and rasterizes the SVG at its actual position.
     pub fn composited(mut self, layer: Option<Point<Pixels>>) -> Self {
         self.composited = layer;
-        self.parent_composited = layer.is_none();
-        self.runtime |= self.parent_composited;
         self
     }
 
@@ -215,7 +210,6 @@ impl Element for Icon {
         let opacity = self.interactivity.base_style.opacity.take().unwrap_or(1.);
         let (name, flip_x, own_layer) = (self.name.clone(), self.flip_x, self.own_layer);
         let (composited, runtime) = (self.composited, self.runtime);
-        let parent_composited = self.parent_composited;
         let saved_opacity = self.saved_opacity;
         let transformation = self.transformation;
         let css = size(px(self.width), px(self.height));
@@ -270,13 +264,7 @@ impl Element for Icon {
                 }
                 let path = format!("icons/{name}.svg");
                 if let Ok(Some(src)) = cx.asset_source().load(&path) {
-                    let layer = composited
-                        .or(own_layer.then_some(bounds.origin))
-                        .or_else(|| {
-                            parent_composited
-                                .then(|| window.composited_layer().map(|(bounds, _)| bounds.origin))
-                                .flatten()
-                        });
+                    let layer = composited.or(own_layer.then_some(bounds.origin));
                     let paint = |window: &mut Window, cx: &mut App| {
                         if transformation.is_some() {
                             shapes::paint_icon_transformed(
