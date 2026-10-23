@@ -1,5 +1,5 @@
 use crate::{
-    composer::{Composer, Dismiss},
+    composer::{Composer, Dismiss, ModifiedSubmit},
     icon::icon,
     text,
     tooltip::{Side, tooltip},
@@ -1430,6 +1430,11 @@ impl Render for Editor {
                     this.submit(window, cx);
                     cx.stop_propagation();
                 }
+            }))
+            // Name and Prompt bind cmd-enter to `ModifiedSubmit`, which wins over key listeners.
+            .capture_action(cx.listener(|this, _: &ModifiedSubmit, window, cx| {
+                this.submit(window, cx);
+                cx.stop_propagation();
             }))
             .child(
                 div()
