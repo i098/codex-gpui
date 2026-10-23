@@ -13,6 +13,7 @@ fn paint_spinner(bounds: Bounds<Pixels>, color: Hsla, window: &mut Window, cx: &
         "composer-loading-spinner",
         bounds,
         color,
+        Some(bounds.origin),
         window,
         cx,
     );
@@ -23,19 +24,11 @@ fn paint_inline_icon(
     key: &'static str,
     bounds: Bounds<Pixels>,
     color: Hsla,
+    layer: Option<Point<Pixels>>,
     window: &mut Window,
     cx: &App,
 ) {
-    if !shapes::paint_icon(
-        svg,
-        key,
-        bounds,
-        false,
-        color,
-        Some(bounds.origin),
-        window,
-        cx,
-    ) {
+    if !shapes::paint_icon(svg, key, bounds, false, color, layer, window, cx) {
         window
             .paint_svg(
                 bounds,
@@ -413,6 +406,7 @@ impl Composer {
                         "dictation-stop",
                         bounds,
                         foreground,
+                        None,
                         window,
                         cx,
                     );
