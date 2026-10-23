@@ -96,7 +96,7 @@ pub mod dictation;
 mod editor;
 mod footer;
 mod requests;
-mod menu {
+pub(crate) mod menu {
     //! Focus rules for the recorded Radix menus: arrows stop at the ends, Escape returns
     //! focus to the trigger, and Enter or Space activates the focused item.
 
@@ -185,7 +185,7 @@ mod menu {
         }
     }
 
-    pub(super) fn trigger_focus(style: StyleRefinement) -> StyleRefinement {
+    pub(crate) fn trigger_focus(style: StyleRefinement) -> StyleRefinement {
         style.shadow(vec![BoxShadow {
             color: rgb(0x3a83f7).into(),
             offset: point(px(0.), px(0.)),
@@ -604,6 +604,13 @@ const QUEUE_ACTIONS: &str = "Queued message actions";
 const QUEUE_EDIT: &str = "queuedEdit";
 const QUEUE_SWITCH: &str = "queuedQueueing";
 const QUEUE_MENU_WIDTH: f32 = 220.;
+
+#[derive(Clone, Copy)]
+struct EmbeddedField {
+    font_size: Pixels,
+    line_height: Pixels,
+}
+
 pub struct Composer {
     focus_handle: FocusHandle,
     placeholder: SharedString,
@@ -687,6 +694,7 @@ pub struct Composer {
     field_resize: Option<(Pixels, Pixels)>,
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
+    embedded_field: Option<EmbeddedField>,
 }
 
 impl Composer {
@@ -772,6 +780,7 @@ impl Composer {
             field_resize: None,
             dictation: None,
             dictation_error: None,
+            embedded_field: None,
         }
     }
 
@@ -791,6 +800,21 @@ impl Composer {
         editor
     }
 
+    pub fn embedded_field(
+        placeholder: &'static str,
+        value: &str,
+        text_size: Pixels,
+        line_height: Pixels,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut editor = Self::settings_field(placeholder, value, false, cx);
+        editor.embedded_field = Some(EmbeddedField {
+            font_size: text_size,
+            line_height,
+        });
+        editor
+    }
+
     pub fn with_field_min_height(mut self, height: Pixels) -> Self {
         self.field_min_height = height;
         self
@@ -804,6 +828,8 @@ impl Composer {
     fn editor_font_size(&self) -> Pixels {
         if self.document_field {
             px(14.)
+        } else if let Some(field) = self.embedded_field {
+            field.font_size
         } else if self.plain_field == Some(true) || (self.request_compact && !self.secret) {
             px(13.)
         } else {
@@ -814,6 +840,8 @@ impl Composer {
     fn editor_line_height(&self) -> Pixels {
         if self.document_field {
             px(23.59375)
+        } else if let Some(field) = self.embedded_field {
+            field.line_height
         } else if self.plain_field == Some(true) {
             px(130. / 7.)
         } else {
@@ -2032,6 +2060,15 @@ impl Render for Composer {
             .on_action(cx.listener(Self::next_command))
             .on_action(cx.listener(Self::previous_command))
             .relative();
+        if self.embedded_field.is_some() {
+            return div().w_full().child(
+                card.key_context(KEY_CONTEXT)
+                    .role(gpui::Role::TextInput)
+                    .aria_label(self.placeholder.clone())
+                    .aria_value(self.content.clone())
+                    .child(self.editor(cx)),
+            );
+        }
         if self.plain_field.is_some() {
             if self.document_field {
                 return div().size_full().child(
