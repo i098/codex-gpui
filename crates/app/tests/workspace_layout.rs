@@ -37,6 +37,10 @@ fn open_changes(fx: &mut Fx) -> Result<()> {
             },
             cx,
         );
+        let panel = root.diff_panel().expect("Changes panel").clone();
+        panel.update(cx, |panel, cx| {
+            panel.view_changes("src/math.py", cx);
+        });
     });
     fx.cx.run_until_parked();
     Ok(())
