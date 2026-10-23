@@ -31,7 +31,7 @@ pub struct Select {
     has_aliases: bool,
     icons: Option<fn(&str, &Theme) -> Option<gpui::AnyElement>>,
     details: std::collections::HashMap<&'static str, &'static str>,
-    width: f32,
+    width: Option<f32>,
 }
 
 impl EventEmitter<Selected> for Select {}
@@ -81,7 +81,7 @@ impl Select {
             has_aliases: false,
             icons: None,
             details: std::collections::HashMap::new(),
-            width: 240.,
+            width: None,
         }
     }
 
@@ -96,7 +96,7 @@ impl Select {
     }
 
     pub fn with_width(mut self, width: f32) -> Self {
-        self.width = width;
+        self.width = Some(width);
         self
     }
 
@@ -306,6 +306,32 @@ impl Select {
         }
     }
 
+    fn menu_width(&self, window: &Window, t: &Theme) -> f32 {
+        self.width.unwrap_or_else(|| {
+            let mut font = window.text_style().font();
+            font.weight = gpui::FontWeight(500.);
+            self.choices
+                .iter()
+                .map(|choice| {
+                    let run = gpui::TextRun {
+                        len: choice.label.len(),
+                        font: font.clone(),
+                        color: t.text,
+                        background_color: None,
+                        underline: None,
+                        strikethrough: None,
+                    };
+                    f32::from(
+                        window
+                            .text_system()
+                            .shape_line(choice.label.clone(), px(13.), &[run], None)
+                            .width,
+                    ) + 48.
+                })
+                .fold(0., f32::max)
+        })
+    }
+
     fn option(
         &self,
         index: usize,
@@ -359,9 +385,8 @@ impl Select {
                             .when(detail.is_some(), |row| row.pt(px(1.281_25)))
                             .children(inline_icon)
                             .child(
-                                text(choice.label.clone(), 13., 18.571_428, 430., t.text)
-                                    .min_w_0()
-                                    .truncate(),
+                                text(choice.label.clone(), 13., 18.571_428, 500., t.text)
+                                    .when(self.width.is_some(), |label| label.min_w_0().truncate()),
                             ),
                     )
                     .children(
@@ -369,15 +394,9 @@ impl Select {
                             .map(|detail| text(detail, 12., 14., 430., t.text_tertiary).truncate()),
                     ),
             )
-            .child(
-                div()
-                    .size(px(16.))
-                    .opacity(if highlighted { 1. } else { 0.75 })
-                    .children(
-                        (choice.value == self.value)
-                            .then(|| crate::icon::icon("menu-check", 16., t.text)),
-                    ),
-            )
+            .child(div().size(px(18.)).children(
+                (choice.value == self.value).then(|| crate::icon::icon("menu-check", 18., t.text)),
+            ))
             .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _, window, cx| this.choose(index, window, cx)))
             .on_mouse_move(cx.listener(move |this, _, _, cx| {
@@ -444,6 +463,7 @@ impl Render for Select {
         control.child(deferred(
             div().absolute().top(px(-2.)).right(px(1.)).child(
                 anchored()
+                    .fractional_layout()
                     .anchor(Anchor::TopRight)
                     .offset(point(px(0.), px(32.)))
                     .child(
@@ -476,7 +496,7 @@ impl Render for Select {
                             .on_hover(cx.listener(|this, hovered: &bool, _, _| {
                                 this.menu_hovered = *hovered
                             }))
-                            .child(popover(&t, self.width, |d| {
+                            .child(popover(&t, self.menu_width(window, &t), |d| {
                                 d.children(self.search.clone().map(|search| {
                                     div()
                                         .mb(px(4.))

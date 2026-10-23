@@ -8,6 +8,7 @@ use crate::{
 
 /// The state that the anchored element element uses to track its children.
 pub struct AnchoredState {
+    layout_id: LayoutId,
     child_layout_ids: SmallVec<[LayoutId; 4]>,
 }
 
@@ -20,6 +21,7 @@ pub struct Anchored {
     anchor_position: Option<Point<Pixels>>,
     position_mode: AnchoredPositionMode,
     offset: Option<Point<Pixels>>,
+    fractional_layout: bool,
 }
 
 /// anchored gives you an element that will avoid overflowing the window bounds.
@@ -32,10 +34,17 @@ pub fn anchored() -> Anchored {
         anchor_position: None,
         position_mode: AnchoredPositionMode::Window,
         offset: None,
+        fractional_layout: false,
     }
 }
 
 impl Anchored {
+    /// Preserves fractional child geometry without changing other anchored elements.
+    pub fn fractional_layout(mut self) -> Self {
+        self.fractional_layout = true;
+        self
+    }
+
     /// Sets which corner of the anchored element should be anchored to the current position.
     pub fn anchor(mut self, anchor: Anchor) -> Self {
         self.anchor = anchor;
@@ -116,7 +125,13 @@ impl Element for Anchored {
 
         let layout_id = window.request_layout(anchored_style, child_layout_ids.iter().copied(), cx);
 
-        (layout_id, AnchoredState { child_layout_ids })
+        (
+            layout_id,
+            AnchoredState {
+                layout_id,
+                child_layout_ids,
+            },
+        )
     }
 
     fn prepaint(
@@ -131,11 +146,22 @@ impl Element for Anchored {
         if request_layout.child_layout_ids.is_empty() {
             return;
         }
+        let bounds = if self.fractional_layout {
+            window.unrounded_layout_bounds(request_layout.layout_id)
+        } else {
+            bounds
+        };
 
         let children_bounds = request_layout
             .child_layout_ids
             .iter()
-            .map(|id| window.layout_bounds(*id))
+            .map(|id| {
+                if self.fractional_layout {
+                    window.unrounded_layout_bounds(*id)
+                } else {
+                    window.layout_bounds(*id)
+                }
+            })
             .reduce(|acc, bounds| acc.union(&bounds))
             .unwrap();
 
@@ -204,14 +230,27 @@ impl Element for Anchored {
             desired.origin.y = limits.origin.y + edges.top;
         }
 
+        if self.fractional_layout {
+            desired.origin = window.pixel_snap_point(desired.origin);
+        }
         let offset = desired.origin - bounds.origin;
-        let offset = point(offset.x.round(), offset.y.round());
-
-        window.with_element_offset(offset, |window| {
-            for child in &mut self.children {
-                child.prepaint(window, cx);
-            }
-        })
+        let offset = if self.fractional_layout {
+            offset
+        } else {
+            point(offset.x.round(), offset.y.round())
+        };
+        let mut prepaint = |window: &mut Window| {
+            window.with_element_offset(offset, |window| {
+                for child in &mut self.children {
+                    child.prepaint(window, cx);
+                }
+            })
+        };
+        if self.fractional_layout {
+            window.with_fractional_layout(prepaint)
+        } else {
+            prepaint(window)
+        }
     }
 
     fn paint(

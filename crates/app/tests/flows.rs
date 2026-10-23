@@ -1072,15 +1072,16 @@ fn settings_select_menu() -> Result<String> {
     let mut fx = Fx::new()?;
     fx.keys("cmd-,")?;
     let at = fx.at("settings", "Close shortcut only")?;
+    fx.capture_evidence("CGX_GENERAL_CONTROLS_EVIDENCE", "close-menu-closed")?;
     fx.click(at)?;
     fx.capture_evidence("CGX_GENERAL_CONTROLS_EVIDENCE", "close-menu-open")?;
-    fx.keys("end enter")?;
+    fx.keys("home enter")?;
     fx.wait("saved close preference", |fx| {
         fx.read(|root, _| root.config()["host"]["confirm-before-close"] == "never")
     })?;
     fx.capture_evidence("CGX_GENERAL_CONTROLS_EVIDENCE", "close-menu-selected")?;
     fx.click(at)?;
-    fx.keys("home escape")?;
+    fx.keys("end escape")?;
     ensure!(
         fx.read(|root, _| root.config()["host"]["confirm-before-close"] == "never"),
         "Escape changed the close preference"

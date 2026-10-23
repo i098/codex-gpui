@@ -730,11 +730,11 @@ pub struct SettingsPane {
     git_fields: Vec<(&'static str, Entity<Composer>)>,
 }
 
-/// `Confirm before closing a window` options, default first.
+/// `Confirm before closing a window` options in the original menu order.
 const CLOSE_OPTIONS: &[(&str, &str)] = &[
+    ("never", "Never"),
     ("keyboardOnly", "Close shortcut only"),
     ("always", "Always"),
-    ("never", "Never"),
 ];
 /// `Send shortcut` options (`settings.general.enterBehavior.*`), default first.
 const SEND_OPTIONS: &[(&str, &str)] = &[
@@ -764,16 +764,16 @@ impl SettingsPane {
         }
     }
 
-    /// A select for `key` with its options menu `(value, label)`; the first option is the
-    /// default. A click outside closes the menu.
+    /// A select with an explicit default independent of the menu order.
     fn select_menu(
         &mut self,
         key: &'static str,
         options: &'static [(&'static str, &'static str)],
-        width: f32,
+        default: &'static str,
+        width: Option<f32>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let current = self.page.read(cx).choice(key, options[0].0).to_owned();
+        let current = self.page.read(cx).choice(key, default).to_owned();
         let page = self.page.clone();
         let select = self.selects.entry(key).or_insert_with(|| {
             let choices = options
@@ -786,8 +786,11 @@ impl SettingsPane {
                 })
                 .collect();
             let select = cx.new(|cx| {
-                crate::settings_kit::Select::new(current.clone(), choices, None, cx)
-                    .with_width(width)
+                let select = crate::settings_kit::Select::new(current.clone(), choices, None, cx);
+                match width {
+                    Some(width) => select.with_width(width),
+                    None => select,
+                }
             });
             cx.subscribe(
                 &select,
@@ -993,7 +996,8 @@ impl SettingsPane {
                     self.select_menu(
                         "host.git-pull-request-merge-method",
                         &[("merge", "Merge"), ("squash", "Squash")],
-                        240.,
+                        "merge",
+                        Some(240.),
                         cx,
                     ),
                     t,
@@ -1191,7 +1195,7 @@ impl SettingsPane {
                     row(
                         "Confirm before closing a window",
                         Some("Warn when a tab-close shortcut would close the window"),
-                        self.select_menu("host.confirm-before-close", CLOSE_OPTIONS, 240., cx),
+                        self.select_menu("host.confirm-before-close", CLOSE_OPTIONS, "keyboardOnly", None, cx),
                     ),
                     row(
                         "Full view by default",
@@ -1297,7 +1301,7 @@ impl SettingsPane {
                     row(
                         "Send shortcut",
                         Some("Choose when Enter sends a prompt or inserts a new line"),
-                        self.select_menu("desktop.composerEnterBehavior", SEND_OPTIONS, 220., cx),
+                        self.select_menu("desktop.composerEnterBehavior", SEND_OPTIONS, "enter", Some(220.), cx),
                     ),
                     row(
                         "Follow-up behavior",
@@ -1754,7 +1758,7 @@ pub(crate) fn select(
                 .children(leading)
                 .child(text(label, 13., 18., 430., t.text)),
         )
-        .child(icon("chevron-down", 14., t.text_tertiary))
+        .child(icon("chevron-down", 14., t.text_tertiary).when(open, |icon| icon.runtime()))
 }
 
 /// The `Zed` app icon `<img>` (the app's 64 px `apps/zed.png` in an 18 px box) over the

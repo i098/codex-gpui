@@ -27,14 +27,6 @@ fn is_word(c: char) -> bool {
 }
 
 impl Composer {
-    fn editor_line_height(&self) -> Pixels {
-        if self.search_field {
-            px(18.571_428)
-        } else {
-            LINE_HEIGHT
-        }
-    }
-
     /// Makes the captured caret transparent without changing focus, selection, or input.
     pub fn set_caret_transparent(cx: &mut App, transparent: bool) {
         cx.default_global::<TransparentCaret>().0 = transparent;

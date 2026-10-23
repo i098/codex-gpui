@@ -794,7 +794,7 @@ impl Composer {
     }
 
     fn editor_line_height(&self) -> Pixels {
-        if self.plain_field == Some(true) {
+        if self.search_field || self.plain_field == Some(true) {
             px(130. / 7.)
         } else {
             LINE_HEIGHT

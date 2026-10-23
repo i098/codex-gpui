@@ -389,6 +389,16 @@ impl TaffyLayoutEngine {
         bounds
     }
 
+    pub fn unrounded_layout_bounds(&mut self, id: LayoutId, scale_factor: f32) -> Bounds<Pixels> {
+        self.layout_bounds(id, scale_factor);
+        let size = Size::from(self.taffy.layout(id.into()).expect(EXPECT_MESSAGE).size);
+        (Bounds {
+            origin: self.absolute_outer_origins[&id],
+            size,
+        } / scale_factor)
+            .map(Pixels)
+    }
+
     /// `layout_bounds(id)`'s unsnapped minus snapped origin x, in pixels.
     pub fn layout_origin_residual_x(&mut self, id: LayoutId, scale_factor: f32) -> Pixels {
         self.layout_bounds(id, scale_factor);
@@ -807,7 +817,7 @@ mod tests {
     }
 
     #[test]
-    fn vertical_residual_restores_fractional_layout_origin() {
+    fn fractional_bounds_preserve_origin_and_size_without_changing_snapped_bounds() {
         std::panic::set_hook(Box::new(|info| {
             eprintln!("{info}");
             std::process::exit(101);
@@ -824,6 +834,10 @@ mod tests {
                         right: taffy::style_helpers::auto(),
                         bottom: taffy::style_helpers::auto(),
                         left: taffy::style_helpers::auto(),
+                    },
+                    size: TaffySize {
+                        width: taffy::style_helpers::length(33.375),
+                        height: taffy::style_helpers::length(18.625),
                     },
                     ..Default::default()
                 })
@@ -857,6 +871,11 @@ mod tests {
                 bounds.origin.y + engine.layout_origin_residual_y(child, scale),
                 Pixels(y / scale)
             );
+            let fractional = engine.unrounded_layout_bounds(child, scale);
+            assert_eq!(fractional.origin.y, Pixels(y / scale));
+            assert_eq!(fractional.size.width, Pixels(33.375 / scale));
+            assert_eq!(fractional.size.height, Pixels(18.625 / scale));
+            assert_eq!(engine.layout_bounds(child, scale), bounds);
         }
     }
 }

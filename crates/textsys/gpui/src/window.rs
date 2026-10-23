@@ -1247,6 +1247,7 @@ pub struct Window {
     rem_size_override_stack: SmallVec<[Pixels; 8]>,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
+    fractional_layout: bool,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: ElementIdStack,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
@@ -2168,6 +2169,7 @@ impl Window {
             rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
+            fractional_layout: false,
             root: None,
             element_id_stack: ElementIdStack::default(),
             text_style_stack: Vec::new(),
@@ -2936,14 +2938,16 @@ impl Window {
             }
             let size = self.viewport_size.to_device_pixels(self.scale_factor());
             let opaque = checkpoint.is_none()
-                && self.platform_window.background_appearance() == WindowBackgroundAppearance::Opaque;
+                && self.platform_window.background_appearance()
+                    == WindowBackgroundAppearance::Opaque;
             let scene = if let Some((epoch, start)) = checkpoint {
                 anyhow::ensure!(
                     epoch == self.scene_epoch && start <= self.next_frame.scene.len(),
                     "stale scene checkpoint"
                 );
                 self.scene_capture_scratch.clear();
-                self.scene_capture_scratch.replay(start..self.next_frame.scene.len(), &self.next_frame.scene);
+                self.scene_capture_scratch
+                    .replay(start..self.next_frame.scene.len(), &self.next_frame.scene);
                 self.scene_capture_scratch.finish();
                 &self.scene_capture_scratch
             } else {
@@ -5531,6 +5535,9 @@ impl Window {
     /// This method should only be called as part of element drawing.
     pub fn layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
         self.invalidator.debug_assert_prepaint();
+        if self.fractional_layout {
+            return self.unrounded_layout_bounds(layout_id);
+        }
 
         let scale_factor = self.scale_factor();
         let mut bounds = self
@@ -5544,11 +5551,37 @@ impl Window {
         bounds
     }
 
+    /// Returns layout geometry before device-pixel edge rounding.
+    pub fn unrounded_layout_bounds(&mut self, layout_id: LayoutId) -> Bounds<Pixels> {
+        self.invalidator.debug_assert_prepaint();
+        let scale = self.scale_factor();
+        let mut bounds = self
+            .layout_engine
+            .as_mut()
+            .unwrap()
+            .unrounded_layout_bounds(layout_id, scale);
+        bounds.origin += self.element_offset();
+        bounds
+    }
+
+    /// Preserves fractional geometry within an anchored subtree during prepaint.
+    pub fn with_fractional_layout<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        self.invalidator.debug_assert_prepaint();
+        let previous = self.fractional_layout;
+        self.fractional_layout = true;
+        let result = f(self);
+        self.fractional_layout = previous;
+        result
+    }
+
     /// The unsnapped minus the snapped x of the layout's origin (`layout_bounds` snaps it to
     /// device pixels): add it to the x where an element paints text, as Blink paints glyphs at
     /// the fractional LayoutUnit x. Call during prepaint or paint, with the id `request_layout`
     /// returned.
     pub fn layout_origin_residual_x(&mut self, layout_id: LayoutId) -> Pixels {
+        if self.fractional_layout {
+            return px(0.);
+        }
         let scale_factor = self.scale_factor();
         self.layout_engine
             .as_mut()
@@ -5558,6 +5591,9 @@ impl Window {
 
     /// Return the fractional y offset removed by `layout_bounds`.
     pub fn layout_origin_residual_y(&mut self, layout_id: LayoutId) -> Pixels {
+        if self.fractional_layout {
+            return px(0.);
+        }
         let scale_factor = self.scale_factor();
         self.layout_engine
             .as_mut()
