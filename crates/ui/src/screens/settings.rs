@@ -254,10 +254,10 @@ pub mod workspace {
     }
 }
 
-#[path = "settings/usage.rs"]
-pub mod usage;
 #[path = "settings_subtrees.rs"]
 pub mod subtrees;
+#[path = "settings/usage.rs"]
+pub mod usage;
 
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
