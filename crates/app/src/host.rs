@@ -41,6 +41,8 @@ use ui::screens::diff::panel::ReviewRepository;
 use ui::screens::sidebar::Project;
 use url::Url;
 
+mod app_tools;
+pub use app_tools::{AppToolEvents, AppTools, ToolEvent};
 mod automation_schedule;
 pub mod computer_use;
 pub mod computer_use_native;
@@ -117,6 +119,17 @@ pub trait Host: Send + Sync {
     /// Invalidates cached account credentials after a login or logout.
     fn invalidate_identity(&self) {}
 
+    fn take_app_tool_events(&self) -> Option<AppToolEvents> {
+        None
+    }
+
+    fn app_tool_thread_config(
+        &self,
+        _thread_id: &str,
+        _thread_source: Option<&str>,
+    ) -> Result<Option<Value>> {
+        Ok(None)
+    }
     /// Reads the original sidebar project state off the UI thread.
     fn projects(&self) -> Result<Vec<Project>> {
         bail!("sidebar project state is unsupported by this host")
@@ -493,6 +506,8 @@ pub struct LocalHost {
     /// The `codex app-server` that `automation-run-now` starts runs on; the original's main
     /// process holds the same connection.
     bridge: Option<Arc<Bridge>>,
+    #[cfg(target_os = "macos")]
+    app_tools: Mutex<Option<Arc<AppTools>>>,
     opener: PathBuf,
     settings: Option<crate::host_settings::Settings>,
     computer_use_settings: Option<computer_use::ComputerUseSettings>,
@@ -510,6 +525,8 @@ impl LocalHost {
             home,
             ssh_home: std::env::var_os("HOME").map(PathBuf::from),
             bridge: None,
+            #[cfg(target_os = "macos")]
+            app_tools: Mutex::new(None),
             opener: "/usr/bin/open".into(),
             settings: None,
             context_files: context_files::ContextFiles::default(),
@@ -519,6 +536,20 @@ impl LocalHost {
     pub fn with_bridge(mut self, bridge: Arc<Bridge>) -> Self {
         self.bridge = Some(bridge);
         self
+    }
+
+    pub fn app_tools(&self) -> Result<Option<Arc<AppTools>>> {
+        #[cfg(target_os = "macos")]
+        if let Some(bridge) = self.bridge.as_ref().filter(|bridge| !bridge.is_acp()) {
+            let mut cached = self.app_tools.lock().unwrap();
+            if let Some(tools) = cached.as_ref() {
+                return Ok(Some(tools.clone()));
+            }
+            let tools = Arc::new(AppTools::start(&self.home, bridge.clone())?);
+            *cached = Some(tools.clone());
+            return Ok(Some(tools));
+        }
+        Ok(None)
     }
 
     pub fn with_settings(mut self, settings: Option<crate::host_settings::Settings>) -> Self {
@@ -851,16 +882,7 @@ impl LocalHost {
     pub fn write_automation(&self, id: &str, contents: &str) -> Result<()> {
         definition(id, contents)?;
         if let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_ONLY)? {
-            let owned: bool = db.query_row(
-                "SELECT EXISTS(SELECT 1 FROM automations WHERE id = ? AND
-                 (account_id IS NOT NULL OR user_id IS NOT NULL OR installation_id IS NOT NULL))",
-                [id],
-                |row| row.get(0),
-            )?;
-            ensure!(
-                !owned,
-                "cannot write an account-owned automation through LocalHost"
-            );
+            ensure_unowned_automation(&db, id)?;
         }
         let root = self.home.join("automations");
         fs::create_dir_all(&root)?;
@@ -884,10 +906,7 @@ impl LocalHost {
 
     fn update_automation(&self, params: &Value) -> Result<Value> {
         let id = params["id"].as_str().context("missing automation id")?;
-        ensure!(
-            !id.is_empty() && id != "." && id != ".." && !id.contains(['/', '\\', '\0']),
-            "invalid automation id"
-        );
+        check_automation_id(id)?;
         let status = params["status"]
             .as_str()
             .context("missing automation status")?;
@@ -923,16 +942,7 @@ impl LocalHost {
             .map(|db| db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate))
             .transpose()?;
         if let Some(transaction) = &transaction {
-            let owned: bool = transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM automations WHERE id = ? AND
-                 (account_id IS NOT NULL OR user_id IS NOT NULL OR installation_id IS NOT NULL))",
-                [id],
-                |row| row.get(0),
-            )?;
-            ensure!(
-                !owned,
-                "cannot write an account-owned automation through LocalHost"
-            );
+            ensure_unowned_automation(transaction, id)?;
         }
         let original = fs::read_to_string(&path).map_err(read_error)?;
         let mut item = definition(id, &original)?;
@@ -969,37 +979,7 @@ impl LocalHost {
             .as_str()
             .context("missing automation recurrence")?;
         let now = chrono::Utc::now().timestamp_millis();
-        // Resume always recalculates; a cached database time is never reused.
-        let (next, nominal) = if status == "PAUSED" {
-            ensure!(
-                automation_schedule::valid(rule, now),
-                "invalid automation recurrence"
-            );
-            (None, None)
-        } else {
-            // Original ZF: an unreadable salt is replaced, and a failed save still schedules this run.
-            let salt_path = root.join(".run-jitter-salt");
-            let salt = fs::read_to_string(&salt_path)
-                .map(|salt| salt.trim().to_owned())
-                .unwrap_or_default();
-            let salt = if salt.is_empty() {
-                let salt = device_id();
-                let _ = fs::write(&salt_path, format!("{salt}\n"));
-                salt
-            } else {
-                salt
-            };
-            let (next, nominal) = automation_schedule::next_run(
-                rule,
-                item["kind"].as_str().context("missing automation kind")?,
-                id,
-                now,
-                rrule::Tz::LOCAL,
-                &salt,
-            )
-            .context(automation_schedule::NO_FUTURE_RUN)?;
-            (Some(next), Some(nominal))
-        };
+        let (next, nominal) = self.scheduled_run(&item, id, rule, status, now)?;
         if let Some(transaction) = &transaction {
             let mut updates = vec![
                 "status=excluded.status".to_owned(),
@@ -1061,6 +1041,9 @@ impl LocalHost {
         }
         raw.insert("status".into(), status.into());
         raw.insert("updated_at".into(), now.into());
+        for key in ["name", "prompt", "rrule"] {
+            raw.insert(key.into(), item[key].as_str().unwrap().into());
+        }
         self.write_automation(id, &toml::to_string(&raw)?)?;
         if let Some(transaction) = transaction
             && let Err(error) = transaction.commit()
@@ -1076,6 +1059,36 @@ impl LocalHost {
         item["nextRunNominalAt"] = json!(nominal);
         item["lastRunAt"] = json!(last);
         Ok(json!({"item": item}))
+    }
+
+    /// The next and nominal run times after a status update; a paused task has none.
+    fn scheduled_run(
+        &self,
+        item: &Value,
+        id: &str,
+        rule: &str,
+        status: &str,
+        now: i64,
+    ) -> Result<(Option<i64>, Option<i64>)> {
+        // Resume always recalculates; a cached database time is never reused.
+        if status == "PAUSED" {
+            ensure!(
+                automation_schedule::valid(rule, now),
+                "invalid automation recurrence"
+            );
+            return Ok((None, None));
+        }
+        // Original ZF: an unreadable salt is replaced, and a failed save still schedules this run.
+        let (next, nominal) = automation_schedule::next_run(
+            rule,
+            item["kind"].as_str().context("missing automation kind")?,
+            id,
+            now,
+            rrule::Tz::LOCAL,
+            &self.jitter_salt(),
+        )
+        .context(automation_schedule::NO_FUTURE_RUN)?;
+        Ok((Some(next), Some(nominal)))
     }
 
     /// Applies the original inbox read-state update, restricted to local, unowned automations.
@@ -1147,6 +1160,64 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn take_app_tool_events(&self) -> Option<AppToolEvents> {
+        self.app_tools()
+            .ok()?
+            .and_then(|tools| tools.subscribe_events())
+    }
+
+    fn app_tool_thread_config(
+        &self,
+        thread_id: &str,
+        thread_source: Option<&str>,
+    ) -> Result<Option<Value>> {
+        #[cfg(target_os = "macos")]
+        {
+            let attempt = (|| -> Result<Option<Value>> {
+                let registered = self
+                    .app_tools
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .is_some_and(|tools| tools.owns_thread(thread_id));
+                let owned = if registered || thread_source == Some("automation") {
+                    true
+                } else if let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_ONLY)? {
+                    db.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM automation_runs AS r JOIN automations AS a ON a.id=r.automation_id WHERE r.thread_id=?1 AND a.account_id IS NULL AND a.user_id IS NULL AND a.installation_id IS NULL)
+                         OR EXISTS(SELECT 1 FROM automations WHERE kind='heartbeat' AND target_thread_id=?1 AND account_id IS NULL AND user_id IS NULL AND installation_id IS NULL)",
+                        [thread_id], |row| row.get::<_, bool>(0),
+                    )?
+                } else {
+                    false
+                };
+                if !owned {
+                    return Ok(None);
+                }
+                let Some(tools) = self.app_tools()? else {
+                    return Ok(None);
+                };
+                let config = tools.thread_config()?;
+                tools.register_thread(thread_id);
+                Ok(Some(config))
+            })();
+            match attempt {
+                Ok(config) => Ok(config),
+                Err(error) => {
+                    eprintln!(
+                        "codex-gpui: optional app tools are unavailable for this thread: {error:#}"
+                    );
+                    Ok(None)
+                }
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (thread_id, thread_source);
+            Ok(None)
+        }
+    }
+
     fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
         Some(self.context_files.bind())
     }
@@ -1274,6 +1345,24 @@ impl Host for LocalHost {
             "automation-create" => self.create_automation(&params)?,
             "automation-update" => self.update_automation(&params)?,
             "automation-run-now" => self.automation_run_now(&params)?,
+            "apply-automation-proposal" => {
+                let tools = self
+                    .app_tools()?
+                    .context("Native app tools are unavailable")?;
+                let thread = params["threadId"].as_str().context("missing threadId")?;
+                tools.register_thread(thread);
+                let saved = tools.apply_proposal(&params["arguments"], thread)?;
+                let item = self.automations()?["items"]
+                    .as_array()
+                    .and_then(|items| {
+                        items
+                            .iter()
+                            .find(|item| item["id"] == saved["automationId"])
+                    })
+                    .cloned()
+                    .context("The saved scheduled task could not be loaded")?;
+                json!({"item": item})
+            }
             "inbox-items" => self.inbox(&params)?,
             "apply-patch" => git::apply_cloud_patch(&params)?,
             "local-environments" => environments::list(Path::new(
@@ -1706,6 +1795,18 @@ impl CloudHost {
 }
 
 impl Host for CloudHost {
+    fn take_app_tool_events(&self) -> Option<AppToolEvents> {
+        self.local.take_app_tool_events()
+    }
+
+    fn app_tool_thread_config(
+        &self,
+        thread_id: &str,
+        thread_source: Option<&str>,
+    ) -> Result<Option<Value>> {
+        self.local.app_tool_thread_config(thread_id, thread_source)
+    }
+
     fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
         self.local.bind_context_files()
     }
@@ -1717,7 +1818,6 @@ impl Host for CloudHost {
     fn record_projectless(&self, thread: &str, workspace: &Workspace) -> Result<()> {
         self.local.record_projectless(thread, workspace)
     }
-
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.local.computer_use_settings()
     }
@@ -2132,11 +2232,29 @@ fn patch_automation(raw: &mut toml::Table, params: &Value, previous: Option<&Val
     Ok(())
 }
 
-fn definition(id: &str, contents: &str) -> Result<Value> {
+fn check_automation_id(id: &str) -> Result<()> {
     ensure!(
         !id.is_empty() && id != "." && id != ".." && !id.contains(['/', '\\', '\0']),
         "invalid automation id"
     );
+    Ok(())
+}
+
+fn ensure_unowned_automation(db: &Connection, id: &str) -> Result<()> {
+    let owned: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM automations WHERE id = ? AND (account_id IS NOT NULL OR user_id IS NOT NULL OR installation_id IS NOT NULL))",
+        [id], |row| row.get(0),
+    )?;
+    ensure!(
+        !owned,
+        "cannot write an account-owned automation through LocalHost"
+    );
+    Ok(())
+}
+
+
+fn definition(id: &str, contents: &str) -> Result<Value> {
+    check_automation_id(id)?;
     let raw: Value = toml::from_str(contents)?;
     ensure!(
         raw["id"] == id,

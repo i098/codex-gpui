@@ -64,8 +64,8 @@ use ui::screens::sidebar::{
 use ui::screens::signin::Login;
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
-    Clock, EditMessage, ForkThread, GitAction, History, RetryHistory, RevertTurn, ThreadView,
-    UsageLimitNotice,
+    Clock, EditMessage, ForkThread, GitAction, History, OpenAutomationCard, RetryHistory,
+    RevertTurn, ThreadView, UsageLimitNotice,
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
@@ -420,6 +420,9 @@ pub struct Root {
     qa_work_started: bool,
     /// Threads started or resumed by this app-server; others need `thread/resume` first.
     loaded: HashSet<String>,
+    /// The original backend's automation tags, omitted by the compact Thread DTO.
+    automation_threads: HashSet<String>,
+    automation_card_results: HashMap<(String, String), Value>,
     queue_load: Option<Task<()>>,
     queue_pending: bool,
     deleted_queued: Vec<DeletedQueuedMessage>,
@@ -441,6 +444,7 @@ pub struct Root {
     /// The `Notifications` region over the window.
     toaster: Entity<Toaster>,
     _events: Task<()>,
+    app_tool_events: Option<Task<()>>,
     context_window: gpui::AnyWindowHandle,
     context_files: Option<Task<()>>,
     _update_policy: Option<Task<()>>,
@@ -712,6 +716,8 @@ impl Root {
             ready: false,
             qa_work_started: false,
             loaded: HashSet::new(),
+            automation_threads: HashSet::new(),
+            automation_card_results: HashMap::new(),
             queue_load: None,
             queue_pending: false,
             deleted_queued: Vec::new(),
@@ -725,6 +731,7 @@ impl Root {
             generation: None,
             toaster: cx.new(|_| Toaster::new()),
             _events,
+            app_tool_events: None,
             context_window: window.window_handle(),
             context_files: None,
             _update_policy: None,
@@ -1048,6 +1055,9 @@ impl Root {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
         self.host = host;
+        self.automation_threads.clear();
+        self.automation_card_results.clear();
+        self.app_tool_events = None;
         self.bind_context_files(cx);
         self.automations = None;
         self.load_projects(cx);
@@ -1057,6 +1067,36 @@ impl Root {
         }
         self.refresh_git_actions(cx);
         cx.notify();
+    }
+
+    fn listen_to_app_tools(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if self.app_tool_events.is_some() {
+            return;
+        }
+        let Some(events) = self.host.take_app_tool_events() else {
+            return;
+        };
+        self.app_tool_events = Some(cx.spawn_in(window, async move |this, cx| {
+            while let Ok(event) = events.recv().await {
+                if this
+                    .update_in(cx, |this, _, cx| this.on_app_tool_event(event, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }));
+    }
+
+    fn on_app_tool_event(&mut self, event: host::ToolEvent, cx: &mut Context<Self>) {
+        match event {
+            host::ToolEvent::ThreadsChanged => self.refresh_threads(cx),
+            host::ToolEvent::AutomationsChanged => {
+                if self.scheduled_route() {
+                    self.load_automations(cx);
+                }
+            }
+        }
     }
 
     fn load_projects(&mut self, cx: &mut Context<Self>) {
@@ -1912,6 +1952,7 @@ impl Root {
             .as_ref()
             .and_then(|t| self.thread_run_settings.get(t))
             .cloned();
+        self.listen_to_app_tools(window, cx);
         self.sync_starting(cx);
         self.toast(Toast::info("Starting run…"), cx);
         let epoch = self.navigation_epoch;
@@ -2370,6 +2411,19 @@ impl Root {
             self.toast(Toast::danger("Task details could not be loaded"), cx);
             return;
         }
+        self.show_automation_editor(item, None, window, cx);
+    }
+
+    fn show_automation_editor(
+        &mut self,
+        item: Option<Value>,
+        origin: Option<(String, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.automation_editor.is_some() || self.dialog.is_some() {
+            return;
+        }
         let editor = cx.new(|cx| automations::editor::Editor::new(item.as_ref(), cx));
         editor.update(cx, |editor, cx| {
             editor.set_options(
@@ -2391,72 +2445,9 @@ impl Root {
                     cx.notify();
                 }
                 automations::editor::Outcome::Save(draft) => {
-                    let mut body = draft.execution.clone();
-                    body["name"] = json!(draft.name);
-                    body["prompt"] = json!(draft.prompt);
-                    body["rrule"] = json!(draft.rrule);
-                    let endpoint = if let Some(id) = &id {
-                        body["id"] = json!(id);
-                        body["status"] = item.as_ref().unwrap()["status"].clone();
-                        "automation-update"
-                    } else {
-                        if body.get("cwds").is_none() {
-                            body["cwds"] = json!([this.cwd]);
-                        }
-                        "automation-create"
-                    };
-                    let host = this.host.clone();
-                    let write = cx.background_spawn(async move {
-                        let response = host::json_body(
-                            &host.fetch(&host::Request::post(endpoint, Some(body)))?,
-                        )?;
-                        serde_json::from_value::<automations::Task>(response["item"].clone())?;
-                        Ok::<_, anyhow::Error>(response["item"].clone())
-                    });
-                    let editor = editor.clone();
-                    cx.spawn_in(window, async move |this, cx| {
-                        let result = write.await;
-                        this.update_in(cx, |this, window, cx| {
-                            if this.automation_editor.as_ref() != Some(&editor) {
-                                return;
-                            }
-                            match result {
-                                Ok(item) => {
-                                    this.automation_editor = None;
-                                    window.focus(&this.focus, cx);
-                                    if let Some(Ok(list)) = &mut this.automations
-                                        && let Some(items) = list["items"].as_array_mut()
-                                    {
-                                        if let Some(stored) =
-                                            items.iter_mut().find(|v| v["id"] == item["id"])
-                                        {
-                                            *stored = item.clone();
-                                        } else {
-                                            items.push(item.clone());
-                                        }
-                                    }
-                                    let route =
-                                        Route::Automation(item["id"].as_str().unwrap().to_owned());
-                                    if this.state.route == route {
-                                        this.sync(window, cx);
-                                    } else {
-                                        this.navigate(route, window, cx);
-                                    }
-                                    this.load_automations(cx);
-                                    this.toast(
-                                        Toast::success("Successfully saved scheduled task"),
-                                        cx,
-                                    );
-                                }
-                                Err(error) => editor.update(cx, |editor, cx| {
-                                    editor.failed(format!("Couldn’t save task: {error}"), cx)
-                                }),
-                            }
-                            cx.notify();
-                        })
-                        .ok();
-                    })
-                    .detach();
+                    let request =
+                        automation_save_request(item.as_ref(), origin.as_ref(), draft, &this.cwd);
+                    this.save_automation(editor, request, origin.clone(), window, cx);
                 }
             },
         )
@@ -2484,6 +2475,84 @@ impl Root {
                 );
             });
         }
+    }
+
+    /// Writes the editor's draft; a failed write keeps the editor open with its draft.
+    fn save_automation(
+        &mut self,
+        editor: &Entity<automations::editor::Editor>,
+        (endpoint, body): (&'static str, Value),
+        origin: Option<(String, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let host = self.host.clone();
+        let write = cx.background_spawn(async move {
+            let response =
+                host::json_body(&host.fetch(&host::Request::post(endpoint, Some(body)))?)?;
+            serde_json::from_value::<automations::Task>(response["item"].clone())?;
+            Ok::<_, anyhow::Error>(response["item"].clone())
+        });
+        let editor = editor.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let result = write.await;
+            this.update_in(cx, |this, window, cx| {
+                if this.automation_editor.as_ref() != Some(&editor) {
+                    return;
+                }
+                match result {
+                    Ok(item) => this.automation_saved(item, origin, window, cx),
+                    Err(error) => editor.update(cx, |editor, cx| {
+                        editor.failed(format!("Couldn’t save task: {error}"), cx)
+                    }),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Closes the editor, stores the saved task, and shows it or its originating card.
+    fn automation_saved(
+        &mut self,
+        item: Value,
+        origin: Option<(String, String)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.automation_editor = None;
+        window.focus(&self.focus, cx);
+        if let Some(Ok(list)) = &mut self.automations
+            && let Some(items) = list["items"].as_array_mut()
+        {
+            if let Some(stored) = items.iter_mut().find(|v| v["id"] == item["id"]) {
+                *stored = item.clone();
+            } else {
+                items.push(item.clone());
+            }
+        }
+        let route = if let Some((thread, call)) = origin {
+            self.automation_card_results
+                .insert((thread.clone(), call.clone()), item.clone());
+            if let Some(view) = &self.thread
+                && view.read(cx).id() == thread
+            {
+                view.update(cx, |view, cx| {
+                    view.set_automation_card_result(&call, &item, cx)
+                });
+            }
+            Route::Thread(thread)
+        } else {
+            Route::Automation(item["id"].as_str().unwrap().to_owned())
+        };
+        if self.state.route == route {
+            self.sync(window, cx);
+        } else {
+            self.navigate(route, window, cx);
+        }
+        self.load_automations(cx);
+        self.toast(Toast::success("Successfully saved scheduled task"), cx);
     }
 
     pub fn automation_editor(&self) -> Option<&Entity<automations::editor::Editor>> {
@@ -2672,6 +2741,8 @@ impl Root {
                         this.tabs.clear();
                         this.side = None;
                         this.loaded.clear();
+                        this.automation_threads.clear();
+                        this.automation_card_results.clear();
                         this.approvals.clear();
                         this.new_chat_section = None;
                         this.sidebar.update(cx, |s, cx| s.clear_sections(cx));
@@ -2937,16 +3008,10 @@ impl Root {
         })
         .detach();
         let bridge = self.bridge.clone();
-        let resume = (!self.loaded.contains(&id)).then(|| {
-            let mut params = json!({"threadId": id, "excludeTurns": true});
-            if let Some(config) = computer_use_overrides(&self.config) {
-                params["config"] = config;
-            }
-            params
-        });
+        let resume = !self.loaded.contains(&id);
         let loading_view = view.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let result = routes::load_thread(&bridge, &id, resume).await;
+            let result = routes::load_thread(&bridge, &this, &id, resume, cx).await;
             this.update_in(cx, |this, window, cx| {
                 if !matches!(&this.state.route, Route::Thread(current) if current == &id)
                     || !this
@@ -3047,6 +3112,26 @@ impl Root {
             view.set_git_phase(self.git_busy, cx);
             view.set_usage_limit_notice(self.usage_limit_notice, cx);
         });
+        view.update(cx, |view, cx| {
+            for ((thread, call), item) in &self.automation_card_results {
+                if view.id() == thread {
+                    view.set_automation_card_result(call, item, cx);
+                }
+            }
+        });
+        cx.subscribe_in(
+            &view,
+            window,
+            |this, _, event: &OpenAutomationCard, window, cx| {
+                this.show_automation_editor(
+                    Some(event.arguments.clone()),
+                    Some((event.thread_id.clone(), event.call_id.clone())),
+                    window,
+                    cx,
+                );
+            },
+        )
+        .detach();
         cx.subscribe_in(
             &view,
             window,
@@ -4890,14 +4975,90 @@ async fn resume_if(
     cx: &mut AsyncWindowContext,
 ) -> Result<()> {
     if resume {
-        let mut params = json!({ "threadId": id });
-        if let Some(config) = this.update(cx, |root, _| computer_use_overrides(&root.config))? {
-            params["config"] = config;
-        }
+        let params = resume_params(this, id, cx).await?;
         bridge.request::<_, Value>("thread/resume", params).await?;
         this.update(cx, |this, _| this.loaded.insert(id.to_owned()))?;
     }
     Ok(())
+}
+
+/// `thread/resume` params: app tools for automation-owned threads plus Computer Use overrides.
+async fn resume_params(
+    this: &WeakEntity<Root>,
+    id: &str,
+    cx: &mut AsyncWindowContext,
+) -> Result<Value> {
+    let (host, source, computer_use) = this.update(cx, |this, _| {
+        (
+            this.host.clone(),
+            this.automation_threads.contains(id).then_some("automation"),
+            computer_use_overrides(&this.config),
+        )
+    })?;
+    let thread_id = id.to_owned();
+    let config = cx
+        .background_spawn(async move { host.app_tool_thread_config(&thread_id, source) })
+        .await
+        .unwrap_or_else(|error| {
+            eprintln!("codex-gpui: optional app tools are unavailable while resuming: {error:#}");
+            None
+        });
+    let mut params = json!({ "threadId": id });
+    if let Some(config) = config {
+        this.update_in(cx, |this, window, cx| this.listen_to_app_tools(window, cx))?;
+        params["config"] = config;
+        params["dynamicTools"] = json!([]);
+    }
+    if let Some(Value::Object(overrides)) = computer_use {
+        if let Some(Value::Object(config)) = params.get_mut("config") {
+            config.extend(overrides);
+        } else {
+            params["config"] = Value::Object(overrides);
+        }
+    }
+    Ok(params)
+}
+
+/// The host request that saves an editor draft: it applies a reviewed card proposal, updates
+/// the edited task `item`, or creates a task in `cwd`.
+fn automation_save_request(
+    item: Option<&Value>,
+    origin: Option<&(String, String)>,
+    draft: &automations::editor::Draft,
+    cwd: &str,
+) -> (&'static str, Value) {
+    let proposal = origin.is_some()
+        && item
+            .and_then(|item| item["mode"].as_str())
+            .is_some_and(|mode| mode.starts_with("suggested_"));
+    let mut body = if proposal {
+        item.cloned().unwrap()
+    } else {
+        json!({})
+    };
+    body["name"] = json!(draft.name);
+    body["prompt"] = json!(draft.prompt);
+    body["rrule"] = json!(draft.rrule);
+    let endpoint = if proposal {
+        "apply-automation-proposal"
+    } else if let Some(id) = item.and_then(|item| item["id"].as_str()) {
+        body["id"] = json!(id);
+        body["status"] = item.unwrap()["status"].clone();
+        "automation-update"
+    } else {
+        body["cwds"] = json!([cwd]);
+        "automation-create"
+    };
+    if let Some(execution) = draft.execution.as_object() {
+        for (key, value) in execution {
+            body[key] = value.clone();
+        }
+    }
+    if proposal {
+        (endpoint, json!({"arguments": body, "threadId": origin.unwrap().0}))
+    } else {
+        (endpoint, body)
+    }
 }
 
 /// The Home chip label for a project root: its folder name.
