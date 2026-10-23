@@ -86,19 +86,26 @@ impl Composer {
             .expect("dictation recovery");
         let recovering = recovery.retrying;
         let recovered = recovery.text.is_some();
-        let mut row = div()
+        let row = div()
             .id("dictation-recovery")
             .relative()
             .flex()
             .items_center()
-            .gap(px(8.))
+            .gap(px(12.))
             .min_h(px(42.))
-            .px(px(12.))
+            .pl(px(12.))
+            .pr(px(8.))
+            .py(px(8.))
             .role(gpui::Role::Status)
             .child(shapes::decoration(shapes::Decoration {
-                radius: Corners::all(px(16.)),
+                radius: Corners::all(px(25.)),
                 corner: shapes::Corner::Squircle,
-                border: Some((px(1.), t.border)),
+                fill: Some(t.surface),
+                shadows: vec![
+                    shadow(t.border_strong, 0., 0., 0.5, false),
+                    shadow(gpui::black().opacity(0.05), 0., 2., 0., false),
+                    shadow(gpui::black().opacity(0.02), 4., 6., 0., false),
+                ],
                 ..Default::default()
             }))
             .child(div().flex_1().min_w_0().child(text(
@@ -110,10 +117,11 @@ impl Composer {
                     "Dictation stopped"
                 },
                 13.,
-                18.,
-                400.,
+                21.125,
+                430.,
                 t.text,
             )));
+        let mut controls = div().flex().items_start().justify_end().gap(px(8.));
         for (action, label) in [
             (0, "View recording"),
             (1, if recovered { "Add to message" } else { "Retry" }),
@@ -124,9 +132,9 @@ impl Composer {
             {
                 continue;
             }
-            row = row.child(self.recovery_button(action, label, t, cx));
+            controls = controls.child(self.recovery_button(action, label, t, cx));
         }
-        row
+        row.child(controls)
     }
 
     fn recovery_button(
@@ -147,20 +155,30 @@ impl Composer {
             .aria_label(label)
             .tab_index(0)
             .focus_visible(menu::trigger_focus);
+        if action == 1 {
+            button = button
+                .relative()
+                .child(shapes::decoration(shapes::Decoration {
+                    radius: Corners::all(px(12.5)),
+                    corner: shapes::Corner::Squircle,
+                    fill: Some(t.text_alpha_5),
+                    ..Default::default()
+                }));
+        }
         button = if action == 2 {
-            button.child(icon("close", 12., t.text_tertiary))
+            button
+                .size(px(26.))
+                .p(px(4.))
+                .child(icon("toast-close", 16., t.text_tertiary))
         } else {
             button.child(text(
                 label,
                 12.,
                 16.,
-                400.,
+                430.,
                 if action == 0 { t.text_tertiary } else { t.text },
             ))
         };
-        if action == 1 {
-            button = button.bg(t.surface_elevated);
-        }
         button
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.recovery_action(action, recovered, window, cx)
@@ -286,17 +304,24 @@ impl Composer {
         };
         let disabled = action != 0 && transcribing;
         let foreground = if action == 2 {
-            t.text_composer_primary
+            t.surface_elevated_secondary
         } else {
             t.text
         };
         let background = if action == 2 {
-            t.composer_primary
+            t.button_primary_solid
         } else {
-            t.surface_elevated
+            t.text_alpha_5
         };
-        pill(label, t)
+        let button = if action == 2 {
+            div().id(label).p(px(2.)).rounded(Theme::RADIUS_FULL)
+        } else {
+            pill(label, t)
+        };
+        button
             .size(px(28.))
+            .flex()
+            .items_center()
             .justify_center()
             .relative()
             .child(shapes::decoration(deco(9999., background, vec![])))
@@ -334,13 +359,13 @@ impl Composer {
         } else if action == 1 {
             div()
                 .size(px(8.8))
-                .rounded(px(1.))
-                .bg(foreground)
+                .relative()
+                .child(shapes::decoration(deco(1., foreground, vec![])))
                 .into_any_element()
         } else {
             icon(
                 if action == 0 {
-                    "close"
+                    "toast-close"
                 } else {
                     "composer-arrow-up"
                 },

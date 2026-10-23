@@ -2382,7 +2382,7 @@ impl Render for Composer {
                 div()
                     .children(tray)
                     .when(self.dictation_recovery.is_some(), |d| {
-                        d.child(self.recovery_card(&t, cx))
+                        d.child(self.recovery_card(&t, cx).mb(px(8.)))
                     })
                     .child(card),
             )
