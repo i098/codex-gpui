@@ -157,6 +157,7 @@ impl Root {
             page.update(cx, |shell, _| {
                 shell.can_go_back = can_back;
                 shell.can_go_forward = can_forward;
+                shell.unread_destinations = self.unread_destinations.clone();
             });
         }
         let thread_id = match &self.state.route {
