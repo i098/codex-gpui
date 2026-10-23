@@ -1025,9 +1025,9 @@ impl Editor {
                 )
             })
             .when(picker == Picker::Trigger, |d| {
-                d.child(icon("automation-scheduled", 16., color))
+                d.child(icon("automation-scheduled", 16., color).runtime())
             })
-            .child(icon(icon_name, icon_size, icon_color))
+            .child(icon(icon_name, icon_size, icon_color).runtime())
             .on_click(cx.listener(move |this, _, window, cx| {
                 if !this.saving && !disabled {
                     this.controls[control].focus(window, cx);
@@ -1460,6 +1460,7 @@ impl Render for Editor {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
+                    .when(self.advanced, |d| d.top_layer())
                     .flex()
                     .flex_col()
                     .gap(px(16.))
