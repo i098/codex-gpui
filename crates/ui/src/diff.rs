@@ -1926,15 +1926,16 @@ impl Render for SplitScreen {
                 }),
             )
             .child(self.shell.clone())
-            .child(
+            .child(titlebar_layer(
+                open.then_some(sidebar_width),
                 self.thread
                     .update(cx, |view, cx| view.titlebar_header(left.is_some(), cx))
-                    .left(header_left)
                     .when_some(left, |h, left| h.w(left - header_left))
                     .when(hidden_tabs, |h| {
                         h.w(window.viewport_size().width - header_left - COMPACT_CONTROLS_WIDTH)
                     }),
-            )
+                header_left,
+            ))
             .when(!open, |d| {
                 let t = cx.theme();
                 // The titlebar's New chat is the 16 px pencil (the command menu's), not the
@@ -2015,6 +2016,24 @@ impl Render for SplitScreen {
                 },
             )
     }
+}
+
+/// Chromium's composited `group/titlebar` layer around the thread `header` at `header_left`:
+/// from the end of the leading titlebar controls (`TITLEBAR_LAYER_X`), or from the titlebar
+/// box where that starts further left (the rail, with no open sidebar), to the window's right
+/// edge. cc tiles only its recorded bounds, the union of what the header paints.
+fn titlebar_layer(sidebar: Option<Pixels>, header: Div, header_left: Pixels) -> Div {
+    let layer_left = TITLEBAR_LAYER_X.min(sidebar.unwrap_or(crate::RAIL_WIDTH));
+    div()
+        .absolute()
+        .top_0()
+        .left(layer_left)
+        .right_0()
+        .h(Theme::TITLEBAR_HEIGHT)
+        .layer()
+        .child(crate::recorded_bounds(
+            header.left(header_left - layer_left),
+        ))
 }
 
 /// Left edge of Chromium's composited `group/titlebar` layer.

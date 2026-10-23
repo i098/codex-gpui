@@ -116,9 +116,7 @@ impl ThreadView {
             .top_0()
             .left(Theme::SIDEBAR_WIDTH)
             .right(px(43.))
-            // Chromium composites the `group/titlebar` (it overlaps composited layers): text
-            // blits into its transparent tile.
-            .layer()
+            // Its composited `group/titlebar` layer is the caller's (`diff::split_screen`).
             .child(self.header(show_identity, cx))
     }
 
@@ -141,7 +139,15 @@ impl ThreadView {
                         .top(px(12.))
                         .w(px(1.))
                         .h(px(20.))
-                        .bg(over(t.border, layout_color(t))),
+                        .bg(over(t.border, layout_color(t)))
+                        // The quad is part of the layer's recorded bounds.
+                        .child(
+                            canvas(
+                                |bounds, window, _| shapes::record_painted(bounds, window),
+                                |_, (), _, _| {},
+                            )
+                            .size_full(),
+                        ),
                 )
             })
             .child(
