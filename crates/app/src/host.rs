@@ -927,37 +927,7 @@ impl LocalHost {
         let original = fs::read_to_string(&path).map_err(read_error)?;
         let mut item = definition(id, &original)?;
         ensure!(item["status"] != "DELETED", "{missing}");
-        for (key, value) in params
-            .as_object()
-            .context("host parameters must be an object")?
-        {
-            if matches!(key.as_str(), "id" | "status" | "hostId") {
-                continue;
-            }
-            if matches!(key.as_str(), "name" | "prompt" | "rrule") {
-                let text = value
-                    .as_str()
-                    .map(str::trim)
-                    .filter(|text| !text.is_empty())
-                    .with_context(|| format!("missing automation {key}"))?;
-                item[key] = json!(text);
-                continue;
-            }
-            let stored = if key == "projectId" {
-                &item["target"]["projectId"]
-            } else {
-                &item[key]
-            };
-            // Original `ugi` sends a legacy task's first cwd as `projectId`.
-            let legacy_cwd = key == "projectId"
-                && item["target"].is_null()
-                && item["cwds"].get(0) == Some(value)
-                && value != "~";
-            ensure!(
-                stored == value || legacy_cwd,
-                "automation update cannot change {key}"
-            );
-        }
+        apply_automation_edits(&mut item, params)?;
         let last: Option<i64> = if let Some(transaction) = &transaction {
             transaction
                 .query_row(
@@ -2004,6 +1974,41 @@ fn take_flag(headers: &mut Headers, name: &str) -> bool {
 fn set_header(headers: &mut Headers, name: &str, value: impl Into<String>) {
     take_header(headers, name);
     headers.push((name.to_owned(), value.into()));
+}
+
+fn apply_automation_edits(item: &mut Value, params: &Value) -> Result<()> {
+    for (key, value) in params
+        .as_object()
+        .context("host parameters must be an object")?
+    {
+        if matches!(key.as_str(), "id" | "status" | "hostId") {
+            continue;
+        }
+        if matches!(key.as_str(), "name" | "prompt" | "rrule") {
+            let text = value
+                .as_str()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .with_context(|| format!("missing automation {key}"))?;
+            item[key] = json!(text);
+            continue;
+        }
+        let stored = if key == "projectId" {
+            &item["target"]["projectId"]
+        } else {
+            &item[key]
+        };
+        // Original `ugi` sends a legacy task's first cwd as `projectId`.
+        let legacy_cwd = key == "projectId"
+            && item["target"].is_null()
+            && item["cwds"].get(0) == Some(value)
+            && value != "~";
+        ensure!(
+            stored == value || legacy_cwd,
+            "automation update cannot change {key}"
+        );
+    }
+    Ok(())
 }
 
 fn definition(id: &str, contents: &str) -> Result<Value> {
