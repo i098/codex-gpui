@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 const CUSTOMIZATION: &str = "inline-sidebar-customization-state-by-account-id-v2";
+const SNAPSHOTS: &str = "sidebar-customization-snapshots-v2";
 const SEEN: &str = "sidebar-more-menu-seen-mcp-destination-ids-by-account-id-v1";
 const CACHE: &str = "mcp-global-entrypoints-v2";
 
@@ -41,6 +42,43 @@ struct Customization {
     version: u8,
     #[serde(default)]
     visibility_by_account_id: HashMap<String, HashMap<String, bool>>,
+}
+
+fn pin_overrides(atoms: &mut Value, scope: Option<&Scope>) -> HashMap<String, bool> {
+    if let Some(scope) = scope {
+        let key = serde_json::to_string(&[scope.account.as_str(), scope.user.as_str()])
+            .expect("navigation identity serializes");
+        if let Some(snapshot) = atoms
+            .get_mut(SNAPSHOTS)
+            .and_then(|value| value.get_mut(&key))
+            .filter(|value| !value.is_null())
+        {
+            if !snapshot["order"]
+                .as_array()
+                .is_some_and(|order| order.iter().all(Value::is_string))
+            {
+                return HashMap::new();
+            }
+            return snapshot
+                .get_mut("pinOverrides")
+                .map(Value::take)
+                .and_then(|value| serde_json::from_value(value).ok())
+                .unwrap_or_default();
+        }
+    }
+    let customization: Customization = atoms
+        .get_mut(CUSTOMIZATION)
+        .map(Value::take)
+        .and_then(|value| serde_json::from_value(value).ok())
+        .unwrap_or_default();
+    let mut visibility = customization.visibility_by_account_id;
+    if customization.version == 2 {
+        visibility
+            .remove(scope.map_or("anonymous", |scope| scope.account.as_str()))
+            .unwrap_or_default()
+    } else {
+        HashMap::new()
+    }
 }
 
 #[derive(Deserialize)]
@@ -87,18 +125,7 @@ fn persisted(host: &dyn Host, authenticated: bool) -> Result<Persisted> {
     let account = scope
         .as_ref()
         .map_or("anonymous", |scope| scope.account.as_str());
-    // The original rejects an invalid customization schema and uses its empty version-two default.
-    let customization: Customization = atoms
-        .get_mut(CUSTOMIZATION)
-        .map(Value::take)
-        .and_then(|value| serde_json::from_value(value).ok())
-        .unwrap_or_default();
-    let mut visibility = customization.visibility_by_account_id;
-    let overrides = if customization.version == 2 {
-        visibility.remove(account).unwrap_or_default()
-    } else {
-        HashMap::new()
-    };
+    let overrides = pin_overrides(&mut atoms, scope.as_ref());
     let seen = match atoms
         .get_mut(SEEN)
         .map(Value::take)
@@ -166,7 +193,6 @@ struct Destination {
     id: SharedString,
     legacy_id: Option<SharedString>,
     visible_by_default: bool,
-    has_unread_activity: bool,
 }
 
 fn resource_uri(meta: &Value) -> Option<&str> {
@@ -245,8 +271,6 @@ fn destination(server: &str, tool: &Value) -> Option<Destination> {
             .then(|| destination_id(connector, name)),
         id: destination_id(canonical_connector, action),
         visible_by_default: server == "code-review",
-        // Pco supplies false for MCP activity; Its derives discovery from the per-account seen IDs.
-        has_unread_activity: false,
     })
 }
 
@@ -304,7 +328,6 @@ fn eligible(catalog: Option<&Catalog>, cached: Option<&[CachedServer]>) -> Vec<D
             id: entry.id.into(),
             legacy_id: None,
             visible_by_default: true,
-            has_unread_activity: false,
         })
         .collect();
     if let Some(catalog) = catalog {
@@ -367,9 +390,8 @@ fn unread(destinations: Vec<Destination>, persisted: &Persisted) -> Arc<[SharedS
         .into_iter()
         .filter(|destination| {
             !pins.contains(&destination.id)
-                && (destination.has_unread_activity
-                    || destination.id.starts_with("mcp:")
-                        && !persisted.seen.contains(destination.id.as_ref()))
+                && destination.id.starts_with("mcp:")
+                && !persisted.seen.contains(destination.id.as_ref())
         })
         .map(|destination| destination.id)
         .collect()
@@ -469,14 +491,16 @@ mod tests {
     }
 
     #[test]
-    fn reading_discovery_does_not_clear_independent_unread_activity() {
-        let mut entry = destination("notes", &tool("open")).unwrap();
+    fn seen_destinations_do_not_light_explore() {
         let mut state = empty_state();
-        state.seen.insert(entry.id.to_string());
-        assert!(unread(vec![destination("notes", &tool("open")).unwrap()], &state).is_empty());
-        entry.has_unread_activity = true;
+        let entry = destination("notes", &tool("open")).unwrap();
         let id = entry.id.clone();
-        assert_eq!(unread(vec![entry], &state).as_ref(), &[id]);
+        assert_eq!(
+            unread(vec![entry], &state).as_ref(),
+            std::slice::from_ref(&id)
+        );
+        state.seen.insert(id.to_string());
+        assert!(unread(vec![destination("notes", &tool("open")).unwrap()], &state).is_empty());
     }
 
     struct ScopedHost {
@@ -635,7 +659,6 @@ mod tests {
                 id: format!("destination-{index}").into(),
                 legacy_id: None,
                 visible_by_default: true,
-                has_unread_activity: false,
             })
             .collect();
         let overrides = HashMap::from([
@@ -659,5 +682,61 @@ mod tests {
         });
         assert!(destination("codex_apps", &connector).is_none());
         assert!(destination("notes", &tool("open")).is_some());
+    }
+
+    #[test]
+    fn signed_in_snapshot_pins_are_scoped_and_precede_legacy_state() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let id = "mcp:[\"mcp-global\",\"notes\",\"open\",\"global\"]";
+        let key = "[\"account-a\",\"user-a\"]";
+        let mut atoms = json!({
+            (SNAPSHOTS): {
+                (key): {"order": [], "pinOverrides": {(id): true}}
+            }
+        });
+        let save = |atoms: &Value| {
+            std::fs::write(
+                home.path().join(".codex-global-state.json"),
+                json!({"electron-persisted-atom-state": atoms}).to_string(),
+            )
+        };
+        let read = |account: &str, user: &str| -> Result<Arc<[SharedString]>> {
+            let state = persisted(
+                &ScopedHost {
+                    local: LocalHost::new(home.path()),
+                    account: account.into(),
+                    user: user.into(),
+                },
+                true,
+            )?;
+            Ok(unread(
+                vec![destination("notes", &tool("open")).unwrap()],
+                &state,
+            ))
+        };
+        save(&atoms)?;
+        assert!(read("account-a", "user-a")?.is_empty());
+        assert_eq!(
+            read("account-b", "user-a")?.as_ref(),
+            &[SharedString::from(id)]
+        );
+        atoms[SNAPSHOTS][key]["pinOverrides"][id] = json!(false);
+        atoms[CUSTOMIZATION] = json!({
+            "version": 2, "orderByAccountId": {},
+            "visibilityByAccountId": {"account-a": {(id): true}}
+        });
+        save(&atoms)?;
+        assert_eq!(
+            read("account-a", "user-a")?.as_ref(),
+            &[SharedString::from(id)]
+        );
+        assert!(read("account-a", "user-b")?.is_empty());
+        atoms[SNAPSHOTS][key]["pinOverrides"] = json!({});
+        save(&atoms)?;
+        assert_eq!(
+            read("account-a", "user-a")?.as_ref(),
+            &[SharedString::from(id)]
+        );
+        Ok(())
     }
 }

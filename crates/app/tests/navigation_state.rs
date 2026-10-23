@@ -46,9 +46,10 @@ fn catalog(line: &mut Value) {
 fn write_state(home: &Path, pinned: bool, seen: bool) -> Result<()> {
     let read: Vec<&str> = if seen { vec![DESTINATION] } else { Vec::new() };
     let state = json!({"electron-persisted-atom-state": {
-        "inline-sidebar-customization-state-by-account-id-v2": {
-            "version": 2, "orderByAccountId": {},
-            "visibilityByAccountId": {"account-a": {(DESTINATION): pinned}}
+        "sidebar-customization-snapshots-v2": {
+            "[\"account-a\",\"user-a\"]": {
+                "order": [], "pinOverrides": {(DESTINATION): pinned}
+            }
         },
         "sidebar-more-menu-seen-mcp-destination-ids-by-account-id-v1": {
             "account-a": read

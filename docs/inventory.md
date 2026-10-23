@@ -112,7 +112,8 @@ MCP entries require a valid `ui://` resource and a global entrypoint.
 Native route identities replace their equivalent MCP entrypoints without creating a second discovery marker.
 
 The existing `get-global-state` transport reads `electron-persisted-atom-state`.
-`inline-sidebar-customization-state-by-account-id-v2` supplies account-scoped pin overrides.
+`sidebar-customization-snapshots-v2` supplies signed-in pin overrides for the exact account and user.
+When no matching snapshot exists, `inline-sidebar-customization-state-by-account-id-v2` supplies the account-scoped fallback.
 Canonical IDs take precedence over legacy aliases; default pins fill at most eight slots.
 `sidebar-more-menu-seen-mcp-destination-ids-by-account-id-v1` supplies the account's seen MCP IDs.
 Pinned destinations do not light Explore.

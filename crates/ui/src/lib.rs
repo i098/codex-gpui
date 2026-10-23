@@ -165,7 +165,7 @@ pub struct Shell {
     pub main_clips_right: bool,
     /// A chat needs attention (unread): the rail's Home item carries the unread dot.
     pub attention: bool,
-    /// Eligible unpinned destinations with unread activity; `None` while their source is unavailable.
+    /// Unseen, unpinned MCP destinations; `None` while their source is unavailable.
     pub unread_destinations: Option<Arc<[SharedString]>>,
     /// The profile avatar's menu is open.
     pub profile_menu: bool,
