@@ -526,6 +526,7 @@ Rasterize these images during paint, when the layer context is available.
 Wrap a sparse viewport layer's decorated subtree in `ui::recorded_bounds`.
 It collects painted bounds, including shadows, without adding an opacity layer.
 The Toaster uses this scope to match Chromium's shifted tile grid and local corner geometry.
+The thread titlebar reports its icon and divider bounds so the tile grid follows painted content, including untitled states.
 
 Wrap a tightly bounded compositor layer in `ui::composited_bounds`.
 It keeps the exact shadow bounds and uses Chromium's dense tile sizes.
