@@ -2096,45 +2096,43 @@ impl Render for Composer {
             .on_action(cx.listener(Self::next_command))
             .on_action(cx.listener(Self::previous_command))
             .relative();
-        if self.plain_field.is_some() {
-            if self.field_style != FieldStyle::Settings {
-                let multiline = self.plain_field == Some(true);
-                let inline = self.field_style == FieldStyle::Inline;
-                let input = self
-                    .editor(cx)
-                    .w_full()
-                    .min_w_0()
-                    .px(px(if inline {
-                        0.
-                    } else if multiline {
-                        18.
-                    } else {
-                        20.
+        if self.plain_field.is_some() && self.field_style != FieldStyle::Settings {
+            let multiline = self.plain_field == Some(true);
+            let inline = self.field_style == FieldStyle::Inline;
+            let input = self
+                .editor(cx)
+                .w_full()
+                .min_w_0()
+                .px(px(if inline {
+                    0.
+                } else if multiline {
+                    18.
+                } else {
+                    20.
+                }))
+                .pb_0()
+                .min_h(px(20.))
+                .when(inline, |d| d.h(px(20.)).overflow_hidden())
+                .when(!inline && !multiline, |d| d.relative().top(px(0.5)))
+                .font_weight(gpui::FontWeight(400.));
+            let field = card
+                .w_full()
+                .when(!inline, |d| {
+                    d.p(px(1.)).child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(20.)),
+                        corner: shapes::Corner::Squircle,
+                        border: Some((px(1.), t.border)),
+                        ..Default::default()
                     }))
-                    .pb_0()
-                    .min_h(px(20.))
-                    .when(inline, |d| d.h(px(20.)).overflow_hidden())
-                    .when(!inline && !multiline, |d| d.relative().top(px(0.5)))
-                    .font_weight(gpui::FontWeight(400.));
-                let field = card
-                    .w_full()
-                    .when(!inline, |d| {
-                        d.p(px(1.)).child(shapes::decoration(shapes::Decoration {
-                            radius: Corners::all(px(20.)),
-                            corner: shapes::Corner::Squircle,
-                            border: Some((px(1.), t.border)),
-                            ..Default::default()
-                        }))
-                    })
-                    .when(multiline, |d| d.min_h(px(122.)).py(px(17.)))
-                    .when(!multiline, |d| {
-                        d.h(px(if inline { 40. } else { 48. }))
-                            .flex()
-                            .items_center()
-                    })
-                    .child(input);
-                return div().w_full().child(field);
-            }
+                })
+                .when(multiline, |d| d.min_h(px(122.)).py(px(17.)))
+                .when(!multiline, |d| {
+                    d.h(px(if inline { 40. } else { 48. }))
+                        .flex()
+                        .items_center()
+                })
+                .child(input);
+            return div().w_full().child(field);
         }
         if self.embedded_field.is_some() {
             return div().w_full().child(
