@@ -277,7 +277,8 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     }
     let config: ConfigReadResponse = fixture::response("readback.jsonl", "config/read", 0);
     let skills: Value = fixture::response("readback.jsonl", "skills/list", 0);
-    let (shell, _) = shell(&config.config, &skills, None, cx);
+    let integrations = cx.new(|_| integrations::State::default());
+    let (shell, _) = shell(&config.config, &skills, None, integrations, cx);
     shell.update(cx, |shell, _| shell.can_go_back = true);
     shell.into()
 }
