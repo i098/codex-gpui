@@ -311,6 +311,7 @@ The row menu's Edit action updates the task through `automation-update`, without
 The editor keeps an existing advanced rule unchanged when only Name or Prompt changes.
 Prefilled drafts stay in Create mode until their data includes an existing task ID.
 Escape closes an open schedule picker first; otherwise, it discards the editor without saving.
+Command-Enter saves the editor, including when Name or Prompt has keyboard focus.
 The local Trigger menu keeps Schedule active and explains why cloud-only Date and time is unavailable.
 Advanced controls update notifications, new-chat or existing-chat execution, automatic archive, project, model, and effort.
 Switching an existing-chat task back to new-chat execution supplies its current local workspace.
