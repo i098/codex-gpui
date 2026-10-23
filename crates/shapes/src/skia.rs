@@ -877,6 +877,8 @@ pub(crate) struct Layer {
     pub(crate) device: Option<[i32; 4]>,
     /// Sparse recording's tiling rect, in these coordinates.
     recorded: Option<[i32; 4]>,
+    /// Canvas backing bounds, independent of decoration and atlas tile boundaries.
+    canvas: Option<[i32; 4]>,
 }
 
 impl Layer {
@@ -959,6 +961,7 @@ impl Layer {
             composited: composited.is_some(),
             device,
             recorded,
+            canvas: None,
         }
     }
 
@@ -999,6 +1002,19 @@ impl Layer {
         self
     }
 
+    fn for_canvas(mut self, bounds: Bounds<Pixels>, scale: f32) -> Self {
+        let dev = |value: Pixels| (f32::from(value) * scale).round() as i32;
+        let left = dev(bounds.left()) - self.origin[0];
+        let top = dev(bounds.top()) - self.origin[1];
+        self.canvas = Some([
+            left,
+            top,
+            left + dev(bounds.size.width),
+            top + dev(bounds.size.height),
+        ]);
+        self
+    }
+
     /// The layer's size: the window past its origin.
     pub(crate) fn size(&self) -> [i32; 2] {
         [
@@ -1028,6 +1044,10 @@ impl Layer {
             min = [min[0].max(l), min[1].max(t)];
             max = [max[0].min(r), max[1].min(b)];
         }
+        if let Some([l, t, r, b]) = self.canvas {
+            min = [min[0].max(l), min[1].max(t)];
+            max = [max[0].min(r), max[1].min(b)];
+        }
         let [right, bottom] = self.size();
         [
             x0.max(min[0]).max(-self.origin[0]),
@@ -1042,9 +1062,17 @@ impl Layer {
         [x0, y0, x1, y1]: [i32; 4],
         extent: [i32; 2],
     ) -> impl Iterator<Item = ([i32; 2], (i32, i32), [i32; 4])> {
-        let offset = self.recorded.map_or(self.tile_origin, |r| [r[0], r[1]]);
-        let max = self.recorded.map_or(extent, |r| [r[2], r[3]]);
-        let raster_size = self.recorded.map(|_| (self.tile[0], self.tile[1]));
+        let backing = self.canvas.or(self.recorded);
+        let offset = backing.map_or(self.tile_origin, |r| [r[0], r[1]]);
+        let max = backing.map_or(extent, |r| [r[2], r[3]]);
+        let canvas_size = self.canvas.map(|r| [r[2] - r[0], r[3] - r[1]]);
+        // The overlap affects the stride, not the canvas surface or its edge clip.
+        let tile = canvas_size.map_or(self.tile, |size| {
+            size.map(|value| value.max(1).saturating_add(2))
+        });
+        let raster_size = canvas_size
+            .map(|[width, height]| (width, height))
+            .or_else(|| self.recorded.map(|_| (self.tile[0], self.tile[1])));
         tiles(
             [
                 x0 - offset[0],
@@ -1053,7 +1081,7 @@ impl Layer {
                 y1 - offset[1],
             ],
             [max[0] - offset[0], max[1] - offset[1]],
-            self.tile,
+            tile,
         )
         .map(move |(o, size, r)| {
             (
@@ -1079,6 +1107,7 @@ impl Layer {
             self.composited,
             self.device,
             self.recorded,
+            self.canvas,
             self.clip_bounds(bounds),
         )
     }
@@ -1385,9 +1414,9 @@ pub(crate) fn tile_pixels(
 }
 
 thread_local! {
-    /// Tile surfaces by size for [`rect_pixels`]: a tile is up to 4 MB, too much to allocate
-    /// and clear for every draw.
-    /// ponytail: kept for the thread's life, a few per tile size; cap them if sizes multiply.
+    /// Reuse raster surfaces by size; canvas surfaces can exceed the 4 MB decoration tiles.
+    /// ponytail: no pooled-byte ceiling; retain sizes for the thread's life. Add byte-bounded
+    /// eviction if large or varying canvas sizes increase retained memory.
     static SURFACES: RefCell<HashMap<(i32, i32), Vec<Surface>>> = Default::default();
 }
 
@@ -2107,7 +2136,13 @@ pub(crate) fn paint_canvas_round_rect(
         return;
     }
     let scale = window.scale_factor();
-    let layer = Layer::new(window, None).for_bounds(bounds, scale);
+    let backing = window.composited_layer().map_or_else(
+        || Bounds::new(point(px(0.), px(0.)), window.viewport_size()),
+        |(bounds, _)| bounds,
+    );
+    let layer = Layer::new(window, None)
+        .for_bounds(bounds, scale)
+        .for_canvas(backing, scale);
     let op = canvas_round_rect(layer.local(bounds, scale), radius, scale);
     paint_op(op, color, layer, window, cx);
 }
@@ -2819,6 +2854,7 @@ pub(crate) fn paint_icon(
             composited: true,
             device: None,
             recorded: None,
+            canvas: None,
         }
     } else {
         Layer::new(window, composited)
@@ -2991,6 +3027,58 @@ mod tests {
             );
         });
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn canvas_round_rect_keeps_coverage_across_tile_and_backing_edges() {
+        let width = TILE * 2 + 200;
+        let height = 56;
+        let layer = Layer {
+            origin: [40, 60],
+            tile_origin: [0, 0],
+            window: [1500, 500],
+            tile: [TILE; 2],
+            composited: false,
+            device: None,
+            recorded: None,
+            canvas: None,
+        }
+        .for_canvas(
+            Bounds::new(
+                point(px(20.), px(30.)),
+                size(px(width as f32 / 2.), px(height as f32 / 2.)),
+            ),
+            2.,
+        );
+        let background = Color4f::new(54. / 255., 54. / 255., 54. / 255., 1.);
+        let color = Color4f::new(1., 1., 1., 0.2);
+        for x in [TILE as f32 - 2.72, width as f32 - 2.72] {
+            let op = canvas_round_rect(
+                Bounds::new(point(px(x / 2.), px(12.5)), size(px(3.), px(3.))),
+                px(1.5),
+                2.,
+            );
+            let ([left, top, raster_width, _], blits) =
+                raster(op.bbox(), layer, 51, false, false, &[], &|canvas, color| {
+                    op.draw(canvas, color);
+                });
+            let (expected, row) = tile_pixels([0, 0], (width, height), background, |canvas| {
+                op.draw(canvas, color);
+            });
+            for (index, [coverage, mode, second_coverage, second_mode]) in
+                blits.into_iter().enumerate()
+            {
+                let actual = blend(mode, 255, 51, 54, coverage);
+                let actual = blend(second_mode, 255, 51, actual, second_coverage);
+                let x = left as usize + index % raster_width as usize;
+                let y = top as usize + index / raster_width as usize;
+                assert_eq!(
+                    actual,
+                    expected[y * row + x * 4],
+                    "canvas coverage differs at ({x}, {y})"
+                );
+            }
+        }
     }
 
     #[test]
@@ -3489,6 +3577,7 @@ mod tests {
             composited: false,
             device: None,
             recorded: Some(recorded),
+            canvas: None,
         }
         .for_bounds(
             Bounds::new(
