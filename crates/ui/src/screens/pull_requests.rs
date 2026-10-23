@@ -2418,11 +2418,14 @@ fn status_icon(item: &model::Item, t: &theme::Theme) -> Div {
         icon_box = icon_box.child(
             div()
                 .absolute()
-                .left(px(12.))
-                .top(px(12.))
-                .size(px(6.282))
-                .rounded_full()
-                .bg(color),
+                .left_0()
+                .top_0()
+                .child(review_svg(
+                    "pull-request-status-dot",
+                    br#"<svg viewBox="0 0 20 20"><circle cx="15.141" cy="15.141" r="3.141" fill="currentColor"/></svg>"#,
+                    20.,
+                    color,
+                )),
         );
     }
     icon_box
@@ -2481,6 +2484,71 @@ fn loading_rows(label: &'static str, cx: &Context<Page>) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn open_status_dot_matches_original_circle_pixels() -> anyhow::Result<()> {
+        struct StatusIcon(model::Item);
+
+        impl Render for StatusIcon {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let theme = theme::Theme::dark();
+                div().size_full().relative().bg(theme.surface).child(
+                    status_icon(&self.0, &theme)
+                        .absolute()
+                        .left(px(94.))
+                        .top(px(213.)),
+                )
+            }
+        }
+
+        let mut app = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = app.open_window(gpui::size(px(1280.), px(832.)), |_, cx| {
+            cx.new(|_| {
+                StatusIcon(model::Item {
+                    node_id: "open-status-dot".into(),
+                    pull_request: Identity {
+                        hostname: "github.com".into(),
+                        owner: "owner".into(),
+                        repository: "repo".into(),
+                        number: 1,
+                    },
+                    title: String::new(),
+                    state: "open".into(),
+                    head_branch: String::new(),
+                    base_branch: String::new(),
+                    author_login: None,
+                    author_avatar_url: None,
+                    updated_at: String::new(),
+                    additions: 0,
+                    deletions: 0,
+                    has_diff_stats: false,
+                    is_draft: false,
+                    ci_status: "pending".into(),
+                    can_merge: false,
+                    merge_blocker: None,
+                })
+            })
+        })?;
+        app.run_until_parked();
+        let image = app.capture_screenshot(window.into())?;
+        assert_eq!(image.dimensions(), (2560, 1664));
+        // Original open-all capture, SHA-256 847bce52e65da92f2b5c7051de10ec0660dc8969e874d7091e5aedc421954890.
+        for (x, y, expected) in [
+            (218, 450, [243, 200, 61, 255]),
+            (224, 456, [154, 128, 46, 255]),
+            (218, 462, [134, 113, 43, 255]),
+            (212, 454, [198, 164, 54, 255]),
+            (218, 456, [255, 210, 64, 255]),
+        ] {
+            assert_eq!(image.get_pixel(x, y).0, expected, "status dot ({x}, {y})");
+        }
+        Ok(())
+    }
 
     #[test]
     fn stale_preview_completion_releases_the_next_request_without_retaining_old_data() {
