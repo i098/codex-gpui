@@ -680,7 +680,7 @@ impl Editor {
         self.field(index, label, t, cx)
     }
 
-    fn weekday_controls(&self, t: &Theme, cx: &Context<Self>) -> Div {
+    fn weekday_controls(&self, t: &Theme, cx: &Context<Self>) -> Stateful<Div> {
         div()
             .id("automation-weekdays")
             .role(Role::Group)
