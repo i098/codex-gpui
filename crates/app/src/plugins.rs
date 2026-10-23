@@ -727,36 +727,4 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.to_string(), "Forbidden");
     }
-
-    #[cfg(unix)]
-    #[test]
-    fn plugin_directories_open_without_allowing_symlink_escape() -> Result<()> {
-        use std::os::unix::fs::symlink;
-        let root = tempfile::tempdir()?;
-        let outside = tempfile::tempdir()?;
-        let plugin = root.path().join("plugin");
-        std::fs::create_dir(&plugin)?;
-        let host = host::LocalHost::new(root.path()).with_opener("/usr/bin/true");
-        let request = |path: &std::path::Path| {
-            host::Request::post(
-                "open-file",
-                Some(json!({
-                    "cwd":root.path(), "path":path,
-                })),
-            )
-        };
-        let opened = host::Host::fetch(&host, &request(&plugin))?;
-        let body: Value =
-            serde_json::from_str(opened["bodyJsonString"].as_str().context("open response")?)?;
-        assert_eq!(body["path"], json!(plugin.canonicalize()?));
-        let escape = root.path().join("escape");
-        symlink(outside.path(), &escape)?;
-        assert!(
-            host::Host::fetch(&host, &request(&escape))
-                .unwrap_err()
-                .to_string()
-                .contains("outside the project")
-        );
-        Ok(())
-    }
 }

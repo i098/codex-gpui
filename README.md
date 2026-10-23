@@ -263,7 +263,6 @@ The multi-select emits `SelectionChanged`; the caller saves the value and can re
 Use `Composer::settings_field` for multiline text and `Toast` for existing information, error, and success messages.
 Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice check.
 
-<<<<<<< origin/main
 `app::diff_content::read_full_file` loads typed before/after data through the existing Git object host.
 It preserves line endings and the host's working-file fallback policy, with a 5 MiB object limit.
 Missing or oversized objects return `FullError::Unavailable`; invalid disk-fallback paths or reply structures return `FullError::Failed`.
@@ -277,7 +276,7 @@ File headers remain visible during scrolling.
 Diff code and context rows paint in their own opaque scroll layer, as in the original renderer.
 Failed reads retain the patch and provide Retry.
 Only Staged and Unstaged sources show staging actions. Uncommitted combines both states and does not expose those actions.
-=======
+
 The Plugins rail opens the native plugin directory and the Skills page.
 Both pages load app-server data and support search.
 Plugin installation, removal, enablement, and sharing wait for server responses.
@@ -290,7 +289,6 @@ Manage opens Settings > Plugins, which owns the management tabs and marketplace 
 The existing 36 reference frames do not cover these routes.
 Run `cargo test -p app --test plugins -- --test-threads=1` on macOS for the native failure and draft checks.
 
->>>>>>> db0f0e1f
 
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
 Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
@@ -415,13 +413,8 @@ That command does not close QA or any normal app.
 
 | Crate | Role |
 |---|---|
-<<<<<<< origin/main
 | `bridge` | JSON-RPC client for `codex app-server` over stdio or durable cloud WebSocket, protocol types, recorded sessions, and the ACP backend. |
 | `ui` | The window shell (titlebar, navigation rail, sidebar, main panel), the page modules in `screens/`, the composer, the thread view, the diff view and the icons. |
-=======
-| `bridge` | Client for `codex app-server`: newline-delimited JSON-RPC over stdio, hand-written protocol types, replay of recorded sessions, and the ACP backend. |
-| `ui` | The window shell (titlebar, navigation rail, sidebar, main panel), the screen modules, the composer, the thread view, the diff view and the icons. |
->>>>>>> db0f0e1f
 | `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths. It links Skia. |
 | `textsys` | A GPUI text system that puts glyphs on the same pixels as Chromium on macOS. It also holds the vendored `gpui` and `gpui_apple`. |
 | `theme` | Color tokens, metrics and the bundled fonts, extracted from the original renderer CSS. |

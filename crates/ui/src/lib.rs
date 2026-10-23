@@ -850,7 +850,10 @@ impl Shell {
                         item("scheduled").on_click(dispatch::<OpenScheduled>),
                         "Scheduled",
                     ))
-                    .child(rail_tip(item("plugins").on_click(dispatch::<OpenPlugins>), "Plugins"))
+                    .child(rail_tip(
+                        item("plugins").on_click(dispatch::<OpenPlugins>),
+                        "Plugins",
+                    ))
                     // Explore with its unread dot; it shows no tooltip.
                     .child(item("explore").child(dot(4.)))
                     .child(div().w(px(24.)).h(px(1.)).bg(t.border))
