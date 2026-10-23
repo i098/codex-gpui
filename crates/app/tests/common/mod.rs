@@ -170,7 +170,14 @@ impl Fx {
 
     pub fn open(theme: &'static str, size: (f32, f32), lines: Vec<Value>) -> Result<Self> {
         let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
-        Self::boot(theme, size, bridge, events, recorded_host_settings()?)
+        Self::boot(
+            theme,
+            size,
+            bridge,
+            events,
+            recorded_host_settings()?,
+            Route::Home,
+        )
     }
 
     /// Like [`Fx::open`], but the app-server is this test binary again as a proxy
@@ -200,9 +207,22 @@ impl Fx {
             .env(PROXY_SCRIPT, &script)
             .env(PROXY_LOG, &log);
         let (bridge, events) = Bridge::spawn(cmd)?;
-        let mut fx = Self::boot(theme, size, bridge, events, settings)?;
+        let mut fx = Self::boot(theme, size, bridge, events, settings, Route::Home)?;
         fx.log = Some(log);
         Ok(fx)
+    }
+
+    pub fn on_route(route: Route) -> Result<Self> {
+        let lines = script(None, |_| {})?;
+        let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
+        Self::boot(
+            "dark",
+            (1280., 832.),
+            bridge,
+            events,
+            recorded_host_settings()?,
+            route,
+        )
     }
 
     fn boot(
@@ -211,6 +231,7 @@ impl Fx {
         bridge: Bridge,
         events: async_channel::Receiver<Event>,
         settings: app::host_settings::Settings,
+        route: Route,
     ) -> Result<Self> {
         #[cfg(target_os = "macos")]
         install_panic_hook();
@@ -245,6 +266,7 @@ impl Fx {
                 _ => ThemeSetting::Dark,
             };
             let state = State {
+                route,
                 theme,
                 ..State::default()
             };

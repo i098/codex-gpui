@@ -561,10 +561,11 @@ impl Composer {
     pub(super) fn line_starts(&self) -> impl Iterator<Item = (usize, Pixels, &WrappedLine)> {
         let mut start = 0;
         let mut y = px(0.);
+        let line_height = self.editor_line_height();
         self.lines.iter().map(move |line| {
             let item = (start, y, line);
             start += line.len() + 1;
-            y += line.size(LINE_HEIGHT).height;
+            y += line.size(line_height).height;
             item
         })
     }
@@ -574,19 +575,20 @@ impl Composer {
         self.line_starts()
             .find(|(start, _, line)| offset <= start + line.len())
             .and_then(|(start, y, line)| {
-                let p = line.position_for_index(offset - start, LINE_HEIGHT)?;
+                let p = line.position_for_index(offset - start, self.editor_line_height())?;
                 Some(point(p.x, p.y + y))
             })
     }
 
     pub(super) fn index_for_local(&self, local: Point<Pixels>) -> usize {
         let mut last = 0;
+        let line_height = self.editor_line_height();
         for (start, y, line) in self.line_starts() {
-            let h = line.size(LINE_HEIGHT).height;
+            let h = line.size(line_height).height;
             if local.y < y + h {
                 let p = point(local.x, (local.y - y).max(px(0.)));
                 let i = line
-                    .closest_index_for_position(p, LINE_HEIGHT)
+                    .closest_index_for_position(p, line_height)
                     .unwrap_or_else(|i| i);
                 return self.snap(start + i, None);
             }
@@ -605,8 +607,9 @@ impl Composer {
     /// Offset one row above (`-1`) or below (`1`) the caret; `None` past the first/last row.
     pub(super) fn vertical(&self, rows: f32) -> Option<usize> {
         let p = self.point_for_index(self.cursor())?;
-        let y = p.y + LINE_HEIGHT * rows + LINE_HEIGHT / 2.;
-        let total: Pixels = self.lines.iter().map(|l| l.size(LINE_HEIGHT).height).sum();
+        let line_height = self.editor_line_height();
+        let y = p.y + line_height * rows + line_height / 2.;
+        let total: Pixels = self.lines.iter().map(|l| l.size(line_height).height).sum();
         (y >= px(0.) && y < total).then(|| self.index_for_local(point(p.x, y)))
     }
 
@@ -637,27 +640,33 @@ impl Composer {
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
-            .px(px(
-                if self.request_parent.is_some() && self.request_compact && !self.secret {
-                    10.
+            .px(px(if self.compact_text() { 10. } else { 12. }))
+            .pb(px(
+                if self.plain_field == Some(true)
+                    || self.request_parent.is_some()
+                    || self.request_compact
+                {
+                    0.
                 } else {
-                    12.
+                    4.
                 },
             ))
-            .pb(px(if self.request_parent.is_some() {
-                0.
+            .min_h(if self.request_parent.is_some() || self.request_compact {
+                px(20.)
             } else {
-                4.
-            }))
-            .min_h(px(if self.request_parent.is_some() {
-                20.
-            } else {
-                48.
-            }))
+                self.field_min_height
+            })
             .cursor(CursorStyle::IBeam)
-            .text_size(FONT_SIZE)
-            .line_height(LINE_HEIGHT)
-            .font_weight(gpui::FontWeight(430.))
+            .when(self.embedded_field.is_some(), |d| {
+                d.px_0().pb_0().min_h(self.editor_line_height())
+            })
+            .text_size(self.editor_font_size())
+            .line_height(self.editor_line_height())
+            .font_weight(gpui::FontWeight(if self.field_text.is_some() {
+                500.
+            } else {
+                430.
+            }))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_click))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -665,11 +674,18 @@ impl Composer {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             // `--opacity-composer-placeholder: .5` on the placeholder. The text blends like
             // Chromium's: blitted into a transparent layer (`_ComposerLayoutInput`'s
-            // `overflow-y: auto` contents), then composited onto the card.
+            // `overflow-y: auto` contents), then composited onto the card. A settings textarea
+            // never scrolls here, so it has no such layer: its text blends onto the field's fill.
+            // The sign-in `input` has neither the opacity nor the layer.
             .child(
                 div()
-                    .when(self.content.is_empty(), |d| d.opacity(0.5))
-                    .layer()
+                    .when(self.field_text.is_none(), |d| {
+                        d.when(
+                            self.content.is_empty() && self.embedded_field.is_none(),
+                            |d| d.opacity(0.5),
+                        )
+                        .when(self.plain_field != Some(true), |d| d.layer())
+                    })
                     .child(Editor(cx.entity())),
             )
     }
@@ -800,7 +816,7 @@ impl EntityInputHandler for Composer {
         let end = self.point_for_index(range.end)?;
         Some(Bounds::from_corners(
             bounds.origin + start,
-            bounds.origin + point(end.x, end.y + LINE_HEIGHT),
+            bounds.origin + point(end.x, end.y + self.editor_line_height()),
         ))
     }
 
@@ -893,17 +909,7 @@ pub(super) fn shape(
         .collect::<Vec<_>>();
     window
         .text_system()
-        .shape_text(
-            s.into(),
-            if composer.request_compact && !composer.secret {
-                px(13.)
-            } else {
-                FONT_SIZE
-            },
-            &runs,
-            width,
-            None,
-        )
+        .shape_text(s.into(), composer.editor_font_size(), &runs, width, None)
         .map(|lines| lines.into_iter().collect())
         .unwrap_or_default()
 }
@@ -936,8 +942,12 @@ impl gpui::Element for Editor {
                 _ => None,
             });
             let black = gpui::black();
-            let lines = shape(input.read(cx), black, black, black, width, window);
-            let height = lines.iter().map(|l| l.size(LINE_HEIGHT).height).sum();
+            let composer = input.read(cx);
+            let lines = shape(composer, black, black, black, width, window);
+            let height = lines
+                .iter()
+                .map(|l| l.size(composer.editor_line_height()).height)
+                .sum();
             Size {
                 width: width.unwrap_or_default(),
                 height,
@@ -956,12 +966,13 @@ impl gpui::Element for Editor {
         cx: &mut App,
     ) {
         let t = cx.theme().clone();
+        let composer = self.0.read(cx);
         let lines = shape(
-            self.0.read(cx),
-            if self.0.read(cx).field_style == FieldStyle::Inline {
+            composer,
+            if composer.field_style == FieldStyle::Inline {
                 t.text_secondary
             } else {
-                t.text
+                composer.field_text.unwrap_or(t.text)
             },
             t.text_tertiary,
             chip_color(&t),
@@ -1004,8 +1015,9 @@ impl gpui::Element for Editor {
         let focus = self.0.read(cx).focus_handle.clone();
         window.handle_input(&focus, ElementInputHandler::new(bounds, self.0.clone()), cx);
         let selection_color = cx.theme().text_selection;
-        let caret_color = cx.theme().text;
         let c = self.0.read(cx);
+        let caret_color = c.field_text.unwrap_or(cx.theme().text);
+        let line_height = c.editor_line_height();
         if !c.selected_range.is_empty()
             && let (Some(a), Some(b)) = (
                 c.point_for_index(c.selected_range.start),
@@ -1019,10 +1031,10 @@ impl gpui::Element for Editor {
                 let x1 = if row == b.y { b.x } else { w };
                 let r = Bounds::from_corners(
                     bounds.origin + point(x0, row),
-                    bounds.origin + point(x1, row + LINE_HEIGHT),
+                    bounds.origin + point(x1, row + line_height),
                 );
                 window.paint_quad(fill(r, selection_color));
-                row += LINE_HEIGHT;
+                row += line_height;
             }
         }
         let caret = (c.selected_range.is_empty()
@@ -1042,9 +1054,9 @@ impl gpui::Element for Editor {
         let mut y = px(0.);
         for line in &lines {
             let origin = bounds.origin + point(x, y);
-            line.paint(origin, LINE_HEIGHT, TextAlign::Left, None, window, cx)
+            line.paint(origin, line_height, TextAlign::Left, None, window, cx)
                 .ok();
-            y += line.size(LINE_HEIGHT).height;
+            y += line.size(line_height).height;
         }
         self.0.update(cx, |c, _| c.lines = lines);
         let chip = chip_color(cx.theme());
@@ -1067,7 +1079,7 @@ impl gpui::Element for Editor {
         if let Some(p) = caret {
             let r = Bounds::new(
                 bounds.origin + point(p.x, p.y + px(1.5)),
-                size(px(1.), LINE_HEIGHT - px(3.)),
+                size(px(1.), line_height - px(3.)),
             );
             window.paint_quad(fill(r, caret_color));
         }
