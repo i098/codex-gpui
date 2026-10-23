@@ -1,5 +1,6 @@
 mod about;
 pub(crate) mod context_files;
+pub(crate) mod navigation;
 
 use crate::{
     CloseWindow, FindInThread, GoBack, GoForward, Hide, HideOthers, LogOut, Minimize, NewChat,
@@ -23,6 +24,7 @@ actions!(
         BringAllToFront,
         ToggleFullScreen,
         TogglePinnedSummary,
+        ToggleNavigationPanel,
     ]
 );
 
@@ -56,6 +58,7 @@ pub(crate) fn init(cx: &mut App) {
 }
 
 pub(crate) fn actions(root: Div, owner: &crate::Root, cx: &mut Context<crate::Root>) -> Div {
+    let root = navigation::actions(root, owner, cx);
     let root = if active_thread(owner, cx).is_some() {
         root.on_action(cx.listener(|this, _: &TogglePinnedSummary, _, cx| {
             if let Some(thread) = active_thread(this, cx) {
@@ -145,6 +148,7 @@ pub(crate) fn menus() -> Vec<Menu> {
         Menu::new("View").items([
             MenuItem::action("Toggle Sidebar", ToggleSidebar),
             MenuItem::action("Toggle Pinned Summary", TogglePinnedSummary),
+            MenuItem::action("Toggle navigation panel", ToggleNavigationPanel),
             MenuItem::action("Toggle Changes Panel", ToggleChangesPanel),
             MenuItem::separator(),
             MenuItem::action("Find", FindInThread),

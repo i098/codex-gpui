@@ -827,7 +827,7 @@ impl FileView {
                         self.line = Some(line);
                         self.scroll.set_offset(gpui::point(
                             px(0.),
-                            -px(line.saturating_sub(3) as f32 * CODE_LINE),
+                            -px(line.saturating_sub(3) as f32 * FILE_LINE_HEIGHT),
                         ));
                         self.go_to_line = None;
                     }

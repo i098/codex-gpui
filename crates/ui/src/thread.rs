@@ -74,7 +74,7 @@ pub use select::Selection;
 use select::{Carets, block_end, frame_start, highlight};
 
 pub fn render_markdown(source: &str, window: &Window, theme: &Theme) -> Div {
-    markdown(source, window, theme, &[])
+    markdown::detail(source, window, theme)
 }
 
 /// `--thread-content-max-width`

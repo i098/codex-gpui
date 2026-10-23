@@ -161,3 +161,69 @@ fn summary_menu_tracks_the_active_thread_and_toggles_from_composer_focus() -> Re
     assert!(!fx.cx.update(|cx| thread.read(cx).summary_open));
     Ok(())
 }
+
+#[test]
+fn workspace_navigation_reads_files_without_changing_them() -> Result<()> {
+    let workspace = tempfile::tempdir()?;
+    let root = workspace.path().to_string_lossy().into_owned();
+    std::fs::create_dir(workspace.path().join("src"))?;
+    let math = workspace.path().join("src/math.py");
+    std::fs::write(&math, "def subtract(a, b):\n    return a - b\n")?;
+    let expected = std::fs::read(&math)?;
+    let script = common::script(None, |_| {})?
+        .into_iter()
+        .map(|line| serde_json::from_str(&line.to_string().replace(common::CWD, &root)))
+        .collect::<serde_json::Result<Vec<_>>>()?;
+    let mut fx = Fx::scripted(script)?;
+    fx.action(Box::new(app::GoToRecentChat(1)))?;
+    fx.wait_thread(common::SUBTRACT)?;
+    fx.action(Box::new(ui::screens::diff::panel::OpenFile {
+        path: math.to_string_lossy().into_owned(),
+        line: None,
+    }))?;
+    fx.wait("the file read", |fx| {
+        fx.read(|root, cx| {
+            root.file_view()
+                .is_some_and(|file| file.read(cx).contents.as_ref().is_some_and(Result::is_ok))
+        })
+    })?;
+    let file = fx.read(|root, _| root.file_view().cloned()).unwrap();
+    fx.menu("View", "Toggle navigation panel")?;
+    fx.wait("the workspace root", |fx| {
+        fx.read(|_, cx| file.read(cx).visible_file_paths().any(|path| path == "src"))
+    })?;
+    assert!(!fx.read(|_, cx| {
+        file.read(cx)
+            .visible_file_paths()
+            .any(|path| path == "src/math.py")
+    }));
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        file.update(cx, |file, cx| file.focus_file_tree(window, cx));
+    })?;
+    fx.keys("home enter")?;
+    fx.wait("the expanded workspace directory", |fx| {
+        fx.read(|_, cx| {
+            file.read(cx)
+                .visible_file_paths()
+                .any(|path| path == "src/math.py")
+        })
+    })?;
+    assert!(!fx.read(|_, cx| file.read(cx).is_preview()));
+    fx.menu("View", "Toggle navigation panel")?;
+    assert!(!fx.read(|_, cx| file.read(cx).file_tree_open()));
+    fx.menu("View", "Toggle navigation panel")?;
+    assert!(fx.read(|_, cx| file.read(cx).file_tree_open()));
+    let opened = fx.read(|_, cx| file.read(cx).path.clone());
+    for path in [
+        "../outside.txt".to_owned(),
+        workspace.path().join("outside.txt").display().to_string(),
+    ] {
+        file.update(&mut fx.cx, |_, cx| {
+            cx.emit(ui::screens::diff::panel::FileTreeRequest::Open(path));
+        });
+        fx.cx.run_until_parked();
+        assert_eq!(fx.read(|_, cx| file.read(cx).path.clone()), opened);
+    }
+    assert_eq!(std::fs::read(math)?, expected);
+    Ok(())
+}

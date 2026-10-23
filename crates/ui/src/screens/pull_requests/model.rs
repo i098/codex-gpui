@@ -84,6 +84,71 @@ pub struct SearchPage {
     pub has_next_page: bool,
 }
 
+pub struct ReviewSummary<'a> {
+    pub names: Vec<&'a str>,
+    pub comments: u64,
+    pub partial: bool,
+}
+
+impl ReviewSummary<'_> {
+    pub fn names_label(&self) -> String {
+        if self.names.is_empty() && !self.partial {
+            "No reviewers".to_owned()
+        } else {
+            format!(
+                "{}{}",
+                self.names.join(", "),
+                if self.partial { "…" } else { "" }
+            )
+        }
+    }
+
+    pub fn comments_label(&self) -> String {
+        if self.comments == 0 && !self.partial {
+            "No comments".to_owned()
+        } else {
+            format!(
+                "{}{} comment{}",
+                self.comments,
+                if self.partial { "+" } else { "" },
+                if self.comments == 1 { "" } else { "s" }
+            )
+        }
+    }
+}
+
+pub fn review_summary(detail: &serde_json::Value) -> Option<ReviewSummary<'_>> {
+    let latest = detail["latestReviews"]["nodes"].as_array()?;
+    let requested = detail["reviewRequests"]["nodes"].as_array()?;
+    let mut names = Vec::new();
+    let mut seen = HashSet::new();
+    let mut comments = 0_u64;
+    for review in latest {
+        comments = comments.checked_add(review["comments"]["totalCount"].as_u64()?)?;
+        if let Some(name) = review["author"]["login"].as_str()
+            && seen.insert(name)
+        {
+            names.push(name);
+        }
+    }
+    for request in requested {
+        let reviewer = &request["requestedReviewer"];
+        if let Some(name) = reviewer["login"]
+            .as_str()
+            .or_else(|| reviewer["name"].as_str())
+            && seen.insert(name)
+        {
+            names.push(name);
+        }
+    }
+    Some(ReviewSummary {
+        names,
+        comments,
+        partial: detail["latestReviews"]["pageInfo"]["hasNextPage"].as_bool()?
+            || detail["reviewRequests"]["pageInfo"]["hasNextPage"].as_bool()?,
+    })
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum View {
     #[default]
@@ -338,6 +403,27 @@ pub fn section_items(streams: &[Stream]) -> Vec<Vec<&Item>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_metadata_distinguishes_missing_partial_and_empty_results() {
+        assert!(review_summary(&serde_json::json!({})).is_none());
+        let value = serde_json::json!({
+            "latestReviews":{"nodes":[{"author":{"login":"alice"},"comments":{"totalCount":2}}],"pageInfo":{"hasNextPage":false}},
+            "reviewRequests":{"nodes":[{"requestedReviewer":{"login":"alice"}},{"requestedReviewer":{"name":"Core"}}],"pageInfo":{"hasNextPage":true}}
+        });
+        let summary = review_summary(&value).unwrap();
+        assert_eq!(summary.names, ["alice", "Core"]);
+        assert_eq!(summary.comments, 2);
+        assert!(summary.partial);
+        let empty = serde_json::json!({
+            "latestReviews":{"nodes":[],"pageInfo":{"hasNextPage":false}},
+            "reviewRequests":{"nodes":[],"pageInfo":{"hasNextPage":false}}
+        });
+        let summary = review_summary(&empty).unwrap();
+        assert!(summary.names.is_empty());
+        assert_eq!(summary.comments, 0);
+        assert!(!summary.partial);
+    }
 
     fn item(id: &str) -> Item {
         Item {

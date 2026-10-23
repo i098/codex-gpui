@@ -1,5 +1,6 @@
 pub mod model;
 
+use crate::screens::diff::panel::DiffPanel;
 use crate::screens::thread::view::Clock;
 use crate::{EmptySidebar, Shell, composer::Composer, icon::icon, text};
 use base64::Engine as _;
@@ -20,23 +21,11 @@ use std::{
 };
 use theme::ActiveTheme as _;
 
-fn toolbar_icon(name: &'static str, side: f32, color: gpui::Hsla) -> impl IntoElement {
-    let source: &'static [u8] = match name {
-        "search" => br##"<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M7.33057 1.98535C10.2484 1.98535 12.6136 4.3508 12.6138 7.26855C12.6138 8.58031 12.1346 9.77942 11.3433 10.7031L13.9897 13.3496C14.1655 13.5253 14.1655 13.8106 13.9897 13.9863C13.814 14.1621 13.5288 14.1621 13.353 13.9863L10.7017 11.335C9.78678 12.0942 8.61243 12.5518 7.33057 12.5518C4.41281 12.5516 2.04736 10.1864 2.04736 7.26855C2.04754 4.35091 4.41292 1.98553 7.33057 1.98535ZM7.33057 2.88574C4.90998 2.88592 2.94793 4.84796 2.94775 7.26855C2.94775 9.68929 4.90987 11.6522 7.33057 11.6523C9.75141 11.6523 11.7144 9.6894 11.7144 7.26855C11.7142 4.84786 9.75131 2.88574 7.33057 2.88574Z" fill="currentColor"/></svg>"##,
-        "clear" => br##"<svg height="16" viewBox="0 0 16 16" width="16" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M8 1.25C11.7279 1.25 14.75 4.27208 14.75 8C14.75 11.7279 11.7279 14.75 8 14.75C4.27208 14.75 1.25 11.7279 1.25 8C1.25 4.27208 4.27208 1.25 8 1.25ZM10.5332 5.46582C10.2403 5.17333 9.76544 5.17317 9.47266 5.46582L8 6.93848L6.52734 5.46582C6.23456 5.17317 5.75968 5.17333 5.4668 5.46582C5.1739 5.75871 5.1739 6.23445 5.4668 6.52734L6.93848 7.99902L5.46582 9.47363C5.17319 9.76655 5.17302 10.2414 5.46582 10.5342C5.75864 10.8269 6.23349 10.8268 6.52637 10.5342L8 9.06055L9.47363 10.5342C9.76651 10.8268 10.2414 10.8269 10.5342 10.5342C10.827 10.2414 10.8268 9.76655 10.5342 9.47363L9.06055 7.99902L10.5332 6.52734C10.8261 6.23445 10.8261 5.75871 10.5332 5.46582Z" fill="currentColor"/></svg>"##,
-        "filter" => br##"<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M16.0013 5.00024C16.0013 4.44715 15.5534 3.99847 15.0003 3.99829H5.00031C4.4471 3.99829 3.99835 4.44704 3.99835 5.00024V5.97583C3.99835 6.24147 4.10349 6.49697 4.29132 6.68481L7.48175 9.87524L7.63702 10.0461C7.97691 10.461 8.16534 10.9826 8.16534 11.5237V15.1663C8.16534 15.3015 8.24656 15.4238 8.3714 15.4758L11.3714 16.7258C11.592 16.8176 11.8353 16.6553 11.8353 16.4163V11.5237C11.8353 10.9054 12.0808 10.3125 12.5179 9.87524L15.7083 6.68481L15.7747 6.6106C15.9206 6.43239 16.0013 6.20818 16.0013 5.97583V5.00024ZM17.3314 5.97583C17.3314 6.51694 17.144 7.03943 16.804 7.45435L16.6487 7.62524L13.4583 10.8157C13.2706 11.0035 13.1653 11.2581 13.1653 11.5237V16.4163C13.1653 17.6044 11.9564 18.4103 10.8597 17.9534L7.85968 16.7034C7.23925 16.4448 6.83527 15.8384 6.83527 15.1663V11.5237C6.83527 11.258 6.72917 11.0035 6.54132 10.8157L3.35089 7.62524C2.91364 7.18798 2.66827 6.59421 2.66827 5.97583V5.00024C2.66827 3.7125 3.71256 2.66821 5.00031 2.66821H15.0003C16.2879 2.66839 17.3314 3.71261 17.3314 5.00024V5.97583Z" fill="currentColor"/></svg>"##,
-        "filter-active" => br##"<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20 5A4 4 0 1 1 12 5A4 4 0 0 1 20 5Z" fill="#0285FF"/><path fill="currentColor" d="M12.5 14.005a.665.665 0 0 1 0 1.33h-5a.665.665 0 0 1 0-1.33h5Zm-.646-4.67a5.996 5.996 0 0 0 2.169 1.33H5a.665.665 0 1 1 0-1.33h6.854ZM10 5c0 .34.03.671.084.995H2.5a.665.665 0 0 1 0-1.33h7.51c-.006.11-.01.223-.01.335Z"/></svg>"##,
-        _ => unreachable!(),
-    };
+fn review_icon(name: &'static str, side: f32, color: gpui::Hsla) -> impl IntoElement {
+    let (key, source): (&'static str, &'static [u8]) = match name { "search" => ("pull-request-toolbar-search", br##"<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M7.33057 1.98535C10.2484 1.98535 12.6136 4.3508 12.6138 7.26855C12.6138 8.58031 12.1346 9.77942 11.3433 10.7031L13.9897 13.3496C14.1655 13.5253 14.1655 13.8106 13.9897 13.9863C13.814 14.1621 13.5288 14.1621 13.353 13.9863L10.7017 11.335C9.78678 12.0942 8.61243 12.5518 7.33057 12.5518C4.41281 12.5516 2.04736 10.1864 2.04736 7.26855C2.04754 4.35091 4.41292 1.98553 7.33057 1.98535ZM7.33057 2.88574C4.90998 2.88592 2.94793 4.84796 2.94775 7.26855C2.94775 9.68929 4.90987 11.6522 7.33057 11.6523C9.75141 11.6523 11.7144 9.6894 11.7144 7.26855C11.7142 4.84786 9.75131 2.88574 7.33057 2.88574Z" fill="currentColor"/></svg>"##), "clear" => ("pull-request-toolbar-clear", br##"<svg height="16" viewBox="0 0 16 16" width="16" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M8 1.25C11.7279 1.25 14.75 4.27208 14.75 8C14.75 11.7279 11.7279 14.75 8 14.75C4.27208 14.75 1.25 11.7279 1.25 8C1.25 4.27208 4.27208 1.25 8 1.25ZM10.5332 5.46582C10.2403 5.17333 9.76544 5.17317 9.47266 5.46582L8 6.93848L6.52734 5.46582C6.23456 5.17317 5.75968 5.17333 5.4668 5.46582C5.1739 5.75871 5.1739 6.23445 5.4668 6.52734L6.93848 7.99902L5.46582 9.47363C5.17319 9.76655 5.17302 10.2414 5.46582 10.5342C5.75864 10.8269 6.23349 10.8268 6.52637 10.5342L8 9.06055L9.47363 10.5342C9.76651 10.8268 10.2414 10.8269 10.5342 10.5342C10.827 10.2414 10.8268 9.76655 10.5342 9.47363L9.06055 7.99902L10.5332 6.52734C10.8261 6.23445 10.8261 5.75871 10.5332 5.46582Z" fill="currentColor"/></svg>"##), "filter" => ("pull-request-toolbar-filter", br##"<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M16.0013 5.00024C16.0013 4.44715 15.5534 3.99847 15.0003 3.99829H5.00031C4.4471 3.99829 3.99835 4.44704 3.99835 5.00024V5.97583C3.99835 6.24147 4.10349 6.49697 4.29132 6.68481L7.48175 9.87524L7.63702 10.0461C7.97691 10.461 8.16534 10.9826 8.16534 11.5237V15.1663C8.16534 15.3015 8.24656 15.4238 8.3714 15.4758L11.3714 16.7258C11.592 16.8176 11.8353 16.6553 11.8353 16.4163V11.5237C11.8353 10.9054 12.0808 10.3125 12.5179 9.87524L15.7083 6.68481L15.7747 6.6106C15.9206 6.43239 16.0013 6.20818 16.0013 5.97583V5.00024ZM17.3314 5.97583C17.3314 6.51694 17.144 7.03943 16.804 7.45435L16.6487 7.62524L13.4583 10.8157C13.2706 11.0035 13.1653 11.2581 13.1653 11.5237V16.4163C13.1653 17.6044 11.9564 18.4103 10.8597 17.9534L7.85968 16.7034C7.23925 16.4448 6.83527 15.8384 6.83527 15.1663V11.5237C6.83527 11.258 6.72917 11.0035 6.54132 10.8157L3.35089 7.62524C2.91364 7.18798 2.66827 6.59421 2.66827 5.97583V5.00024C2.66827 3.7125 3.71256 2.66821 5.00031 2.66821H15.0003C16.2879 2.66839 17.3314 3.71261 17.3314 5.00024V5.97583Z" fill="currentColor"/></svg>"##), "filter-active" => ("pull-request-toolbar-filter-active", br##"<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20 5A4 4 0 1 1 12 5A4 4 0 0 1 20 5Z" fill="#0285FF"/><path fill="currentColor" d="M12.5 14.005a.665.665 0 0 1 0 1.33h-5a.665.665 0 0 1 0-1.33h5Zm-.646-4.67a5.996 5.996 0 0 0 2.169 1.33H5a.665.665 0 1 1 0-1.33h6.854ZM10 5c0 .34.03.671.084.995H2.5a.665.665 0 0 1 0-1.33h7.51c-.006.11-.01.223-.01.335Z"/></svg>"##), "fullscreen" => ("pull-request-fullscreen", br##"<svg height="16" viewBox="0 0 16 16" width="16" xmlns="http://www.w3.org/2000/svg"><path d="M6.31909 8.95312C6.52412 8.74814 6.85627 8.74811 7.06128 8.95312C7.26625 9.15814 7.26625 9.4903 7.06128 9.69531L4.61108 12.1455H6.66284C6.95279 12.1455 7.18823 12.3809 7.18823 12.6709C7.18797 12.9606 6.95263 13.1963 6.66284 13.1963H3.4314C3.08669 13.1961 2.80687 12.9159 2.8064 12.5713V9.34082C2.8064 9.05093 3.04191 8.81552 3.33179 8.81543C3.62166 8.81552 3.8562 9.05093 3.8562 9.34082V11.416L6.31909 8.95312Z" fill="currentColor"/><path d="M12.5681 2.81055C12.9131 2.81067 13.1929 3.09062 13.1931 3.43555V6.66602C13.1931 6.95597 12.9577 7.19141 12.6677 7.19141C12.3779 7.19123 12.1433 6.95586 12.1433 6.66602V4.58984L9.68042 7.05273C9.47539 7.25774 9.14325 7.25775 8.93823 7.05273C8.7336 6.84769 8.73336 6.51544 8.93823 6.31055L11.3875 3.86133H9.33667C9.0468 3.86124 8.81128 3.62583 8.81128 3.33594C8.81128 3.04604 9.0468 2.81064 9.33667 2.81055H12.5681Z" fill="currentColor"/></svg>"##), "branch" => ("pull-request-branch", br##"<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7.2915 5A1.875 1.875 0 1 1 3.5415 5A1.875 1.875 0 1 1 7.2915 5Z" stroke="currentColor" stroke-width="1.33"/><path d="M7.2915 15A1.875 1.875 0 1 1 3.5415 15A1.875 1.875 0 1 1 7.2915 15Z" stroke="currentColor" stroke-width="1.33"/><path d="M16.4583 5A1.875 1.875 0 1 1 12.7083 5A1.875 1.875 0 1 1 16.4583 5Z" stroke="currentColor" stroke-width="1.33"/><path d="M5.4165 6.66664V13.3333" stroke="currentColor" stroke-width="1.33" stroke-linejoin="round"/><path d="M5.41658 12.5V11.6667C5.41658 10.7462 6.16278 10 7.08325 10H12.9166C13.8371 10 14.5833 9.25381 14.5833 8.33333V7.5" stroke="currentColor" stroke-width="1.33" stroke-linejoin="round"/></svg>"##), "reviewers" => ("pull-request-reviewers", br##"<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M16.585 10C16.585 6.3632 13.6368 3.41504 10 3.41504C6.3632 3.41504 3.41504 6.3632 3.41504 10C3.41504 11.9528 4.26592 13.7062 5.61621 14.9121C6.6544 13.6452 8.23235 12.835 10 12.835C11.7674 12.835 13.3447 13.6454 14.3828 14.9121C15.7334 13.7062 16.585 11.9531 16.585 10ZM10 14.165C8.67626 14.165 7.49115 14.7585 6.69531 15.6953C7.66679 16.2602 8.79525 16.585 10 16.585C11.2041 16.585 12.3316 16.2597 13.3027 15.6953C12.5069 14.759 11.3233 14.1651 10 14.165ZM11.835 8.5C11.835 7.48656 11.0134 6.66504 10 6.66504C8.98656 6.66504 8.16504 7.48656 8.16504 8.5C8.16504 9.51344 8.98656 10.335 10 10.335C11.0134 10.335 11.835 9.51344 11.835 8.5ZM17.915 10C17.915 14.3713 14.3713 17.915 10 17.915C5.62867 17.915 2.08496 14.3713 2.08496 10C2.08496 5.62867 5.62867 2.08496 10 2.08496C14.3713 2.08496 17.915 5.62867 17.915 10ZM13.165 8.5C13.165 10.248 11.748 11.665 10 11.665C8.25202 11.665 6.83496 10.248 6.83496 8.5C6.83496 6.75202 8.25202 5.33496 10 5.33496C11.748 5.33496 13.165 6.75202 13.165 8.5Z" fill="currentColor"/></svg>"##), "comments" => ("pull-request-comments", br##"<svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M11.335 12.083C11.3347 9.97242 9.44966 8.16504 7 8.16504C4.55034 8.16504 2.66527 9.97242 2.66504 12.083C2.66504 12.8512 2.90887 13.5704 3.33691 14.1797C3.4302 14.3125 3.47218 14.4745 3.4541 14.6357C3.40535 15.0678 3.31415 15.4843 3.19922 15.8877C3.66136 15.8098 4.10651 15.6986 4.54297 15.5508L4.66699 15.5215C4.79159 15.5045 4.91938 15.5238 5.03516 15.5771C5.62294 15.8481 6.2901 16.002 7 16.002C9.44981 16.002 11.335 14.1938 11.335 12.083ZM17.335 7.91309C17.3348 5.80247 15.4497 3.99512 13 3.99512C11.5595 3.99512 10.298 4.62925 9.51465 5.58496C9.28182 5.86891 8.86214 5.9105 8.57812 5.67773C8.29409 5.44493 8.25257 5.02526 8.48535 4.74121C9.52649 3.47094 11.1693 2.66504 13 2.66504C16.0729 2.66504 18.6648 4.96138 18.665 7.91309C18.665 8.8753 18.3824 9.77408 17.8984 10.5459C17.9866 11.1153 18.1604 11.6767 18.3848 12.2568C18.4665 12.4681 18.4355 12.7068 18.3018 12.8896C18.1681 13.0723 17.9505 13.1739 17.7246 13.1602C16.8659 13.1076 16.0585 12.9617 15.2734 12.7178C15.1054 12.7861 14.9347 12.8511 14.7588 12.9043C14.4073 13.0104 14.036 12.8113 13.9297 12.46C13.8235 12.1084 14.0226 11.7372 14.374 11.6309C14.5782 11.5692 14.7758 11.4944 14.9648 11.4072L15.084 11.3652C15.2063 11.3351 15.3361 11.3399 15.457 11.3809C15.8932 11.5286 16.338 11.6399 16.7998 11.7178C16.6849 11.3144 16.5946 10.8978 16.5459 10.4658C16.5278 10.3046 16.5698 10.1426 16.6631 10.0098C17.0911 9.40048 17.335 8.68131 17.335 7.91309ZM12.665 12.083C12.665 15.0349 10.073 17.332 7 17.332C6.19184 17.332 5.42143 17.1731 4.72266 16.8887C4.04698 17.0983 3.35521 17.2365 2.62793 17.3037L2.27539 17.3301C2.04946 17.3438 1.83192 17.2422 1.69824 17.0596C1.56452 16.8767 1.53354 16.638 1.61523 16.4268L1.79297 15.9375C1.93133 15.5279 2.03737 15.1238 2.10059 14.7158C1.61678 13.9441 1.33496 13.045 1.33496 12.083C1.33519 9.13134 3.92709 6.83496 7 6.83496C10.0729 6.83496 12.6648 9.13134 12.665 12.083Z" fill="currentColor"/></svg>"##), _ => unreachable!(), };
     gpui::canvas(
         |_, _, _| {},
         move |bounds, (), window, cx| {
-            let key = match name {
-                "search" => "pull-request-toolbar-search",
-                "clear" => "pull-request-toolbar-clear",
-                "filter-active" => "pull-request-toolbar-filter-active",
-                _ => "pull-request-toolbar-filter",
-            };
             if !shapes::paint_icon(source, key, bounds, false, color, None, window, cx) {
                 window
                     .paint_svg(
@@ -55,6 +44,172 @@ fn toolbar_icon(name: &'static str, side: f32, color: gpui::Hsla) -> impl IntoEl
     .flex_none()
 }
 
+// Chromium a49e2e3d's IDR_BROKENIMAGE at 100%; attribution is in docs/inventory.md.
+/*
+Embedded image resource license:
+Copyright (C) 2003, 2004, 2005, 2006 Apple Computer, Inc.  All rights reserved.
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+THIS SOFTWARE IS PROVIDED BY APPLE COMPUTER, INC. ``AS IS'' AND ANY
+EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE COMPUTER, INC. OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+fn missing_avatar() -> gpui::AnyElement {
+    static IMAGE: std::sync::LazyLock<Arc<gpui::Image>> = std::sync::LazyLock::new(|| {
+        let bytes = base64::engine::general_purpose::STANDARD.decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAA4AAAAQCAYAAAAmlE46AAABh0lEQVQoU42QSS9DURiGv7VfhKWEnyA2WFizsLciJGrowDVU55VIjE3sxFhB1ZDiVlUapYYguLRor9f5DrdRuaJv8izOOc+zORQIBFAKRFRGP+f3B6BlP/CYMecpo0NRFLBXFPt8fpzf6ThO50xJ3rzLkMduIfZ6vTi51hE5fZMYM85q6rUQ8tiXsdvtQfxKx3biFb/Hd0citNlsRXBDLpdbhmbbimcRiWu4uMvhXstL+D+4IadzDPFLHRvHL6aETzLYT2ZxcPZF6lYHNzQ66kQsnUdIfS4Jdrmh4eERqOKwdqiVBLuiIVKUIagXeaxEtQLL0UfMRKII7sSK7hnhckM0OKjgSISLew8ST2getePlqJuskDTPNWI2rBrvJFxuiByOARye57Gw+wDbklfIlYXIoH6yChObERIOCVc2ZLc7ZOhaDZpG31DDVDXNhRMcghuyWu1YT6TROF3zZ2TQEmxCNPUObqi/34q2hdZ/I+Oud60HvdY+UGdnF9rbO8ygHxS9dVss+AQqZY47NSC2iwAAAABJRU5ErkJggg==").expect("embedded browser image");
+        Arc::new(gpui::Image::from_bytes(gpui::ImageFormat::Png, bytes))
+    });
+    if !cfg!(target_os = "macos") {
+        return crate::rounded_clip(
+            px(9.),
+            shapes::Corner::Round,
+            div()
+                .size(px(18.))
+                .relative()
+                .child(shapes::decoration(shapes::Decoration {
+                    border: Some((px(1.), gpui::rgb(0xc0c0c0).into())),
+                    ..Default::default()
+                }))
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(1.))
+                        .right(px(1.))
+                        .top(px(1.))
+                        .bottom(px(1.))
+                        .overflow_hidden()
+                        .child(
+                            gpui::img(IMAGE.clone())
+                                .absolute()
+                                .left(px(1.))
+                                .top(px(1.))
+                                .size(px(16.))
+                                .object_fit(gpui::ObjectFit::Fill),
+                        ),
+                ),
+        )
+        .into_any_element();
+    }
+    static PIXELS: std::sync::LazyLock<image::RgbaImage> = std::sync::LazyLock::new(|| {
+        let mut pixels = image::load_from_memory(&IMAGE.bytes)
+            .expect("embedded browser PNG")
+            .to_rgba8();
+        shapes::premultiply(&mut pixels);
+        pixels
+    });
+    static WHITE: std::sync::LazyLock<image::RgbaImage> = std::sync::LazyLock::new(|| {
+        image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 255, 255, 255]))
+    });
+    static SILVER: std::sync::LazyLock<image::RgbaImage> = std::sync::LazyLock::new(|| {
+        image::RgbaImage::from_pixel(1, 1, image::Rgba([192, 192, 192, 255]))
+    });
+    type Cached = (
+        gpui::Bounds<gpui::Pixels>,
+        f32,
+        gpui::Hsla,
+        gpui::Bounds<gpui::Pixels>,
+        Arc<gpui::RenderImage>,
+    );
+    thread_local! {
+        static CACHE: RefCell<Option<Cached>> = const { RefCell::new(None) };
+    }
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, (), window, cx| {
+            let scale = window.scale_factor();
+            let page = cx.theme().surface;
+            let cached = CACHE.with_borrow(|cache| {
+                cache
+                    .as_ref()
+                    .filter(|entry| entry.0 == bounds && entry.1 == scale && entry.2 == page)
+                    .map(|entry| (entry.3, entry.4.clone()))
+            });
+            let (at, rendered) = if let Some(cached) = cached {
+                cached
+            } else {
+                let rect = |x, y, w, h| {
+                    gpui::Bounds::new(
+                        bounds.origin + point(px(x), px(y)),
+                        gpui::size(px(w), px(h)),
+                    )
+                };
+                let snapped = |b: gpui::Bounds<gpui::Pixels>| {
+                    gpui::Bounds::from_corners(
+                        point(
+                            px((f32::from(b.left()) * scale).round() / scale),
+                            px((f32::from(b.top()) * scale).round() / scale),
+                        ),
+                        point(
+                            px((f32::from(b.right()) * scale).round() / scale),
+                            px((f32::from(b.bottom()) * scale).round() / scale),
+                        ),
+                    )
+                };
+                let inner_bounds = rect(1., 1., 16., 16.);
+                let inner = shapes::raster_images(
+                    &[(&PIXELS, rect(2., 2., 16., 16.))],
+                    inner_bounds,
+                    gpui::Corners::default(),
+                    shapes::Corner::Round,
+                    shapes::ImageComposition::Direct(gpui::transparent_black()),
+                    window,
+                )
+                .expect("Mac image rasterizer");
+                let size = inner.size(0);
+                let mut bytes = inner.as_bytes(0).expect("raster frame").to_vec();
+                for pixel in bytes.as_chunks_mut::<4>().0 {
+                    pixel.swap(0, 2);
+                }
+                let clipped =
+                    image::RgbaImage::from_raw(size.width.into(), size.height.into(), bytes)
+                        .expect("raster size");
+                let images: [(&image::RgbaImage, gpui::Bounds<gpui::Pixels>); 6] = [
+                    (&WHITE, bounds),
+                    (&SILVER, rect(0., 0., 18., 1.)),
+                    (&SILVER, rect(0., 17., 18., 1.)),
+                    (&SILVER, rect(0., 1., 1., 16.)),
+                    (&SILVER, rect(17., 1., 1., 16.)),
+                    (&clipped, snapped(inner_bounds)),
+                ];
+                let rendered = Arc::new(
+                    shapes::raster_images(
+                        &images,
+                        bounds,
+                        gpui::Corners::all(px(9.)),
+                        shapes::Corner::Round,
+                        shapes::ImageComposition::Composited(page),
+                        window,
+                    )
+                    .expect("Mac image rasterizer"),
+                );
+                let at = snapped(bounds);
+                CACHE.set(Some((bounds, scale, page, at, rendered.clone())));
+                (at, rendered)
+            };
+            window
+                .paint_image(at, at, gpui::Corners::default(), rendered, 0, false)
+                .ok();
+        },
+    )
+    .size(px(18.))
+    .into_any_element()
+}
+
 pub const INSTALL_PROMPT: &str = "Install GitHub CLI (`gh`) on this machine, verify it works, and help me authenticate if needed so I can view and manage pull requests in Codex";
 
 const PREVIEW_MEMORY_LIMIT: usize = 512 * 1024 * 1024;
@@ -69,6 +224,12 @@ pub enum Availability {
     Ready(Account),
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DetailTab {
+    Summary,
+    Code,
+}
+
 #[derive(Clone)]
 pub enum Event {
     Query,
@@ -76,6 +237,7 @@ pub enum Event {
     More,
     Select(Option<Identity>),
     AskCodex(String),
+    Code,
     Media { generation: u64, url: String },
 }
 
@@ -87,6 +249,10 @@ pub struct Page {
     pub repository: Option<Repository>,
     pub selected: Option<Identity>,
     pub detail: Option<Result<Value, String>>,
+    pub detail_tab: DetailTab,
+    pub code: Option<Result<Entity<DiffPanel>, String>>,
+    code_loading: bool,
+    detail_fullscreen: bool,
     media_images: HashMap<String, Option<Result<Arc<gpui::RenderImage>, String>>>,
     media_queue: VecDeque<String>,
     media_inflight: bool,
@@ -126,7 +292,8 @@ pub fn shell(page: Entity<Page>, cx: &mut App) -> Entity<Shell> {
 
 impl Page {
     pub fn new(clock: Clock, cx: &mut Context<Self>) -> Self {
-        let search = cx.new(|cx| Composer::search_field("Search pull requests", cx));
+        let search =
+            cx.new(|cx| Composer::embedded_field("Search pull requests", "", px(14.), px(20.), cx));
         cx.observe(&search, |this, editor, cx| {
             let query = model::limit_query(editor.read(cx).field_text()).to_owned();
             if editor.read(cx).field_text() != query {
@@ -146,6 +313,10 @@ impl Page {
             repository: None,
             selected: None,
             detail: None,
+            detail_tab: DetailTab::Summary,
+            code: None,
+            code_loading: false,
+            detail_fullscreen: false,
             media_images: HashMap::new(),
             media_queue: VecDeque::new(),
             media_inflight: false,
@@ -177,6 +348,8 @@ impl Page {
             Availability::Checking => {
                 self.detail_generation += 1;
                 self.detail = None;
+                self.code = None;
+                self.code_loading = false;
                 self.media_images.clear();
                 self.media_queue.clear();
                 self.streams.clear();
@@ -281,6 +454,12 @@ impl Page {
         }
         self.selected = identity;
         self.detail = None;
+        self.code = None;
+        self.code_loading = false;
+        if self.selected.is_none() {
+            self.detail_tab = DetailTab::Summary;
+            self.detail_fullscreen = false;
+        }
         self.media_images.clear();
         self.media_queue.clear();
         self.detail_generation += 1;
@@ -309,6 +488,38 @@ impl Page {
         }
         self.detail = Some(result);
         self.start_next_media(cx);
+        if self.detail_tab == DetailTab::Code && self.code.is_none() && !self.code_loading {
+            self.request_code(cx);
+        }
+        cx.notify();
+    }
+
+    pub fn set_detail_tab(&mut self, tab: DetailTab, cx: &mut Context<Self>) {
+        self.detail_tab = tab;
+        if tab == DetailTab::Code && self.code.is_none() && !self.code_loading {
+            self.request_code(cx);
+        }
+        cx.notify();
+    }
+
+    fn request_code(&mut self, cx: &mut Context<Self>) {
+        self.code = None;
+        self.code_loading = true;
+        cx.emit(Event::Code);
+        cx.notify();
+    }
+
+    pub fn apply_code(
+        &mut self,
+        generation: u64,
+        result: Result<String, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if generation != self.detail_generation {
+            return;
+        }
+        self.code_loading = false;
+        self.code = Some(result.map(|patch| cx.new(|_| DiffPanel::from_patch("", &patch))));
         cx.notify();
     }
 
@@ -649,7 +860,7 @@ impl Page {
                 border: Some((px(1.), t.border_strong)),
                 ..Default::default()
             }))
-            .child(toolbar_icon("search", 18., t.text_secondary))
+            .child(review_icon("search", 18., t.text_secondary))
             .child(div().flex_1().min_w_0().child(self.search.clone()))
             .when(!self.query.is_empty(), |d| {
                 d.child(
@@ -661,7 +872,7 @@ impl Page {
                         .cursor_pointer()
                         .size(px(16.))
                         .flex_none()
-                        .child(toolbar_icon("clear", 16., t.text_secondary))
+                        .child(review_icon("clear", 16., t.text_secondary))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.search.update(cx, |search, cx| search.set_text("", cx));
                             this.search.focus_handle(cx).focus(window, cx);
@@ -870,7 +1081,7 @@ impl Page {
                         fill: Some(t.text_alpha_5),
                         ..Default::default()
                     }))
-                    .child(toolbar_icon(
+                    .child(review_icon(
                         if self.lifecycle != "open" || self.repository.is_some() {
                             "filter-active"
                         } else {
@@ -897,7 +1108,7 @@ impl Page {
             .min_h_0()
             .child(navigation)
             .child(toolbar)
-            .child(body.px(px(30.)).pt(px(20.)).pb(px(20.)))
+            .child(body.px(px(30.)).pt(px(20.)))
             .child(
                 crate::screens::thread::view::skia_gradient(
                     &[(t.surface, 0.), (t.surface.opacity(0.), 1.)],
@@ -992,6 +1203,7 @@ impl Page {
             .flex()
             .flex_col()
             .layer()
+            .pb(px(20.))
             .gap(px(16.));
         for (index, stream) in self.streams.iter().enumerate() {
             if rows[index].is_empty() && !stream.loading {
@@ -1076,6 +1288,8 @@ impl Page {
     }
 
     fn row(&self, item: &model::Item, show_author: bool, cx: &Context<Self>) -> Stateful<Div> {
+        static STATS_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
+            std::sync::LazyLock::new(|| super::diff::panel::stats_features(12.));
         let t = cx.theme();
         let identity = item.pull_request.clone();
         let selected = self.selected.as_ref() == Some(&identity);
@@ -1173,6 +1387,7 @@ impl Page {
                                     div()
                                         .flex_none()
                                         .flex()
+                                        .font_features(STATS_FEATURES.clone())
                                         .gap(px(4.))
                                         .child(text(
                                             format!("+{}", grouped_count(item.additions)),
@@ -1203,38 +1418,464 @@ impl Page {
             }))
     }
 
+    fn detail_control(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        active: bool,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let t = cx.theme();
+        div()
+            .id(id)
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .track_focus(&self.control(id, cx))
+            .relative()
+            .h(px(28.))
+            .px(px(9.))
+            .rounded(px(12.5))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .focus_visible(|s| {
+                s.shadow(vec![gpui::BoxShadow {
+                    color: t.text_accent,
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(2.),
+                    inset: true,
+                }])
+            })
+            .hover(|s| s.bg(t.ghost_hover))
+            .when(active, |d| {
+                d.child(shapes::decoration(shapes::Decoration {
+                    radius: gpui::Corners::all(px(12.5)),
+                    corner: shapes::Corner::Squircle,
+                    fill: Some(t.text_alpha_5),
+                    ..Default::default()
+                }))
+            })
+    }
+
+    fn discuss_selected(&self, cx: &mut Context<Self>) {
+        if let (Some(identity), Some(Ok(detail))) = (&self.selected, &self.detail) {
+            cx.emit(Event::AskCodex(format!(
+                "Help me understand pull request #{}: {}\n{}",
+                identity.number,
+                detail["title"].as_str().unwrap_or(""),
+                identity.url(),
+            )));
+        }
+    }
+
+    fn open_selected(&self, cx: &mut Context<Self>) {
+        if let Some(identity) = &self.selected {
+            cx.open_url(&identity.url());
+        }
+    }
+
+    fn detail_toolbar(&self, detail: Option<&Value>, cx: &Context<Self>) -> Div {
+        let t = cx.theme();
+        let (glyph, color) = request_status(
+            detail
+                .and_then(|value| value["state"].as_str())
+                .unwrap_or("OPEN"),
+            detail.is_some_and(|value| value["isDraft"] == true),
+            t,
+        );
+        let mut tabs = div()
+            .id("detail-tabs")
+            .role(gpui::Role::TabList)
+            .flex()
+            .gap(px(2.));
+        for (tab, id, label) in [
+            (DetailTab::Summary, "detail-summary", "Summary"),
+            (DetailTab::Code, "detail-code", "Code"),
+        ] {
+            let active = self.detail_tab == tab;
+            tabs = tabs.child(
+                self.detail_control(id, label, active, cx)
+                    .role(gpui::Role::Tab)
+                    .aria_selected(active)
+                    .child(text(
+                        label,
+                        13.,
+                        18.,
+                        430.,
+                        if active { t.text } else { t.text_tertiary },
+                    ))
+                    .on_click(cx.listener(move |this, _, _, cx| this.set_detail_tab(tab, cx)))
+                    .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            this.set_detail_tab(tab, cx);
+                            cx.stop_propagation();
+                        }
+                    })),
+            );
+        }
+        div()
+            .h(px(46.))
+            .flex_none()
+            .px(px(16.))
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .child(icon(glyph, 18., color))
+            .child(tabs)
+            .child(div().flex_1())
+            .child(self.detail_actions(detail.is_some(), cx))
+    }
+
+    fn detail_actions(&self, available: bool, cx: &Context<Self>) -> Div {
+        let t = cx.theme();
+        div()
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .child(
+                self.detail_control("open-github", "Open in browser", false, cx)
+                    .w(px(28.))
+                    .px_0()
+                    .child(icon("diff-open-in", 16., t.text))
+                    .on_click(cx.listener(|this, _, _, cx| this.open_selected(cx)))
+                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            this.open_selected(cx);
+                            cx.stop_propagation();
+                        }
+                    })),
+            )
+            .child(
+                self.detail_control("ask-pull-request", "Chat", true, cx)
+                    .aria_disabled(!available)
+                    .child(text("Chat", 13., 18., 430., t.text))
+                    .on_click(cx.listener(|this, _, _, cx| this.discuss_selected(cx)))
+                    .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            this.discuss_selected(cx);
+                            cx.stop_propagation();
+                        }
+                    })),
+            )
+            .child(
+                self.detail_control(
+                    "pull-request-fullscreen",
+                    if self.detail_fullscreen {
+                        "Exit full screen"
+                    } else {
+                        "Enter full screen"
+                    },
+                    false,
+                    cx,
+                )
+                .w(px(28.))
+                .px_0()
+                .child(review_icon("fullscreen", 16., t.text_tertiary))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.detail_fullscreen = !this.detail_fullscreen;
+                    cx.notify();
+                }))
+                .on_key_down(cx.listener(
+                    |this, event: &gpui::KeyDownEvent, _, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            this.detail_fullscreen = !this.detail_fullscreen;
+                            cx.notify();
+                            cx.stop_propagation();
+                        }
+                    },
+                )),
+            )
+    }
+
+    fn detail_metadata(&self, detail: &Value, cx: &Context<Self>) -> Div {
+        let t = cx.theme();
+        let reviews = model::review_summary(detail);
+        let reviewers = reviews.as_ref().map_or_else(
+            || "Couldn’t load reviewers".to_owned(),
+            model::ReviewSummary::names_label,
+        );
+        let comments = reviews.as_ref().map_or_else(
+            || "Couldn’t load comments".to_owned(),
+            model::ReviewSummary::comments_label,
+        );
+        let status = match detail["state"].as_str() {
+            Some("MERGED") => "Merged",
+            Some("CLOSED") => "Closed",
+            Some("OPEN") if detail["isDraft"] == true => "Draft",
+            Some("OPEN") => "Open",
+            _ => "Unknown",
+        };
+        let (glyph, color) = request_status(
+            detail["state"].as_str().unwrap_or(""),
+            detail["isDraft"] == true,
+            t,
+        );
+        let branch_names = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .min_w_0()
+            .child(
+                text(
+                    detail["headRefName"].as_str().unwrap_or("").to_owned(),
+                    14.,
+                    20.,
+                    430.,
+                    t.text,
+                )
+                .truncate(),
+            )
+            .child(icon("thread-chevron-right", 14., t.text_tertiary))
+            .child(
+                text(
+                    detail["baseRefName"].as_str().unwrap_or("").to_owned(),
+                    14.,
+                    20.,
+                    430.,
+                    t.text,
+                )
+                .truncate(),
+            );
+        let branch = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(branch_names)
+            .child(
+                self.detail_control(
+                    "review-pull-request-changes",
+                    "Review pull request changes",
+                    false,
+                    cx,
+                )
+                .child(crate::screens::diff::panel::stats(
+                    detail["additions"].as_u64().unwrap_or(0) as usize,
+                    detail["deletions"].as_u64().unwrap_or(0) as usize,
+                    13.,
+                    t,
+                ))
+                .on_click(cx.listener(|this, _, _, cx| this.set_detail_tab(DetailTab::Code, cx)))
+                .on_key_down(cx.listener(
+                    |this, event: &gpui::KeyDownEvent, _, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            this.set_detail_tab(DetailTab::Code, cx);
+                            cx.stop_propagation();
+                        }
+                    },
+                )),
+            );
+        div()
+            .px(px(8.))
+            .pb(px(8.))
+            .flex()
+            .flex_col()
+            .child(metadata_row(
+                "Branch",
+                review_icon("branch", 18., t.text_tertiary),
+                branch,
+                t,
+            ))
+            .child(metadata_row(
+                "Reviewers",
+                review_icon("reviewers", 18., t.text_tertiary),
+                text(reviewers, 14., 20., 430., t.text_tertiary).whitespace_normal(),
+                t,
+            ))
+            .child(metadata_row(
+                "Comments",
+                review_icon("comments", 18., t.text_tertiary),
+                text(comments, 14., 20., 430., t.text),
+                t,
+            ))
+            .child(metadata_row(
+                "Checks",
+                icon("sidebar-cmd-manage-scheduled-tasks", 18., t.text_tertiary),
+                text(check_label(detail), 14., 20., 430., t.text),
+                t,
+            ))
+            .child(metadata_row(
+                "Status",
+                icon(glyph, 18., color),
+                text(status, 14., 20., 430., t.text),
+                t,
+            ))
+    }
+
+    fn detail_sections(&self, detail: &Value, window: &Window, cx: &Context<Self>) -> Div {
+        let t = cx.theme();
+        let mut sections = div().flex().flex_col().gap(px(24.));
+        for (index, title) in ["Description", "Checks"].into_iter().enumerate() {
+            let collapsed = self.collapsed_detail[index];
+            let header = div()
+                .id(("detail-section", index))
+                .role(gpui::Role::Button)
+                .aria_label(title)
+                .aria_expanded(!collapsed)
+                .track_focus(&self.control(("detail-section", index), cx))
+                .pl(px(8.))
+                .pr(px(2.))
+                .pb(px(8.))
+                .border_b_1()
+                .border_color(t.border_subtle)
+                .flex()
+                .items_center()
+                .gap(px(6.))
+                .cursor_pointer()
+                .child(
+                    text(title, 16., 24., 500., t.text)
+                        .h(px(28.))
+                        .flex()
+                        .items_center(),
+                )
+                .child(icon(
+                    if collapsed {
+                        "thread-chevron-right"
+                    } else {
+                        "chevron-down"
+                    },
+                    14.,
+                    t.text,
+                ))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.collapsed_detail[index] = !this.collapsed_detail[index];
+                    cx.notify();
+                }))
+                .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
+                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        this.collapsed_detail[index] = !this.collapsed_detail[index];
+                        cx.notify();
+                        cx.stop_propagation();
+                    }
+                }));
+            let mut section = div().flex().flex_col().gap(px(16.)).child(header);
+            if !collapsed {
+                let body = if index == 0 {
+                    self.description(detail["body"].as_str().unwrap_or(""), window, cx)
+                } else {
+                    check_details(detail, t)
+                };
+                section = section.child(body.px(px(8.)));
+            }
+            sections = sections.child(section);
+        }
+        sections
+    }
+
+    fn detail_summary(&self, detail: &Value, window: &Window, cx: &Context<Self>) -> Stateful<Div> {
+        let t = cx.theme();
+        let author = &detail["author"];
+        let identity = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .mt(px(1.))
+            .when_some(author["avatarUrl"].as_str(), |d, url| {
+                d.child(
+                    gpui::img(url.to_owned())
+                        .size(px(18.))
+                        .rounded_full()
+                        .bg(gpui::white())
+                        .with_fallback(missing_avatar)
+                        .object_fit(gpui::ObjectFit::Cover),
+                )
+            })
+            .child(text(
+                author["login"].as_str().unwrap_or("").to_owned(),
+                14.,
+                21.,
+                430.,
+                t.text_secondary,
+            ))
+            .child(text("·", 14., 21., 430., t.text_secondary))
+            .child(text(
+                relative_age(detail["createdAt"].as_str().unwrap_or(""), self.clock),
+                14.,
+                21.,
+                430.,
+                t.text_secondary,
+            ));
+        div()
+            .id("pull-request-detail-scroll")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .track_scroll(&self.detail_scroll)
+            .px(px(20.))
+            .pb(px(20.))
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(768.))
+                    .mx_auto()
+                    .flex()
+                    .flex_col()
+                    .gap(px(24.))
+                    .layer()
+                    .child(
+                        div()
+                            .pt(px(16.))
+                            .px(px(8.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(6.))
+                            .child(
+                                text(
+                                    detail["title"].as_str().unwrap_or("").to_owned(),
+                                    24.,
+                                    28.8,
+                                    500.,
+                                    t.text,
+                                )
+                                .whitespace_normal(),
+                            )
+                            .child(identity),
+                    )
+                    .child(self.detail_metadata(detail, cx))
+                    .child(self.detail_sections(detail, window, cx)),
+            )
+    }
+
     fn detail(&self, window: &Window, cx: &Context<Self>) -> Div {
-        let Some(identity) = &self.selected else {
+        if self.selected.is_none() {
             return div()
                 .size_full()
                 .pt(px(46.))
                 .flex()
                 .flex_col()
                 .child(self.empty("Select pull request to view", None, None, false, cx));
-        };
-        let t = cx.theme();
-        let mut pane = div().size_full().flex().flex_col().p(px(24.)).gap(px(16.));
-        pane = pane.child(
-            div()
-                .flex()
-                .justify_between()
-                .child(text(
-                    format!(
-                        "{}/{} #{}",
-                        identity.owner, identity.repository, identity.number
+        }
+        let value = self.detail.as_ref().and_then(|detail| detail.as_ref().ok());
+        let pane = div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(self.detail_toolbar(value, cx));
+        if self.detail_tab == DetailTab::Code {
+            return match &self.code {
+                Some(Ok(panel)) => pane.child(div().flex_1().min_h_0().child(panel.clone())),
+                Some(Err(error)) => pane.child(
+                    self.empty(
+                        "Unable to load pull request changes",
+                        Some(error),
+                        Some(
+                            div().child(
+                                self.button("retry-code", "Try again", cx)
+                                    .on_click(cx.listener(|this, _, _, cx| this.request_code(cx))),
+                            ),
+                        ),
+                        false,
+                        cx,
                     ),
-                    14.,
-                    20.,
-                    430.,
-                    t.text_secondary,
-                ))
-                .child(
-                    self.button("close-pull-request", "Close", cx)
-                        .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::Select(None)))),
                 ),
-        );
+                None => {
+                    pane.child(self.empty("Loading pull request changes", None, None, true, cx))
+                }
+            };
+        }
         match &self.detail {
-            None => pane.child(self.empty("Loading pull request details", None, None, true, cx)),
+            Some(Ok(detail)) => pane.child(self.detail_summary(detail, window, cx)),
             Some(Err(error)) => pane.child(
                 self.empty(
                     "Pull request details are unavailable",
@@ -1249,127 +1890,111 @@ impl Page {
                     cx,
                 ),
             ),
-            Some(Ok(detail)) => {
-                let title = detail["title"].as_str().unwrap_or("");
-                let prompt = format!(
-                    "Help me understand pull request #{}: {}\n{}",
-                    identity.number,
-                    title,
-                    identity.url()
-                );
-                let url = identity.url();
-                pane = pane
-                    .child(text(title.to_owned(), 24., 30., 500., t.text).whitespace_normal())
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(text(
-                                detail["state"].as_str().unwrap_or(""),
-                                12.,
-                                18.,
-                                500.,
-                                t.text_secondary,
-                            ))
-                            .child(text(
-                                format!(
-                                    "{} → {}",
-                                    detail["headRefName"].as_str().unwrap_or(""),
-                                    detail["baseRefName"].as_str().unwrap_or("")
-                                ),
-                                13.,
-                                20.,
-                                430.,
-                                t.text_tertiary,
-                            )),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(8.))
-                            .child(self.button("ask-pull-request", "Ask Codex", cx).on_click(
-                                cx.listener(move |_, _, _, cx| {
-                                    cx.emit(Event::AskCodex(prompt.clone()))
-                                }),
-                            ))
-                            .child(
-                                self.button("open-github", "Open in GitHub", cx)
-                                    .on_click(move |_, _, cx| cx.open_url(&url)),
-                            ),
-                    );
-                let mut sections = div()
-                    .id("pull-request-detail-scroll")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.detail_scroll)
-                    .flex()
-                    .flex_col()
-                    .gap(px(24.));
-                for (index, title) in ["Description", "Checks"].into_iter().enumerate() {
-                    let mut section = div().flex().flex_col().gap(px(12.)).child(
-                        div()
-                            .id(("detail-section", index))
-                            .role(gpui::Role::Button)
-                            .aria_label(title)
-                            .cursor_pointer()
-                            .track_focus(&self.control(("detail-section", index), cx))
-                            .child(text(title, 14., 20., 500., t.text))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.collapsed_detail[index] = !this.collapsed_detail[index];
-                                cx.notify();
-                            })),
-                    );
-                    if !self.collapsed_detail[index] {
-                        if index == 0 {
-                            let body = detail["body"].as_str().unwrap_or("");
-                            section = section.child(self.description(body, window, cx));
-                        } else if let Some(checks) =
-                            detail["statusCheckRollup"]["contexts"]["nodes"]
-                                .as_array()
-                                .filter(|c| !c.is_empty())
-                        {
-                            for check in checks {
-                                let name = check["name"]
-                                    .as_str()
-                                    .or_else(|| check["context"].as_str())
-                                    .unwrap_or("");
-                                let status = check["conclusion"]
-                                    .as_str()
-                                    .or_else(|| check["state"].as_str())
-                                    .or_else(|| check["status"].as_str())
-                                    .unwrap_or("");
-                                section = section.child(text(
-                                    format!("{name}    {status}"),
-                                    14.,
-                                    21.,
-                                    430.,
-                                    t.text_secondary,
-                                ));
-                            }
-                        } else {
-                            section = section.child(text(
-                                "No checks reported",
-                                14.,
-                                21.,
-                                430.,
-                                t.text_tertiary,
-                            ));
-                        }
-                    }
-                    sections = sections.child(section);
-                }
-                pane.child(sections)
-            }
+            None => pane.child(self.empty("Loading pull request details", None, None, true, cx)),
         }
+    }
+}
+
+fn metadata_row(
+    label: &'static str,
+    glyph: impl IntoElement,
+    value: impl IntoElement,
+    t: &theme::Theme,
+) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(12.))
+        .min_h(px(30.))
+        .py(px(5.))
+        .child(
+            div()
+                .w(px(120.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(glyph)
+                .child(text(label, 14., 20., 430., t.text_tertiary)),
+        )
+        .child(div().flex_1().min_w_0().child(value))
+}
+
+fn check_label(detail: &Value) -> &'static str {
+    match detail["ciStatus"].as_str() {
+        Some("none") => "No CI checks",
+        Some("passing") => "Checks successful",
+        Some("failing") => "Checks failing",
+        Some("pending") => "Checks pending",
+        _ => "Couldn’t load checks",
+    }
+}
+
+fn check_details(detail: &Value, t: &theme::Theme) -> Div {
+    let mut content = div().flex().flex_col().gap(px(8.));
+    let Some(checks) = detail["statusCheckRollup"]["contexts"]["nodes"]
+        .as_array()
+        .filter(|nodes| !nodes.is_empty())
+    else {
+        return content.child(text(check_label(detail), 14., 21., 430., t.text_tertiary));
+    };
+    for check in checks {
+        let name = check["name"]
+            .as_str()
+            .or_else(|| check["context"].as_str())
+            .unwrap_or("");
+        let status = check["conclusion"]
+            .as_str()
+            .or_else(|| check["state"].as_str())
+            .or_else(|| check["status"].as_str())
+            .unwrap_or("");
+        content = content.child(text(
+            format!("{name}    {status}"),
+            14.,
+            21.,
+            430.,
+            t.text_secondary,
+        ));
+    }
+    content
+}
+
+fn request_status(state: &str, draft: bool, t: &theme::Theme) -> (&'static str, gpui::Hsla) {
+    match state {
+        "closed" | "CLOSED" => ("pull-request-closed", t.text_error),
+        "merged" | "MERGED" => (
+            "pull-request-merged",
+            gpui::rgb(if t.appearance == theme::Appearance::Dark {
+                0xad7bf9
+            } else {
+                0x924ff7
+            })
+            .into(),
+        ),
+        _ if draft => ("pull-request-draft", t.text_tertiary),
+        _ => ("pull-request-status", t.text_tertiary),
     }
 }
 
 impl Render for Page {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ready = self.account().is_some();
-        let main = if ready {
+        let pane_width = if self.detail_fullscreen {
+            window.viewport_size().width - crate::RAIL_WIDTH - crate::PAGE_INSET
+        } else {
+            px(default_detail_width(window.viewport_size()))
+        };
+        if let Some(Ok(panel)) = &self.code {
+            panel.update(cx, |panel, cx| {
+                panel.set_container_width(
+                    pane_width - px(if self.detail_fullscreen { 0. } else { 1. }),
+                    cx,
+                );
+            });
+        }
+        let main = if self.detail_fullscreen {
+            div()
+        } else if ready {
             self.inbox(window, cx)
         } else {
             div()
@@ -1392,15 +2017,18 @@ impl Render for Page {
             .size_full()
             .flex()
             .bg(cx.theme().surface)
-            .child(div().flex_1().min_w_0().child(main))
+            .when(!self.detail_fullscreen, |d| {
+                d.child(div().flex_1().min_w_0().child(main))
+            })
             .when(ready || self.selected.is_some(), |d| {
                 d.child(
                     div()
-                        .w(px(default_detail_width(window.viewport_size())))
+                        .w(pane_width)
                         .flex_none()
                         .h_full()
-                        .border_l_1()
-                        .border_color(cx.theme().border)
+                        .when(!self.detail_fullscreen, |d| {
+                            d.border_l_1().border_color(cx.theme().border)
+                        })
                         .child(self.detail(window, cx)),
                 )
             })
@@ -1597,16 +2225,7 @@ fn html_media_source(html: &str) -> Option<&str> {
 }
 
 fn status_icon(item: &model::Item, t: &theme::Theme) -> Div {
-    let dark = t.appearance == theme::Appearance::Dark;
-    let (glyph, color) = match item.state.as_str() {
-        "closed" => ("pull-request-closed", t.text_error),
-        "merged" => (
-            "pull-request-merged",
-            gpui::rgb(if dark { 0xad7bf9 } else { 0x924ff7 }).into(),
-        ),
-        _ if item.is_draft => ("pull-request-draft", t.text_tertiary),
-        _ => ("pull-request-status", t.text_tertiary),
-    };
+    let (glyph, color) = request_status(&item.state, item.is_draft, t);
     let mut icon_box = div()
         .relative()
         .size(px(20.))
