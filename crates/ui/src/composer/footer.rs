@@ -156,7 +156,10 @@ impl Composer {
             .tab_index(0)
             .focus_visible(menu::trigger_focus);
         if action == 1 {
+            // Paint through the transparent border; retain its width in the layout padding.
             button = button
+                .border_0()
+                .px(px(9.))
                 .relative()
                 .child(shapes::decoration(shapes::Decoration {
                     radius: Corners::all(px(12.5)),
@@ -316,7 +319,7 @@ impl Composer {
         let button = if action == 2 {
             div().id(label).p(px(2.)).rounded(Theme::RADIUS_FULL)
         } else {
-            pill(label, t)
+            pill(label, t).border_0()
         };
         button
             .size(px(28.))
