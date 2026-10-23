@@ -977,7 +977,7 @@ impl Editor {
         );
         let color = if setting {
             t.text
-        } else if matches!(picker, Picker::Trigger | Picker::Effort) {
+        } else if picker == Picker::Trigger {
             t.text_tertiary
         } else {
             t.text_secondary
