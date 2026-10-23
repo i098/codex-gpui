@@ -212,10 +212,16 @@ impl Management {
                             .child(text(next, 12., 16., 430., t.text_secondary).flex_none())
                             .child(text("·", 12., 16., 430., t.text_secondary).flex_none())
                             .child(
-                                text(schedule_summary(&task.rrule), 12., 16., 430., t.text_secondary)
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .text_ellipsis(),
+                                text(
+                                    schedule_summary(&task.rrule),
+                                    12.,
+                                    16.,
+                                    430.,
+                                    t.text_secondary,
+                                )
+                                .min_w_0()
+                                .overflow_hidden()
+                                .text_ellipsis(),
                             ),
                     ),
             )
@@ -239,6 +245,31 @@ impl Management {
                 }
             })
     }
+
+    fn visible_tasks<'a>(&self, tasks: &'a [Task], query: &str) -> Vec<&'a Task> {
+        let mut tasks: Vec<_> = tasks
+            .iter()
+            .filter(|task| {
+                let status = match self.status {
+                    "all" => true,
+                    "paused" => task.status == "PAUSED",
+                    "finished" => false,
+                    _ => task.status == "ACTIVE",
+                };
+                status
+                    && (query.is_empty()
+                        || task.name.to_lowercase().contains(query)
+                        || task.prompt.to_lowercase().contains(query))
+            })
+            .collect();
+        match self.order {
+            "name" => tasks.sort_by(|a, b| a.name.cmp(&b.name)),
+            "next" => tasks.sort_by_key(|task| task.next_run_at.unwrap_or(i64::MAX)),
+            "recent" => tasks.sort_by_key(|task| std::cmp::Reverse(task.created_at)),
+            _ => tasks.sort_by_key(|task| std::cmp::Reverse(task.created_at)),
+        }
+        tasks
+    }
 }
 
 impl Render for Management {
@@ -253,28 +284,7 @@ impl Render for Management {
         let history = sidebar.history.clone();
         let is_empty = sidebar.tasks.is_empty();
         let query = self.search.read(cx).value.to_lowercase();
-        let mut tasks: Vec<_> = sidebar
-            .tasks
-            .iter()
-            .filter(|task| {
-                let status = match self.status {
-                    "all" => true,
-                    "paused" => task.status == "PAUSED",
-                    "finished" => false,
-                    _ => task.status == "ACTIVE",
-                };
-                status
-                    && (query.is_empty()
-                        || task.name.to_lowercase().contains(&query)
-                        || task.prompt.to_lowercase().contains(&query))
-            })
-            .collect();
-        match self.order {
-            "name" => tasks.sort_by(|a, b| a.name.cmp(&b.name)),
-            "next" => tasks.sort_by_key(|task| task.next_run_at.unwrap_or(i64::MAX)),
-            "recent" => tasks.sort_by_key(|task| std::cmp::Reverse(task.created_at)),
-            _ => tasks.sort_by_key(|task| std::cmp::Reverse(task.created_at)),
-        }
+        let tasks = self.visible_tasks(&sidebar.tasks, &query);
         let unread = history.as_ref().is_some_and(|history| {
             history
                 .read(cx)

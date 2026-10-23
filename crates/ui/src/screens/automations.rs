@@ -704,16 +704,7 @@ impl ScheduledSidebar {
             "escape" => self.close_menu(window, cx),
             "enter" | "space" => {
                 if let Some(id) = self.menu.clone() {
-                    match self.menu_item {
-                        Some(1) => self.run_now(&id, window, cx),
-                        Some(2) => {
-                            self.close_menu(window, cx);
-                            window.dispatch_action(Box::new(EditAutomation { id }), cx);
-                        }
-                        Some(3) => self.share(&id, window, cx),
-                        Some(4) => self.delete(&id, window, cx),
-                        _ => self.toggle(&id, window, cx),
-                    }
+                    self.activate_menu_item(id, window, cx);
                 }
             }
             "up" | "down" | "home" | "end" => {
@@ -730,6 +721,19 @@ impl ScheduledSidebar {
             }
             "tab" => cx.stop_propagation(),
             _ => {}
+        }
+    }
+
+    fn activate_menu_item(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        match self.menu_item {
+            Some(1) => self.run_now(&id, window, cx),
+            Some(2) => {
+                self.close_menu(window, cx);
+                window.dispatch_action(Box::new(EditAutomation { id }), cx);
+            }
+            Some(3) => self.share(&id, window, cx),
+            Some(4) => self.delete(&id, window, cx),
+            _ => self.toggle(&id, window, cx),
         }
     }
 

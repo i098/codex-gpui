@@ -64,6 +64,43 @@ impl Execution {
         config: &Value,
         cwd: &str,
     ) -> (bool, bool, bool) {
+        let models_changed = self.set_models(models, config);
+        let projects_changed = projects.is_some_and(|projects| {
+            self.projects.iter().ne(projects
+                .iter()
+                .filter(|project| !project.missing && project.root.is_some()))
+        });
+        let threads_changed = self.threads.len() != threads.len()
+            || self
+                .threads
+                .iter()
+                .zip(threads)
+                .any(|((id, label), thread)| id != &thread.id || label != &title(thread));
+        if projects_changed {
+            self.projects = projects
+                .unwrap()
+                .iter()
+                .filter(|project| !project.missing && project.root.is_some())
+                .cloned()
+                .collect();
+        }
+        if threads_changed {
+            self.threads = threads
+                .iter()
+                .map(|thread| (thread.id.clone(), title(thread)))
+                .collect();
+        }
+        if self.cwd != cwd {
+            self.cwd = cwd.to_owned();
+        }
+        if self.values["cwds"].as_array().is_none_or(Vec::is_empty) {
+            self.values["cwds"] = json!([cwd]);
+        }
+        self.resolve_model_settings();
+        (models_changed, projects_changed, threads_changed)
+    }
+
+    fn set_models(&mut self, models: &[Model], config: &Value) -> bool {
         let selected = self.values["model"].as_str();
         let visible_model =
             |model: &&Model| !model.hidden || Some(model.model.as_str()) == selected;
@@ -96,17 +133,6 @@ impl Execution {
             .or_else(|| visible.clone().next())
             .map(|model| model.model.as_str());
         let default_changed = self.default_model.as_deref() != default_model;
-        let projects_changed = projects.is_some_and(|projects| {
-            self.projects.iter().ne(projects
-                .iter()
-                .filter(|project| !project.missing && project.root.is_some()))
-        });
-        let threads_changed = self.threads.len() != threads.len()
-            || self
-                .threads
-                .iter()
-                .zip(threads)
-                .any(|((id, label), thread)| id != &thread.id || label != &title(thread));
         if models_changed {
             self.models = visible
                 .map(|model| ModelChoice {
@@ -130,32 +156,7 @@ impl Execution {
         if default_changed {
             self.default_model = default_model.map(str::to_owned);
         }
-        if projects_changed {
-            self.projects = projects
-                .unwrap()
-                .iter()
-                .filter(|project| !project.missing && project.root.is_some())
-                .cloned()
-                .collect();
-        }
-        if threads_changed {
-            self.threads = threads
-                .iter()
-                .map(|thread| (thread.id.clone(), title(thread)))
-                .collect();
-        }
-        if self.cwd != cwd {
-            self.cwd = cwd.to_owned();
-        }
-        if self.values["cwds"].as_array().is_none_or(Vec::is_empty) {
-            self.values["cwds"] = json!([cwd]);
-        }
-        self.resolve_model_settings();
-        (
-            models_changed || default_changed,
-            projects_changed,
-            threads_changed,
-        )
+        models_changed || default_changed
     }
 
     pub fn new_chat(&self) -> bool {
@@ -222,6 +223,16 @@ impl Execution {
             }
             return;
         }
+        let (model_change, effort_change) = self.resolved_model_changes();
+        if let Some(value) = model_change {
+            self.set("model", value);
+        }
+        if let Some(value) = effort_change {
+            self.set("reasoningEffort", value);
+        }
+    }
+
+    fn resolved_model_changes(&self) -> (Option<Value>, Option<Value>) {
         let requested = if self.inherited_model {
             None
         } else {
@@ -266,12 +277,7 @@ impl Execution {
             (self.values["model"].as_str() != Some(model.id.as_str())).then(|| json!(model.id));
         let effort_change = (self.values["reasoningEffort"].as_str() != effort)
             .then(|| effort.map_or(Value::Null, |effort| json!(effort)));
-        if let Some(value) = model_change {
-            self.set("model", value);
-        }
-        if let Some(value) = effort_change {
-            self.set("reasoningEffort", value);
-        }
+        (model_change, effort_change)
     }
 
     fn selected_model(&self) -> Option<&ModelChoice> {

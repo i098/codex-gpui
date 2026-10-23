@@ -109,7 +109,6 @@ impl SearchInput {
 
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let key = &event.keystroke;
-        let range = self.selection();
         match key.key.as_str() {
             "escape" => {
                 self.set_value(String::new(), cx);
@@ -123,44 +122,52 @@ impl SearchInput {
                 return;
             }
             "left" | "right" | "home" | "end" | "backspace" | "delete" => {
-                let back = matches!(key.key.as_str(), "left" | "backspace" | "home");
-                let boundary =
-                    if key.modifiers.platform || matches!(key.key.as_str(), "home" | "end") {
-                        if back { 0 } else { self.value.len() }
-                    } else if back {
-                        self.value[..self.cursor]
-                            .char_indices()
-                            .next_back()
-                            .map_or(0, |(i, _)| i)
-                    } else {
-                        self.cursor
-                            + self.value[self.cursor..]
-                                .chars()
-                                .next()
-                                .map_or(0, char::len_utf8)
-                    };
-                if matches!(key.key.as_str(), "backspace" | "delete") {
-                    let range = if range.is_empty() {
-                        boundary.min(self.cursor)..boundary.max(self.cursor)
-                    } else {
-                        range
-                    };
-                    self.replace(range, "", cx);
-                } else {
-                    self.cursor = if !key.modifiers.shift && !range.is_empty() {
-                        if back { range.start } else { range.end }
-                    } else {
-                        boundary
-                    };
-                    if !key.modifiers.shift {
-                        self.anchor = self.cursor;
-                    }
-                }
+                self.apply_edit_key(key, cx);
             }
             _ => return,
         }
         cx.stop_propagation();
         cx.notify();
+    }
+
+    fn apply_edit_key(&mut self, key: &gpui::Keystroke, cx: &mut Context<Self>) {
+        let range = self.selection();
+        let back = matches!(key.key.as_str(), "left" | "backspace" | "home");
+        let boundary = self.cursor_boundary(key, back);
+        if matches!(key.key.as_str(), "backspace" | "delete") {
+            let range = if range.is_empty() {
+                boundary.min(self.cursor)..boundary.max(self.cursor)
+            } else {
+                range
+            };
+            self.replace(range, "", cx);
+        } else {
+            self.cursor = if !key.modifiers.shift && !range.is_empty() {
+                if back { range.start } else { range.end }
+            } else {
+                boundary
+            };
+            if !key.modifiers.shift {
+                self.anchor = self.cursor;
+            }
+        }
+    }
+
+    fn cursor_boundary(&self, key: &gpui::Keystroke, back: bool) -> usize {
+        if key.modifiers.platform || matches!(key.key.as_str(), "home" | "end") {
+            if back { 0 } else { self.value.len() }
+        } else if back {
+            self.value[..self.cursor]
+                .char_indices()
+                .next_back()
+                .map_or(0, |(i, _)| i)
+        } else {
+            self.cursor
+                + self.value[self.cursor..]
+                    .chars()
+                    .next()
+                    .map_or(0, char::len_utf8)
+        }
     }
 }
 
