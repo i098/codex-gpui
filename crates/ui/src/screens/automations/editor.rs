@@ -12,6 +12,7 @@ use gpui::{
     div, prelude::FluentBuilder as _, px,
 };
 use serde_json::Value;
+use std::collections::HashMap;
 use theme::{ActiveTheme as _, Theme};
 
 mod execution;
@@ -200,27 +201,13 @@ impl Editor {
     }
 
     fn load_rule(&mut self, rule: &str, cx: &mut Context<Self>) {
-        let parts: std::collections::HashMap<_, _> = rule
+        let parts: HashMap<_, _> = rule
             .trim_start_matches("RRULE:")
             .split(';')
             .filter_map(|s| s.split_once('='))
             .collect();
         let frequency = parts.get("FREQ").copied().unwrap_or("");
-        let rule_fields: &[&str] = match frequency {
-            "MINUTELY" => &[],
-            "HOURLY" => &["BYMINUTE"],
-            "DAILY" => &["BYHOUR", "BYMINUTE"],
-            "WEEKLY" => &["BYDAY", "BYHOUR", "BYMINUTE"],
-            "MONTHLY" => &["BYMONTHDAY", "BYHOUR", "BYMINUTE"],
-            "YEARLY" => &["BYMONTH", "BYMONTHDAY", "BYHOUR", "BYMINUTE"],
-            _ => &[],
-        };
-        // Keep uneditable fields verbatim; BYSECOND=0 can still change heartbeat timing.
-        self.raw_rule = rule.contains('\n')
-            || parts
-                .keys()
-                .any(|key| !["FREQ", "INTERVAL"].contains(key) && !rule_fields.contains(key))
-            || rule_fields.iter().any(|key| !parts.contains_key(key));
+        self.raw_rule = Self::has_uneditable_fields(rule, &parts);
         self.frequency = ["HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"]
             .iter()
             .position(|s| *s == frequency)
@@ -230,29 +217,7 @@ impl Editor {
         let weekdays = parts.get("BYDAY").copied().unwrap_or("MO");
         self.weekdays = std::array::from_fn(|i| weekdays.split(',').any(|day| day == DAYS[i]));
         self.update_day_label();
-        self.raw_rule |= !["MINUTELY", "HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"]
-            .contains(&frequency)
-            || parts
-                .get("BYDAY")
-                .is_some_and(|days| days.split(',').any(|day| !DAYS.contains(&day)))
-            || ["BYHOUR", "BYMINUTE", "BYMONTH"]
-                .iter()
-                .any(|key| parts.get(key).is_some_and(|s| s.contains(',')));
-        self.mode = Some(if self.raw_rule {
-            5
-        } else if self.minutes || frequency == "HOURLY" && parts.get("BYMINUTE") == Some(&"0") {
-            0
-        } else if frequency == "HOURLY" || interval != "1" || frequency == "YEARLY" {
-            5
-        } else {
-            match frequency {
-                "DAILY" => 1,
-                "WEEKLY" if weekdays == "MO,TU,WE,TH,FR" => 2,
-                "WEEKLY" => 3,
-                "MONTHLY" => 4,
-                _ => 5,
-            }
-        });
+        self.mode = Some(self.mode_for_rule(&parts));
         for (index, value) in [
             (INTERVAL, interval.to_owned()),
             (
@@ -283,6 +248,54 @@ impl Editor {
             ),
         ] {
             self.fields[index].update(cx, |field, cx| field.set_text(&value, cx));
+        }
+    }
+
+    fn has_uneditable_fields(rule: &str, parts: &HashMap<&str, &str>) -> bool {
+        let frequency = parts.get("FREQ").copied().unwrap_or("");
+        let rule_fields: &[&str] = match frequency {
+            "MINUTELY" => &[],
+            "HOURLY" => &["BYMINUTE"],
+            "DAILY" => &["BYHOUR", "BYMINUTE"],
+            "WEEKLY" => &["BYDAY", "BYHOUR", "BYMINUTE"],
+            "MONTHLY" => &["BYMONTHDAY", "BYHOUR", "BYMINUTE"],
+            "YEARLY" => &["BYMONTH", "BYMONTHDAY", "BYHOUR", "BYMINUTE"],
+            _ => &[],
+        };
+        // Keep uneditable fields verbatim; BYSECOND=0 can still change heartbeat timing.
+        rule.contains('\n')
+            || parts
+                .keys()
+                .any(|key| !["FREQ", "INTERVAL"].contains(key) && !rule_fields.contains(key))
+            || rule_fields.iter().any(|key| !parts.contains_key(key))
+            || !["MINUTELY", "HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"].contains(&frequency)
+            || parts
+                .get("BYDAY")
+                .is_some_and(|days| days.split(',').any(|day| !DAYS.contains(&day)))
+            || ["BYHOUR", "BYMINUTE", "BYMONTH"]
+                .iter()
+                .any(|key| parts.get(key).is_some_and(|s| s.contains(',')))
+    }
+
+    fn mode_for_rule(&self, parts: &HashMap<&str, &str>) -> usize {
+        let frequency = parts.get("FREQ").copied().unwrap_or("");
+        let interval = parts.get("INTERVAL").copied().unwrap_or("1");
+        let weekdays = parts.get("BYDAY").copied().unwrap_or("MO");
+        if self.raw_rule {
+            return 5;
+        }
+        if self.minutes || frequency == "HOURLY" && parts.get("BYMINUTE") == Some(&"0") {
+            return 0;
+        }
+        if frequency == "HOURLY" || interval != "1" || frequency == "YEARLY" {
+            return 5;
+        }
+        match frequency {
+            "DAILY" => 1,
+            "WEEKLY" if weekdays == "MO,TU,WE,TH,FR" => 2,
+            "WEEKLY" => 3,
+            "MONTHLY" => 4,
+            _ => 5,
         }
     }
 
@@ -349,15 +362,14 @@ impl Editor {
                 if self.minutes { "" } else { ";BYMINUTE=0" }
             ));
         }
+        self.calendar_rule(mode, interval, cx)
+    }
+
+    fn calendar_rule(&self, mode: usize, interval: u16, cx: &App) -> Option<String> {
         let frequency = if mode == 5 {
             self.frequency
         } else {
-            match mode {
-                1 => 1,
-                2 | 3 => 2,
-                4 => 3,
-                _ => return None,
-            }
+            *[1, 2, 2, 3].get(mode.checked_sub(1)?)?
         };
         let mut rule = format!(
             "FREQ={};INTERVAL={}",
@@ -692,7 +704,14 @@ impl Editor {
             .child(self.fields[index].clone())
     }
 
-    fn field(&self, index: usize, label: &'static str, t: &Theme, cx: &App) -> Div {
+    fn field(&self, index: usize, t: &Theme, cx: &App) -> Div {
+        let label = match index {
+            INTERVAL => "Every",
+            MONTH_DAYS => "On",
+            MONTH => "Month",
+            MINUTE => "Minute",
+            _ => "Schedule",
+        };
         Self::row(
             label,
             div()
@@ -1144,14 +1163,7 @@ impl Editor {
                     true,
                 ));
             } else {
-                let label = match index {
-                    INTERVAL => "Every",
-                    MONTH_DAYS => "On",
-                    MONTH => "Month",
-                    MINUTE => "Minute",
-                    _ => "Schedule",
-                };
-                content = content.child(self.field(index, label, t, cx));
+                content = content.child(self.field(index, t, cx));
             }
         }
         if self.mode == Some(0) {
@@ -1179,30 +1191,24 @@ impl Editor {
         t: &Theme,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
+        let (height, padding, radius, gap) = match control {
+            ADVANCED => (28., 8., 10., 8.),
+            12 => (32., 0., 10., 6.),
+            _ => (36., 16., 9999., 6.),
+        };
+        let (weight, color) = if control == 14 {
+            (500., t.surface_elevated_secondary)
+        } else {
+            (400., t.text_secondary)
+        };
         div()
             .id(("automation-editor-button", control))
             .role(Role::Button)
             .aria_label(label)
             .track_focus(&self.controls[control])
-            .h(px(if control == ADVANCED {
-                28.
-            } else if control == 12 {
-                32.
-            } else {
-                36.
-            }))
-            .px(px(if control == ADVANCED {
-                8.
-            } else if control == 12 {
-                0.
-            } else {
-                16.
-            }))
-            .rounded(px(if control == 12 || control == ADVANCED {
-                10.
-            } else {
-                9999.
-            }))
+            .h(px(height))
+            .px(px(padding))
+            .rounded(px(radius))
             .when(control == 12, |d| d.w(px(32.)))
             .when(control == 14, |d| {
                 d.px(px(17.)).child(shapes::decoration(shapes::Decoration {
@@ -1216,21 +1222,11 @@ impl Editor {
             .flex()
             .items_center()
             .justify_center()
-            .gap(px(if control == ADVANCED { 8. } else { 6. }))
+            .gap(px(gap))
             .when(control != 12, |d| {
                 d.child(
-                    text(
-                        label,
-                        14.,
-                        20.,
-                        if control == 14 { 500. } else { 400. },
-                        if control == 14 {
-                            t.surface_elevated_secondary
-                        } else {
-                            t.text_secondary
-                        },
-                    )
-                    .when(control == ADVANCED, |d| d.w(px(58.87)).flex_none()),
+                    text(label, 14., 20., weight, color)
+                        .when(control == ADVANCED, |d| d.w(px(58.87)).flex_none()),
                 )
             })
             .when(control == 12, |d| {
@@ -1244,26 +1240,71 @@ impl Editor {
                 ))
             })
             .on_click(cx.listener(move |this, _, window, cx| {
-                if control == ADVANCED {
-                    this.toggle_control(control, cx);
-                } else if control == 14 {
-                    this.submit(window, cx);
-                } else if !this.saving {
-                    cx.emit(Outcome::Dismiss);
-                }
+                this.activate_button(control, window, cx);
             }))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    if control == ADVANCED {
-                        this.toggle_control(control, cx);
-                    } else if control == 14 {
-                        this.submit(window, cx);
-                    } else if !this.saving {
-                        cx.emit(Outcome::Dismiss);
-                    }
+                    this.activate_button(control, window, cx);
                     cx.stop_propagation();
                 }
             }))
+    }
+
+    fn activate_button(&mut self, control: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if control == ADVANCED {
+            self.toggle_control(control, cx);
+        } else if control == 14 {
+            self.submit(window, cx);
+        } else if !self.saving {
+            cx.emit(Outcome::Dismiss);
+        }
+    }
+
+    fn save_state(&self, cx: &App) -> (bool, &'static str) {
+        let valid = !self.saving
+            && !self.value(NAME, cx).is_empty()
+            && self.value(NAME, cx).chars().count() <= 250
+            && !self.value(PROMPT, cx).is_empty()
+            && self.value(PROMPT, cx).chars().count() <= 100_000
+            && self.execution.valid()
+            && self.rule(cx).is_some();
+        let reason = if self.value(NAME, cx).is_empty() {
+            "Enter a name"
+        } else if self.value(PROMPT, cx).is_empty() {
+            "Enter a prompt"
+        } else if !self.execution.valid() {
+            "Select a chat"
+        } else {
+            "Enter valid schedule fields"
+        };
+        (valid, reason)
+    }
+
+    fn footer(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let (valid, reason) = self.save_state(cx);
+        div()
+            .flex()
+            .justify_end()
+            .gap(px(12.))
+            .pt(px(20.))
+            .when(!self.editing, |d| d.child(self.button(13, "Cancel", t, cx)))
+            .child(tooltip(
+                self.button(
+                    14,
+                    match (self.saving, self.editing) {
+                        (true, _) => "Saving…",
+                        (false, true) => "Save",
+                        (false, false) => "Create",
+                    },
+                    t,
+                    cx,
+                )
+                .aria_disabled(!valid)
+                .opacity(if valid { 1. } else { 0.4 }),
+                if valid { "Save scheduled task" } else { reason },
+                None,
+                Side::Top,
+            ))
     }
 }
 
@@ -1312,22 +1353,6 @@ fn clock_parts(value: &str, zone: &str) -> Option<(u8, u8)> {
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
-        let valid = !self.saving
-            && !self.value(NAME, cx).is_empty()
-            && self.value(NAME, cx).chars().count() <= 250
-            && !self.value(PROMPT, cx).is_empty()
-            && self.value(PROMPT, cx).chars().count() <= 100_000
-            && self.execution.valid()
-            && self.rule(cx).is_some();
-        let reason = if self.value(NAME, cx).is_empty() {
-            "Enter a name"
-        } else if self.value(PROMPT, cx).is_empty() {
-            "Enter a prompt"
-        } else if !self.execution.valid() {
-            "Select a chat"
-        } else {
-            "Enter valid schedule fields"
-        };
         let title = if self.editing {
             "Edit task"
         } else {
@@ -1424,33 +1449,7 @@ impl Render for Editor {
             .when_some(self.error.as_ref(), |d, error| {
                 d.child(text(error.clone(), 13., 20., 400., t.text_error).whitespace_normal())
             })
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap(px(12.))
-                    .pt(px(20.))
-                    .when(!self.editing, |d| d.child(self.button(13, "Cancel", t, cx)))
-                    .child(tooltip(
-                        self.button(
-                            14,
-                            if self.saving {
-                                "Saving…"
-                            } else if self.editing {
-                                "Save"
-                            } else {
-                                "Create"
-                            },
-                            t,
-                            cx,
-                        )
-                        .aria_disabled(!valid)
-                        .opacity(if valid { 1. } else { 0.4 }),
-                        if valid { "Save scheduled task" } else { reason },
-                        None,
-                        Side::Top,
-                    )),
-            );
+            .child(self.footer(t, cx));
         if self.menu.is_some() {
             form = form.child(div().absolute().inset_0().occlude().on_mouse_down(
                 MouseButton::Left,
@@ -1517,6 +1516,19 @@ impl CreateMenu {
         window.dispatch_action(Box::new(super::CreateAutomation { mode }), cx);
         cx.notify();
     }
+
+    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event.keystroke.key.as_str() {
+            "up" if self.open => self.selected = (self.selected + 2) % 3,
+            "down" if self.open => self.selected = (self.selected + 1) % 3,
+            "enter" | "space" if self.open => self.select(window, cx),
+            "enter" | "space" | "down" => self.open = true,
+            "escape" | "tab" if self.open => self.open = false,
+            _ => return,
+        }
+        cx.notify();
+        cx.stop_propagation();
+    }
 }
 
 impl Render for CreateMenu {
@@ -1571,18 +1583,7 @@ impl Render for CreateMenu {
             .relative()
             .track_focus(&self.focus)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                match event.keystroke.key.as_str() {
-                    "up" if this.open => this.selected = (this.selected + 2) % 3,
-                    "down" if this.open => this.selected = (this.selected + 1) % 3,
-                    "enter" | "space" if this.open => this.select(window, cx),
-                    "enter" | "space" | "down" => this.open = true,
-                    "escape" | "tab" if this.open => this.open = false,
-                    _ => return,
-                }
-                cx.notify();
-                cx.stop_propagation();
-            }))
+            .on_key_down(cx.listener(Self::key))
             .child(
                 div()
                     .id("automation-create-trigger")
