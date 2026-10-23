@@ -146,6 +146,7 @@ pub struct Shell {
     avatar_hovered: bool,
     sidebar: AnyView,
     main: AnyView,
+    main_content_inline_inset: Pixels,
 }
 
 /// The fixture account's 24 px avatar with its circular clip baked into alpha. The two
@@ -190,7 +191,12 @@ impl Shell {
             avatar_hovered: false,
             sidebar,
             main,
+            main_content_inline_inset: px(0.),
         }
+    }
+
+    pub fn main_content_inline_inset(&self) -> Pixels {
+        self.main_content_inline_inset
     }
 
     pub fn set_main(&mut self, main: AnyView, cx: &mut Context<Self>) {
@@ -992,8 +998,24 @@ impl Shell {
         open: bool,
         focus: &gpui::FocusHandle,
         hairline_width: Pixels,
+        cx: &Context<Self>,
     ) -> Div {
         let r = Theme::RADIUS_XL_BASE;
+        let shell = cx.entity().downgrade();
+        let measured = canvas(
+            move |bounds, window, cx| {
+                let outer_width = window.viewport_size().width - PAGE_INSET - left;
+                shell
+                    .update(cx, |shell, _| {
+                        shell.main_content_inline_inset =
+                            (outer_width - bounds.size.width).max(px(0.));
+                    })
+                    .ok();
+            },
+            |_, (), _, _| {},
+        )
+        .absolute()
+        .size_full();
         let panel = div()
             .tab_group()
             .tab_index(3)
@@ -1004,7 +1026,8 @@ impl Shell {
             .right(PAGE_INSET)
             .bottom(PAGE_INSET)
             .overflow_hidden()
-            .child(self.main.clone());
+            .child(self.main.clone())
+            .child(measured);
         if self.main_composited {
             return panel.left(if open { left + hairline_width } else { left });
         }
@@ -1479,7 +1502,7 @@ impl Render for Shell {
             .bg(under)
             .child(page)
             .when(progress > 0., |d| d.child(self.sidebar_panel(&t, progress)))
-            .child(self.main_panel(main_left, open, &main_focus, hairline_width))
+            .child(self.main_panel(main_left, open, &main_focus, hairline_width, cx))
             .when(composited || self.main_backgrounds > 0, |d| {
                 d.child(corners)
             })
