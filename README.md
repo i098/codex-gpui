@@ -146,6 +146,23 @@ The environment UI and host-aware thread routing remain separate work.
 
 Run `cargo test -p bridge` for real loopback WebSocket exchanges, disconnect handling, and credential checks.
 
+## Sign-in
+
+The sign-in screen reads `configRequirements/read` before it shows account methods.
+Missing, invalid, and failed requirement reads keep those methods hidden.
+Null requirements fall back to `config/read` and its `forced_login_method`.
+
+The screen uses the original feature gates for Google, Microsoft, Amazon Bedrock, and browser account lookup.
+Browser account lookup uses the installed app's native eligibility helper and a bounded localhost callback.
+It does not read browser profiles or cookies.
+Credential fields support the native clipboard and keyboard editor.
+The OpenAI API-key field shows its text, as the original does.
+The Bedrock secret fields mask both displayed text and operating-system text reads.
+The copied sign-in link matches the browser URL, including provider and account selection.
+Bedrock sign-in discovers AWS profiles, accepts explicit credentials, restarts the app-server, and checks GovCloud requirements.
+The GovCloud warning remains open after restart until the user selects Continue.
+No test signs into a real account or changes AWS credentials.
+
 ## Native Computer Use service
 
 The host keeps one managed native helper at `$CODEX_HOME/computer-use/Codex Computer Use.app`.
