@@ -877,6 +877,110 @@ impl LocalHost {
         Ok(json!({"item": definition(&id, &contents)?}))
     }
 
+    /// `automation-delete` (original `src-BJv5Mk7n.js` `aI`, wrapped like the main process's
+    /// `delete`): removes the definition directory and its cached row and answers
+    /// `{item, success, status}`. `deleted` and `not_found` succeed; account-owned rows are
+    /// outside LocalHost and answer `not_found` untouched.
+    fn delete_automation(&self, params: &Value) -> Result<Value> {
+        let id = params["id"].as_str().context("missing automation id")?;
+        let valid = !id.is_empty() && id != "." && id != ".." && !id.contains(['/', '\\', '\0']);
+        let directory = self.home.join("automations").join(id);
+        let item = valid
+            .then(|| fs::read_to_string(directory.join("automation.toml")).ok())
+            .flatten()
+            .and_then(|text| definition(id, &text).ok());
+        let status = if valid {
+            self.remove_automation(id, &directory)?
+        } else {
+            "invalid_id"
+        };
+        let success = matches!(status, "deleted" | "not_found");
+        Ok(json!({"item": item, "success": success, "status": status}))
+    }
+
+    fn remove_automation(&self, id: &str, directory: &Path) -> Result<&'static str> {
+        let db = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let mut cached = false;
+        if let Some(db) = &db {
+            let owner = db
+                .query_row(
+                    "SELECT account_id IS NOT NULL OR user_id IS NOT NULL OR installation_id IS NOT NULL
+                     FROM automations WHERE id = ?",
+                    [id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .optional()?;
+            if owner == Some(true) {
+                return Ok("not_found");
+            }
+            cached = owner.is_some();
+        }
+        let present = self.automation_directory_present(directory)?;
+        let existed = present && directory.join("automation.toml").exists() || cached;
+        let transaction = db
+            .as_ref()
+            .map(Connection::unchecked_transaction)
+            .transpose()?;
+        if let Some(transaction) = &transaction
+            && transaction
+                .execute("DELETE FROM automations WHERE id = ?", [id])
+                .is_err()
+        {
+            return Ok("state_cleanup_failed");
+        }
+        let staged = if present {
+            let temporary = tempfile::Builder::new()
+                .prefix(".deleted-automation-")
+                .tempdir_in(&self.home)?;
+            let destination = temporary.path().join("task");
+            if fs::rename(directory, &destination).is_err() {
+                return Ok("remove_failed");
+            }
+            Some((temporary.keep(), destination))
+        } else {
+            None
+        };
+        if let Some(transaction) = transaction {
+            transaction
+                .execute("DELETE FROM automation_runs WHERE automation_id = ?", [id])
+                .ok();
+            if let Err(error) = transaction.commit() {
+                if let Some((temporary, destination)) = &staged {
+                    fs::rename(destination, directory).with_context(|| {
+                        format!("restore automation from {}", destination.display())
+                    })?;
+                    fs::remove_dir(temporary).ok();
+                }
+                return Err(error.into());
+            }
+        }
+        if let Some((temporary, _)) = staged
+            && let Err(error) = fs::remove_dir_all(&temporary)
+        {
+            eprintln!(
+                "codex-gpui: deleted automation retained at {}: {error}",
+                temporary.display()
+            );
+        }
+        Ok(if existed { "deleted" } else { "not_found" })
+    }
+
+    fn automation_directory_present(&self, directory: &Path) -> Result<bool> {
+        match fs::symlink_metadata(directory) {
+            Ok(_) => {
+                let root = self.home.join("automations").canonicalize()?;
+                ensure!(
+                    directory.canonicalize()?.parent() == Some(root.as_path())
+                        && root.starts_with(self.home.canonicalize()?),
+                    "automation directory escapes CODEX_HOME"
+                );
+                Ok(true)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error.into()),
+        }
+    }
+
     /// Saves a validated original-format definition, not an automation scheduling command.
     /// Existing schedule metadata remains in the original database for its scheduler to reconcile.
     pub fn write_automation(&self, id: &str, contents: &str) -> Result<()> {
@@ -1343,6 +1447,7 @@ impl Host for LocalHost {
             }
             "list-automations" => self.automations()?,
             "automation-create" => self.create_automation(&params)?,
+            "automation-delete" => self.delete_automation(&params)?,
             "automation-update" => self.update_automation(&params)?,
             "automation-run-now" => self.automation_run_now(&params)?,
             "apply-automation-proposal" => {

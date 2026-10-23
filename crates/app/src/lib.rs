@@ -1974,14 +1974,14 @@ impl Root {
         cx.spawn_in(window, async move |this, cx| {
             let result = run.await;
             this.update_in(cx, |this, window, cx| {
-                this.running_automations.remove(&id);
+                let still_running = this.running_automations.remove(&id);
                 this.sync_starting(cx);
                 let title = "Could not start scheduled task";
                 match result {
                     Ok(body) if body["success"] == true => {
                         if let Some(target) = target {
                             this.loaded.insert(target.clone());
-                            if this.navigation_epoch == epoch {
+                            if this.navigation_epoch == epoch && still_running {
                                 let reload = this
                                     .thread
                                     .as_ref()
@@ -2513,6 +2513,64 @@ impl Root {
         .detach();
     }
 
+    /// Row menu `Delete` (AM-026): the confirmation names the task the host lists.
+    fn confirm_delete_task(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(task) = self.tasks().into_iter().find(|task| task.id == id) else {
+            return;
+        };
+        let dialog = cx.new(|cx| Dialog::delete_task(task.id, task.name.to_string(), cx));
+        self.show_dialog(dialog, window, cx);
+    }
+
+    /// `Delete scheduled task`: `automation-delete` for the confirmed task.
+    /// A failure keeps the confirmation open so the user can retry or cancel.
+    fn delete_task(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let host = self.host.clone();
+        let params = json!({"id": id});
+        let write = cx.background_spawn(async move {
+            host.fetch(&host::Request::post("automation-delete", Some(params)))
+                .and_then(|response| host::json_body(&response))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = write.await;
+            this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(body) if body["success"] == true => {
+                        this.dialog = None;
+                        this.task_deleted(&id, window, cx);
+                    }
+                    failure => {
+                        if let Some(dialog) = &this.dialog {
+                            dialog.update(cx, |dialog, cx| dialog.delete_failed(cx));
+                        }
+                        let (detail, description) = match failure {
+                            Ok(body) => (
+                                format!(
+                                    "automation-delete: {}",
+                                    body["status"].as_str().unwrap_or("no status")
+                                ),
+                                None,
+                            ),
+                            Err(error) => (format!("{error:#}"), Some(error.to_string())),
+                        };
+                        eprintln!("codex-gpui: could not delete scheduled task: {detail}");
+                        let toast = Toast::danger("Could not delete scheduled task");
+                        this.toast(
+                            match description {
+                                Some(description) => toast.description(description),
+                                None => toast,
+                            },
+                            cx,
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Closes the editor, stores the saved task, and shows it or its originating card.
     fn automation_saved(
         &mut self,
@@ -2559,6 +2617,57 @@ impl Root {
         self.automation_editor.as_ref()
     }
 
+    /// The list drops the deleted task at once (the original filters its cached list), then
+    /// the host is read again; a deleted task's page closes to the Scheduled page.
+    fn task_deleted(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.running_automations.remove(id);
+        if let Some(Ok(list)) = &mut self.automations
+            && let Some(items) = list["items"].as_array_mut()
+        {
+            items.retain(|item| item["id"] != id);
+        }
+        let tasks = self.tasks();
+        if let Some(sidebar) = &self.scheduled {
+            sidebar.update(cx, |sidebar, cx| sidebar.set_tasks(tasks, cx));
+        }
+        let route = Route::Automation(id.to_owned());
+        for history in [&mut self.back, &mut self.forward] {
+            history.retain_mut(|(entry, automation)| {
+                if automation.as_deref() == Some(id) {
+                    *automation = None;
+                }
+                *entry != route
+            });
+        }
+        let had_sidebar = self.sidebar_automation.as_deref() == Some(id);
+        if had_sidebar || self.state.route == route {
+            self.navigation_epoch = self.navigation_epoch.wrapping_add(1);
+        }
+        if had_sidebar {
+            self.sidebar_automation = None;
+        }
+        window.focus(&self.focus, cx);
+        if self.state.route == route {
+            self.state.route = Route::Scheduled;
+            self.sync(window, cx);
+            self.select_route(cx);
+        } else if had_sidebar {
+            self.sync(window, cx);
+        } else {
+            self.load_automations(cx);
+        }
+    }
+
+    /// Focus returns to the task's `Scheduled task actions` button.
+    fn focus_task_trigger(&self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let trigger = self
+            .scheduled
+            .as_ref()
+            .and_then(|sidebar| sidebar.read(cx).trigger_focus(id))
+            .unwrap_or_else(|| self.focus.clone());
+        window.focus(&trigger, cx);
+    }
+
     fn show_dialog(&mut self, dialog: Entity<Dialog>, window: &mut Window, cx: &mut Context<Self>) {
         if self.dialog.is_some() || self.automation_editor.is_some() {
             return;
@@ -2575,6 +2684,10 @@ impl Root {
             thread.update(cx, |view, cx| view.close_summary(cx));
         }
         cx.subscribe_in(&dialog, window, move |this, dialog, outcome, window, cx| {
+            if let DialogOutcome::DeleteTask { id } = outcome {
+                this.delete_task(id.clone(), window, cx);
+                return;
+            }
             if let DialogOutcome::ScheduleTask { prompt, rrule } = outcome {
                 this.create_task(prompt.clone(), rrule.clone(), window, cx);
                 return;
@@ -2635,6 +2748,9 @@ impl Root {
                         }) {
                             window.focus(&focus, cx);
                         }
+                    } else if dialog.read(cx).kind() == DialogKind::DeleteTask {
+                        let id = dialog.read(cx).task().to_owned();
+                        this.focus_task_trigger(&id, window, cx);
                     } else {
                         window.focus(&focus, cx);
                     }
@@ -2699,6 +2815,7 @@ impl Root {
                     }
                 }
                 DialogOutcome::ScheduleTask { .. }
+                | DialogOutcome::DeleteTask { .. }
                 | DialogOutcome::CheckoutBranch { .. }
                 | DialogOutcome::CommitBeforeCheckout => unreachable!(),
             }
@@ -5783,6 +5900,11 @@ impl Render for Root {
             .capture_action(cx.listener(|this, _: &Undo, window, cx| {
                 this.undo_queued(window, cx);
             }))
+            .on_action(
+                cx.listener(|this, action: &automations::DeleteAutomation, window, cx| {
+                    this.confirm_delete_task(&action.id, window, cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &GoBack, window, cx| this.step(true, window, cx)))
             .on_action(cx.listener(|this, _: &GoForward, window, cx| this.step(false, window, cx)))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
