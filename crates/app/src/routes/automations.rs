@@ -10,6 +10,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.navigate(Route::Automation(a.id.clone()), window, cx)
         }),
     )
+    .on_action(cx.listener(
+        |this, action: &automations::OpenAutomationManagement, window, cx| {
+            this.navigate(Route::AutomationManagement(action.id.clone()), window, cx)
+        },
+    ))
     .on_action(
         cx.listener(|this, a: &automations::RunAutomationNow, window, cx| {
             this.run_automation_now(a.id.clone(), window, cx)
@@ -78,14 +83,40 @@ pub(super) fn automation(
         root.load_automations(cx);
     }
     let tasks = root.tasks();
-    let selected = tasks.iter().find(|t| t.id == id).cloned().map(|task| {
-        let composer: AnyView = cx.new(|cx| Composer::automation(window, cx)).into();
-        (task, composer)
-    });
-    let (shell, sidebar, page) = automations::shell(tasks, selected, utc_offset(), cx);
+    let (shell, sidebar, page) = if matches!(root.state.route, Route::AutomationManagement(_)) {
+        let (shell, sidebar) = automations::management_shell(tasks, Some(id), utc_offset(), cx);
+        (shell, sidebar, None)
+    } else {
+        let selected = tasks.iter().find(|t| t.id == id).cloned().map(|task| {
+            let composer: AnyView = cx.new(|cx| Composer::automation(window, cx)).into();
+            (task, composer)
+        });
+        automations::shell(tasks, selected, utc_offset(), cx)
+    };
+    if let Some(history) = sidebar.read(cx).history.clone() {
+        if let Some(clock) = root.clock {
+            history.update(cx, |history, _| history.set_clock(clock));
+        }
+        cx.subscribe_in(
+            &history,
+            window,
+            |this, _, open: &OpenThread, window, cx| {
+                this.navigate(Route::Thread(open.0.clone()), window, cx);
+            },
+        )
+        .detach();
+    }
     root.scheduled = Some(sidebar);
     root.sync_starting(cx);
     root.suggestions = page;
+    shell
+}
+
+pub(super) fn management(root: &mut Root, cx: &mut Context<Root>) -> Entity<Shell> {
+    root.load_automations(cx);
+    let (shell, sidebar) = automations::management_shell(root.tasks(), None, utc_offset(), cx);
+    root.scheduled = Some(sidebar);
+    root.suggestions = None;
     shell
 }
 

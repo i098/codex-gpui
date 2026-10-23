@@ -19,7 +19,13 @@ import tempfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
-CELLS = {("home", "rest"), ("terminal", "rest"), ("settings", "configuration")}
+CELLS = {
+    ("home", "rest"),
+    ("terminal", "rest"),
+    ("settings", "configuration"),
+    ("automations", "history-menu"),
+    ("automations", "history-confirm"),
+}
 PINS = {
     "index.html": "fbdbdbc3d10bc13ebb49e6175673c77fafbcbcdec90a7f7e147ad91950145a0b",
     "assets/index-44a69cb8b3cd.js": "bd10e3c9056f5dc7f6a9ce750d6cfb6a99343e20e9a206bef6d61d4b70df6dea",
@@ -156,6 +162,52 @@ def worker(args):
     return result.returncode
 
 
+def seed_automation_history(local):
+    fixture = json.loads((ROOT / "tools/parity/fixtures/automation-history.json").read_text())
+    reference = json.loads((ROOT / "refs/interactions/s037.json").read_text())
+    task = next(item for item in reference["fixture"]["items"] if item["id"] == fixture["taskId"])
+    oracle_path = local / "tools/route1/oracle.json"
+    oracle = json.loads(oracle_path.read_text())
+    list_key = 'fetch POST vscode://codex/list-automations ""'
+    response = oracle[list_key]
+    oracle[list_key] = dict(response, bodyJsonString=json.dumps({"items": [task]}, separators=(",", ":")))
+    inbox_key = 'fetch POST vscode://codex/inbox-items "{\\"limit\\":200}"'
+    oracle[inbox_key] = dict(response, bodyJsonString=json.dumps(fixture["inbox"], separators=(",", ":")))
+    for row in fixture["inbox"]["items"]:
+        params = json.dumps({"limit": 1, "threadId": row["threadId"]}, separators=(",", ":"))
+        key = f"fetch POST vscode://codex/inbox-items {json.dumps(params)}"
+        oracle[key] = dict(response, bodyJsonString=json.dumps(
+            {"items": [row], "unreadRunCounts": fixture["inbox"]["unreadRunCounts"]},
+            separators=(",", ":")))
+    payload = json.loads(oracle["shared statsig_evaluations"]["payload"])
+    payload["feature_gates"]["4283773748"]["value"] = True
+    oracle["shared statsig_evaluations"]["payload"] = json.dumps(payload, separators=(",", ":"))
+    for key, value in oracle.items():
+        if "/wham/statsig/bootstrap" in key:
+            envelope = value["value"]["response"]["__response"]
+            body = json.loads(envelope["body"])
+            payload = json.loads(body["statsigPayload"])
+            payload["feature_gates"]["4283773748"]["value"] = True
+            body["statsigPayload"] = json.dumps(payload, separators=(",", ":"))
+            envelope["body"] = json.dumps(body, separators=(",", ":"))
+    recorded = next(value for key, value in oracle.items()
+                    if "/automations?filter=scheduled&limit=25" in key)
+    request = {
+        "url": "/automations/query", "method": "POST",
+        "body": '{"scope":"personal","q":"","status":"active","limit":25,"cursor":null}',
+        "headers": {
+            "x-openai-web-frontend": "codex_webview", "x-oai-mcp-form-version": "2",
+            "x-openai-codex-window-type": "electron", "OAI-Language": "en-US",
+            "oai-did": "<id>", "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1", "X-OpenAI-Attach-Integrity-State": "1",
+        },
+        "returnErrorResponse": True,
+    }
+    key = "svc httpFetch.fetch " + json.dumps(["<id>", request, None], separators=(",", ":"))
+    oracle[key] = recorded
+    oracle_path.write_text(json.dumps(oracle, indent=1) + "\n")
+
+
 def original_through_tunnel(args, ssh):
     env = dict(os.environ)
     env.pop("R1_SF_FONTS", None)
@@ -163,6 +215,8 @@ def original_through_tunnel(args, ssh):
     with tempfile.TemporaryDirectory(prefix="route1-", dir=args.out) as temporary:
         local = Path(temporary)
         shutil.copytree(ROOT / "tools/route1", local / "tools/route1")
+        if args.surface == "automations":
+            seed_automation_history(local)
         (local / "fixtures").symlink_to(ROOT / "fixtures", target_is_directory=True)
         (local / "tools/capture").symlink_to(ROOT / "tools/capture", target_is_directory=True)
         (local / "bin").mkdir()

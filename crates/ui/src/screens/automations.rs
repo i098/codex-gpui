@@ -27,6 +27,12 @@ use std::{
 use theme::{ActiveTheme as _, Theme};
 
 pub mod editor;
+mod history;
+mod management;
+mod search;
+pub use history::{
+    ArchiveAllRuns, ArchiveRun, MarkAllRunsRead, RunHistory, SetRunRead, archiveable,
+};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum CreationMode {
@@ -39,12 +45,6 @@ pub enum CreationMode {
 #[action(namespace = automations, no_json)]
 pub struct CreateAutomation {
     pub mode: CreationMode,
-}
-
-#[derive(Clone, PartialEq, Action)]
-#[action(namespace = automations, no_json)]
-pub struct EditAutomation {
-    pub id: String,
 }
 actions!(
     automations,
@@ -64,6 +64,18 @@ actions!(
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = automations, no_json)]
 pub struct OpenAutomation {
+    pub id: String,
+}
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct OpenAutomationManagement {
+    pub id: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct EditAutomation {
     pub id: String,
 }
 
@@ -160,16 +172,28 @@ fn day_time(at_ms: i64, utc_offset: i64) -> (String, String) {
 }
 
 fn rule_part<'a>(rrule: &'a str, key: &str) -> Option<&'a str> {
-    rrule.split([';', '\n']).find_map(|part| {
-        part.trim_start_matches("RRULE:")
-            .strip_prefix(key)?
-            .strip_prefix('=')
-    })
+    rrule
+        .lines()
+        .flat_map(|line| line.trim().trim_start_matches("RRULE:").split(';'))
+        .find_map(|part| part.strip_prefix(key)?.strip_prefix('='))
 }
 
-fn cadence(rrule: &str) -> &'static str {
-    match rule_part(rrule, "FREQ") {
-        Some("MINUTELY" | "HOURLY") => "Interval",
+fn cadence(rrule: &str) -> String {
+    let frequency = rule_part(rrule, "FREQ");
+    if matches!(frequency, Some("MINUTELY" | "HOURLY")) {
+        let factor = if frequency == Some("HOURLY") { 60 } else { 1 };
+        let Some(minutes) = rule_part(rrule, "INTERVAL")
+            .unwrap_or("1")
+            .parse::<u64>()
+            .ok()
+            .and_then(|n| n.checked_mul(factor))
+            .filter(|n| *n > 0)
+        else {
+            return "Custom schedule".to_owned();
+        };
+        return interval_summary(minutes);
+    }
+    match frequency {
         Some("DAILY") => "Daily",
         Some("WEEKLY") if rule_part(rrule, "BYDAY") == Some("MO,TU,WE,TH,FR") => "Weekdays",
         Some("WEEKLY") => "Weekly",
@@ -177,21 +201,18 @@ fn cadence(rrule: &str) -> &'static str {
         Some("YEARLY") => "Yearly",
         _ => "Custom",
     }
+    .to_owned()
 }
 
 pub fn schedule_summary(rrule: &str) -> String {
     let frequency = rule_part(rrule, "FREQ");
     if matches!(frequency, Some("MINUTELY" | "HOURLY")) {
-        let interval = rule_part(rrule, "INTERVAL")
-            .and_then(|n| n.parse::<u64>().ok())
-            .unwrap_or(1);
-        let minutes = interval.saturating_mul(if frequency == Some("HOURLY") { 60 } else { 1 });
-        return interval_summary(minutes);
+        return cadence(rrule);
     }
     let hour = rule_part(rrule, "BYHOUR").and_then(|h| h.parse::<u32>().ok());
     let minute = rule_part(rrule, "BYMINUTE").and_then(|m| m.parse::<u32>().ok());
     let (Some(hour), Some(minute)) = (hour, minute) else {
-        return cadence(rrule).to_owned();
+        return cadence(rrule);
     };
     let time = format!(
         "{}:{minute:02} {}",
@@ -215,7 +236,7 @@ fn interval_summary(minutes: u64) -> String {
 }
 
 /// The weekday of a single-day weekly rule, else its cadence.
-fn day_label(rrule: &str) -> &'static str {
+fn day_label(rrule: &str) -> String {
     match (rule_part(rrule, "FREQ"), rule_part(rrule, "BYDAY")) {
         (Some("WEEKLY"), Some("MO")) => "Mondays",
         (Some("WEEKLY"), Some("TU")) => "Tuesdays",
@@ -224,8 +245,9 @@ fn day_label(rrule: &str) -> &'static str {
         (Some("WEEKLY"), Some("FR")) => "Fridays",
         (Some("WEEKLY"), Some("SA")) => "Saturdays",
         (Some("WEEKLY"), Some("SU")) => "Sundays",
-        _ => cadence(rrule),
+        _ => return cadence(rrule),
     }
+    .to_owned()
 }
 
 // The card uses the original 24 px clock, not the sidebar's 20 px asset.
@@ -443,29 +465,25 @@ fn shell_with(
     Entity<ScheduledSidebar>,
     Option<Entity<AutomationsPage>>,
 ) {
-    let sidebar = cx.new(|cx| ScheduledSidebar {
+    let sidebar = scheduled_sidebar(
         tasks,
-        selected: selected.as_ref().map(|(task, _)| task.id.clone()),
+        selected.as_ref().map(|(task, _)| task.id.clone()),
         utc_offset,
-        pending: HashSet::new(),
-        starting: HashSet::new(),
-        menu_item: None,
-        menu: None,
-        menu_button_hovered: false,
-        menu_focus: cx.focus_handle(),
-        return_focus: None,
-        create_menu: cx.new(editor::CreateMenu::new),
-        buttons: HashMap::new(),
-    });
+        cx,
+    );
     let mut page = None;
     let main: AnyView = match selected {
-        Some((task, composer)) => cx
-            .new(|_| AutomationThread {
+        Some((task, composer)) => {
+            let history = cx.new(|cx| RunHistory::new(task.id.clone(), cx));
+            sidebar.update(cx, |sidebar, _| sidebar.history = Some(history.clone()));
+            cx.new(|_| AutomationThread {
                 task,
                 composer,
                 utc_offset,
+                history,
             })
-            .into(),
+            .into()
+        }
         None => page
             .insert(cx.new(|_| AutomationsPage {
                 cards: cards(server),
@@ -482,15 +500,66 @@ fn shell_with(
     (shell, sidebar, page)
 }
 
+fn scheduled_sidebar(
+    tasks: Vec<Task>,
+    selected: Option<String>,
+    utc_offset: i64,
+    cx: &mut App,
+) -> Entity<ScheduledSidebar> {
+    cx.new(|cx| ScheduledSidebar {
+        history: None,
+        tasks,
+        selected,
+        utc_offset,
+        management: false,
+        pending: HashSet::new(),
+        starting: HashSet::new(),
+        menu_item: None,
+        menu: None,
+        menu_button_hovered: false,
+        menu_focus: cx.focus_handle(),
+        return_focus: None,
+        create_menu: cx.new(editor::CreateMenu::new),
+        buttons: HashMap::new(),
+    })
+}
+
+pub fn management_shell(
+    tasks: Vec<Task>,
+    selected: Option<String>,
+    utc_offset: i64,
+    cx: &mut App,
+) -> (Entity<Shell>, Entity<ScheduledSidebar>) {
+    let sidebar = scheduled_sidebar(tasks, selected.clone(), utc_offset, cx);
+    sidebar.update(cx, |sidebar, _| sidebar.management = true);
+    if let Some(id) = selected {
+        let history = cx.new(|cx| RunHistory::new(id, cx));
+        sidebar.update(cx, |sidebar, cx| {
+            cx.observe(&history, |_, _, cx| cx.notify()).detach();
+            sidebar.history = Some(history);
+        });
+    }
+    let main = cx.new(|cx| management::Management::new(sidebar.clone(), cx));
+    let shell = cx.new(|_| {
+        let mut shell = Shell::new(sidebar.clone().into(), main.into());
+        shell.selected_rail = Some("scheduled");
+        shell.new_tab = false;
+        shell
+    });
+    (shell, sidebar)
+}
+
 /// `ScheduledSidebar`: header `Scheduled` + search, `New task`, section `Upcoming` with one
 /// 48 px row per task (`automation-row`): name, `Oct 17 · Weekly`, and on hover the list
 /// fill with the `Scheduled task actions` button fading in. The selected row keeps the fill.
 pub struct ScheduledSidebar {
     tasks: Vec<Task>,
+    pub history: Option<Entity<RunHistory>>,
     selected: Option<String>,
     utc_offset: i64,
+    management: bool,
     pending: HashSet<String>,
-    /// Tasks whose run is starting: their row reads `Starting run…` and `Run now` is off.
+    /// Tasks whose pending run disables `Run now`.
     starting: HashSet<String>,
     /// The keyboard-active item in Pause/Resume, Run now, Edit, Share, Delete order.
     menu_item: Option<usize>,
@@ -586,6 +655,37 @@ impl ScheduledSidebar {
         window.focus(&self.menu_focus, cx);
         cx.stop_propagation();
         cx.notify();
+    }
+
+    fn header_actions(
+        &self,
+        task: &Task,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let open = self.menu.as_deref() == Some(task.id.as_str());
+        let focus = focus::handle("managed-task-actions", 0, window, cx);
+        let return_focus = focus.clone();
+        let id = task.id.clone();
+        focus::ring(
+            icon_button(
+                "managed-task-actions",
+                icon("thread-chat-actions", 16., t.text_tertiary),
+                t,
+            )
+            .size(px(28.))
+            .role(Role::Button)
+            .aria_label("Scheduled task actions")
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.toggle_menu(&id, return_focus.read(cx).handle.clone(), window, cx);
+            }))
+            .when(open, |d| d.child(self.menu_popup(task, t, cx))),
+            &focus,
+            px(9.375),
+            px(2.),
+            cx,
+        )
     }
 
     fn toggle(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -796,7 +896,11 @@ impl ScheduledSidebar {
                 }
             }))
             .child(crate::composer::popover(t, 220., |menu| {
-                menu.child(item).child(run).child(edit).child(share).child(delete)
+                menu.child(item)
+                    .child(run)
+                    .child(edit)
+                    .child(share)
+                    .child(delete)
             }));
         deferred(
             div().absolute().top(px(30.)).right(px(1.)).child(
@@ -816,9 +920,22 @@ impl ScheduledSidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
-        let fill = fill(px(12.5), t.ghost_hover);
+        let has_history = self.history.as_ref().is_some_and(|history| {
+            let history = history.read(cx);
+            history.id == task.id && !history.items().is_empty()
+        });
+        let hover = if self.management && t.appearance == theme::Appearance::Dark {
+            gpui::Hsla {
+                a: 1. - (1. - 0.08),
+                ..t.text_alpha_10
+            }
+        } else {
+            t.ghost_hover
+        };
+        let fill = fill(px(12.5), hover);
         let group = SharedString::from(format!("task-row-{}", task.id));
         let id = task.id.clone();
+        let management = self.management;
         let pending = self.pending.contains(&task.id);
         let paused = task.status == "PAUSED";
         let label = if paused { "Resume" } else { "Pause" };
@@ -827,8 +944,10 @@ impl ScheduledSidebar {
         let menu_id = SharedString::from(format!("{group}-actions"));
         let menu_focus = focus::handle(menu_id.clone(), 0, window, cx);
         let status_focused = status_focus.read(cx).handle.is_focused(window);
+        let status_focus_visible = status_focus.read(cx).is_focus_visible(window);
         let open = self.menu.as_deref() == Some(task.id.as_str());
-        let show_controls = status_focused || menu_focus.read(cx).handle.is_focused(window) || open;
+        let show_controls =
+            status_focus_visible || menu_focus.read(cx).is_focus_visible(window) || open;
         let status_task = task.id.clone();
         let (press_task, key_task) = (task.id.clone(), task.id.clone());
         let (press_return, key_return) = (menu_focus.clone(), menu_focus.clone());
@@ -917,12 +1036,8 @@ impl ScheduledSidebar {
             px(2.),
             cx,
         );
-        let starting = self.starting.contains(&task.id);
         let mut secondary = div().h(px(16.)).pr(px(5.)).flex().items_center();
-        if !paused
-            && !starting
-            && let Some(next) = task.next_run_at
-        {
+        if !paused && let Some(next) = task.next_run_at {
             secondary = secondary
                 .child(text(
                     day_time(next, self.utc_offset).0,
@@ -951,31 +1066,42 @@ impl ScheduledSidebar {
                     .group_hover(group.clone(), |s| s.opacity(1.))
             })
             .on_click(move |_, window, cx| {
-                window.dispatch_action(Box::new(OpenAutomation { id: id.clone() }), cx)
+                if management {
+                    window.dispatch_action(
+                        Box::new(OpenAutomationManagement {
+                            id: Some(id.clone()),
+                        }),
+                        cx,
+                    );
+                } else {
+                    window.dispatch_action(Box::new(OpenAutomation { id: id.clone() }), cx);
+                }
             })
             .child(
-                text(task.name.clone(), 14., 20., 430., t.text_default_nav)
-                    .overflow_hidden()
-                    .text_ellipsis(),
-            )
-            .child(
-                secondary
-                    .child(text(
-                        if paused {
-                            "Paused"
-                        } else {
-                            cadence(&task.rrule)
-                        },
-                        12.,
-                        16.,
-                        430.,
-                        t.text_tertiary,
-                    ))
-                    .when(starting, |d| {
-                        d.child(text("·", 12., 16., 430., t.text_tertiary).mx(px(4.)))
-                            .child(text("Starting run…", 12., 16., 430., t.text_tertiary))
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(
+                        text(task.name.clone(), 14., 20., 430., t.text_default_nav)
+                            .overflow_hidden()
+                            .text_ellipsis(),
+                    )
+                    .when(has_history, |d| {
+                        d.child(icon("chevron-down-small", 12., t.text_tertiary))
                     }),
             )
+            .child(secondary.child(text(
+                if paused {
+                    "Paused".into()
+                } else {
+                    cadence(&task.rrule)
+                },
+                12.,
+                16.,
+                430.,
+                t.text_tertiary,
+            )))
             .child(
                 div()
                     .absolute()
@@ -989,7 +1115,14 @@ impl ScheduledSidebar {
                     .justify_end()
                     .opacity(if show_controls { 1. } else { 0. })
                     .group_hover(group.clone(), |s| s.opacity(1.))
-                    .child(tooltip(status, label, None, Side::Top))
+                    .child(tooltip(
+                        status
+                            .opacity(if status_focus_visible { 1. } else { 0. })
+                            .group_hover(group.clone(), |s| s.opacity(1.)),
+                        label,
+                        None,
+                        Side::Top,
+                    ))
                     .child(menu),
             )
     }
@@ -1002,7 +1135,76 @@ impl Render for ScheduledSidebar {
         let rows: Vec<_> = self
             .tasks
             .iter()
-            .map(|task| self.row(task, &t, window, cx))
+            .map(|task| {
+                let mut row = div().child(self.row(task, &t, window, cx));
+                if let Some(history) = self
+                    .history
+                    .as_ref()
+                    .filter(|history| history.read(cx).id == task.id)
+                {
+                    for (index, run) in history
+                        .read(cx)
+                        .items()
+                        .iter()
+                        .filter(|run| run["status"] != "ARCHIVED")
+                        .enumerate()
+                    {
+                        let Some(thread) = run["threadId"].as_str().map(str::to_owned) else {
+                            continue;
+                        };
+                        let history = history.clone();
+                        row = row.child(
+                            div()
+                                .id(("scheduled-run", index))
+                                .role(Role::Button)
+                                .h(px(30.))
+                                .mt(px(1.))
+                                .pl(px(24.))
+                                .pr(px(8.))
+                                .rounded(px(12.5))
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .hover(|s| s.bg(t.list_hover))
+                                .child(
+                                    text(
+                                        run["title"].as_str().unwrap_or(&task.name).to_owned(),
+                                        14.,
+                                        20.,
+                                        430.,
+                                        t.text_default_nav,
+                                    )
+                                    .flex_1()
+                                    .overflow_hidden()
+                                    .text_ellipsis(),
+                                )
+                                .when(run["readAt"].is_null(), |d| {
+                                    d.child(
+                                        div()
+                                            .size(px(20.))
+                                            .mr(px(-4.))
+                                            .flex_none()
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .child(
+                                                div()
+                                                    .size(px(8.))
+                                                    .rounded_full()
+                                                    .bg(gpui::rgb(0x3a83f7)),
+                                            ),
+                                    )
+                                })
+                                .on_click(move |_, _, cx| {
+                                    history.update(cx, |_, cx| {
+                                        cx.emit(crate::screens::sidebar::OpenThread(thread.clone()))
+                                    })
+                                }),
+                        );
+                    }
+                }
+                row
+            })
             .collect();
         div()
             .size_full()
@@ -1202,12 +1404,16 @@ impl Render for AutomationsPage {
             .chunks(2)
             .enumerate()
             .map(|(r, pair)| {
-                div().flex().gap(px(20.)).children(
-                    pair.iter()
-                        .enumerate()
-                        .map(|(c, s)| self.card(r * 2 + c, s, cx))
-                        .collect::<Vec<_>>(),
-                )
+                div()
+                    .flex()
+                    .gap(px(20.))
+                    .children(
+                        pair.iter()
+                            .enumerate()
+                            .map(|(c, s)| self.card(r * 2 + c, s, cx))
+                            .collect::<Vec<_>>(),
+                    )
+                    .when(pair.len() == 1, |row| row.child(div().flex_1()))
             })
             .collect();
         let t = cx.theme();
@@ -1289,12 +1495,11 @@ impl Render for AutomationsPage {
 /// Main column of `/scheduled?automationId=<id>`: the task's thread as the original shows it
 /// before any run (date separator, the prompt as the user's message, `Your task is
 /// scheduled…` with the automation card) over the docked composer.
-/// ponytail: no scroll fades, corner clip, message hover actions or run items; add with the
-/// run-history rows.
 pub struct AutomationThread {
     task: Task,
     composer: AnyView,
     utc_offset: i64,
+    history: Entity<RunHistory>,
 }
 
 impl Render for AutomationThread {
@@ -1383,7 +1588,8 @@ impl Render for AutomationThread {
                                     t,
                                 )
                                 .mt(px(24.)),
-                            ),
+                            )
+                            .child(self.history.clone()),
                     )
                     // Room for the docked composer.
                     .child(div().h(px(114.))),
@@ -1415,6 +1621,33 @@ fn status_icon(paused: bool, color: gpui::Hsla) -> crate::icon::Icon {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn calendar_and_interval_rules_keep_distinct_and_equivalent_cadences() {
+        let cadence = |rule: &str| {
+            let task: super::Task = serde_json::from_value(serde_json::json!({
+                "id": "interval", "name": "Monitor", "prompt": "Check", "status": "ACTIVE", "rrule": rule,
+            })).unwrap();
+            super::cadence(&task.rrule)
+        };
+        assert_ne!(cadence("FREQ=MINUTELY;INTERVAL=30"), cadence("FREQ=DAILY"));
+        assert_ne!(
+            cadence("FREQ=MINUTELY;INTERVAL=30"),
+            cadence("FREQ=HOURLY;INTERVAL=30")
+        );
+        assert_eq!(cadence("FREQ=MINUTELY;INTERVAL=60"), cadence("FREQ=HOURLY"));
+        assert_eq!(
+            cadence("FREQ=MINUTELY;INTERVAL=1440"),
+            cadence("FREQ=DAILY")
+        );
+        assert_eq!(cadence("FREQ=HOURLY;INTERVAL=168"), cadence("FREQ=WEEKLY"));
+        assert_ne!(cadence("FREQ=MONTHLY"), cadence("FREQ=DAILY"));
+        assert_ne!(cadence("FREQ=YEARLY"), cadence("FREQ=MONTHLY"));
+        assert_ne!(
+            cadence("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR"),
+            cadence("FREQ=WEEKLY")
+        );
+    }
+
     #[test]
     fn only_the_original_event_prompt_is_event_triggered() {
         let event = "## When this happens\n> a PR opens\n>\n> in main\n\n## Perform action\n> review it\n\nTrailing";

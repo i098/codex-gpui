@@ -70,6 +70,9 @@ pub enum Kind {
     CreateBranch,
     BranchConflict,
     DiscardInstructions,
+    ArchiveRuns {
+        count: usize,
+    },
 }
 
 #[derive(Clone)]
@@ -119,6 +122,10 @@ pub enum Outcome {
         create: bool,
     },
     CommitBeforeCheckout,
+    ArchiveRuns {
+        automation: String,
+        threads: Vec<String>,
+    },
 }
 
 /// The rows of the commit form: `Commit`, `Commit and push` and `Push`.
@@ -181,6 +188,7 @@ pub struct Dialog {
     scroll: ScrollHandle,
     /// `Rename`: the thread id.
     thread: String,
+    archive_threads: Vec<String>,
     /// `LogOut`: the signed-in ChatGPT account's email, from `account/read`.
     email: Option<String>,
     schedule_time: String,
@@ -212,6 +220,7 @@ impl Dialog {
             do_not_ask_again: false,
             scroll: ScrollHandle::new(),
             thread: String::new(),
+            archive_threads: Vec::new(),
             email: None,
             schedule_time: "09:00".into(),
             repeat: 0,
@@ -229,6 +238,16 @@ impl Dialog {
         Self {
             email,
             ..Self::new(Kind::LogOut, cx)
+        }
+    }
+    pub fn archive_runs(automation: String, threads: Vec<String>, cx: &mut Context<Self>) -> Self {
+        Self {
+            thread: automation,
+            kind: Kind::ArchiveRuns {
+                count: threads.len(),
+            },
+            archive_threads: threads,
+            ..Self::new(Kind::ArchiveRuns { count: 0 }, cx)
         }
     }
     /// `Rename chat` for `thread`, its input prefilled with `title` and all of it selected.
@@ -794,6 +813,10 @@ impl Dialog {
             }
             (Kind::DiscardInstructions, 0) => "Keep editing",
             (Kind::DiscardInstructions, _) => "Discard changes",
+            (Kind::ArchiveRuns { .. }, 0) => "Cancel",
+            (Kind::ArchiveRuns { .. }, 2) => "Close dialog",
+            (Kind::ArchiveRuns { count: 1 }, _) => "Archive",
+            (Kind::ArchiveRuns { .. }, _) => "Archive all",
             (Kind::ModelAnnouncement, 0) => "Close",
             (Kind::ModelAnnouncement, 1) => "Continue with current model",
             (Kind::ModelAnnouncement, _) => {
@@ -961,6 +984,10 @@ impl Dialog {
             (Kind::LogOut, 1) => cx.emit(Outcome::LogOut),
             (Kind::ArchiveSection, 1) => cx.emit(Outcome::ArchiveSection(self.thread.clone())),
             (Kind::DiscardInstructions, 1) => cx.emit(Outcome::DiscardInstructions),
+            (Kind::ArchiveRuns { .. }, 1) => cx.emit(Outcome::ArchiveRuns {
+                automation: self.thread.clone(),
+                threads: self.archive_threads.clone(),
+            }),
             (Kind::ModelAnnouncement, 2) => {
                 let announcement = self.announcement.as_ref().expect("model announcement");
                 cx.emit(Outcome::UseAnnouncedModel {
@@ -1221,6 +1248,7 @@ impl Dialog {
                         | Kind::LogOut
                         | Kind::ArchiveSection
                         | Kind::DeleteTask
+                        | Kind::ArchiveRuns { .. }
                         | Kind::ModelAnnouncement
                         | Kind::RevertChanges
                         | Kind::DiscardInstructions
@@ -1279,6 +1307,7 @@ impl Dialog {
                         | Kind::ArchiveSection
                         | Kind::DiscardInstructions
                         | Kind::DeleteTask
+                        | Kind::ArchiveRuns { .. }
                 ),
                 |d| {
                     d.h(px(36.)).rounded(px(18.)).bg(if primary {
@@ -1342,6 +1371,7 @@ impl Dialog {
                         | Kind::ArchiveSection
                         | Kind::DiscardInstructions
                         | Kind::DeleteTask
+                        | Kind::ArchiveRuns { .. }
                 ) && primary
                 {
                     t.text_error
@@ -1524,7 +1554,7 @@ impl Dialog {
     /// the button row, 32 px buttons sized to their text plus 16 px each side, 12 px apart,
     /// 20 px from the right and bottom edges, and a 24 px close button 16 px from the corner.
     /// The `Signed in as <email>` line sits 4 px under the title and adds 25 px.
-    fn logout_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+    fn logout_content(&self, t: &Theme, window: &Window, cx: &Context<Self>) -> Div {
         div()
             .relative()
             .p(px(20.))
@@ -1559,8 +1589,8 @@ impl Dialog {
                     .flex()
                     .justify_end()
                     .gap(px(12.))
-                    .child(self.logout_button(0, "Cancel", t, cx))
-                    .child(self.logout_button(1, "Log out", t, cx)),
+                    .child(self.compact_button(0, "Cancel", t, window, cx))
+                    .child(self.compact_button(1, "Log out", t, window, cx)),
             )
             .child(
                 div()
@@ -1581,13 +1611,13 @@ impl Dialog {
             )
     }
 
-    /// `Cancel` is the ghost button and `Log out` the danger button: 32 px high, `px-4` and a
-    /// 1 px transparent border, radius 12.5, the 2 px ring outside the box when focused.
-    fn logout_button(
+    /// A ghost cancel or danger action with the original compact focus ring.
+    fn compact_button(
         &self,
         index: usize,
         label: &'static str,
         t: &Theme,
+        window: &Window,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
         let danger = index == 1;
@@ -1611,16 +1641,19 @@ impl Dialog {
                     ..Default::default()
                 }))
             })
-            .when(self.selected == index, |d| {
-                d.child(div().absolute().inset(px(-2.)).child(shapes::decoration(
-                    shapes::Decoration {
-                        radius: Corners::all(px(14.5)),
-                        corner: shapes::Corner::Squircle,
-                        border: Some((px(2.), rgba(0x3a83f7ff).into())),
-                        ..Default::default()
-                    },
-                )))
-            })
+            .when(
+                self.selected == index && window.last_input_was_keyboard(),
+                |d| {
+                    d.child(div().absolute().inset(px(-2.)).child(shapes::decoration(
+                        shapes::Decoration {
+                            radius: Corners::all(px(14.5)),
+                            corner: shapes::Corner::Squircle,
+                            border: Some((px(2.), rgba(0x3a83f7ff).into())),
+                            ..Default::default()
+                        },
+                    )))
+                },
+            )
             .hover(|s| s.opacity(0.85))
             .child(text(
                 label,
@@ -1758,6 +1791,72 @@ impl Dialog {
                         .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
                 )
             })
+    }
+
+    fn archive_title(&self) -> String {
+        match self.kind {
+            Kind::ArchiveRuns { count: 1 } => "Archive this run?".into(),
+            Kind::ArchiveRuns { count } => format!("Archive {count} runs?"),
+            _ => unreachable!(),
+        }
+    }
+
+    fn archive_content(&self, t: &Theme, window: &Window, cx: &Context<Self>) -> Div {
+        let single = self.kind == Kind::ArchiveRuns { count: 1 };
+        div()
+            .relative()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .child(text(self.archive_title(), 20., 28., 600., t.text))
+            .child(
+                text(
+                    if single {
+                        "You can find this run’s chat later in archived chats"
+                    } else {
+                        "You can find these runs’ chats later in archived chats"
+                    },
+                    14.,
+                    21.,
+                    430.,
+                    t.text_tertiary,
+                )
+                .mt(px(4.))
+                .whitespace_normal(),
+            )
+            .child(
+                div()
+                    .mt(px(12.))
+                    .flex()
+                    .justify_end()
+                    .gap(px(12.))
+                    .child(self.compact_button(0, "Cancel", t, window, cx))
+                    .child(self.compact_button(
+                        1,
+                        if single { "Archive" } else { "Archive all" },
+                        t,
+                        window,
+                        cx,
+                    )),
+            )
+            .child(
+                div()
+                    .id("archive-close")
+                    .role(gpui::Role::Button)
+                    .aria_label("Close dialog")
+                    .track_focus(&self.controls[2])
+                    .absolute()
+                    .right(px(16.))
+                    .top(px(16.))
+                    .size(px(24.))
+                    .rounded(px(4.))
+                    .hover(|s| s.bg(t.ghost_hover))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("close", 16., t.text.opacity(0.8)))
+                    .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
+            )
     }
 
     fn close_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
@@ -3057,6 +3156,7 @@ impl Render for Dialog {
         let schedule = self.kind == Kind::ScheduleTask;
         let announcement = self.kind == Kind::ModelAnnouncement;
         let commit = self.kind == Kind::Commit;
+        let archive = matches!(self.kind, Kind::ArchiveRuns { .. });
         let (width, height): (f32, f32) = match self.kind {
             Kind::Shortcuts => (600., shortcuts_height),
             Kind::CloseWindow => (420., 171.),
@@ -3068,6 +3168,7 @@ impl Render for Dialog {
             Kind::FullAccess => (520., 420.),
             Kind::LogOut => (380., 145. + if self.email.is_some() { 25. } else { 0. }),
             Kind::DiscardInstructions => (420., 180.),
+            Kind::ArchiveRuns { .. } => (420., 137.),
             Kind::ModelAnnouncement => (480., 432.),
             Kind::Commit => (420., self.commit_height()),
             Kind::Branches => (
@@ -3091,8 +3192,9 @@ impl Render for Dialog {
             Kind::Rename | Kind::NewSection | Kind::EditSection => self.rename_content(t, cx),
             Kind::ArchiveSection => self.archive_section_content(t, cx),
             Kind::FullAccess => self.full_access_content(t, cx),
-            Kind::LogOut => self.logout_content(t, cx),
+            Kind::LogOut => self.logout_content(t, window, cx),
             Kind::DiscardInstructions => self.discard_instructions_content(t, cx),
+            Kind::ArchiveRuns { .. } => self.archive_content(t, window, cx),
             Kind::ModelAnnouncement => self.announcement_content(t, cx),
             Kind::Commit => self.commit_content(t, cx),
             Kind::Branches | Kind::CreateBranch | Kind::BranchConflict => {
@@ -3149,6 +3251,7 @@ impl Render for Dialog {
                         Kind::FullAccess => "Turn on Full Access?".into(),
                         Kind::LogOut => "Log out?".into(),
                         Kind::DiscardInstructions => "Discard changes?".into(),
+                        Kind::ArchiveRuns { .. } => self.archive_title().into(),
                         Kind::Commit => "Commit or push".into(),
                         Kind::Branches => "Switch branch".into(),
                         Kind::CreateBranch => "Create and checkout branch".into(),
@@ -3224,12 +3327,15 @@ impl Render for Dialog {
                         20.
                     } else if schedule {
                         30.
-                    } else if matches!(self.kind, Kind::LogOut | Kind::DeleteTask) {
+                    } else if matches!(
+                        self.kind,
+                        Kind::LogOut | Kind::DeleteTask | Kind::ArchiveRuns { .. }
+                    ) {
                         25.
                     } else {
                         24.
                     }))
-                    .when(!commit && self.kind != Kind::LogOut, |d| {
+                    .when(!commit && self.kind != Kind::LogOut && !archive, |d| {
                         d.overflow_hidden()
                     })
                     .map(|d| {
@@ -3275,14 +3381,21 @@ impl Render for Dialog {
                                 false,
                                 shapes::Decoration {
                                     radius: Corners::all(px(
-                                        if matches!(self.kind, Kind::LogOut | Kind::DeleteTask) {
+                                        if matches!(
+                                            self.kind,
+                                            Kind::LogOut
+                                                | Kind::DeleteTask
+                                                | Kind::ArchiveRuns { .. }
+                                        ) {
                                             25.
                                         } else {
                                             24.
                                         },
                                     )),
-                                    corner: if matches!(self.kind, Kind::LogOut | Kind::DeleteTask)
-                                    {
+                                    corner: if matches!(
+                                        self.kind,
+                                        Kind::LogOut | Kind::DeleteTask | Kind::ArchiveRuns { .. }
+                                    ) {
                                         shapes::Corner::Squircle
                                     } else {
                                         shapes::Corner::default()
@@ -3308,7 +3421,13 @@ impl Render for Dialog {
                             d.bg(t.surface_elevated_secondary)
                         }
                     })
-                    .child(content),
+                    .child(if archive {
+                        crate::rounded_clip(px(25.), shapes::Corner::Squircle, content)
+                            .into_any_element()
+                    } else {
+                        content.into_any_element()
+                    })
+                    .when(archive, |panel| panel.snap_origin()),
             )
     }
 }

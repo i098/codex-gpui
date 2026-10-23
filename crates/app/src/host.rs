@@ -1207,6 +1207,50 @@ impl LocalHost {
         )? > 0)
     }
 
+    fn mark_all_runs_read(&self, read_at: i64) -> Result<usize> {
+        let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? else {
+            return Ok(0);
+        };
+        Ok(db.execute(
+            "UPDATE automation_runs SET read_at = ?1 WHERE read_at IS NULL AND updated_at <= ?1
+             AND status IN ('PENDING_REVIEW', 'ACCEPTED', 'ARCHIVED') AND automation_id IN
+             (SELECT id FROM automations WHERE account_id IS NULL AND user_id IS NULL AND installation_id IS NULL)",
+            [read_at],
+        )?)
+    }
+
+    fn archive_inbox_run(&self, params: &Value) -> Result<bool> {
+        let thread = params["threadId"]
+            .as_str()
+            .context("missing inbox threadId")?;
+        let reason = params
+            .get("archivedReason")
+            .filter(|v| !v.is_null())
+            .map(|v| v.as_str().context("invalid archivedReason"))
+            .transpose()?;
+        let message = |key| -> Result<Option<&str>> {
+            params
+                .get(key)
+                .filter(|v| !v.is_null())
+                .map(|v| v.as_str().with_context(|| format!("invalid {key}")))
+                .transpose()
+        };
+        let assistant = message("archivedAssistantMessage")?;
+        let user = message("archivedUserMessage")?;
+        let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? else {
+            return Ok(false);
+        };
+        Ok(db.execute(
+            "UPDATE automation_runs SET status = 'ARCHIVED', updated_at = ?1,
+             archived_reason = COALESCE(archived_reason, ?2),
+             archived_assistant_message = COALESCE(?3, archived_assistant_message),
+             archived_user_message = COALESCE(?4, archived_user_message)
+             WHERE thread_id = ?5 AND automation_id IN
+             (SELECT id FROM automations WHERE account_id IS NULL AND user_id IS NULL AND installation_id IS NULL)",
+            params![chrono::Utc::now().timestamp_millis(), reason, assistant, user, thread],
+        )? > 0)
+    }
+
     fn inbox(&self, params: &Value) -> Result<Value> {
         let limit = match params.get("limit").filter(|v| !v.is_null()) {
             Some(limit) => limit
@@ -1494,6 +1538,16 @@ impl Host for LocalHost {
                 self.delete_worktree(params["worktree"].as_str().context("missing worktree")?)?
             }
             "git-pr-watch-update" => self.update_pr_watchers(&params)?,
+            "inbox-item-set-read-state" => {
+                let id = params["id"].as_str().context("missing inbox id")?;
+                let read = params["isRead"].as_bool().context("invalid inbox isRead")?;
+                json!({"success": self.mark_inbox_read(id, read.then(|| chrono::Utc::now().timestamp_millis()))?})
+            }
+            "inbox-automation-runs-mark-all-read" => {
+                let read_at = params["readAt"].as_i64().context("invalid inbox readAt")?;
+                json!({"count": self.mark_all_runs_read(read_at)?})
+            }
+            "automation-run-archive" => json!({"success": self.archive_inbox_run(&params)?}),
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-init-repo"
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
             | "git-checkout" | "git-cat-file" | "git-review-patch" | "git-file-url" => {
@@ -2356,7 +2410,6 @@ fn ensure_unowned_automation(db: &Connection, id: &str) -> Result<()> {
     );
     Ok(())
 }
-
 
 fn definition(id: &str, contents: &str) -> Result<Value> {
     check_automation_id(id)?;

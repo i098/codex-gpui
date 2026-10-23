@@ -344,6 +344,20 @@ General settings shows the read-only `In-app updates` row with `Managed` when th
 The row uses `experimentalFeature/list`, not a local preference.
 The app hides the row when that policy is absent or enabled.
 
+Previous runs offers `Mark all as read` and `Archive all` for the selected task.
+Previous runs uses the original 200-item inbox window.
+The management view separates the latest run from previous runs and keeps the task list visible beside the results.
+Its rows show the recorded chat title, folder, status, and age.
+Opening the management view marks its latest run as read without marking older runs.
+Archive requires confirmation and skips running or already archived chats.
+The confirmation shows focus rings for keyboard input, not pointer input.
+The app keeps failed rows and reloads the run store after each action.
+New reloads replace older reloads.
+Local read and archive writes exclude account-owned tasks and never remove worktrees.
+Global read leaves running runs and updates newer than the read snapshot unread.
+Run `cargo test -p app --test automation_history -- --test-threads=1` on macOS for confirmation, cancellation, read failure, and archive rollback proof.
+Set `CGX_ARCHIVE_SHOTS` to an owned output directory to capture the matched S037 management view, history menu, and confirmation.
+
 ## Release bundle
 
 ```sh

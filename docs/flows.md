@@ -814,7 +814,7 @@ Ordinary local task creation and the existing draft remain unchanged.
 
 `Run now` (AM-021) is the second item of the row `Scheduled task actions` menu, after `Pause` / `Resume`. The original sidebar menu is `q` in `menu-items-19a7bd2f5b31.js`, called with `statusFirst: true` from `actions-b3b1b77c618b.js`; `run-now-11e55df28c95.js` holds only the run action.
 Choosing it sends `automation-run-now` with `{id, collaborationMode, permissions}` and disables duplicate starts until the host answers.
-The information toast and row show `Starting run…` until the host answers.
+The information toast reads `Starting run…`; the row keeps its cadence and next-run text.
 `LocalHost` starts one app-server thread per task folder, titles it with the task name, and sends the original's run preamble and the prompt as the first turn.
 The new thread then appears in Recents through `thread/started`.
 Before each thread the host reads the user's saved config (`config/read` for the folder) and the config requirements, and picks the model from `model/list` like the original (`Pr`): the task's model, else `gpt-5.3-codex`, else the default.

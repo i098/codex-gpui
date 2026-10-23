@@ -26,6 +26,8 @@ pub enum Route {
     Scheduled,
     /// A sidebar task row (`/scheduled?automationId=<id>`): the task's thread.
     Automation(String),
+    /// The task table and optional run detail at `/scheduled?view=manage`.
+    AutomationManagement(Option<String>),
     /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
     Mobile,
     Archive,
@@ -123,6 +125,7 @@ impl Root {
         self.flush_settings(cx);
         self.settings_page = None;
         self.suggestion_load = None;
+        self.run_history_load = None;
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
         self.mobile_page = None;
@@ -134,7 +137,10 @@ impl Root {
             }
             Route::Settings | Route::SettingsSubtree(_) => Some(settings::page(self, window, cx)),
             Route::Scheduled => Some(automations::scheduled(self, cx)),
-            Route::Automation(id) => Some(automations::automation(self, id, window, cx)),
+            Route::Automation(id) | Route::AutomationManagement(Some(id)) => {
+                Some(automations::automation(self, id, window, cx))
+            }
+            Route::AutomationManagement(None) => Some(automations::management(self, cx)),
             Route::Archive => Some(archive::page(self, cx)),
             Route::Thread(_) if self.sidebar_automation.is_some() => {
                 Some(automations::thread(self, cx))
@@ -149,6 +155,7 @@ impl Root {
         }
         if self.scheduled_route() {
             self.load_suggestions(cx);
+            self.load_run_history(cx);
         }
         if let Some(page) = &self.page {
             page.update(cx, |shell, _| {

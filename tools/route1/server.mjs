@@ -329,7 +329,7 @@ const keyOf = (x) =>
 // other private data stay out of the oracle: GETs answer 404, other POSTs (analytics, cache
 // flushes) an empty 200. ChatGPT-host thread catalog pages (the owner's chats) answer an empty
 // last page.
-const POST_READ_URL = /statsig\/bootstrap|ab\.chatgpt\.com\/v1\/initialize|has_installations/;
+const POST_READ_URL = /statsig\/bootstrap|ab\.chatgpt\.com\/v1\/initialize|has_installations|^\/automations\/query$/;
 const PRIVATE_URL = /payment|subscriptions|checkout|gift-credits|referrals|\/spaces|\/pins\b|gizmos|amphora\/notifications|\/tbo\b|conversation|files\/library|\/websites|mfa_info/;
 const jsonResponse = (status, body) => ({ value: { response: { __response: { status, statusText: "", headers: [["content-type", "application/json"]], body } } } });
 function privateAnswer(svc, method, args) {

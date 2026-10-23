@@ -240,12 +240,12 @@ fn database(home: &std::path::Path) -> Result<Connection> {
         created_at INTEGER, updated_at INTEGER);
         INSERT INTO automations VALUES ('local', 'Local task', 'Fallback prompt', 100, 100, 50, 'FREQ=DAILY;BYHOUR=9', 'ACTIVE', NULL, NULL, NULL);
         INSERT INTO automations VALUES ('private', 'Other account', 'Secret', 100, 100, 50, '', 'ACTIVE', 'account', 'user', 'installation');
-        INSERT INTO automation_runs (thread_id, automation_id, status, created_at, inbox_summary) VALUES
-        ('running', 'local', 'IN_PROGRESS', 1, ''),
-        ('review', 'local', 'PENDING_REVIEW', 2, 'Review this'),
-        ('accepted', 'local', 'ACCEPTED', 3, NULL),
-        ('archived', 'local', 'ARCHIVED', 4, NULL),
-        ('private-run', 'private', 'PENDING_REVIEW', 5, 'Secret');")?;
+        INSERT INTO automation_runs (thread_id, automation_id, status, created_at, updated_at, inbox_summary) VALUES
+        ('running', 'local', 'IN_PROGRESS', 1, 1, ''),
+        ('review', 'local', 'PENDING_REVIEW', 2, 2, 'Review this'),
+        ('accepted', 'local', 'ACCEPTED', 3, 3, NULL),
+        ('archived', 'local', 'ARCHIVED', 4, 4, NULL),
+        ('private-run', 'private', 'PENDING_REVIEW', 5, 5, 'Secret');")?;
     Ok(db)
 }
 
@@ -291,6 +291,144 @@ fn inbox_preserves_order_filtering_counts_and_account_isolation() -> Result<()> 
         host.fetch(&Request::post("inbox-items", Some(json!({"limit": -1}))))
             .is_err()
     );
+    Ok(())
+}
+
+#[test]
+fn read_actions_respect_run_state_account_and_snapshot_cutoff() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let db = database(home.path())?;
+    let host = LocalHost::new(home.path());
+    db.execute_batch(
+        "UPDATE automation_runs SET updated_at = 2000 WHERE thread_id = 'accepted';
+        UPDATE automation_runs SET updated_at = 1234 WHERE thread_id = 'review';",
+    )?;
+    let bulk = Request::post(
+        "inbox-automation-runs-mark-all-read",
+        Some(json!({"readAt": 1234})),
+    );
+    assert_eq!(json_body(&host.fetch(&bulk)?)?["count"], 2);
+    let reads = || -> Result<Vec<(String, Option<i64>)>> {
+        Ok(db
+            .prepare("SELECT thread_id, read_at FROM automation_runs ORDER BY thread_id")?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?)
+    };
+    assert_eq!(
+        reads()?,
+        vec![
+            ("accepted".into(), None),
+            ("archived".into(), Some(1234)),
+            ("private-run".into(), None),
+            ("review".into(), Some(1234)),
+            ("running".into(), None),
+        ]
+    );
+    assert_eq!(json_body(&host.fetch(&bulk)?)?["count"], 0);
+    assert_eq!(
+        json_body(&host.fetch(&Request::post(
+            "inbox-automation-runs-mark-all-read",
+            Some(json!({"readAt": 3000}))
+        ))?)?["count"],
+        1
+    );
+    assert_eq!(reads()?[0].1, Some(3000));
+    host.fetch(&Request::post(
+        "inbox-item-set-read-state",
+        Some(json!({"id": "review", "isRead": false})),
+    ))?;
+    assert_eq!(
+        json_body(&host.fetch(&Request::post("inbox-items", None))?)?["unreadRunCounts"]["total"],
+        1
+    );
+    assert_eq!(
+        json_body(&host.fetch(&Request::post(
+            "inbox-item-set-read-state",
+            Some(json!({"id": "private-run", "isRead": true}))
+        ))?)?["success"],
+        false
+    );
+    assert_eq!(reads()?[2].1, None);
+    Ok(())
+}
+
+#[test]
+fn archive_run_preserves_messages_reason_and_other_account_rows() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let db = database(home.path())?;
+    let host = LocalHost::new(home.path());
+    let archive = |id, reason, message| {
+        Request::post(
+            "automation-run-archive",
+            Some(json!({
+                "threadId": id, "archivedReason": reason, "archivedAssistantMessage": message,
+            })),
+        )
+    };
+    assert_eq!(
+        json_body(&host.fetch(&archive("review", "user", Some("Retained answer")))?)?["success"],
+        true
+    );
+    host.fetch(&archive("review", "auto", None))?;
+    let row: (String, String, String) = db.query_row(
+        "SELECT status, archived_reason, archived_assistant_message FROM automation_runs WHERE thread_id = 'review'",
+        [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    assert_eq!(
+        row,
+        ("ARCHIVED".into(), "user".into(), "Retained answer".into())
+    );
+    assert_eq!(
+        json_body(&host.fetch(&archive("private-run", "user", Some("Overwrite")))?)?["success"],
+        false
+    );
+    assert_eq!(
+        db.query_row(
+            "SELECT status FROM automation_runs WHERE thread_id = 'private-run'",
+            [],
+            |r| r.get::<_, String>(0)
+        )?,
+        "PENDING_REVIEW"
+    );
+    assert_eq!(
+        json_body(&host.fetch(&Request::post("inbox-items", None))?)?["unreadRunCounts"]["total"],
+        1
+    );
+    Ok(())
+}
+
+#[test]
+fn refused_run_mutations_leave_stored_results_unchanged() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let db = database(home.path())?;
+    let host = LocalHost::new(home.path());
+    db.execute_batch("CREATE TRIGGER refuse_update BEFORE UPDATE ON automation_runs BEGIN SELECT RAISE(ABORT, 'owned refusal'); END;")?;
+    for request in [
+        Request::post(
+            "inbox-item-set-read-state",
+            Some(json!({"id":"review","isRead":true})),
+        ),
+        Request::post(
+            "inbox-automation-runs-mark-all-read",
+            Some(json!({"readAt":1234})),
+        ),
+        Request::post(
+            "automation-run-archive",
+            Some(json!({"threadId":"review","archivedReason":"user"})),
+        ),
+    ] {
+        assert!(
+            host.fetch(&request)
+                .unwrap_err()
+                .to_string()
+                .contains("owned refusal")
+        );
+    }
+    let row: (String, Option<i64>, Option<String>) = db.query_row(
+        "SELECT status, read_at, archived_reason FROM automation_runs WHERE thread_id = 'review'",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    )?;
+    assert_eq!(row, ("PENDING_REVIEW".into(), None, None));
     Ok(())
 }
 
