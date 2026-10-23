@@ -1,6 +1,6 @@
 mod common;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use app::{
     Route,
     host::{Host, ReplayHost, Request, json_body},
@@ -11,16 +11,45 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
-use ui::screens::pull_requests::{Availability, Event};
+use ui::screens::pull_requests::{Availability, DetailTab, Event};
 
 struct AccountHost {
     replay: ReplayHost,
     switched: AtomicBool,
+    review_metadata: serde_json::Value,
+    fail_code: AtomicBool,
 }
 
 impl Host for AccountHost {
     fn fetch(&self, request: &Request) -> Result<serde_json::Value> {
+        if let Request::Fetch { url, .. } = request
+            && url == "vscode://codex/gh-pr-patch"
+        {
+            if self.fail_code.load(Ordering::SeqCst) {
+                anyhow::bail!("synthetic patch transport failure");
+            }
+            let diff = "diff --git a/src/example.rs b/src/example.rs\n--- a/src/example.rs\n+++ b/src/example.rs\n@@ -1 +1 @@\n-let ready = false;\n+let ready = true;\n";
+            return Ok(serde_json::json!({
+                "type":"fetch-response", "responseType":"success", "status":200, "headers":{},
+                "bodyJsonString":serde_json::json!({"diff":diff}).to_string()
+            }));
+        }
         let mut response = self.replay.fetch(request)?;
+        if let Request::Fetch { url, .. } = request
+            && url == "vscode://codex/gh-pr-detail"
+        {
+            let mut body = json_body(&response)?;
+            let number = body["number"]
+                .as_u64()
+                .context("recorded detail number")?
+                .to_string();
+            if let Some(metadata) = self.review_metadata[&number].as_object() {
+                body.as_object_mut()
+                    .context("recorded detail object")?
+                    .extend(metadata.clone());
+            }
+            response["bodyJsonString"] = body.to_string().into();
+        }
         if self.switched.load(Ordering::SeqCst)
             && let Request::Fetch { url, .. } = request
             && url == "vscode://codex/gh-current-user"
@@ -85,6 +114,9 @@ fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
     let host = Arc::new(AccountHost {
         replay: ReplayHost::from_recording(&recording)?,
         switched: AtomicBool::new(false),
+        review_metadata: serde_json::from_str::<serde_json::Value>(&recording)?["reviewMetadata"]
+            .clone(),
+        fail_code: AtomicBool::new(true),
     });
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
@@ -180,11 +212,64 @@ fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
     assert_eq!(all_ids.iter().collect::<HashSet<_>>().len(), all_ids.len());
     capture(&mut fx, "merged-second-page")?;
     let selected = fx.read(|_, cx| page.read(cx).streams[0].items[0].pull_request.clone());
-    page.update(&mut fx.cx, |_, cx| cx.emit(Event::Select(Some(selected))));
+    page.update(&mut fx.cx, |_, cx| {
+        cx.emit(Event::Select(Some(selected.clone())))
+    });
     fx.wait("recorded detail response", |fx| {
         fx.read(|_, cx| matches!(page.read(cx).detail, Some(Ok(_))))
     })?;
     capture(&mut fx, "merged-detail")?;
+    if cfg!(target_os = "macos") {
+        fx.click((690., 67.))?;
+    } else {
+        page.update(&mut fx.cx, |page, cx| {
+            page.set_detail_tab(DetailTab::Code, cx)
+        });
+    }
+    fx.wait("patch failure", |fx| {
+        fx.read(|_, cx| matches!(page.read(cx).code, Some(Err(_))))
+    })?;
+    assert!(fx.read(|_, cx| matches!(page.read(cx).detail, Some(Ok(_)))));
+    assert_eq!(
+        fx.read(|_, cx| page.read(cx).selected.clone()),
+        Some(selected)
+    );
+    host.fail_code.store(false, Ordering::SeqCst);
+    page.update(&mut fx.cx, |_, cx| cx.emit(Event::Code));
+    fx.wait("patch retry", |fx| {
+        fx.read(|_, cx| matches!(page.read(cx).code, Some(Ok(_))))
+    })?;
+    fx.read(|_, cx| {
+        let panel = page
+            .read(cx)
+            .code
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .read(cx);
+        assert_eq!(panel.files.len(), 1);
+        assert_eq!(panel.files[0].name.as_ref(), "example.rs");
+        assert_eq!((panel.files[0].added, panel.files[0].removed), (1, 1));
+    });
+    capture(&mut fx, "merged-code")?;
+    page.update(&mut fx.cx, |page, cx| {
+        page.set_detail_tab(DetailTab::Summary, cx)
+    });
+    if cfg!(target_os = "macos") {
+        let original_fullscreen = fx
+            .cx
+            .update_window(fx.window, |_, window, _| window.is_fullscreen())?;
+        fx.click((1246., 67.))?;
+        capture(&mut fx, "detail-expanded")?;
+        assert_eq!(
+            fx.cx
+                .update_window(fx.window, |_, window, _| window.is_fullscreen())?,
+            original_fullscreen,
+            "The workspace control must not change OS fullscreen state",
+        );
+        fx.click((1246., 67.))?;
+    }
     host.switched.store(true, Ordering::SeqCst);
     page.update(&mut fx.cx, |_, cx| cx.emit(Event::Retry));
     fx.wait("switched GitHub account", |fx| {

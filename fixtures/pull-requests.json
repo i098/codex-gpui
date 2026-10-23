@@ -7,7 +7,14 @@
     "accountRead": "Authenticated gh api user on the authorized Mac",
     "rawRecords": "/sdc-disk/tmp/cgx/cgx-fam-pull-requests/github-recordings/",
     "detailProjection": "Original summary, metadata, body, and mergeability fields; head revision equality checked.",
+    "reviewProjection": "Original gh-pr-reviews raw latestReviews/reviewRequests and gh-pr-summary ciStatus; applied by the replay host.",
     "nativeRequestEncoding": "serde_json preserve_order: request and struct field declaration order; values unchanged."
+  },
+  "reviewMetadata": {
+    "259": {"latestReviews":{"nodes":[],"pageInfo":{"hasNextPage":false}},"reviewRequests":{"nodes":[],"pageInfo":{"hasNextPage":false}},"ciStatus":"none"},
+    "372": {"latestReviews":{"nodes":[],"pageInfo":{"hasNextPage":false}},"reviewRequests":{"nodes":[],"pageInfo":{"hasNextPage":false}},"ciStatus":"none"},
+    "380": {"latestReviews":{"nodes":[],"pageInfo":{"hasNextPage":false}},"reviewRequests":{"nodes":[],"pageInfo":{"hasNextPage":false}},"ciStatus":"none"},
+    "385": {"latestReviews":{"nodes":[],"pageInfo":{"hasNextPage":false}},"reviewRequests":{"nodes":[],"pageInfo":{"hasNextPage":false}},"ciStatus":"pending"}
   },
   "exchanges": [
     {

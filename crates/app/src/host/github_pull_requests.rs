@@ -5,7 +5,7 @@ use std::time::Duration;
 use ui::screens::pull_requests::model::{Account, Filters, Identity, valid_component};
 
 const SEARCH: &str = "query($searchQuery:String!,$first:Int!,$after:String){search(query:$searchQuery,type:ISSUE,first:$first,after:$after){issueCount nodes{... on PullRequest{additions author{avatarUrl(size:48) login} baseRefName createdAt deletions headRefName id isDraft mergeStateStatus mergeable number repository{name owner{login}} state statusCheckRollup{contexts(first:100){totalCount nodes{__typename ... on CheckRun{conclusion name status} ... on StatusContext{context state}}}} title updatedAt url}} pageInfo{endCursor hasNextPage}}}";
-const DETAIL: &str = "query($owner:String!,$repo:String!,$number:Int!){viewer{login} repository(owner:$owner,name:$repo){pullRequest(number:$number){number url title body baseRefName headRefName headRefOid state isDraft author{login avatarUrl} createdAt additions deletions changedFiles mergeable mergeStateStatus reviewDecision statusCheckRollup{contexts(first:100){totalCount nodes{__typename ... on CheckRun{conclusion name status detailsUrl} ... on StatusContext{context state targetUrl}}}}}}}";
+const DETAIL: &str = "query($owner:String!,$repo:String!,$number:Int!){viewer{login} repository(owner:$owner,name:$repo){pullRequest(number:$number){number url title body baseRefName headRefName headRefOid state isDraft author{login avatarUrl} createdAt additions deletions changedFiles mergeable mergeStateStatus reviewDecision latestReviews(first:100){nodes{author{login avatarUrl} state comments(first:1){totalCount}} pageInfo{hasNextPage}} reviewRequests(first:100){nodes{requestedReviewer{__typename ... on User{login avatarUrl} ... on Team{name slug}}} pageInfo{hasNextPage}} statusCheckRollup{contexts(first:100){totalCount nodes{__typename ... on CheckRun{conclusion name status detailsUrl} ... on StatusContext{context state targetUrl}}}}}}}";
 
 struct Output {
     code: Option<i32>,
@@ -237,6 +237,7 @@ pub(super) fn fetch(host: &super::LocalHost, endpoint: &str, params: &Value) -> 
         }
         "gh-pr-search" => search(host, params),
         "gh-pr-detail" => detail(host, params),
+        "gh-pr-patch" => patch(host, params),
         "gh-pr-media" => media(host, params),
         _ => bail!("Unsupported GitHub endpoint: {endpoint}"),
     }
@@ -319,13 +320,18 @@ fn search(host: &super::LocalHost, params: &Value) -> Result<Value> {
     )
 }
 
-fn detail(host: &super::LocalHost, params: &Value) -> Result<Value> {
+fn request_identity(params: &Value) -> Result<(Account, Identity)> {
     let account = account(params)?;
     let identity: Identity = serde_json::from_value(params["pullRequest"].clone())?;
     ensure!(
         identity.valid() && identity.hostname.eq_ignore_ascii_case(&account.hostname),
         "Pull request account does not match the request"
     );
+    Ok((account, identity))
+}
+
+fn detail(host: &super::LocalHost, params: &Value) -> Result<Value> {
+    let (account, identity) = request_identity(params)?;
     let response = graphql(
         host,
         &account.hostname,
@@ -337,6 +343,15 @@ fn detail(host: &super::LocalHost, params: &Value) -> Result<Value> {
         ],
         15,
     )?;
+    verify_viewer(&response, &account)?;
+    let request = &response["data"]["repository"]["pullRequest"];
+    ensure!(!request.is_null(), "Pull request not found");
+    let mut request = request.clone();
+    request["ciStatus"] = ci(&request["statusCheckRollup"]).into();
+    Ok(request)
+}
+
+fn verify_viewer(response: &Value, account: &Account) -> Result<()> {
     let viewer = response["data"]["viewer"]["login"]
         .as_str()
         .context("GitHub viewer is missing")?;
@@ -344,9 +359,30 @@ fn detail(host: &super::LocalHost, params: &Value) -> Result<Value> {
         viewer.eq_ignore_ascii_case(&account.login),
         "Pull request account does not match the signed-in user"
     );
-    let request = &response["data"]["repository"]["pullRequest"];
-    ensure!(!request.is_null(), "Pull request not found");
-    Ok(request.clone())
+    Ok(())
+}
+
+fn patch(host: &super::LocalHost, params: &Value) -> Result<Value> {
+    let (account, identity) = request_identity(params)?;
+    let viewer = graphql(host, &account.hostname, "query{viewer{login}}", &[], 5)?;
+    verify_viewer(&viewer, &account)?;
+    let endpoint = format!(
+        "repos/{}/{}/pulls/{}",
+        identity.owner, identity.repository, identity.number
+    );
+    let diff = checked(command(
+        host,
+        &[
+            "api",
+            &endpoint,
+            "--hostname",
+            &account.hostname,
+            "--header",
+            "Accept: application/vnd.github.diff",
+        ],
+        30,
+    )?)?;
+    Ok(json!({"diff": diff}))
 }
 
 fn media_url(raw: &str) -> Result<url::Url> {
@@ -467,6 +503,18 @@ fn media(host: &super::LocalHost, params: &Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn patch_identity_and_viewer_must_match_the_active_account() {
+        let params = json!({
+            "account":{"hostId":"local","hostname":"github.com","login":"alice"},
+            "pullRequest":{"hostname":"elsewhere.example","owner":"org","repository":"repo","number":1}
+        });
+        assert!(request_identity(&params).is_err());
+        let account = account(&params).unwrap();
+        assert!(verify_viewer(&json!({"data":{"viewer":{"login":"bob"}}}), &account).is_err());
+        assert!(verify_viewer(&json!({"data":{"viewer":{"login":"ALICE"}}}), &account).is_ok());
+    }
 
     #[test]
     fn missing_executable_does_not_hide_a_missing_working_directory() {

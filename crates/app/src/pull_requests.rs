@@ -70,6 +70,7 @@ impl Root {
                 self.navigate(Route::PullRequests(selected.clone()), window, cx)
             }
             Event::AskCodex(prompt) => self.prefill_pull_request_chat(prompt, window, cx),
+            Event::Code => self.load_pull_request_code(page, cx),
             Event::Media { generation, url } => {
                 self.load_pull_request_media(page, *generation, url.clone(), cx)
             }
@@ -199,6 +200,35 @@ impl Root {
                 .await
                 .map_err(|error| repository_error(&login, format!("{error:#}")));
             page.update(cx, |page, cx| page.apply_detail(generation, result, cx));
+        })
+        .detach();
+    }
+
+    fn load_pull_request_code(&self, page: Entity<Page>, cx: &mut Context<Self>) {
+        let generation = page.read(cx).detail_generation;
+        let (Some(account), Some(identity)) = (
+            page.read(cx).account().cloned(),
+            page.read(cx).selected.clone(),
+        ) else {
+            page.update(cx, |page, cx| {
+                page.apply_code(generation, Err("GitHub access is unavailable".into()), cx)
+            });
+            return;
+        };
+        let service = self.host.clone();
+        let load = cx.background_spawn(async move {
+            let response = host::json_body(&service.fetch(&host::Request::post(
+                "gh-pr-patch",
+                Some(json!({"account": account, "pullRequest": identity})),
+            ))?)?;
+            response["diff"]
+                .as_str()
+                .map(str::to_owned)
+                .context("GitHub returned no patch")
+        });
+        cx.spawn(async move |_, cx| {
+            let result = load.await.map_err(|error| format!("{error:#}"));
+            page.update(cx, |page, cx| page.apply_code(generation, result, cx));
         })
         .detach();
     }

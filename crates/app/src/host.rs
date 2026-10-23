@@ -1292,7 +1292,9 @@ impl Host for LocalHost {
                 git::fetch(endpoint, &params)?
             }
             "gh-cli-status" | "gh-current-user" | "gh-pr-search" | "gh-pr-detail"
-            | "gh-pr-media" => github_pull_requests::fetch(self, endpoint, &params)?,
+            | "gh-pr-patch" | "gh-pr-media" => {
+                github_pull_requests::fetch(self, endpoint, &params)?
+            }
             "create-worktree" => self.create_worktree(&params)?,
             "set-worktree-owner-thread" | "worktree-set-owner-thread" => {
                 let worktree = params["worktree"].as_str().context("missing worktree")?;

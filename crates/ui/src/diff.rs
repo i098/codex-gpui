@@ -254,6 +254,7 @@ pub struct DiffPanel {
     filter_focus: Option<FocusHandle>,
     scroll: ScrollHandle,
     standalone: bool,
+    container_width: Option<Pixels>,
     base_branch: Option<String>,
     commit: Option<String>,
 }
@@ -359,8 +360,16 @@ impl DiffPanel {
             filter_focus: None,
             scroll: ScrollHandle::new(),
             standalone: false,
+            container_width: None,
             base_branch: None,
             commit: None,
+        }
+    }
+
+    pub fn set_container_width(&mut self, width: Pixels, cx: &mut Context<Self>) {
+        if self.container_width != Some(width) {
+            self.container_width = Some(width);
+            cx.notify();
         }
     }
 
@@ -1108,11 +1117,13 @@ impl DiffPanel {
 impl Render for DiffPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let width = if self.standalone {
-            window.viewport_size().width
-        } else {
-            panel_width(window, cx) - px(1.)
-        };
+        let width = self.container_width.unwrap_or_else(|| {
+            if self.standalone {
+                window.viewport_size().width
+            } else {
+                panel_width(window, cx) - px(1.)
+            }
+        });
         let wide = width >= px(625.);
         let tree = self.show_tree.then(|| self.file_tree(width, window, cx));
         let code_width = width

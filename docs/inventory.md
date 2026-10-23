@@ -120,15 +120,51 @@ The executable also accepts `/pull-requests` and `/pull-requests/<host>/<owner>/
 The host runs GitHub CLI reads through the existing app-server `process/spawn` connection.
 Missing CLI, unavailable access, empty results, loading, and partial failures remain distinct states.
 Ask Codex fills a new chat draft; it does not install software or start a turn.
-The detail panel shows the description, branches, checks, and supported GitHub attachment images.
+Summary shows the author, branches, reviewers, review-comment counts, checks, status, and description.
+Descriptions preserve source line breaks and render Markdown tables with copy controls.
+Code loads the authenticated read-only patch into the existing diff view; a failed load preserves Summary and offers retry.
+The detail toolbar expands the workspace pane without changing the operating system's fullscreen state.
 Media requests validate HTTPS hosts and stop at the size limit.
-Each page loads at most eight attachment previews, one at a time, including when the selected request changes.
+Each selected request has at most eight attachment previews.
+Each page runs one preview job at a time, including when the selected request changes.
 Image decoding runs off the UI thread with a 64 MiB per-image limit and a 512 MiB retention limit.
 Video attachments show the original `Preview unavailable` card and `Open in GitHub` action instead of an inline player.
 The host rejects video content before downloading its body.
 `fixtures/pull-requests.json` retains scoped GitHub reads for `i098/codex-gpui`, with original response normalization and no credential tokens.
 
 Implementation: `crates/app/src/pull_requests.rs`, `crates/app/src/host/github_pull_requests.rs`, and `crates/ui/src/screens/pull_requests.rs`.
+
+### 3.2 Browser image-error resource
+
+Failed author avatars use Chromium's original `IDR_BROKENIMAGE` resource, not pixels copied from a reference screenshot.
+The embedded 100% asset is [broken_image.png](https://chromium.googlesource.com/chromium/src/+/a49e2e3d4addfd84e765b52afe230bedb81096db/third_party/blink/public/default_100_percent/blink/broken_image.png).
+Its SHA-256 is `efcb5c77b9b97421b60982637d0a3d1e352b0275f294be3c62173743b3f0d8ee`.
+The error box follows [HTMLImageFallbackHelper](https://chromium.googlesource.com/chromium/src/+/a49e2e3d4addfd84e765b52afe230bedb81096db/third_party/blink/renderer/core/html/html_image_fallback_helper.cc): a 16-pixel marker, one-pixel silver border, and one-pixel padding.
+Chromium retains this [image license notice](https://chromium.googlesource.com/chromium/src/+/a49e2e3d4addfd84e765b52afe230bedb81096db/content/shell/resources/README.txt):
+
+```text
+Copyright (C) 2003, 2004, 2005, 2006 Apple Computer, Inc.  All rights reserved.
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+THIS SOFTWARE IS PROVIDED BY APPLE COMPUTER, INC. ``AS IS'' AND ANY
+EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE COMPUTER, INC. OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 
 ## 4. Screen: Sidebar (thread list and search)
 
