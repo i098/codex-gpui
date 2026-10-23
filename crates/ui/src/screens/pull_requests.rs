@@ -1289,7 +1289,7 @@ impl Page {
 
     fn row(&self, item: &model::Item, show_author: bool, cx: &Context<Self>) -> Stateful<Div> {
         static STATS_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
-            std::sync::LazyLock::new(|| crate::diff::stats_features(12.));
+            std::sync::LazyLock::new(|| super::diff::stats_features(12.));
         let t = cx.theme();
         let identity = item.pull_request.clone();
         let selected = self.selected.as_ref() == Some(&identity);
