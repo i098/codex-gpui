@@ -38,6 +38,7 @@ pub fn icon_sized(name: &str, width: f32, height: f32, color: Hsla) -> Icon {
         composited: None,
         own_layer: false,
         runtime: false,
+        css_pixel_snap: false,
         transformation: None,
         interactivity: Interactivity::new(),
     }
@@ -56,6 +57,7 @@ pub struct Icon {
     composited: Option<Point<Pixels>>,
     own_layer: bool,
     runtime: bool,
+    css_pixel_snap: bool,
     transformation: Option<Transformation>,
     interactivity: Interactivity,
 }
@@ -93,10 +95,24 @@ impl Icon {
         self
     }
 
+    /// Snap an inline SVG root in CSS coordinates before device scaling.
+    /// Fitted images and explicitly transformed or composited icons keep their existing geometry.
+    pub fn css_pixel_snap(mut self) -> Self {
+        self.css_pixel_snap = true;
+        self
+    }
+
     /// Transforms the rendered icon without changing its layout or hitbox.
     pub fn with_transformation(mut self, transformation: Transformation) -> Self {
         self.transformation = Some(transformation);
         self
+    }
+
+    fn snaps_css_pixels(&self) -> bool {
+        self.css_pixel_snap
+            && self.transformation.is_none()
+            && self.composited.is_none()
+            && !self.own_layer
     }
 }
 
@@ -127,7 +143,7 @@ fn color_key(color: Hsla) -> String {
 }
 
 impl Element for Icon {
-    type RequestLayoutState = ();
+    type RequestLayoutState = LayoutId;
     type PrepaintState = Option<Hitbox>;
 
     fn id(&self) -> Option<ElementId> {
@@ -144,7 +160,7 @@ impl Element for Icon {
         inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
-    ) -> (LayoutId, ()) {
+    ) -> (LayoutId, LayoutId) {
         let layout_id = self.interactivity.request_layout(
             global_id,
             inspector_id,
@@ -152,7 +168,7 @@ impl Element for Icon {
             cx,
             |style, window, cx| window.request_layout(style, None, cx),
         );
-        (layout_id, ())
+        (layout_id, layout_id)
     }
 
     fn prepaint(
@@ -160,10 +176,10 @@ impl Element for Icon {
         global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut (),
+        _: &mut LayoutId,
         window: &mut Window,
         cx: &mut App,
-    ) -> Option<Hitbox> {
+    ) -> Self::PrepaintState {
         self.interactivity.prepaint(
             global_id,
             inspector_id,
@@ -180,11 +196,12 @@ impl Element for Icon {
         global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut (),
+        layout_id: &mut LayoutId,
         hitbox: &mut Option<Hitbox>,
         window: &mut Window,
         cx: &mut App,
     ) {
+        let (layout_id, css_pixel_snap) = (*layout_id, self.snaps_css_pixels());
         // The icon's own opacity goes into the color (and the fitted images' key).
         let opacity = self.interactivity.base_style.opacity.take().unwrap_or(1.);
         let (name, flip_x, own_layer) = (self.name.clone(), self.flip_x, self.own_layer);
@@ -202,8 +219,7 @@ impl Element for Icon {
                 let Some(color) = style.text.color.map(|c| c.opacity(opacity)) else {
                     return;
                 };
-                // Chromium snaps the svg origin to the nearest device pixel (half up) and
-                // rasterizes its box rounded up to whole device pixels.
+                // Fitted images use their existing device-pixel keys.
                 let scale = window.scale_factor();
                 let transform = transformation
                     .map(|value| value.into_matrix(bounds.center(), scale))
@@ -235,6 +251,19 @@ impl Element for Icon {
                         .ok();
                     return;
                 }
+                let paint_bounds = if css_pixel_snap {
+                    let origin = bounds.origin
+                        + point(
+                            window.layout_origin_residual_x(layout_id),
+                            window.layout_origin_residual_y(layout_id),
+                        );
+                    Bounds::new(
+                        origin.map(|coordinate| px(f32::from(coordinate).round())),
+                        bounds.size,
+                    )
+                } else {
+                    bounds
+                };
                 let path = format!("icons/{name}.svg");
                 if let Ok(Some(src)) = cx.asset_source().load(&path) {
                     let layer = composited.or(own_layer.then_some(bounds.origin));
@@ -254,7 +283,7 @@ impl Element for Icon {
                         shapes::paint_icon(
                             &src,
                             &path,
-                            Bounds::new(bounds.origin, css),
+                            Bounds::new(paint_bounds.origin, css),
                             flip_x,
                             color,
                             layer,
@@ -275,7 +304,7 @@ impl Element for Icon {
                         .translate(center.scale(-scale));
                 }
                 window
-                    .paint_svg(bounds, path.into(), None, matrix, color, cx)
+                    .paint_svg(paint_bounds, path.into(), None, matrix, color, cx)
                     .ok();
             },
         )

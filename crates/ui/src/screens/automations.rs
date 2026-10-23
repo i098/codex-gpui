@@ -755,6 +755,7 @@ impl ScheduledSidebar {
             .rounded(px(15.))
             .flex()
             .items_center()
+            .gap(px(6.))
             .when(self.menu_item == Some(1) && !off, |d| d.bg(hover))
             .when(off, |d| d.opacity(0.4))
             .when(!off, |d| {
@@ -762,6 +763,15 @@ impl ScheduledSidebar {
                     cx.listener(move |this, _, window, cx| this.run_now(&run_id, window, cx)),
                 )
             })
+            .child(
+                div()
+                    .size(px(16.))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("automation-run-now", 20., t.text).css_pixel_snap()),
+            )
             .child(text("Run now", 13., 18.5714, 430., t.text));
         let run = if triggered {
             tooltip(run, TRIGGER_TOOLTIP, None, Side::Right).into_any_element()
@@ -799,6 +809,7 @@ impl ScheduledSidebar {
         let edit_id = task.id.clone();
         let edit = div()
             .id("edit-automation")
+            .group("edit-automation-item")
             .role(Role::MenuItem)
             .aria_label("Edit")
             .h(px(28.5625))
@@ -806,8 +817,20 @@ impl ScheduledSidebar {
             .rounded(px(15.))
             .flex()
             .items_center()
+            .gap(px(6.))
             .when(self.menu_item == Some(2), |d| d.bg(hover))
             .hover(move |s| s.bg(hover))
+            .child(
+                div()
+                    .size(px(16.))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .opacity(if self.menu_item == Some(2) { 1. } else { 0.75 })
+                    .group_hover("edit-automation-item", |s| s.opacity(1.))
+                    .child(icon("automation-edit", 20., t.text).css_pixel_snap()),
+            )
             .child(text("Edit", 13., 18.5714, 430., t.text))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.close_menu(window, cx);
@@ -940,66 +963,13 @@ impl ScheduledSidebar {
         let group = SharedString::from(format!("task-row-{}", task.id));
         let id = task.id.clone();
         let management = self.management;
-        let pending = self.pending.contains(&task.id);
         let paused = task.status == "PAUSED";
-        let label = if paused { "Resume" } else { "Pause" };
-        let status_id = SharedString::from(format!("{group}-status"));
-        let status_focus = focus::handle(status_id.clone(), 0, window, cx);
         let menu_id = SharedString::from(format!("{group}-actions"));
         let menu_focus = focus::handle(menu_id.clone(), 0, window, cx);
-        let status_focused = status_focus.read(cx).handle.is_focused(window);
-        let status_focus_visible = status_focus.read(cx).is_focus_visible(window);
         let open = self.menu.as_deref() == Some(task.id.as_str());
-        let show_controls =
-            status_focus_visible || menu_focus.read(cx).is_focus_visible(window) || open;
-        let status_task = task.id.clone();
+        let show_controls = menu_focus.read(cx).is_focus_visible(window) || open;
         let (press_task, key_task) = (task.id.clone(), task.id.clone());
         let (press_return, key_return) = (menu_focus.clone(), menu_focus.clone());
-        let status = focus::ring(
-            div()
-                .id(status_id.clone())
-                .group(status_id.clone())
-                .role(Role::Button)
-                .aria_label(format!("{label} {}", task.name))
-                .aria_disabled(pending)
-                .relative()
-                .size(px(28.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(9.375))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(
-                    cx.listener(move |this, _, window, cx| this.toggle(&status_task, window, cx)),
-                )
-                .child(if pending {
-                    icon("sidebar-cmd-spinner", 16., t.text_tertiary).into_any_element()
-                } else if paused {
-                    status_icon(true, t.text_tertiary).into_any_element()
-                } else {
-                    div()
-                        .relative()
-                        .size(px(16.))
-                        .child(
-                            icon("scheduled", 16., t.text_tertiary)
-                                .opacity(if status_focused { 0. } else { 1. })
-                                .group_hover(status_id.clone(), |s| s.opacity(0.)),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .inset_0()
-                                .opacity(if status_focused { 1. } else { 0. })
-                                .group_hover(status_id.clone(), |s| s.opacity(1.))
-                                .child(status_icon(false, t.text_tertiary)),
-                        )
-                        .into_any_element()
-                }),
-            &status_focus,
-            px(9.375),
-            px(2.),
-            cx,
-        );
         let menu = focus::ring(
             div()
                 .id(menu_id)
@@ -1119,14 +1089,6 @@ impl ScheduledSidebar {
                     .justify_end()
                     .opacity(if show_controls { 1. } else { 0. })
                     .group_hover(group.clone(), |s| s.opacity(1.))
-                    .child(tooltip(
-                        status
-                            .opacity(if status_focus_visible { 1. } else { 0. })
-                            .group_hover(group.clone(), |s| s.opacity(1.)),
-                        label,
-                        None,
-                        Side::Top,
-                    ))
                     .child(menu),
             )
     }

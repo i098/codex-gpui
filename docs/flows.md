@@ -892,6 +892,11 @@ The `host` checks match the retained original oracle.
 AM-022, AM-023 and AM-028 use the existing sidebar task list.
 The `Scheduled task actions` menu opens under the row button like the original (right edge 1 px inside the button, 220 px wide).
 `Pause` or `Resume` is the first item, before `Run now`, as in the original.
+`Run now` and `Edit` use the original 20 px icons inside 16 px slots with 6 px text gaps.
+The Edit icon has 75 percent opacity until hover or keyboard focus.
+Both icons restore their raw layout origins and snap their inline SVG roots in CSS coordinates before device scaling.
+The local sidebar has no separate status button because Pause and Resume belong to this menu.
+`s037::task_menu_renders_run_now_and_edit_icons` checks native icon pixels, opacity, and the missing duplicate control.
 
 Task delete (AM-026, AM-027) is the last item of the row menu, after Pause / Resume, Run now, Edit, and Share.
 The dialog `Delete {name}?` names the task the host lists, starts on `Cancel`, and sends nothing until `Delete scheduled task`.
@@ -907,11 +912,12 @@ The user can retry from the same confirmation or cancel without losing the task.
 The failure toast has no description for an unsuccessful host response and shows the error message for a failed host request.
 The page-list row's inline delete icon and tooltip (AM-029) belong to the original page list, which the native route does not draw.
 `crates/app/tests/task_delete.rs` proves the host contract in disposable stores and, on macOS, the native Escape, Cancel, confirm, failed removal and retry path.
-The row status control shows `Pause` or `Resume` on hover or keyboard focus, with a named accessible action.
+The first menu item provides the named `Pause` or `Resume` action.
 Both send `automation-update` with the original cron or heartbeat request, block duplicate writes and refetch the list.
 Success shows `Successfully paused automation` or `Successfully resumed automation`; the row shows `Paused` only after the host reports PAUSED.
 An error keeps the stored state and shows `Could not update scheduled task` with the host error description.
-`s037::task_status_controls_persist_through_the_real_local_host` pauses through the menu with keyboard events, restarts the app on a fresh `LocalHost`, resumes with the pointer and fails a real definition write.
+`s037::task_status_controls_persist_through_the_real_local_host` pauses through the menu and restarts the app on a fresh `LocalHost`.
+It resumes through the menu and fails a real definition write.
 It checks the TOML, the database row, the recalculated next run and the unchanged task fields.
 It uses an isolated headless native Root and a task-owned `CODEX_HOME`, not an installed window.
 
@@ -959,7 +965,7 @@ A profile without the original database saves the definition without creating a 
 | 8 | Row actions | click | Pause / Resume, Run now, Edit, Share, Delete. | All five actions use the existing host paths. Delete requires confirmation. | PARTIAL (composed source; full-menu pixel proof pending) |
 | 9 | Editor fields | focus | Name, Prompt, schedule. | Editable Name and multiline Prompt, six schedule modes, custom frequencies, time presets, and day fields persist through the existing host. | PASS (`task_create::editor`, `host`) |
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
-| 11 | Row hover | hover | Row highlight. | The recorded row fill and actions match; the status icon changes to Pause on hover or keyboard focus. | PASS (`s037::task_row_hover_and_click_match_original`; suggestion hover: `s035::suggestion_hover_matches_original`) |
+| 11 | Row hover | hover | Row highlight. | The row shows its actions menu button; Pause and Resume stay inside the menu. | PASS (`s037::task_row_hover_and_click_match_original`; suggestion hover: `s035::suggestion_hover_matches_original`) |
 | 12 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
 | 13 | No tasks | empty | `No scheduled tasks`, suggestions. | `No scheduled tasks`, server suggestions and distinct landing examples, up to six cards. | PASS (`rail_scheduled`, `parity_automations`, `host::scheduled_suggestions_follow_late_reads_and_host_replacement`) |
 | 14 | Loading | loading | `Loading scheduled tasks…`. | — | NOT WIRED (no host: `list-automations`) |

@@ -103,6 +103,64 @@ fn task_row_hover_and_click_match_original() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn task_menu_renders_run_now_and_edit_icons() -> Result<()> {
+    use anyhow::{Context as _, ensure};
+    use common::{Fx, RAIL_SCHEDULED};
+    use std::{sync::Arc, time::Duration};
+
+    let recording: Value = serde_json::from_str(RECORDING)?;
+    let mut fx = Fx::new()?;
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.set_host(Arc::new(Fixture(recording["fixture"].clone())), cx)
+    });
+    fx.click(RAIL_SCHEDULED)?;
+    fx.wait("host automation list", |fx| {
+        fx.read(|root, _| root.automations().is_some())
+    })?;
+    fx.hover((150., 190.))?;
+    fx.click((310., 192.))?;
+    fx.advance(Duration::from_millis(300))?;
+    let image = fx.shot()?;
+    let row_background = image.get_pixel(540, 383);
+    ensure!(
+        (370..398).all(|y| (548..582).all(|x| image.get_pixel(x, y) == row_background)),
+        "the row has a separate status control"
+    );
+
+    let check = |fx: &mut Fx, points: &[(u32, u32, u8)]| -> Result<()> {
+        let image = fx.shot()?;
+        ensure!(image.dimensions() == (2560, 1664));
+        for &(x, y, expected) in points {
+            let actual = image.get_pixel(x, y).0;
+            ensure!(
+                actual[..3] == [expected; 3],
+                "menu pixel ({x}, {y}): {actual:?}, expected {expected}"
+            );
+        }
+        Ok(())
+    };
+    check(
+        &mut fx,
+        &[
+            (251, 496, 255),
+            (232, 514, 255),
+            (252, 551, 202),
+            (244, 558, 202),
+            (232, 577, 202),
+        ],
+    )
+    .context("normal icon paint")?;
+    fx.keys("home down down")?;
+    check(&mut fx, &[(252, 551, 255), (244, 558, 255)]).context("keyboard focus")?;
+    fx.keys("escape")?;
+    fx.click((310., 192.))?;
+    fx.hover((122., 278.))?;
+    fx.advance(Duration::from_millis(300))?;
+    check(&mut fx, &[(252, 551, 255), (244, 558, 255)]).context("pointer hover")?;
+    Ok(())
+}
+
 struct ObservedLocal {
     local: app::host::LocalHost,
     requests: parking_lot::Mutex<Vec<Request>>,
@@ -346,9 +404,10 @@ fn task_status_controls_persist_through_the_real_local_host() -> Result<()> {
     fx.wait("restarted list", |fx| root_status(fx, cron) == "PAUSED")?;
     shot(&mut fx, "4-restarted")?;
 
-    // AM-023 and AM-028: the inline row control resumes and recalculates the next run.
+    // AM-023 and AM-028: the menu resumes and recalculates the next run.
     let start = chrono::Utc::now().timestamp_millis();
-    fx.click((282., 192.))?;
+    fx.click((310., 192.))?;
+    fx.keys("home enter")?;
     fx.wait("resume success", |fx| {
         toast_count(fx, "Successfully resumed automation") == 1
     })?;
@@ -373,7 +432,8 @@ fn task_status_controls_persist_through_the_real_local_host() -> Result<()> {
     let directory = home.path().join("automations").join(heartbeat);
     fs::set_permissions(&directory, fs::Permissions::from_mode(0o555))?;
     let restore = ReadOnlyDirectory(directory);
-    fx.click((282., 241.))?;
+    fx.click((310., 241.))?;
+    fx.keys("home enter")?;
     fx.wait("update error", |fx| {
         toast_count(fx, "Could not update scheduled task") == 1
     })?;
