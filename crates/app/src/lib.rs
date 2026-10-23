@@ -2421,33 +2421,7 @@ impl Root {
                                 return;
                             }
                             match result {
-                                Ok(item) => {
-                                    this.automation_editor = None;
-                                    window.focus(&this.focus, cx);
-                                    if let Some(Ok(list)) = &mut this.automations
-                                        && let Some(items) = list["items"].as_array_mut()
-                                    {
-                                        if let Some(stored) =
-                                            items.iter_mut().find(|v| v["id"] == item["id"])
-                                        {
-                                            *stored = item.clone();
-                                        } else {
-                                            items.push(item.clone());
-                                        }
-                                    }
-                                    let route =
-                                        Route::Automation(item["id"].as_str().unwrap().to_owned());
-                                    if this.state.route == route {
-                                        this.sync(window, cx);
-                                    } else {
-                                        this.navigate(route, window, cx);
-                                    }
-                                    this.load_automations(cx);
-                                    this.toast(
-                                        Toast::success("Successfully saved scheduled task"),
-                                        cx,
-                                    );
-                                }
+                                Ok(item) => this.finish_automation_save(item, window, cx),
                                 Err(error) => editor.update(cx, |editor, cx| {
                                     editor.failed(format!("Couldn’t save task: {error}"), cx)
                                 }),
@@ -2484,6 +2458,28 @@ impl Root {
                 );
             });
         }
+    }
+
+    fn finish_automation_save(&mut self, item: Value, window: &mut Window, cx: &mut Context<Self>) {
+        self.automation_editor = None;
+        window.focus(&self.focus, cx);
+        if let Some(Ok(list)) = &mut self.automations
+            && let Some(items) = list["items"].as_array_mut()
+        {
+            if let Some(stored) = items.iter_mut().find(|v| v["id"] == item["id"]) {
+                *stored = item.clone();
+            } else {
+                items.push(item.clone());
+            }
+        }
+        let route = Route::Automation(item["id"].as_str().unwrap().to_owned());
+        if self.state.route == route {
+            self.sync(window, cx);
+        } else {
+            self.navigate(route, window, cx);
+        }
+        self.load_automations(cx);
+        self.toast(Toast::success("Successfully saved scheduled task"), cx);
     }
 
     pub fn automation_editor(&self) -> Option<&Entity<automations::editor::Editor>> {

@@ -938,18 +938,7 @@ impl LocalHost {
         let mut item = definition(id, &original)?;
         let mut raw: toml::Table = toml::from_str(&original)?;
         ensure!(item["status"] != "DELETED", "{missing}");
-        for (key, value) in params
-            .as_object()
-            .context("host parameters must be an object")?
-        {
-            if matches!(key.as_str(), "id" | "status" | "hostId") {
-                continue;
-            }
-            if AUTOMATION_EDIT_FIELDS.iter().any(|(name, _)| *name == key) || key == "projectId" {
-                continue;
-            }
-            ensure!(item[key] == *value, "automation update cannot change {key}");
-        }
+        validate_automation_edits(&item, params)?;
         patch_automation(&mut raw, params, Some(&item))?;
         let previous = item;
         item = definition(id, &toml::to_string(&raw)?)?;
@@ -2035,6 +2024,22 @@ const AUTOMATION_EDIT_FIELDS: &[(&str, &str)] = &[
     ),
 ];
 
+fn validate_automation_edits(item: &Value, params: &Value) -> Result<()> {
+    for (key, value) in params
+        .as_object()
+        .context("host parameters must be an object")?
+    {
+        if matches!(key.as_str(), "id" | "status" | "hostId") {
+            continue;
+        }
+        if AUTOMATION_EDIT_FIELDS.iter().any(|(name, _)| *name == key) || key == "projectId" {
+            continue;
+        }
+        ensure!(item[key] == *value, "automation update cannot change {key}");
+    }
+    Ok(())
+}
+
 fn patch_automation(raw: &mut toml::Table, params: &Value, previous: Option<&Value>) -> Result<()> {
     for &(field, stored) in AUTOMATION_EDIT_FIELDS {
         let Some(value) = params.get(field) else {
@@ -2077,6 +2082,15 @@ fn patch_automation(raw: &mut toml::Table, params: &Value, previous: Option<&Val
         }
         raw.insert(stored.to_owned(), value);
     }
+    patch_automation_project(raw, params, previous)?;
+    reconcile_automation_kind(raw, previous)
+}
+
+fn patch_automation_project(
+    raw: &mut toml::Table,
+    params: &Value,
+    previous: Option<&Value>,
+) -> Result<()> {
     if let Some(project) = params.get("projectId")
         && (previous.is_none_or(|item| item["target"]["projectId"] != *project)
             || params.get("cwds").is_some())
@@ -2103,6 +2117,10 @@ fn patch_automation(raw: &mut toml::Table, params: &Value, previous: Option<&Val
             raw.insert("target".into(), toml::Value::try_from(target)?);
         }
     }
+    Ok(())
+}
+
+fn reconcile_automation_kind(raw: &mut toml::Table, previous: Option<&Value>) -> Result<()> {
     let kind = raw
         .get("kind")
         .and_then(toml::Value::as_str)
