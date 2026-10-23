@@ -1,6 +1,6 @@
 use super::*;
 use crate::{focus, screens::settings::button};
-use gpui::{AnyElement, ClipboardItem};
+use gpui::{AnyElement, ClipboardItem, Div};
 
 impl Page {
     pub(super) fn render_page(
