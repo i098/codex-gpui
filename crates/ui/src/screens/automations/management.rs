@@ -212,7 +212,7 @@ impl Management {
                             .child(text(next, 12., 16., 430., t.text_secondary).flex_none())
                             .child(text("·", 12., 16., 430., t.text_secondary).flex_none())
                             .child(
-                                text(task.schedule(), 12., 16., 430., t.text_secondary)
+                                text(schedule_summary(&task.rrule), 12., 16., 430., t.text_secondary)
                                     .min_w_0()
                                     .overflow_hidden()
                                     .text_ellipsis(),
@@ -514,7 +514,7 @@ impl Render for Management {
                                                     .text_ellipsis(),
                                             )
                                             .child(text(
-                                                task.schedule(),
+                                                schedule_summary(&task.rrule),
                                                 13.,
                                                 20.,
                                                 430.,

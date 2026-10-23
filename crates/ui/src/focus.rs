@@ -68,7 +68,7 @@ pub fn inset_outline(
     window: &Window,
     cx: &App,
 ) -> AnyElement {
-    let visible = focus.read(cx).visible(window);
+    let visible = focus.read(cx).is_focus_visible(window);
     let control = ring(control, focus, radius, RING_WIDTH + offset, cx);
     if visible {
         crate::composited_bounds(control.top_layer()).into_any_element()
