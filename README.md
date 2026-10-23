@@ -402,6 +402,7 @@ Full view initially focuses the content pane and keeps a compact composer availa
 The Chat tab restores the transcript without closing content tabs or losing the draft.
 Find in full view searches the visible Changes panel, not the hidden chat.
 These commands do not create a browser tab when no content tab is open.
+Expanded diff lines preserve syntax-span positioning while supporting selection, copy, search highlights, and line wrapping.
 Run `cargo test -p app --test workspace_layout -- --test-threads=1` for the native interaction checks.
 
 `LocalHost` serves `native-desktop-apps` and `native-desktop-app-by-bundle-id` through the desktop fetch boundary.

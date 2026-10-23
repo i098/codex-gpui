@@ -2836,7 +2836,92 @@ fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
     }
 }
 
-fn word_mark(line: &Line, layout: gpui::TextLayout, t: &Theme) -> Option<gpui::AnyElement> {
+#[derive(Clone)]
+struct CodeLineLayout(Arc<Vec<(Range<usize>, gpui::TextLayout)>>);
+
+impl CodeLineLayout {
+    fn position_for_index(&self, index: usize) -> Option<gpui::Point<Pixels>> {
+        let (range, layout) = self
+            .0
+            .iter()
+            .find(|(range, _)| range.contains(&index))
+            .or_else(|| self.0.last().filter(|(range, _)| index == range.end))?;
+        layout.position_for_index(index - range.start)
+    }
+
+    fn index_for_position(&self, point: gpui::Point<Pixels>) -> Result<usize, usize> {
+        for (range, layout) in self.0.iter() {
+            if point.x <= layout.bounds().right() {
+                return layout
+                    .index_for_position(point)
+                    .map(|index| range.start + index)
+                    .map_err(|index| range.start + index);
+            }
+        }
+        Err(self.0.last().map_or(0, |(range, _)| range.end))
+    }
+}
+
+fn code_line(
+    line: &SharedString,
+    tokens: Vec<(Range<usize>, HighlightStyle)>,
+    highlights: Vec<(Range<usize>, HighlightStyle)>,
+    foreground: Hsla,
+    wrap: bool,
+) -> (gpui::AnyElement, CodeLineLayout) {
+    if wrap || tokens.is_empty() {
+        let text =
+            StyledText::new(line.clone()).with_highlights(combine_highlights(tokens, highlights));
+        let layout = CodeLineLayout(Arc::new(vec![(0..line.len(), text.layout().clone())]));
+        return (text.into_any_element(), layout);
+    }
+    let mut spans: Vec<(Range<usize>, Hsla)> = Vec::new();
+    let mut end = 0;
+    for (range, style) in tokens {
+        let color = style.color.unwrap_or(foreground);
+        let gap = &line[end..range.start];
+        let start = if gap.chars().all(char::is_whitespace) {
+            end
+        } else {
+            range.start
+        };
+        if start > end {
+            spans.push((end..start, foreground));
+        }
+        if let Some((previous, previous_color)) = spans.last_mut()
+            && *previous_color == color
+            && previous.end == range.start
+            && gap.is_empty()
+        {
+            previous.end = range.end;
+        } else {
+            spans.push((start..range.end, color));
+        }
+        end = range.end;
+    }
+    if end < line.len() {
+        spans.push((end..line.len(), foreground));
+    }
+    let mut layouts = Vec::with_capacity(spans.len());
+    let mut element = div().flex().items_center();
+    for (range, color) in spans {
+        let text = StyledText::new(line[range.clone()].to_owned()).with_highlights(
+            highlights.iter().filter_map(|(highlight, style)| {
+                let start = highlight.start.max(range.start);
+                let end = highlight.end.min(range.end);
+                (start < end).then(|| (start - range.start..end - range.start, *style))
+            }),
+        );
+        layouts.push((range, text.layout().clone()));
+        element = element.child(div().flex_none().text_color(color).child(text));
+    }
+    (
+        element.into_any_element(),
+        CodeLineLayout(Arc::new(layouts)),
+    )
+}
+
+fn word_mark(line: &Line, layout: CodeLineLayout, t: &Theme) -> Option<gpui::AnyElement> {
     let range = line.word_change.clone()?;
     let text = line.text.clone();
     let color = if line.kind == Kind::Added {
@@ -2966,7 +3051,7 @@ fn hunk(
     let row = |number: Option<u32>,
                (number_bg, number_fg): (Hsla, Hsla),
                bg: Hsla,
-               content: StyledText,
+               content: gpui::AnyElement,
                mark: Option<gpui::AnyElement>,
                bar: Option<Kind>| {
         div()
@@ -3064,11 +3149,8 @@ fn hunk(
         } else {
             highlight(&l.text, &syntax)
         };
-        let content = StyledText::new(l.text.clone()).with_highlights(combine_highlights(
-            combine_highlights(combine_highlights(tokens, word), found),
-            selection,
-        ));
-        let down_layout = content.layout().clone();
+        let highlights = combine_highlights(combine_highlights(word, found), selection).collect();
+        let (content, down_layout) = code_line(&l.text, tokens, highlights, foreground, panel.wrap);
         let move_layout = down_layout.clone();
         let mark = word_mark(l, down_layout.clone(), t);
         row(
@@ -3130,13 +3212,15 @@ fn hunk(
                 None,
                 (separator, t.text_tertiary),
                 separator,
-                StyledText::new(label).with_highlights([(
-                    0..len,
-                    HighlightStyle {
-                        color: Some(t.text_tertiary),
-                        ..Default::default()
-                    },
-                )]),
+                StyledText::new(label)
+                    .with_highlights([(
+                        0..len,
+                        HighlightStyle {
+                            color: Some(t.text_tertiary),
+                            ..Default::default()
+                        },
+                    )])
+                    .into_any_element(),
                 None,
                 None,
             ))

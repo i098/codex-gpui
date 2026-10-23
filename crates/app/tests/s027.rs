@@ -67,6 +67,11 @@ fn diff_selection_and_hover_replay() -> Result<()> {
     fx.click(fx.at("sidebar", "Add a subtract")?)?;
     fx.wait_thread(common::SUBTRACT)?;
     fx.click(fx.at("thread", "View changes")?)?;
+    let panel = fx.read(|root, _| root.diff_panel().unwrap().clone());
+    panel.update(&mut fx.cx, |panel, cx| {
+        panel.view_changes("/private/tmp/cgx-mac/proj/src/math.py", cx);
+    });
+    fx.cx.run_until_parked();
     let requests_before = fx.sent()?.len();
     let steps = recording["steps"].as_array().context("steps")?;
     let header = steps
