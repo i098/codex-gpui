@@ -96,7 +96,7 @@ pub mod dictation;
 mod editor;
 mod footer;
 mod requests;
-mod menu {
+pub(crate) mod menu {
     //! Focus rules for the recorded Radix menus: arrows stop at the ends, Escape returns
     //! focus to the trigger, and Enter or Space activates the focused item.
 
@@ -185,7 +185,7 @@ mod menu {
         }
     }
 
-    pub(super) fn trigger_focus(style: StyleRefinement) -> StyleRefinement {
+    pub(crate) fn trigger_focus(style: StyleRefinement) -> StyleRefinement {
         style.shadow(vec![BoxShadow {
             color: rgb(0x3a83f7).into(),
             offset: point(px(0.), px(0.)),
@@ -604,6 +604,13 @@ const QUEUE_ACTIONS: &str = "Queued message actions";
 const QUEUE_EDIT: &str = "queuedEdit";
 const QUEUE_SWITCH: &str = "queuedQueueing";
 const QUEUE_MENU_WIDTH: f32 = 220.;
+
+#[derive(Clone, Copy)]
+struct EmbeddedField {
+    font_size: Pixels,
+    line_height: Pixels,
+}
+
 pub struct Composer {
     focus_handle: FocusHandle,
     placeholder: SharedString,
@@ -659,6 +666,9 @@ pub struct Composer {
     request_drafts: Vec<(Rc<RequestIdentity>, RequestDraft)>,
     request_focus_pending: bool,
     request_compact: bool,
+    /// The sign-in `input`'s text color (set by [`Self::set_compact_field`]); its placeholder
+    /// is `text-tertiary` at full opacity.
+    field_text: Option<Hsla>,
     request_number: bool,
     request_label: Option<SharedString>,
     secret: bool,
@@ -684,6 +694,7 @@ pub struct Composer {
     field_resize: Option<(Pixels, Pixels)>,
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
+    embedded_field: Option<EmbeddedField>,
 }
 
 impl Composer {
@@ -747,6 +758,7 @@ impl Composer {
             request_drafts: Vec::new(),
             request_focus_pending: false,
             request_compact: false,
+            field_text: None,
             request_number: false,
             request_label: None,
             secret: false,
@@ -766,6 +778,7 @@ impl Composer {
             field_resize: None,
             dictation: None,
             dictation_error: None,
+            embedded_field: None,
         }
     }
 
@@ -781,13 +794,37 @@ impl Composer {
         editor
     }
 
+    pub fn embedded_field(
+        placeholder: &'static str,
+        value: &str,
+        text_size: Pixels,
+        line_height: Pixels,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut editor = Self::settings_field(placeholder, value, false, cx);
+        editor.embedded_field = Some(EmbeddedField {
+            font_size: text_size,
+            line_height,
+        });
+        editor
+    }
+
     pub fn with_field_min_height(mut self, height: Pixels) -> Self {
         self.field_min_height = height;
         self
     }
 
+    /// 13 px text and 10 px insets: a settings textarea, a sign-in field, or a compact request
+    /// field that is not secret.
+    fn compact_text(&self) -> bool {
+        self.plain_field == Some(true)
+            || (self.request_compact && (self.request_parent.is_none() || !self.secret))
+    }
+
     fn editor_font_size(&self) -> Pixels {
-        if self.plain_field == Some(true) || (self.request_compact && !self.secret) {
+        if let Some(field) = self.embedded_field {
+            field.font_size
+        } else if self.compact_text() {
             px(13.)
         } else {
             FONT_SIZE
@@ -795,7 +832,9 @@ impl Composer {
     }
 
     fn editor_line_height(&self) -> Pixels {
-        if self.plain_field == Some(true) {
+        if let Some(field) = self.embedded_field {
+            field.line_height
+        } else if self.plain_field == Some(true) {
             px(130. / 7.)
         } else {
             LINE_HEIGHT
@@ -804,6 +843,22 @@ impl Composer {
 
     pub fn field_text(&self) -> &str {
         &self.content
+    }
+
+    pub fn set_secret(&mut self, secret: bool, cx: &mut Context<Self>) {
+        self.secret = secret;
+        cx.notify();
+    }
+
+    pub fn set_field_label(&mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.request_label = Some(label.into());
+        cx.notify();
+    }
+
+    pub(crate) fn set_compact_field(&mut self, text: Hsla, cx: &mut Context<Self>) {
+        self.request_compact = true;
+        self.field_text = Some(text);
+        cx.notify();
     }
 
     pub fn message_edit(
@@ -2013,6 +2068,15 @@ impl Render for Composer {
             .on_action(cx.listener(Self::next_command))
             .on_action(cx.listener(Self::previous_command))
             .relative();
+        if self.embedded_field.is_some() {
+            return div().w_full().child(
+                card.key_context(KEY_CONTEXT)
+                    .role(gpui::Role::TextInput)
+                    .aria_label(self.placeholder.clone())
+                    .aria_value(self.content.clone())
+                    .child(self.editor(cx)),
+            );
+        }
         if self.plain_field.is_some() {
             let card = if self.plain_field == Some(true) {
                 let border = if self.focus_handle.is_focused(window) {
@@ -2031,13 +2095,40 @@ impl Render for Composer {
                     }))
             } else {
                 card.key_context(KEY_CONTEXT)
-                    .when(self.request_parent.is_none(), |d| {
-                        d.border_1()
-                            .border_color(t.border)
-                            .focus_visible(|style| style.border_color(gpui::rgb(0x3a83f7)))
-                            .rounded(px(8.))
-                            .bg(t.background_panel)
+                    .when(
+                        self.request_parent.is_none() && !self.request_compact,
+                        |d| {
+                            d.border_1()
+                                .border_color(t.border)
+                                .focus_visible(|style| style.border_color(gpui::rgb(0x3a83f7)))
+                                .rounded(px(8.))
+                                .bg(t.background_panel)
+                                .py(px(8.))
+                        },
+                    )
+                    .when(self.request_parent.is_none() && self.request_compact, |d| {
+                        // The sign-in `input`: `rounded-md bg-primary-soft border
+                        // border-primary-outline focus:border-ring`, `--codex-corner-shape`.
+                        d.px(px(1.))
                             .py(px(8.))
+                            .child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(Theme::RADIUS_MD),
+                                corner: shapes::Corner::Squircle,
+                                fill: Some(if t.appearance == Appearance::Dark {
+                                    gpui::rgba(0x2d2d2df5).into()
+                                } else {
+                                    t.background_panel
+                                }),
+                                border: Some((
+                                    px(1.),
+                                    if self.focus_handle.is_focused(window) {
+                                        gpui::rgba(0x83c3ffc2).into()
+                                    } else {
+                                        t.border_strong
+                                    },
+                                )),
+                                ..Default::default()
+                            }))
                     })
                     .when(self.request_parent.is_some(), |d| {
                         d.px(px(1.))
@@ -2059,28 +2150,23 @@ impl Render for Composer {
                                 ..Default::default()
                             }))
                     })
-                    .when(self.request_parent.is_some(), |d| {
-                        d.role(if self.secret {
-                            gpui::Role::PasswordInput
-                        } else {
-                            gpui::Role::TextInput
-                        })
-                        .aria_label(
-                            self.request_label
-                                .as_ref()
-                                .unwrap_or(&self.placeholder)
-                                .clone(),
-                        )
-                        .aria_placeholder(self.placeholder.clone())
-                        .when(!self.secret, |d| d.aria_value(self.content.clone()))
+                    .role(if self.secret {
+                        gpui::Role::PasswordInput
+                    } else {
+                        gpui::Role::TextInput
                     })
+                    .aria_label(
+                        self.request_label
+                            .as_ref()
+                            .unwrap_or(&self.placeholder)
+                            .clone(),
+                    )
+                    .aria_placeholder(self.placeholder.clone())
+                    .when(!self.secret, |d| d.aria_value(self.content.clone()))
             };
             let card = card
                 .child(
                     self.editor(cx)
-                        .when(self.request_parent.is_none(), |editor| {
-                            editor.min_h(self.field_min_height)
-                        })
                         .when(self.request_number, |editor| editor.pr(px(30.))),
                 )
                 .when(self.request_number, |d| {
