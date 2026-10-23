@@ -390,10 +390,10 @@ fn load_plugin_icons(
             let url = plugin["interface"]["logoUrlDark"]
                 .as_str()
                 .or_else(|| plugin["interface"]["logoUrl"].as_str());
-            if let Some(url) = url {
-                if let Ok(data) = load_icon(host, url) {
-                    plugin["iconDataUrl"] = data.into();
-                }
+            if let Some(url) = url
+                && let Ok(data) = load_icon(host, url)
+            {
+                plugin["iconDataUrl"] = data.into();
             }
         }
     }
