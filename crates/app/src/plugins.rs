@@ -305,8 +305,8 @@ impl Root {
                             settings
                                 .read_all()
                                 .get("has-opened-skill-creator-prefill-v1")
+                                .and_then(Value::as_bool)
                         })
-                        .and_then(Value::as_bool)
                         .unwrap_or(false);
                     if !seen {
                         let result =
