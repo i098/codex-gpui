@@ -39,10 +39,22 @@ fn open_changes(fx: &mut Fx) -> Result<()> {
         );
         let panel = root.diff_panel().expect("Changes panel").clone();
         panel.update(cx, |panel, cx| {
-            panel.view_changes("src/math.py", cx);
+            panel.view_changes("/private/tmp/cgx-mac/proj/src/math.py", cx);
         });
     });
     fx.cx.run_until_parked();
+    ensure!(
+        fx.read(|root, cx| {
+            root.diff_panel().is_some_and(|panel| {
+                panel
+                    .read(cx)
+                    .files
+                    .iter()
+                    .any(|file| file.name == "math.py" && file.open)
+            })
+        }),
+        "The expanded fixture must open math.py"
+    );
     Ok(())
 }
 
