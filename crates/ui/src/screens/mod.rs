@@ -11,5 +11,6 @@ pub mod mobile;
 pub mod pull_requests;
 pub mod settings;
 pub mod sidebar;
+pub mod signin;
 pub mod terminal;
 pub mod thread;
