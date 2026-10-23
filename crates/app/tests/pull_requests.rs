@@ -257,6 +257,7 @@ fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
         page.set_detail_tab(DetailTab::Summary, cx)
     });
     if cfg!(target_os = "macos") {
+        let default_pane = fx.reference_shot()?;
         let original_fullscreen = fx
             .cx
             .update_window(fx.window, |_, window, _| window.is_fullscreen())?;
@@ -269,6 +270,12 @@ fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
             "The workspace control must not change OS fullscreen state",
         );
         fx.click((1246., 67.))?;
+        let restored_pane = fx.reference_shot()?;
+        assert!(
+            default_pane.as_raw() == restored_pane.as_raw(),
+            "Restoring the workspace pane must restore its default pixels",
+        );
+        capture(&mut fx, "detail-restored")?;
     }
     host.switched.store(true, Ordering::SeqCst);
     page.update(&mut fx.cx, |_, cx| cx.emit(Event::Retry));
