@@ -799,6 +799,7 @@ The tool-assisted switch writes `memories.disable_on_external_context` and remov
 Reads and writes use the user configuration layer when it supplies a file path.
 After a partial failure, the page shows the values that the server actually saved.
 Delete requires confirmation before `memory/reset`; failure keeps the confirmation available for retry.
+The confirmation's close X and Cancel button dismiss it without a memory reset or a saved setting change.
 
 Writing is available to a ChatGPT account through its existing authenticated host.
 The page reads the canonical Writing plugin and the installed plugin list.

@@ -13,3 +13,4 @@ There is no release yet.
 ### Fixed
 
 - Preserve page-frame occlusion under opaque scrolling content at rounded surface corners.
+- Restore the close X in the memory deletion confirmation without changing saved memories or settings.

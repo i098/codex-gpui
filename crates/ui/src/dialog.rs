@@ -2418,10 +2418,12 @@ impl Dialog {
                     .right(px(16.))
                     .top(px(16.))
                     .size(px(24.))
+                    .rounded(px(4.))
+                    .hover(|s| s.bg(t.ghost_hover))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(icon("close", 16., t.text_tertiary))
+                    .child(icon("diff-tab-close", 16., t.text.opacity(0.8)))
                     .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
             )
     }
@@ -4077,7 +4079,11 @@ impl Render for Dialog {
                                 .absolute()
                                 .inset_0()
                                 .top_layer()
-                                .child(crate::recorded_bounds(dialog))
+                                .child(if self.kind == Kind::WritingStyle {
+                                    crate::recorded_bounds(dialog).into_any_element()
+                                } else {
+                                    dialog.into_any_element()
+                                })
                                 .into_any_element()
                         } else {
                             dialog.into_any_element()

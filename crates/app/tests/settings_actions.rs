@@ -870,14 +870,37 @@ fn enabling_memory_updates_the_persisted_state_and_the_switch() -> Result<()> {
 fn deleting_memory_requires_confirmation_and_cancel_sends_no_reset() -> Result<()> {
     let mut lines = script(None, |_| {})?;
     lines.extend(exchange("memory/reset", Value::Null));
-    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    let home = tempfile::tempdir()?;
+    let settings_path = home.path().join("host-settings.json");
+    std::fs::write(
+        &settings_path,
+        serde_json::to_vec(&*recorded_host_settings()?.read_all())?,
+    )?;
+    let mut fx = Fx::captured_with_host_settings(
+        "dark",
+        (1280., 832.),
+        lines,
+        app::host_settings::Settings::load(settings_path.clone())?,
+    )?;
     prepare_instructions(&mut fx)?;
+    let config = fx.read(|root, _| root.config().clone());
+    let persisted = std::fs::read(&settings_path)?;
     fx.click((1125., 392.))?;
     assert_eq!(
         fx.read(|root, cx| root.dialog().map(|dialog| dialog.read(cx).kind())),
         Some(ui::dialog::Kind::DeleteMemories)
     );
     evidence(&mut fx, "memory-delete-confirmation")?;
+    fx.click((822., 375.5))?;
+    assert!(fx.read(|root, _| root.dialog().is_none()));
+    assert_eq!(fx.read(|root, _| root.config().clone()), config);
+    assert_eq!(std::fs::read(&settings_path)?, persisted);
+    assert!(!fx.sent()?.iter().any(|request| matches!(
+        request["method"].as_str(),
+        Some("memory/reset" | "config/batchWrite" | "config/value/write")
+    )));
+    evidence(&mut fx, "memory-close-cancelled")?;
+    fx.click((1125., 392.))?;
     fx.keys("enter")?;
     assert!(fx.read(|root, _| root.dialog().is_none()));
     assert!(
