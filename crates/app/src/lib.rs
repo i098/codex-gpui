@@ -18,6 +18,7 @@ pub use routes::Route;
 mod search;
 mod section_actions;
 mod settings_subtrees;
+mod signin;
 pub mod updater;
 mod window_shell;
 pub mod windows;
@@ -55,12 +56,13 @@ use ui::screens::diff::panel::{
     with_side_tabs,
 };
 use ui::screens::home::{HomeMain, OpenFolder};
-use ui::screens::settings::{self, AppServer, Login, SettingChanged, workspace};
+use ui::screens::settings::{self, AppServer, SettingChanged, workspace};
 use ui::screens::sidebar::{
     ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
     PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, SearchRequest,
     SelectProject, title as thread_title,
 };
+use ui::screens::signin::Login;
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
     Clock, EditMessage, ForkThread, GitAction, History, RetryHistory, RevertTurn, ThreadView,
@@ -832,7 +834,7 @@ impl Root {
                 this._update_policy = updater::poll_policy(bridge.clone(), cx);
                 this.set_account(account.as_ref(), cx);
                 if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
-                    this.show_login(config.config["forced_login_method"].clone(), cx);
+                    this.login = Some(this.new_login(window, cx));
                 }
                 this.set_threads(&threads.data, cx);
                 this.set_next_cursor(threads.next_cursor, cx);
@@ -2151,8 +2153,8 @@ impl Root {
         cx.stop_propagation();
     }
 
-    /// The strip tab of `side` in the open thread `view`: `(icon, label)`. No terminal tab
-    /// without a background command, no file tab without a file viewer.
+    /// The strip tab of `side` in the open thread `view`.
+    /// No terminal tab without a background command; no file tab without a file viewer.
     fn side_tab(
         side: SidePanel,
         view: &Entity<ThreadView>,
@@ -2160,14 +2162,26 @@ impl Root {
         cx: &App,
     ) -> Option<Tab> {
         match side {
-            SidePanel::Changes => Some(("diff-tab-changes", "Changes".into())),
+            SidePanel::Changes => Some(Tab {
+                icon: "diff-tab-changes",
+                label: "Changes".into(),
+                preview: false,
+            }),
             SidePanel::Terminal => {
                 let (_, command, _) = view.read(cx).terminal()?;
-                Some(("thread-terminal", command.into()))
+                Some(Tab {
+                    icon: "thread-terminal",
+                    label: command.into(),
+                    preview: false,
+                })
             }
             SidePanel::File => {
                 let file = file?.read(cx);
-                Some((file.tab_icon(), file.name()))
+                Some(Tab {
+                    icon: file.tab_icon(),
+                    label: file.name(),
+                    preview: file.is_preview(),
+                })
             }
         }
     }
@@ -2226,52 +2240,6 @@ impl Root {
         self.sync(window, cx);
     }
 
-    /// A file link in an answer: the file viewer tab, filled with the local file.
-    fn open_file(&mut self, action: &OpenFile, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = &self.thread else { return };
-        let cwd = std::path::Path::new(view.read(cx).cwd())
-            .components()
-            .as_path()
-            .to_string_lossy()
-            .into_owned();
-        let path = if action.path.starts_with('/') {
-            action.path.clone()
-        } else {
-            format!("{cwd}/{}", action.path.trim_start_matches("./"))
-        };
-        let file = cx.new(|_| FileView::new(&cwd, path.clone(), action.line));
-        // The original asks its Electron main for `vscode://codex/read-file`; the port's local
-        // host is this process, so it reads the file itself.
-        // ponytail: FileView loads the whole file; add paging there instead of a command-only size limit.
-        let read = cx.background_spawn(async move {
-            let contents = std::fs::read_to_string(&path).map_err(|error| error.to_string());
-            (path, contents)
-        });
-        let target = file.clone();
-        cx.spawn(async move |this, cx| {
-            let (path, contents) = read.await;
-            let failed = contents.is_err();
-            target.update(cx, |file, cx| file.set_contents(contents, cx));
-            if failed {
-                this.update(cx, |this, cx| {
-                    this.toast(Toast::danger("Could not open file"), cx)
-                })
-                .ok();
-            } else {
-                this.update(cx, |this, cx| this.remember_file(&cwd, &path, cx))
-                    .ok();
-            }
-        })
-        .detach();
-        self.file = Some(file);
-        if self.side == Some(SidePanel::File) {
-            // The tab is selected already: show the new file in it.
-            self.sync(window, cx);
-        } else {
-            self.set_side(SidePanel::File, window, cx);
-        }
-    }
-
     /// `⌘K`, `⌘⇧P` and the sidebar `Search`: the command menu over live Recents, focused.
     fn open_command_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(thread) = &self.thread {
@@ -2280,9 +2248,11 @@ impl Root {
         let unread = self.sidebar.read(cx).unread.clone();
         let thread_open = matches!(self.state.route, Route::Thread(_));
         let cloud = self.chatgpt_account && self.host.supports_cloud_search();
+        let navigation = native_menus::navigation::available(self, cx);
         let menu = cx.new(|cx| {
             CommandMenu::with_threads(&self.threads, &unread, thread_open, "", cx)
                 .with_cloud_search(cloud)
+                .with_navigation_panel(navigation)
         });
         cx.subscribe_in(&menu, window, |this, _, event, window, cx| {
             this.run_command(event, window, cx)
@@ -2549,7 +2519,7 @@ impl Root {
                 this.logout_pending = false;
                 match result {
                     Ok(_) => {
-                        this.show_login(this.config["forced_login_method"].clone(), cx);
+                        this.login = Some(this.new_login(window, cx));
                         this.set_account(None, cx);
                         let host = this.host.clone();
                         cx.background_spawn(async move { host.invalidate_identity() })
@@ -2687,6 +2657,9 @@ impl Root {
                 "Open Changes tab" => window.dispatch_action(Box::new(OpenChangesPanel), cx),
                 "New tab" => window.dispatch_action(Box::new(ToggleChangesPanel), cx),
                 "Open terminal" => window.dispatch_action(Box::new(OpenBackgroundTerminal), cx),
+                "Toggle navigation panel" => {
+                    window.dispatch_action(Box::new(native_menus::ToggleNavigationPanel), cx)
+                }
                 "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 "Log out" => window.dispatch_action(Box::new(LogOut), cx),
@@ -4483,9 +4456,7 @@ impl Root {
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         if let Some(login) = &self.login {
-            if login.update(cx, |login, cx| login.apply(&event, cx)) {
-                self.finish_sign_in(cx);
-            }
+            login.update(cx, |login, cx| login.apply(&event, cx));
             return;
         }
         if let Event::Notification { method, params } = &event
@@ -4656,21 +4627,6 @@ impl Root {
         }
     }
 
-    fn show_login(&mut self, forced_login_method: Value, cx: &mut Context<Self>) {
-        self.ready = false;
-        let login = cx.new(|cx| Login::with_login_policy(forced_login_method, cx));
-        cx.subscribe(&login, |this, _, _: &settings::LoginMethodsLoaded, cx| {
-            this.ready = true;
-            cx.notify();
-        })
-        .detach();
-        cx.subscribe(&login, |this, _, _: &settings::LoggedIn, cx| {
-            this.finish_sign_in(cx);
-        })
-        .detach();
-        self.login = Some(login);
-    }
-
     fn finish_sign_in(&mut self, cx: &mut Context<Self>) {
         self.login = None;
         self.read_account(cx);
@@ -4716,6 +4672,7 @@ impl Root {
         log_err(task, cx);
     }
 
+    /// Reads the first `thread/list` page again; threads of later loaded pages stay after it.
     fn refresh_threads(&self, cx: &mut Context<Self>) {
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {

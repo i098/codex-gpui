@@ -640,34 +640,33 @@ impl Composer {
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
-            .px(px(
-                if self.plain_field == Some(true)
-                    || (self.request_parent.is_some() && self.request_compact && !self.secret)
-                {
-                    10.
-                } else {
-                    12.
-                },
-            ))
+            .px(px(if self.compact_text() { 10. } else { 12. }))
             .pb(px(
-                if self.plain_field == Some(true) || self.request_parent.is_some() {
+                if self.plain_field == Some(true)
+                    || self.request_parent.is_some()
+                    || self.request_compact
+                {
                     0.
                 } else {
                     4.
                 },
             ))
-            .min_h(px(if self.request_parent.is_some() {
-                20.
+            .min_h(if self.request_parent.is_some() || self.request_compact {
+                px(20.)
             } else {
-                48.
-            }))
+                self.field_min_height
+            })
             .cursor(CursorStyle::IBeam)
             .when(self.embedded_field.is_some(), |d| {
                 d.px_0().pb_0().min_h(self.editor_line_height())
             })
             .text_size(self.editor_font_size())
             .line_height(self.editor_line_height())
-            .font_weight(gpui::FontWeight(430.))
+            .font_weight(gpui::FontWeight(if self.field_text.is_some() {
+                500.
+            } else {
+                430.
+            }))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_click))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -677,13 +676,16 @@ impl Composer {
             // Chromium's: blitted into a transparent layer (`_ComposerLayoutInput`'s
             // `overflow-y: auto` contents), then composited onto the card. A settings textarea
             // never scrolls here, so it has no such layer: its text blends onto the field's fill.
+            // The sign-in `input` has neither the opacity nor the layer.
             .child(
                 div()
-                    .when(
-                        self.content.is_empty() && self.embedded_field.is_none(),
-                        |d| d.opacity(0.5),
-                    )
-                    .when(self.plain_field != Some(true), |d| d.layer())
+                    .when(self.field_text.is_none(), |d| {
+                        d.when(
+                            self.content.is_empty() && self.embedded_field.is_none(),
+                            |d| d.opacity(0.5),
+                        )
+                        .when(self.plain_field != Some(true), |d| d.layer())
+                    })
                     .child(Editor(cx.entity())),
             )
     }
@@ -965,9 +967,10 @@ impl gpui::Element for Editor {
         cx: &mut App,
     ) {
         let t = cx.theme().clone();
+        let composer = self.0.read(cx);
         let lines = shape(
-            self.0.read(cx),
-            t.text,
+            composer,
+            composer.field_text.unwrap_or(t.text),
             t.text_tertiary,
             chip_color(&t),
             Some(bounds.size.width),
@@ -1000,8 +1003,8 @@ impl gpui::Element for Editor {
         let focus = self.0.read(cx).focus_handle.clone();
         window.handle_input(&focus, ElementInputHandler::new(bounds, self.0.clone()), cx);
         let selection_color = cx.theme().text_selection;
-        let caret_color = cx.theme().text;
         let c = self.0.read(cx);
+        let caret_color = c.field_text.unwrap_or(cx.theme().text);
         let line_height = c.editor_line_height();
         if !c.selected_range.is_empty()
             && let (Some(a), Some(b)) = (
