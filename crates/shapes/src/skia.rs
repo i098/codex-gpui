@@ -2602,8 +2602,27 @@ fn paint_color(v: &str) -> Option<Option<Rgba>> {
     }
 }
 
-/// The subset of SVG the icon assets use: nested `<g transform>`, `<path>` with fill/stroke
-/// attributes inherited from `<svg>`/`<g>`. `None` for anything else (masks).
+fn circle_path(tag: &str) -> Option<Path> {
+    let scalar = |name| {
+        attr(tag, name)
+            .unwrap_or("0")
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite())
+    };
+    let (x, y, radius) = (scalar("cx")?, scalar("cy")?, scalar("r")?);
+    if radius < 0. {
+        return None;
+    }
+    Some(if radius == 0. {
+        Path::default()
+    } else {
+        Path::circle((x, y), radius, None)
+    })
+}
+
+/// The icon SVG subset: nested transforms, paths and circles, with inherited fill/stroke.
+/// Unsupported shapes and masks return `None` for the platform fallback.
 fn parse_icon(src: &str) -> Option<IconSvg> {
     let mut view_box = None;
     let mut paths = Vec::new();
@@ -2647,11 +2666,15 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
         match name {
             "svg" => view_box = Some(numbers(attr(tag, "viewBox")?)),
             "g" => {}
-            "path" => {
+            "path" | "circle" => {
                 if attr(tag, "mask").is_some() || attr(tag, "clip-path").is_some() {
                     return None;
                 }
-                let mut path = Path::from_svg(attr(tag, "d")?)?;
+                let mut path = if name == "circle" {
+                    circle_path(tag)?
+                } else {
+                    Path::from_svg(attr(tag, "d")?)?
+                };
                 if attr(tag, "fill-rule") == Some("evenodd") {
                     path.set_fill_type(PathFillType::EvenOdd);
                 }
@@ -2692,8 +2715,9 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
                 }
                 continue;
             }
-            "mask" | "clipPath" | "circle" | "rect" | "ellipse" | "line" | "polyline"
-            | "polygon" | "use" => return None,
+            "mask" | "clipPath" | "rect" | "ellipse" | "line" | "polyline" | "polygon" | "use" => {
+                return None;
+            }
             _ => continue,
         }
         if !tag.ends_with('/') {
@@ -3634,6 +3658,49 @@ mod tests {
             assert_eq!(image.get_pixel(x, y).0, expected, "corner ({x}, {y})");
         }
         Ok(())
+    }
+
+    #[test]
+    fn svg_circle_preserves_native_geometry_and_inherited_paint() {
+        let svg = br##"<svg viewBox="0 0 20 20"><g transform="translate(1.25 2.5)" fill="none" stroke="currentColor" stroke-width="1.33"><circle cx="6.25" cy="7.5" r="2.75"/></g><circle cx="16" cy="5" r="4" fill="#0285ff"/><circle cx="4" cy="4" fill="none" stroke="currentColor" stroke-width="10"/></svg>"##;
+        let background = Color4f::new(24. / 255., 24. / 255., 24. / 255., 1.);
+        let actual = tile_pixels([0, 0], (24, 24), background, |canvas| {
+            assert!(draw_icon(
+                canvas,
+                svg,
+                "circle-geometry-regression",
+                Bounds::new(point(px(0.), px(0.)), size(px(20.), px(20.))),
+                gpui::white(),
+                1.,
+            ));
+        });
+        let expected = tile_pixels([0, 0], (24, 24), background, |canvas| {
+            canvas.clip_rect(Rect::new(0., 0., 20., 20.), ClipOp::Intersect, true);
+            let mut stroke = fill_paint(Color4f::new(1., 1., 1., 1.));
+            stroke.set_style(PaintStyle::Stroke).set_stroke_width(1.33);
+            // Preserve the group's CTM: baking translation into the center changes Skia's raster.
+            canvas.save();
+            canvas.translate((1.25, 2.5));
+            canvas.draw_circle((6.25, 7.5), 2.75, &stroke);
+            canvas.restore();
+            canvas.draw_circle(
+                (16., 5.),
+                4.,
+                &fill_paint(Color4f::new(2. / 255., 133. / 255., 1., 1.)),
+            );
+        });
+        assert!(
+            actual.0 == expected.0,
+            "SVG circle pixels must match native Skia circles"
+        );
+        for radius in ["-1", "NaN"] {
+            assert!(
+                parse_icon(&format!(
+                    r#"<svg viewBox="0 0 20 20"><circle r="{radius}"/></svg>"#
+                ))
+                .is_none()
+            );
+        }
     }
 
     #[test]

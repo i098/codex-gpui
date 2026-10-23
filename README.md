@@ -402,7 +402,7 @@ That command does not close QA or any normal app.
 |---|---|
 | `bridge` | JSON-RPC client for `codex app-server` over stdio or durable cloud WebSocket, protocol types, recorded sessions, and the ACP backend. |
 | `ui` | The window shell (titlebar, navigation rail, sidebar, main panel), the page modules in `screens/`, the composer, the thread view, the diff view and the icons. |
-| `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths. It links Skia. |
+| `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths and circles. It links Skia. |
 | `textsys` | A GPUI text system that puts glyphs on the same pixels as Chromium on macOS. It also holds the vendored `gpui` and `gpui_apple`. |
 | `theme` | Color tokens, metrics and the bundled fonts, extracted from the original renderer CSS. |
 | `parity` | The pixel-parity harness: it renders each screen headless and compares it with the reference screenshot. |
