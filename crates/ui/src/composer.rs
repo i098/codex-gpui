@@ -1428,7 +1428,13 @@ impl Composer {
                 .id(kind)
                 .h(px(24.))
                 .min_w(px(24.))
-                .px(px(4.))
+                .px(px(if matches!(action, QueueAction::Steer(_)) {
+                    8.
+                } else {
+                    0.
+                }))
+                .border_1()
+                .border_color(gpui::transparent_black())
                 .flex_shrink_0()
                 .flex()
                 .items_center()
@@ -1448,7 +1454,7 @@ impl Composer {
                         .items_center()
                         .gap(px(4.))
                         .child(icon("queue-steer", 14., t.text_tertiary))
-                        .child(text("Steer", 12., 20., 400., t.text_tertiary))
+                        .child(text("Steer", 13., 18., 430., t.text_tertiary))
                         .into_any_element(),
                     _ => icon("queue-delete", 14., t.text_tertiary).into_any_element(),
                 })
@@ -2900,21 +2906,32 @@ impl Render for Composer {
                             430.,
                             t.text,
                         )))
-                        .child(self.queue_button(
-                            QueueAction::Steer(row.submission.id.clone()),
-                            "Steer",
-                            "Submit without interrupting the model",
-                            &t,
-                            cx,
-                        ))
-                        .child(self.queue_button(
-                            QueueAction::Delete(row.submission.id.clone()),
-                            "Delete queued message",
-                            "Delete queued message",
-                            &t,
-                            cx,
-                        ))
-                        .child(self.queue_menu_button(row.submission.id.clone(), &t, window, cx))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(4.))
+                                .child(self.queue_button(
+                                    QueueAction::Steer(row.submission.id.clone()),
+                                    "Steer",
+                                    "Submit without interrupting the model",
+                                    &t,
+                                    cx,
+                                ))
+                                .child(self.queue_button(
+                                    QueueAction::Delete(row.submission.id.clone()),
+                                    "Delete queued message",
+                                    "Delete queued message",
+                                    &t,
+                                    cx,
+                                ))
+                                .child(self.queue_menu_button(
+                                    row.submission.id.clone(),
+                                    &t,
+                                    window,
+                                    cx,
+                                )),
+                        )
                 }))
         });
         div()
