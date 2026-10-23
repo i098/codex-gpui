@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use theme::ActiveTheme as _;
 
 pub struct MarketplaceForm {
+    state: Entity<State>,
     source: Entity<Composer>,
     reference: Entity<Composer>,
     sparse_paths: Entity<Composer>,
@@ -17,7 +18,8 @@ pub struct MarketplaceForm {
 impl EventEmitter<Close> for MarketplaceForm {}
 
 impl MarketplaceForm {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(state: Entity<State>, cx: &mut Context<Self>) -> Self {
+        cx.observe(&state, |_, _, cx| cx.notify()).detach();
         let mut field = |placeholder| {
             let field = cx.new(|cx| Composer::settings_field(placeholder, "", false, cx));
             cx.observe(&field, |_, _, cx| cx.notify()).detach();
@@ -27,6 +29,7 @@ impl MarketplaceForm {
             source: field("openai/plugins or git@github.com:org/repo.git"),
             reference: field("main"),
             sparse_paths: field("plugins/codex"),
+            state,
             error: None,
         }
     }
@@ -55,7 +58,7 @@ impl MarketplaceForm {
         ) {
             Some(params) => {
                 self.error = None;
-                dispatch(Action::AddMarketplace(params), cx);
+                dispatch(&self.state, Action::AddMarketplace(params), cx);
             }
             None => self.error = Some("Enter a marketplace source"),
         }
@@ -82,7 +85,7 @@ fn parameters(source: &str, reference: &str, sparse_paths: &str) -> Option<Value
 impl Render for MarketplaceForm {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let state = cx.global::<State>().clone();
+        let state = self.state.read(cx).clone();
         let pending = state.pending;
         let field = |label, editor: Entity<Composer>| -> Div {
             div()

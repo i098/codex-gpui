@@ -784,20 +784,22 @@ They do not create folders in the normal profile.
 ### MCP servers, Hooks, and the extension manager
 
 Settings owns the Plugins, Apps, MCPs, Skills, and Marketplace management tabs.
+Each Root owns its manager state and dispatch callback; another window cannot replace them.
 The manager reads the app-server and keeps confirmed state after each completed operation.
-MCP edits preserve fields outside the form, and project-owned server definitions stay read-only.
-OAuth links must use HTTP or HTTPS; completion notifications refresh server status.
+MCP edits preserve argument text and fields outside the form, and project-owned server definitions stay read-only.
+New server names cannot replace reserved internal servers.
+Form writes use the captured user-file version and retain the draft when that version is stale.
+OAuth links must use HTTP or HTTPS; completion queues a status refresh if another operation is still pending.
 Hooks stay off until their current definition is trusted.
 Managed hooks stay on and cannot be edited.
 Marketplace removal uninstalls its remaining plugins before removing the configured source.
 The shared host reads the original Statsig bootstrap and caches its parsed evaluations for the current Root.
 
 `cargo test -p ui --lib screens::settings::integrations` checks key collisions, form preservation, skill precedence, read-only origins, and hook trust.
-`cargo test -p app --lib settings_integrations` checks the OAuth URL boundary.
-An owned-profile application smoke checked Root dispatch against the real app-server on Linux and macOS.
+`cargo test -p app --lib settings_integrations` checks the OAuth URL boundary, queued refresh, stale writes, and window isolation.
+An earlier owned-profile application smoke checked Root dispatch against the real app-server on Linux and macOS.
 It covered MCP toggling, saving, trust, invalid-save preservation, deletion, marketplace add/remove, and directory navigation.
-The native renderer produced a manager screenshot without a new crash report.
-These checks do not establish appearance parity.
+Those earlier checks do not validate this revision's state ownership or appearance.
 Strict original/native pairs remain blocked on capture recovery.
 ST-155 remains gated while the native MCP app sandbox is absent; the manager never reports a synthetic data-clear success.
 

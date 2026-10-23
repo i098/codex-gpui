@@ -71,7 +71,9 @@ fn main() -> anyhow::Result<()> {
                 ui::fixture::response("readback.jsonl", "config/read", 0);
             let skills: serde_json::Value =
                 ui::fixture::response("readback.jsonl", "skills/list", 0);
-            let (shell, settings) = ui::screens::settings::shell(&config.config, &skills, None, cx);
+            let integrations = cx.new(|_| ui::screens::settings::integrations::State::default());
+            let (shell, settings) =
+                ui::screens::settings::shell(&config.config, &skills, None, integrations, cx);
             settings.update(cx, |settings, cx| settings.show_subtree(page.into(), cx));
             shell.update(cx, |shell, _| shell.can_go_back = true);
             shell.into()

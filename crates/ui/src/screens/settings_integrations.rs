@@ -2,9 +2,9 @@ use super::computer_use::Load;
 use super::{Layer, button, deco, on_card, probe, switch};
 use crate::{composer::popover, focus, icon::icon, text};
 use gpui::{
-    AnyElement, App, AppContext as _, BorrowAppContext as _, Context, Div, Entity, Global,
-    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
+    AnyElement, App, AppContext as _, Context, Div, Entity, InteractiveElement, IntoElement,
+    KeyDownEvent, ParentElement, Render, SharedString, Stateful, StatefulInteractiveElement,
+    Styled, Window, div, prelude::FluentBuilder as _, px,
 };
 use serde_json::Value;
 use shapes::Corner::Squircle;
@@ -42,6 +42,7 @@ pub enum Action {
     SaveServer {
         key: String,
         config: Value,
+        expected_version: String,
     },
     RemoveServer(String),
     Authenticate {
@@ -89,6 +90,7 @@ pub struct State {
     pub hidden_plugins: Arc<HashSet<String>>,
     pub gates_loaded: bool,
     pub pending: bool,
+    pub refresh_requested: bool,
     pub reload_required: bool,
     pub form_error: Option<String>,
     pub operation_error: Option<String>,
@@ -100,26 +102,30 @@ pub struct State {
     pub dispatch: Option<Dispatch>,
 }
 
-impl Global for State {}
-
-pub fn render(section: &'static str, window: &mut Window, cx: &mut App) -> AnyElement {
+pub fn render(
+    section: &'static str,
+    state: Entity<State>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
     let page = window.use_keyed_state(
         SharedString::from(format!("settings-integrations-{section}")),
         cx,
-        |_, cx| {
-            cx.observe_global::<State>(|this: &mut Manager, cx| {
-                let saved = cx.global::<State>().form_saved;
+        move |_, cx| {
+            cx.observe(&state, |this: &mut Manager, state, cx| {
+                let state = state.read(cx);
+                let saved = state.form_saved;
                 if saved != this.form_saved {
                     this.form = None;
                     this.form_saved = saved;
                 }
-                let added = cx.global::<State>().marketplace_added;
+                let added = state.marketplace_added;
                 if added != this.marketplace_added {
                     this.marketplace_form = None;
                     this.marketplace_added = added;
                     this.tab = Tab::Marketplace;
                 }
-                if this.marketplace.as_ref() == cx.global::<State>().removal_completed.as_ref() {
+                if this.marketplace.as_ref() == state.removal_completed.as_ref() {
                     this.marketplace = None;
                 }
                 cx.notify();
@@ -133,17 +139,16 @@ pub fn render(section: &'static str, window: &mut Window, cx: &mut App) -> AnyEl
                 layer: Layer::default(),
                 menu: None,
                 form: None,
-                form_saved: cx.try_global::<State>().map_or(0, |state| state.form_saved),
+                form_saved: state.read(cx).form_saved,
                 marketplace_form: None,
-                marketplace_added: cx
-                    .try_global::<State>()
-                    .map_or(0, |state| state.marketplace_added),
+                marketplace_added: state.read(cx).marketplace_added,
                 marketplace: None,
                 selected_hooks: None,
                 modal_focus: cx.focus_handle(),
                 return_focus: None,
                 expanded_hooks: HashSet::new(),
                 registrations: BTreeMap::new(),
+                state,
             }
         },
     );
@@ -166,6 +171,7 @@ enum Menu {
 }
 
 struct Manager {
+    state: Entity<State>,
     section: &'static str,
     tab: Tab,
     query: String,
@@ -184,11 +190,8 @@ struct Manager {
     registrations: BTreeMap<String, &'static str>,
 }
 
-pub(super) fn dispatch(action: Action, cx: &mut App) {
-    if let Some(dispatch) = cx
-        .try_global::<State>()
-        .and_then(|state| state.dispatch.clone())
-    {
+pub(super) fn dispatch(state: &Entity<State>, action: Action, cx: &mut App) {
+    if let Some(dispatch) = state.read(cx).dispatch.clone() {
         dispatch(action, cx);
     }
 }
@@ -400,7 +403,7 @@ impl Manager {
     fn open_form(&mut self, key: Option<String>, config: Value, cx: &mut Context<Self>) {
         self.tab = Tab::Mcps;
         self.menu = None;
-        let form = cx.new(|cx| form::Form::new(key, config, cx));
+        let form = cx.new(|cx| form::Form::new(key, config, self.state.clone(), cx));
         cx.subscribe(&form, |this, _, _: &form::Close, cx| {
             this.form = None;
             cx.notify();
@@ -584,9 +587,10 @@ impl Manager {
                 gpui::Toggled::False
             })
             .aria_disabled(read_only || state.pending)
-            .on_activate(window, cx, move |_, _, cx| {
+            .on_activate(window, cx, move |this, _, cx| {
                 if !read_only {
                     dispatch(
+                        &this.state,
                         Action::SetServerEnabled {
                             key: key.clone(),
                             enabled: !enabled,
@@ -651,9 +655,10 @@ impl Manager {
                 )
                 .aria_disabled(pending)
                 .when(pending, |d| d.opacity(0.4))
-                .on_activate(window, cx, move |_, _, cx| {
+                .on_activate(window, cx, move |this, _, cx| {
                     if !pending {
                         dispatch(
+                            &this.state,
                             Action::Authenticate {
                                 name: server.clone(),
                                 registration,
@@ -734,7 +739,7 @@ impl Manager {
             body = body.child(action_button("reload-mcp", "Restart", t).on_activate(
                 window,
                 cx,
-                |_, _, cx| dispatch(Action::ReloadServers, cx),
+                |this, _, cx| dispatch(&this.state, Action::ReloadServers, cx),
             ));
         }
         body
@@ -812,8 +817,11 @@ impl Manager {
         cx: &mut Context<Self>,
     ) -> Div {
         message(title, Some(error), t).child(
-            action_button("integrations-retry", "Retry", t)
-                .on_activate(window, cx, |_, _, cx| dispatch(Action::Refresh, cx)),
+            action_button("integrations-retry", "Retry", t).on_activate(
+                window,
+                cx,
+                |this, _, cx| dispatch(&this.state, Action::Refresh, cx),
+            ),
         )
     }
 
@@ -869,8 +877,9 @@ impl Manager {
                 gpui::Toggled::False
             })
             .aria_disabled(state.pending)
-            .on_activate(window, cx, move |_, _, cx| {
+            .on_activate(window, cx, move |this, _, cx| {
                 dispatch(
+                    &this.state,
                     Action::SetPluginEnabled {
                         plugin: value.clone(),
                         enabled: !enabled,
@@ -991,8 +1000,9 @@ impl Manager {
                 } else {
                     gpui::Toggled::False
                 })
-                .on_activate(window, cx, move |_, _, cx| {
+                .on_activate(window, cx, move |this, _, cx| {
                     dispatch(
+                        &this.state,
                         Action::SetAppEnabled {
                             id: id.clone(),
                             enabled: !enabled,
@@ -1089,9 +1099,10 @@ impl Manager {
                 } else {
                     gpui::Toggled::False
                 })
-                .on_activate(window, cx, move |_, _, cx| {
+                .on_activate(window, cx, move |this, _, cx| {
                     if !managed {
                         dispatch(
+                            &this.state,
                             Action::SetSkillEnabled {
                                 path: path.clone(),
                                 enabled: !enabled,
@@ -1211,9 +1222,10 @@ impl Manager {
                             .on_activate(
                                 window,
                                 cx,
-                                move |_, _, cx| {
+                                move |this, _, cx| {
                                     if can_upgrade {
                                         dispatch(
+                                            &this.state,
                                             Action::UpgradeMarketplace(upgrade_name.clone()),
                                             cx,
                                         );
@@ -1361,9 +1373,10 @@ impl Manager {
     fn begin_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.return_focus = window.focused(cx);
         self.modal_focus.focus(window, cx);
-        cx.update_global::<State, _>(|state, _| {
+        self.state.update(cx, |state, cx| {
             state.operation_error = None;
             state.removal_completed = None;
+            cx.notify();
         });
     }
 
@@ -1450,8 +1463,8 @@ impl Manager {
                     .child(
                         action_button("hooks-trust-all", "Trust all", t)
                             .aria_disabled(state.pending)
-                            .on_activate(window, cx, move |_, _, cx| {
-                                dispatch(Action::TrustHooks(trust.clone()), cx)
+                            .on_activate(window, cx, move |this, _, cx| {
+                                dispatch(&this.state, Action::TrustHooks(trust.clone()), cx)
                             }),
                     ),
             );
@@ -1590,9 +1603,10 @@ impl Manager {
             } else {
                 gpui::Toggled::False
             })
-            .on_activate(window, cx, move |_, _, cx| {
+            .on_activate(window, cx, move |this, _, cx| {
                 if !managed && !review {
                     dispatch(
+                        &this.state,
                         Action::SetHookEnabled {
                             key: toggle_key.clone(),
                             enabled: !enabled,
@@ -1610,8 +1624,9 @@ impl Manager {
             controls_row = controls_row.child(
                 action_button(id, "Trust", t)
                     .aria_disabled(state.pending)
-                    .on_activate(window, cx, move |_, _, cx| {
+                    .on_activate(window, cx, move |this, _, cx| {
                         dispatch(
+                            &this.state,
                             Action::TrustHooks(vec![(trust_key.clone(), hash.clone())]),
                             cx,
                         )
@@ -1826,9 +1841,9 @@ impl Manager {
                 .children(affected.iter().map(|plugin| text(plugin_name(plugin).to_owned(), 14., 20., 430., t.text)))
                 .child(div().flex().justify_end().gap(px(8.))
                     .child(action_button("cancel-removal", "Cancel", t).aria_disabled(pending).on_activate(window, cx, move |this, window, cx| { if !pending { this.close_modal(window, cx); } }))
-                    .child(action_button("confirm-removal", action, t).aria_disabled(pending).on_activate(window, cx, move |_, _, cx| {
+                    .child(action_button("confirm-removal", action, t).aria_disabled(pending).on_activate(window, cx, move |this, _, cx| {
                         if pending { return; }
-                        Self::dispatch_removal(&target, plugin.as_ref(), cx);
+                        this.dispatch_removal(&target, plugin.as_ref(), cx);
                     })));
         self.modal(
             (title_label, confirm),
@@ -1844,12 +1859,12 @@ impl Manager {
         )
     }
 
-    fn dispatch_removal(target: &str, plugin: Option<&Value>, cx: &mut App) {
+    fn dispatch_removal(&self, target: &str, plugin: Option<&Value>, cx: &mut App) {
         let action = match plugin {
             Some(plugin) if target.starts_with("plugin:") => Action::RemovePlugin(plugin.clone()),
             _ => Action::RemoveMarketplace(target.to_owned()),
         };
-        dispatch(action, cx);
+        dispatch(&self.state, action, cx);
     }
 
     fn menu_overlay(
@@ -1911,7 +1926,9 @@ impl Manager {
                                 this.open_form(None, serde_json::json!({"command":""}), cx);
                             } else {
                                 this.begin_modal(window, cx);
-                                let form = cx.new(marketplace_form::MarketplaceForm::new);
+                                let form = cx.new(|cx| {
+                                    marketplace_form::MarketplaceForm::new(this.state.clone(), cx)
+                                });
                                 cx.subscribe(&form, |this, _, _: &form::Close, cx| {
                                     this.marketplace_form = None;
                                     cx.notify();
@@ -1971,9 +1988,9 @@ impl Manager {
                     .justify_center()
                     .when(disabled, |d| d.opacity(0.4))
                     .child(icon("diff-refresh", 16., t.text_secondary))
-                    .on_activate(window, cx, move |_, _, cx| {
+                    .on_activate(window, cx, move |this, _, cx| {
                         if !disabled {
-                            dispatch(Action::ReloadHooks, cx);
+                            dispatch(&this.state, Action::ReloadHooks, cx);
                         }
                     }),
             );
@@ -2124,7 +2141,7 @@ fn hook_event(event: &str) -> (&str, &'static str) {
 
 impl Render for Manager {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let state = cx.try_global::<State>().cloned().unwrap_or_default();
+        let state = self.state.read(cx).clone();
         let t = cx.theme().clone();
         let hooks = self.section == "Hooks";
         if self.marketplace.is_none()

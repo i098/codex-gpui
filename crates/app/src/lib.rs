@@ -386,6 +386,8 @@ pub struct Root {
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
+    settings_integrations: Entity<settings::integrations::State>,
+    settings_integration_task: Option<Task<()>>,
     pending_settings_leave: Option<SettingsLeave>,
     workspace: Entity<workspace::Workspace>,
     /// `⌘K` command menu over the window.
@@ -484,7 +486,6 @@ impl Root {
                 Err(error) => eprintln!("codex-gpui: cannot load host settings: {error:#}"),
             }
         }
-        cx.set_global(settings::integrations::State::default());
         let this = cx.weak_entity();
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
@@ -684,6 +685,8 @@ impl Root {
             plugins_page: None,
             settings_section: None,
             settings_page: None,
+            settings_integrations: cx.new(|_| settings::integrations::State::default()),
+            settings_integration_task: None,
             pending_settings_leave: None,
             workspace: cx.new(workspace::Workspace::new),
             command_menu: None,
@@ -1037,6 +1040,7 @@ impl Root {
     /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
         self.invalidate_oauth(cx);
+        self.invalidate_settings_integrations(cx);
         self.cloud = None;
         self.automation_load = None;
         self.project_load = None;
@@ -1060,6 +1064,9 @@ impl Root {
             self.load_suggestions(cx);
         }
         self.refresh_git_actions(cx);
+        if self.settings_page.is_some() {
+            self.load_settings_integrations(cx);
+        }
         cx.notify();
     }
 

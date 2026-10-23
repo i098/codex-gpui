@@ -297,10 +297,11 @@ pub fn shell(
     config: &Value,
     skills: &Value,
     section: Option<&'static str>,
+    integrations: Entity<integrations::State>,
     cx: &mut App,
 ) -> (Entity<Shell>, Entity<SettingsPage>) {
     let page = cx.new(|cx| {
-        let mut page = SettingsPage::new(config, skills, cx);
+        let mut page = SettingsPage::new(config, skills, integrations, cx);
         if let Some(label) = section {
             page.section = label;
         }
@@ -389,11 +390,17 @@ pub struct SettingsPage {
     /// `projectlessWorkspaceRoot` default: `~/Documents/Codex`.
     projectless_root: String,
     pending_instructions: Vec<SettingChanged>,
+    integrations: Entity<integrations::State>,
     pub personalization: Entity<personalization::Personalization>,
 }
 
 impl SettingsPage {
-    fn new(config: &Value, skills: &Value, cx: &mut Context<Self>) -> Self {
+    fn new(
+        config: &Value,
+        skills: &Value,
+        integrations: Entity<integrations::State>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         // The fixture's home directory, from the user skills under `~/.agents`.
         let home = skills["data"][0]["skills"]
             .as_array()
@@ -414,6 +421,7 @@ impl SettingsPage {
             values,
             projectless_root,
             pending_instructions: Vec::new(),
+            integrations,
             personalization: cx.new(personalization::Personalization::new),
         }
     }
@@ -1454,7 +1462,12 @@ impl Render for SettingsPane {
                 .into_any_element();
         }
         if matches!(section, "Plugins" | "Hooks") {
-            return integrations::render(section, window, cx);
+            return integrations::render(
+                section,
+                self.page.read(cx).integrations.clone(),
+                window,
+                cx,
+            );
         }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
