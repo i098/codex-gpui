@@ -79,6 +79,21 @@ pub(in crate::host) fn read_file_version(params: &Value) -> Result<Option<Vec<u8
         "{revision}:{}",
         path.to_str().context("Git file path must be UTF-8")?
     );
+    if let Some(limit) = params.get("maxBytes") {
+        let limit = limit
+            .as_u64()
+            .context("maxBytes must be an unsigned integer")?;
+        let size = command(&root, &["cat-file", "-s", &spec])
+            .env("GIT_NO_LAZY_FETCH", "1")
+            .output()?;
+        if !size.status.success() {
+            return Ok(None);
+        }
+        let bytes = std::str::from_utf8(&size.stdout)?.trim().parse::<u64>()?;
+        if bytes > limit {
+            return Ok(None);
+        }
+    }
     let output = command(&root, &["show", &spec])
         .env("GIT_NO_LAZY_FETCH", "1")
         .output()?;
