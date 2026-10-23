@@ -28,8 +28,9 @@ gpui::actions!(ui, [StopBackgroundTerminals]);
 
 /// A bottom-panel tab's content, `tab_width` px wide, with its 14 px `×` while `selected` or
 /// `hovered` (the caller's 20 px close control at `top-1.5 end-1.75` holds no glyph). The
-/// original blits the selected tab's glyphs onto the translucent fill of its composited
-/// `_SelectedSurface`, and every other glyph of the strip into a layer of its own.
+/// original rasters the whole tab strip into one composited layer, so the caller gives the
+/// strip a `.layer()`: the glyphs rasterize at runtime on its tile grid, over the
+/// `_SelectedSurface` (a layer of its own).
 pub fn panel_tab(
     label: SharedString,
     selected: bool,
@@ -41,13 +42,11 @@ pub fn panel_tab(
     let t = cx.theme();
     let closable = selected || hovered;
     let color = if selected { t.text } else { t.text_tertiary };
-    let glyph = || crate::icon::icon("thread-terminal", 16., color);
-    let close = || {
-        crate::icon::icon("diff-tab-close", 14., t.text_tertiary)
-            .absolute()
-            .left(px(tab_width - 24.))
-            .top(px(9.))
-    };
+    let close = crate::icon::icon("diff-tab-close", 14., t.text_tertiary)
+        .runtime()
+        .absolute()
+        .left(px(tab_width - 24.))
+        .top(px(9.));
     let width = window
         .text_system()
         .shape_line(
@@ -105,18 +104,12 @@ pub fn panel_tab(
                                     vec![]
                                 },
                                 ..Default::default()
-                            }))
-                            .when(selected, |d| {
-                                d.child(glyph().runtime().absolute().left(px(10.)).top(px(8.)))
-                                    .child(close().runtime())
-                            }),
+                            })),
                     ),
             )
         })
-        .when(hovered && !selected, |d| d.child(close().own_layer(None)))
-        // The selected glyph paints in the layer above; its box keeps the label's place.
-        .when(selected, |d| d.child(div().flex_none().size(px(16.))))
-        .when(!selected, |d| d.child(glyph().own_layer(None)))
+        .when(closable, |d| d.child(close))
+        .child(crate::icon::icon("thread-terminal", 16., color).runtime())
         .child(
             div()
                 .relative()
