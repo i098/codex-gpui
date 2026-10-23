@@ -288,9 +288,48 @@ impl Form {
                     .on_activate(window, cx, move |this, _, cx| this.add_row(index, cx)),
             )
     }
+
+    fn connection_fields(
+        &self,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Div> {
+        let mut fields = Vec::new();
+        if self.http {
+            fields.push(self.field("URL", &self.url, t));
+            fields.push(self.field("Bearer token env var", &self.bearer, t));
+        } else {
+            fields.push(self.field("Command to launch", &self.command, t));
+        }
+        for (index, list) in self.lists.iter().enumerate() {
+            if self.http == matches!(list.kind, Kind::Headers | Kind::EnvHeaders) {
+                fields.push(self.list(index, t, window, cx));
+            }
+        }
+        if !self.http {
+            fields.push(self.field("Working directory", &self.cwd, t));
+        }
+        fields
+    }
 }
 
 pub fn server_key(name: &str, configuration: &Value) -> String {
+    let normalized = normalized_server_name(name);
+    let used = |key: &str| configured_servers(configuration).any(|(name, _)| name == key);
+    if !used(&normalized) {
+        return normalized;
+    }
+    for suffix in 2.. {
+        let candidate = format!("{normalized}-{suffix}");
+        if !used(&candidate) {
+            return candidate;
+        }
+    }
+    unreachable!()
+}
+
+fn normalized_server_name(name: &str) -> String {
     let mut normalized = String::new();
     let mut previous_whitespace = false;
     for ch in name.trim().chars() {
@@ -313,17 +352,7 @@ pub fn server_key(name: &str, configuration: &Value) -> String {
     if normalized.is_empty() {
         normalized = "custom-server".into();
     }
-    let used = |key: &str| configured_servers(configuration).any(|(name, _)| name == key);
-    if !used(&normalized) {
-        return normalized;
-    }
-    for suffix in 2.. {
-        let candidate = format!("{normalized}-{suffix}");
-        if !used(&candidate) {
-            return candidate;
-        }
-    }
-    unreachable!()
+    normalized
 }
 
 impl Render for Form {
@@ -387,21 +416,7 @@ impl Render for Form {
                 t.text_secondary,
             )));
         }
-        let mut fields = Vec::new();
-        if self.http {
-            fields.push(self.field("URL", &self.url, &t));
-            fields.push(self.field("Bearer token env var", &self.bearer, &t));
-        } else {
-            fields.push(self.field("Command to launch", &self.command, &t));
-        }
-        for (index, list) in self.lists.iter().enumerate() {
-            if self.http == matches!(list.kind, Kind::Headers | Kind::EnvHeaders) {
-                fields.push(self.list(index, &t, window, cx));
-            }
-        }
-        if !self.http {
-            fields.push(self.field("Working directory", &self.cwd, &t));
-        }
+        let fields = self.connection_fields(&t, window, cx);
         let value = self.value(cx);
         let disabled = state.pending
             || self.name.read(cx).field_text().trim().is_empty()

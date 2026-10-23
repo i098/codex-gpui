@@ -75,7 +75,6 @@ impl Root {
         if cx.global::<State>().pending {
             return;
         }
-        let saved_form = matches!(action, Action::SaveServer { .. } | Action::RemoveServer(_));
         let oauth = match &action {
             Action::Authenticate { name, .. } => Some(name.clone()),
             _ => None,
@@ -122,81 +121,44 @@ impl Root {
         cx.spawn(async move |this, cx| {
             let (result, snapshot) = read.await;
             this.update(cx, |this, cx| {
-                if let Some(snapshot) = snapshot {
-                    if let Ok(configuration) = &snapshot.configuration {
-                        this.config = configuration["config"].clone();
-                    }
-                    cx.update_global::<State, _>(|state, _| snapshot.apply(state));
-                }
-                let mut notice = None;
-                cx.update_global::<State, _>(|state, cx| {
-                    state.pending = false;
-                    match result {
-                        Ok(url) => {
-                            if saved_form {
-                                state.form_saved += 1;
-                            }
-                            match &action {
-                                Action::SetServerEnabled { .. }
-                                | Action::SaveServer { .. }
-                                | Action::RemoveServer(_) => state.reload_required = true,
-                                Action::ReloadServers => {
-                                    state.reload_required = false;
-                                    state.suppressed_servers.clear();
-                                }
-                                Action::AddMarketplace(_) => state.marketplace_added += 1,
-                                Action::RemoveMarketplace(name) => {
-                                    state.removal_completed = Some(name.clone())
-                                }
-                                Action::RemovePlugin(plugin) => {
-                                    state.removal_completed =
-                                        plugin["id"].as_str().map(|id| format!("plugin:{id}"))
-                                }
-                                _ => {}
-                            }
-                            if let Action::RemoveServer(key) = &action {
-                                state.suppressed_servers.insert(key.clone());
-                            }
-                            if let Action::Authenticate { name, .. } = &action {
-                                if let Some(url) = url {
-                                    state.oauth.insert(name.clone(), Some(url.clone()));
-                                    cx.open_url(&url);
-                                }
-                            }
-                        }
-                        Err(error) => {
-                            if let Action::Authenticate { name, .. } = &action {
-                                state.oauth.remove(name);
-                            }
-                            if saved_form {
-                                state.form_error = Some(error.to_string());
-                            } else if matches!(
-                                &action,
-                                Action::TrustHooks(_)
-                                    | Action::SetHookEnabled { .. }
-                                    | Action::RemoveMarketplace(_)
-                                    | Action::AddMarketplace(_)
-                                    | Action::RemovePlugin(_)
-                            ) {
-                                state.operation_error = Some(error.to_string());
-                            } else {
-                                notice = Some(error.to_string());
-                            }
-                        }
-                    }
-                });
-                if let Some(notice) = notice {
-                    this.toast(Toast::danger(notice), cx);
-                }
-                if matches!(action, Action::ReloadHooks)
-                    && matches!(&cx.global::<State>().hooks, Load::Ready(_))
-                {
-                    this.toast(Toast::info("Refreshed hooks"), cx);
-                }
+                this.finish_settings_integration(action, result, snapshot, cx);
             })
             .ok();
         })
         .detach();
+    }
+
+    fn finish_settings_integration(
+        &mut self,
+        action: Action,
+        result: Result<Option<String>>,
+        snapshot: Option<Snapshot>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(snapshot) = snapshot {
+            if let Ok(configuration) = &snapshot.configuration {
+                self.config = configuration["config"].clone();
+            }
+            cx.update_global::<State, _>(|state, _| snapshot.apply(state));
+        }
+        let notice = cx.update_global::<State, _>(|state, cx| {
+            state.pending = false;
+            match result {
+                Ok(url) => {
+                    integration_succeeded(state, &action, url, cx);
+                    None
+                }
+                Err(error) => integration_failed(state, &action, error),
+            }
+        });
+        if let Some(notice) = notice {
+            self.toast(Toast::danger(notice), cx);
+        }
+        if matches!(action, Action::ReloadHooks)
+            && matches!(&cx.global::<State>().hooks, Load::Ready(_))
+        {
+            self.toast(Toast::info("Refreshed hooks"), cx);
+        }
     }
 
     pub(crate) fn settings_integration_event(&mut self, event: &Event, cx: &mut Context<Self>) {
@@ -224,6 +186,62 @@ impl Root {
             );
         }
     }
+}
+
+fn integration_succeeded(
+    state: &mut State,
+    action: &Action,
+    url: Option<String>,
+    cx: &mut gpui::App,
+) {
+    if matches!(action, Action::SaveServer { .. } | Action::RemoveServer(_)) {
+        state.form_saved += 1;
+    }
+    match action {
+        Action::SetServerEnabled { .. } | Action::SaveServer { .. } | Action::RemoveServer(_) => {
+            state.reload_required = true;
+        }
+        Action::ReloadServers => {
+            state.reload_required = false;
+            state.suppressed_servers.clear();
+        }
+        Action::AddMarketplace(_) => state.marketplace_added += 1,
+        Action::RemoveMarketplace(name) => state.removal_completed = Some(name.clone()),
+        Action::RemovePlugin(plugin) => {
+            state.removal_completed = plugin["id"].as_str().map(|id| format!("plugin:{id}"));
+        }
+        _ => {}
+    }
+    if let Action::RemoveServer(key) = action {
+        state.suppressed_servers.insert(key.clone());
+    }
+    if let Action::Authenticate { name, .. } = action
+        && let Some(url) = url
+    {
+        state.oauth.insert(name.clone(), Some(url.clone()));
+        cx.open_url(&url);
+    }
+}
+
+fn integration_failed(state: &mut State, action: &Action, error: anyhow::Error) -> Option<String> {
+    if let Action::Authenticate { name, .. } = action {
+        state.oauth.remove(name);
+    }
+    if matches!(action, Action::SaveServer { .. } | Action::RemoveServer(_)) {
+        state.form_error = Some(error.to_string());
+    } else if matches!(
+        action,
+        Action::TrustHooks(_)
+            | Action::SetHookEnabled { .. }
+            | Action::RemoveMarketplace(_)
+            | Action::AddMarketplace(_)
+            | Action::RemovePlugin(_)
+    ) {
+        state.operation_error = Some(error.to_string());
+    } else {
+        return Some(error.to_string());
+    }
+    None
 }
 
 struct Snapshot {
@@ -308,38 +326,7 @@ async fn load(
         .request("plugin/installed", json!({"cwds":roots}))
         .await;
     if let Ok(value) = &mut plugins {
-        for marketplace in value["marketplaces"].as_array_mut().into_iter().flatten() {
-            for plugin in marketplace["plugins"]
-                .as_array_mut()
-                .into_iter()
-                .flatten()
-                .filter(|plugin| {
-                    ui::screens::settings::integrations::visible_plugin(plugin, &hidden_plugins)
-                })
-            {
-                let cached = cached_plugins["marketplaces"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .flat_map(|marketplace| marketplace["plugins"].as_array().into_iter().flatten())
-                    .find(|old| {
-                        old["id"] == plugin["id"] && old["interface"] == plugin["interface"]
-                    })
-                    .and_then(|old| old["iconDataUrl"].as_str());
-                if let Some(data) = cached {
-                    plugin["iconDataUrl"] = data.into();
-                    continue;
-                }
-                let url = plugin["interface"]["logoUrlDark"]
-                    .as_str()
-                    .or_else(|| plugin["interface"]["logoUrl"].as_str());
-                if let Some(url) = url {
-                    if let Ok(data) = load_icon(host, url) {
-                        plugin["iconDataUrl"] = data.into();
-                    }
-                }
-            }
-        }
+        load_plugin_icons(value, cached_plugins, &hidden_plugins, host);
     }
     let marketplaces = bridge
         .request(
@@ -371,6 +358,44 @@ async fn load(
         roots,
         evaluations,
         hidden_plugins,
+    }
+}
+
+fn load_plugin_icons(
+    value: &mut Value,
+    cached_plugins: &Value,
+    hidden_plugins: &HashSet<String>,
+    host: &dyn Host,
+) {
+    for marketplace in value["marketplaces"].as_array_mut().into_iter().flatten() {
+        for plugin in marketplace["plugins"]
+            .as_array_mut()
+            .into_iter()
+            .flatten()
+            .filter(|plugin| {
+                ui::screens::settings::integrations::visible_plugin(plugin, hidden_plugins)
+            })
+        {
+            let cached = cached_plugins["marketplaces"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .flat_map(|marketplace| marketplace["plugins"].as_array().into_iter().flatten())
+                .find(|old| old["id"] == plugin["id"] && old["interface"] == plugin["interface"])
+                .and_then(|old| old["iconDataUrl"].as_str());
+            if let Some(data) = cached {
+                plugin["iconDataUrl"] = data.into();
+                continue;
+            }
+            let url = plugin["interface"]["logoUrlDark"]
+                .as_str()
+                .or_else(|| plugin["interface"]["logoUrl"].as_str());
+            if let Some(url) = url {
+                if let Ok(data) = load_icon(host, url) {
+                    plugin["iconDataUrl"] = data.into();
+                }
+            }
+        }
     }
 }
 
@@ -432,6 +457,80 @@ async fn execute(
     roots: &[String],
     configuration: &Value,
 ) -> Result<Option<String>> {
+    match action {
+        Action::Refresh | Action::ReloadHooks => {}
+        Action::ReloadServers => {
+            bridge
+                .request::<_, Value>("config/mcpServer/reload", json!({}))
+                .await?;
+        }
+        Action::SetServerEnabled { .. }
+        | Action::SaveServer { .. }
+        | Action::RemoveServer(_)
+        | Action::Authenticate { .. } => {
+            return execute_server_action(bridge, action, configuration).await;
+        }
+        Action::SetHookEnabled { key, enabled } => {
+            write(
+                bridge,
+                vec![edit(
+                    format!("hooks.state.{}.enabled", quote(key)?),
+                    json!(enabled),
+                    "upsert",
+                )],
+            )
+            .await?;
+        }
+        Action::TrustHooks(hooks) => trust_hooks(bridge, hooks, roots).await?,
+        Action::SetPluginEnabled { plugin, enabled } => {
+            set_plugin_enabled(bridge, host, plugin, *enabled).await?;
+        }
+        Action::RemovePlugin(plugin) => uninstall_plugin(bridge, plugin).await?,
+        Action::RemoveMarketplace(name) => remove_marketplace(bridge, name, roots).await?,
+        Action::AddMarketplace(params) => {
+            ensure!(
+                params["source"]
+                    .as_str()
+                    .is_some_and(|source| !source.trim().is_empty()),
+                "Enter a marketplace source"
+            );
+            bridge
+                .request::<_, Value>("marketplace/add", params)
+                .await?;
+        }
+        Action::UpgradeMarketplace(name) => {
+            bridge
+                .request::<_, Value>("marketplace/upgrade", json!({"marketplaceName":name}))
+                .await?;
+        }
+        Action::SetAppEnabled { id, enabled } => {
+            write(
+                bridge,
+                vec![edit(
+                    format!("apps.{}.enabled", quote(id)?),
+                    json!(enabled),
+                    "upsert",
+                )],
+            )
+            .await?;
+        }
+        Action::SetSkillEnabled { path, enabled } => {
+            bridge
+                .request::<_, Value>(
+                    "skills/config/write",
+                    json!({"path":path,"enabled":enabled}),
+                )
+                .await?;
+        }
+    }
+    Ok(None)
+}
+
+async fn execute_server_action(
+    bridge: &Bridge,
+    action: &Action,
+    configuration: &Value,
+) -> Result<Option<String>> {
     let server_key = match action {
         Action::SetServerEnabled { key, .. }
         | Action::SaveServer { key, .. }
@@ -445,12 +544,6 @@ async fn execute(
         );
     }
     match action {
-        Action::Refresh | Action::ReloadHooks => {}
-        Action::ReloadServers => {
-            bridge
-                .request::<_, Value>("config/mcpServer/reload", json!({}))
-                .await?;
-        }
         Action::SetServerEnabled { key, enabled } => {
             write(
                 bridge,
@@ -504,114 +597,76 @@ async fn execute(
             let result: Value = bridge.request("mcpServer/oauth/login", params).await?;
             return Ok(Some(authorization_url(&result)?.into()));
         }
-        Action::SetHookEnabled { key, enabled } => {
-            write(
-                bridge,
-                vec![edit(
-                    format!("hooks.state.{}.enabled", quote(key)?),
-                    json!(enabled),
-                    "upsert",
-                )],
-            )
-            .await?;
-        }
-        Action::TrustHooks(hooks) => {
-            ensure!(!hooks.is_empty(), "No hooks selected for trust");
-            let edits = hooks
-                .iter()
-                .map(|(key, hash)| {
-                    Ok(edit(
-                        format!("hooks.state.{}.trusted_hash", quote(key)?),
-                        json!(hash),
-                        "upsert",
-                    ))
-                })
-                .collect::<Result<Vec<_>>>()?;
-            write(bridge, edits).await?;
-            let loaded: Value = bridge.request("hooks/list", json!({"cwds":roots})).await?;
-            for (key, hash) in hooks {
-                let trusted = loaded["data"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .flat_map(|entry| entry["hooks"].as_array().into_iter().flatten())
-                    .any(|hook| {
-                        hook["key"] == *key
-                            && hook["currentHash"] == *hash
-                            && hook["trustStatus"] == "trusted"
-                    });
-                ensure!(
-                    trusted,
-                    "Another config layer overrides these hook settings and must be changed before approval can take effect"
-                );
-            }
-        }
-        Action::SetPluginEnabled { plugin, enabled } => {
-            if plugin["source"]["type"] == "remote" {
-                let id = plugin["remotePluginId"]
-                    .as_str()
-                    .context("Remote plugin has no identifier")?;
-                let id = url::form_urlencoded::byte_serialize(id.as_bytes()).collect::<String>();
-                let endpoint = if *enabled { "enable" } else { "disable" };
-                host::json_body(&host.fetch(&plugin_request(
-                    host,
-                    format!("/ps/plugins/{id}/{endpoint}"),
-                ))?)?;
-            } else {
-                let id = plugin["id"].as_str().context("Plugin has no identifier")?;
-                write(
-                    bridge,
-                    vec![edit(
-                        format!("plugins.{}.enabled", quote(id)?),
-                        json!(enabled),
-                        "upsert",
-                    )],
-                )
-                .await?;
-            }
-            bridge
-                .request::<_, Value>("config/mcpServer/reload", json!({}))
-                .await?;
-        }
-        Action::RemovePlugin(plugin) => uninstall_plugin(bridge, plugin).await?,
-        Action::RemoveMarketplace(name) => remove_marketplace(bridge, name, roots).await?,
-        Action::AddMarketplace(params) => {
-            ensure!(
-                params["source"]
-                    .as_str()
-                    .is_some_and(|source| !source.trim().is_empty()),
-                "Enter a marketplace source"
-            );
-            bridge
-                .request::<_, Value>("marketplace/add", params)
-                .await?;
-        }
-        Action::UpgradeMarketplace(name) => {
-            bridge
-                .request::<_, Value>("marketplace/upgrade", json!({"marketplaceName":name}))
-                .await?;
-        }
-        Action::SetAppEnabled { id, enabled } => {
-            write(
-                bridge,
-                vec![edit(
-                    format!("apps.{}.enabled", quote(id)?),
-                    json!(enabled),
-                    "upsert",
-                )],
-            )
-            .await?;
-        }
-        Action::SetSkillEnabled { path, enabled } => {
-            bridge
-                .request::<_, Value>(
-                    "skills/config/write",
-                    json!({"path":path,"enabled":enabled}),
-                )
-                .await?;
-        }
+        _ => return Err(anyhow::anyhow!("Unsupported MCP server action")),
     }
     Ok(None)
+}
+
+async fn trust_hooks(bridge: &Bridge, hooks: &[(String, String)], roots: &[String]) -> Result<()> {
+    ensure!(!hooks.is_empty(), "No hooks selected for trust");
+    let edits = hooks
+        .iter()
+        .map(|(key, hash)| {
+            Ok(edit(
+                format!("hooks.state.{}.trusted_hash", quote(key)?),
+                json!(hash),
+                "upsert",
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    write(bridge, edits).await?;
+    let loaded: Value = bridge.request("hooks/list", json!({"cwds":roots})).await?;
+    for (key, hash) in hooks {
+        let trusted = loaded["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|entry| entry["hooks"].as_array().into_iter().flatten())
+            .any(|hook| {
+                hook["key"] == *key
+                    && hook["currentHash"] == *hash
+                    && hook["trustStatus"] == "trusted"
+            });
+        ensure!(
+            trusted,
+            "Another config layer overrides these hook settings and must be changed before approval can take effect"
+        );
+    }
+    Ok(())
+}
+
+async fn set_plugin_enabled(
+    bridge: &Bridge,
+    host: &dyn Host,
+    plugin: &Value,
+    enabled: bool,
+) -> Result<()> {
+    if plugin["source"]["type"] == "remote" {
+        let id = plugin["remotePluginId"]
+            .as_str()
+            .context("Remote plugin has no identifier")?;
+        let id = url::form_urlencoded::byte_serialize(id.as_bytes()).collect::<String>();
+        let endpoint = if enabled { "enable" } else { "disable" };
+        host::json_body(&host.fetch(&plugin_request(
+            host,
+            format!("/ps/plugins/{id}/{endpoint}"),
+        ))?)?;
+    } else {
+        let id = plugin["id"].as_str().context("Plugin has no identifier")?;
+        write(
+            bridge,
+            vec![edit(
+                format!("plugins.{}.enabled", quote(id)?),
+                json!(enabled),
+                "upsert",
+            )],
+        )
+        .await?;
+    }
+    bridge
+        .request::<_, Value>("config/mcpServer/reload", json!({}))
+        .await?;
+    Ok(())
 }
 
 fn plugin_request(host: &dyn Host, url: String) -> Request {

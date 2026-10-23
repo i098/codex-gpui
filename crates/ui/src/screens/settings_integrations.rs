@@ -537,62 +537,17 @@ impl Manager {
     fn server_row(
         &self,
         key: &str,
-        config: Option<&Value>,
-        status: Option<&Value>,
+        details: (Option<&Value>, Option<&Value>),
         state: &State,
         t: &Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
+        let (config, status) = details;
         let name = config.and_then(|c| c["name"].as_str()).unwrap_or(key);
         let enabled = config.is_none_or(|config| config["enabled"] != false);
         let read_only = server_read_only(&state.configuration, key);
-        let authenticate = status.is_some_and(|status| status["authStatus"] == "notLoggedIn");
-        let mut controls = div().flex().items_center().gap(px(12.));
-        if authenticate {
-            let registration = self.registrations.get(key).copied().unwrap_or("auto");
-            let label = match registration {
-                "cimd" => "CIMD",
-                "dcr" => "DCR",
-                _ => "Auto",
-            };
-            let server = key.to_owned();
-            controls = controls.child(
-                action_button(format!("registration-{key}"), label, t)
-                    .aria_label("OAuth client registration")
-                    .child(icon("chevron-down", 14., t.text_secondary))
-                    .on_activate(window, cx, move |this, _, cx| {
-                        this.menu = Some(Menu::OAuth(server.clone()));
-                        cx.notify();
-                    }),
-            );
-            let server = key.to_owned();
-            let pending = state.oauth.get(key).is_some_and(Option::is_none);
-            controls = controls.child(
-                action_button(
-                    format!("authenticate-{key}"),
-                    if pending {
-                        "Starting…"
-                    } else {
-                        "Authenticate"
-                    },
-                    t,
-                )
-                .aria_disabled(pending)
-                .when(pending, |d| d.opacity(0.4))
-                .on_activate(window, cx, move |_, _, cx| {
-                    if !pending {
-                        dispatch(
-                            Action::Authenticate {
-                                name: server.clone(),
-                                registration,
-                            },
-                            cx,
-                        );
-                    }
-                }),
-            );
-        }
+        let mut controls = self.authentication_controls(key, status, state, t, window, cx);
         if let Some(config) = config {
             let settings_key = key.to_owned();
             let value = config.clone();
@@ -654,6 +609,64 @@ impl Manager {
             .child(controls)
     }
 
+    fn authentication_controls(
+        &self,
+        key: &str,
+        status: Option<&Value>,
+        state: &State,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let authenticate = status.is_some_and(|status| status["authStatus"] == "notLoggedIn");
+        let mut controls = div().flex().items_center().gap(px(12.));
+        if authenticate {
+            let registration = self.registrations.get(key).copied().unwrap_or("auto");
+            let label = match registration {
+                "cimd" => "CIMD",
+                "dcr" => "DCR",
+                _ => "Auto",
+            };
+            let server = key.to_owned();
+            controls = controls.child(
+                action_button(format!("registration-{key}"), label, t)
+                    .aria_label("OAuth client registration")
+                    .child(icon("chevron-down", 14., t.text_secondary))
+                    .on_activate(window, cx, move |this, _, cx| {
+                        this.menu = Some(Menu::OAuth(server.clone()));
+                        cx.notify();
+                    }),
+            );
+            let server = key.to_owned();
+            let pending = state.oauth.get(key).is_some_and(Option::is_none);
+            controls = controls.child(
+                action_button(
+                    format!("authenticate-{key}"),
+                    if pending {
+                        "Starting…"
+                    } else {
+                        "Authenticate"
+                    },
+                    t,
+                )
+                .aria_disabled(pending)
+                .when(pending, |d| d.opacity(0.4))
+                .on_activate(window, cx, move |_, _, cx| {
+                    if !pending {
+                        dispatch(
+                            Action::Authenticate {
+                                name: server.clone(),
+                                registration,
+                            },
+                            cx,
+                        );
+                    }
+                }),
+            );
+        }
+        controls
+    }
+
     fn mcp_list(
         &self,
         state: &State,
@@ -664,61 +677,7 @@ impl Manager {
         if let Some(error) = &state.config_error {
             return self.load_error("MCP server settings are unavailable", error, t, window, cx);
         }
-        let query = self.query.to_lowercase();
-        let mut configured = configured_servers(&state.configuration).collect::<Vec<_>>();
-        configured.sort_by_key(|(key, config)| {
-            (
-                config["enabled"] == false,
-                config["name"].as_str().unwrap_or(key).to_lowercase(),
-            )
-        });
-        let statuses = match &state.servers {
-            Load::Ready(value) => array(value, "data"),
-            _ => &[],
-        };
-        let custom = configured
-            .iter()
-            .filter(|(key, config)| {
-                key.to_lowercase().contains(&query)
-                    || config["name"]
-                        .as_str()
-                        .is_some_and(|name| name.to_lowercase().contains(&query))
-            })
-            .map(|(key, config)| {
-                self.server_row(
-                    key,
-                    Some(config),
-                    statuses.iter().find(|s| s["name"] == *key),
-                    state,
-                    t,
-                    window,
-                    cx,
-                )
-            })
-            .collect::<Vec<_>>();
-        let provided = statuses
-            .iter()
-            .filter(|status| {
-                let name = status["name"].as_str().unwrap_or("");
-                !server_hidden(name)
-                    && !state.suppressed_servers.contains(name)
-                    && !configured
-                        .iter()
-                        .any(|(key, config)| *key == name || config["name"] == name)
-                    && name.to_lowercase().contains(&query)
-            })
-            .map(|status| {
-                self.server_row(
-                    status["name"].as_str().unwrap_or(""),
-                    None,
-                    Some(status),
-                    state,
-                    t,
-                    window,
-                    cx,
-                )
-            })
-            .collect::<Vec<_>>();
+        let (custom, provided) = self.server_rows(state, t, window, cx);
         let mut body = div().flex().flex_col().gap(px(32.));
         match &state.servers {
             Load::Loading => return body.child(message("Loading MCP servers…", None, t)),
@@ -779,6 +738,69 @@ impl Manager {
             ));
         }
         body
+    }
+
+    fn server_rows(
+        &self,
+        state: &State,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Vec<Div>, Vec<Div>) {
+        let query = self.query.to_lowercase();
+        let mut configured = configured_servers(&state.configuration).collect::<Vec<_>>();
+        configured.sort_by_key(|(key, config)| {
+            (
+                config["enabled"] == false,
+                config["name"].as_str().unwrap_or(key).to_lowercase(),
+            )
+        });
+        let statuses = match &state.servers {
+            Load::Ready(value) => array(value, "data"),
+            _ => &[],
+        };
+        let custom = configured
+            .iter()
+            .filter(|(key, config)| {
+                key.to_lowercase().contains(&query)
+                    || config["name"]
+                        .as_str()
+                        .is_some_and(|name| name.to_lowercase().contains(&query))
+            })
+            .map(|(key, config)| {
+                self.server_row(
+                    key,
+                    (Some(config), statuses.iter().find(|s| s["name"] == *key)),
+                    state,
+                    t,
+                    window,
+                    cx,
+                )
+            })
+            .collect::<Vec<_>>();
+        let provided = statuses
+            .iter()
+            .filter(|status| {
+                let name = status["name"].as_str().unwrap_or("");
+                !server_hidden(name)
+                    && !state.suppressed_servers.contains(name)
+                    && !configured
+                        .iter()
+                        .any(|(key, config)| *key == name || config["name"] == name)
+                    && name.to_lowercase().contains(&query)
+            })
+            .map(|status| {
+                self.server_row(
+                    status["name"].as_str().unwrap_or(""),
+                    (None, Some(status)),
+                    state,
+                    t,
+                    window,
+                    cx,
+                )
+            })
+            .collect::<Vec<_>>();
+        (custom, provided)
     }
 
     fn load_error(
@@ -1449,147 +1471,7 @@ impl Manager {
                 .filter(|hook| hook["eventName"] == event)
                 .enumerate()
             {
-                let key = hook["key"].as_str().unwrap_or("").to_owned();
-                let expanded = self.expanded_hooks.contains(&key);
-                let managed = hook["isManaged"] == true;
-                let review = needs_review(hook);
-                let enabled = hook_enabled(hook);
-                let title = hook["statusMessage"]
-                    .as_str()
-                    .filter(|value| !value.trim().is_empty())
-                    .map_or_else(
-                        || format!("Hook {}", index + 1),
-                        |status| format!("{} - {status}", index + 1),
-                    );
-                let toggle_id = format!("hook-enabled-{key}");
-                let expand_id = format!("hook-expand-{key}");
-                controls.extend([expand_id.clone(), toggle_id.clone()]);
-                let expand_key = key.clone();
-                let toggle_key = key.clone();
-                let toggle = switch(
-                    SharedString::from(toggle_id),
-                    enabled,
-                    managed || review || state.pending,
-                    t,
-                )
-                .role(gpui::Role::Switch)
-                .aria_label(title.clone())
-                .aria_disabled(managed || review || state.pending)
-                .aria_toggled(if enabled {
-                    gpui::Toggled::True
-                } else {
-                    gpui::Toggled::False
-                })
-                .on_activate(window, cx, move |_, _, cx| {
-                    if !managed && !review {
-                        dispatch(
-                            Action::SetHookEnabled {
-                                key: toggle_key.clone(),
-                                enabled: !enabled,
-                            },
-                            cx,
-                        );
-                    }
-                });
-                let mut controls_row = div().flex().items_center().gap(px(8.));
-                if !managed && review {
-                    let id = format!("trust-{key}");
-                    controls.push(id.clone());
-                    let hash = hook["currentHash"].as_str().unwrap_or("").to_owned();
-                    let trust_key = key.clone();
-                    controls_row = controls_row.child(
-                        action_button(id, "Trust", t)
-                            .aria_disabled(state.pending)
-                            .on_activate(window, cx, move |_, _, cx| {
-                                dispatch(
-                                    Action::TrustHooks(vec![(trust_key.clone(), hash.clone())]),
-                                    cx,
-                                )
-                            }),
-                    );
-                }
-                controls_row = controls_row.child(toggle);
-                let mut row = div().flex().flex_col().px(px(12.)).child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .py(px(8.))
-                        .child(
-                            div()
-                                .id(SharedString::from(expand_id))
-                                .role(gpui::Role::Button)
-                                .aria_label(title.clone())
-                                .aria_expanded(expanded)
-                                .flex_1()
-                                .flex()
-                                .items_center()
-                                .gap(px(8.))
-                                .child(text(title, 13., 18., 430., t.text))
-                                .child(icon(
-                                    if expanded {
-                                        "chevron-down"
-                                    } else {
-                                        "chevron-right"
-                                    },
-                                    14.,
-                                    t.text_secondary,
-                                ))
-                                .on_activate(window, cx, move |this, _, cx| {
-                                    if !this.expanded_hooks.remove(&expand_key) {
-                                        this.expanded_hooks.insert(expand_key.clone());
-                                    }
-                                    cx.notify();
-                                }),
-                        )
-                        .child(controls_row),
-                );
-                if expanded {
-                    let detail = if hook["handlerType"] == "command" {
-                        format!("Command: {}", hook["command"].as_str().unwrap_or(""))
-                    } else if hook["handlerType"] == "mcpTool" {
-                        format!(
-                            "MCP server: {}\\nTool: {}",
-                            hook["server"].as_str().unwrap_or(""),
-                            hook["tool"].as_str().unwrap_or("")
-                        )
-                    } else {
-                        format!("Handler: {}", hook["handlerType"].as_str().unwrap_or(""))
-                    };
-                    row = row.child(
-                        div()
-                            .px(px(28.))
-                            .pb(px(12.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(8.))
-                            .child(
-                                text(detail, 12., 16., 430., t.text)
-                                    .font_family(crate::MONO)
-                                    .whitespace_normal(),
-                            )
-                            .children(hook["matcher"].as_str().map(|matcher| {
-                                text(
-                                    format!("Matcher: {matcher}"),
-                                    12.,
-                                    16.,
-                                    430.,
-                                    t.text_secondary,
-                                )
-                            }))
-                            .child(text(
-                                format!(
-                                    "Timeout: {}s",
-                                    hook["timeoutSec"].as_u64().unwrap_or_default()
-                                ),
-                                12.,
-                                16.,
-                                430.,
-                                t.text_secondary,
-                            )),
-                    );
-                }
-                rows.push(row);
+                rows.push(self.hook_row((index, hook), &mut controls, state, t, window, cx));
             }
             body = body.child(card(
                 [div()
@@ -1612,16 +1494,188 @@ impl Manager {
         (body, controls)
     }
 
+    fn hook_row(
+        &self,
+        entry: (usize, &Value),
+        controls: &mut Vec<String>,
+        state: &State,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let (index, hook) = entry;
+        let key = hook["key"].as_str().unwrap_or("").to_owned();
+        let expanded = self.expanded_hooks.contains(&key);
+        let title = hook["statusMessage"]
+            .as_str()
+            .filter(|value| !value.trim().is_empty())
+            .map_or_else(
+                || format!("Hook {}", index + 1),
+                |status| format!("{} - {status}", index + 1),
+            );
+        let expand_id = format!("hook-expand-{key}");
+        controls.push(expand_id.clone());
+        let expand_key = key.clone();
+        let controls_row = Self::hook_controls(
+            (key.as_str(), hook, title.as_str()),
+            controls,
+            state,
+            t,
+            window,
+            cx,
+        );
+        let mut row = div().flex().flex_col().px(px(12.)).child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .py(px(8.))
+                .child(
+                    div()
+                        .id(SharedString::from(expand_id))
+                        .role(gpui::Role::Button)
+                        .aria_label(title.clone())
+                        .aria_expanded(expanded)
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(text(title, 13., 18., 430., t.text))
+                        .child(icon(
+                            if expanded {
+                                "chevron-down"
+                            } else {
+                                "chevron-right"
+                            },
+                            14.,
+                            t.text_secondary,
+                        ))
+                        .on_activate(window, cx, move |this, _, cx| {
+                            if !this.expanded_hooks.remove(&expand_key) {
+                                this.expanded_hooks.insert(expand_key.clone());
+                            }
+                            cx.notify();
+                        }),
+                )
+                .child(controls_row),
+        );
+        if expanded {
+            row = row.child(Self::hook_body(hook, t));
+        }
+        row
+    }
+
+    fn hook_controls(
+        details: (&str, &Value, &str),
+        controls: &mut Vec<String>,
+        state: &State,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let (key, hook, title) = details;
+        let managed = hook["isManaged"] == true;
+        let review = needs_review(hook);
+        let enabled = hook_enabled(hook);
+        let disabled = managed || review || state.pending;
+        let toggle_id = format!("hook-enabled-{key}");
+        controls.push(toggle_id.clone());
+        let toggle_key = key.to_owned();
+        let toggle = switch(SharedString::from(toggle_id), enabled, disabled, t)
+            .role(gpui::Role::Switch)
+            .aria_label(title.to_owned())
+            .aria_disabled(disabled)
+            .aria_toggled(if enabled {
+                gpui::Toggled::True
+            } else {
+                gpui::Toggled::False
+            })
+            .on_activate(window, cx, move |_, _, cx| {
+                if !managed && !review {
+                    dispatch(
+                        Action::SetHookEnabled {
+                            key: toggle_key.clone(),
+                            enabled: !enabled,
+                        },
+                        cx,
+                    );
+                }
+            });
+        let mut controls_row = div().flex().items_center().gap(px(8.));
+        if !managed && review {
+            let id = format!("trust-{key}");
+            controls.push(id.clone());
+            let hash = hook["currentHash"].as_str().unwrap_or("").to_owned();
+            let trust_key = key.to_owned();
+            controls_row = controls_row.child(
+                action_button(id, "Trust", t)
+                    .aria_disabled(state.pending)
+                    .on_activate(window, cx, move |_, _, cx| {
+                        dispatch(
+                            Action::TrustHooks(vec![(trust_key.clone(), hash.clone())]),
+                            cx,
+                        )
+                    }),
+            );
+        }
+        controls_row = controls_row.child(toggle);
+        controls_row
+    }
+
+    fn hook_body(hook: &Value, t: &Theme) -> Div {
+        let detail = if hook["handlerType"] == "command" {
+            format!("Command: {}", hook["command"].as_str().unwrap_or(""))
+        } else if hook["handlerType"] == "mcpTool" {
+            format!(
+                "MCP server: {}\\nTool: {}",
+                hook["server"].as_str().unwrap_or(""),
+                hook["tool"].as_str().unwrap_or("")
+            )
+        } else {
+            format!("Handler: {}", hook["handlerType"].as_str().unwrap_or(""))
+        };
+        div()
+            .px(px(28.))
+            .pb(px(12.))
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(
+                text(detail, 12., 16., 430., t.text)
+                    .font_family(crate::MONO)
+                    .whitespace_normal(),
+            )
+            .children(hook["matcher"].as_str().map(|matcher| {
+                text(
+                    format!("Matcher: {matcher}"),
+                    12.,
+                    16.,
+                    430.,
+                    t.text_secondary,
+                )
+            }))
+            .child(text(
+                format!(
+                    "Timeout: {}s",
+                    hook["timeoutSec"].as_u64().unwrap_or_default()
+                ),
+                12.,
+                16.,
+                430.,
+                t.text_secondary,
+            ))
+    }
+
     fn modal(
         &self,
-        title: String,
-        content: Div,
+        content: (String, Div),
         controls: Vec<gpui::FocusHandle>,
         pending: bool,
         t: &Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let (title, content) = content;
         gpui::deferred(
             div()
                 .absolute()
@@ -1695,8 +1749,7 @@ impl Manager {
         if let Some(form) = &self.marketplace_form {
             let controls = form.update(cx, |form, cx| form.controls(window, cx));
             return Some(self.modal(
-                "Add plugin marketplace".into(),
-                div().child(form.clone()),
+                ("Add plugin marketplace".into(), div().child(form.clone())),
                 controls,
                 state.pending,
                 t,
@@ -1707,8 +1760,7 @@ impl Manager {
         if let Some(source) = &self.selected_hooks {
             let (content, controls) = self.hook_details(source, state, t, window, cx);
             return Some(self.modal(
-                hook_source_title(source, state),
-                content,
+                (hook_source_title(source, state), content),
                 control_handles(controls, window, cx),
                 state.pending,
                 t,
@@ -1717,70 +1769,97 @@ impl Manager {
             ));
         }
         if let Some(name) = &self.marketplace {
-            let plugin_id = name.strip_prefix("plugin:");
-            let listed = match &state.plugins {
-                Load::Ready(value) => Some(value),
-                _ => None,
-            };
-            let affected = listed
-                .into_iter()
-                .flat_map(|value| array(value, "marketplaces"))
-                .filter(|marketplace| plugin_id.is_some() || marketplace["name"] == *name)
-                .flat_map(|marketplace| array(marketplace, "plugins"))
-                .filter(|plugin| plugin_id.is_none_or(|id| plugin["id"] == id))
-                .collect::<Vec<_>>();
-            let title = if let Some(id) = plugin_id {
-                format!(
-                    "Uninstall {}?",
-                    affected
-                        .iter()
-                        .find(|p| p["id"] == id)
-                        .map_or(id, |p| plugin_name(p))
-                )
-            } else {
-                format!("Remove \"{name}\"?")
-            };
-            let action = if state.operation_error.is_some() {
-                "Retry"
-            } else if plugin_id.is_some() {
-                "Uninstall"
-            } else if affected.is_empty() {
-                "Remove"
-            } else {
-                "Uninstall & remove"
-            };
-            let target = name.clone();
-            let plugin = affected.first().map(|value| (*value).clone());
-            let title_label = title.clone();
-            let pending = state.pending;
-            let confirm = div().w(px(448.)).p(px(24.)).flex().flex_col().gap(px(16.)).relative()
+            return Some(self.removal_dialog(name, state, t, window, cx));
+        }
+        self.menu
+            .as_ref()
+            .map(|menu| self.menu_overlay(menu, state, t, window, cx))
+    }
+
+    fn removal_dialog(
+        &self,
+        name: &str,
+        state: &State,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let plugin_id = name.strip_prefix("plugin:");
+        let listed = match &state.plugins {
+            Load::Ready(value) => Some(value),
+            _ => None,
+        };
+        let affected = listed
+            .into_iter()
+            .flat_map(|value| array(value, "marketplaces"))
+            .filter(|marketplace| plugin_id.is_some() || marketplace["name"] == name)
+            .flat_map(|marketplace| array(marketplace, "plugins"))
+            .filter(|plugin| plugin_id.is_none_or(|id| plugin["id"] == id))
+            .collect::<Vec<_>>();
+        let title = if let Some(id) = plugin_id {
+            format!(
+                "Uninstall {}?",
+                affected
+                    .iter()
+                    .find(|p| p["id"] == id)
+                    .map_or(id, |p| plugin_name(p))
+            )
+        } else {
+            format!("Remove \"{name}\"?")
+        };
+        let empty = affected.is_empty();
+        let action = match (state.operation_error.is_some(), plugin_id.is_some(), empty) {
+            (true, _, _) => "Retry",
+            (false, true, _) => "Uninstall",
+            (false, false, true) => "Remove",
+            (false, false, false) => "Uninstall & remove",
+        };
+        let target = name.to_owned();
+        let plugin = affected.first().map(|value| (*value).clone());
+        let title_label = title.clone();
+        let pending = state.pending;
+        let confirm = div().w(px(448.)).p(px(24.)).flex().flex_col().gap(px(16.)).relative()
                 .children(state.operation_error.as_ref().map(|error| text(error.clone(), 13., 18., 430., t.text_error).whitespace_normal()))
                 .child(text(title, 18., 24., 600., t.text))
-                .child(text(if affected.is_empty() { "Its plugins will not appear or be available for installation unless you add it again" }
+                .child(text(if empty { "Its plugins will not appear or be available for installation unless you add it again" }
                     else { "The following plugins will be uninstalled, and can't be re-installed unless you add this marketplace again." }, 13., 18., 430., t.text_secondary).whitespace_normal())
                 .children(affected.iter().map(|plugin| text(plugin_name(plugin).to_owned(), 14., 20., 430., t.text)))
                 .child(div().flex().justify_end().gap(px(8.))
                     .child(action_button("cancel-removal", "Cancel", t).aria_disabled(pending).on_activate(window, cx, move |this, window, cx| { if !pending { this.close_modal(window, cx); } }))
                     .child(action_button("confirm-removal", action, t).aria_disabled(pending).on_activate(window, cx, move |_, _, cx| {
                         if pending { return; }
-                        if let Some(plugin) = &plugin { if target.starts_with("plugin:") { dispatch(Action::RemovePlugin(plugin.clone()), cx); } else { dispatch(Action::RemoveMarketplace(target.clone()), cx); } }
-                        else { dispatch(Action::RemoveMarketplace(target.clone()), cx); }
+                        Self::dispatch_removal(&target, plugin.as_ref(), cx);
                     })));
-            return Some(self.modal(
-                title_label,
-                confirm,
-                control_handles(
-                    vec!["cancel-removal".into(), "confirm-removal".into()],
-                    window,
-                    cx,
-                ),
-                pending,
-                t,
+        self.modal(
+            (title_label, confirm),
+            control_handles(
+                vec!["cancel-removal".into(), "confirm-removal".into()],
                 window,
                 cx,
-            ));
-        }
-        let menu = self.menu.as_ref()?;
+            ),
+            pending,
+            t,
+            window,
+            cx,
+        )
+    }
+
+    fn dispatch_removal(target: &str, plugin: Option<&Value>, cx: &mut App) {
+        let action = match plugin {
+            Some(plugin) if target.starts_with("plugin:") => Action::RemovePlugin(plugin.clone()),
+            _ => Action::RemoveMarketplace(target.to_owned()),
+        };
+        dispatch(action, cx);
+    }
+
+    fn menu_overlay(
+        &self,
+        menu: &Menu,
+        state: &State,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let options = match menu {
             Menu::Add => vec![
                 ("Create plugin", None),
@@ -1843,14 +1922,109 @@ impl Manager {
                             cx.notify();
                         })
                 }));
-        Some(
-            div()
-                .absolute()
-                .top(px(120.))
-                .right(px(40.))
-                .child(popover(t, 260., |d| d.child(content)))
-                .into_any_element(),
-        )
+        div()
+            .absolute()
+            .top(px(120.))
+            .right(px(40.))
+            .child(popover(t, 260., |d| d.child(content)))
+            .into_any_element()
+    }
+
+    fn select_available_tab(&mut self, state: &State) {
+        let counts = self.tab_counts(&state);
+        let plugins_enabled = state.configuration["config"]["features"]["plugins"] != false;
+        if !plugins_enabled {
+            self.tab = Tab::Mcps;
+        } else if self.tab != Tab::Mcps
+            && counts
+                .iter()
+                .any(|(tab, _, count)| *tab == self.tab && *count == 0)
+            && !matches!(&state.plugins, Load::Loading)
+        {
+            self.tab = counts
+                .iter()
+                .find(|(_, _, count)| *count > 0)
+                .map_or(Tab::Mcps, |(tab, _, _)| *tab);
+        }
+    }
+
+    fn header_actions(
+        &self,
+        hooks: bool,
+        state: &State,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let mut actions = div().flex().items_center().gap(px(8.));
+        if hooks {
+            let disabled = state.pending || state.roots.is_empty();
+            actions = actions.child(
+                div()
+                    .id("reload-hooks")
+                    .role(gpui::Role::Button)
+                    .aria_label("Reload hooks")
+                    .aria_disabled(disabled)
+                    .size(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(disabled, |d| d.opacity(0.4))
+                    .child(icon("diff-refresh", 16., t.text_secondary))
+                    .on_activate(window, cx, move |_, _, cx| {
+                        if !disabled {
+                            dispatch(Action::ReloadHooks, cx);
+                        }
+                    }),
+            );
+        } else {
+            actions =
+                actions
+                    .child(
+                        action_button("browse-extension-directory", "Browse directory", t)
+                            .on_activate(window, cx, {
+                                let path = if self.tab == Tab::Skills {
+                                    "/skills"
+                                } else {
+                                    "/plugins"
+                                };
+                                move |_, window, cx| {
+                                    window
+                                        .dispatch_action(Box::new(OpenExtensionDirectory(path)), cx)
+                                }
+                            }),
+                    )
+                    .child(action_button("integrations-add", "Add", t).on_activate(
+                        window,
+                        cx,
+                        |this, _, cx| {
+                            this.menu = Some(Menu::Add);
+                            cx.notify();
+                        },
+                    ));
+        }
+        actions
+    }
+
+    fn extension_body(
+        &self,
+        state: &State,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if let Some(form) = &self.form {
+            form.clone().into_any_element()
+        } else {
+            match self.tab {
+                Tab::Plugins => self.plugin_list(state, t, window, cx),
+                Tab::Apps => self.app_list(state, t, window, cx),
+                Tab::Mcps => self.mcp_list(state, t, window, cx),
+                Tab::Skills => self.skill_list(state, t, window, cx),
+                Tab::Marketplace => self.marketplace_list(state, t, window, cx),
+            }
+            .into_any_element()
+        }
     }
 }
 
@@ -1961,21 +2135,7 @@ impl Render for Manager {
             focus.focus(window, cx);
         }
         if !hooks && !state.pending {
-            let counts = self.tab_counts(&state);
-            let plugins_enabled = state.configuration["config"]["features"]["plugins"] != false;
-            if !plugins_enabled {
-                self.tab = Tab::Mcps;
-            } else if self.tab != Tab::Mcps
-                && counts
-                    .iter()
-                    .any(|(tab, _, count)| *tab == self.tab && *count == 0)
-                && !matches!(&state.plugins, Load::Loading)
-            {
-                self.tab = counts
-                    .iter()
-                    .find(|(_, _, count)| *count > 0)
-                    .map_or(Tab::Mcps, |(tab, _, _)| *tab);
-            }
+            self.select_available_tab(&state);
         }
         let heading = if hooks { "Hooks" } else { "Plugins" };
         let subtitle = if hooks {
@@ -2007,51 +2167,7 @@ impl Render for Manager {
                 t.text_secondary,
             )
         };
-        let mut actions = div().flex().items_center().gap(px(8.));
-        if hooks {
-            let disabled = state.pending || state.roots.is_empty();
-            actions = actions.child(
-                div()
-                    .id("reload-hooks")
-                    .role(gpui::Role::Button)
-                    .aria_label("Reload hooks")
-                    .aria_disabled(disabled)
-                    .size(px(28.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .when(disabled, |d| d.opacity(0.4))
-                    .child(icon("diff-refresh", 16., t.text_secondary))
-                    .on_activate(window, cx, move |_, _, cx| {
-                        if !disabled {
-                            dispatch(Action::ReloadHooks, cx);
-                        }
-                    }),
-            );
-        } else {
-            actions = actions
-                .child(
-                    action_button("browse-extension-directory", "Browse directory", &t)
-                        .on_activate(window, cx, {
-                            let path = if self.tab == Tab::Skills {
-                                "/skills"
-                            } else {
-                                "/plugins"
-                            };
-                            move |_, window, cx| {
-                                window.dispatch_action(Box::new(OpenExtensionDirectory(path)), cx)
-                            }
-                        }),
-                )
-                .child(action_button("integrations-add", "Add", &t).on_activate(
-                    window,
-                    cx,
-                    |this, _, cx| {
-                        this.menu = Some(Menu::Add);
-                        cx.notify();
-                    },
-                ));
-        }
+        let actions = self.header_actions(hooks, &state, &t, window, cx);
         let mut content = div()
             .w_full()
             .max_w(px(768.))
@@ -2083,17 +2199,8 @@ impl Render for Manager {
         }
         let body = if hooks {
             self.hooks(&state, &t, window, cx).into_any_element()
-        } else if let Some(form) = &self.form {
-            form.clone().into_any_element()
         } else {
-            match self.tab {
-                Tab::Plugins => self.plugin_list(&state, &t, window, cx),
-                Tab::Apps => self.app_list(&state, &t, window, cx),
-                Tab::Mcps => self.mcp_list(&state, &t, window, cx),
-                Tab::Skills => self.skill_list(&state, &t, window, cx),
-                Tab::Marketplace => self.marketplace_list(&state, &t, window, cx),
-            }
-            .into_any_element()
+            self.extension_body(&state, &t, window, cx)
         };
         content = content.child(body);
         div()
