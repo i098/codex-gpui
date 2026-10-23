@@ -1129,7 +1129,12 @@ impl ThreadView {
     }
 
     /// `Toggle summary` panel: project changes and background processes.
-    fn summary(&mut self, window: &mut Window, t: &Theme, cx: &mut Context<Self>) -> Div {
+    pub(crate) fn summary(
+        &mut self,
+        window: &mut Window,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let project = self.cwd.rsplit('/').next().unwrap_or(&self.cwd).to_owned();
         // `sticky` headers: their background (and their `before:` 8 px above) paints again in
         // the panel's rounded `overflow: hidden` clip, over the panel's corner.

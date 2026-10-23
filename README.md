@@ -398,7 +398,8 @@ Opening a right pane restores the header identity; the toolbar actions stay avai
 In a loaded chat with an open content tab, `Cmd+Shift+F` switches between full and split view.
 `Cmd+Shift+B` changes full view to split view, hides the tabs, or restores the retained tabs beside Chat.
 Hiding tabs keeps their selected content; opening the same file, terminal, or Changes tab shows it again.
-Full view focuses the content pane and does not send typed text to the hidden composer.
+Full view initially focuses the content pane and keeps a compact composer available for explicit input.
+The Chat tab restores the transcript without closing content tabs or losing the draft.
 Find in full view searches the visible Changes panel, not the hidden chat.
 These commands do not create a browser tab when no content tab is open.
 Run `cargo test -p app --test workspace_layout -- --test-threads=1` for the native interaction checks.

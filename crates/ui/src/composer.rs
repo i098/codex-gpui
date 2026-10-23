@@ -2146,8 +2146,10 @@ impl Render for Composer {
             card.child(shapes::decoration(shapes::Decoration {
                 radius: Corners::all(px(22.)),
                 fill: Some(t.surface_elevated_secondary),
-                border: Some((px(0.5), t.border)),
-                shadows: vec![shadow(gpui::black().opacity(0.19), 16., 32., -8., false)],
+                shadows: vec![
+                    shadow(t.border, 0., 0., 0.5, false),
+                    shadow(gpui::black().opacity(0.19), 16., 32., -8., false),
+                ],
                 ..Default::default()
             }))
             .child(self.footer(window, &t, cx))

@@ -246,6 +246,7 @@ impl Composer {
                     }))
                     .px(px(6.))
                     .gap(px(4.))
+                    .when(single_line, |d| d.w(px(28.)).px_0().justify_center())
                     .child(footer_icon(
                         if self.permission == Permission::Ask {
                             "composer-permission-ask"

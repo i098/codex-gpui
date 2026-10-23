@@ -1495,6 +1495,10 @@ impl SplitScreen {
         const LABEL_WIDTH: f32 = 181.;
         const FADE: f32 = 16.;
         let layout = layout_color(t);
+        let full = matches!(
+            self.layout,
+            WorkspaceLayout::Full | WorkspaceLayout::FullChat
+        );
         let fill = match t.appearance {
             Appearance::Dark => t.ghost_hover,
             Appearance::Light => t.surface_elevated_secondary,
@@ -1655,13 +1659,13 @@ impl SplitScreen {
             .h(Theme::TITLEBAR_HEIGHT)
             .flex()
             .items_center()
-            .pl(px(8.))
+            .pl(px(if full { 9. } else { 8. }))
             // `border-b border-transparent`: the content box is 43 px, so the tab sits at y 5.5.
-            .pb(px(1.))
+            .pb(px(if full { 0. } else { 1. }))
             .child(
                 div()
                     .absolute()
-                    .left_0()
+                    .left(px(if full { 1. } else { 0. }))
                     .top(px(12.))
                     .w(px(1.))
                     .h(px(20.))
@@ -1682,26 +1686,31 @@ impl SplitScreen {
                             .tab_index(0)
                             .focus_visible(|s| s.border_2().border_color(rgb(0x3a83f7)))
                             .w(px(240.))
+                            .mr(px(1.))
                             .h(px(32.))
                             .flex()
                             .items_center()
-                            .gap(px(6.))
+                            .gap(px(4.))
                             .px(px(10.))
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(dispatch_action(crate::SelectWorkspaceChat))
                             .on_key_down(dispatch_key(crate::SelectWorkspaceChat))
                             .child(icon("workspace-chat", 16., t.text_tertiary))
                             .child(
-                                div().flex_1().min_w_0().overflow_hidden().child(
-                                    text(
+                                div()
+                                    .relative()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .overflow_hidden()
+                                    .child(text(
                                         self.thread.read(cx).header_title(),
                                         13.,
                                         18.5714,
                                         430.,
                                         t.text_tertiary,
-                                    )
-                                    .text_ellipsis(),
-                                ),
+                                    ))
+                                    .layer()
+                                    .child(shapes::x_fade(px(0.), px(16.))),
                             ),
                     )
                 },
@@ -1717,13 +1726,11 @@ impl SplitScreen {
                     .overflow_hidden()
                     .child(tab(ix, t, cx))
             }))
-            .when(self.layout == WorkspaceLayout::Split, |d| {
-                d.child(
-                    div()
-                        .pl(px(6.))
-                        .child(strip_button("diff-new-tab", t.text_tertiary, None)),
-                )
-            })
+            .child(
+                div()
+                    .pl(px(6.))
+                    .child(strip_button("diff-new-tab", t.text_tertiary, None)),
+            )
             .child(self.layout_controls(t))
     }
 
@@ -1747,27 +1754,62 @@ impl SplitScreen {
             .right(px(8.))
             .flex()
             .gap(px(6.))
+            .when(full, |d| {
+                let thread = self.thread.clone();
+                let keyboard_thread = thread.clone();
+                d.child(
+                    strip_button("thread-summary", t.text_tertiary, None)
+                        .id("workspace-summary")
+                        .role(gpui::Role::Button)
+                        .aria_label("Toggle summary")
+                        .focusable()
+                        .tab_index(0)
+                        .on_click(move |_, _, cx| {
+                            thread.update(cx, |thread, cx| {
+                                thread.summary_open ^= true;
+                                cx.notify();
+                            })
+                        })
+                        .on_key_down(move |event, _, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                keyboard_thread.update(cx, |thread, cx| {
+                                    thread.summary_open ^= true;
+                                    cx.notify();
+                                });
+                                cx.stop_propagation();
+                            }
+                        }),
+                )
+            })
             .child(
-                strip_button(glyph, t.text_tertiary, full.then_some(t.text_alpha_5))
-                    .id("workspace-full-view")
-                    .role(gpui::Role::Button)
-                    .aria_label(label)
-                    .focusable()
-                    .tab_index(0)
-                    .on_key_down(dispatch_key(crate::ShowWorkspaceTabView))
-                    .focus_visible(|style| style.border_2().border_color(rgb(0x3a83f7)))
-                    .on_click(dispatch_action(crate::ShowWorkspaceTabView)),
+                strip_button(
+                    glyph,
+                    if full { t.text } else { t.text_tertiary },
+                    full.then_some(t.text_alpha_5),
+                )
+                .id("workspace-full-view")
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .focusable()
+                .tab_index(0)
+                .on_key_down(dispatch_key(crate::ShowWorkspaceTabView))
+                .focus_visible(|style| style.border_2().border_color(rgb(0x3a83f7)))
+                .on_click(dispatch_action(crate::ShowWorkspaceTabView)),
             )
             .child(
-                strip_button("diff-hide-tabs", t.text, Some(t.text_alpha_5))
-                    .id("workspace-step-layout")
-                    .role(gpui::Role::Button)
-                    .aria_label(step_label)
-                    .focusable()
-                    .tab_index(0)
-                    .on_key_down(dispatch_key(crate::StepWorkspaceLayout))
-                    .focus_visible(|style| style.border_2().border_color(rgb(0x3a83f7)))
-                    .on_click(dispatch_action(crate::StepWorkspaceLayout)),
+                strip_button(
+                    "diff-hide-tabs",
+                    if full { t.text_tertiary } else { t.text },
+                    (!full).then_some(t.text_alpha_5),
+                )
+                .id("workspace-step-layout")
+                .role(gpui::Role::Button)
+                .aria_label(step_label)
+                .focusable()
+                .tab_index(0)
+                .on_key_down(dispatch_key(crate::StepWorkspaceLayout))
+                .focus_visible(|style| style.border_2().border_color(rgb(0x3a83f7)))
+                .on_click(dispatch_action(crate::StepWorkspaceLayout)),
             )
     }
 }
@@ -1813,7 +1855,6 @@ fn dispatch_key(action: impl Action) -> impl Fn(&KeyDownEvent, &mut Window, &mut
 struct SplitMain {
     thread: AnyView,
     panel: AnyView,
-    composer: AnyView,
     /// Width at press plus the pointer x at press, while the divider is dragged.
     drag_anchor: Option<Pixels>,
     layout: WorkspaceLayout,
@@ -1827,24 +1868,7 @@ impl Render for SplitMain {
                 .size_full()
                 .relative()
                 .track_focus(&self.focus)
-                .child(self.panel.clone())
-                .child(
-                    div()
-                        .absolute()
-                        .bottom(px(16.))
-                        .left_0()
-                        .right_0()
-                        .px(px(10.))
-                        .flex()
-                        .justify_center()
-                        .child(
-                            div()
-                                .w(px(560.))
-                                .max_w_full()
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .child(self.composer.clone()),
-                        ),
-                );
+                .child(self.panel.clone());
         }
         let t = cx.theme();
         let width = panel_width(window, cx);
@@ -1950,6 +1974,51 @@ impl Render for SplitScreen {
             .font_family(SANS)
             .on_key_down(crate::focus::tab)
             .child(self.shell.clone())
+            .when(self.layout == WorkspaceLayout::Full, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top(Theme::TITLEBAR_HEIGHT)
+                        .bottom(px(4.))
+                        .overflow_hidden()
+                        .left(if open {
+                            sidebar_width
+                        } else {
+                            crate::RAIL_WIDTH
+                        })
+                        .right(px(4.))
+                        .child(
+                            div()
+                                .absolute()
+                                .bottom(px(16.))
+                                .left_0()
+                                .right_0()
+                                .px(px(10.))
+                                .flex()
+                                .justify_center()
+                                .child(
+                                    div()
+                                        .w(px(561.))
+                                        .max_w_full()
+                                        .p(px(0.5))
+                                        .m(px(-0.5))
+                                        .layer()
+                                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                            cx.stop_propagation()
+                                        })
+                                        .child(self.thread.read(cx).composer.clone()),
+                                ),
+                        ),
+                )
+            })
+            .when(
+                self.layout == WorkspaceLayout::Full && self.thread.read(cx).summary_open,
+                |d| {
+                    d.child(deferred(self.thread.update(cx, |thread, cx| {
+                        thread.summary(window, &cx.theme().clone(), cx)
+                    })))
+                },
+            )
             .when(
                 open && !matches!(
                     self.layout,
@@ -2161,10 +2230,9 @@ fn workspace_content(
     let main =
         match panel.filter(|_| matches!(layout, WorkspaceLayout::Split | WorkspaceLayout::Full)) {
             Some(panel) => cx
-                .new(|cx| SplitMain {
+                .new(|_| SplitMain {
                     thread: thread.clone().into(),
                     panel: panel.clone(),
-                    composer: thread.read(cx).composer.clone(),
                     drag_anchor: None,
                     layout,
                     focus: focus.clone(),
