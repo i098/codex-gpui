@@ -134,6 +134,7 @@ Image decoding runs off the UI thread with a 64 MiB per-image limit and a 512 Mi
 Video attachments show the original `Preview unavailable` card and `Open in GitHub` action instead of an inline player.
 The host rejects video content before downloading its body.
 `fixtures/pull-requests.json` retains scoped GitHub reads for `i098/codex-gpui`, with original response normalization and no credential tokens.
+The native replay binds recorded account identity, persisted navigation atoms, and MCP capabilities before capture.
 
 Implementation: `crates/app/src/pull_requests.rs`, `crates/app/src/host/github_pull_requests.rs`, and `crates/ui/src/screens/pull_requests.rs`.
 

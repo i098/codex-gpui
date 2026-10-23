@@ -13,15 +13,35 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use ui::screens::pull_requests::{Availability, DetailTab, Event};
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordedNavigation {
+    account_id: String,
+    user_id: String,
+    device_id: String,
+    atoms: serde_json::Value,
+}
+
 struct AccountHost {
     replay: ReplayHost,
     switched: AtomicBool,
     review_metadata: serde_json::Value,
     fail_code: AtomicBool,
+    navigation: RecordedNavigation,
 }
 
 impl Host for AccountHost {
     fn fetch(&self, request: &Request) -> Result<serde_json::Value> {
+        if let Request::Fetch { url, body, .. } = request
+            && url == "vscode://codex/get-global-state"
+            && serde_json::from_str::<serde_json::Value>(body)?["key"]
+                == "electron-persisted-atom-state"
+        {
+            return Ok(serde_json::json!({
+                "type": "fetch-response", "responseType": "success", "status": 200, "headers": {},
+                "bodyJsonString": serde_json::json!({"value": self.navigation.atoms}).to_string()
+            }));
+        }
         if let Request::Fetch { url, .. } = request
             && url == "vscode://codex/gh-pr-patch"
         {
@@ -60,6 +80,14 @@ impl Host for AccountHost {
             response["bodyJsonString"] = body.to_string().into();
         }
         Ok(response)
+    }
+
+    fn identity(&self) -> Option<app::host::Identity> {
+        Some(app::host::Identity {
+            account_id: self.navigation.account_id.clone(),
+            user_id: self.navigation.user_id.clone(),
+            device_id: self.navigation.device_id.clone(),
+        })
     }
 }
 
@@ -108,18 +136,40 @@ fn missing_host_response_keeps_retry_and_chat_available() -> Result<()> {
 #[test]
 fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
     use ui::screens::pull_requests::model::View;
-    let mut fx = Fx::new()?;
     let recording =
         std::fs::read_to_string(format!("{}/fixtures/pull-requests.json", common::ROOT))?;
+    let mut data: serde_json::Value = serde_json::from_str(&recording)?;
+    let mut script = common::script(None, |_| {})?;
+    let account = script
+        .iter()
+        .find(|line| line["msg"]["result"]["account"].is_object())
+        .context("recorded account")?["msg"]["result"]
+        .clone();
+    script.extend(common::exchange("account/read", account));
+    let [mut request, response] =
+        common::exchange("mcpServerStatus/list", data["navigation"]["catalog"].take());
+    request["msg"]["params"] =
+        serde_json::json!({"cursor": null, "detail": "toolsAndAuthOnly", "limit": 100});
+    script.extend([request, response]);
+    let mut fx = Fx::scripted(script)?;
     let host = Arc::new(AccountHost {
         replay: ReplayHost::from_recording(&recording)?,
         switched: AtomicBool::new(false),
-        review_metadata: serde_json::from_str::<serde_json::Value>(&recording)?["reviewMetadata"]
-            .clone(),
+        review_metadata: data["reviewMetadata"].take(),
         fail_code: AtomicBool::new(true),
+        navigation: serde_json::from_value(data["navigation"].take())?,
     });
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+    fx.wait("recorded navigation state", |fx| {
+        fx.read(|root, cx| {
+            root.shell()
+                .read(cx)
+                .unread_destinations
+                .as_ref()
+                .is_some_and(|ids| ids.is_empty())
+        })
+    })?;
     fx.cx.update_window(fx.window, |_, window, cx| {
         window.dispatch_action(Box::new(ui::OpenPullRequests), cx);
     })?;
