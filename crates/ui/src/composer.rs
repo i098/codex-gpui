@@ -96,7 +96,7 @@ pub mod dictation;
 mod editor;
 mod footer;
 mod requests;
-mod menu {
+pub(crate) mod menu {
     //! Focus rules for the recorded Radix menus: arrows stop at the ends, Escape returns
     //! focus to the trigger, and Enter or Space activates the focused item.
 
@@ -185,7 +185,7 @@ mod menu {
         }
     }
 
-    pub(super) fn trigger_focus(style: StyleRefinement) -> StyleRefinement {
+    pub(crate) fn trigger_focus(style: StyleRefinement) -> StyleRefinement {
         style.shadow(vec![BoxShadow {
             color: rgb(0x3a83f7).into(),
             offset: point(px(0.), px(0.)),
@@ -209,6 +209,9 @@ const SM_WIDTH: f32 = 440.;
 const XS_WIDTH: f32 = 300.;
 const FONT_SIZE: Pixels = px(14.);
 const LINE_HEIGHT: Pixels = px(20.);
+/// Smallest content height the textarea grip resizes to: the original's `min-h-24` (96 px)
+/// border box less its 1 px borders and 8 px vertical padding.
+const MIN_TEXTAREA_HEIGHT: Pixels = px(78.);
 
 /// Composer keys (inventory §7.2): Enter sends, Shift+Enter inserts a newline. Edit menu
 /// commands (`crate::Cut`, `Copy`, `Paste`, `SelectAll`) are bound by the app.
@@ -600,6 +603,12 @@ pub struct QueuedMessage {
 const QUEUE_ACTIONS: &str = "Queued message actions";
 const QUEUE_EDIT: &str = "queuedEdit";
 const QUEUE_SWITCH: &str = "queuedQueueing";
+
+#[derive(Clone, Copy)]
+struct EmbeddedField {
+    font_size: Pixels,
+    line_height: Pixels,
+}
 pub struct Composer {
     focus_handle: FocusHandle,
     placeholder: SharedString,
@@ -675,8 +684,12 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    field_min_height: Pixels,
+    /// The grip drag of a plain multiline field: pointer y and field height at its start.
+    field_resize: Option<(Pixels, Pixels)>,
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
+    embedded_field: Option<EmbeddedField>,
 }
 
 impl Composer {
@@ -755,8 +768,11 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            field_min_height: px(48.),
+            field_resize: None,
             dictation: None,
             dictation_error: None,
+            embedded_field: None,
         }
     }
 
@@ -770,6 +786,46 @@ impl Composer {
         editor.plain_field = Some(multiline);
         editor.set_text(value, cx);
         editor
+    }
+
+    pub fn embedded_field(
+        placeholder: &'static str,
+        value: &str,
+        text_size: Pixels,
+        line_height: Pixels,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut editor = Self::settings_field(placeholder, value, false, cx);
+        editor.embedded_field = Some(EmbeddedField {
+            font_size: text_size,
+            line_height,
+        });
+        editor
+    }
+
+    pub fn with_field_min_height(mut self, height: Pixels) -> Self {
+        self.field_min_height = height;
+        self
+    }
+
+    fn editor_font_size(&self) -> Pixels {
+        if let Some(field) = self.embedded_field {
+            field.font_size
+        } else if self.plain_field == Some(true) || (self.request_compact && !self.secret) {
+            px(13.)
+        } else {
+            FONT_SIZE
+        }
+    }
+
+    fn editor_line_height(&self) -> Pixels {
+        if let Some(field) = self.embedded_field {
+            field.line_height
+        } else if self.plain_field == Some(true) {
+            px(130. / 7.)
+        } else {
+            LINE_HEIGHT
+        }
     }
 
     pub fn field_text(&self) -> &str {
@@ -2003,12 +2059,37 @@ impl Render for Composer {
             .on_action(cx.listener(Self::next_command))
             .on_action(cx.listener(Self::previous_command))
             .relative();
-        if self.plain_field.is_some() {
+        if self.embedded_field.is_some() {
             return div().w_full().child(
+                card.key_context(KEY_CONTEXT)
+                    .role(gpui::Role::TextInput)
+                    .aria_label(self.placeholder.clone())
+                    .aria_value(self.content.clone())
+                    .child(self.editor(cx)),
+            );
+        }
+        if self.plain_field.is_some() {
+            let card = if self.plain_field == Some(true) {
+                let border = if self.focus_handle.is_focused(window) {
+                    gpui::rgb(0x3a83f7).into()
+                } else {
+                    t.border
+                };
+                card.py(px(9.))
+                    .px(px(1.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(10.)),
+                        corner: shapes::Corner::Squircle,
+                        fill: Some(t.control_background.opacity(0.96)),
+                        border: Some((px(1.), border)),
+                        ..Default::default()
+                    }))
+            } else {
                 card.key_context(KEY_CONTEXT)
                     .when(self.request_parent.is_none(), |d| {
                         d.border_1()
                             .border_color(t.border)
+                            .focus_visible(|style| style.border_color(gpui::rgb(0x3a83f7)))
                             .rounded(px(8.))
                             .bg(t.background_panel)
                             .py(px(8.))
@@ -2048,11 +2129,66 @@ impl Render for Composer {
                         .aria_placeholder(self.placeholder.clone())
                         .when(!self.secret, |d| d.aria_value(self.content.clone()))
                     })
-                    .child(self.editor(cx).when(self.request_number, |d| d.pr(px(30.))))
-                    .when(self.request_number, |d| {
-                        d.child(self.request_number_stepper(&t, cx))
+            };
+            let card = card
+                .child(
+                    self.editor(cx)
+                        .when(self.request_parent.is_none(), |editor| {
+                            editor.min_h(self.field_min_height)
+                        })
+                        .when(self.request_number, |editor| editor.pr(px(30.))),
+                )
+                .when(self.request_number, |d| {
+                    d.child(self.request_number_stepper(&t, cx))
+                });
+            if self.plain_field != Some(true) {
+                return div().w_full().child(card);
+            }
+            // The textarea's `resize: vertical` grip, in its border box's corner.
+            let grip = div()
+                .id("textarea-resize")
+                .absolute()
+                .right_0()
+                .bottom_0()
+                .size(px(16.))
+                .cursor(CursorStyle::ResizeUpDown)
+                .child(icon("textarea-resize", 16., t.text))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                        this.field_resize = Some((event.position.y, this.field_min_height));
+                        this.focus_handle.focus(window, cx);
+                        cx.stop_propagation();
+                        cx.notify();
                     }),
-            );
+                );
+            let drag = self.field_resize.map(|(start, height)| {
+                let moved = cx.entity().downgrade();
+                let released = moved.clone();
+                crate::drag_layer(
+                    move |_, window, cx| {
+                        let next =
+                            (height + window.mouse_position().y - start).max(MIN_TEXTAREA_HEIGHT);
+                        moved
+                            .update(cx, |this, cx| {
+                                if this.field_min_height != next {
+                                    this.field_min_height = next;
+                                    cx.notify();
+                                }
+                            })
+                            .ok();
+                    },
+                    move |cx| {
+                        released
+                            .update(cx, |this, cx| {
+                                this.field_resize = None;
+                                cx.notify();
+                            })
+                            .ok();
+                    },
+                )
+            });
+            return div().w_full().child(card.child(grip).children(drag));
         }
         let card = card
             .flex()
