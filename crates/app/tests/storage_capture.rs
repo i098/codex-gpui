@@ -71,6 +71,19 @@ fn capture_storage() -> Result<()> {
             metrics.counts
         );
     }
+    if let Ok(path) = env::var("CGX_STORAGE_ACTIONS") {
+        let actions: Vec<(String, (f32, f32))> =
+            serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        for (name, position) in actions {
+            fx.click(position)?;
+            for _ in 0..100 {
+                fx.advance(Duration::from_millis(20))?;
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            fx.reference_shot()?
+                .save(Path::new(&output).join(format!("{name}.png")))?;
+        }
+    }
     Ok(())
 }
 

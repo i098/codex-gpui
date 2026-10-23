@@ -1363,3 +1363,5 @@ The UI unit captures use synthetic interaction data and do not establish pixel p
 The ignored `storage_capture` integration test captures the real Root and can apply the unchanged parity gate.
 Set `CGX_STORAGE_HOME` to an owned fixture, `CGX_STORAGE_CAPTURE` to its output directory, and `CGX_STORAGE_REFS` to the original references.
 `CGX_STORAGE_REPLAY` supplies additional recorded read responses; `CGX_STORAGE_REVIEW_Y` selects the cleanup-dialog capture.
+`CGX_STORAGE_ACTIONS` reads an ordered JSON array of `[name, [x, y]]` clicks for additional full-window captures.
+Compare those extra images with their matching original states; this option does not replace the default state's gate.
