@@ -662,7 +662,7 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
   // 8 scales compositor opacity with integer truncation. 9 = mode 1 at coverage 0 (AAA's
   // alpha-0 run px); its sprite coverage only marks the px.
   Hsla hsla = sprite.color;
-  uint skia_mode = uint(clamp(floor(hsla.h / 2.0), 0.0, 9.0));
+  uint skia_mode = uint(clamp(floor(hsla.h / 2.0), 0.0, 10.0));
   hsla.h -= 2.0 * skia_mode;
   float4 color = hsla_to_rgba(hsla);
   return MonochromeSpriteVertexOutput{
@@ -679,6 +679,11 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
 // premultiplied color mode 4 blends.
 uint4 skia_blit(uint mode, uint m, uint4 src, uint ca, uint4 d, float4 fsrc) {
   uint scale = m + 1;
+  if (mode == 10) {
+    // SkFastFourByteInterp for opaque paired-edge pixels.
+    uint weight = m + (m >> 7);
+    return (src * weight + d * (256 - weight)) >> 8;
+  }
   if (mode == 8) {
     // Compositor opacity uses SkAlphaMulQ; zero coverage is the identity.
     return (d * (256 - m)) >> 8;
