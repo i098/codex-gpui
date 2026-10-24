@@ -2203,14 +2203,15 @@ impl Root {
             SidePanel::SideChat(key) => {
                 let chat = side_chats.iter().find(|chat| chat.key == key)?;
                 let running = chat.view.read(cx).is_running();
-                Some((
-                    if running {
+                Some(Tab {
+                    icon: if running {
                         "sidebar-cmd-spinner"
                     } else {
                         "side-chat"
                     },
-                    chat.title.clone(),
-                ))
+                    label: chat.title.clone(),
+                    preview: false,
+                })
             }
         }
     }
@@ -4778,9 +4779,9 @@ impl Root {
                         for composer in this.thread_composers() {
                             composer.update(cx, |c, cx| c.set_queue_mode(queue, cx));
                         }
-                        this.toast(Toast::danger("Couldn’t save your changes. Try again"), cx);
-                    })?;
-                }
+                    }
+                    this.toast(Toast::danger(failure), cx);
+                })?;
                 return Err(error);
             }
             this.update(cx, |this, cx| {
@@ -5431,11 +5432,11 @@ fn wire_thread_composer(composer: &mut Composer, this: WeakEntity<Root>, side: O
         send.update(cx, |this, cx| this.send(side, s.clone(), window, cx))
             .ok();
     });
-    composer.on_approval(move |decision, _, cx| {
+    composer.on_approval(move |id, thread, response, _, cx| {
         // Deferred: answering refreshes this composer's card.
         let this = this.clone();
         cx.defer(move |cx| {
-            this.update(cx, |this, cx| this.answer(side, decision, cx))
+            this.update(cx, |this, cx| this.answer(id, &thread, response, cx))
                 .ok();
         });
     });
@@ -6139,8 +6140,8 @@ impl Render for Root {
                 }),
             )
             .on_action(
-                cx.listener(|this, a: &automations::RunAutomationNow, _, cx| {
-                    this.run_automation_now(a.id.clone(), cx)
+                cx.listener(|this, a: &automations::RunAutomationNow, window, cx| {
+                    this.run_automation_now(a.id.clone(), window, cx)
                 }),
             )
             .on_action(
@@ -6153,7 +6154,10 @@ impl Render for Root {
             }))
             .on_action(
                 cx.listener(|this, _: &automations::StartSuggestedTask, _, cx| {
-                    this.start_suggested_task(cx)
+                    this.toast(
+                        Toast::danger("Starting suggested tasks isn’t supported in this version"),
+                        cx,
+                    )
                 }),
             )
             .on_action(cx.listener(|this, _: &OpenMobileSetup, window, cx| {

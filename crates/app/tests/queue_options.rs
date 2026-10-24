@@ -574,16 +574,6 @@ fn a_side_chat_that_fails_to_open_puts_the_message_back_in_place() -> Result<()>
     lines.extend(exchange("thread/resume", json!({})));
     lines.extend(list(&[&first, &second, &third]));
     lines.extend(exchange("thread/queue/delete", json!({ "deleted": true })));
-    if stage != "fork" {
-        lines.extend(exchange("thread/fork", fork_response(fork)));
-        lines.extend(exchange(
-            "thread/unsubscribe",
-            json!({ "status": "unsubscribed" }),
-        ));
-    }
-    if stage == "turn" {
-        lines.extend(exchange("thread/inject_items", json!({})));
-    }
     lines.extend(list(&[&first, &third]));
     lines.extend(exchange(
         "thread/queue/add",

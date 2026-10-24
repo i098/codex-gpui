@@ -14,7 +14,7 @@ use gpui::{
     Action, AnimationExt as _, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context,
     Corners, CursorStyle, Div, Entity, FocusHandle, Font, FontFeatures, FontWeight, Global,
     HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString, Stateful,
+    MouseDownEvent, ParentElement, Pixels, Render, ScrollHandle, SharedString, Stateful,
     StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black, combine_highlights,
     deferred, div, font, prelude::FluentBuilder as _, px, rgb,
 };
@@ -1596,8 +1596,8 @@ impl SplitScreen {
             } else {
                 "side-chat"
             };
-            if tab.0 != icon {
-                tab.0 = icon;
+            if tab.icon != icon {
+                tab.icon = icon;
                 cx.notify();
             }
         }
