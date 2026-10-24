@@ -12,4 +12,5 @@ There is no release yet.
 
 ### Fixed
 
+- Preserve titled-thread identity in the titlebar and derive compositor tiles from painted bounds.
 - Preserve page-frame occlusion under opaque scrolling content at rounded surface corners.
