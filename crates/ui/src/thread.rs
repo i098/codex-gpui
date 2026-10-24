@@ -2382,10 +2382,13 @@ fn width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>)
         underline: None,
         strikethrough: None,
     };
-    window
-        .text_system()
-        .layout_line(s, px(size), &[run], None)
-        .width
+    crate::run_width(
+        window
+            .text_system()
+            .layout_line(s, px(size), &[run], None)
+            .width,
+        window,
+    )
 }
 
 /// Text of a known run width (see [`width`]).

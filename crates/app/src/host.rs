@@ -807,39 +807,17 @@ impl LocalHost {
         let name = required("name")?;
         let prompt = required("prompt")?;
         let rrule = required("rrule")?;
-        let mut parts = rrule.split(';');
-        match parts.next() {
-            Some("FREQ=DAILY") => {}
-            Some("FREQ=WEEKLY") => ensure!(
-                matches!(
-                    parts.next(),
-                    Some(
-                        "BYDAY=MO"
-                            | "BYDAY=TU"
-                            | "BYDAY=WE"
-                            | "BYDAY=TH"
-                            | "BYDAY=FR"
-                            | "BYDAY=SA"
-                            | "BYDAY=SU"
-                    )
-                ),
-                "invalid weekly schedule"
-            ),
-            _ => bail!("unsupported schedule frequency"),
-        }
-        let hour = parts
-            .next()
-            .and_then(|s| s.strip_prefix("BYHOUR="))
-            .and_then(|s| s.parse::<u8>().ok());
-        let minute = parts
-            .next()
-            .and_then(|s| s.strip_prefix("BYMINUTE="))
-            .and_then(|s| s.parse::<u8>().ok());
         ensure!(
-            hour.is_some_and(|h| h < 24)
-                && minute.is_some_and(|m| m < 60)
-                && parts.next().is_none(),
-            "invalid schedule time"
+            automation_schedule::next_run(
+                rrule,
+                "cron",
+                "new",
+                chrono::Utc::now().timestamp_millis(),
+                rrule::Tz::LOCAL,
+                "",
+            )
+            .is_some(),
+            "invalid automation recurrence or no future runs"
         );
         let cwds: Vec<String> = serde_json::from_value(params["cwds"].clone())?;
         ensure!(
@@ -855,7 +833,7 @@ impl LocalHost {
         });
         let contents = toml::to_string(&raw)?;
         self.write_automation(&id, &contents)?;
-        definition(&id, &contents)
+        Ok(json!({"item": definition(&id, &contents)?}))
     }
 
     /// Saves a validated original-format definition, not an automation scheduling command.
@@ -929,59 +907,49 @@ impl LocalHost {
             root.starts_with(self.home.canonicalize()?) && path.starts_with(&root),
             "automation directory escapes CODEX_HOME"
         );
-        let mut db = self
-            .database(OpenFlags::SQLITE_OPEN_READ_WRITE)?
-            .context("automation database is unavailable")?;
-        let transaction = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let owned: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM automations WHERE id = ? AND
-             (account_id IS NOT NULL OR user_id IS NOT NULL OR installation_id IS NOT NULL))",
-            [id],
-            |row| row.get(0),
-        )?;
-        ensure!(
-            !owned,
-            "cannot write an account-owned automation through LocalHost"
-        );
+        let mut db = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let transaction = db
+            .as_mut()
+            .map(|db| db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate))
+            .transpose()?;
+        if let Some(transaction) = &transaction {
+            let owned: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM automations WHERE id = ? AND
+                 (account_id IS NOT NULL OR user_id IS NOT NULL OR installation_id IS NOT NULL))",
+                [id],
+                |row| row.get(0),
+            )?;
+            ensure!(
+                !owned,
+                "cannot write an account-owned automation through LocalHost"
+            );
+        }
         let original = fs::read_to_string(&path).map_err(read_error)?;
         let mut item = definition(id, &original)?;
         ensure!(item["status"] != "DELETED", "{missing}");
-        for (key, value) in params
-            .as_object()
-            .context("host parameters must be an object")?
-        {
-            if matches!(key.as_str(), "id" | "status" | "hostId") {
-                continue;
-            }
-            let stored = if key == "projectId" {
-                &item["target"]["projectId"]
-            } else {
-                &item[key]
-            };
-            // Original `ugi` sends a legacy task's first cwd as `projectId`.
-            let legacy_cwd = key == "projectId"
-                && item["target"].is_null()
-                && item["cwds"].get(0) == Some(value)
-                && value != "~";
-            ensure!(
-                stored == value || legacy_cwd,
-                "status-only automation update cannot change {key}"
-            );
-        }
-        let last: Option<i64> = transaction
-            .query_row(
-                "SELECT last_run_at FROM automations WHERE id = ?",
-                [id],
-                |row| row.get(0),
-            )
-            .optional()?
-            .flatten();
+        apply_automation_edits(&mut item, params)?;
+        let last: Option<i64> = if let Some(transaction) = &transaction {
+            transaction
+                .query_row(
+                    "SELECT last_run_at FROM automations WHERE id = ?",
+                    [id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .flatten()
+        } else {
+            None
+        };
         let rule = item["rrule"]
             .as_str()
             .context("missing automation recurrence")?;
         let now = chrono::Utc::now().timestamp_millis();
         // Resume always recalculates; a cached database time is never reused.
         let (next, nominal) = if status == "PAUSED" {
+            ensure!(
+                automation_schedule::valid(rule, now),
+                "invalid automation recurrence"
+            );
             (None, None)
         } else {
             // Original ZF: an unreadable salt is replaced, and a failed save still schedules this run.
@@ -1007,8 +975,9 @@ impl LocalHost {
             .context(automation_schedule::NO_FUTURE_RUN)?;
             (Some(next), Some(nominal))
         };
-        transaction.execute(
-            "INSERT INTO automations
+        if let Some(transaction) = &transaction {
+            transaction.execute(
+                "INSERT INTO automations
              (id, name, prompt, status, next_run_at, next_run_nominal_at, last_run_at, cwds,
               target_type, project_id, rrule, model, reasoning_effort, created_at, updated_at,
               kind, target_thread_id, execution_environment, local_environment_config_path,
@@ -1017,42 +986,48 @@ impl LocalHost {
                      ?16, ?17, ?18, ?19, ?20, ?21, ?22)
              ON CONFLICT(id) DO UPDATE SET status=excluded.status, next_run_at=excluded.next_run_at,
               next_run_nominal_at=excluded.next_run_nominal_at, updated_at=excluded.updated_at,
-              rrule=excluded.rrule",
-            params![
-                id,
-                item["name"].as_str(),
-                item["prompt"].as_str(),
-                status,
-                next,
-                nominal,
-                last,
-                item.get("cwds")
-                    .map_or_else(|| "[]".to_owned(), Value::to_string),
-                item["target"]["type"].as_str(),
-                item["target"]["projectId"].as_str(),
-                rule,
-                item["model"].as_str(),
-                item["reasoningEffort"].as_str(),
-                item["createdAt"].as_i64(),
-                now,
-                item["kind"].as_str(),
-                item["targetThreadId"].as_str(),
-                item["executionEnvironment"].as_str(),
-                item["localEnvironmentConfigPath"].as_str(),
-                item["pluginTemplateId"].as_str(),
-                item["notificationPolicy"].as_str(),
-                item["autoArchive"].as_bool().unwrap_or(false)
-            ],
-        )?;
+              rrule=excluded.rrule, name=excluded.name, prompt=excluded.prompt",
+                params![
+                    id,
+                    item["name"].as_str(),
+                    item["prompt"].as_str(),
+                    status,
+                    next,
+                    nominal,
+                    last,
+                    item.get("cwds")
+                        .map_or_else(|| "[]".to_owned(), Value::to_string),
+                    item["target"]["type"].as_str(),
+                    item["target"]["projectId"].as_str(),
+                    rule,
+                    item["model"].as_str(),
+                    item["reasoningEffort"].as_str(),
+                    item["createdAt"].as_i64(),
+                    now,
+                    item["kind"].as_str(),
+                    item["targetThreadId"].as_str(),
+                    item["executionEnvironment"].as_str(),
+                    item["localEnvironmentConfigPath"].as_str(),
+                    item["pluginTemplateId"].as_str(),
+                    item["notificationPolicy"].as_str(),
+                    item["autoArchive"].as_bool().unwrap_or(false)
+                ],
+            )?;
+        }
         let mut raw: toml::Table = toml::from_str(&original)?;
         raw.insert("status".into(), status.into());
         raw.insert("updated_at".into(), now.into());
+        for key in ["name", "prompt", "rrule"] {
+            raw.insert(key.into(), item[key].as_str().unwrap().into());
+        }
         self.write_automation(id, &toml::to_string(&raw)?)?;
-        if let Err(error) = transaction.commit() {
+        if let Some(transaction) = transaction
+            && let Err(error) = transaction.commit()
+        {
             self.write_automation(id, &original).context(format!(
                 "restore automation after database commit failed: {error}"
             ))?;
-            return Err(error).context("persist automation status");
+            return Err(error).context("persist automation update");
         }
         item["status"] = json!(status);
         item["updatedAt"] = json!(now);
@@ -1255,7 +1230,7 @@ impl Host for LocalHost {
                 Value::Object(serde_json::Map::from_iter([("value".into(), value)]))
             }
             "list-automations" => self.automations()?,
-            "create-automation" => self.create_automation(&params)?,
+            "automation-create" => self.create_automation(&params)?,
             "automation-update" => self.update_automation(&params)?,
             "automation-run-now" => self.automation_run_now(&params)?,
             "inbox-items" => self.inbox(&params)?,
@@ -1999,6 +1974,41 @@ fn take_flag(headers: &mut Headers, name: &str) -> bool {
 fn set_header(headers: &mut Headers, name: &str, value: impl Into<String>) {
     take_header(headers, name);
     headers.push((name.to_owned(), value.into()));
+}
+
+fn apply_automation_edits(item: &mut Value, params: &Value) -> Result<()> {
+    for (key, value) in params
+        .as_object()
+        .context("host parameters must be an object")?
+    {
+        if matches!(key.as_str(), "id" | "status" | "hostId") {
+            continue;
+        }
+        if matches!(key.as_str(), "name" | "prompt" | "rrule") {
+            let text = value
+                .as_str()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .with_context(|| format!("missing automation {key}"))?;
+            item[key] = json!(text);
+            continue;
+        }
+        let stored = if key == "projectId" {
+            &item["target"]["projectId"]
+        } else {
+            &item[key]
+        };
+        // Original `ugi` sends a legacy task's first cwd as `projectId`.
+        let legacy_cwd = key == "projectId"
+            && item["target"].is_null()
+            && item["cwds"].get(0) == Some(value)
+            && value != "~";
+        ensure!(
+            stored == value || legacy_cwd,
+            "automation update cannot change {key}"
+        );
+    }
+    Ok(())
 }
 
 fn definition(id: &str, contents: &str) -> Result<Value> {
