@@ -38,6 +38,7 @@ pub fn icon_sized(name: &str, width: f32, height: f32, color: Hsla) -> Icon {
         composited: None,
         own_layer: false,
         runtime: false,
+        saved_opacity: None,
         transformation: None,
         interactivity: Interactivity::new(),
     }
@@ -56,6 +57,7 @@ pub struct Icon {
     composited: Option<Point<Pixels>>,
     own_layer: bool,
     runtime: bool,
+    saved_opacity: Option<u8>,
     transformation: Option<Transformation>,
     interactivity: Interactivity,
 }
@@ -93,10 +95,29 @@ impl Icon {
         self
     }
 
+    /// Applies CSS opacity to the SVG's painted bounds, preserving its fill and stroke composition.
+    pub fn saved_opacity(mut self, alpha: u8) -> Self {
+        self.saved_opacity = Some(alpha);
+        self.runtime = true;
+        self
+    }
     /// Transforms the rendered icon without changing its layout or hitbox.
     pub fn with_transformation(mut self, transformation: Transformation) -> Self {
         self.transformation = Some(transformation);
         self
+    }
+}
+
+fn with_saved_opacity<R>(
+    alpha: Option<u8>,
+    bounds: Option<Bounds<Pixels>>,
+    window: &mut Window,
+    paint: impl FnOnce(&mut Window) -> R,
+) -> R {
+    match (alpha, bounds) {
+        (Some(alpha), Some(bounds)) => shapes::with_layer(alpha, bounds, window, paint),
+        (Some(alpha), None) => window.with_skia_layer(alpha, paint),
+        (None, _) => paint(window),
     }
 }
 
@@ -127,7 +148,7 @@ fn color_key(color: Hsla) -> String {
 }
 
 impl Element for Icon {
-    type RequestLayoutState = ();
+    type RequestLayoutState = LayoutId;
     type PrepaintState = Option<Hitbox>;
 
     fn id(&self) -> Option<ElementId> {
@@ -144,7 +165,7 @@ impl Element for Icon {
         inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
-    ) -> (LayoutId, ()) {
+    ) -> (LayoutId, LayoutId) {
         let layout_id = self.interactivity.request_layout(
             global_id,
             inspector_id,
@@ -152,7 +173,7 @@ impl Element for Icon {
             cx,
             |style, window, cx| window.request_layout(style, None, cx),
         );
-        (layout_id, ())
+        (layout_id, layout_id)
     }
 
     fn prepaint(
@@ -160,7 +181,7 @@ impl Element for Icon {
         global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut (),
+        _: &mut LayoutId,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Hitbox> {
@@ -190,7 +211,7 @@ impl Element for Icon {
         global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut (),
+        layout_id: &mut LayoutId,
         hitbox: &mut Option<Hitbox>,
         window: &mut Window,
         cx: &mut App,
@@ -199,8 +220,14 @@ impl Element for Icon {
         let opacity = self.interactivity.base_style.opacity.take().unwrap_or(1.);
         let (name, flip_x, own_layer) = (self.name.clone(), self.flip_x, self.own_layer);
         let (composited, runtime) = (self.composited, self.runtime);
+        let saved_opacity = self.saved_opacity;
         let transformation = self.transformation;
         let css = size(px(self.width), px(self.height));
+        let mut ink_bounds = Bounds::new(bounds.origin, css);
+        if saved_opacity.is_some() {
+            ink_bounds.origin.x += window.layout_origin_residual_x(*layout_id);
+            ink_bounds.origin.y += window.layout_origin_residual_y(*layout_id);
+        }
         self.interactivity.paint(
             global_id,
             inspector_id,
@@ -248,30 +275,38 @@ impl Element for Icon {
                 let path = format!("icons/{name}.svg");
                 if let Ok(Some(src)) = cx.asset_source().load(&path) {
                     let layer = composited.or(own_layer.then_some(bounds.origin));
-                    let painted = if transformation.is_some() {
-                        shapes::paint_icon_transformed(
-                            &src,
-                            &path,
-                            Bounds::new(bounds.origin, css),
-                            flip_x,
-                            color,
-                            layer,
-                            transform,
-                            window,
-                            cx,
-                        )
-                    } else {
-                        shapes::paint_icon(
-                            &src,
-                            &path,
-                            Bounds::new(bounds.origin, css),
-                            flip_x,
-                            color,
-                            layer,
-                            window,
-                            cx,
-                        )
+                    let paint = |window: &mut Window, cx: &mut App| {
+                        if transformation.is_some() {
+                            shapes::paint_icon_transformed(
+                                &src,
+                                &path,
+                                Bounds::new(bounds.origin, css),
+                                flip_x,
+                                color,
+                                layer,
+                                transform,
+                                window,
+                                cx,
+                            )
+                        } else {
+                            shapes::paint_icon(
+                                &src,
+                                &path,
+                                Bounds::new(bounds.origin, css),
+                                flip_x,
+                                color,
+                                layer,
+                                window,
+                                cx,
+                            )
+                        }
                     };
+                    let ink = saved_opacity.map(|_| {
+                        shapes::icon_paint_bounds(&src, &path, ink_bounds, flip_x, window)
+                            .unwrap_or(bounds)
+                    });
+                    let painted =
+                        with_saved_opacity(saved_opacity, ink, window, |window| paint(window, cx));
                     if painted {
                         return;
                     }
@@ -284,9 +319,10 @@ impl Element for Icon {
                         .scale(size(-1., 1.))
                         .translate(center.scale(-scale));
                 }
-                window
-                    .paint_svg(bounds, path.into(), None, matrix, color, cx)
-                    .ok();
+                let paint = |window: &mut Window| {
+                    window.paint_svg(bounds, path.into(), None, matrix, color, cx)
+                };
+                with_saved_opacity(saved_opacity, None, window, paint).ok();
             },
         )
     }

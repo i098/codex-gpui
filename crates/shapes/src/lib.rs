@@ -323,6 +323,95 @@ pub fn paint_horizontal_stripes(
     }
 }
 
+/// Draws a vertical color-to-transparent fade in its compositor layer's raster coordinates.
+/// The fade must share the layer's left edge; `layer_offset_y` is its distance below the layer top.
+/// For example, `vertical_fade(color, px(56.))` follows a 56 px sticky toolbar.
+/// macOS preserves the original dithering; other platforms use the native gradient.
+pub fn vertical_fade(color: Hsla, layer_offset_y: Pixels) -> impl IntoElement {
+    VerticalFade {
+        color,
+        layer_offset_y,
+    }
+}
+
+struct VerticalFade {
+    color: Hsla,
+    layer_offset_y: Pixels,
+}
+
+impl IntoElement for VerticalFade {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui::Element for VerticalFade {
+    type RequestLayoutState = gpui::LayoutId;
+    type PrepaintState = Bounds<Pixels>;
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        let (id, _) = gpui::div()
+            .absolute()
+            .size_full()
+            .request_layout(None, None, window, cx);
+        (id, id)
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        mut bounds: Bounds<Pixels>,
+        id: &mut gpui::LayoutId,
+        window: &mut Window,
+        _: &mut App,
+    ) -> Bounds<Pixels> {
+        bounds.origin.x += window.layout_origin_residual_x(*id);
+        bounds.origin.y += window.layout_origin_residual_y(*id);
+        bounds
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut gpui::LayoutId,
+        bounds: &mut Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        #[cfg(target_os = "macos")]
+        skia::paint_vertical_fade(self.color.into(), self.layer_offset_y, *bounds, window, cx);
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (cx, self.layer_offset_y);
+            window.paint_quad(gpui::fill(
+                *bounds,
+                gpui::linear_gradient(
+                    180.,
+                    gpui::linear_color_stop(self.color, 0.),
+                    gpui::linear_color_stop(self.color.opacity(0.), 1.),
+                ),
+            ));
+        }
+    }
+}
+
 /// How image pixels compose over their background.
 #[derive(Clone, Copy, Debug)]
 pub enum ImageComposition {
