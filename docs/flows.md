@@ -193,6 +193,8 @@ The repair is tracked in [the Sidebar issue](https://github.com/i098/codex-gpui/
 | 18 | `⌘⇧N`, `⌘⌥O` | shortcut | Temporary chat, standalone chat. | — | NOT WIRED (`crates/app/src/lib.rs`: no projects or temporary chats) |
 | 19 | `⌘⌥1`…`⌘⌥6` | shortcut | Go to recent chat N (`recentThread1..6`: the chats by last update, newest first). | `GoToRecentChat`: the Nth Recents thread by `updatedAt`; past the end does nothing. | PASS (`recent_chat_keys`) |
 | 20 | `⌘+`, `⌘-`, `⌘0` | shortcut | Zoom in, zoom out, actual size. | — | NOT WIRED (`crates/ui/src/lib.rs`: no UI scale) |
+| 21 | Startup loader | loading | 56 px blossom centered on the window background until `initialize` answers. | Shows until the first app-server answer; then the app's own screens take over. | PASS (`error_shell::loader_shows_until_the_app_server_answers`) |
+| 22 | App-server death | error | Crash page: `Somewhere, a flower lost a petal`, Try again, Send feedback. | `Event::Closed` shows the recovery page; Try again reconnects through `windows::connect`. | PASS (`error_shell::crash_page_shows_when_the_app_server_dies`, `error_shell::try_again_respawns_the_app_server`) |
 
 F1d covers SH-020 and SH-135 with `refs/interactions/f1d.json` and `cargo test -p app --test f1d`.
 The original Mac recording proves a native 1280×832 viewport at scale 2.

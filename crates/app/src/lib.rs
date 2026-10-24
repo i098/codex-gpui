@@ -59,6 +59,7 @@ use ui::screens::diff::panel::{
     with_side_tabs,
 };
 use ui::screens::home::{HomeMain, OpenFolder};
+use ui::screens::recovery;
 use ui::screens::settings::{self, AppServer, SettingChanged, workspace};
 use ui::screens::sidebar::{
     ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
@@ -424,6 +425,8 @@ pub struct Root {
     skills: Value,
     models: Vec<Model>,
     ready: bool,
+    /// The app-server process died: the crash page (SH-145) shows until Try again.
+    crashed: bool,
     qa_work_started: bool,
     /// Threads started or resumed by this app-server; others need `thread/resume` first.
     loaded: HashSet<String>,
@@ -724,6 +727,7 @@ impl Root {
             skills: Value::Null,
             models: Vec::new(),
             ready: false,
+            crashed: false,
             qa_work_started: false,
             loaded: HashSet::new(),
             queue_load: None,
@@ -934,6 +938,11 @@ impl Root {
     /// `initialize` and the startup reads are done and the route is showing.
     pub fn ready(&self) -> bool {
         self.ready
+    }
+
+    /// The app-server process died; the crash page is showing (SH-145).
+    pub fn crashed(&self) -> bool {
+        self.crashed
     }
 
     pub fn qa_restart_ready(&self, window: &Window, cx: &App) -> bool {
@@ -4575,6 +4584,11 @@ impl Root {
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
         self.plugins_event(&event, cx);
         usage::on_event(&event, cx);
+        if matches!(event, Event::Closed) {
+            self.crashed = true;
+            cx.notify();
+            return;
+        }
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             return;
@@ -4754,7 +4768,35 @@ impl Root {
                     }
                 }
             }
+            // Handled above; kept for exhaustiveness.
+            Event::Closed => {}
         }
+    }
+
+    /// Crash page "Try again": a fresh app-server connection. [`Root::with_connection`]
+    /// rebuilds every screen; the window-level observers it registers re-run idempotently.
+    fn restart(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.crashed = false;
+        cx.notify();
+        let cwd = PathBuf::from(self.cwd.clone());
+        let state = self.state.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let restarted = windows::connect(&cwd).map(|bridge| (Arc::new(bridge.0), bridge.1));
+            this.update_in(cx, |root, window, cx| match restarted {
+                Ok((bridge, events)) => {
+                    let cwd = root.cwd.clone();
+                    *root = Root::with_connection(state, bridge, events, cwd, window, cx);
+                    cx.notify();
+                }
+                Err(error) => {
+                    root.crashed = true;
+                    cx.notify();
+                    eprintln!("codex-gpui: cannot restart the app-server: {error:#}");
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn finish_sign_in(&mut self, cx: &mut Context<Self>) {
@@ -5563,6 +5605,34 @@ fn generation_instructions(context: &str) -> String {
 
 impl Render for Root {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.crashed {
+            return native_menus::actions(
+                div()
+                    .size_full()
+                    .relative()
+                    .font_family(ui::SANS)
+                    .track_focus(&self.focus)
+                    .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
+                        this.close_window(window, cx);
+                    }))
+                    .on_action(|_: &Minimize, window, _| window.minimize_window())
+                    .on_action(|_: &Zoom, window, _| window.zoom_window())
+                    .on_action(cx.listener(|this, _: &recovery::TryAgain, window, cx| {
+                        this.restart(window, cx);
+                    }))
+                    .on_action(cx.listener(|_, _: &recovery::SendFeedback, _, cx| {
+                        // shortcut: the in-app feedback form is not built; open the report
+                        // URL its dialog links to instead.
+                        cx.open_url(
+                            "https://github.com/openai/codex/issues/new?template=1-codex-app.yml",
+                        );
+                    }))
+                    .child(recovery::Recovery),
+                self,
+                cx,
+            )
+            .into_any_element();
+        }
         if let Some(login) = &self.login {
             return native_menus::actions(
                 div()
@@ -5600,6 +5670,20 @@ impl Render for Root {
                 .child(self.workspace.clone())
                 .child(self.toaster.clone())
                 .children(self.dialog.clone())
+                .into_any_element();
+        }
+        if !self.ready {
+            return div()
+                .size_full()
+                .relative()
+                .font_family(ui::SANS)
+                .track_focus(&self.focus)
+                .on_action(cx.listener(|this, _: &CloseWindow, window, cx| {
+                    this.close_window(window, cx);
+                }))
+                .on_action(|_: &Minimize, window, _| window.minimize_window())
+                .on_action(|_: &Zoom, window, _| window.zoom_window())
+                .child(recovery::StartupLoader)
                 .into_any_element();
         }
         let content: AnyElement = match (&self.page, &self.split) {
