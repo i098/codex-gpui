@@ -6,6 +6,7 @@
 mod cloud_task;
 pub use cloud_task::parse_task_response;
 pub mod computer_use_requests;
+mod destinations;
 pub mod diff_content;
 mod features;
 pub mod host;
@@ -399,6 +400,8 @@ pub struct Root {
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
     project_load: Option<Task<()>>,
+    destination_load: Option<Task<()>>,
+    unread_destinations: Option<Arc<[SharedString]>>,
     picking_project: bool,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
@@ -626,13 +629,16 @@ impl Root {
         .detach();
         cx.observe_window_appearance(window, |this, window, cx| this.apply_theme(window, cx))
             .detach();
-        if qa::ENABLED {
-            // ponytail: defer used sessions until manual close; prove state restoration before relaxing this guard.
-            cx.observe_window_activation(window, |this, window, _| {
-                this.qa_work_started |= window.is_window_active();
-            })
-            .detach();
-        }
+        cx.observe_window_activation(window, |this, window, cx| {
+            let active = window.is_window_active();
+            if qa::ENABLED {
+                this.qa_work_started |= active;
+            }
+            if active && this.ready && !this.signed_out() {
+                this.load_destinations(cx);
+            }
+        })
+        .detach();
         let _events = cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 if this
@@ -697,6 +703,8 @@ impl Root {
             automation_load: None,
             running_automations: HashSet::new(),
             project_load: None,
+            destination_load: None,
+            unread_destinations: None,
             picking_project: false,
             automation_updates: HashMap::new(),
             suggestion_load: None,
@@ -1031,6 +1039,8 @@ impl Root {
         self.cloud = None;
         self.automation_load = None;
         self.project_load = None;
+        self.destination_load = None;
+        self.set_unread_destinations(None, cx);
         self.suggestion_load = None;
         self.git_status_load = None;
         self.automation_updates.clear();
@@ -1046,6 +1056,9 @@ impl Root {
         self.bind_context_files(cx);
         self.automations = None;
         self.load_projects(cx);
+        if self.ready && !self.signed_out() {
+            self.load_destinations(cx);
+        }
         if self.scheduled_route() {
             self.load_automations(cx);
             self.load_suggestions(cx);
@@ -4513,6 +4526,16 @@ impl Root {
         }
         match event {
             Event::Notification { method, params } => match method.as_str() {
+                "account/updated" if self.ready => {
+                    self.destination_load = None;
+                    self.set_unread_destinations(None, cx);
+                    self.read_account(cx);
+                }
+                "mcpServer/startupStatus/updated" | "mcpServer/oauthLogin/completed"
+                    if self.ready && !self.signed_out() =>
+                {
+                    self.load_destinations(cx);
+                }
                 "thread/started" if params["thread"]["ephemeral"] != true => {
                     if let Ok(n) = serde_json::from_value::<ThreadStartedNotification>(params) {
                         self.add_thread(&n.thread, cx);
@@ -4644,6 +4667,12 @@ impl Root {
             view.update(cx, |view, cx| {
                 view.set_usage_limit_notice(self.usage_limit_notice, cx)
             });
+        }
+        if account.is_some_and(|account| account.account.is_some()) {
+            self.load_destinations(cx);
+        } else {
+            self.destination_load = None;
+            self.set_unread_destinations(None, cx);
         }
     }
 
