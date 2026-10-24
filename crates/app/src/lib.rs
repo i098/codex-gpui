@@ -15,6 +15,7 @@ pub mod native_menus;
 pub mod qa;
 mod routes;
 pub use routes::Route;
+mod plugins;
 mod search;
 mod section_actions;
 mod settings_subtrees;
@@ -389,6 +390,7 @@ pub struct Root {
     /// The Mobile route's setup page.
     mobile_page: Option<Entity<mobile::MobileSetupPage>>,
     cloud: Option<cloud_task::Session>,
+    plugins_page: Option<Entity<ui::screens::plugins::Page>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
@@ -681,6 +683,7 @@ impl Root {
             archive_page: None,
             mobile_page: None,
             cloud: None,
+            plugins_page: None,
             settings_section: None,
             settings_page: None,
             pending_settings_leave: None,
@@ -4839,6 +4842,7 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        self.plugins_event(&event, cx);
         usage::on_event(&event, cx);
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
