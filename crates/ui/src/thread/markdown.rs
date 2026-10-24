@@ -819,11 +819,13 @@ impl<'a> Markdown<'a> {
             underline: None,
             strikethrough: None,
         };
-        let width = self
-            .window
-            .text_system()
-            .layout_line(s, px(style.size), &[run], None)
-            .width;
+        let width = crate::run_width(
+            self.window
+                .text_system()
+                .layout_line(s, px(style.size), &[run], None)
+                .width,
+            self.window,
+        );
         if !style.italic && !style.strike && find.is_none() && fades.is_empty() {
             return (
                 width,
@@ -1186,12 +1188,13 @@ impl RenderOnce for CodeBlock {
                             }]
                         }
                     };
-                    width = width.max(
+                    width = width.max(crate::run_width(
                         window
                             .text_system()
                             .layout_line(line, px(12.), &runs, None)
                             .width,
-                    );
+                        window,
+                    ));
                     (SharedString::from(line.to_owned()), runs)
                 })
                 .collect();

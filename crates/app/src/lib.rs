@@ -16,6 +16,7 @@ pub mod qa;
 mod routes;
 pub use routes::Route;
 mod plugins;
+pub mod screenshot;
 mod search;
 mod section_actions;
 mod settings_subtrees;
@@ -72,6 +73,7 @@ use ui::screens::thread::view::{
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
+use ui::workspace::WorkspaceLayout;
 use ui::{
     Copy, Cut, GoBack, GoForward, LogOut, NewChat, OpenBackgroundTerminal, OpenChangesPanel,
     OpenCommandMenu, OpenMobileSetup, OpenScheduled, OpenSettings, Paste, Redo, SelectAll,
@@ -156,6 +158,7 @@ pub fn init(cx: &mut App) {
     ui::composer::bind_keys(cx);
     features::init(cx);
     native_menus::init(cx);
+    screenshot::init(cx);
     cx.on_action(|_: &Quit, cx| cx.defer(routes::request_quit));
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
@@ -376,6 +379,7 @@ pub struct Root {
     /// `tabs`); kept across threads like the original's panel.
     tabs: Vec<SidePanel>,
     side: Option<SidePanel>,
+    workspace_layout: WorkspaceLayout,
     /// The route's own shell.
     page: Option<Entity<Shell>>,
     archive_page: Option<Entity<ArchivedChats>>,
@@ -391,6 +395,7 @@ pub struct Root {
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     dialog: Option<Entity<Dialog>>,
+    automation_editor: Option<Entity<automations::editor::Editor>>,
     /// The open dialog came from the composer: its close returns focus there.
     dialog_to_composer: bool,
     /// Signed out: replaces the whole window.
@@ -681,6 +686,7 @@ impl Root {
             split: None,
             tabs: Vec::new(),
             side: None,
+            workspace_layout: WorkspaceLayout::Split,
             page: None,
             archive_page: None,
             mobile_page: None,
@@ -692,6 +698,7 @@ impl Root {
             workspace: cx.new(workspace::Workspace::new),
             command_menu: None,
             dialog: None,
+            automation_editor: None,
             dialog_to_composer: false,
             login: None,
             logout_pending: false,
@@ -944,6 +951,7 @@ impl Root {
                 .iter()
                 .all(|thread| thread.status != ThreadStatus::Active)
             && self.dialog.is_none()
+            && self.automation_editor.is_none()
             && self.command_menu.is_none()
             && self.approvals.is_empty()
             && self.automation_load.is_none()
@@ -1002,6 +1010,18 @@ impl Root {
         &self.tabs
     }
 
+    pub fn workspace_layout(&self) -> WorkspaceLayout {
+        if self.tabs.is_empty() {
+            WorkspaceLayout::Chat
+        } else {
+            self.workspace_layout
+        }
+    }
+
+    fn side_visible(&self, side: SidePanel) -> bool {
+        self.side == Some(side) && self.workspace_layout() != WorkspaceLayout::Chat
+    }
+
     pub fn diff_panel(&self) -> Option<&Entity<DiffPanel>> {
         self.diff.as_ref()
     }
@@ -1043,6 +1063,7 @@ impl Root {
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
         self.cloud = None;
         self.automation_load = None;
+        self.automation_editor = None;
         self.project_load = None;
         self.destination_load = None;
         self.set_unread_destinations(None, cx);
@@ -2153,7 +2174,9 @@ impl Root {
             || keystroke.modifiers.platform
             || keystroke.modifiers.control
             || self.dialog.is_some()
+            || self.automation_editor.is_some()
             || self.command_menu.is_some()
+            || (self.split.is_some() && self.workspace_layout() == WorkspaceLayout::Full)
             || route_focus == self.focus
             || in_popover
             || editing
@@ -2231,13 +2254,19 @@ impl Root {
 
     /// Opens (a new tab after the others) or switches to the thread route's side panel tab.
     fn set_side(&mut self, side: SidePanel, window: &mut Window, cx: &mut Context<Self>) {
-        if !matches!(self.state.route, Route::Thread(_)) || self.side == Some(side) {
+        if !matches!(self.state.route, Route::Thread(_)) {
+            return;
+        }
+        if self.side_visible(side) {
             return;
         }
         if !self.tabs.contains(&side) {
             self.tabs.push(side);
         }
         self.side = Some(side);
+        if self.workspace_layout == WorkspaceLayout::Chat {
+            self.workspace_layout = WorkspaceLayout::Split;
+        }
         self.sync(window, cx);
     }
 
@@ -2343,7 +2372,7 @@ impl Root {
             .collect();
         let params = json!({"name": name, "prompt": prompt, "rrule": rrule, "cwds": [self.cwd]});
         let write = cx.background_spawn(async move {
-            host.fetch(&host::Request::post("create-automation", Some(params)))
+            host.fetch(&host::Request::post("automation-create", Some(params)))
                 .and_then(|response| host::json_body(&response))
         });
         cx.spawn_in(window, async move |this, cx| {
@@ -2366,8 +2395,208 @@ impl Root {
         .detach();
     }
 
+    fn edit_automation(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        if self.automation_editor.is_some() || self.dialog.is_some() {
+            return;
+        }
+        let item = id.as_ref().and_then(|id| {
+            self.automations.as_ref()?.as_ref().ok()?["items"]
+                .as_array()?
+                .iter()
+                .find(|item| item["id"] == *id)
+                .cloned()
+        });
+        if id.is_some() && item.is_none() {
+            self.toast(Toast::danger("Task details could not be loaded"), cx);
+            return;
+        }
+        let editor = cx.new(|cx| automations::editor::Editor::new(item.as_ref(), cx));
+        cx.subscribe_in(
+            &editor,
+            window,
+            move |this, editor, outcome, window, cx| match outcome {
+                automations::editor::Outcome::Dismiss => {
+                    this.automation_editor = None;
+                    window.focus(&this.focus, cx);
+                    cx.notify();
+                }
+                automations::editor::Outcome::Save(draft) => {
+                    let mut body =
+                        json!({"name": draft.name, "prompt": draft.prompt, "rrule": draft.rrule});
+                    let endpoint = if let Some(id) = &id {
+                        body["id"] = json!(id);
+                        body["status"] = item.as_ref().unwrap()["status"].clone();
+                        "automation-update"
+                    } else {
+                        body["cwds"] = json!([this.cwd]);
+                        "automation-create"
+                    };
+                    let host = this.host.clone();
+                    let write = cx.background_spawn(async move {
+                        let response = host::json_body(
+                            &host.fetch(&host::Request::post(endpoint, Some(body)))?,
+                        )?;
+                        serde_json::from_value::<automations::Task>(response["item"].clone())?;
+                        Ok::<_, anyhow::Error>(response["item"].clone())
+                    });
+                    let editor = editor.clone();
+                    cx.spawn_in(window, async move |this, cx| {
+                        let result = write.await;
+                        this.update_in(cx, |this, window, cx| {
+                            if this.automation_editor.as_ref() != Some(&editor) {
+                                return;
+                            }
+                            match result {
+                                Ok(item) => this.finish_automation_save(item, window, cx),
+                                Err(error) => editor.update(cx, |editor, cx| {
+                                    editor.failed(format!("Couldn’t save task: {error}"), cx)
+                                }),
+                            }
+                            cx.notify();
+                        })
+                        .ok();
+                    })
+                    .detach();
+                }
+            },
+        )
+        .detach();
+        window.focus(&editor.focus_handle(cx), cx);
+        self.automation_editor = Some(editor);
+        cx.notify();
+    }
+
+    fn finish_automation_save(&mut self, item: Value, window: &mut Window, cx: &mut Context<Self>) {
+        self.automation_editor = None;
+        window.focus(&self.focus, cx);
+        if let Some(Ok(list)) = &mut self.automations
+            && let Some(items) = list["items"].as_array_mut()
+        {
+            if let Some(stored) = items.iter_mut().find(|v| v["id"] == item["id"]) {
+                *stored = item.clone();
+            } else {
+                items.push(item.clone());
+            }
+        }
+        let route = Route::Automation(item["id"].as_str().unwrap().to_owned());
+        if self.state.route == route {
+            self.sync(window, cx);
+        } else {
+            self.navigate(route, window, cx);
+        }
+        self.load_automations(cx);
+        self.toast(Toast::success("Successfully saved scheduled task"), cx);
+    }
+
+    pub fn automation_editor(&self) -> Option<&Entity<automations::editor::Editor>> {
+        self.automation_editor.as_ref()
+    }
+
+    /// Row menu `Delete` (AM-026): the confirmation names the task the host lists.
+    fn confirm_delete_task(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(task) = self.tasks().into_iter().find(|task| task.id == id) else {
+            return;
+        };
+        let dialog = cx.new(|cx| Dialog::delete_task(task.id, task.name.to_string(), cx));
+        self.show_dialog(dialog, window, cx);
+    }
+
+    /// `Delete scheduled task`: `automation-delete` for the confirmed task. Like the
+    /// original, the dialog closes either way; a failure toasts and the task stays listed.
+    fn delete_task(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let host = self.host.clone();
+        let params = json!({"id": id});
+        let write = cx.background_spawn(async move {
+            host.fetch(&host::Request::post("automation-delete", Some(params)))
+                .and_then(|response| host::json_body(&response))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = write.await;
+            this.update_in(cx, |this, window, cx| {
+                this.dialog = None;
+                match result {
+                    Ok(body) if body["success"] == true => this.task_deleted(&id, window, cx),
+                    failure => {
+                        let (detail, description) = match failure {
+                            Ok(body) => (
+                                format!(
+                                    "automation-delete: {}",
+                                    body["status"].as_str().unwrap_or("no status")
+                                ),
+                                "Try again".to_owned(),
+                            ),
+                            Err(error) => (format!("{error:#}"), error.to_string()),
+                        };
+                        eprintln!("codex-gpui: could not delete scheduled task: {detail}");
+                        this.toast(
+                            Toast::danger("Could not delete scheduled task")
+                                .description(description)
+                                .action("Copy error", move |_, cx| {
+                                    cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                        detail.clone(),
+                                    ))
+                                }),
+                            cx,
+                        );
+                        this.focus_task_trigger(&id, window, cx);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The list drops the deleted task at once (the original filters its cached list), then
+    /// the host is read again; a deleted task's page closes to the Scheduled page.
+    fn task_deleted(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(Ok(list)) = &mut self.automations
+            && let Some(items) = list["items"].as_array_mut()
+        {
+            items.retain(|item| item["id"] != id);
+        }
+        let tasks = self.tasks();
+        if let Some(sidebar) = &self.scheduled {
+            sidebar.update(cx, |sidebar, cx| sidebar.set_tasks(tasks, cx));
+        }
+        let route = Route::Automation(id.to_owned());
+        for history in [&mut self.back, &mut self.forward] {
+            history.retain_mut(|(entry, automation)| {
+                if automation.as_deref() == Some(id) {
+                    *automation = None;
+                }
+                *entry != route
+            });
+        }
+        let had_sidebar = self.sidebar_automation.as_deref() == Some(id);
+        if had_sidebar {
+            self.sidebar_automation = None;
+        }
+        window.focus(&self.focus, cx);
+        if self.state.route == route {
+            self.state.route = Route::Scheduled;
+            self.sync(window, cx);
+            self.select_route(cx);
+        } else if had_sidebar {
+            self.sync(window, cx);
+        } else {
+            self.load_automations(cx);
+        }
+    }
+
+    /// Focus returns to the task's `Scheduled task actions` button.
+    fn focus_task_trigger(&self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let trigger = self
+            .scheduled
+            .as_ref()
+            .and_then(|sidebar| sidebar.read(cx).trigger_focus(id))
+            .unwrap_or_else(|| self.focus.clone());
+        window.focus(&trigger, cx);
+    }
+
     fn show_dialog(&mut self, dialog: Entity<Dialog>, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dialog.is_some() {
+        if self.dialog.is_some() || self.automation_editor.is_some() {
             return;
         }
         self.command_menu = None;
@@ -2382,6 +2611,10 @@ impl Root {
             thread.update(cx, |view, cx| view.close_summary(cx));
         }
         cx.subscribe_in(&dialog, window, move |this, dialog, outcome, window, cx| {
+            if let DialogOutcome::DeleteTask { id } = outcome {
+                this.delete_task(id.clone(), window, cx);
+                return;
+            }
             if let DialogOutcome::ScheduleTask { prompt, rrule } = outcome {
                 this.create_task(prompt.clone(), rrule.clone(), window, cx);
                 return;
@@ -2442,6 +2675,9 @@ impl Root {
                         }) {
                             window.focus(&focus, cx);
                         }
+                    } else if dialog.read(cx).kind() == DialogKind::DeleteTask {
+                        let id = dialog.read(cx).task().to_owned();
+                        this.focus_task_trigger(&id, window, cx);
                     } else {
                         window.focus(&focus, cx);
                     }
@@ -2506,6 +2742,7 @@ impl Root {
                     }
                 }
                 DialogOutcome::ScheduleTask { .. }
+                | DialogOutcome::DeleteTask { .. }
                 | DialogOutcome::CheckoutBranch { .. }
                 | DialogOutcome::CommitBeforeCheckout => unreachable!(),
             }
@@ -2540,6 +2777,7 @@ impl Root {
                             .detach();
                         this.command_menu = None;
                         this.dialog = None;
+                        this.automation_editor = None;
                         this.thread = None;
                         this.diff = None;
                         this.file = None;
@@ -2589,14 +2827,17 @@ impl Root {
     /// `⌘W`: Electron main runs `closeTab` (`close-active-app-shell-tab`) while the thread
     /// route's panel shows a tab, else the window closes.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dialog.is_some() {
+        if self.dialog.is_some() || self.automation_editor.is_some() {
             return;
         }
         if self.instructions_changed(cx) {
             self.confirm_instructions_leave(SettingsLeave::Window, window, cx);
             return;
         }
-        if let Some(side) = self.side.filter(|_| self.split.is_some()) {
+        if let Some(side) = self
+            .side
+            .filter(|_| self.split.is_some() && self.workspace_layout() != WorkspaceLayout::Chat)
+        {
             return self.close_side(side, window, cx);
         }
         if self.state.confirm_before_close == ConfirmBeforeClose::Never {
@@ -5515,6 +5756,11 @@ impl Render for Root {
             .capture_action(cx.listener(|this, _: &Undo, window, cx| {
                 this.undo_queued(window, cx);
             }))
+            .on_action(
+                cx.listener(|this, action: &automations::DeleteAutomation, window, cx| {
+                    this.confirm_delete_task(&action.id, window, cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &GoBack, window, cx| this.step(true, window, cx)))
             .on_action(cx.listener(|this, _: &GoForward, window, cx| this.step(false, window, cx)))
             .on_action(cx.listener(|this, _: &ToggleSidebar, _, cx| {
@@ -5554,7 +5800,8 @@ impl Render for Root {
             }))
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
-            .children(self.dialog.clone());
+            .children(self.dialog.clone())
+            .children(self.automation_editor.clone());
         let root = routes::actions(root, cx);
         native_menus::actions(
             section_actions::actions(features::actions(root, cx), cx),

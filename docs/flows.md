@@ -877,7 +877,7 @@ Its native window proof also checks pending state, duplicate suppression, succes
 On macOS, its native row-menu replay starts a task, then displays the real app-server refusal through the same toast component.
 
 `LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
-It accepts `{id, status}` or the original full cron or heartbeat body; any other changed field fails.
+It accepts `{id, status}` or the original full cron or heartbeat body, including edits to `name`, `prompt`, and `rrule`.
 Like the original `ugi`, a task without a target sends its first cwd as `projectId`; the host compares that value with the stored cwd.
 `PAUSED` clears `next_run_at` and `next_run_nominal_at`.
 `ACTIVE` recalculates the original nominal and actual next run with `GF`/`KF`/`JF`/`XF` and the persisted `.run-jitter-salt`; it never reuses a cached time.
@@ -888,6 +888,17 @@ The recurrence uses the vendored `rrule` 0.14.0 with the original limits: `INTER
 The `host` checks match the retained original oracle.
 
 AM-022, AM-023 and AM-028 use the existing sidebar task list.
+
+Task delete (AM-026, AM-027) is the last item of the row menu: the red trash `Delete` after `Run now` and `Pause` or `Resume`.
+The dialog `Delete {name}?` names the task the host lists, starts on `Cancel`, and sends nothing until `Delete scheduled task`.
+Escape and `Cancel` close it without a request and return focus to the row's button; both are ignored while the delete runs.
+Confirm sends `automation-delete` through `LocalHost`, which removes the definition directory, its cached `automations` row and its `automation_runs` like the original `aI`.
+The answer is `{item, success, status}`; `deleted` and `not_found` succeed, and account-owned rows are never touched.
+Success drops the row at once, reads the list again, and closes the deleted task's page to `Scheduled`.
+Failure closes the dialog like the original, shows the toast `Could not delete scheduled task` with `Copy error` for the host status, and keeps the task for another try.
+The failure toast shows `Try again` for an unsuccessful host response and the error message for a failed host request.
+The page-list row's inline delete icon and tooltip (AM-029) belong to the original page list, which the native route does not draw.
+`crates/app/tests/task_delete.rs` proves the host contract in disposable stores and, on macOS, the native Escape, Cancel, confirm, failed removal and retry path.
 The `Scheduled task actions` menu opens under the row button like the original (right edge 1 px inside the button, 220 px wide); its first item is `Pause` or `Resume`.
 The row status control shows `Pause` or `Resume` on hover or keyboard focus, with a named accessible action.
 Both send `automation-update` with the original cron or heartbeat request, block duplicate writes and refetch the list.
@@ -911,17 +922,35 @@ A failure removes only the worktree that the call made, after its cleanup script
 `crates/app/tests/automation_worktree.rs` proves these effects against disposable repositories and a local bare remote, and the `host::git` unit tests prove the cleanup refusals and the name collision.
 Run now calls `create_worktree` and `set_owner_thread` directly for worktree tasks.
 
+The sidebar New task options menu offers `Create with Codex`, `Create with ChatGPT`, and `Set up manually`.
+The chat actions open a new native chat with the original setup prompt.
+They do not send a turn until the user submits the composer.
+The manual editor uses the existing Composer text fields for Name and multiline Prompt.
+It supports Interval, Daily, Weekdays, Weekly, Monthly, and Custom schedules.
+Custom supports Hourly, Daily, Weekly, Monthly, and Yearly, with the matching time, interval, weekday, month-day, month, and minute controls.
+Morning, Afternoon, Evening, and Night select 09:00, 14:00, 18:00, and 22:00.
+Empty names, empty prompts, invalid numbers, invalid times, and empty weekly day selections disable Save.
+The existing recurrence parser validates the host request.
+The editor retains the draft on a write error and reloads the saved task after success.
+Row Edit loads the stored Name, Prompt, and recurrence into the same editor.
+Text-only edits retain an existing advanced recurrence without rewriting it.
+`automation-update` writes Name, Prompt, and recurrence to the original TOML and database stores while preserving unrelated fields and rollback.
+A profile without the original database saves the definition without creating a parallel database.
+`task_create::editor` exercises the native fields, menu, schedule controls, failed write, create, edit, and fresh-host read.
+`host` checks persistence across the accepted recurrence variants and rejects invalid changes before writing.
+
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Rail `Scheduled` | entry | Automations page, `ScheduledSidebar`. | `Route::Scheduled` with `ScheduledSidebar` and the page. | PASS (`rail_scheduled`, `parity_automations`) |
 | 2 | Deep link `/scheduled?automationId=…` | entry | Page with the task selected. | — | NOT WIRED (`crates/app/src/lib.rs`: no URL routing; no tasks without the host) |
-| 3 | `New task` | click | Create flow. | Dispatches `NewTask`; no handler. | NOT WIRED (no host: `automation-create` is a host fetch) |
-| 4 | `Create` menu | click | Create with Codex / ChatGPT / manually. | — | NOT WIRED (no host: `automation-create`) |
+| 3 | `New task` | click | Create flow. | The recorded compact schedule dialog saves through `automation-create` and retains the draft on a write error. | PASS (`task_create`, `s036`) |
+| 4 | `Create` menu | click | Create with Codex / ChatGPT / manually. | The sidebar split control opens both chat actions with the original setup prompt, or the full manual editor. | PASS (`task_create::editor`) |
 | 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (no host: `list-automations`) |
 | 6 | Status filter | click | All / Active / Paused. | — | NOT WIRED (no host: `list-automations`) |
 | 7 | Task row | click | Detail panel. | Selects the task and opens its thread. | PASS (`s037::task_row_hover_and_click_match_original`) |
-| 8 | Row actions | click | Edit, Run now, Pause, Delete. | `Run now` (through `automation-run-now`) and `Pause` / `Resume` in the row menu; the status control persists through `automation-update`. Edit and Delete remain outside this slice. | PARTIAL (`automation_run_now`; `s037::task_status_controls_persist_through_the_real_local_host`) |
-| 9 | Editor fields | focus | Name, Prompt, schedule. | — | NOT WIRED (no host: `automation-create`) |
+| 8 | Row actions | click | Edit, Run now, Pause, Delete. | Edit opens the stored definition in the full editor; Run now and Pause / Resume retain their existing host paths. Delete has a separate owner. | PARTIAL (`task_create::editor`, `automation_run_now`, `s037`) |
+| 9 | Editor fields | focus | Name, Prompt, schedule. | Editable Name and multiline Prompt, six schedule modes, custom frequencies, time presets, and day fields persist through the existing host. | PASS (`task_create::editor`, `host`) |
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
 | 11 | Row hover | hover | Row highlight. | The recorded row fill and actions match; the status icon changes to Pause on hover or keyboard focus. | PASS (`s037::task_row_hover_and_click_match_original`; suggestion hover: `s035::suggestion_hover_matches_original`) |
 | 12 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |

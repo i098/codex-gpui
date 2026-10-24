@@ -309,7 +309,7 @@ Add `links` to check plan, credit, and billing destinations without opening a br
 Add `account-switch` to check that an account change discards the previous reset confirmation.
 
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
-Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
+Create saves the definition through `automation-create` to `CODEX_HOME/automations/<id>/automation.toml`.
 The app reloads the task list after a successful write and retains the draft if the write fails.
 The existing host schedules these definitions; this app does not start another scheduler.
 The row menu's `Run now` sends `automation-run-now`; the host starts one `codex app-server` thread and turn per task folder.
@@ -322,6 +322,14 @@ The host saves projectless thread IDs, workspace-root hints, and output paths in
 Heartbeat tasks resume their existing thread with its selected model and permissions.
 The app opens that thread after a successful start, unless you navigate away while the run starts.
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
+The New task options menu also opens the full manual editor or a new chat with the original task setup prompt.
+The manual editor saves Name, multiline Prompt, Interval, Daily, Weekdays, Weekly, Monthly, and Custom schedules.
+Custom schedules support Hourly, Daily, Weekly, Monthly, and Yearly repeats, with interval, weekday, month-day, month, minute, and local time fields.
+The time presets use 09:00, 14:00, 18:00, and 22:00.
+The row menu's Edit action updates the task through `automation-update`, without changing its identity or unrelated definition fields.
+The editor keeps an existing advanced rule unchanged when only Name or Prompt changes.
+Prefilled drafts stay in Create mode until their data includes an existing task ID.
+Run `cargo test -p app --test task_create editor:: -- --test-threads=1` on macOS for the native editor, schedule, and Create menu checks.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 
 ### Legacy Codex Cloud threads
@@ -451,6 +459,14 @@ An unset effort stays unset in requests; the picker shows Medium.
 The composer labels modified workspace policies as Custom.
 A titled thread shows its header identity, also in a single pane.
 An untitled thread shows it only when a right pane is open; the toolbar actions stay available.
+
+In a loaded chat with an open content tab, `Cmd+Shift+F` switches between full and split view.
+`Cmd+Shift+B` changes full view to split view, hides the tabs, or restores the retained tabs beside Chat.
+Hiding tabs keeps their selected content; opening the same file, terminal, or Changes tab shows it again.
+Full view focuses the content pane and does not send typed text to the hidden composer.
+Find in full view searches the visible Changes panel, not the hidden chat.
+These commands do not create a browser tab when no content tab is open.
+Run `cargo test -p app --test workspace_layout -- --test-threads=1` for the native interaction checks.
 
 `LocalHost` serves `native-desktop-apps` and `native-desktop-app-by-bundle-id` through the desktop fetch boundary.
 On macOS, the adapter reads Spotlight metadata, applies the original app exclusions, and supports usage or display-name ordering.
@@ -705,6 +721,14 @@ Images in the composer and tool output support Copy Image and Save Image As.
 Images with a local source also support Reveal in Finder.
 Saving writes the original bytes and replaces the destination only after the write succeeds.
 The headless Save-dialog hook allows tests to select a destination without opening a native window.
+On macOS, Control+Shift+4 attaches a selected screen region to the primary window's current chat.
+Control+Option+Shift+4 opens a new chat before selection.
+Starting a new chat clears the previous Home draft, including its attachments.
+Both shortcuts use the native selection tool and leave the screenshot unsent.
+Enlarged image previews retain their edge colors instead of sampling adjacent texture data.
+Escape cancels selection without an error; changing the chat or account discards an unfinished capture.
+The shortcuts use `codex-command-keybindings` overrides and never change Screen Recording permissions.
+Run `cargo test -p app --lib screenshot:: -- --test-threads=1` for isolated capture, attachment, and macOS image-edge checks.
 
 ```sh
 tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'

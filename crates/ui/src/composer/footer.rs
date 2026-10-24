@@ -115,20 +115,23 @@ impl Composer {
             });
         let trigger = if loading {
             let value = "Loading model…";
-            let width = window
-                .text_system()
-                .layout_line(
-                    value,
-                    px(13.),
-                    &[TextRun {
-                        len: value.len(),
-                        font: gpui::font(crate::SANS),
-                        color: t.text_tertiary,
-                        ..Default::default()
-                    }],
-                    None,
-                )
-                .width;
+            let width = crate::run_width(
+                window
+                    .text_system()
+                    .layout_line(
+                        value,
+                        px(13.),
+                        &[TextRun {
+                            len: value.len(),
+                            font: gpui::font(crate::SANS),
+                            color: t.text_tertiary,
+                            ..Default::default()
+                        }],
+                        None,
+                    )
+                    .width,
+                window,
+            );
             pill("model-picker", t)
                 .aria_label(value)
                 .aria_disabled(true)
