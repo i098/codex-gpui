@@ -135,6 +135,23 @@ fn missing_host_response_keeps_retry_and_chat_available() -> Result<()> {
 
 #[test]
 fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
+    replay_pane_states(None)
+}
+
+#[test]
+fn original_pane_reset_keeps_the_mount_default() -> Result<()> {
+    for state in [
+        "open-all",
+        "merged-first-page",
+        "merged-second-page",
+        "merged-detail",
+    ] {
+        replay_pane_states(Some(state))?;
+    }
+    Ok(())
+}
+
+fn replay_pane_states(reset_state: Option<&str>) -> Result<()> {
     use ui::screens::pull_requests::model::View;
     let recording =
         std::fs::read_to_string(format!("{}/fixtures/pull-requests.json", common::ROOT))?;
@@ -170,6 +187,7 @@ fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
                 .is_some_and(|ids| ids.is_empty())
         })
     })?;
+    fx.advance(Duration::ZERO)?;
     fx.cx.update_window(fx.window, |_, window, cx| {
         window.dispatch_action(Box::new(ui::OpenPullRequests), cx);
     })?;
@@ -186,38 +204,14 @@ fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
     fx.cx.run_until_parked();
     fx.type_text("repo:i098/codex-gpui")?;
     fx.advance(Duration::from_millis(250))?;
-    let loaded = fx.wait("recorded open queries", |fx| {
-        fx.read(|_, cx| {
-            let page = page.read(cx);
-            !page.streams.is_empty()
-                && page
-                    .streams
-                    .iter()
-                    .all(|stream| stream.loaded && !stream.loading && stream.error.is_none())
-        })
-    });
-    if let Err(error) = loaded {
-        let (query, states) = fx.read(|_, cx| {
-            let page = page.read(cx);
-            (
-                page.query.clone(),
-                page.streams
-                    .iter()
-                    .map(|stream| {
-                        (
-                            stream.key,
-                            stream.loaded,
-                            stream.loading,
-                            stream.error.clone(),
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            )
-        });
-        capture(&mut fx, "open-query-error")?;
-        anyhow::bail!("{error:#}; query={query:?}; states={states:?}");
+    wait_for_open_queries(&mut fx, &page)?;
+    assert!(
+        (fx.read(|_, cx| page.read(cx).detail_width()) - 723.86584).abs() < 0.0001,
+        "The initial ratio must retain the preceding Home inset",
+    );
+    if capture_pane(&mut fx, "open-all", reset_state)? {
+        return Ok(());
     }
-    capture(&mut fx, "open-all")?;
     page.update(&mut fx.cx, |page, cx| {
         page.view = View::Authored;
         page.lifecycle = "merged".into();
@@ -239,7 +233,9 @@ fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
             .map(|item| item.node_id.clone())
             .collect::<Vec<_>>()
     });
-    capture(&mut fx, "merged-first-page")?;
+    if capture_pane(&mut fx, "merged-first-page", reset_state)? {
+        return Ok(());
+    }
     page.update(&mut fx.cx, |_, cx| cx.emit(Event::More));
     fx.wait("second recorded merged page", |fx| {
         fx.read(|_, cx| {
@@ -260,7 +256,9 @@ fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
     });
     assert_eq!(&all_ids[..first_ids.len()], first_ids);
     assert_eq!(all_ids.iter().collect::<HashSet<_>>().len(), all_ids.len());
-    capture(&mut fx, "merged-second-page")?;
+    if capture_pane(&mut fx, "merged-second-page", reset_state)? {
+        return Ok(());
+    }
     let selected = fx.read(|_, cx| page.read(cx).streams[0].items[0].pull_request.clone());
     page.update(&mut fx.cx, |_, cx| {
         cx.emit(Event::Select(Some(selected.clone())))
@@ -268,7 +266,14 @@ fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
     fx.wait("recorded detail response", |fx| {
         fx.read(|_, cx| matches!(page.read(cx).detail, Some(Ok(_))))
     })?;
-    capture(&mut fx, "merged-detail")?;
+    assert_eq!(
+        fx.read(|_, cx| page.read(cx).detail_width()),
+        724.,
+        "A fresh detail mount must reach its width before reset",
+    );
+    if capture_pane(&mut fx, "merged-detail", reset_state)? {
+        return Ok(());
+    }
     if cfg!(target_os = "macos") {
         fx.click((690., 67.))?;
     } else {
@@ -327,6 +332,22 @@ fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
         );
         capture(&mut fx, "detail-restored")?;
     }
+    let divider = 1276. - fx.read(|_, cx| page.read(cx).detail_width());
+    fx.drag((divider, 300.), (divider + 50., 300.), 4)?;
+    assert!((fx.read(|_, cx| page.read(cx).detail_width()) - 674.).abs() < 0.001);
+    capture(&mut fx, "detail-dragged")?;
+    reset_pane(&mut fx)?;
+    assert_eq!(fx.read(|_, cx| page.read(cx).detail_width()), 724.);
+    capture(&mut fx, "detail-reset-after-drag")?;
+    fx.resize(1440., 832.)?;
+    fx.advance(Duration::ZERO)?;
+    fx.advance(Duration::ZERO)?;
+    let expected = 320. + (724. - 320.) / (1224. - 672.) * (1384. - 672.);
+    assert!((fx.read(|_, cx| page.read(cx).detail_width()) - expected).abs() < 0.001);
+    capture(&mut fx, "detail-resized")?;
+    page.update(&mut fx.cx, |page, cx| page.reset_detail_width(cx));
+    assert_eq!(fx.read(|_, cx| page.read(cx).detail_width()), 724.);
+    capture(&mut fx, "detail-resized-reset")?;
     host.switched.store(true, Ordering::SeqCst);
     page.update(&mut fx.cx, |_, cx| cx.emit(Event::Retry));
     fx.wait("switched GitHub account", |fx| {
@@ -339,11 +360,180 @@ fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
     Ok(())
 }
 
+fn wait_for_open_queries(
+    fx: &mut Fx,
+    page: &gpui::Entity<ui::screens::pull_requests::Page>,
+) -> Result<()> {
+    let loaded = fx.wait("recorded open queries", |fx| {
+        fx.read(|_, cx| {
+            let page = page.read(cx);
+            !page.streams.is_empty()
+                && page
+                    .streams
+                    .iter()
+                    .all(|stream| stream.loaded && !stream.loading && stream.error.is_none())
+        })
+    });
+    if let Err(error) = loaded {
+        let (query, states) = fx.read(|_, cx| {
+            let page = page.read(cx);
+            (
+                page.query.clone(),
+                page.streams
+                    .iter()
+                    .map(|stream| {
+                        (
+                            stream.key,
+                            stream.loaded,
+                            stream.loading,
+                            stream.error.clone(),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        });
+        capture(fx, "open-query-error")?;
+        anyhow::bail!("{error:#}; query={query:?}; states={states:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn pane_mount_reads_the_preceding_shell_after_resize_and_sidebar_changes() -> Result<()> {
+    for (index, (size, sidebar_open)) in [
+        ((1280., 832.), true),
+        ((1440., 700.), false),
+        ((1100., 900.), true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut fx = Fx::with("dark", size, None, |_| {})?;
+        assert!(fx.sidebar_open());
+        if !sidebar_open {
+            fx.keys("cmd-b")?;
+            fx.advance(Duration::from_millis(500))?;
+        }
+        assert_eq!(fx.sidebar_open(), sidebar_open);
+        for visit in 0..2 {
+            if visit != 0 {
+                fx.cx.update_window(fx.window, |_, window, cx| {
+                    window.dispatch_action(Box::new(ui::NewChat), cx);
+                })?;
+                assert_eq!(fx.sidebar_open(), sidebar_open);
+                fx.keys("cmd-b")?;
+                fx.advance(Duration::from_millis(500))?;
+                assert_eq!(fx.sidebar_open(), !sidebar_open);
+            }
+            assert_eq!(fx.sidebar_open(), sidebar_open != (visit != 0));
+            fx.advance(Duration::ZERO)?;
+            let inset = f64::from(f32::from(
+                fx.shell(|shell| shell.main_content_inline_inset()),
+            ));
+            assert_eq!(inset > 0., sidebar_open != (visit != 0));
+            let viewport = (size.0 + 100. * (visit + 1) as f32, size.1 - 40.);
+            fx.resize(viewport.0, viewport.1)?;
+            fx.advance(Duration::ZERO)?;
+            let available = f64::from(viewport.0 - 56.);
+            let initial_available = available - inset;
+            let default = (f64::from(viewport.1) * 1.6)
+                .min(initial_available - 500.)
+                .max(640_f64.min(initial_available - 352.))
+                .max(320.);
+            let ratio = ((default - 320.) / (initial_available - 672.)).clamp(0., 1.);
+            fx.cx.update_window(fx.window, |_, window, cx| {
+                window.dispatch_action(Box::new(ui::OpenPullRequests), cx);
+            })?;
+            fx.advance(Duration::ZERO)?;
+            fx.advance(Duration::ZERO)?;
+            let width =
+                fx.read(|root, cx| root.pull_requests_page().unwrap().read(cx).detail_width());
+            assert!((f64::from(width) - (320. + ratio * (available - 672.))).abs() < 0.001);
+            capture(&mut fx, &format!("navigation-resized-{index}-{visit}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn reset_pane(fx: &mut Fx) -> Result<()> {
+    let width = fx.read(|root, cx| root.pull_requests_page().unwrap().read(cx).detail_width());
+    let position = fx.cx.update_window(fx.window, |_, window, _| {
+        gpui::point(
+            window.viewport_size().width - gpui::px(4. + width),
+            gpui::px(300.),
+        )
+    })?;
+    fx.hover((position.x.into(), position.y.into()))?;
+    fx.input(gpui::PlatformInput::MouseDown(gpui::MouseDownEvent {
+        button: gpui::MouseButton::Left,
+        position,
+        modifiers: gpui::Modifiers::default(),
+        click_count: 2,
+        first_mouse: false,
+    }))?;
+    fx.input(gpui::PlatformInput::MouseUp(gpui::MouseUpEvent {
+        button: gpui::MouseButton::Left,
+        position,
+        modifiers: gpui::Modifiers::default(),
+        click_count: 2,
+    }))
+}
+
+fn capture_pane(fx: &mut Fx, state: &str, reset_state: Option<&str>) -> Result<bool> {
+    if reset_state.is_none() {
+        capture(fx, state)?;
+        return Ok(false);
+    }
+    if reset_state != Some(state) {
+        return Ok(false);
+    }
+    let width = fx.read(|root, cx| root.pull_requests_page().unwrap().read(cx).detail_width());
+    let expected_initial = if state == "merged-detail" {
+        724.
+    } else {
+        723.86584
+    };
+    assert!((width - expected_initial).abs() < 0.0001);
+    capture(fx, &format!("{state}-before-reset"))?;
+    reset_pane(fx)?;
+    let expected = if state == "merged-detail" {
+        724.
+    } else {
+        723.5
+    };
+    assert_eq!(
+        fx.read(|root, cx| root.pull_requests_page().unwrap().read(cx).detail_width()),
+        expected,
+    );
+    capture(fx, &format!("{state}-reset"))?;
+    Ok(true)
+}
+
 fn capture(fx: &mut Fx, name: &str) -> Result<()> {
     if let Some(directory) = std::env::var_os("CGX_PULL_REQUEST_EVIDENCE") {
         std::fs::create_dir_all(&directory)?;
         fx.reference_shot()?
             .save(std::path::Path::new(&directory).join(format!("{name}.png")))?;
+        let width = fx.read(|root, cx| {
+            root.pull_requests_page()
+                .map(|page| page.read(cx).detail_width())
+        });
+        let viewport = fx.cx.update_window(fx.window, |_, window, _| {
+            let size = window.viewport_size();
+            [
+                f32::from(size.width),
+                f32::from(size.height),
+                window.scale_factor(),
+            ]
+        })?;
+        std::fs::write(
+            std::path::Path::new(&directory).join(format!("{name}.json")),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "state": name,
+                "width": width,
+                "viewport": viewport,
+            }))?,
+        )?;
     }
     Ok(())
 }
