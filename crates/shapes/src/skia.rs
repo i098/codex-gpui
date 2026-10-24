@@ -2642,6 +2642,7 @@ impl IconPath {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn scan_hairline_operations(
     path: &IconPath,
     view: &Matrix,
