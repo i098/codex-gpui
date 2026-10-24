@@ -336,7 +336,18 @@ pub(super) fn command(root: &Path, args: &[&str]) -> Command {
 }
 
 fn run(root: &Path, args: &[&str]) -> Result<Output> {
-    command(root, args).output().context("run local Git")
+    match command(root, args).output() {
+        Ok(output) => Ok(output),
+        Err(error) => {
+            eprintln!(
+                "DBG git run failed args={args:?} cwd={} root={:?} PATH={:?}",
+                root.display(),
+                root,
+                std::env::var_os("PATH")
+            );
+            Err(anyhow::anyhow!(format!("{error}")).context("run local Git"))
+        }
+    }
 }
 
 fn checked(output: Output) -> Result<Vec<u8>> {
@@ -552,12 +563,23 @@ fn apply(
     if cached {
         args.push("--cached");
     }
-    let mut child = command(root, &args)
+    let mut child = match command(root, &args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .context("run local Git")?;
+    {
+        Ok(child) => child,
+        Err(error) => {
+            eprintln!(
+                "DBG git apply spawn failed args={args:?} cwd={} root={:?} PATH={:?}",
+                root.display(),
+                root,
+                std::env::var_os("PATH")
+            );
+            return Err(anyhow::anyhow!(format!("{error}")).context("run local Git"));
+        }
+    };
     let sent = child.stdin.take().context("Git stdin")?.write_all(patch);
     checked(child.wait_with_output().context("run local Git")?)?;
     sent.context("send patch to Git")
