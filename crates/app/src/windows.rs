@@ -391,7 +391,18 @@ pub fn set_pointer_interactive(
 }
 
 pub fn reopen(cx: &mut App) -> Result<()> {
-    let handle = cx.try_global::<Windows>().and_then(|windows| {
+    if let Some(handle) = primary(cx) {
+        return show(handle, Presentation::Foreground, cx);
+    }
+    let cwd = std::env::current_dir().context("read launch directory")?;
+    open_primary(State::load(), cwd.to_string_lossy().into_owned(), cx)?;
+    Ok(())
+}
+
+/// The last active primary window, else any primary: the window a deep link or Dock
+/// reopen addresses.
+pub fn primary(cx: &App) -> Option<AnyWindowHandle> {
+    cx.try_global::<Windows>().and_then(|windows| {
         windows
             .last_primary
             .and_then(|id| windows.entries.get(&id))
@@ -402,16 +413,10 @@ pub fn reopen(cx: &mut App) -> Result<()> {
                     .find(|entry| entry.kind == Kind::Primary)
             })
             .map(|entry| entry.handle)
-    });
-    if let Some(handle) = handle {
-        return show(handle, Presentation::Foreground, cx);
-    }
-    let cwd = std::env::current_dir().context("read launch directory")?;
-    open_primary(State::load(), cwd.to_string_lossy().into_owned(), cx)?;
-    Ok(())
+    })
 }
 
-fn connect(cwd: &Path) -> Result<(Bridge, Receiver<Event>)> {
+pub(crate) fn connect(cwd: &Path) -> Result<(Bridge, Receiver<Event>)> {
     if let Some(mut command) = bridge::acp_command() {
         command.current_dir(cwd);
         Bridge::spawn_acp(command)

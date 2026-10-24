@@ -6,6 +6,7 @@
 mod cloud_task;
 pub use cloud_task::parse_task_response;
 pub mod computer_use_requests;
+pub mod deep_link;
 mod destinations;
 pub mod diff_content;
 mod features;
@@ -4060,7 +4061,7 @@ impl Root {
     }
 
     /// Settings at `section`, whether or not Settings is open.
-    fn open_settings_section(
+    pub(crate) fn open_settings_section(
         &mut self,
         section: &'static str,
         window: &mut Window,
