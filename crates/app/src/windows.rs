@@ -416,6 +416,21 @@ pub fn primary(cx: &App) -> Option<AnyWindowHandle> {
     })
 }
 
+/// `primary` as a typed root, opening a hidden primary when none exists: the
+/// window screenshot capture addresses.
+pub(crate) fn primary_or_open(cx: &mut App) -> Result<WindowHandle<Root>> {
+    if let Some(handle) = primary(cx).and_then(|handle| handle.downcast::<Root>()) {
+        return Ok(handle);
+    }
+    let cwd = std::env::current_dir().context("read launch directory")?;
+    open_primary_with_presentation(
+        State::load(),
+        cwd.to_string_lossy().into_owned(),
+        Presentation::Hidden,
+        cx,
+    )
+}
+
 pub(crate) fn connect(cwd: &Path) -> Result<(Bridge, Receiver<Event>)> {
     if let Some(mut command) = bridge::acp_command() {
         command.current_dir(cwd);
@@ -429,6 +444,15 @@ pub(crate) fn connect(cwd: &Path) -> Result<(Bridge, Receiver<Event>)> {
 }
 
 pub fn open_primary(state: State, cwd: String, cx: &mut App) -> Result<WindowHandle<Root>> {
+    open_primary_with_presentation(state, cwd, Presentation::Foreground, cx)
+}
+
+fn open_primary_with_presentation(
+    state: State,
+    cwd: String,
+    presentation: Presentation,
+    cx: &mut App,
+) -> Result<WindowHandle<Root>> {
     if !cx.has_global::<host_settings::Settings>() {
         let settings = match &state.path {
             Some(path) => host_settings::Settings::load(path.with_file_name("host-settings.json"))?,
@@ -446,6 +470,7 @@ pub fn open_primary(state: State, cwd: String, cx: &mut App) -> Result<WindowHan
         },
     );
     spec.bounds = Some(primary_bounds(&state, cx));
+    spec.presentation = presentation;
     open(spec, cx, |window, cx| {
         cx.new(|cx| Root::new(state, bridge, events, cwd, window, cx))
     })

@@ -460,6 +460,14 @@ The composer labels modified workspace policies as Custom.
 A titled thread shows its header identity, also in a single pane.
 An untitled thread shows it only when a right pane is open; the toolbar actions stay available.
 
+In a loaded chat with an open content tab, `Cmd+Shift+F` switches between full and split view.
+`Cmd+Shift+B` changes full view to split view, hides the tabs, or restores the retained tabs beside Chat.
+Hiding tabs keeps their selected content; opening the same file, terminal, or Changes tab shows it again.
+Full view focuses the content pane and does not send typed text to the hidden composer.
+Find in full view searches the visible Changes panel, not the hidden chat.
+These commands do not create a browser tab when no content tab is open.
+Run `cargo test -p app --test workspace_layout -- --test-threads=1` for the native interaction checks.
+
 `LocalHost` serves `native-desktop-apps` and `native-desktop-app-by-bundle-id` through the desktop fetch boundary.
 On macOS, the adapter reads Spotlight metadata, applies the original app exclusions, and supports usage or display-name ordering.
 It returns each app's path, bundle ID, and display name without launching the app.
@@ -713,6 +721,14 @@ Images in the composer and tool output support Copy Image and Save Image As.
 Images with a local source also support Reveal in Finder.
 Saving writes the original bytes and replaces the destination only after the write succeeds.
 The headless Save-dialog hook allows tests to select a destination without opening a native window.
+On macOS, Control+Shift+4 attaches a selected screen region to the primary window's current chat.
+Control+Option+Shift+4 opens a new chat before selection.
+Starting a new chat clears the previous Home draft, including its attachments.
+Both shortcuts use the native selection tool and leave the screenshot unsent.
+Enlarged image previews retain their edge colors instead of sampling adjacent texture data.
+Escape cancels selection without an error; changing the chat or account discards an unfinished capture.
+The shortcuts use `codex-command-keybindings` overrides and never change Screen Recording permissions.
+Run `cargo test -p app --lib screenshot:: -- --test-threads=1` for isolated capture, attachment, and macOS image-edge checks.
 
 ```sh
 tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'

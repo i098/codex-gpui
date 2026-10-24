@@ -33,6 +33,7 @@ pub mod settings_kit;
 pub mod toast;
 pub mod tooltip;
 pub mod updater;
+pub mod workspace;
 
 actions!(
     shell,
@@ -57,6 +58,8 @@ actions!(
         OpenChangesPanel,
         /// Thread summary ▸ `Background processes` row: the command's terminal tab.
         OpenBackgroundTerminal,
+        ShowWorkspaceTabView,
+        StepWorkspaceLayout,
         /// `⌘K`, `⌘⇧P`, sidebar `Search`: the command menu.
         OpenCommandMenu,
     ]
@@ -285,6 +288,17 @@ impl Shell {
     pub fn set_main(&mut self, main: AnyView, cx: &mut Context<Self>) {
         self.main = main;
         cx.notify();
+    }
+
+    pub fn main_width(&self, window: &Window, cx: &App) -> Pixels {
+        let progress = self.sidebar_progress(cx.background_executor().now());
+        let left = RAIL_WIDTH + (self.sidebar_width - RAIL_WIDTH) * progress;
+        let border = if progress > 0.1 {
+            MAIN_HAIRLINE
+        } else {
+            px(0.)
+        };
+        (window.viewport_size().width - left - PAGE_INSET - border).max(px(0.))
     }
 
     pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {

@@ -887,6 +887,17 @@ The recurrence uses the vendored `rrule` 0.14.0 with the original limits: `INTER
 The `host` checks match the retained original oracle.
 
 AM-022, AM-023 and AM-028 use the existing sidebar task list.
+
+Task delete (AM-026, AM-027) is the last item of the row menu: the red trash `Delete` after `Run now` and `Pause` or `Resume`.
+The dialog `Delete {name}?` names the task the host lists, starts on `Cancel`, and sends nothing until `Delete scheduled task`.
+Escape and `Cancel` close it without a request and return focus to the row's button; both are ignored while the delete runs.
+Confirm sends `automation-delete` through `LocalHost`, which removes the definition directory, its cached `automations` row and its `automation_runs` like the original `aI`.
+The answer is `{item, success, status}`; `deleted` and `not_found` succeed, and account-owned rows are never touched.
+Success drops the row at once, reads the list again, and closes the deleted task's page to `Scheduled`.
+Failure closes the dialog like the original, shows the toast `Could not delete scheduled task` with `Copy error` for the host status, and keeps the task for another try.
+The failure toast shows `Try again` for an unsuccessful host response and the error message for a failed host request.
+The page-list row's inline delete icon and tooltip (AM-029) belong to the original page list, which the native route does not draw.
+`crates/app/tests/task_delete.rs` proves the host contract in disposable stores and, on macOS, the native Escape, Cancel, confirm, failed removal and retry path.
 The `Scheduled task actions` menu opens under the row button like the original (right edge 1 px inside the button, 220 px wide); its first item is `Pause` or `Resume`.
 The row status control shows `Pause` or `Resume` on hover or keyboard focus, with a named accessible action.
 Both send `automation-update` with the original cron or heartbeat request, block duplicate writes and refetch the list.

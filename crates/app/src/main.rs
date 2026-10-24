@@ -136,6 +136,7 @@ fn main() {
                 root.open_deep_link(&link, window, cx)
             });
         }
+        app::screenshot::register(cx);
         app::qa::monitor(handle, cx);
         if !app::qa::ENABLED {
             cx.activate(true);
