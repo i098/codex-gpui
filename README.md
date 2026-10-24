@@ -19,7 +19,7 @@ The app drives the real `codex app-server` over stdio, the same JSON-RPC transpo
 The workspace also builds on Linux, with GPUI's no-op text system, for CI (fmt, clippy, tests).
 The self-hosted CI job disables dev/test debug information and incremental compilation.
 It uses only its own workspace's `target` directory and removes that directory after success or failure.
-CI skips draft pull requests: marking a PR ready for review starts its run. A newer push to a PR cancels that PR's older run; pushes to `main` always run. A pull request that changes only the listed documentation files (`paths-ignore` in `.github/workflows/ci.yml`) starts no run.
+CI skips draft pull requests by default. Marking a pull request ready for review starts the normal run; maintainers can also use Actions > ci > Run workflow to test a draft branch. A newer push to a pull request cancels its older run; pushes to `main` always run. A pull request that changes only the listed documentation files (`paths-ignore` in `.github/workflows/ci.yml`) starts no run.
 
 ## Computer use runtime
 
