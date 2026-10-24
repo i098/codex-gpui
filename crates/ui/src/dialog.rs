@@ -143,6 +143,8 @@ pub enum Kind {
     ModelAnnouncement,
     /// `Schedule a task`: the Scheduled sidebar's `New task` create editor (AM-005).
     ScheduleTask,
+    /// `Delete {name}?` from a Scheduled task's menu (AM-026, `automation-delete-confirmation-dialog`).
+    DeleteTask,
     /// `Rename chat` from a Recents row's menu (RS-091, refs/interactions/s002.json): the
     /// `Chat title` input, prefilled and selected, `Cancel`, `Save` and `Close dialog`.
     Rename,
@@ -190,6 +192,10 @@ pub enum Outcome {
     ScheduleTask {
         prompt: String,
         rrule: String,
+    },
+    /// `Delete scheduled task`: the app runs `automation-delete` for task `id`.
+    DeleteTask {
+        id: String,
     },
     /// A submitted commit form: the app creates the branch, commits and pushes.
     Commit {
@@ -1039,6 +1045,19 @@ impl Dialog {
                     )),
             )
     }
+
+    /// `Delete {name}?` for the Scheduled task `id`; `Cancel` has the first focus.
+    pub fn delete_task(id: String, name: String, cx: &mut Context<Self>) -> Self {
+        Self {
+            query: name,
+            thread: id,
+            ..Self::new(Kind::DeleteTask, cx)
+        }
+    }
+    /// The id of the Scheduled task a `DeleteTask` dialog asks about.
+    pub fn task(&self) -> &str {
+        &self.thread
+    }
     /// `Commit or push` for the repository `repo` describes.
     pub fn commit(repo: CommitRepository, cx: &mut Context<Self>) -> Self {
         let form = CommitForm {
@@ -1462,6 +1481,8 @@ impl Dialog {
             (Kind::RevertChanges, _) => "Don't ask again",
             (Kind::FullAccess, 0) => "Cancel",
             (Kind::FullAccess, _) => "Confirm",
+            (Kind::DeleteTask, 0) => "Cancel",
+            (Kind::DeleteTask, _) => "Delete scheduled task",
             (Kind::LogOut, 0) => "Cancel",
             (Kind::LogOut, _) => "Log out",
             (Kind::ArchiveSection, 0) => "Cancel",
@@ -1637,6 +1658,13 @@ impl Dialog {
                     });
                     cx.notify();
                 }
+            }
+            (Kind::DeleteTask, 1) => {
+                self.saving = true;
+                cx.emit(Outcome::DeleteTask {
+                    id: self.thread.clone(),
+                });
+                cx.notify();
             }
             (Kind::ScheduleTask, 0 | 4) => {}
             (Kind::FullAccess, 1) => cx.emit(Outcome::FullAccess),
@@ -1874,6 +1902,7 @@ impl Dialog {
                     | Kind::ArchiveSection
                     | Kind::DiscardInstructions => vec![0, 1],
                     Kind::DeleteMemories => vec![0, 1, 2],
+                    Kind::DeleteTask => vec![0, 1],
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
                     Kind::Branches => vec![0, 1],
                     Kind::BranchConflict => vec![1, 2],
@@ -1916,6 +1945,7 @@ impl Dialog {
                         | Kind::FullAccess
                         | Kind::LogOut
                         | Kind::ArchiveSection
+                        | Kind::DeleteTask
                         | Kind::ModelAnnouncement
                         | Kind::RevertChanges
                         | Kind::DiscardInstructions
@@ -1974,6 +2004,7 @@ impl Dialog {
                         | Kind::RevertChanges
                         | Kind::ArchiveSection
                         | Kind::DiscardInstructions
+                        | Kind::DeleteTask
                 ),
                 |d| {
                     d.h(px(36.)).rounded(px(18.)).bg(if primary {
@@ -2018,6 +2049,9 @@ impl Dialog {
                         ..Default::default()
                     }))
             })
+            .when(self.saving && self.kind == Kind::DeleteTask, |d| {
+                d.opacity(0.5)
+            })
             .child(text(
                 label,
                 14.,
@@ -2030,6 +2064,7 @@ impl Dialog {
                         | Kind::ArchiveSection
                         | Kind::DiscardInstructions
                         | Kind::DeleteMemories
+                        | Kind::DeleteTask
                 ) && primary
                 {
                     t.text_error
@@ -2464,6 +2499,36 @@ impl Dialog {
             .child(div().absolute().bottom(px(20.)).right(px(20.)).flex().gap(px(12.))
                 .child(self.button(0, "Cancel", 88., t, cx))
                 .child(self.button(1, "Confirm", 115., t, cx)))
+    }
+
+    fn delete_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        div()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .child(
+                text(format!("Delete {}?", self.query), 20., 28., 600., t.text).whitespace_normal(),
+            )
+            .child(
+                text(
+                    "This will permanently delete the scheduled task and stop future runs",
+                    14.,
+                    20.,
+                    400.,
+                    t.text_secondary,
+                )
+                .mt(px(8.))
+                .whitespace_normal(),
+            )
+            .child(
+                div()
+                    .mt(px(20.))
+                    .flex()
+                    .justify_end()
+                    .gap(px(12.))
+                    .child(self.button(0, "Cancel", 80., t, cx))
+                    .child(self.button(1, "Delete scheduled task", 178., t, cx)),
+            )
     }
 
     fn close_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
@@ -3786,6 +3851,11 @@ impl Render for Dialog {
             Kind::Shortcuts => (600., shortcuts_height),
             Kind::CloseWindow => (420., 171.),
             Kind::RevertChanges => (420., 199.),
+            // ponytail: the title wraps by character count (about 32 per 380 px line, 3 lines).
+            Kind::DeleteTask => (
+                420.,
+                144. + 28. * (self.query.chars().count() + 8).div_ceil(32).clamp(1, 3) as f32,
+            ),
             Kind::ScheduleTask => (680., 422.),
             Kind::Rename | Kind::NewSection | Kind::EditSection => (420., 185.),
             Kind::ArchiveSection => (420., 181.),
@@ -3812,6 +3882,7 @@ impl Render for Dialog {
         let content = match self.kind {
             Kind::Shortcuts => self.shortcuts_content(&visible, t, cx),
             Kind::CloseWindow | Kind::RevertChanges => self.close_content(t, cx),
+            Kind::DeleteTask => self.delete_content(t, cx),
             Kind::ScheduleTask => self.schedule_content(t, cx),
             Kind::Rename | Kind::NewSection | Kind::EditSection => self.rename_content(t, cx),
             Kind::ArchiveSection => self.archive_section_content(t, cx),
@@ -3858,6 +3929,7 @@ impl Render for Dialog {
                         Kind::Shortcuts => "Keyboard shortcuts".into(),
                         Kind::CloseWindow => "Are you sure you want to close the window?".into(),
                         Kind::RevertChanges => "Revert changes?".into(),
+                        Kind::DeleteTask => format!("Delete {}?", self.query).into(),
                         Kind::ScheduleTask => "Schedule a task".into(),
                         Kind::Rename | Kind::NewSection | Kind::EditSection => {
                             self.name_title().into()
