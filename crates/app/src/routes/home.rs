@@ -27,7 +27,7 @@ impl Root {
         }
         self.navigate(Route::Home, window, cx);
         let composer = self.home.read(cx).composer.clone();
-        composer.update(cx, |c, cx| c.set_text("", cx));
+        composer.update(cx, |c, cx| c.clear_session(cx));
         window.focus(&composer.focus_handle(cx), cx);
     }
 }

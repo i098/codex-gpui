@@ -17,11 +17,13 @@ mod command_destinations;
 mod keymap;
 pub(crate) mod shortcuts;
 pub(crate) mod terminal;
+mod workspace;
 pub(crate) use command_destinations::OpenThreadInNewWindow;
 
 /// Called by [`crate::init`], after the app's own bindings.
 pub(crate) fn init(cx: &mut App) {
     shortcuts::init(cx);
+    workspace::init(cx);
 }
 
 pub(crate) fn install_shortcuts(cx: &mut App) {
@@ -30,9 +32,12 @@ pub(crate) fn install_shortcuts(cx: &mut App) {
 
 /// Called by `Root::render` on the root element, after the app's own actions.
 pub(crate) fn actions(root: Div, owner: &Root, cx: &mut Context<Root>) -> Div {
-    shortcuts::actions(
-        command_destinations::actions(crate::windows::actions(root, cx), cx),
-        owner,
+    workspace::actions(
+        shortcuts::actions(
+            command_destinations::actions(crate::windows::actions(root, cx), cx),
+            owner,
+            cx,
+        ),
         cx,
     )
 }

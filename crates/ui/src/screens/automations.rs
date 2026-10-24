@@ -19,7 +19,11 @@ use gpui::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::HashSet, fs, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::Path,
+};
 use theme::{ActiveTheme as _, Theme};
 
 pub mod editor;
@@ -66,6 +70,13 @@ pub struct OpenAutomation {
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = automations, no_json)]
 pub struct ToggleAutomation {
+    pub id: String,
+}
+
+/// Row menu `Delete`: asks to delete the task `id` (AM-026); the app confirms first.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct DeleteAutomation {
     pub id: String,
 }
 
@@ -320,6 +331,7 @@ fn shell_with(
         menu_focus: cx.focus_handle(),
         return_focus: None,
         create_menu: cx.new(editor::CreateMenu::new),
+        buttons: HashMap::new(),
     });
     let mut page = None;
     let main: AnyView = match selected {
@@ -365,7 +377,13 @@ pub struct ScheduledSidebar {
     menu_focus: FocusHandle,
     return_focus: Option<FocusHandle>,
     create_menu: Entity<editor::CreateMenu>,
+    /// The `Scheduled task actions` button each opened menu came from: focus returns there
+    /// after a dialog from the menu closes.
+    buttons: HashMap<String, FocusHandle>,
 }
+
+/// The original's trash icon (`settings.automations.delete`), 16 px.
+const DELETE_ICON: &[u8] = br##"<svg height="16" viewBox="0 0 16 16" width="16" xmlns="http://www.w3.org/2000/svg"><path d="M6.66724 6.80762C6.95696 6.80788 7.19263 7.04322 7.19263 7.33301V10.6729C7.19256 10.9626 6.95692 11.197 6.66724 11.1973C6.37733 11.1973 6.14192 10.9627 6.14185 10.6729V7.33301C6.14185 7.04306 6.37729 6.80762 6.66724 6.80762Z" fill="currentColor"></path> <path d="M9.33325 6.80762C9.6232 6.80762 9.85864 7.04306 9.85864 7.33301V10.6729C9.85857 10.9627 9.62316 11.1973 9.33325 11.1973C9.04335 11.1973 8.80793 10.9627 8.80786 10.6729V7.33301C8.80786 7.04306 9.0433 6.80762 9.33325 6.80762Z" fill="currentColor"></path> <path fill-rule="evenodd" clip-rule="evenodd" d="M8.00024 1.25391C9.66003 1.25407 11.0236 2.52186 11.177 4.1416H13.6663C13.9562 4.1416 14.1917 4.37704 14.1917 4.66699C14.1914 4.95672 13.956 5.19238 13.6663 5.19238H13.1692L12.6995 12.1787C12.6105 13.5045 11.5096 14.5349 10.1809 14.5352H5.8313C4.50407 14.535 3.40273 13.5068 3.31177 12.1826L2.83228 5.19238H2.33325C2.04347 5.19238 1.80813 4.95672 1.80786 4.66699C1.80786 4.37704 2.0433 4.1416 2.33325 4.1416H4.82251C4.976 2.52175 6.34031 1.25391 8.00024 1.25391ZM4.35962 12.1104C4.41275 12.8838 5.05604 13.4842 5.8313 13.4844H10.1809C10.957 13.4841 11.6006 12.8828 11.6526 12.1084L12.1165 5.19238H3.88403L4.35962 12.1104ZM8.00024 2.30469C6.92101 2.30469 6.03114 3.10331 5.88306 4.1416H10.1174C9.96932 3.10342 9.07933 2.30485 8.00024 2.30469Z" fill="currentColor"></path></svg>"##;
 
 impl ScheduledSidebar {
     pub fn set_tasks(&mut self, tasks: Vec<Task>, cx: &mut Context<Self>) {
@@ -395,6 +413,17 @@ impl ScheduledSidebar {
     /// The task whose actions menu is open.
     pub fn open_menu(&self) -> Option<&str> {
         self.menu.as_deref()
+    }
+
+    /// The task's `Scheduled task actions` button, where focus returns after its delete
+    /// confirmation closes.
+    pub fn trigger_focus(&self, id: &str) -> Option<FocusHandle> {
+        self.buttons.get(id).cloned()
+    }
+
+    fn delete(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_menu(window, cx);
+        window.dispatch_action(Box::new(DeleteAutomation { id: id.to_owned() }), cx);
     }
 
     fn run_now(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -428,6 +457,7 @@ impl ScheduledSidebar {
         }
         self.menu = Some(id.to_owned());
         self.menu_item = None;
+        self.buttons.insert(id.to_owned(), button.clone());
         self.return_focus = Some(button);
         window.focus(&self.menu_focus, cx);
         cx.stop_propagation();
@@ -449,18 +479,23 @@ impl ScheduledSidebar {
                     } else if self.menu_item == Some(2) {
                         self.close_menu(window, cx);
                         window.dispatch_action(Box::new(EditAutomation { id }), cx);
+                    } else if self.menu_item == Some(3) {
+                        self.delete(&id, window, cx);
                     } else {
                         self.toggle(&id, window, cx);
                     }
                 }
             }
             "up" | "down" | "home" | "end" => {
-                self.menu_item = Some(match event.keystroke.key.as_str() {
-                    "home" => 0,
-                    "end" => 2,
-                    "down" => self.menu_item.map_or(1, |i| (i + 1) % 3),
-                    _ => self.menu_item.map_or(0, |i| (i + 2) % 3),
-                });
+                const ITEMS: usize = 4;
+                let next = match (event.keystroke.key.as_str(), self.menu_item) {
+                    ("home", _) | ("down", None) => 0,
+                    ("end", _) | ("up", None) => ITEMS - 1,
+                    ("down", Some(i)) => (i + 1) % ITEMS,
+                    (_, Some(i)) => (i + ITEMS - 1) % ITEMS,
+                    (_, None) => 0,
+                };
+                self.menu_item = Some(next);
                 cx.stop_propagation();
                 cx.notify();
             }
@@ -550,6 +585,48 @@ impl ScheduledSidebar {
                     cx,
                 );
             }));
+        let delete_id = task.id.clone();
+        let danger = t.text_error;
+        let delete = div()
+            .id("delete-task")
+            .group("delete-task-item")
+            .role(Role::MenuItem)
+            .aria_label("Delete")
+            .h(px(28.5625))
+            .px(px(8.))
+            .rounded(px(15.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .when(self.menu_item == Some(2), |d| d.bg(hover))
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(move |this, _, window, cx| this.delete(&delete_id, window, cx)))
+            .child(
+                div()
+                    .size(px(16.))
+                    .flex_none()
+                    .opacity(0.75)
+                    .group_hover("delete-task-item", |s| s.opacity(1.))
+                    .child(
+                        canvas(
+                            |_, _, _| {},
+                            move |bounds, (), window, cx| {
+                                shapes::paint_icon(
+                                    DELETE_ICON,
+                                    "task-menu-delete",
+                                    bounds,
+                                    false,
+                                    danger,
+                                    None,
+                                    window,
+                                    cx,
+                                );
+                            },
+                        )
+                        .size(px(16.)),
+                    ),
+            )
+            .child(text("Delete", 13., 18.5714, 430., danger));
         let menu = div()
             .id("task-actions-menu")
             .occlude()
@@ -563,7 +640,7 @@ impl ScheduledSidebar {
                 }
             }))
             .child(crate::composer::popover(t, 220., |menu| {
-                menu.child(run).child(item).child(edit)
+                menu.child(run).child(item).child(edit).child(delete)
             }));
         deferred(
             div().absolute().top(px(30.)).right(px(1.)).child(
