@@ -164,6 +164,16 @@ pub struct Decoration {
     pub shadows: Vec<Shadow>,
 }
 
+/// Reports a box that something other than a decoration paints (an icon's raster box, a
+/// quad) into the [`recorded_bounds`] being collected, as cc's recorded bounds cover every
+/// painted op. Outside a collection it does nothing.
+pub fn record_painted(bounds: Bounds<Pixels>, window: &Window) {
+    #[cfg(target_os = "macos")]
+    skia::record_decoration(&Decoration::default(), bounds, window);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (bounds, window);
+}
+
 /// An element covering its parent's box that paints `d`.
 pub fn decoration(d: Decoration) -> impl IntoElement {
     translated_decoration(d, Point::default())

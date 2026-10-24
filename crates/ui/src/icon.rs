@@ -185,6 +185,16 @@ impl Element for Icon {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Hitbox> {
+        // The raster box `paint` uses: the svg origin snapped to the device px (half up), its
+        // size rounded up to whole device px.
+        let scale = window.scale_factor();
+        let snap = |v: Pixels| px((f32::from(v) * scale + 0.5).floor() / scale);
+        let up = |v: f32| px((v * scale).ceil() / scale);
+        let origin = point(snap(bounds.origin.x), snap(bounds.origin.y));
+        shapes::record_painted(
+            Bounds::new(origin, size(up(self.width), up(self.height))),
+            window,
+        );
         self.interactivity.prepaint(
             global_id,
             inspector_id,
@@ -347,6 +357,7 @@ impl InteractiveElement for Icon {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+    use gpui::prelude::FluentBuilder as _;
     use gpui::{
         AppContext as _, HeadlessAppContext, ParentElement, Render, Transformation, div, rgb, rgba,
         svg,
@@ -518,6 +529,68 @@ mod tests {
             "total"
         );
         assert_eq!(a, 0, "icons differ from Chromium");
+    }
+
+    struct RecordedIcon(bool);
+
+    impl Render for RecordedIcon {
+        fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            let content = div()
+                .size_full()
+                .when(self.0, |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .left(px(116.))
+                            .top(px(12.))
+                            .w(px(1.))
+                            .h(px(20.))
+                            .child(shapes::decoration(shapes::Decoration {
+                                fill: Some(gpui::white()),
+                                ..Default::default()
+                            })),
+                    )
+                })
+                .child(
+                    icon("thread-summary", 16., rgba(0xffffff7f).into())
+                        .runtime()
+                        .absolute()
+                        .left(px(985.))
+                        .top(px(14.)),
+                );
+            div().size_full().bg(rgb(0x242424)).child(
+                div()
+                    .absolute()
+                    .left(px(224.))
+                    .right_0()
+                    .h(px(44.))
+                    .layer()
+                    .child(crate::recorded_bounds(content)),
+            )
+        }
+    }
+
+    #[test]
+    fn recorded_children_set_the_icon_raster_grid() -> anyhow::Result<()> {
+        let mut cx = HeadlessAppContext::with_platform(
+            Arc::new(gpui::NoopTextSystem::new()),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        // Original Chrome 155: the same path differs when earlier paint extends its recording.
+        for (leading, expected) in [(false, 51), (true, 52)] {
+            let window = cx.open_window(size(px(1280.), px(60.)), |_, cx| {
+                cx.new(|_| RecordedIcon(leading))
+            })?;
+            cx.run_until_parked();
+            let image = cx.capture_screenshot(window.into())?;
+            assert_eq!(
+                image.get_pixel(2429, 33).0,
+                [expected, expected, expected, 255]
+            );
+            cx.update_window(window.into(), |_, window, _| window.remove_window())?;
+        }
+        Ok(())
     }
 
     struct RotatingIcon(f32);
