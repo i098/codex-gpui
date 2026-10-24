@@ -277,6 +277,18 @@ Diff code and context rows paint in their own opaque scroll layer, as in the ori
 Failed reads retain the patch and provide Retry.
 Only Staged and Unstaged sources show staging actions. Uncommitted combines both states and does not expose those actions.
 
+The Plugins rail opens the native plugin directory and the Skills page.
+Both pages load app-server data and support search.
+Plugin installation, removal, enablement, and sharing wait for server responses.
+Failed operations keep the last confirmed catalog state.
+Share creates a remote link only after Copy link; only personal-marketplace plugins can publish a shared version.
+Plugins with install-time authentication require confirmed app connections before Try now.
+New skill prepares an editable draft without sending a turn.
+App connections open the original browser setup flow; Check connection reads the app list again.
+Manage opens Settings > Plugins, which owns the management tabs and marketplace controls.
+The existing 36 reference frames do not cover these routes.
+Run `cargo test -p app --test plugins -- --test-threads=1` on macOS for the native failure and draft checks.
+
 Settings > Usage & billing reads plan limits and reset credits from the app-server.
 It keeps the original account gates for credit controls, enterprise usage requests, analytics, and balance history.
 Reset retries keep the same idempotency key; billing changes keep their confirmed state when a request fails.
@@ -297,7 +309,7 @@ Add `links` to check plan, credit, and billing destinations without opening a br
 Add `account-switch` to check that an account change discards the previous reset confirmation.
 
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
-Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
+Create saves the definition through `automation-create` to `CODEX_HOME/automations/<id>/automation.toml`.
 The app reloads the task list after a successful write and retains the draft if the write fails.
 The existing host schedules these definitions; this app does not start another scheduler.
 The row menu's `Run now` sends `automation-run-now`; the host starts one `codex app-server` thread and turn per task folder.
@@ -310,6 +322,14 @@ The host saves projectless thread IDs, workspace-root hints, and output paths in
 Heartbeat tasks resume their existing thread with its selected model and permissions.
 The app opens that thread after a successful start, unless you navigate away while the run starts.
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
+The New task options menu also opens the full manual editor or a new chat with the original task setup prompt.
+The manual editor saves Name, multiline Prompt, Interval, Daily, Weekdays, Weekly, Monthly, and Custom schedules.
+Custom schedules support Hourly, Daily, Weekly, Monthly, and Yearly repeats, with interval, weekday, month-day, month, minute, and local time fields.
+The time presets use 09:00, 14:00, 18:00, and 22:00.
+The row menu's Edit action updates the task through `automation-update`, without changing its identity or unrelated definition fields.
+The editor keeps an existing advanced rule unchanged when only Name or Prompt changes.
+Prefilled drafts stay in Create mode until their data includes an existing task ID.
+Run `cargo test -p app --test task_create editor:: -- --test-threads=1` on macOS for the native editor, schedule, and Create menu checks.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 
 ### Legacy Codex Cloud threads

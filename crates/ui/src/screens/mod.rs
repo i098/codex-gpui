@@ -8,6 +8,7 @@ pub use settings::computer_use;
 pub mod diff;
 pub mod home;
 pub mod mobile;
+pub mod plugins;
 pub mod pull_requests;
 pub mod settings;
 pub mod sidebar;
