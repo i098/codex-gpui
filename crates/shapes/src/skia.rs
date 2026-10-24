@@ -14,7 +14,6 @@ use gpui::{
 use image::{ExtendedColorType, ImageEncoder as _, codecs::png::PngEncoder};
 use parking_lot::Mutex;
 use skia_hairline_sys::{Kind as HairlineKind, Operation as HairlineOperation};
-use skia_safe::prelude::NativeAccess as _;
 use skia_safe::{
     AlphaType, BlendMode, BlurStyle, Canvas, ClipOp, Color4f, ColorSpace, ColorType,
     ContourMeasureIter, Data, FilterMode, IRect, ImageInfo, MaskFilter, Matrix, MipmapMode, Paint,
@@ -2723,7 +2722,8 @@ fn scan_hairline_operations(
         ];
         let mut tile_operations = unsafe {
             skia_hairline_sys::scan(
-                path.path.native() as *const _ as *const std::ffi::c_void,
+                // skia-safe's `Path` is `#[repr(transparent)]` over `SkPath` and exposes no raw access.
+                (&path.path as *const Path).cast(),
                 &values,
                 local_clip,
                 alpha,
