@@ -309,7 +309,7 @@ Add `links` to check plan, credit, and billing destinations without opening a br
 Add `account-switch` to check that an account change discards the previous reset confirmation.
 
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
-Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
+Create saves the definition through `automation-create` to `CODEX_HOME/automations/<id>/automation.toml`.
 The app reloads the task list after a successful write and retains the draft if the write fails.
 The existing host schedules these definitions; this app does not start another scheduler.
 The row menu's `Run now` sends `automation-run-now`; the host starts one `codex app-server` thread and turn per task folder.
@@ -322,6 +322,14 @@ The host saves projectless thread IDs, workspace-root hints, and output paths in
 Heartbeat tasks resume their existing thread with its selected model and permissions.
 The app opens that thread after a successful start, unless you navigate away while the run starts.
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
+The New task options menu also opens the full manual editor or a new chat with the original task setup prompt.
+The manual editor saves Name, multiline Prompt, Interval, Daily, Weekdays, Weekly, Monthly, and Custom schedules.
+Custom schedules support Hourly, Daily, Weekly, Monthly, and Yearly repeats, with interval, weekday, month-day, month, minute, and local time fields.
+The time presets use 09:00, 14:00, 18:00, and 22:00.
+The row menu's Edit action updates the task through `automation-update`, without changing its identity or unrelated definition fields.
+The editor keeps an existing advanced rule unchanged when only Name or Prompt changes.
+Prefilled drafts stay in Create mode until their data includes an existing task ID.
+Run `cargo test -p app --test task_create editor:: -- --test-threads=1` on macOS for the native editor, schedule, and Create menu checks.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 
 ### Legacy Codex Cloud threads

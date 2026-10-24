@@ -91,8 +91,11 @@ fn host_with(home: &Path, log: &Path, slow: bool, env: &[(&str, &str)]) -> Resul
 fn create(host: &LocalHost, home: &Path, prompt: &str) -> Result<String> {
     let params = json!({"name": "Review", "prompt": prompt, "rrule": "FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
         "cwds": [home]});
-    let created = json_body(&host.fetch(&Request::post("create-automation", Some(params)))?)?;
-    Ok(created["id"].as_str().unwrap_or_default().to_owned())
+    let created = json_body(&host.fetch(&Request::post("automation-create", Some(params)))?)?;
+    Ok(created["item"]["id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned())
 }
 
 fn run(host: &LocalHost, id: &str) -> Result<Value> {
