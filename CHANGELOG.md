@@ -8,8 +8,10 @@ There is no release yet.
 
 ### Added
 
+- Add dictation with session ownership and cancellation when composer edits change the active draft.
 - A contributing guide, issue and pull request templates, a security policy, and this changelog.
 
 ### Fixed
 
+- Preserve titled-thread identity in the titlebar and derive compositor tiles from painted bounds.
 - Preserve page-frame occlusion under opaque scrolling content at rounded surface corners.

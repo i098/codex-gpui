@@ -54,6 +54,7 @@ The `scroll_*` flows send wheel events (pixel deltas, a trackpad flick with its 
 At 1280x320, the largest offset of the sidebar sections is 82 px, the same as in the original.
 This value was recorded through `tools/route1` with a copy of the fixture `CODEX_HOME`.
 The other panes must repaint on the first wheel, stay still past the end, and show the start again.
+Div scroll limits use raw layout sizes rounded to logical pixels; painting keeps device-snapped bounds.
 
 ## Parity of the states the flows reach
 
@@ -356,7 +357,7 @@ New chat adds a Back entry even when Home is already open.
 | 10 | `+` Add files and more | click | Context menu (files, photos, @-mentions). | Opens the system file picker at once. | FAIL (`crates/ui/src/composer.rs` `add_files`: no context menu) |
 | 11 | `Custom` permissions | click | Permissions dropdown. | Opens; Escape closes. | PASS (`permissions_popover`) |
 | 12 | Model picker | click | Model and effort menu. | Opens; Escape closes. | PASS (`model_picker_popover`) |
-| 13 | `Dictate` | click | Starts dictation. | No handler. | NOT WIRED (`crates/ui/src/composer.rs`, `dictate`) |
+| 13 | `Dictate` | click | Starts dictation. | Uses native macOS capture and authenticated `/transcribe`; inserts at the initiating Composer selection. | WIRED; live microphone acceptance remains gated. |
 | 14 | `Start new voice chat` | click | Starts realtime voice. | With an empty draft the button calls `submit`, which does nothing. | NOT WIRED (`crates/ui/src/composer.rs`, `send`) |
 | 15 | Submit with Enter | shortcut | `thread/start`, `turn/start`, navigates to the thread. | Same; the turn streams in; the draft clears; also by clicking Send. | PASS (`submit_enter_starts_thread`, `submit_click_send`) |
 | 16 | Hover on every button | hover | Ghost background fades in. | Hover fill on composer buttons (checked on `Dictate`). | PASS (`composer_button_hover`) |
@@ -374,6 +375,22 @@ Consumers can wait before submitting a draft. A closed event stream fails instea
 `Dispatcher::new` receives the initiating `Window` and `App`, so a capture service can select that window's host.
 Typing, IME edits, mentions, and slash commands cancel dictation and emit `Completion::Cancelled`.
 Comment owners call `finish_dictation` and wait for `Completion::Succeeded` before saving the inserted transcript.
+
+The app installs `app::dictation::dispatcher`, which reads the initiating window's current `CloudHost`.
+Host replacement cancels only that window's session; route changes and window closure also cancel the active session.
+Transcription requests have a 60-second deadline; streaming requests keep their existing timeout policy.
+Request text fields share the dispatcher; secret and numeric fields do not expose Dictate.
+The `app` integration test uses generated WAV bytes and a loopback HTTP response, not a microphone or speech recognition.
+Run `cargo test -p app --features test-support --test dictation -- --test-threads=1` for that controlled path.
+Set `CGX_DICTATION_EVIDENCE` to an output directory on macOS to capture the recording, transcription error, and inserted transcript.
+These offscreen frames do not prove original/native pixel parity.
+The recording footer exposes Cancel, the input waveform, Stop, and Transcribe and send.
+The app derives waveform levels from microphone metering; controlled tests derive them from their generated PCM samples.
+Transcribe and send submits only after successful transcript insertion.
+Failed transcription saves audio under the initiating host's `codex-gpui-dictation` directory with private file permissions for Retry.
+Successful transcription does not save a recording, and a successful retry removes its saved recording.
+Recovery does not replace the draft; Add to message inserts recovered text only after an explicit action.
+Dismiss removes the recovery notice but does not delete the saved recording.
 
 ## 14.4 Thread view
 
@@ -995,7 +1012,9 @@ A row above that names a `crates/ui` owner needs that change first. The changes 
 
 `crates/app/tests/s016.rs` replays `refs/interactions/s016.json` on the Mac headless app.
 The test opens a chat, opens and dismisses `Chat actions`, and checks the header tooltips.
-It checks the title, menu labels, menu pixels, tooltip position, and outgoing thread requests.
+It checks title data, summary-toggle title-region stability, menu labels, menu pixels, tooltip position, and outgoing thread requests.
+The existing `parity_thread` compares the visible no-side-pane titlebar with the original full frames.
+The workspace summary shows project information and does not replace or duplicate the thread titlebar identity.
 The menu uses the original labels, icons, separators, and shortcuts.
 The `Toggle summary` tooltip stays inside the window.
 The recorded `Chat actions` button has no tooltip.

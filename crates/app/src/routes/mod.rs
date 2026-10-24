@@ -63,6 +63,7 @@ impl Root {
                 );
                 return;
             }
+            ui::composer::dictation::Dispatcher::cancel(window.window_handle().window_id(), cx);
             self.remember_thread_settings(cx);
             self.back.push((
                 std::mem::replace(&mut self.state.route, route),
@@ -98,6 +99,7 @@ impl Root {
             (&mut self.forward, &mut self.back)
         };
         if let Some((route, automation)) = from.pop() {
+            ui::composer::dictation::Dispatcher::cancel(window.window_handle().window_id(), cx);
             to.push((
                 std::mem::replace(&mut self.state.route, route),
                 std::mem::replace(&mut self.sidebar_automation, automation),

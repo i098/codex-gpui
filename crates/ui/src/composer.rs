@@ -694,6 +694,7 @@ pub struct Composer {
     field_resize: Option<(Pixels, Pixels)>,
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
+    dictation_recovery: Option<dictation::Recovery>,
     embedded_field: Option<EmbeddedField>,
 }
 
@@ -778,6 +779,7 @@ impl Composer {
             field_resize: None,
             dictation: None,
             dictation_error: None,
+            dictation_recovery: None,
             embedded_field: None,
         }
     }
@@ -2171,6 +2173,13 @@ impl Render for Composer {
                 )
                 .when(self.request_number, |d| {
                     d.child(self.request_number_stepper(&t, cx))
+                })
+                .when(
+                    self.request_parent.is_some() && !self.secret && !self.request_number,
+                    |d| d.child(self.dictation_button(&t, cx)),
+                )
+                .when_some(self.dictation_error.clone(), |d, error| {
+                    d.child(text(error, 12., 16., 400., t.text))
                 });
             if self.plain_field != Some(true) {
                 return div().w_full().child(card);
@@ -2369,7 +2378,19 @@ impl Render for Composer {
             .when_some(self.approval.clone(), |d, a| {
                 d.child(self.approval_card(&a, &t, cx))
             })
-            .child(div().children(tray).child(card))
+            .child(
+                div()
+                    .children(tray)
+                    .when(self.dictation_recovery.is_some(), |d| {
+                        d.child(self.recovery_card(&t, cx).mb(px(8.)))
+                    })
+                    .child(card),
+            )
+            .when(self.dictation_recovery.is_none(), |d| {
+                d.when_some(self.dictation_error.clone(), |d, error| {
+                    d.child(text(error, 12., 16., 400., t.text))
+                })
+            })
             .when_some(self.context_menu.as_ref(), |d, menu| {
                 d.child(menu.overlay(
                     "composer-menu",

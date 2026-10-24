@@ -5,22 +5,35 @@ const SPINNER: &[u8] = include_bytes!(concat!(
     "/../../assets/icons/sidebar-cmd-spinner.svg"
 ));
 
+const DICTATION_STOP: &[u8] = br#"<svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M4.5 5.75C4.5 5.05964 5.05964 4.5 5.75 4.5H14.25C14.9404 4.5 15.5 5.05964 15.5 5.75V14.25C15.5 14.9404 14.9404 15.5 14.25 15.5H5.75C5.05964 15.5 4.5 14.9404 4.5 14.25V5.75Z"/></svg>"#;
+
 fn paint_spinner(bounds: Bounds<Pixels>, color: Hsla, window: &mut Window, cx: &App) {
-    if !shapes::paint_icon(
+    paint_inline_icon(
         SPINNER,
         "composer-loading-spinner",
         bounds,
-        false,
         color,
         Some(bounds.origin),
         window,
         cx,
-    ) {
+    );
+}
+
+fn paint_inline_icon(
+    svg: &'static [u8],
+    key: &'static str,
+    bounds: Bounds<Pixels>,
+    color: Hsla,
+    layer: Option<Point<Pixels>>,
+    window: &mut Window,
+    cx: &App,
+) {
+    if !shapes::paint_icon(svg, key, bounds, false, color, layer, window, cx) {
         window
             .paint_svg(
                 bounds,
-                "composer-loading-spinner".into(),
-                Some(SPINNER),
+                key.into(),
+                Some(svg),
                 gpui::TransformationMatrix::default(),
                 color,
                 cx,
@@ -55,7 +68,7 @@ fn loading_send(background: Hsla, foreground: Hsla) -> impl IntoElement {
     .size_full()
 }
 
-fn loading_model(color: Hsla) -> impl IntoElement {
+fn loading_model(color: Hsla) -> impl IntoElement + Styled {
     gpui::canvas(
         |_, _, _| {},
         move |bounds, (), window, cx| {
@@ -79,7 +92,382 @@ fn effort_icon(effort: &str) -> &'static str {
 }
 
 impl Composer {
+    pub(super) fn recovery_card(&self, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+        let recovery = self
+            .dictation_recovery
+            .as_ref()
+            .expect("dictation recovery");
+        let recovering = recovery.retrying;
+        let recovered = recovery.text.is_some();
+        let row = div()
+            .id("dictation-recovery")
+            .relative()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .min_h(px(42.))
+            .pl(px(12.))
+            .pr(px(8.))
+            .py(px(8.))
+            .role(gpui::Role::Status)
+            .child(shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(25.)),
+                corner: shapes::Corner::Squircle,
+                fill: Some(t.surface),
+                shadows: vec![
+                    shadow(t.border_strong, 0., 0., 0.5, false),
+                    shadow(gpui::black().opacity(0.05), 0., 2., 0., false),
+                    shadow(gpui::black().opacity(0.02), 4., 6., 0., false),
+                ],
+                ..Default::default()
+            }))
+            .child(div().flex_1().min_w_0().child(text(
+                if recovering {
+                    "Recovering text…"
+                } else if recovered {
+                    "Text recovered"
+                } else {
+                    "Dictation stopped"
+                },
+                13.,
+                21.125,
+                430.,
+                t.text,
+            )));
+        let mut controls = div().flex().items_start().justify_end().gap(px(8.));
+        for (action, label) in [
+            (0, "View recording"),
+            (1, if recovered { "Add to message" } else { "Retry" }),
+            (2, "Dismiss"),
+        ] {
+            if (action == 0 && recovery.active.recording_url.is_none())
+                || (action == 1 && recovering)
+            {
+                continue;
+            }
+            controls = controls.child(self.recovery_button(action, label, t, cx));
+        }
+        row.child(controls)
+    }
+
+    fn recovery_button(
+        &self,
+        action: usize,
+        label: &'static str,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let recovered = self
+            .dictation_recovery
+            .as_ref()
+            .is_some_and(|recovery| recovery.text.is_some());
+        let mut button = pill(label, t)
+            .h(px(24.))
+            .px(px(8.))
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .tab_index(0)
+            .focus_visible(menu::trigger_focus);
+        if action == 1 {
+            // Paint through the transparent border; retain its width in the layout padding.
+            button = button
+                .border_0()
+                .px(px(9.))
+                .relative()
+                .child(shapes::decoration(shapes::Decoration {
+                    radius: Corners::all(px(12.5)),
+                    corner: shapes::Corner::Squircle,
+                    fill: Some(t.text_alpha_5),
+                    ..Default::default()
+                }));
+        }
+        button = if action == 2 {
+            button
+                .size(px(26.))
+                .p(px(4.))
+                .child(icon("toast-close", 16., t.text_tertiary))
+        } else {
+            button.child(text(
+                label,
+                12.,
+                16.,
+                430.,
+                if action == 0 { t.text_tertiary } else { t.text },
+            ))
+        };
+        button
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.recovery_action(action, recovered, window, cx)
+            }))
+            .on_key_down(
+                cx.listener(move |this, event: &gpui::KeyDownEvent, window, cx| {
+                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        this.recovery_action(action, recovered, window, cx);
+                        cx.stop_propagation();
+                    }
+                }),
+            )
+    }
+
+    fn recovery_action(
+        &mut self,
+        action: usize,
+        recovered: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            0 => self.view_recording(cx),
+            1 if recovered => self.insert_recovered_dictation(window, cx),
+            1 => self.retry_dictation(cx),
+            _ => {
+                self.dictation_recovery = None;
+                self.dictation_error = None;
+                cx.notify();
+            }
+        }
+    }
+
+    fn recording_waveform(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let entity = cx.entity().downgrade();
+        let color = t.text;
+        let waveform = gpui::canvas(
+            |_, _, _| {},
+            move |bounds, (), window, cx| {
+                let Some(entity) = entity.upgrade() else {
+                    return;
+                };
+                let Some(active) = &entity.read(cx).dictation else {
+                    return;
+                };
+                // The original canvas advances one 6 px slot per 200 ms.
+                let reduced_motion = cx.reduce_motion();
+                let phase = if reduced_motion {
+                    0.
+                } else {
+                    active.waveform_started_at.map_or(0., |started| {
+                        (cx.background_executor()
+                            .now()
+                            .saturating_duration_since(started)
+                            .as_secs_f64()
+                            / 0.2)
+                            .fract() as f32
+                    })
+                };
+                if !reduced_motion {
+                    window.request_animation_frame();
+                }
+                let count = (f32::from(bounds.size.width) / 6.).floor() as usize + 1;
+                let available = active.levels.len().min(count);
+                for index in 0..count {
+                    let sample = index.checked_sub(count - available).and_then(|offset| {
+                        active.levels.get(active.levels.len() - available + offset)
+                    });
+                    let height = ((f32::from(bounds.size.height) - 3.)
+                        * sample.copied().unwrap_or(0.))
+                    .max(3.);
+                    let rect = Bounds::new(
+                        point(
+                            bounds.origin.x + bounds.size.width
+                                - px((count - index - 1) as f32 * 6. + phase * 6.),
+                            bounds.center().y - px(height / 2.),
+                        ),
+                        size(px(3.), px(height)),
+                    );
+                    shapes::paint_canvas_round_rect(
+                        px(1.5),
+                        color.opacity(if sample.is_some() { 0.5 } else { 0.2 }),
+                        rect,
+                        window,
+                        cx,
+                    );
+                }
+            },
+        )
+        .size_full();
+        div()
+            .relative()
+            .w_full()
+            .h(px(28.))
+            .layer()
+            .overflow_hidden()
+            .child(waveform)
+            .child(shapes::x_fade(px(6.), px(6.)))
+    }
+
+    fn recording_footer(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
+        let active = self.dictation.as_ref().expect("active dictation");
+        let transcribing = active.transcribing;
+        let middle = div()
+            .flex_1()
+            .min_w_0()
+            .h(px(28.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(if transcribing {
+                text("Transcribing", 14., 20., 400., t.text_tertiary).into_any_element()
+            } else {
+                self.recording_waveform(t, cx).into_any_element()
+            });
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .px(px(8.))
+            .pb(px(8.))
+            .child(self.recording_button(0, t, cx))
+            .child(middle)
+            .child(self.recording_button(1, t, cx))
+            .child(self.recording_button(2, t, cx))
+    }
+
+    fn recording_action(&mut self, action: usize, window: &mut Window, cx: &mut Context<Self>) {
+        match action {
+            0 => self.cancel_dictation(cx),
+            1 => self.finish_dictation(window, cx),
+            _ => self.transcribe_and_send(window, cx),
+        }
+    }
+
+    fn recording_button(&self, action: usize, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+        let active = self.dictation.as_ref().expect("active dictation");
+        let transcribing = active.transcribing;
+        let label = match action {
+            0 if transcribing => "Cancel transcription",
+            0 => "Cancel dictation",
+            1 => "Stop dictation",
+            _ => "Transcribe and send",
+        };
+        let disabled = action != 0 && transcribing;
+        let foreground = if action == 2 {
+            t.surface_elevated_secondary
+        } else {
+            t.text
+        };
+        let background = if action == 2 {
+            t.button_primary_solid
+        } else {
+            t.text_alpha_5
+        };
+        let button = if action == 2 {
+            div().id(label).p(px(2.)).rounded(Theme::RADIUS_FULL)
+        } else {
+            pill(label, t).border_0()
+        };
+        button
+            .size(px(28.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .relative()
+            .child(shapes::decoration(deco(9999., background, vec![])))
+            .child(self.recording_button_icon(action, foreground))
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .aria_disabled(disabled)
+            .tab_index(0)
+            .focus_visible(menu::trigger_focus)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if !disabled {
+                    this.recording_action(action, window, cx);
+                }
+            }))
+            .on_key_down(
+                cx.listener(move |this, event: &gpui::KeyDownEvent, window, cx| {
+                    if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        this.recording_action(action, window, cx);
+                        cx.stop_propagation();
+                    }
+                }),
+            )
+    }
+
+    fn recording_button_icon(&self, action: usize, foreground: Hsla) -> AnyElement {
+        let active = self.dictation.as_ref().expect("active dictation");
+        let loading = active.transcribing
+            && match action {
+                1 => !active.submit_when_finished,
+                2 => active.submit_when_finished,
+                _ => false,
+            };
+        if loading {
+            loading_model(foreground).into_any_element()
+        } else if action == 1 {
+            gpui::canvas(
+                |_, _, _| {},
+                move |bounds, (), window, cx| {
+                    paint_inline_icon(
+                        DICTATION_STOP,
+                        "dictation-stop",
+                        bounds,
+                        foreground,
+                        None,
+                        window,
+                        cx,
+                    );
+                },
+            )
+            .size(px(16.))
+            .into_any_element()
+        } else {
+            icon(
+                if action == 0 {
+                    "toast-close"
+                } else {
+                    "composer-arrow-up"
+                },
+                16.,
+                foreground,
+            )
+            .into_any_element()
+        }
+    }
+
+    pub(super) fn dictation_button(&self, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+        let label = self.dictation_label();
+        pill("dictate", t)
+            .justify_center()
+            .child(if label == "Finishing dictation" {
+                loading_model(t.text).size(px(16.)).into_any_element()
+            } else if label == "Retry dictation" {
+                icon("diff-refresh", 16., t.text)
+                    .when(self.docked, |i| i.own_layer(None))
+                    .into_any_element()
+            } else if self.dictation.is_some() {
+                div()
+                    .size(px(8.8))
+                    .rounded(px(1.))
+                    .bg(t.text)
+                    .into_any_element()
+            } else {
+                icon("mic", 16., t.text)
+                    .when(self.docked, |i| i.own_layer(None))
+                    .into_any_element()
+            })
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .aria_disabled(matches!(label, "Transcribing" | "Finishing dictation"))
+            .tab_index(0)
+            .focus_visible(menu::trigger_focus)
+            .size(px(28.))
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.invoke_dictation_button(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .on_click(cx.listener(|this, _, window, cx| this.invoke_dictation_button(window, cx)))
+    }
+
     pub(super) fn footer(&self, window: &Window, t: &Theme, cx: &mut Context<Self>) -> Div {
+        if self
+            .dictation
+            .as_ref()
+            .is_some_and(|active| !active.starting)
+        {
+            return self.recording_footer(t, cx);
+        }
         let open = matches!(self.menu, Some(Menu::Effort | Menu::Models));
         let model = self.current_model();
         let loading = model.is_none();
@@ -349,14 +737,7 @@ impl Composer {
             .flex()
             .items_center()
             .child(model_button)
-            .child(
-                pill("dictate", t)
-                    .tab_index(0)
-                    .focus_visible(menu::trigger_focus)
-                    .w(px(28.))
-                    .justify_center()
-                    .child(footer_icon("mic", t.text)),
-            )
+            .child(self.dictation_button(t, cx))
             .child(send);
         div()
             .flex()

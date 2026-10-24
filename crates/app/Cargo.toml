@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+test-support = []
+
 [[bin]]
 name = "codex-gpui"
 path = "src/main.rs"
@@ -44,9 +47,10 @@ url = "2"
 rustix = { version = "1.1.5", features = ["fs"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSRunningApplication", "NSImage", "NSImageRep", "NSBitmapImageRep"] }
 objc2 = "0.6.5"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "NSData", "NSDictionary", "NSString"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "NSData", "NSDictionary", "NSString", "NSValue", "NSURL", "NSError"] }
 raw-window-handle = "0.6"
 
 [dev-dependencies]

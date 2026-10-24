@@ -88,6 +88,10 @@ pub trait Host: Send + Sync {
     /// Derive `cwd` from the active workspace, never from model-provided input.
     fn fetch(&self, request: &Request) -> Result<Value>;
 
+    fn save_dictation(&self, _audio: &[u8]) -> Result<PathBuf> {
+        bail!("Recording storage is not available for this host")
+    }
+
     /// Binds context-file events to this host's view, replacing any prior binding.
     fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
         None
@@ -1131,6 +1135,18 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn save_dictation(&self, audio: &[u8]) -> Result<PathBuf> {
+        let directory = self.home.join("codex-gpui-dictation");
+        fs::create_dir_all(&directory)?;
+        let mut file = tempfile::Builder::new()
+            .prefix("recording-")
+            .suffix(".wav")
+            .tempfile_in(directory)?;
+        file.write_all(audio)?;
+        file.as_file().sync_all()?;
+        Ok(file.into_temp_path().keep()?)
+    }
+
     fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
         Some(self.context_files.bind())
     }
@@ -1495,6 +1511,7 @@ impl CloudHost {
             .unwrap_or("GET")
             .to_ascii_uppercase();
         let body = request["body"].as_str().map(str::to_owned);
+        let timeout = request["timeoutMs"].as_u64().map(Duration::from_millis);
         let binary_body = request["bodyBase64"]
             .as_str()
             .map(|body| {
@@ -1630,13 +1647,19 @@ impl CloudHost {
             }
             let bad = |e: ureq::http::Error| (400, e.to_string());
             let response = match (&binary_body, &body) {
-                (Some(body), _) => {
-                    self.run_request(builder.body(body.clone()).map_err(bad)?, body_timeout)
+                (Some(body), _) => self.run_request(
+                    builder.body(body.clone()).map_err(bad)?,
+                    body_timeout,
+                    timeout,
+                ),
+                (None, Some(body)) => self.run_request(
+                    builder.body(body.clone()).map_err(bad)?,
+                    body_timeout,
+                    timeout,
+                ),
+                (None, None) => {
+                    self.run_request(builder.body(()).map_err(bad)?, body_timeout, timeout)
                 }
-                (None, Some(body)) => {
-                    self.run_request(builder.body(body.clone()).map_err(bad)?, body_timeout)
-                }
-                (None, None) => self.run_request(builder.body(()).map_err(bad)?, body_timeout),
             }
             .map_err(|e| (500, e.to_string()))?;
             if integrity {
@@ -1655,12 +1678,14 @@ impl CloudHost {
         &self,
         request: ureq::http::Request<B>,
         body_timeout: Option<Duration>,
+        timeout: Option<Duration>,
     ) -> std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error> {
         use ureq::RequestExt as _;
         request
             .with_agent(&self.agent)
             .configure()
             .timeout_recv_body(body_timeout)
+            .timeout_global(timeout)
             .build()
             .run()
     }
@@ -1690,6 +1715,10 @@ impl CloudHost {
 }
 
 impl Host for CloudHost {
+    fn save_dictation(&self, audio: &[u8]) -> Result<PathBuf> {
+        self.local.save_dictation(audio)
+    }
+
     fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
         self.local.bind_context_files()
     }

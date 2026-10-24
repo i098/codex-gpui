@@ -7,12 +7,15 @@ use std::sync::{Arc, mpsc};
 
 pub enum Command {
     Finish,
+    Retry,
     Cancel,
 }
 
 pub enum Event {
     Recording,
+    Level(f32),
     Transcribing,
+    Captured(Option<String>),
     Finished(Result<String, String>),
 }
 
@@ -71,11 +74,22 @@ impl Dispatcher {
 }
 
 pub(super) struct Active {
-    starting: bool,
+    pub(super) starting: bool,
     session: Session,
     _task: Task<()>,
-    transcribing: bool,
+    pub(super) transcribing: bool,
     selection: Range<usize>,
+    pub(super) submit_when_finished: bool,
+    pub(super) levels: std::collections::VecDeque<f32>,
+    pub(super) waveform_started_at: Option<std::time::Instant>,
+    recorded: bool,
+    pub(super) recording_url: Option<String>,
+}
+
+pub(super) struct Recovery {
+    pub(super) active: Active,
+    pub(super) text: Option<String>,
+    pub(super) retrying: bool,
 }
 
 impl Composer {
@@ -120,6 +134,7 @@ impl Composer {
             }
         };
         self.dictation_error = None;
+        self.dictation_recovery = None;
         self.marked_range = None;
         self.focus_handle.focus(window, cx);
         let target = cx.weak_entity();
@@ -127,7 +142,7 @@ impl Composer {
         let events = session.events.clone();
         let task = cx.spawn_in(window, async move |this, cx| {
             while let Ok(event) = events.recv().await {
-                let finished = matches!(event, Event::Finished(_));
+                let finished = matches!(event, Event::Finished(Ok(_)));
                 if this
                     .update_in(cx, |this, window, cx| {
                         this.dictation_event(event, window, cx)
@@ -154,6 +169,11 @@ impl Composer {
             _task: task,
             transcribing: false,
             selection: self.selected_range.clone(),
+            submit_when_finished: false,
+            levels: std::collections::VecDeque::new(),
+            waveform_started_at: None,
+            recorded: false,
+            recording_url: None,
         });
         cx.notify();
     }
@@ -178,12 +198,20 @@ impl Composer {
         }
     }
 
+    pub(super) fn transcribe_and_send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(active) = &mut self.dictation {
+            active.submit_when_finished = true;
+            self.finish_dictation(window, cx);
+        }
+    }
+
     pub fn has_active_dictation(&self) -> bool {
         self.dictation.is_some()
     }
 
     pub fn cancel_dictation(&mut self, cx: &mut Context<Self>) {
         let cancelled = self.dictation.take().is_some();
+        self.dictation_recovery = None;
         for field in &self.request_draft.fields {
             field.update(cx, |field, cx| field.cancel_dictation(cx));
         }
@@ -217,37 +245,85 @@ impl Composer {
             Event::Recording => {
                 if let Some(active) = &mut self.dictation {
                     active.starting = false;
+                    active
+                        .waveform_started_at
+                        .get_or_insert_with(|| cx.background_executor().now());
+                }
+            }
+            Event::Level(rms) => {
+                if let Some(active) = &mut self.dictation {
+                    if active.levels.len() == 512 {
+                        active.levels.pop_front();
+                    }
+                    active
+                        .levels
+                        .push_back(((rms - 0.006).max(0.) / 0.154).min(1.).powf(0.6));
                 }
             }
             Event::Transcribing => {
+                if let Some(recovery) = &mut self.dictation_recovery {
+                    recovery.retrying = true;
+                }
                 if let Some(active) = &mut self.dictation {
                     active.transcribing = true;
                 }
             }
-            Event::Finished(result) => {
-                let Some(active) = self.dictation.take() else {
-                    return;
-                };
-                let completion = match result {
-                    Ok(text) => {
-                        if !text.trim().is_empty() {
-                            self.selected_range = active.selection;
-                            self.history.last = None;
-                            self.replace_text_in_range(None, text.trim(), window, cx);
-                            self.history.last = None;
-                            self.focus_handle.focus(window, cx);
-                        }
-                        Completion::Succeeded
-                    }
-                    Err(error) => {
-                        self.dictation_error = Some(error);
-                        Completion::Failed
-                    }
-                };
-                cx.emit(completion);
+            Event::Captured(path) => {
+                if let Some(active) = &mut self.dictation {
+                    active.recorded = true;
+                    active.recording_url = path;
+                }
             }
+            Event::Finished(result) => self.finish_dictation_event(result, window, cx),
         }
         cx.notify();
+    }
+
+    fn finish_dictation_event(
+        &mut self,
+        result: Result<String, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(recovery) = &mut self.dictation_recovery {
+            recovery.retrying = false;
+            match result {
+                Ok(text) => recovery.text = Some(text),
+                Err(error) => self.dictation_error = Some(error),
+            }
+            return;
+        }
+        let Some(active) = self.dictation.take() else {
+            return;
+        };
+        let submit = active.submit_when_finished;
+        let completion = match result {
+            Ok(text) => {
+                if !text.trim().is_empty() {
+                    self.selected_range = active.selection;
+                    self.history.last = None;
+                    self.replace_text_in_range(None, text.trim(), window, cx);
+                    self.history.last = None;
+                    self.focus_handle.focus(window, cx);
+                }
+                Completion::Succeeded
+            }
+            Err(error) => {
+                self.dictation_error = Some(error);
+                if active.recorded {
+                    self.dictation_recovery = Some(Recovery {
+                        active,
+                        text: None,
+                        retrying: false,
+                    });
+                }
+                Completion::Failed
+            }
+        };
+        cx.emit(completion);
+        if completion == Completion::Succeeded && submit {
+            self.submit(&Submit, window, cx);
+        }
     }
 
     pub fn dictation_label(&self) -> &'static str {
@@ -255,12 +331,88 @@ impl Composer {
             Some(active) if active.transcribing => "Transcribing",
             Some(active) if active.starting => "Starting dictation",
             Some(_) => "Stop dictation",
+            None if self
+                .dictation_recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.retrying) =>
+            {
+                "Finishing dictation"
+            }
+            None if self
+                .dictation_recovery
+                .as_ref()
+                .is_some_and(|recovery| recovery.text.is_none()) =>
+            {
+                "Retry dictation"
+            }
             None => "Dictate",
         }
     }
 
     pub fn dictation_error(&self) -> Option<&str> {
         self.dictation_error.as_deref()
+    }
+
+    pub(super) fn invoke_dictation_button(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match &self.dictation_recovery {
+            Some(recovery) if recovery.retrying => {}
+            Some(recovery) if recovery.text.is_none() => self.retry_dictation(cx),
+            _ => self.dictate(window, cx),
+        }
+    }
+
+    pub(super) fn retry_dictation(&mut self, cx: &mut Context<Self>) {
+        if let Some(recovery) = &mut self.dictation_recovery {
+            if recovery.retrying {
+                return;
+            }
+            if recovery
+                .active
+                .session
+                .commands
+                .send(Command::Retry)
+                .is_ok()
+            {
+                recovery.retrying = true;
+            } else {
+                self.dictation_error = Some("Unable to transcribe audio".into());
+            }
+            cx.notify();
+        }
+    }
+
+    pub(super) fn view_recording(&self, cx: &mut App) {
+        if let Some(url) = self
+            .dictation_recovery
+            .as_ref()
+            .and_then(|recovery| recovery.active.recording_url.as_ref())
+        {
+            cx.open_url(url);
+        }
+    }
+
+    pub(super) fn insert_recovered_dictation(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(text) = self
+            .dictation_recovery
+            .as_ref()
+            .and_then(|recovery| recovery.text.clone())
+        {
+            self.selected_range = self.content.len()..self.content.len();
+            let separator =
+                if self.content.is_empty() || self.content.ends_with(char::is_whitespace) {
+                    ""
+                } else {
+                    " "
+                };
+            self.insert(&format!("{separator}{text}"), window, cx);
+            self.dictation_recovery = None;
+            self.dictation_error = None;
+            cx.notify();
+        }
     }
 }
 
@@ -280,6 +432,59 @@ mod tests {
             })
         }));
         receiver
+    }
+
+    #[test]
+    fn recovery_retries_retained_audio_and_inserts_only_on_request() {
+        let mut cx = gpui::TestAppContext::single();
+        let commands = cx.update(install);
+        let window = cx.add_window(Composer::home);
+        window
+            .update(&mut cx, |editor, window, cx| {
+                editor.set_text("keep", cx);
+                editor.dictate(window, cx);
+                editor.dictation_event(
+                    Event::Captured(Some("file:///recording.wav".into())),
+                    window,
+                    cx,
+                );
+                editor.dictation_event(Event::Finished(Err("offline".into())), window, cx);
+                assert!(!editor.has_active_dictation());
+                assert_eq!(editor.field_text(), "keep");
+                editor.invoke_dictation_button(window, cx);
+                assert!(matches!(commands.try_recv(), Ok(Command::Retry)));
+                editor.dictation_event(Event::Finished(Ok("recovered".into())), window, cx);
+                assert_eq!(editor.field_text(), "keep");
+                assert_eq!(
+                    editor.dictation_recovery.as_ref().unwrap().text.as_deref(),
+                    Some("recovered")
+                );
+                editor.insert_recovered_dictation(window, cx);
+                assert_eq!(editor.field_text(), "keep recovered");
+                assert!(editor.dictation_recovery.is_none());
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn a_new_dictation_replaces_failed_recovery_and_inserts_its_transcript() {
+        let mut cx = gpui::TestAppContext::single();
+        cx.update(install);
+        let window = cx.add_window(Composer::home);
+        window
+            .update(&mut cx, |editor, window, cx| {
+                editor.set_text("keep ", cx);
+                editor.dictate(window, cx);
+                editor.dictation_event(Event::Captured(None), window, cx);
+                editor.dictation_event(Event::Finished(Err("offline".into())), window, cx);
+                assert!(editor.dictation_recovery.is_some());
+                editor.dictate(window, cx);
+                assert!(editor.dictation_recovery.is_none());
+                editor.dictation_event(Event::Finished(Ok("new transcript".into())), window, cx);
+                assert_eq!(editor.field_text(), "keep new transcript");
+                assert!(!editor.has_active_dictation());
+            })
+            .unwrap();
     }
 
     #[test]

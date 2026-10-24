@@ -33,6 +33,18 @@ fn header_interactions_match_the_original() -> Result<()> {
             .as_ref(),
         recording["result"]["title"]["text"].as_str().unwrap()
     );
+    let bounds = &recording["result"]["title"]["bbox"];
+    let title_rect =
+        ["x", "y", "w", "h"].map(|key| bounds[key].as_f64().expect("recorded title bounds") as f32);
+    fx.menu("View", "Toggle Pinned Summary")?;
+    assert!(fx.read(|root, cx| root.thread().expect("open thread").read(cx).summary_open));
+    let summary = fx.shot()?;
+    ensure!(
+        changed(&before, &summary, title_rect) == 0,
+        "opening the workspace summary changed the thread titlebar identity"
+    );
+    fx.menu("View", "Toggle Pinned Summary")?;
+    assert!(!fx.read(|root, cx| root.thread().expect("open thread").read(cx).summary_open));
     let sent = fx.sent()?.len();
     fx.click(center(&recording["steps"][1]["target"]["bbox"]))?;
     let opened = fx.shot()?;
