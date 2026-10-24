@@ -13,6 +13,8 @@ use gpui::{
 };
 use image::{ExtendedColorType, ImageEncoder as _, codecs::png::PngEncoder};
 use parking_lot::Mutex;
+use skia_hairline_sys::{Kind as HairlineKind, Operation as HairlineOperation};
+use skia_safe::prelude::NativeAccess as _;
 use skia_safe::{
     AlphaType, BlendMode, BlurStyle, Canvas, ClipOp, Color4f, ColorSpace, ColorType,
     ContourMeasureIter, Data, FilterMode, IRect, ImageInfo, MaskFilter, Matrix, MipmapMode, Paint,
@@ -1686,31 +1688,99 @@ pub(crate) fn sprites(
 ) -> Arc<Vec<Sprite>> {
     cached(key, || {
         let (rect, blits) = make();
-        let mut out = Vec::new();
-        for (blit, mode) in [0, 2].into_iter().flat_map(|b| {
-            [
-                MASK,
-                ARGB32,
-                PIPELINE,
-                LAYER,
-                DST_IN,
-                OPACITY,
-                ARGB32_ZERO,
-                FAST_INTERP,
-            ]
-            .map(|m| (b, m))
-        }) {
-            if !blits.iter().any(|b| b[blit + 1] == mode && b[blit] != 0) {
-                continue;
-            }
-            let value = |i: usize| {
-                let b = blits[i];
-                if b[blit + 1] == mode { b[blit] } else { 0 }
-            };
-            chunks(&mut out, rect, &value, mode, None, false);
-        }
-        out
+        sprites_from_blits(rect, &blits)
     })
+}
+
+fn sprites_from_blits(rect: [i32; 4], blits: &[Blits]) -> Vec<Sprite> {
+    let mut out = Vec::new();
+    for (blit, mode) in [0, 2].into_iter().flat_map(|b| {
+        [
+            MASK,
+            ARGB32,
+            PIPELINE,
+            LAYER,
+            DST_IN,
+            OPACITY,
+            ARGB32_ZERO,
+            FAST_INTERP,
+        ]
+        .map(|m| (b, m))
+    }) {
+        if !blits.iter().any(|b| b[blit + 1] == mode && b[blit] != 0) {
+            continue;
+        }
+        let value = |i: usize| {
+            let b = blits[i];
+            if b[blit + 1] == mode { b[blit] } else { 0 }
+        };
+        chunks(&mut out, rect, &value, mode, None, false);
+    }
+    out
+}
+
+fn hairline_sprites(operations: &[HairlineOperation]) -> Vec<Sprite> {
+    let mut out = Vec::new();
+    for operation in operations {
+        assert!(operation.width > 0 && operation.height > 0);
+        if matches!(
+            operation.kind,
+            HairlineKind::AntiHorizontalPairAlpha | HairlineKind::AntiVerticalPairAlpha
+        ) && (operation.first == 0 || operation.second == 0)
+        {
+            let vertical = operation.kind == HairlineKind::AntiVerticalPairAlpha;
+            for (index, coverage) in [operation.first, operation.second].into_iter().enumerate() {
+                let mode = if coverage == 0 { ARGB32_ZERO } else { ARGB32 };
+                let value = if coverage == 0 { 255 } else { coverage };
+                let (x, y) = if vertical {
+                    (operation.x, operation.y + index as i32)
+                } else {
+                    (operation.x + index as i32, operation.y)
+                };
+                chunks(&mut out, [x, y, 1, 1], &|_| value, mode, None, false);
+            }
+            continue;
+        }
+        let mode = match operation.kind {
+            HairlineKind::Horizontal
+            | HairlineKind::Rectangle
+            | HairlineKind::AntiHorizontalPairAlpha
+            | HairlineKind::AntiVerticalPairAlpha => ARGB32,
+            HairlineKind::Vertical | HairlineKind::AntiHorizontal | HairlineKind::Mask => MASK,
+            HairlineKind::AntiHorizontalPairOpaque | HairlineKind::AntiVerticalPairOpaque => {
+                FAST_INTERP
+            }
+        };
+        let value = |index: usize| match operation.kind {
+            HairlineKind::Horizontal | HairlineKind::Rectangle => 255,
+            HairlineKind::Vertical | HairlineKind::AntiHorizontal | HairlineKind::Mask => {
+                operation.first
+            }
+            HairlineKind::AntiHorizontalPairOpaque | HairlineKind::AntiHorizontalPairAlpha => {
+                if index as i32 % operation.width == 0 {
+                    operation.first
+                } else {
+                    operation.second
+                }
+            }
+            HairlineKind::AntiVerticalPairOpaque | HairlineKind::AntiVerticalPairAlpha => {
+                if index as i32 / operation.width == 0 {
+                    operation.first
+                } else {
+                    operation.second
+                }
+            }
+        };
+        chunks(
+            &mut out,
+            [operation.x, operation.y, operation.width, operation.height],
+            &value,
+            mode,
+            None,
+            false,
+        );
+    }
+    out
 }
 
 /// Cuts the coverage `value` of each px of `[x0, y0, w, h]` (row-major) into sprites.
@@ -2573,6 +2643,101 @@ impl IconPath {
     }
 }
 
+fn scan_hairline_operations(
+    path: &IconPath,
+    view: &Matrix,
+    origin: [f32; 2],
+    clip: Rect,
+    bbox: [i32; 4],
+    flip_x: bool,
+    width: f64,
+    alpha: u8,
+    layer: Layer,
+    transformed: bool,
+    wide: bool,
+    clips: &[Contour],
+) -> Option<Vec<HairlineOperation>> {
+    if transformed
+        || layer.composited
+        || layer.tile != [TILE; 2]
+        || wide
+        || !clips.is_empty()
+        || !matches!(path.stroke, Some((_, PaintCap::Butt, _)))
+    {
+        return None;
+    }
+    let [x0, y0, x1, y1] = layer.clip_bounds(bbox);
+    if x0 >= x1 || y0 >= y1 {
+        return Some(Vec::new());
+    }
+    let mut operations = Vec::new();
+    for (tile_origin, tile_size, [ox0, oy0, ox1, oy1]) in
+        layer.tiles([x0, y0, x1, y1], layer.clamp())
+    {
+        let lo = layer.device.map_or(tile_origin, |device| {
+            [tile_origin[0].max(device[0]), tile_origin[1].max(device[1])]
+        });
+        let hi = layer.device.map_or(
+            [tile_origin[0] + tile_size.0, tile_origin[1] + tile_size.1],
+            |device| {
+                [
+                    (tile_origin[0] + tile_size.0).min(device[2]),
+                    (tile_origin[1] + tile_size.1).min(device[3]),
+                ]
+            },
+        );
+        let size = (hi[0] - lo[0], hi[1] - lo[1]);
+        if size.0 <= 0 || size.1 <= 0 {
+            continue;
+        }
+        let rect = [ox0.max(lo[0]), oy0.max(lo[1]), ox1, oy1];
+        let scan_clip = [
+            rect[0].max(clip.left() as i32),
+            rect[1].max(clip.top() as i32),
+            rect[2].min(clip.right() as i32),
+            rect[3].min(clip.bottom() as i32),
+        ];
+        if scan_clip[0] >= scan_clip[2] || scan_clip[1] >= scan_clip[3] {
+            continue;
+        }
+        let mut matrix = Matrix::concat(
+            &Matrix::translate((-lo[0] as f32, -lo[1] as f32)),
+            &Matrix::translate((origin[0], origin[1])),
+        );
+        if flip_x {
+            matrix = Matrix::concat(&matrix, &Matrix::translate(((width / 2.) as f32, 0.)));
+            matrix = Matrix::concat(
+                &matrix,
+                &Matrix::new_all(-1., 0., 0., 0., 1., 0., 0., 0., 1.),
+            );
+            matrix = Matrix::concat(&matrix, &Matrix::translate((-(width / 2.) as f32, 0.)));
+        }
+        matrix = Matrix::concat(&matrix, view);
+        matrix = Matrix::concat(&matrix, &path.transform);
+        let values = std::array::from_fn(|index| matrix[index]);
+        let local_clip = [
+            scan_clip[0] - lo[0],
+            scan_clip[1] - lo[1],
+            scan_clip[2] - lo[0],
+            scan_clip[3] - lo[1],
+        ];
+        let mut tile_operations = unsafe {
+            skia_hairline_sys::scan(
+                path.path.native() as *const _ as *const std::ffi::c_void,
+                &values,
+                local_clip,
+                alpha,
+            )
+        }?;
+        for operation in &mut tile_operations {
+            operation.x += lo[0];
+            operation.y += lo[1];
+        }
+        operations.extend(tile_operations);
+    }
+    Some(operations)
+}
+
 /// A parsed icon: viewBox and drawables, in document order.
 struct IconSvg {
     view_box: [f32; 4],
@@ -2996,13 +3161,33 @@ pub(crate) fn paint_icon(
         let a = alpha_byte(a);
         let black = is_black(color, a);
         let wide = p.color.is_none() && wide(color);
-        let sprites = sprites(
-            format!(
-                "{key}#{n}{flip_x}{clip:?}{w}x{h}{:?}{a}{black}{wide}{clips:?}",
-                layer.key(bbox)
-            ),
-            || raster(bbox, layer, a, black, wide, &clips, &draw),
+        let key = format!(
+            "{key}#{n}{flip_x}{clip:?}{w}x{h}{:?}{a}{black}{wide}{clips:?}",
+            layer.key(bbox)
         );
+        let make = || raster(bbox, layer, a, black, wide, &clips, &draw);
+        let sprites = cached(key, || {
+            if hairline.is_some()
+                && let Some(operations) = scan_hairline_operations(
+                    p,
+                    &view,
+                    origin,
+                    clip,
+                    bbox,
+                    flip_x,
+                    w,
+                    a,
+                    layer,
+                    transformed,
+                    wide,
+                    &clips,
+                )
+            {
+                return hairline_sprites(&operations);
+            }
+            let (rect, blits) = make();
+            sprites_from_blits(rect, &blits)
+        });
         paint_transformed_sprites(&sprites, color, paint_origin, transformation, window, cx);
     }
     true

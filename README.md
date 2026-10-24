@@ -529,6 +529,9 @@ An extra layer changes glyph edge bytes even when its opacity is one.
 
 `shapes` links Skia binaries built with Chromium's `SkUserConfig.h` legacy defines.
 `.cargo/config.toml` points `SKIA_BINARIES_URL` to these binaries.
+`skia-hairline-sys` links a narrow C scanner wrapper for Skia revision `61e7ca4e99062cdd0ab69445d5963fb3365778f6`.
+It records the ordered legacy hairline operations that the sprite renderer replays.
+`.cargo/config.toml` points `SKIA_HAIRLINE_BINARIES_URL` and `SKIA_HAIRLINE_PACKAGE_SHA256` to its versioned package.
 
 Raster output buffers stop at the visible viewport.
 Compositor tiles keep their original size, so long scrollers preserve edge rasterization.
@@ -592,6 +595,7 @@ It prints a Markdown table for a PR body.
 | Icon SVGs | `python3 tools/extract/icons.py` | Writes `assets/icons/<name>.svg` from the references. |
 | Icon images | `uv run -p /usr/bin/python3 --with numpy --with pillow tools/icons/build.py` | Fits the per-pixel icon images in `assets/icons/px/` and `tools/icons/check.json`. |
 | Skia binaries | `tools/shapes/skia.sh` | Builds Skia with Chromium's defines and uploads it for `SKIA_BINARIES_URL`. |
+| Hairline scanner package | `tools/shapes/build-skia-hairline.py` | Builds `skia-hairline-sys` against the installed Skia archive twice and writes the versioned package and receipt. |
 
 The labs `tools/shapes/run.sh`, `tools/shapes/blur.sh` and `tools/text/measure.sh` compare shapes, blur and text with Chromium case by case.
 

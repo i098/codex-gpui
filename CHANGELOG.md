@@ -12,4 +12,5 @@ There is no release yet.
 
 ### Fixed
 
+- Replay Skia's pinned scanner operations for legacy hairline icon strokes through a new versioned `skia-hairline-sys` package.
 - Preserve page-frame occlusion under opaque scrolling content at rounded surface corners.
