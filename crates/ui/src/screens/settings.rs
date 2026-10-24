@@ -3,8 +3,8 @@
 //! (login-route chunk) that replaces the app when `account/read` reports no account.
 
 use crate::{
-    MONO, SANS, SetTheme, Shell,
-    composer::{Composer, popover, shadow},
+    MONO, SetTheme, Shell,
+    composer::{Composer, shadow},
     fixture, focus,
     icon::icon,
     in_layer, layout_color,
@@ -16,12 +16,11 @@ use crate::{
 use bridge::Bridge;
 use bridge::types::{AccountReadResponse, ConfigReadResponse};
 use gpui::{
-    Anchor, AnyElement, AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity,
-    EventEmitter, FocusHandle, Focusable, Font, FontWeight, Global, HighlightStyle, Hsla,
-    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render,
-    RenderImage, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun,
-    Window, anchored, canvas, deferred, div, font, img, point, prelude::FluentBuilder as _, px,
-    size,
+    AnyElement, AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity, EventEmitter,
+    FocusHandle, Focusable, Font, FontWeight, Global, HighlightStyle, Hsla, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render, RenderImage, SharedString,
+    Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, canvas, div, font,
+    img, point, prelude::FluentBuilder as _, px, size,
 };
 use serde_json::{Value, json};
 use shapes::Corner::{self, Round, Squircle};

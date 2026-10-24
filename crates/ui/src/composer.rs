@@ -100,7 +100,7 @@ pub(crate) mod menu {
     //! Focus rules for the recorded Radix menus: arrows stop at the ends, Escape returns
     //! focus to the trigger, and Enter or Space activates the focused item.
 
-    use gpui::{App, FocusHandle, Window};
+    use gpui::{App, BoxShadow, FocusHandle, StyleRefinement, Styled, Window, point, px, rgb};
     use std::time::{Duration, Instant};
 
     pub(super) struct MenuFocus {
@@ -836,8 +836,8 @@ impl Composer {
     fn editor_line_height(&self) -> Pixels {
         if let Some(field) = self.embedded_field {
             field.line_height
-        } else if self.plain_field == Some(true) {
-            px(130. / 7.)
+        } else if self.search_field || self.plain_field == Some(true) {
+            px(18.571_428)
         } else {
             LINE_HEIGHT
         }
