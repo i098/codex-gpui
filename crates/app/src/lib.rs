@@ -72,6 +72,7 @@ use ui::screens::thread::view::{
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
+use ui::workspace::WorkspaceLayout;
 use ui::{
     Copy, Cut, GoBack, GoForward, LogOut, NewChat, OpenBackgroundTerminal, OpenChangesPanel,
     OpenCommandMenu, OpenMobileSetup, OpenScheduled, OpenSettings, Paste, Redo, SelectAll,
@@ -376,6 +377,7 @@ pub struct Root {
     /// `tabs`); kept across threads like the original's panel.
     tabs: Vec<SidePanel>,
     side: Option<SidePanel>,
+    workspace_layout: WorkspaceLayout,
     /// The route's own shell.
     page: Option<Entity<Shell>>,
     archive_page: Option<Entity<ArchivedChats>>,
@@ -682,6 +684,7 @@ impl Root {
             split: None,
             tabs: Vec::new(),
             side: None,
+            workspace_layout: WorkspaceLayout::Split,
             page: None,
             archive_page: None,
             mobile_page: None,
@@ -1003,6 +1006,18 @@ impl Root {
     /// The thread route's side panel tabs in strip order.
     pub fn side_tabs(&self) -> &[SidePanel] {
         &self.tabs
+    }
+
+    pub fn workspace_layout(&self) -> WorkspaceLayout {
+        if self.tabs.is_empty() {
+            WorkspaceLayout::Chat
+        } else {
+            self.workspace_layout
+        }
+    }
+
+    fn side_visible(&self, side: SidePanel) -> bool {
+        self.side == Some(side) && self.workspace_layout() != WorkspaceLayout::Chat
     }
 
     pub fn diff_panel(&self) -> Option<&Entity<DiffPanel>> {
@@ -2159,6 +2174,7 @@ impl Root {
             || self.dialog.is_some()
             || self.automation_editor.is_some()
             || self.command_menu.is_some()
+            || (self.split.is_some() && self.workspace_layout() == WorkspaceLayout::Full)
             || route_focus == self.focus
             || in_popover
             || editing
@@ -2236,13 +2252,19 @@ impl Root {
 
     /// Opens (a new tab after the others) or switches to the thread route's side panel tab.
     fn set_side(&mut self, side: SidePanel, window: &mut Window, cx: &mut Context<Self>) {
-        if !matches!(self.state.route, Route::Thread(_)) || self.side == Some(side) {
+        if !matches!(self.state.route, Route::Thread(_)) {
+            return;
+        }
+        if self.side_visible(side) {
             return;
         }
         if !self.tabs.contains(&side) {
             self.tabs.push(side);
         }
         self.side = Some(side);
+        if self.workspace_layout == WorkspaceLayout::Chat {
+            self.workspace_layout = WorkspaceLayout::Split;
+        }
         self.sync(window, cx);
     }
 
@@ -2699,7 +2721,10 @@ impl Root {
             self.confirm_instructions_leave(SettingsLeave::Window, window, cx);
             return;
         }
-        if let Some(side) = self.side.filter(|_| self.split.is_some()) {
+        if let Some(side) = self
+            .side
+            .filter(|_| self.split.is_some() && self.workspace_layout() != WorkspaceLayout::Chat)
+        {
             return self.close_side(side, window, cx);
         }
         if self.state.confirm_before_close == ConfirmBeforeClose::Never {
