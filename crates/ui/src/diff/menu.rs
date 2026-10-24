@@ -16,38 +16,69 @@ const SOURCES: [DiffSource; 6] = [
 const SOURCE_CHECK: &[u8] = br#"<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path d="M12.7216 2.99666C12.8863 2.75824 13.2125 2.69837 13.4511 2.86287C13.6895 3.0274 13.75 3.35377 13.5858 3.59236L7.20011 12.8472C6.97922 13.1685 6.52057 13.2111 6.24405 12.9361L2.45987 9.18123C2.25451 8.97704 2.25305 8.64475 2.45694 8.43904C2.66115 8.23343 2.99433 8.23205 3.20011 8.43611L6.62296 11.8326L12.7216 2.99666Z" fill="currentColor"/></svg>"#;
 const SOURCE_SUBMENU: &[u8] = br#"<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg"><path d="M5.96236 11.6289C5.75734 11.8339 5.75734 12.166 5.96236 12.3711C6.16739 12.5761 6.49953 12.5761 6.70455 12.3711L10.4692 8.60641C10.8039 8.27129 10.8039 7.72863 10.4692 7.39351L6.70455 3.62887C6.49952 3.42384 6.16739 3.42384 5.96236 3.62887C5.75734 3.83389 5.75734 4.16603 5.96236 4.37105L9.59127 7.99996L5.96236 11.6289Z" fill="currentColor"/></svg>"#;
 
-fn source_glyph(
+pub(super) fn source_glyph(
     data: &'static [u8],
     id: &'static str,
     color: Hsla,
     opacity: u8,
-) -> impl IntoElement {
+) -> impl IntoElement + Styled {
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, (), window, cx| paint_glyph(data, id, color, opacity, bounds, window, cx),
+    )
+    .size(px(16.))
+    .flex_none()
+}
+
+/// [`source_glyph`] inside a `backdrop-filter` box: Chromium rasters its opacity group on the
+/// box's own layer.
+pub(super) fn backdrop_glyph(
+    data: &'static [u8],
+    id: &'static str,
+    color: Hsla,
+    opacity: u8,
+) -> impl IntoElement + Styled {
     gpui::canvas(
         |_, _, _| {},
         move |bounds, (), window, cx| {
-            let paint = |window: &mut Window| {
-                if !shapes::paint_icon(data, id, bounds, false, color, None, window, cx) {
-                    window
-                        .paint_svg(
-                            bounds,
-                            id.into(),
-                            Some(data),
-                            gpui::TransformationMatrix::default(),
-                            color,
-                            cx,
-                        )
-                        .ok();
-                }
-            };
-            if opacity == 255 {
-                paint(window);
-            } else {
-                shapes::with_composited_opacity(opacity, bounds, window, cx, paint);
+            let alpha = f32::from(opacity) / 255.;
+            if !shapes::paint_icon_in_backdrop(data, id, bounds, color, alpha, true, window) {
+                paint_glyph(data, id, color, opacity, bounds, window, cx);
             }
         },
     )
     .size(px(16.))
     .flex_none()
+}
+
+fn paint_glyph(
+    data: &'static [u8],
+    id: &'static str,
+    color: Hsla,
+    opacity: u8,
+    bounds: gpui::Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    let paint = |window: &mut Window| {
+        if !shapes::paint_icon(data, id, bounds, false, color, None, window, cx) {
+            window
+                .paint_svg(
+                    bounds,
+                    id.into(),
+                    Some(data),
+                    gpui::TransformationMatrix::default(),
+                    color,
+                    cx,
+                )
+                .ok();
+        }
+    };
+    if opacity == 255 {
+        paint(window);
+    } else {
+        shapes::with_composited_opacity(opacity, bounds, window, cx, paint);
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -111,7 +142,7 @@ impl DiffPanel {
                 ),
                 Kind::Header => match index {
                     0 => ("Copy path", true),
-                    1 => ("Open in editor", true),
+                    1 => ("Open in editor", !self.workspace.is_empty()),
                     2 => (
                         if self.files[self.menu.as_ref().unwrap().file].open {
                             "Collapse file"
@@ -267,12 +298,24 @@ impl DiffPanel {
     /// The directory a displayed file path is relative to.
     pub(super) fn file_root(&self) -> &str {
         if self.source == DiffSource::LastTurn {
-            &self.workspace
+            if self.aggregated_turn.is_some() {
+                &self.cwd
+            } else {
+                &self.workspace
+            }
         } else {
             self.repository
                 .as_ref()
                 .map_or(self.workspace.as_str(), |r| r.root.as_str())
         }
+    }
+
+    pub(super) fn file_path(&self, index: usize) -> Option<String> {
+        let file = self.files.get(index)?;
+        Some(absolute_path(
+            self.file_root(),
+            &format!("{}{}", file.dir, file.name),
+        ))
     }
 
     pub(super) fn request_open(&self, file: usize, cx: &mut Context<Self>) {
