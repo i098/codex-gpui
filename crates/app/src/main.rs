@@ -46,6 +46,18 @@ fn main() {
                 cx.set_global(state.theme.theme(cx.window_appearance()));
                 app::init(cx);
                 cx.on_action(|_: &app::CloseWindow, cx| cx.quit());
+                let settings = state.path.as_ref().map_or_else(
+                    || Ok(app::host_settings::Settings::default()),
+                    |path| {
+                        app::host_settings::Settings::load(
+                            path.with_file_name("host-settings.json"),
+                        )
+                    },
+                );
+                match settings {
+                    Ok(settings) => cx.set_global(settings),
+                    Err(error) => eprintln!("codex-gpui: cannot load host settings: {error:#}"),
+                }
                 cx.on_window_closed(|cx, _| cx.quit()).detach();
                 cx.open_window(
                     WindowOptions {
@@ -63,7 +75,14 @@ fn main() {
                         ..Default::default()
                     },
                     |_, cx| {
-                        cx.new(|_| ui::screens::diff::panel::DiffPanel::from_patch(&cwd, &patch))
+                        let panel = cx
+                            .new(|_| ui::screens::diff::panel::DiffPanel::from_patch(&cwd, &patch));
+                        app::diff_content::bind_standalone_diff(
+                            &panel,
+                            std::sync::Arc::new(app::host::LocalHost::from_env()),
+                            cx,
+                        );
+                        panel
                     },
                 )
                 .expect("open diff window");
