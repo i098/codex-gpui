@@ -54,6 +54,7 @@ The `scroll_*` flows send wheel events (pixel deltas, a trackpad flick with its 
 At 1280x320, the largest offset of the sidebar sections is 82 px, the same as in the original.
 This value was recorded through `tools/route1` with a copy of the fixture `CODEX_HOME`.
 The other panes must repaint on the first wheel, stay still past the end, and show the start again.
+Div scroll limits use raw layout sizes rounded to logical pixels; painting keeps device-snapped bounds.
 
 ## Parity of the states the flows reach
 
@@ -370,6 +371,10 @@ The shared Composer session API includes `finish_dictation(window, cx)` and `Com
 Success follows transcript processing; failure and cancellation remain distinct.
 Consumers can wait before submitting a draft. A closed event stream fails instead of leaving the session active.
 `cargo test -p ui --lib composer::dictation` checks completion order, cancellation, and closed streams without microphone access.
+
+`Dispatcher::new` receives the initiating `Window` and `App`, so a capture service can select that window's host.
+Typing, IME edits, mentions, and slash commands cancel dictation and emit `Completion::Cancelled`.
+Comment owners call `finish_dictation` and wait for `Completion::Succeeded` before saving the inserted transcript.
 
 ## 14.4 Thread view
 
