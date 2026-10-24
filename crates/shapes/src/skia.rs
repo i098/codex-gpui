@@ -1751,64 +1751,65 @@ fn hairline_sprites(operations: &[HairlineOperation]) -> Vec<Sprite> {
     let mut out = Vec::new();
     for operation in operations {
         assert!(operation.width > 0 && operation.height > 0);
-        if matches!(
-            operation.kind,
-            HairlineKind::AntiHorizontalPairAlpha | HairlineKind::AntiVerticalPairAlpha
-        ) && (operation.first == 0 || operation.second == 0)
-        {
-            let vertical = operation.kind == HairlineKind::AntiVerticalPairAlpha;
-            for (index, coverage) in [operation.first, operation.second].into_iter().enumerate() {
-                let mode = if coverage == 0 { ARGB32_ZERO } else { ARGB32 };
-                let value = if coverage == 0 { 255 } else { coverage };
-                let (x, y) = if vertical {
-                    (operation.x, operation.y + index as i32)
-                } else {
-                    (operation.x + index as i32, operation.y)
-                };
-                chunks(&mut out, [x, y, 1, 1], &|_| value, mode, None, false);
-            }
-            continue;
-        }
-        let mode = match operation.kind {
-            HairlineKind::Horizontal
-            | HairlineKind::Rectangle
-            | HairlineKind::AntiHorizontalPairAlpha
-            | HairlineKind::AntiVerticalPairAlpha => ARGB32,
-            HairlineKind::Vertical | HairlineKind::AntiHorizontal | HairlineKind::Mask => MASK,
-            HairlineKind::AntiHorizontalPairOpaque | HairlineKind::AntiVerticalPairOpaque => {
-                FAST_INTERP
-            }
-        };
-        let value = |index: usize| match operation.kind {
-            HairlineKind::Horizontal | HairlineKind::Rectangle => 255,
-            HairlineKind::Vertical | HairlineKind::AntiHorizontal | HairlineKind::Mask => {
-                operation.first
-            }
-            HairlineKind::AntiHorizontalPairOpaque | HairlineKind::AntiHorizontalPairAlpha => {
-                if index as i32 % operation.width == 0 {
-                    operation.first
-                } else {
-                    operation.second
-                }
-            }
-            HairlineKind::AntiVerticalPairOpaque | HairlineKind::AntiVerticalPairAlpha => {
-                if index as i32 / operation.width == 0 {
-                    operation.first
-                } else {
-                    operation.second
-                }
-            }
-        };
-        chunks(
-            &mut out,
-            [operation.x, operation.y, operation.width, operation.height],
-            &value,
-            mode,
-            None,
-            false,
-        );
+        hairline_sprite(&mut out, operation);
     }
     out
+}
+
+fn hairline_sprite(out: &mut Vec<Sprite>, operation: &HairlineOperation) {
+    let alpha_pair = matches!(
+        operation.kind,
+        HairlineKind::AntiHorizontalPairAlpha | HairlineKind::AntiVerticalPairAlpha
+    );
+    if alpha_pair && (operation.first == 0 || operation.second == 0) {
+        let vertical = operation.kind == HairlineKind::AntiVerticalPairAlpha;
+        for (index, coverage) in [operation.first, operation.second].into_iter().enumerate() {
+            let mode = if coverage == 0 { ARGB32_ZERO } else { ARGB32 };
+            let value = if coverage == 0 { 255 } else { coverage };
+            let (x, y) = if vertical {
+                (operation.x, operation.y + index as i32)
+            } else {
+                (operation.x + index as i32, operation.y)
+            };
+            chunks(out, [x, y, 1, 1], &|_| value, mode, None, false);
+        }
+        return;
+    }
+    let value = |index: usize| hairline_coverage(operation, index);
+    let rect = [operation.x, operation.y, operation.width, operation.height];
+    chunks(
+        out,
+        rect,
+        &value,
+        hairline_mode(operation.kind),
+        None,
+        false,
+    );
+}
+
+fn hairline_mode(kind: HairlineKind) -> u8 {
+    match kind {
+        HairlineKind::Horizontal
+        | HairlineKind::Rectangle
+        | HairlineKind::AntiHorizontalPairAlpha
+        | HairlineKind::AntiVerticalPairAlpha => ARGB32,
+        HairlineKind::Vertical | HairlineKind::AntiHorizontal | HairlineKind::Mask => MASK,
+        HairlineKind::AntiHorizontalPairOpaque | HairlineKind::AntiVerticalPairOpaque => {
+            FAST_INTERP
+        }
+    }
+}
+
+/// Coverage of pixel `index` (row-major); pair operations are always two pixels.
+fn hairline_coverage(operation: &HairlineOperation, index: usize) -> u8 {
+    match operation.kind {
+        HairlineKind::Horizontal | HairlineKind::Rectangle => 255,
+        HairlineKind::Vertical | HairlineKind::AntiHorizontal | HairlineKind::Mask => {
+            operation.first
+        }
+        _ if index == 0 => operation.first,
+        _ => operation.second,
+    }
 }
 
 /// Cuts the coverage `value` of each px of `[x0, y0, w, h]` (row-major) into sprites.
@@ -2710,6 +2711,63 @@ impl IconPath {
     }
 }
 
+/// Whether Skia's legacy hairline scanner draws this stroke exactly like the sprite renderer.
+fn hairline_eligible(
+    path: &IconPath,
+    layer: Layer,
+    transformed: bool,
+    wide: bool,
+    clips: &[Contour],
+) -> bool {
+    !transformed
+        && !layer.composited
+        && layer.tile == [TILE; 2]
+        && !wide
+        && clips.is_empty()
+        && matches!(path.stroke, Some((_, PaintCap::Butt, _)))
+}
+
+/// The device origin of a layer tile, if the tile covers any device pixel.
+fn tile_extent(layer: Layer, tile_origin: [i32; 2], tile_size: (i32, i32)) -> Option<[i32; 2]> {
+    let lo = layer.device.map_or(tile_origin, |device| {
+        [tile_origin[0].max(device[0]), tile_origin[1].max(device[1])]
+    });
+    let hi = layer.device.map_or(
+        [tile_origin[0] + tile_size.0, tile_origin[1] + tile_size.1],
+        |device| {
+            [
+                (tile_origin[0] + tile_size.0).min(device[2]),
+                (tile_origin[1] + tile_size.1).min(device[3]),
+            ]
+        },
+    );
+    (hi[0] > lo[0] && hi[1] > lo[1]).then_some(lo)
+}
+
+/// Path space to tile space; `flip` is the icon width of a mirrored (rtl) icon.
+fn hairline_matrix(
+    path: &IconPath,
+    view: &Matrix,
+    origin: [f32; 2],
+    lo: [i32; 2],
+    flip: Option<f64>,
+) -> Matrix {
+    let mut matrix = Matrix::concat(
+        &Matrix::translate((-lo[0] as f32, -lo[1] as f32)),
+        &Matrix::translate((origin[0], origin[1])),
+    );
+    if let Some(width) = flip {
+        matrix = Matrix::concat(&matrix, &Matrix::translate(((width / 2.) as f32, 0.)));
+        matrix = Matrix::concat(
+            &matrix,
+            &Matrix::new_all(-1., 0., 0., 0., 1., 0., 0., 0., 1.),
+        );
+        matrix = Matrix::concat(&matrix, &Matrix::translate((-(width / 2.) as f32, 0.)));
+    }
+    matrix = Matrix::concat(&matrix, view);
+    Matrix::concat(&matrix, &path.transform)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn scan_hairline_operations(
     path: &IconPath,
@@ -2717,71 +2775,31 @@ fn scan_hairline_operations(
     origin: [f32; 2],
     clip: Rect,
     bbox: [i32; 4],
-    flip_x: bool,
-    width: f64,
+    flip: Option<f64>,
     alpha: u8,
     layer: Layer,
-    transformed: bool,
-    wide: bool,
-    clips: &[Contour],
 ) -> Option<Vec<HairlineOperation>> {
-    if transformed
-        || layer.composited
-        || layer.tile != [TILE; 2]
-        || wide
-        || !clips.is_empty()
-        || !matches!(path.stroke, Some((_, PaintCap::Butt, _)))
-    {
-        return None;
-    }
     let [x0, y0, x1, y1] = layer.clip_bounds(bbox);
-    if x0 >= x1 || y0 >= y1 {
-        return Some(Vec::new());
-    }
     let mut operations = Vec::new();
+    if x0 >= x1 || y0 >= y1 {
+        return Some(operations);
+    }
     for (tile_origin, tile_size, [ox0, oy0, ox1, oy1]) in
         layer.tiles([x0, y0, x1, y1], layer.clamp())
     {
-        let lo = layer.device.map_or(tile_origin, |device| {
-            [tile_origin[0].max(device[0]), tile_origin[1].max(device[1])]
-        });
-        let hi = layer.device.map_or(
-            [tile_origin[0] + tile_size.0, tile_origin[1] + tile_size.1],
-            |device| {
-                [
-                    (tile_origin[0] + tile_size.0).min(device[2]),
-                    (tile_origin[1] + tile_size.1).min(device[3]),
-                ]
-            },
-        );
-        let size = (hi[0] - lo[0], hi[1] - lo[1]);
-        if size.0 <= 0 || size.1 <= 0 {
+        let Some(lo) = tile_extent(layer, tile_origin, tile_size) else {
             continue;
-        }
-        let rect = [ox0.max(lo[0]), oy0.max(lo[1]), ox1, oy1];
+        };
         let scan_clip = [
-            rect[0].max(clip.left() as i32),
-            rect[1].max(clip.top() as i32),
-            rect[2].min(clip.right() as i32),
-            rect[3].min(clip.bottom() as i32),
+            ox0.max(lo[0]).max(clip.left() as i32),
+            oy0.max(lo[1]).max(clip.top() as i32),
+            ox1.min(clip.right() as i32),
+            oy1.min(clip.bottom() as i32),
         ];
         if scan_clip[0] >= scan_clip[2] || scan_clip[1] >= scan_clip[3] {
             continue;
         }
-        let mut matrix = Matrix::concat(
-            &Matrix::translate((-lo[0] as f32, -lo[1] as f32)),
-            &Matrix::translate((origin[0], origin[1])),
-        );
-        if flip_x {
-            matrix = Matrix::concat(&matrix, &Matrix::translate(((width / 2.) as f32, 0.)));
-            matrix = Matrix::concat(
-                &matrix,
-                &Matrix::new_all(-1., 0., 0., 0., 1., 0., 0., 0., 1.),
-            );
-            matrix = Matrix::concat(&matrix, &Matrix::translate((-(width / 2.) as f32, 0.)));
-        }
-        matrix = Matrix::concat(&matrix, view);
-        matrix = Matrix::concat(&matrix, &path.transform);
+        let matrix = hairline_matrix(path, view, origin, lo, flip);
         let values = std::array::from_fn(|index| matrix[index]);
         let local_clip = [
             scan_clip[0] - lo[0],
@@ -3236,27 +3254,20 @@ pub(crate) fn paint_icon(
             layer.key(bbox)
         );
         let make = || raster(bbox, layer, a, black, wide, &clips, &draw);
-        let sprites = cached(key, || {
-            if hairline.is_some()
-                && let Some(operations) = scan_hairline_operations(
-                    p,
-                    &view,
-                    origin,
-                    clip,
-                    bbox,
-                    flip_x,
-                    w,
-                    a,
-                    layer,
-                    transformed,
-                    wide,
-                    &clips,
-                )
-            {
-                return hairline_sprites(&operations);
+        let scan = || {
+            let eligible =
+                hairline.is_some() && hairline_eligible(p, layer, transformed, wide, &clips);
+            let flip = flip_x.then_some(w);
+            eligible
+                .then(|| scan_hairline_operations(p, &view, origin, clip, bbox, flip, a, layer))
+                .flatten()
+        };
+        let sprites = cached(key, || match scan() {
+            Some(operations) => hairline_sprites(&operations),
+            None => {
+                let (rect, blits) = make();
+                sprites_from_blits(rect, &blits)
             }
-            let (rect, blits) = make();
-            sprites_from_blits(rect, &blits)
         });
         paint_transformed_sprites(&sprites, color, paint_origin, transformation, window, cx);
     }
