@@ -336,29 +336,7 @@ pub(super) fn command(root: &Path, args: &[&str]) -> Command {
 }
 
 fn run(root: &Path, args: &[&str]) -> Result<Output> {
-    match command(root, args).output() {
-        Ok(output) => Ok(output),
-        Err(error) => {
-            eprintln!(
-                "DBG git run failed args={args:?} cwd={} root={:?} PATH={:?}",
-                root.display(),
-                root,
-                std::env::var_os("PATH")
-            );
-            eprintln!(
-                "DBG root_exists={} pwd={:?} ws={:?} git={:?}",
-                root.exists(),
-                std::env::current_dir(),
-                std::env::var_os("GITHUB_WORKSPACE"),
-                std::process::Command::new("git")
-                    .arg("--version")
-                    .output()
-                    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-                    .err()
-            );
-            Err(anyhow::anyhow!(format!("{error}")).context("run local Git"))
-        }
-    }
+    command(root, args).output().context("run local Git")
 }
 
 fn checked(output: Output) -> Result<Vec<u8>> {
@@ -574,23 +552,12 @@ fn apply(
     if cached {
         args.push("--cached");
     }
-    let mut child = match command(root, &args)
+    let mut child = command(root, &args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-    {
-        Ok(child) => child,
-        Err(error) => {
-            eprintln!(
-                "DBG git apply spawn failed args={args:?} cwd={} root={:?} PATH={:?}",
-                root.display(),
-                root,
-                std::env::var_os("PATH")
-            );
-            return Err(anyhow::anyhow!(format!("{error}")).context("run local Git"));
-        }
-    };
+        .context("run local Git")?;
     let sent = child.stdin.take().context("Git stdin")?.write_all(patch);
     checked(child.wait_with_output().context("run local Git")?)?;
     sent.context("send patch to Git")
