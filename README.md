@@ -277,6 +277,18 @@ Diff code and context rows paint in their own opaque scroll layer, as in the ori
 Failed reads retain the patch and provide Retry.
 Only Staged and Unstaged sources show staging actions. Uncommitted combines both states and does not expose those actions.
 
+The Plugins rail opens the native plugin directory and the Skills page.
+Both pages load app-server data and support search.
+Plugin installation, removal, enablement, and sharing wait for server responses.
+Failed operations keep the last confirmed catalog state.
+Share creates a remote link only after Copy link; only personal-marketplace plugins can publish a shared version.
+Plugins with install-time authentication require confirmed app connections before Try now.
+New skill prepares an editable draft without sending a turn.
+App connections open the original browser setup flow; Check connection reads the app list again.
+Manage opens Settings > Plugins, which owns the management tabs and marketplace controls.
+The existing 36 reference frames do not cover these routes.
+Run `cargo test -p app --test plugins -- --test-threads=1` on macOS for the native failure and draft checks.
+
 Settings > Usage & billing reads plan limits and reset credits from the app-server.
 It keeps the original account gates for credit controls, enterprise usage requests, analytics, and balance history.
 Reset retries keep the same idempotency key; billing changes keep their confirmed state when a request fails.

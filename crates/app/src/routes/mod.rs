@@ -5,6 +5,7 @@ mod archive;
 mod automations;
 mod home;
 mod mobile;
+mod plugins;
 mod settings;
 mod thread;
 
@@ -28,6 +29,7 @@ pub enum Route {
     Automation(String),
     /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
     Mobile,
+    Plugins(String),
     Archive,
     SelectWorkspace,
 }
@@ -38,6 +40,7 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = settings::actions(root, cx);
     root = automations::actions(root, cx);
     root = mobile::actions(root, cx);
+    root = plugins::actions(root, cx);
     root = archive::actions(root, cx);
     root
 }
@@ -127,6 +130,7 @@ impl Root {
         self.archive_page = None;
         self.mobile_page = None;
         self.cloud = None;
+        self.plugins_page = None;
         self.page = match self.state.route.clone() {
             Route::Remote { task_id, hotkey } => {
                 self.load_cloud_task(task_id, hotkey, window, cx);
@@ -140,6 +144,7 @@ impl Root {
                 Some(automations::thread(self, cx))
             }
             Route::Mobile => Some(mobile::page(self, cx)),
+            Route::Plugins(path) => Some(self.plugins_shell(path, window, cx)),
             Route::Home | Route::Thread(_) | Route::SelectWorkspace => None,
         };
         if let Some(sidebar) = &self.scheduled {

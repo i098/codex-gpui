@@ -954,7 +954,37 @@ impl LocalHost {
             .as_str()
             .context("missing automation recurrence")?;
         let now = chrono::Utc::now().timestamp_millis();
-        let (next, nominal) = self.scheduled_run(&item, id, rule, status, now)?;
+        // Resume always recalculates; a cached database time is never reused.
+        let (next, nominal) = if status == "PAUSED" {
+            ensure!(
+                automation_schedule::valid(rule, now),
+                "invalid automation recurrence"
+            );
+            (None, None)
+        } else {
+            // Original ZF: an unreadable salt is replaced, and a failed save still schedules this run.
+            let salt_path = root.join(".run-jitter-salt");
+            let salt = fs::read_to_string(&salt_path)
+                .map(|salt| salt.trim().to_owned())
+                .unwrap_or_default();
+            let salt = if salt.is_empty() {
+                let salt = device_id();
+                let _ = fs::write(&salt_path, format!("{salt}\n"));
+                salt
+            } else {
+                salt
+            };
+            let (next, nominal) = automation_schedule::next_run(
+                rule,
+                item["kind"].as_str().context("missing automation kind")?,
+                id,
+                now,
+                rrule::Tz::LOCAL,
+                &salt,
+            )
+            .context(automation_schedule::NO_FUTURE_RUN)?;
+            (Some(next), Some(nominal))
+        };
         if let Some(transaction) = &transaction {
             transaction.execute(
                 "INSERT INTO automations
@@ -2080,20 +2110,6 @@ fn check_automation_id(id: &str) -> Result<()> {
     );
     Ok(())
 }
-
-fn ensure_unowned_automation(db: &Connection, id: &str) -> Result<()> {
-    let owned: bool = db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM automations WHERE id = ? AND (account_id IS NOT NULL OR user_id IS NOT NULL OR installation_id IS NOT NULL))",
-        [id], |row| row.get(0),
-    )?;
-    ensure!(
-        !owned,
-        "cannot write an account-owned automation through LocalHost"
-    );
-    Ok(())
-}
-
-/// Applies an update's text fields to `item`; every other field must keep its stored value.
 fn apply_automation_edits(item: &mut Value, params: &Value) -> Result<()> {
     for (key, value) in params
         .as_object()
@@ -2128,6 +2144,20 @@ fn apply_automation_edits(item: &mut Value, params: &Value) -> Result<()> {
     }
     Ok(())
 }
+
+fn ensure_unowned_automation(db: &Connection, id: &str) -> Result<()> {
+    let owned: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM automations WHERE id = ? AND (account_id IS NOT NULL OR user_id IS NOT NULL OR installation_id IS NOT NULL))",
+        [id], |row| row.get(0),
+    )?;
+    ensure!(
+        !owned,
+        "cannot write an account-owned automation through LocalHost"
+    );
+    Ok(())
+}
+
+/// Applies an update's text fields to `item`; every other field must keep its stored value.
 
 fn definition(id: &str, contents: &str) -> Result<Value> {
     check_automation_id(id)?;

@@ -1,5 +1,5 @@
 use crate::{
-    composer::{Composer, Dismiss, ModifiedSubmit},
+    composer::{Composer, ModifiedSubmit},
     icon::icon,
     text,
     tooltip::{Side, tooltip},
@@ -11,6 +11,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 use serde_json::Value;
+use std::collections::HashMap;
 use theme::{ActiveTheme as _, Theme};
 
 const MODES: &[&str] = &[
@@ -145,13 +146,13 @@ impl Editor {
     }
 
     fn load_rule(&mut self, rule: &str, cx: &mut Context<Self>) {
-        let parts: std::collections::HashMap<_, _> = rule
+        let parts: HashMap<_, _> = rule
             .trim_start_matches("RRULE:")
             .split(';')
             .filter_map(|s| s.split_once('='))
             .collect();
         let frequency = parts.get("FREQ").copied().unwrap_or("");
-        self.raw_rule = uneditable_rule(rule, &parts, frequency);
+        self.raw_rule = Self::has_uneditable_fields(rule, &parts);
         self.frequency = ["HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"]
             .iter()
             .position(|s| *s == frequency)
@@ -160,11 +161,7 @@ impl Editor {
         let interval = parts.get("INTERVAL").copied().unwrap_or("1");
         let weekdays = parts.get("BYDAY").copied().unwrap_or("MO");
         self.weekdays = std::array::from_fn(|i| weekdays.split(',').any(|day| day == DAYS[i]));
-        self.mode = Some(if self.raw_rule {
-            5
-        } else {
-            rule_mode(frequency, &parts, interval, weekdays)
-        });
+        self.mode = Some(self.mode_for_rule(&parts));
         for (index, value) in [
             (INTERVAL, interval.to_owned()),
             (
@@ -198,6 +195,53 @@ impl Editor {
         }
     }
 
+    fn has_uneditable_fields(rule: &str, parts: &HashMap<&str, &str>) -> bool {
+        let frequency = parts.get("FREQ").copied().unwrap_or("");
+        let rule_fields: &[&str] = match frequency {
+            "MINUTELY" => &[],
+            "HOURLY" => &["BYMINUTE"],
+            "DAILY" => &["BYHOUR", "BYMINUTE"],
+            "WEEKLY" => &["BYDAY", "BYHOUR", "BYMINUTE"],
+            "MONTHLY" => &["BYMONTHDAY", "BYHOUR", "BYMINUTE"],
+            "YEARLY" => &["BYMONTH", "BYMONTHDAY", "BYHOUR", "BYMINUTE"],
+            _ => &[],
+        };
+        // Keep uneditable fields verbatim; BYSECOND=0 can still change heartbeat timing.
+        rule.contains('\n')
+            || parts
+                .keys()
+                .any(|key| !["FREQ", "INTERVAL"].contains(key) && !rule_fields.contains(key))
+            || rule_fields.iter().any(|key| !parts.contains_key(key))
+            || !["MINUTELY", "HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"].contains(&frequency)
+            || parts
+                .get("BYDAY")
+                .is_some_and(|days| days.split(',').any(|day| !DAYS.contains(&day)))
+            || ["BYHOUR", "BYMINUTE", "BYMONTH"]
+                .iter()
+                .any(|key| parts.get(key).is_some_and(|s| s.contains(',')))
+    }
+
+    fn mode_for_rule(&self, parts: &HashMap<&str, &str>) -> usize {
+        let frequency = parts.get("FREQ").copied().unwrap_or("");
+        let interval = parts.get("INTERVAL").copied().unwrap_or("1");
+        let weekdays = parts.get("BYDAY").copied().unwrap_or("MO");
+        if self.raw_rule {
+            return 5;
+        }
+        if self.minutes || frequency == "HOURLY" && parts.get("BYMINUTE") == Some(&"0") {
+            return 0;
+        }
+        if frequency == "HOURLY" || interval != "1" || frequency == "YEARLY" {
+            return 5;
+        }
+        match frequency {
+            "DAILY" => 1,
+            "WEEKLY" if weekdays == "MO,TU,WE,TH,FR" => 2,
+            "WEEKLY" => 3,
+            "MONTHLY" => 4,
+            _ => 5,
+        }
+    }
     pub fn saving(&self) -> bool {
         self.saving
     }
@@ -239,31 +283,32 @@ impl Editor {
         if self.raw_rule {
             return self.original_rule.clone();
         }
+        let interval = if matches!(mode, 0 | 5) {
+            self.number(INTERVAL, 1, 999, cx)?
+        } else {
+            1
+        };
         if mode == 0 {
-            let interval = self.number(INTERVAL, 1, 999, cx)?;
             return Some(format!(
                 "FREQ={};INTERVAL={interval}{}",
                 if self.minutes { "MINUTELY" } else { "HOURLY" },
                 if self.minutes { "" } else { ";BYMINUTE=0" }
             ));
         }
-        let (frequency, interval) = if mode == 5 {
-            (self.frequency, self.number(INTERVAL, 1, 999, cx)?)
-        } else {
-            (preset_frequency(mode)?, 1)
-        };
-        let mut rule = format!(
-            "FREQ={};INTERVAL={interval}",
-            ["HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"][frequency],
-        );
-        rule.push_str(&self.day_parts(frequency, mode, cx)?);
-        rule.push_str(&self.time_part(frequency, cx)?);
-        Some(rule)
+        self.calendar_rule(mode, interval, cx)
     }
 
-    /// `BYDAY`, `BYMONTHDAY` and `BYMONTH` for a weekly, monthly or yearly rule.
-    fn day_parts(&self, frequency: usize, mode: usize, cx: &App) -> Option<String> {
-        let mut parts = String::new();
+    fn calendar_rule(&self, mode: usize, interval: u16, cx: &App) -> Option<String> {
+        let frequency = if mode == 5 {
+            self.frequency
+        } else {
+            *[1, 2, 2, 3].get(mode.checked_sub(1)?)?
+        };
+        let mut rule = format!(
+            "FREQ={};INTERVAL={}",
+            ["HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"][frequency],
+            if mode == 5 { interval } else { 1 }
+        );
         if frequency == 2 {
             let days: Vec<_> = DAYS
                 .iter()
@@ -274,7 +319,7 @@ impl Editor {
             if days.is_empty() {
                 return None;
             }
-            parts.push_str(&format!(";BYDAY={}", days.join(",")));
+            rule.push_str(&format!(";BYDAY={}", days.join(",")));
         }
         if frequency >= 3 {
             let days = self.value(MONTH_DAYS, cx);
@@ -285,36 +330,23 @@ impl Editor {
             {
                 return None;
             }
-            parts.push_str(&format!(
+            rule.push_str(&format!(
                 ";BYMONTHDAY={}",
                 days.split(',').map(str::trim).collect::<Vec<_>>().join(",")
             ));
         }
         if frequency == 4 {
-            parts.push_str(&format!(";BYMONTH={}", self.number(MONTH, 1, 12, cx)?));
+            rule.push_str(&format!(";BYMONTH={}", self.number(MONTH, 1, 12, cx)?));
         }
-        Some(parts)
-    }
-
-    /// `BYMINUTE` for an hourly rule, else `BYHOUR` and `BYMINUTE` from the time field.
-    fn time_part(&self, frequency: usize, cx: &App) -> Option<String> {
         if frequency == 0 {
-            return Some(format!(";BYMINUTE={}", self.number(MINUTE, 0, 59, cx)?));
+            rule.push_str(&format!(";BYMINUTE={}", self.number(MINUTE, 0, 59, cx)?));
+        } else {
+            let (hour, minute) = self.value(TIME, cx).split_once(':')?;
+            let hour = hour.parse::<u8>().ok().filter(|h| *h < 24)?;
+            let minute = minute.parse::<u8>().ok().filter(|m| *m < 60)?;
+            rule.push_str(&format!(";BYHOUR={hour};BYMINUTE={minute}"));
         }
-        let (hour, minute) = self.value(TIME, cx).split_once(':')?;
-        let hour = hour.parse::<u8>().ok().filter(|h| *h < 24)?;
-        let minute = minute.parse::<u8>().ok().filter(|m| *m < 60)?;
-        Some(format!(";BYHOUR={hour};BYMINUTE={minute}"))
-    }
-
-    fn dismiss(&mut self, cx: &mut Context<Self>) {
-        if self.saving {
-            return;
-        }
-        if self.menu.take().is_none() {
-            cx.emit(Outcome::Dismiss);
-        }
-        cx.notify();
+        Some(rule)
     }
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -376,7 +408,7 @@ impl Editor {
             return;
         }
         match key.key.as_str() {
-            "escape" => self.dismiss(cx),
+            "escape" => cx.emit(Outcome::Dismiss),
             "tab" => {
                 let handles = self.tab_order(cx);
                 let current = handles
@@ -440,7 +472,7 @@ impl Editor {
             self.fields[PROMPT].focus_handle(cx),
             self.controls[0].clone(),
         ];
-        if self.shows_frequency() {
+        if self.mode == Some(5) && !self.raw_rule {
             handles.push(self.controls[1].clone());
         }
         handles.extend(
@@ -451,7 +483,7 @@ impl Editor {
         if self.mode == Some(0) {
             handles.push(self.controls[2].clone());
         }
-        if self.shows_weekdays() {
+        if self.mode == Some(3) || self.mode == Some(5) && self.frequency == 2 && !self.raw_rule {
             handles.extend(self.controls[4..11].iter().cloned());
         }
         if self.visible_fields().contains(&TIME) {
@@ -563,7 +595,7 @@ impl Editor {
                 .whitespace_normal(),
             );
         }
-        if self.shows_frequency() {
+        if self.mode == Some(5) && !self.raw_rule {
             content = content.child(self.picker(
                 Picker::Frequency,
                 "Repeat frequency",
@@ -574,7 +606,7 @@ impl Editor {
             ));
         }
         for index in self.visible_fields() {
-            content = content.child(self.field(index, field_label(index), t, cx));
+            content = content.child(self.schedule_field(index, t, cx));
         }
         if self.mode == Some(0) {
             content = content.child(self.picker(
@@ -586,85 +618,14 @@ impl Editor {
                 cx,
             ));
         }
-        if self.shows_weekdays() {
-            content = content.child(self.weekday_toggles(t, cx));
+        if self.mode == Some(3) || self.mode == Some(5) && self.frequency == 2 && !self.raw_rule {
+            content = content.child(self.weekday_controls(t, cx));
         }
         if self.visible_fields().contains(&TIME) {
             content =
                 content.child(self.picker(Picker::Time, "Time presets", "Time presets", 3, t, cx));
         }
         content
-    }
-
-    /// The custom rule shows its frequency picker.
-    fn shows_frequency(&self) -> bool {
-        self.mode == Some(5) && !self.raw_rule
-    }
-
-    /// The weekly preset and a weekly custom rule show the weekday toggles.
-    fn shows_weekdays(&self) -> bool {
-        self.mode == Some(3) || self.mode == Some(5) && self.frequency == 2 && !self.raw_rule
-    }
-
-    fn weekday_toggles(&self, t: &Theme, cx: &Context<Self>) -> Stateful<Div> {
-        div()
-            .id("automation-weekdays")
-            .role(Role::Group)
-            .aria_label("Days of the week")
-            .flex()
-            .gap(px(4.))
-            .children(
-                DAYS.iter()
-                    .enumerate()
-                    .map(|(i, day)| self.weekday_toggle(i, day, t, cx)),
-            )
-    }
-
-    fn weekday_toggle(
-        &self,
-        i: usize,
-        day: &'static str,
-        t: &Theme,
-        cx: &Context<Self>,
-    ) -> Stateful<Div> {
-        div()
-            .id(("automation-weekday", i))
-            .anchor_scroll(Some(self.control_anchors[4 + i].clone()))
-            .role(Role::Button)
-            .aria_label(DAY_LABELS[i])
-            .aria_toggled(if self.weekdays[i] {
-                gpui::Toggled::True
-            } else {
-                gpui::Toggled::False
-            })
-            .track_focus(&self.controls[4 + i])
-            .size(px(34.))
-            .rounded(px(8.))
-            .bg(if self.weekdays[i] {
-                t.text_alpha_10
-            } else {
-                gpui::transparent_black()
-            })
-            .focus_visible(|s| s.border_2().border_color(gpui::rgb(0x3a83f7)))
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(text(day, 12., 20., 430., t.text))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if !this.saving {
-                    this.weekdays[i] = !this.weekdays[i];
-                    this.schedule_dirty = true;
-                    cx.notify();
-                }
-            }))
-            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _, cx| {
-                if !this.saving && matches!(e.keystroke.key.as_str(), "enter" | "space") {
-                    this.weekdays[i] = !this.weekdays[i];
-                    this.schedule_dirty = true;
-                    cx.notify();
-                    cx.stop_propagation();
-                }
-            }))
     }
 
     fn button(
@@ -706,192 +667,115 @@ impl Editor {
             }))
     }
 
-    fn title(&self) -> &'static str {
-        if self.editing {
-            "Edit scheduled task"
-        } else {
-            "Create scheduled task"
-        }
+    fn schedule_field(&self, index: usize, t: &Theme, cx: &App) -> Stateful<Div> {
+        let label = match index {
+            TIME => "Time (local, HH:MM)",
+            INTERVAL => "Every",
+            MONTH_DAYS => "On days (1-31)",
+            MONTH => "Month (1-12)",
+            MINUTE => "Minute past the hour",
+            _ => "Schedule rule",
+        };
+        self.field(index, label, t, cx)
     }
 
-    /// The Create or Save button; its tooltip names the first missing field.
-    fn save_button(&self, t: &Theme, cx: &Context<Self>) -> impl IntoElement {
-        let valid = !self.saving
-            && !self.value(NAME, cx).is_empty()
-            && !self.value(PROMPT, cx).is_empty()
-            && self.rule(cx).is_some();
-        tooltip(
-            self.button(14, self.save_label(), t, cx)
+    fn weekday_controls(&self, t: &Theme, cx: &Context<Self>) -> Stateful<Div> {
+        div()
+            .id("automation-weekdays")
+            .role(Role::Group)
+            .aria_label("Days of the week")
+            .flex()
+            .gap(px(4.))
+            .children(DAYS.iter().enumerate().map(|(i, day)| {
+                div()
+                    .id(("automation-weekday", i))
+                    .anchor_scroll(Some(self.control_anchors[4 + i].clone()))
+                    .role(Role::Button)
+                    .aria_label(DAY_LABELS[i])
+                    .aria_toggled(if self.weekdays[i] {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .track_focus(&self.controls[4 + i])
+                    .size(px(34.))
+                    .rounded(px(8.))
+                    .bg(if self.weekdays[i] {
+                        t.text_alpha_10
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .focus_visible(|s| s.border_2().border_color(gpui::rgb(0x3a83f7)))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(text(*day, 12., 20., 430., t.text))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if !this.saving {
+                            this.weekdays[i] = !this.weekdays[i];
+                            this.schedule_dirty = true;
+                            cx.notify();
+                        }
+                    }))
+                    .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _, cx| {
+                        if !this.saving && matches!(e.keystroke.key.as_str(), "enter" | "space") {
+                            this.weekdays[i] = !this.weekdays[i];
+                            this.schedule_dirty = true;
+                            cx.notify();
+                            cx.stop_propagation();
+                        }
+                    }))
+            }))
+    }
+
+    fn footer(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let name_empty = self.value(NAME, cx).is_empty();
+        let prompt_empty = self.value(PROMPT, cx).is_empty();
+        let valid = !self.saving && !name_empty && !prompt_empty && self.rule(cx).is_some();
+        let reason = match (name_empty, prompt_empty, self.mode.is_none()) {
+            (true, _, _) => "Enter a name",
+            (false, true, _) => "Enter a prompt",
+            (false, false, true) => "Choose a schedule",
+            _ => "Enter valid schedule fields",
+        };
+        div()
+            .flex()
+            .justify_end()
+            .gap(px(8.))
+            .child(self.button(13, "Cancel", t, cx))
+            .child(tooltip(
+                self.button(
+                    14,
+                    match (self.saving, self.editing) {
+                        (true, _) => "Saving…",
+                        (false, true) => "Save",
+                        (false, false) => "Create",
+                    },
+                    t,
+                    cx,
+                )
                 .bg(t.text_alpha_10)
                 .aria_disabled(!valid)
                 .opacity(if valid { 1. } else { 0.4 }),
-            if valid {
-                "Save scheduled task"
-            } else {
-                self.missing_reason(cx)
-            },
-            None,
-            Side::Top,
-        )
-    }
-
-    fn save_label(&self) -> &'static str {
-        if self.saving {
-            "Saving…"
-        } else if self.editing {
-            "Save"
-        } else {
-            "Create"
-        }
-    }
-
-    fn missing_reason(&self, cx: &App) -> &'static str {
-        if self.value(NAME, cx).is_empty() {
-            "Enter a name"
-        } else if self.value(PROMPT, cx).is_empty() {
-            "Enter a prompt"
-        } else if self.mode.is_none() {
-            "Choose a schedule"
-        } else {
-            "Enter valid schedule fields"
-        }
-    }
-
-    /// The open picker's options over the form; a click outside closes it.
-    fn picker_menu(&self, picker: Picker, selected: usize, t: &Theme, cx: &Context<Self>) -> Div {
-        div()
-            .absolute()
-            .inset_0()
-            .occlude()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    this.menu = None;
-                    cx.notify();
-                    cx.stop_propagation();
-                }),
-            )
-            .child(
-                div()
-                    .id("automation-editor-picker-menu")
-                    .absolute()
-                    .right(px(24.))
-                    .bottom(px(64.))
-                    .w(px(220.))
-                    .rounded(px(10.))
-                    .py(px(4.))
-                    .bg(t.menu_background)
-                    .border_1()
-                    .border_color(t.border)
-                    .role(Role::Menu)
-                    .children(Self::options(picker).iter().enumerate().map(|(i, label)| {
-                        div()
-                            .id(("automation-editor-option", i))
-                            .role(Role::MenuItem)
-                            .aria_label(*label)
-                            .h(px(30.))
-                            .px(px(12.))
-                            .flex()
-                            .items_center()
-                            .bg(if selected == i {
-                                t.list_hover
-                            } else {
-                                gpui::transparent_black()
-                            })
-                            .hover(|s| s.bg(t.list_hover))
-                            .child(text(*label, 13., 20., 430., t.text))
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .on_click(cx.listener(move |this, _, _, cx| this.choose(picker, i, cx)))
-                    })),
-            )
-    }
-}
-
-fn field_label(index: usize) -> &'static str {
-    match index {
-        TIME => "Time (local, HH:MM)",
-        INTERVAL => "Every",
-        MONTH_DAYS => "On days (1-31)",
-        MONTH => "Month (1-12)",
-        MINUTE => "Minute past the hour",
-        _ => "Schedule rule",
-    }
-}
-
-/// The `FREQUENCIES` index that a daily, weekday, weekly or monthly preset saves.
-fn preset_frequency(mode: usize) -> Option<usize> {
-    match mode {
-        1 => Some(1),
-        2 | 3 => Some(2),
-        4 => Some(3),
-        _ => None,
-    }
-}
-
-/// The RRULE fields the editor shows for `frequency`.
-fn editable_fields(frequency: &str) -> &'static [&'static str] {
-    match frequency {
-        "MINUTELY" => &[],
-        "HOURLY" => &["BYMINUTE"],
-        "DAILY" => &["BYHOUR", "BYMINUTE"],
-        "WEEKLY" => &["BYDAY", "BYHOUR", "BYMINUTE"],
-        "MONTHLY" => &["BYMONTHDAY", "BYHOUR", "BYMINUTE"],
-        "YEARLY" => &["BYMONTH", "BYMONTHDAY", "BYHOUR", "BYMINUTE"],
-        _ => &[],
-    }
-}
-
-/// Whether `rule` has parts the editor cannot show; the editor then keeps it verbatim.
-fn uneditable_rule(
-    rule: &str,
-    parts: &std::collections::HashMap<&str, &str>,
-    frequency: &str,
-) -> bool {
-    let rule_fields = editable_fields(frequency);
-    // Keep uneditable fields verbatim; BYSECOND=0 can still change heartbeat timing.
-    rule.contains('\n')
-        || parts
-            .keys()
-            .any(|key| !["FREQ", "INTERVAL"].contains(key) && !rule_fields.contains(key))
-        || rule_fields.iter().any(|key| !parts.contains_key(key))
-        || !["MINUTELY", "HOURLY", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"].contains(&frequency)
-        || parts
-            .get("BYDAY")
-            .is_some_and(|days| days.split(',').any(|day| !DAYS.contains(&day)))
-        || ["BYHOUR", "BYMINUTE", "BYMONTH"]
-            .iter()
-            .any(|key| parts.get(key).is_some_and(|s| s.contains(',')))
-}
-
-/// The `MODES` entry that shows an editable rule.
-fn rule_mode(
-    frequency: &str,
-    parts: &std::collections::HashMap<&str, &str>,
-    interval: &str,
-    weekdays: &str,
-) -> usize {
-    if frequency == "MINUTELY" || frequency == "HOURLY" && parts.get("BYMINUTE") == Some(&"0") {
-        0
-    } else if frequency == "HOURLY" || interval != "1" || frequency == "YEARLY" {
-        5
-    } else {
-        match frequency {
-            "DAILY" => 1,
-            "WEEKLY" if weekdays == "MO,TU,WE,TH,FR" => 2,
-            "WEEKLY" => 3,
-            "MONTHLY" => 4,
-            _ => 5,
-        }
+                if valid { "Save scheduled task" } else { reason },
+                None,
+                Side::Top,
+            ))
     }
 }
 
 impl Render for Editor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme();
+        let title = if self.editing {
+            "Edit scheduled task"
+        } else {
+            "Create scheduled task"
+        };
         let mut form = div()
             .id("automation-editor-form")
             .role(Role::Dialog)
-            .aria_label(self.title())
+            .aria_label(title)
             .relative()
             .w(px(640.).min(window.viewport_size().width * 0.92))
             .max_h(window.viewport_size().height * 0.9)
@@ -905,12 +789,6 @@ impl Render for Editor {
             .gap(px(16.))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_key_down(cx.listener(Self::key))
-            .on_action(cx.listener(|this, _: &Dismiss, _, cx| this.dismiss(cx)))
-            // Text fields bind Cmd-Enter to `ModifiedSubmit`; the binding runs before key listeners.
-            .capture_action(cx.listener(|this, _: &ModifiedSubmit, window, cx| {
-                this.submit(window, cx);
-                cx.stop_propagation();
-            }))
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let key = &event.keystroke;
                 if key.key == "enter" && (key.modifiers.platform || key.modifiers.control) {
@@ -918,12 +796,16 @@ impl Render for Editor {
                     cx.stop_propagation();
                 }
             }))
+            .capture_action(cx.listener(|this, _: &ModifiedSubmit, window, cx| {
+                this.submit(window, cx);
+                cx.stop_propagation();
+            }))
             .child(
                 div()
                     .flex()
                     .justify_between()
                     .items_center()
-                    .child(text(self.title(), 16., 24., 590., t.text))
+                    .child(text(title, 16., 24., 590., t.text))
                     .child(self.button(12, "Close", t, cx)),
             )
             .child(
@@ -942,16 +824,61 @@ impl Render for Editor {
             .when_some(self.error.as_ref(), |d, error| {
                 d.child(text(error.clone(), 13., 20., 430., t.text_error).whitespace_normal())
             })
-            .child(
-                div()
-                    .flex()
-                    .justify_end()
-                    .gap(px(8.))
-                    .child(self.button(13, "Cancel", t, cx))
-                    .child(self.save_button(t, cx)),
-            );
+            .child(self.footer(t, cx));
         if let Some((picker, selected)) = self.menu {
-            form = form.child(self.picker_menu(picker, selected, t, cx));
+            form = form.child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .occlude()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            this.menu = None;
+                            cx.notify();
+                            cx.stop_propagation();
+                        }),
+                    )
+                    .child(
+                        div()
+                            .id("automation-editor-picker-menu")
+                            .absolute()
+                            .right(px(24.))
+                            .bottom(px(64.))
+                            .w(px(220.))
+                            .rounded(px(10.))
+                            .py(px(4.))
+                            .bg(t.menu_background)
+                            .border_1()
+                            .border_color(t.border)
+                            .role(Role::Menu)
+                            .children(Self::options(picker).iter().enumerate().map(
+                                |(i, label)| {
+                                    div()
+                                        .id(("automation-editor-option", i))
+                                        .role(Role::MenuItem)
+                                        .aria_label(*label)
+                                        .h(px(30.))
+                                        .px(px(12.))
+                                        .flex()
+                                        .items_center()
+                                        .bg(if selected == i {
+                                            t.list_hover
+                                        } else {
+                                            gpui::transparent_black()
+                                        })
+                                        .hover(|s| s.bg(t.list_hover))
+                                        .child(text(*label, 13., 20., 430., t.text))
+                                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                            cx.stop_propagation()
+                                        })
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.choose(picker, i, cx)
+                                        }))
+                                },
+                            )),
+                    ),
+            );
         }
         if self.saving {
             form = form.child(div().absolute().inset_0().occlude());
@@ -1001,6 +928,19 @@ impl CreateMenu {
         ][self.selected];
         window.dispatch_action(Box::new(super::CreateAutomation { mode }), cx);
         cx.notify();
+    }
+
+    fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event.keystroke.key.as_str() {
+            "up" if self.open => self.selected = (self.selected + 2) % 3,
+            "down" if self.open => self.selected = (self.selected + 1) % 3,
+            "enter" | "space" if self.open => self.select(window, cx),
+            "enter" | "space" | "down" => self.open = true,
+            "escape" | "tab" if self.open => self.open = false,
+            _ => return,
+        }
+        cx.notify();
+        cx.stop_propagation();
     }
 }
 
@@ -1056,18 +996,7 @@ impl Render for CreateMenu {
             .relative()
             .track_focus(&self.focus)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                match event.keystroke.key.as_str() {
-                    "up" if this.open => this.selected = (this.selected + 2) % 3,
-                    "down" if this.open => this.selected = (this.selected + 1) % 3,
-                    "enter" | "space" if this.open => this.select(window, cx),
-                    "enter" | "space" | "down" => this.open = true,
-                    "escape" | "tab" if this.open => this.open = false,
-                    _ => return,
-                }
-                cx.notify();
-                cx.stop_propagation();
-            }))
+            .on_key_down(cx.listener(Self::key))
             .child(
                 div()
                     .id("automation-create-trigger")
