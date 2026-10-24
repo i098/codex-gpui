@@ -282,6 +282,7 @@ pub struct DiffPanel {
     filter_focus: Option<FocusHandle>,
     scroll: ScrollHandle,
     standalone: bool,
+    container_width: Option<Pixels>,
     base_branch: Option<String>,
     commit: Option<String>,
     cwd: String,
@@ -414,11 +415,19 @@ impl DiffPanel {
             filter_focus: None,
             scroll: ScrollHandle::new(),
             standalone: false,
+            container_width: None,
             base_branch: None,
             commit: None,
             cwd: cwd.to_owned(),
             full_files: false,
             content_generation: 0,
+        }
+    }
+
+    pub fn set_container_width(&mut self, width: Pixels, cx: &mut Context<Self>) {
+        if self.container_width != Some(width) {
+            self.container_width = Some(width);
+            cx.notify();
         }
     }
 
@@ -1171,11 +1180,13 @@ impl Render for DiffPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.request_visible_full_files(cx);
         let t = cx.theme().clone();
-        let width = if self.standalone {
-            window.viewport_size().width
-        } else {
-            panel_width(window, cx) - px(1.)
-        };
+        let width = self.container_width.unwrap_or_else(|| {
+            if self.standalone {
+                window.viewport_size().width
+            } else {
+                panel_width(window, cx) - px(1.)
+            }
+        });
         let wide = width >= px(625.);
         let tree = self.show_tree.then(|| self.file_tree(width, window, cx));
         let code_width = width
@@ -2493,12 +2504,16 @@ fn capsule(t: &Theme, clamped: bool) -> Div {
         ))
 }
 
+pub(crate) fn stats_features(size: f32) -> FontFeatures {
+    let mut features = vec![("tnum".into(), 1), ("cv01".into(), 1), ("cv02".into(), 1)];
+    features.extend(textsys::letter_spacing(-0.025 * size).0.iter().cloned());
+    FontFeatures(Arc::new(features))
+}
+
 /// `+N -M` in git colors, `size` px with `tracking-tight` (-0.025em letter spacing),
 /// `tabular-nums` and `disambiguated-digits` (`cv01`, `cv02`).
 pub fn stats(added: usize, removed: usize, size: f32, t: &Theme) -> Div {
-    let mut features = vec![("tnum".into(), 1), ("cv01".into(), 1), ("cv02".into(), 1)];
-    features.extend(textsys::letter_spacing(-0.025 * size).0.iter().cloned());
-    let features = FontFeatures(Arc::new(features));
+    let features = stats_features(size);
     let tracked =
         |s: String, color: Hsla| text(s, size, size, 430., color).font_features(features.clone());
     div()
