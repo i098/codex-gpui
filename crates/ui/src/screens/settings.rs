@@ -19,8 +19,9 @@ use gpui::{
     Anchor, AnyElement, AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity,
     EventEmitter, FocusHandle, Focusable, Font, FontWeight, Global, HighlightStyle, Hsla,
     InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render,
-    RenderImage, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window,
-    anchored, canvas, deferred, div, font, img, point, prelude::FluentBuilder as _, px, size,
+    RenderImage, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun,
+    Window, anchored, canvas, deferred, div, font, img, point, prelude::FluentBuilder as _, px,
+    size,
 };
 use serde_json::{Value, json};
 use shapes::Corner::{self, Round, Squircle};
@@ -1747,7 +1748,12 @@ fn probe(l: &Layer) -> impl IntoElement {
 
 /// Toolbar `_Button` (`Change`, `View`: `bg-text/5`, transparent 1 px border; `Open System
 /// Settings`: outlined).
-fn button(label: &'static str, fill: Hsla, border: Option<Hsla>, t: &Theme) -> Div {
+pub(crate) fn button(
+    label: impl Into<SharedString>,
+    fill: Hsla,
+    border: Option<Hsla>,
+    t: &Theme,
+) -> Div {
     div()
         .h(px(28.))
         .px(px(9.))

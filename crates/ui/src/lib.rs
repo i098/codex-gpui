@@ -47,6 +47,7 @@ actions!(
         ShowKeyboardShortcuts,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
+        OpenPlugins,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
         OpenMobileSetup,
         /// `⌥⌘B`: show or hide the Changes side panel.
@@ -878,7 +879,10 @@ impl Shell {
                         item("scheduled").on_click(dispatch::<OpenScheduled>),
                         "Scheduled",
                     ))
-                    .child(rail_tip(item("plugins"), "Plugins"))
+                    .child(rail_tip(
+                        item("plugins").on_click(dispatch::<OpenPlugins>),
+                        "Plugins",
+                    ))
                     // Explore has no tooltip; its marker follows the bound destination state.
                     .child(
                         item("explore").when(
