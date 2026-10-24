@@ -277,6 +277,25 @@ Diff code and context rows paint in their own opaque scroll layer, as in the ori
 Failed reads retain the patch and provide Retry.
 Only Staged and Unstaged sources show staging actions. Uncommitted combines both states and does not expose those actions.
 
+Settings > Usage & billing reads plan limits and reset credits from the app-server.
+It keeps the original account gates for credit controls, enterprise usage requests, analytics, and balance history.
+Reset retries keep the same idempotency key; billing changes keep their confirmed state when a request fails.
+An uncertain reset keeps its original credit list until the server confirms the result.
+Account changes clear drafts and reset confirmations before the next control action.
+Analytics refreshes keep the selected period; credit speed groups use the recorded speed.
+The input fields reuse `Composer::settings_field`, including selection, clipboard access, and input methods.
+The renderer paints each limit card within the scroll layer and paints the sticky tabs in a separate layer.
+The sticky fade uses the original compositor layer's pixel origin to preserve gradient dithering.
+Disabled Analytics arrows use their painted bounds for the opacity layer.
+Card contents keep the original rounded overflow clip.
+Thin SVG strokes use Skia's original hairline alpha adjustment before rasterization.
+Run `cargo test -p ui -p app --lib usage` for the protocol and validation checks.
+Run `cargo run -p ui --example usage -- /path/to/usage.png` for the recorded native screen.
+Add `confirm-reset` after the output path to capture the confirmation state without redeeming a reset.
+Add `analytics` or `reset-error` to capture the recorded error states.
+Add `links` to check plan, credit, and billing destinations without opening a browser.
+Add `account-switch` to check that an account change discards the previous reset confirmation.
+
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
 Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
 The app reloads the task list after a successful write and retains the draft if the write fails.
@@ -402,7 +421,7 @@ That command does not close QA or any normal app.
 |---|---|
 | `bridge` | JSON-RPC client for `codex app-server` over stdio or durable cloud WebSocket, protocol types, recorded sessions, and the ACP backend. |
 | `ui` | The window shell (titlebar, navigation rail, sidebar, main panel), the page modules in `screens/`, the composer, the thread view, the diff view and the icons. |
-| `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths. It links Skia. |
+| `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths and circles. It links Skia. |
 | `textsys` | A GPUI text system that puts glyphs on the same pixels as Chromium on macOS. It also holds the vendored `gpui` and `gpui_apple`. |
 | `theme` | Color tokens, metrics and the bundled fonts, extracted from the original renderer CSS. |
 | `parity` | The pixel-parity harness: it renders each screen headless and compares it with the reference screenshot. |
@@ -418,8 +437,8 @@ Opening an unloaded chat reads its history and resumes the thread before showing
 The composer restores that thread's returned model, reasoning effort, and permissions instead of using startup defaults.
 An unset effort stays unset in requests; the picker shows Medium.
 The composer labels modified workspace policies as Custom.
-The default pinned-summary layout hides the thread identity in a single pane.
-Opening a right pane restores the header identity; the toolbar actions stay available.
+A titled thread shows its header identity, also in a single pane.
+An untitled thread shows it only when a right pane is open; the toolbar actions stay available.
 
 `LocalHost` serves `native-desktop-apps` and `native-desktop-app-by-bundle-id` through the desktop fetch boundary.
 On macOS, the adapter reads Spotlight metadata, applies the original app exclusions, and supports usage or display-name ordering.
@@ -510,6 +529,9 @@ An extra layer changes glyph edge bytes even when its opacity is one.
 
 `shapes` links Skia binaries built with Chromium's `SkUserConfig.h` legacy defines.
 `.cargo/config.toml` points `SKIA_BINARIES_URL` to these binaries.
+`skia-hairline-sys` links a narrow C scanner wrapper for Skia revision `61e7ca4e99062cdd0ab69445d5963fb3365778f6`.
+It records the ordered legacy hairline operations that the sprite renderer replays.
+`.cargo/config.toml` points `SKIA_HAIRLINE_BINARIES_URL` and `SKIA_HAIRLINE_PACKAGE_SHA256` to its versioned package.
 
 Raster output buffers stop at the visible viewport.
 Compositor tiles keep their original size, so long scrollers preserve edge rasterization.
@@ -526,6 +548,7 @@ Rasterize these images during paint, when the layer context is available.
 Wrap a sparse viewport layer's decorated subtree in `ui::recorded_bounds`.
 It collects painted bounds, including shadows, without adding an opacity layer.
 The Toaster uses this scope to match Chromium's shifted tile grid and local corner geometry.
+The thread titlebar reports its icon and divider bounds so the tile grid follows painted content, including untitled states.
 
 Wrap a tightly bounded compositor layer in `ui::composited_bounds`.
 It keeps the exact shadow bounds and uses Chromium's dense tile sizes.
@@ -573,6 +596,7 @@ It prints a Markdown table for a PR body.
 | Icon SVGs | `python3 tools/extract/icons.py` | Writes `assets/icons/<name>.svg` from the references. |
 | Icon images | `uv run -p /usr/bin/python3 --with numpy --with pillow tools/icons/build.py` | Fits the per-pixel icon images in `assets/icons/px/` and `tools/icons/check.json`. |
 | Skia binaries | `tools/shapes/skia.sh` | Builds Skia with Chromium's defines and uploads it for `SKIA_BINARIES_URL`. |
+| Hairline scanner package | `tools/shapes/build-skia-hairline.py` | Builds `skia-hairline-sys` against the installed Skia archive twice and writes the versioned package and receipt. |
 
 The labs `tools/shapes/run.sh`, `tools/shapes/blur.sh` and `tools/text/measure.sh` compare shapes, blur and text with Chromium case by case.
 

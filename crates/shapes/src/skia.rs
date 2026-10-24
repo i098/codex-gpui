@@ -13,6 +13,7 @@ use gpui::{
 };
 use image::{ExtendedColorType, ImageEncoder as _, codecs::png::PngEncoder};
 use parking_lot::Mutex;
+use skia_hairline_sys::{Kind as HairlineKind, Operation as HairlineOperation};
 use skia_safe::{
     AlphaType, BlendMode, BlurStyle, Canvas, ClipOp, Color4f, ColorSpace, ColorType,
     ContourMeasureIter, Data, FilterMode, IRect, ImageInfo, MaskFilter, Matrix, MipmapMode, Paint,
@@ -1715,31 +1716,100 @@ pub(crate) fn sprites(
 ) -> Arc<Vec<Sprite>> {
     cached(key, || {
         let (rect, blits) = make();
-        let mut out = Vec::new();
-        for (blit, mode) in [0, 2].into_iter().flat_map(|b| {
-            [
-                MASK,
-                ARGB32,
-                PIPELINE,
-                LAYER,
-                DST_IN,
-                OPACITY,
-                ARGB32_ZERO,
-                FAST_INTERP,
-            ]
-            .map(|m| (b, m))
-        }) {
-            if !blits.iter().any(|b| b[blit + 1] == mode && b[blit] != 0) {
-                continue;
-            }
-            let value = |i: usize| {
-                let b = blits[i];
-                if b[blit + 1] == mode { b[blit] } else { 0 }
-            };
-            chunks(&mut out, rect, &value, mode, None, false);
-        }
-        out
+        sprites_from_blits(rect, &blits)
     })
+}
+
+fn sprites_from_blits(rect: [i32; 4], blits: &[Blits]) -> Vec<Sprite> {
+    let mut out = Vec::new();
+    for (blit, mode) in [0, 2].into_iter().flat_map(|b| {
+        [
+            MASK,
+            ARGB32,
+            PIPELINE,
+            LAYER,
+            DST_IN,
+            OPACITY,
+            ARGB32_ZERO,
+            FAST_INTERP,
+        ]
+        .map(|m| (b, m))
+    }) {
+        if !blits.iter().any(|b| b[blit + 1] == mode && b[blit] != 0) {
+            continue;
+        }
+        let value = |i: usize| {
+            let b = blits[i];
+            if b[blit + 1] == mode { b[blit] } else { 0 }
+        };
+        chunks(&mut out, rect, &value, mode, None, false);
+    }
+    out
+}
+
+fn hairline_sprites(operations: &[HairlineOperation]) -> Vec<Sprite> {
+    let mut out = Vec::new();
+    for operation in operations {
+        assert!(operation.width > 0 && operation.height > 0);
+        hairline_sprite(&mut out, operation);
+    }
+    out
+}
+
+fn hairline_sprite(out: &mut Vec<Sprite>, operation: &HairlineOperation) {
+    let alpha_pair = matches!(
+        operation.kind,
+        HairlineKind::AntiHorizontalPairAlpha | HairlineKind::AntiVerticalPairAlpha
+    );
+    if alpha_pair && (operation.first == 0 || operation.second == 0) {
+        let vertical = operation.kind == HairlineKind::AntiVerticalPairAlpha;
+        for (index, coverage) in [operation.first, operation.second].into_iter().enumerate() {
+            let mode = if coverage == 0 { ARGB32_ZERO } else { ARGB32 };
+            let value = if coverage == 0 { 255 } else { coverage };
+            let (x, y) = if vertical {
+                (operation.x, operation.y + index as i32)
+            } else {
+                (operation.x + index as i32, operation.y)
+            };
+            chunks(out, [x, y, 1, 1], &|_| value, mode, None, false);
+        }
+        return;
+    }
+    let value = |index: usize| hairline_coverage(operation, index);
+    let rect = [operation.x, operation.y, operation.width, operation.height];
+    chunks(
+        out,
+        rect,
+        &value,
+        hairline_mode(operation.kind),
+        None,
+        false,
+    );
+}
+
+fn hairline_mode(kind: HairlineKind) -> u8 {
+    match kind {
+        HairlineKind::Horizontal
+        | HairlineKind::Rectangle
+        | HairlineKind::AntiHorizontalPairAlpha
+        | HairlineKind::AntiVerticalPairAlpha => ARGB32,
+        HairlineKind::Vertical | HairlineKind::AntiHorizontal | HairlineKind::Mask => MASK,
+        HairlineKind::AntiHorizontalPairOpaque | HairlineKind::AntiVerticalPairOpaque => {
+            FAST_INTERP
+        }
+    }
+}
+
+/// Coverage of pixel `index` (row-major); pair operations are always two pixels.
+fn hairline_coverage(operation: &HairlineOperation, index: usize) -> u8 {
+    match operation.kind {
+        HairlineKind::Horizontal | HairlineKind::Rectangle => 255,
+        HairlineKind::Vertical | HairlineKind::AntiHorizontal | HairlineKind::Mask => {
+            operation.first
+        }
+        _ if index == 0 => operation.first,
+        _ => operation.second,
+    }
 }
 
 /// Cuts the coverage `value` of each px of `[x0, y0, w, h]` (row-major) into sprites.
@@ -2272,6 +2342,65 @@ pub(crate) fn paint_horizontal_stripes(
     );
 }
 
+pub(crate) fn paint_vertical_fade(
+    color: Rgba,
+    layer_offset_y: Pixels,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    use skia_safe::{TileMode, gradient};
+    let scale = window.scale_factor();
+    let floor = |value: Pixels| px((f32::from(value) * scale).floor() / scale);
+    let origin = point(floor(bounds.left()), floor(bounds.top() - layer_offset_y));
+    let layer = Layer::new(window, Some(origin)).for_bounds(bounds, scale);
+    let (contour, _) = ops(&Decoration::default(), layer.local(bounds, scale), scale);
+    let bbox = Op::Fill(contour).bbox();
+    if !shown(bbox, layer, window) {
+        return;
+    }
+    let clips = clips(window, layer);
+    let sprites = cached(
+        format!("fade{color:?}{contour:?}{clips:?}{:?}", layer.key(bbox)),
+        || {
+            let colors = [
+                Color4f::new(color.r, color.g, color.b, color.a),
+                Color4f::new(color.r, color.g, color.b, 0.),
+            ];
+            let gradient = gradient::Gradient::new(
+                gradient::Colors::new_evenly_spaced(&colors, TileMode::Clamp, None),
+                gradient::Interpolation {
+                    in_premul: gradient::interpolation::InPremul::Yes,
+                    color_space: gradient::interpolation::ColorSpace::OKLab,
+                    ..Default::default()
+                },
+            );
+            let [x, y, width, height] = contour.rr.r;
+            let shader =
+                gradient::shaders::linear_gradient(((x, y), (x, y + height)), &gradient, None)
+                    .expect("vertical fade shader");
+            let mut paint = Paint::default();
+            paint
+                .set_anti_alias(true)
+                .set_dither(true)
+                .set_shader(shader);
+            composited_sprites(bbox, layer, &|canvas| {
+                for clip in &clips {
+                    clip.clip(canvas, ClipOp::Intersect);
+                }
+                canvas.draw_rect(Rect::from_xywh(x, y, width, height), &paint);
+            })
+        },
+    );
+    paint_sprites(
+        &sprites,
+        gpui::rgb(0xffffff).into(),
+        layer.origin,
+        window,
+        cx,
+    );
+}
+
 // Chromium decodes to the smallest mip that still covers the rounded destination.
 fn image_decode_size(mut source: [i32; 2], target: [f32; 2]) -> Option<[i32; 2]> {
     let target = target.map(|side| side.abs().round() as i32);
@@ -2582,6 +2711,120 @@ impl IconPath {
     }
 }
 
+/// Whether Skia's legacy hairline scanner draws this stroke exactly like the sprite renderer.
+fn hairline_eligible(
+    path: &IconPath,
+    layer: Layer,
+    transformed: bool,
+    wide: bool,
+    clips: &[Contour],
+) -> bool {
+    !transformed
+        && !layer.composited
+        && layer.tile == [TILE; 2]
+        && !wide
+        && clips.is_empty()
+        && matches!(path.stroke, Some((_, PaintCap::Butt, _)))
+}
+
+/// The device origin of a layer tile, if the tile covers any device pixel.
+fn tile_extent(layer: Layer, tile_origin: [i32; 2], tile_size: (i32, i32)) -> Option<[i32; 2]> {
+    let lo = layer.device.map_or(tile_origin, |device| {
+        [tile_origin[0].max(device[0]), tile_origin[1].max(device[1])]
+    });
+    let hi = layer.device.map_or(
+        [tile_origin[0] + tile_size.0, tile_origin[1] + tile_size.1],
+        |device| {
+            [
+                (tile_origin[0] + tile_size.0).min(device[2]),
+                (tile_origin[1] + tile_size.1).min(device[3]),
+            ]
+        },
+    );
+    (hi[0] > lo[0] && hi[1] > lo[1]).then_some(lo)
+}
+
+/// Path space to tile space; `flip` is the icon width of a mirrored (rtl) icon.
+fn hairline_matrix(
+    path: &IconPath,
+    view: &Matrix,
+    origin: [f32; 2],
+    lo: [i32; 2],
+    flip: Option<f64>,
+) -> Matrix {
+    let mut matrix = Matrix::concat(
+        &Matrix::translate((-lo[0] as f32, -lo[1] as f32)),
+        &Matrix::translate((origin[0], origin[1])),
+    );
+    if let Some(width) = flip {
+        matrix = Matrix::concat(&matrix, &Matrix::translate(((width / 2.) as f32, 0.)));
+        matrix = Matrix::concat(
+            &matrix,
+            &Matrix::new_all(-1., 0., 0., 0., 1., 0., 0., 0., 1.),
+        );
+        matrix = Matrix::concat(&matrix, &Matrix::translate((-(width / 2.) as f32, 0.)));
+    }
+    matrix = Matrix::concat(&matrix, view);
+    Matrix::concat(&matrix, &path.transform)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_hairline_operations(
+    path: &IconPath,
+    view: &Matrix,
+    origin: [f32; 2],
+    clip: Rect,
+    bbox: [i32; 4],
+    flip: Option<f64>,
+    alpha: u8,
+    layer: Layer,
+) -> Option<Vec<HairlineOperation>> {
+    let [x0, y0, x1, y1] = layer.clip_bounds(bbox);
+    let mut operations = Vec::new();
+    if x0 >= x1 || y0 >= y1 {
+        return Some(operations);
+    }
+    for (tile_origin, tile_size, [ox0, oy0, ox1, oy1]) in
+        layer.tiles([x0, y0, x1, y1], layer.clamp())
+    {
+        let Some(lo) = tile_extent(layer, tile_origin, tile_size) else {
+            continue;
+        };
+        let scan_clip = [
+            ox0.max(lo[0]).max(clip.left() as i32),
+            oy0.max(lo[1]).max(clip.top() as i32),
+            ox1.min(clip.right() as i32),
+            oy1.min(clip.bottom() as i32),
+        ];
+        if scan_clip[0] >= scan_clip[2] || scan_clip[1] >= scan_clip[3] {
+            continue;
+        }
+        let matrix = hairline_matrix(path, view, origin, lo, flip);
+        let values = std::array::from_fn(|index| matrix[index]);
+        let local_clip = [
+            scan_clip[0] - lo[0],
+            scan_clip[1] - lo[1],
+            scan_clip[2] - lo[0],
+            scan_clip[3] - lo[1],
+        ];
+        let mut tile_operations = unsafe {
+            skia_hairline_sys::scan(
+                // skia-safe's `Path` is `#[repr(transparent)]` over `SkPath` and exposes no raw access.
+                (&path.path as *const Path).cast(),
+                &values,
+                local_clip,
+                alpha,
+            )
+        }?;
+        for operation in &mut tile_operations {
+            operation.x += lo[0];
+            operation.y += lo[1];
+        }
+        operations.extend(tile_operations);
+    }
+    Some(operations)
+}
+
 /// A parsed icon: viewBox and drawables, in document order.
 struct IconSvg {
     view_box: [f32; 4],
@@ -2715,8 +2958,27 @@ fn paint_color(v: &str) -> Option<Option<Rgba>> {
     }
 }
 
-/// The subset of SVG the icon assets use: nested `<g transform>`, `<path>` with fill/stroke
-/// attributes inherited from `<svg>`/`<g>`. `None` for anything else (masks).
+fn circle_path(tag: &str) -> Option<Path> {
+    let scalar = |name| {
+        attr(tag, name)
+            .unwrap_or("0")
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite())
+    };
+    let (x, y, radius) = (scalar("cx")?, scalar("cy")?, scalar("r")?);
+    if radius < 0. {
+        return None;
+    }
+    Some(if radius == 0. {
+        Path::default()
+    } else {
+        Path::circle((x, y), radius, None)
+    })
+}
+
+/// The icon SVG subset: nested transforms, paths and circles, with inherited fill/stroke.
+/// Unsupported shapes and masks return `None` for the platform fallback.
 fn parse_icon(src: &str) -> Option<IconSvg> {
     let mut view_box = None;
     let mut paths = Vec::new();
@@ -2760,11 +3022,15 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
         match name {
             "svg" => view_box = Some(numbers(attr(tag, "viewBox")?)),
             "g" => {}
-            "path" => {
+            "path" | "circle" => {
                 if attr(tag, "mask").is_some() || attr(tag, "clip-path").is_some() {
                     return None;
                 }
-                let mut path = Path::from_svg(attr(tag, "d")?)?;
+                let mut path = if name == "circle" {
+                    circle_path(tag)?
+                } else {
+                    Path::from_svg(attr(tag, "d")?)?
+                };
                 if attr(tag, "fill-rule") == Some("evenodd") {
                     path.set_fill_type(PathFillType::EvenOdd);
                 }
@@ -2805,8 +3071,9 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
                 }
                 continue;
             }
-            "mask" | "clipPath" | "circle" | "rect" | "ellipse" | "line" | "polyline"
-            | "polygon" | "use" => return None,
+            "mask" | "clipPath" | "rect" | "ellipse" | "line" | "polyline" | "polygon" | "use" => {
+                return None;
+            }
             _ => continue,
         }
         if !tag.ends_with('/') {
@@ -2831,7 +3098,6 @@ pub(crate) fn icon_paint_bounds(
     let icon = cached_icon(src, key)?;
     let ink = icon.paint_bounds()?;
     let s = window.scale_factor();
-    let snap = |value: Pixels| f64::from((f32::from(value) * s + 0.5).floor());
     let (w, h) = (
         f64::from(f32::from(bounds.size.width) * s),
         f64::from(f32::from(bounds.size.height) * s),
@@ -2845,13 +3111,14 @@ pub(crate) fn icon_paint_bounds(
     if flip_x {
         (left, right) = (w - right, w - left);
     }
-    let (x, y) = (snap(bounds.left()), snap(bounds.top()));
-    let left = (x + left).floor().max(x);
-    let top = (y + f64::from(ink.top) * scale + ty).floor().max(y);
-    let right = (x + right).ceil().min(snap(bounds.right()));
+    let x = f64::from(f32::from(bounds.left()) * s);
+    let y = f64::from(f32::from(bounds.top()) * s);
+    let left = (x + left).floor().max(x.floor());
+    let top = (y + f64::from(ink.top) * scale + ty).floor().max(y.floor());
+    let right = (x + right).ceil().min((x + w).ceil());
     let bottom = (y + f64::from(ink.bottom) * scale + ty)
         .ceil()
-        .min(snap(bounds.bottom()));
+        .min((y + h).ceil());
     if left >= right || top >= bottom {
         return None;
     }
@@ -3006,13 +3273,26 @@ pub(crate) fn paint_icon(
         let a = alpha_byte(a);
         let black = is_black(color, a);
         let wide = p.color.is_none() && wide(color);
-        let sprites = sprites(
-            format!(
-                "{key}#{n}{flip_x}{clip:?}{w}x{h}{:?}{a}{black}{wide}{clips:?}",
-                layer.key(bbox)
-            ),
-            || raster(bbox, layer, a, black, wide, &clips, &draw),
+        let key = format!(
+            "{key}#{n}{flip_x}{clip:?}{w}x{h}{:?}{a}{black}{wide}{clips:?}",
+            layer.key(bbox)
         );
+        let make = || raster(bbox, layer, a, black, wide, &clips, &draw);
+        let scan = || {
+            let eligible =
+                hairline.is_some() && hairline_eligible(p, layer, transformed, wide, &clips);
+            let flip = flip_x.then_some(w);
+            eligible
+                .then(|| scan_hairline_operations(p, &view, origin, clip, bbox, flip, a, layer))
+                .flatten()
+        };
+        let sprites = cached(key, || match scan() {
+            Some(operations) => hairline_sprites(&operations),
+            None => {
+                let (rect, blits) = make();
+                sprites_from_blits(rect, &blits)
+            }
+        });
         paint_transformed_sprites(&sprites, color, paint_origin, transformation, window, cx);
     }
     true
@@ -3236,6 +3516,7 @@ mod tests {
     }
 
     #[test]
+
     fn horizontal_stripes_keep_fractional_period_and_hard_stop() {
         let colors = [
             Rgba {
@@ -3927,6 +4208,49 @@ mod tests {
             assert_eq!(image.get_pixel(x, y).0, expected, "corner ({x}, {y})");
         }
         Ok(())
+    }
+
+    #[test]
+    fn svg_circle_preserves_native_geometry_and_inherited_paint() {
+        let svg = br##"<svg viewBox="0 0 20 20"><g transform="translate(1.25 2.5)" fill="none" stroke="currentColor" stroke-width="1.33"><circle cx="6.25" cy="7.5" r="2.75"/></g><circle cx="16" cy="5" r="4" fill="#0285ff"/><circle cx="4" cy="4" fill="none" stroke="currentColor" stroke-width="10"/></svg>"##;
+        let background = Color4f::new(24. / 255., 24. / 255., 24. / 255., 1.);
+        let actual = tile_pixels([0, 0], (24, 24), background, |canvas| {
+            assert!(draw_icon(
+                canvas,
+                svg,
+                "circle-geometry-regression",
+                Bounds::new(point(px(0.), px(0.)), size(px(20.), px(20.))),
+                gpui::white(),
+                1.,
+            ));
+        });
+        let expected = tile_pixels([0, 0], (24, 24), background, |canvas| {
+            canvas.clip_rect(Rect::new(0., 0., 20., 20.), ClipOp::Intersect, true);
+            let mut stroke = fill_paint(Color4f::new(1., 1., 1., 1.));
+            stroke.set_style(PaintStyle::Stroke).set_stroke_width(1.33);
+            // Preserve the group's CTM: baking translation into the center changes Skia's raster.
+            canvas.save();
+            canvas.translate((1.25, 2.5));
+            canvas.draw_circle((6.25, 7.5), 2.75, &stroke);
+            canvas.restore();
+            canvas.draw_circle(
+                (16., 5.),
+                4.,
+                &fill_paint(Color4f::new(2. / 255., 133. / 255., 1., 1.)),
+            );
+        });
+        assert!(
+            actual.0 == expected.0,
+            "SVG circle pixels must match native Skia circles"
+        );
+        for radius in ["-1", "NaN"] {
+            assert!(
+                parse_icon(&format!(
+                    r#"<svg viewBox="0 0 20 20"><circle r="{radius}"/></svg>"#
+                ))
+                .is_none()
+            );
+        }
     }
 
     #[test]

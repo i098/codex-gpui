@@ -21,6 +21,7 @@ mod section_actions;
 mod settings_subtrees;
 mod signin;
 pub mod updater;
+mod usage;
 mod window_shell;
 pub mod windows;
 
@@ -485,6 +486,7 @@ impl Root {
             }
         }
         let this = cx.weak_entity();
+        usage::install(this.clone(), cx);
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
             available: cfg!(target_os = "macos") && !bridge.is_acp(),
@@ -1058,6 +1060,7 @@ impl Root {
         self.host = host;
         self.bind_context_files(cx);
         self.reset_pull_requests(cx);
+        usage::invalidate(cx);
         self.automations = None;
         self.load_projects(cx);
         if self.ready && !self.signed_out() {
@@ -4468,6 +4471,7 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        usage::on_event(&event, cx);
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             return;
