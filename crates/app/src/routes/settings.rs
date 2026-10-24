@@ -7,6 +7,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.navigate(Route::Settings, window, cx)
         }),
     )
+    .on_action(cx.listener(
+        |this, action: &settings::usage::analytics::OpenChat, window, cx| {
+            this.navigate(Route::Thread(action.0.clone()), window, cx);
+        },
+    ))
     .on_action(cx.listener(Root::open_settings_subtree))
     .on_action(cx.listener(Root::open_settings_parent))
     .on_action(cx.listener(|this, _: &LogOut, window, cx| {

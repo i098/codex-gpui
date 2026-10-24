@@ -5219,6 +5219,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
+ "skia-hairline-sys",
  "skia-safe",
  "textsys",
 ]
@@ -5291,6 +5292,10 @@ dependencies = [
  "tar",
  "toml 1.1.8+spec-1.1.0",
 ]
+
+[[package]]
+name = "skia-hairline-sys"
+version = "0.1.0"
 
 [[package]]
 name = "skia-safe"

@@ -684,7 +684,10 @@ impl Composer {
                             self.content.is_empty() && self.embedded_field.is_none(),
                             |d| d.opacity(0.5),
                         )
-                        .when(self.plain_field != Some(true), |d| d.layer())
+                        .when(
+                            self.embedded_field.is_none() && self.plain_field != Some(true),
+                            |d| d.layer(),
+                        )
                     })
                     .child(Editor(cx.entity())),
             )
@@ -775,6 +778,7 @@ impl EntityInputHandler for Composer {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.cancel_dictation(cx);
         let single_line;
         let new_text = if self.plain_field == Some(false) && new_text.contains(['\n', '\r']) {
             single_line = new_text.replace(['\n', '\r'], "");
@@ -909,7 +913,17 @@ pub(super) fn shape(
         .collect::<Vec<_>>();
     window
         .text_system()
-        .shape_text(s.into(), composer.editor_font_size(), &runs, width, None)
+        .shape_text(
+            s.into(),
+            composer.editor_font_size(),
+            &runs,
+            if composer.embedded_field.is_some() {
+                None
+            } else {
+                width
+            },
+            None,
+        )
         .map(|lines| lines.into_iter().collect())
         .unwrap_or_default()
 }
@@ -980,6 +994,13 @@ impl gpui::Element for Editor {
         let collapse = |w: f32| (w <= SM_WIDTH, w <= XS_WIDTH);
         let changed = self.0.update(cx, |c, _| {
             c.lines = lines;
+            let mut bounds = bounds;
+            if c.embedded_field.is_some() {
+                let cursor = c
+                    .point_for_index(c.cursor())
+                    .map_or(px(0.), |point| point.x);
+                bounds.origin.x -= (cursor - bounds.size.width + px(2.)).max(px(0.));
+            }
             c.bounds = Some(bounds);
             collapse(std::mem::replace(&mut c.footer_width, width)) != collapse(width)
         });
@@ -1004,6 +1025,11 @@ impl gpui::Element for Editor {
         let selection_color = cx.theme().text_selection;
         let c = self.0.read(cx);
         let caret_color = c.field_text.unwrap_or(cx.theme().text);
+        let bounds = if c.embedded_field.is_some() {
+            c.bounds.unwrap_or(bounds)
+        } else {
+            bounds
+        };
         let line_height = c.editor_line_height();
         if !c.selected_range.is_empty()
             && let (Some(a), Some(b)) = (
