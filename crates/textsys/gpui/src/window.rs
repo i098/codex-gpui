@@ -5546,6 +5546,13 @@ impl Window {
         bounds
     }
 
+    pub(crate) fn layout_scroll_max(&self, layout_id: LayoutId) -> Point<Pixels> {
+        self.layout_engine
+            .as_ref()
+            .unwrap()
+            .scroll_max_offset(layout_id, self.scale_factor())
+    }
+
     /// The unsnapped minus the snapped x of the layout's origin (`layout_bounds` snaps it to
     /// device pixels): add it to the x where an element paints text, as Blink paints glyphs at
     /// the fractional LayoutUnit x. Call during prepaint or paint, with the id `request_layout`

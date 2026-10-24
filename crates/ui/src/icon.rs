@@ -38,6 +38,7 @@ pub fn icon_sized(name: &str, width: f32, height: f32, color: Hsla) -> Icon {
         composited: None,
         own_layer: false,
         runtime: false,
+        saved_opacity: None,
         transformation: None,
         interactivity: Interactivity::new(),
     }
@@ -56,6 +57,7 @@ pub struct Icon {
     composited: Option<Point<Pixels>>,
     own_layer: bool,
     runtime: bool,
+    saved_opacity: Option<u8>,
     transformation: Option<Transformation>,
     interactivity: Interactivity,
 }
@@ -93,10 +95,29 @@ impl Icon {
         self
     }
 
+    /// Applies CSS opacity to the SVG's painted bounds, preserving its fill and stroke composition.
+    pub fn saved_opacity(mut self, alpha: u8) -> Self {
+        self.saved_opacity = Some(alpha);
+        self.runtime = true;
+        self
+    }
     /// Transforms the rendered icon without changing its layout or hitbox.
     pub fn with_transformation(mut self, transformation: Transformation) -> Self {
         self.transformation = Some(transformation);
         self
+    }
+}
+
+fn with_saved_opacity<R>(
+    alpha: Option<u8>,
+    bounds: Option<Bounds<Pixels>>,
+    window: &mut Window,
+    paint: impl FnOnce(&mut Window) -> R,
+) -> R {
+    match (alpha, bounds) {
+        (Some(alpha), Some(bounds)) => shapes::with_layer(alpha, bounds, window, paint),
+        (Some(alpha), None) => window.with_skia_layer(alpha, paint),
+        (None, _) => paint(window),
     }
 }
 
@@ -127,7 +148,7 @@ fn color_key(color: Hsla) -> String {
 }
 
 impl Element for Icon {
-    type RequestLayoutState = ();
+    type RequestLayoutState = LayoutId;
     type PrepaintState = Option<Hitbox>;
 
     fn id(&self) -> Option<ElementId> {
@@ -144,7 +165,7 @@ impl Element for Icon {
         inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
-    ) -> (LayoutId, ()) {
+    ) -> (LayoutId, LayoutId) {
         let layout_id = self.interactivity.request_layout(
             global_id,
             inspector_id,
@@ -152,7 +173,7 @@ impl Element for Icon {
             cx,
             |style, window, cx| window.request_layout(style, None, cx),
         );
-        (layout_id, ())
+        (layout_id, layout_id)
     }
 
     fn prepaint(
@@ -160,10 +181,20 @@ impl Element for Icon {
         global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut (),
+        _: &mut LayoutId,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Hitbox> {
+        // The raster box `paint` uses: the svg origin snapped to the device px (half up), its
+        // size rounded up to whole device px.
+        let scale = window.scale_factor();
+        let snap = |v: Pixels| px((f32::from(v) * scale + 0.5).floor() / scale);
+        let up = |v: f32| px((v * scale).ceil() / scale);
+        let origin = point(snap(bounds.origin.x), snap(bounds.origin.y));
+        shapes::record_painted(
+            Bounds::new(origin, size(up(self.width), up(self.height))),
+            window,
+        );
         self.interactivity.prepaint(
             global_id,
             inspector_id,
@@ -180,7 +211,7 @@ impl Element for Icon {
         global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut (),
+        layout_id: &mut LayoutId,
         hitbox: &mut Option<Hitbox>,
         window: &mut Window,
         cx: &mut App,
@@ -189,8 +220,14 @@ impl Element for Icon {
         let opacity = self.interactivity.base_style.opacity.take().unwrap_or(1.);
         let (name, flip_x, own_layer) = (self.name.clone(), self.flip_x, self.own_layer);
         let (composited, runtime) = (self.composited, self.runtime);
+        let saved_opacity = self.saved_opacity;
         let transformation = self.transformation;
         let css = size(px(self.width), px(self.height));
+        let mut ink_bounds = Bounds::new(bounds.origin, css);
+        if saved_opacity.is_some() {
+            ink_bounds.origin.x += window.layout_origin_residual_x(*layout_id);
+            ink_bounds.origin.y += window.layout_origin_residual_y(*layout_id);
+        }
         self.interactivity.paint(
             global_id,
             inspector_id,
@@ -238,30 +275,38 @@ impl Element for Icon {
                 let path = format!("icons/{name}.svg");
                 if let Ok(Some(src)) = cx.asset_source().load(&path) {
                     let layer = composited.or(own_layer.then_some(bounds.origin));
-                    let painted = if transformation.is_some() {
-                        shapes::paint_icon_transformed(
-                            &src,
-                            &path,
-                            Bounds::new(bounds.origin, css),
-                            flip_x,
-                            color,
-                            layer,
-                            transform,
-                            window,
-                            cx,
-                        )
-                    } else {
-                        shapes::paint_icon(
-                            &src,
-                            &path,
-                            Bounds::new(bounds.origin, css),
-                            flip_x,
-                            color,
-                            layer,
-                            window,
-                            cx,
-                        )
+                    let paint = |window: &mut Window, cx: &mut App| {
+                        if transformation.is_some() {
+                            shapes::paint_icon_transformed(
+                                &src,
+                                &path,
+                                Bounds::new(bounds.origin, css),
+                                flip_x,
+                                color,
+                                layer,
+                                transform,
+                                window,
+                                cx,
+                            )
+                        } else {
+                            shapes::paint_icon(
+                                &src,
+                                &path,
+                                Bounds::new(bounds.origin, css),
+                                flip_x,
+                                color,
+                                layer,
+                                window,
+                                cx,
+                            )
+                        }
                     };
+                    let ink = saved_opacity.map(|_| {
+                        shapes::icon_paint_bounds(&src, &path, ink_bounds, flip_x, window)
+                            .unwrap_or(bounds)
+                    });
+                    let painted =
+                        with_saved_opacity(saved_opacity, ink, window, |window| paint(window, cx));
                     if painted {
                         return;
                     }
@@ -274,9 +319,10 @@ impl Element for Icon {
                         .scale(size(-1., 1.))
                         .translate(center.scale(-scale));
                 }
-                window
-                    .paint_svg(bounds, path.into(), None, matrix, color, cx)
-                    .ok();
+                let paint = |window: &mut Window| {
+                    window.paint_svg(bounds, path.into(), None, matrix, color, cx)
+                };
+                with_saved_opacity(saved_opacity, None, window, paint).ok();
             },
         )
     }
@@ -311,6 +357,7 @@ impl InteractiveElement for Icon {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+    use gpui::prelude::FluentBuilder as _;
     use gpui::{
         AppContext as _, HeadlessAppContext, ParentElement, Render, Transformation, div, rgb, rgba,
         svg,
@@ -482,6 +529,68 @@ mod tests {
             "total"
         );
         assert_eq!(a, 0, "icons differ from Chromium");
+    }
+
+    struct RecordedIcon(bool);
+
+    impl Render for RecordedIcon {
+        fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            let content = div()
+                .size_full()
+                .when(self.0, |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .left(px(116.))
+                            .top(px(12.))
+                            .w(px(1.))
+                            .h(px(20.))
+                            .child(shapes::decoration(shapes::Decoration {
+                                fill: Some(gpui::white()),
+                                ..Default::default()
+                            })),
+                    )
+                })
+                .child(
+                    icon("thread-summary", 16., rgba(0xffffff7f).into())
+                        .runtime()
+                        .absolute()
+                        .left(px(985.))
+                        .top(px(14.)),
+                );
+            div().size_full().bg(rgb(0x242424)).child(
+                div()
+                    .absolute()
+                    .left(px(224.))
+                    .right_0()
+                    .h(px(44.))
+                    .layer()
+                    .child(crate::recorded_bounds(content)),
+            )
+        }
+    }
+
+    #[test]
+    fn recorded_children_set_the_icon_raster_grid() -> anyhow::Result<()> {
+        let mut cx = HeadlessAppContext::with_platform(
+            Arc::new(gpui::NoopTextSystem::new()),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        // Original Chrome 155: the same path differs when earlier paint extends its recording.
+        for (leading, expected) in [(false, 51), (true, 52)] {
+            let window = cx.open_window(size(px(1280.), px(60.)), |_, cx| {
+                cx.new(|_| RecordedIcon(leading))
+            })?;
+            cx.run_until_parked();
+            let image = cx.capture_screenshot(window.into())?;
+            assert_eq!(
+                image.get_pixel(2429, 33).0,
+                [expected, expected, expected, 255]
+            );
+            cx.update_window(window.into(), |_, window, _| window.remove_window())?;
+        }
+        Ok(())
     }
 
     struct RotatingIcon(f32);
