@@ -540,6 +540,7 @@ impl Composer {
 
     /// Removes the command token (and a submenu's query) and returns focus to the editor.
     fn finish_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_dictation(cx);
         self.splice(self.slash.range.clone(), "");
         self.selected_range = self.slash.range.start..self.slash.range.start;
         self.marked_range = None;
@@ -606,6 +607,7 @@ impl Composer {
     /// Enter on a submenu command: the token becomes `/id `, the caret follows it, and the
     /// text typed next filters the rows. The rest of the draft stays as it is.
     fn open_sub(&mut self, id: &'static str, cx: &mut Context<Self>) {
+        self.cancel_dictation(cx);
         let start = self.slash.range.start;
         let token = format!("/{id} ");
         self.splice(self.slash.range.clone(), &token);

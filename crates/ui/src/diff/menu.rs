@@ -142,7 +142,7 @@ impl DiffPanel {
                 ),
                 Kind::Header => match index {
                     0 => ("Copy path", true),
-                    1 => ("Open in editor", true),
+                    1 => ("Open in editor", !self.workspace.is_empty()),
                     2 => (
                         if self.files[self.menu.as_ref().unwrap().file].open {
                             "Collapse file"

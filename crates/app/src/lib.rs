@@ -6,6 +6,7 @@
 mod cloud_task;
 pub use cloud_task::parse_task_response;
 pub mod computer_use_requests;
+mod destinations;
 pub mod diff_content;
 mod features;
 pub mod host;
@@ -15,11 +16,13 @@ mod personalization;
 pub mod qa;
 mod routes;
 pub use routes::Route;
+mod plugins;
 mod search;
 mod section_actions;
 mod settings_subtrees;
 mod signin;
 pub mod updater;
+mod usage;
 mod window_shell;
 pub mod windows;
 
@@ -382,6 +385,7 @@ pub struct Root {
     /// The Mobile route's setup page.
     mobile_page: Option<Entity<mobile::MobileSetupPage>>,
     cloud: Option<cloud_task::Session>,
+    plugins_page: Option<Entity<ui::screens::plugins::Page>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
@@ -391,6 +395,7 @@ pub struct Root {
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     dialog: Option<Entity<Dialog>>,
+    automation_editor: Option<Entity<automations::editor::Editor>>,
     /// The open dialog came from the composer: its close returns focus there.
     dialog_to_composer: bool,
     /// Signed out: replaces the whole window.
@@ -403,6 +408,8 @@ pub struct Root {
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
     project_load: Option<Task<()>>,
+    destination_load: Option<Task<()>>,
+    unread_destinations: Option<Arc<[SharedString]>>,
     picking_project: bool,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
@@ -484,6 +491,7 @@ impl Root {
             }
         }
         let this = cx.weak_entity();
+        usage::install(this.clone(), cx);
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
             available: cfg!(target_os = "macos") && !bridge.is_acp(),
@@ -630,13 +638,16 @@ impl Root {
         .detach();
         cx.observe_window_appearance(window, |this, window, cx| this.apply_theme(window, cx))
             .detach();
-        if qa::ENABLED {
-            // ponytail: defer used sessions until manual close; prove state restoration before relaxing this guard.
-            cx.observe_window_activation(window, |this, window, _| {
-                this.qa_work_started |= window.is_window_active();
-            })
-            .detach();
-        }
+        cx.observe_window_activation(window, |this, window, cx| {
+            let active = window.is_window_active();
+            if qa::ENABLED {
+                this.qa_work_started |= active;
+            }
+            if active && this.ready && !this.signed_out() {
+                this.load_destinations(cx);
+            }
+        })
+        .detach();
         let _events = cx.spawn(async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 if this
@@ -679,6 +690,7 @@ impl Root {
             archive_page: None,
             mobile_page: None,
             cloud: None,
+            plugins_page: None,
             settings_section: None,
             settings_page: None,
             writing_dialog_preference: None,
@@ -686,6 +698,7 @@ impl Root {
             workspace: cx.new(workspace::Workspace::new),
             command_menu: None,
             dialog: None,
+            automation_editor: None,
             dialog_to_composer: false,
             login: None,
             logout_pending: false,
@@ -702,6 +715,8 @@ impl Root {
             automation_load: None,
             running_automations: HashSet::new(),
             project_load: None,
+            destination_load: None,
+            unread_destinations: None,
             picking_project: false,
             automation_updates: HashMap::new(),
             suggestion_load: None,
@@ -936,6 +951,7 @@ impl Root {
                 .iter()
                 .all(|thread| thread.status != ThreadStatus::Active)
             && self.dialog.is_none()
+            && self.automation_editor.is_none()
             && self.command_menu.is_none()
             && self.approvals.is_empty()
             && self.automation_load.is_none()
@@ -1035,7 +1051,10 @@ impl Root {
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
         self.cloud = None;
         self.automation_load = None;
+        self.automation_editor = None;
         self.project_load = None;
+        self.destination_load = None;
+        self.set_unread_destinations(None, cx);
         self.suggestion_load = None;
         self.git_status_load = None;
         self.automation_updates.clear();
@@ -1049,8 +1068,12 @@ impl Root {
         }
         self.host = host;
         self.bind_context_files(cx);
+        usage::invalidate(cx);
         self.automations = None;
         self.load_projects(cx);
+        if self.ready && !self.signed_out() {
+            self.load_destinations(cx);
+        }
         if self.scheduled_route() {
             self.load_automations(cx);
             self.load_suggestions(cx);
@@ -2139,6 +2162,7 @@ impl Root {
             || keystroke.modifiers.platform
             || keystroke.modifiers.control
             || self.dialog.is_some()
+            || self.automation_editor.is_some()
             || self.command_menu.is_some()
             || route_focus == self.focus
             || in_popover
@@ -2329,7 +2353,7 @@ impl Root {
             .collect();
         let params = json!({"name": name, "prompt": prompt, "rrule": rrule, "cwds": [self.cwd]});
         let write = cx.background_spawn(async move {
-            host.fetch(&host::Request::post("create-automation", Some(params)))
+            host.fetch(&host::Request::post("automation-create", Some(params)))
                 .and_then(|response| host::json_body(&response))
         });
         cx.spawn_in(window, async move |this, cx| {
@@ -2352,8 +2376,105 @@ impl Root {
         .detach();
     }
 
+    fn edit_automation(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        if self.automation_editor.is_some() || self.dialog.is_some() {
+            return;
+        }
+        let item = id.as_ref().and_then(|id| {
+            self.automations.as_ref()?.as_ref().ok()?["items"]
+                .as_array()?
+                .iter()
+                .find(|item| item["id"] == *id)
+                .cloned()
+        });
+        if id.is_some() && item.is_none() {
+            self.toast(Toast::danger("Task details could not be loaded"), cx);
+            return;
+        }
+        let editor = cx.new(|cx| automations::editor::Editor::new(item.as_ref(), cx));
+        cx.subscribe_in(
+            &editor,
+            window,
+            move |this, editor, outcome, window, cx| match outcome {
+                automations::editor::Outcome::Dismiss => {
+                    this.automation_editor = None;
+                    window.focus(&this.focus, cx);
+                    cx.notify();
+                }
+                automations::editor::Outcome::Save(draft) => {
+                    let mut body =
+                        json!({"name": draft.name, "prompt": draft.prompt, "rrule": draft.rrule});
+                    let endpoint = if let Some(id) = &id {
+                        body["id"] = json!(id);
+                        body["status"] = item.as_ref().unwrap()["status"].clone();
+                        "automation-update"
+                    } else {
+                        body["cwds"] = json!([this.cwd]);
+                        "automation-create"
+                    };
+                    let host = this.host.clone();
+                    let write = cx.background_spawn(async move {
+                        let response = host::json_body(
+                            &host.fetch(&host::Request::post(endpoint, Some(body)))?,
+                        )?;
+                        serde_json::from_value::<automations::Task>(response["item"].clone())?;
+                        Ok::<_, anyhow::Error>(response["item"].clone())
+                    });
+                    let editor = editor.clone();
+                    cx.spawn_in(window, async move |this, cx| {
+                        let result = write.await;
+                        this.update_in(cx, |this, window, cx| {
+                            if this.automation_editor.as_ref() != Some(&editor) {
+                                return;
+                            }
+                            match result {
+                                Ok(item) => this.finish_automation_save(item, window, cx),
+                                Err(error) => editor.update(cx, |editor, cx| {
+                                    editor.failed(format!("Couldn’t save task: {error}"), cx)
+                                }),
+                            }
+                            cx.notify();
+                        })
+                        .ok();
+                    })
+                    .detach();
+                }
+            },
+        )
+        .detach();
+        window.focus(&editor.focus_handle(cx), cx);
+        self.automation_editor = Some(editor);
+        cx.notify();
+    }
+
+    fn finish_automation_save(&mut self, item: Value, window: &mut Window, cx: &mut Context<Self>) {
+        self.automation_editor = None;
+        window.focus(&self.focus, cx);
+        if let Some(Ok(list)) = &mut self.automations
+            && let Some(items) = list["items"].as_array_mut()
+        {
+            if let Some(stored) = items.iter_mut().find(|v| v["id"] == item["id"]) {
+                *stored = item.clone();
+            } else {
+                items.push(item.clone());
+            }
+        }
+        let route = Route::Automation(item["id"].as_str().unwrap().to_owned());
+        if self.state.route == route {
+            self.sync(window, cx);
+        } else {
+            self.navigate(route, window, cx);
+        }
+        self.load_automations(cx);
+        self.toast(Toast::success("Successfully saved scheduled task"), cx);
+    }
+
+    pub fn automation_editor(&self) -> Option<&Entity<automations::editor::Editor>> {
+        self.automation_editor.as_ref()
+    }
+
     fn show_dialog(&mut self, dialog: Entity<Dialog>, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dialog.is_some() {
+        if self.dialog.is_some() || self.automation_editor.is_some() {
             return;
         }
         self.command_menu = None;
@@ -2565,6 +2686,7 @@ impl Root {
                             .detach();
                         this.command_menu = None;
                         this.dialog = None;
+                        this.automation_editor = None;
                         this.thread = None;
                         this.diff = None;
                         this.file = None;
@@ -2614,7 +2736,7 @@ impl Root {
     /// `⌘W`: Electron main runs `closeTab` (`close-active-app-shell-tab`) while the thread
     /// route's panel shows a tab, else the window closes.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dialog.is_some() {
+        if self.dialog.is_some() || self.automation_editor.is_some() {
             return;
         }
         if self.instructions_changed(cx) {
@@ -4520,6 +4642,8 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        self.plugins_event(&event, cx);
+        usage::on_event(&event, cx);
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             return;
@@ -4583,6 +4707,16 @@ impl Root {
         }
         match event {
             Event::Notification { method, params } => match method.as_str() {
+                "account/updated" if self.ready => {
+                    self.destination_load = None;
+                    self.set_unread_destinations(None, cx);
+                    self.read_account(cx);
+                }
+                "mcpServer/startupStatus/updated" | "mcpServer/oauthLogin/completed"
+                    if self.ready && !self.signed_out() =>
+                {
+                    self.load_destinations(cx);
+                }
                 "thread/started" if params["thread"]["ephemeral"] != true => {
                     if let Ok(n) = serde_json::from_value::<ThreadStartedNotification>(params) {
                         self.add_thread(&n.thread, cx);
@@ -4714,6 +4848,12 @@ impl Root {
             view.update(cx, |view, cx| {
                 view.set_usage_limit_notice(self.usage_limit_notice, cx)
             });
+        }
+        if account.is_some_and(|account| account.account.is_some()) {
+            self.load_destinations(cx);
+        } else {
+            self.destination_load = None;
+            self.set_unread_destinations(None, cx);
         }
     }
 
@@ -5590,7 +5730,8 @@ impl Render for Root {
             }))
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
-            .children(self.dialog.clone());
+            .children(self.dialog.clone())
+            .children(self.automation_editor.clone());
         let root = routes::actions(root, cx);
         native_menus::actions(
             section_actions::actions(features::actions(root, cx), cx),

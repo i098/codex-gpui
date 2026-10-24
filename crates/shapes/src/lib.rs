@@ -164,6 +164,16 @@ pub struct Decoration {
     pub shadows: Vec<Shadow>,
 }
 
+/// Reports a box that something other than a decoration paints (an icon's raster box, a
+/// quad) into the [`recorded_bounds`] being collected, as cc's recorded bounds cover every
+/// painted op. Outside a collection it does nothing.
+pub fn record_painted(bounds: Bounds<Pixels>, window: &Window) {
+    #[cfg(target_os = "macos")]
+    skia::record_decoration(&Decoration::default(), bounds, window);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (bounds, window);
+}
+
 /// An element covering its parent's box that paints `d`.
 pub fn decoration(d: Decoration) -> impl IntoElement {
     translated_decoration(d, Point::default())
@@ -225,6 +235,104 @@ pub fn paint(
     }
 }
 
+/// [`paint`] for a fill-only `d` under CSS `transform: scale(factor)`. Blink paints the snapped
+/// box in its local space and scales it about its transform origin, 50% of the layout box
+/// (`size`, the authored size: `bounds` arrive snapped) from the snapped paint offset, so the
+/// drawn edges keep the scaled fraction.
+pub fn paint_scaled(
+    d: &Decoration,
+    layer: Option<Point<Pixels>>,
+    bounds: Bounds<Pixels>,
+    size: gpui::Size<Pixels>,
+    factor: f32,
+    window: &mut Window,
+    cx: &App,
+) {
+    #[cfg(target_os = "macos")]
+    skia::paint_scaled(d, layer, bounds, size, factor, window, cx);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (cx, layer, size);
+        let c = bounds.center();
+        let r = [
+            bounds.left(),
+            bounds.top(),
+            bounds.size.width,
+            bounds.size.height,
+        ]
+        .map(f32::from);
+        let [l, t, w, h] = scaled_rect(r, [c.x, c.y].map(f32::from), factor).map(gpui::px);
+        quads(d, Bounds::new(gpui::point(l, t), gpui::size(w, h)), window);
+    }
+}
+
+/// `r` (`[left, top, width, height]`, device px) under `scale(factor)` about `origin`.
+fn scaled_rect(r: [f32; 4], origin: [f32; 2], factor: f32) -> [f32; 4] {
+    let [l, t, w, h] = r;
+    let [x, y] = origin;
+    [
+        x + (l - x) * factor,
+        y + (t - y) * factor,
+        w * factor,
+        h * factor,
+    ]
+}
+
+/// Fills a canvas rounded rectangle without snapping its bounds to device pixels.
+/// The radius must be finite and nonnegative; it is constrained to half the shorter side.
+/// macOS uses Skia; other platforms use GPUI's fractional path renderer.
+pub fn paint_canvas_round_rect(
+    radius: Pixels,
+    color: Hsla,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    assert!(f32::from(radius).is_finite() && radius >= gpui::px(0.));
+    if bounds.is_empty() {
+        return;
+    }
+    let radius = radius
+        .min(bounds.size.width / 2.)
+        .min(bounds.size.height / 2.);
+    #[cfg(target_os = "macos")]
+    skia::paint_canvas_round_rect(radius, color, bounds, window, cx);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = cx;
+        window.paint_path(canvas_round_rect_path(bounds, radius), color);
+    }
+}
+
+#[cfg(any(not(target_os = "macos"), test))]
+fn canvas_round_rect_path(bounds: Bounds<Pixels>, radius: Pixels) -> gpui::Path<Pixels> {
+    use gpui::{PathBuilder, point, px};
+    let (left, top, right, bottom) = (bounds.left(), bounds.top(), bounds.right(), bounds.bottom());
+    let mut path = PathBuilder::fill();
+    path.move_to(point(left + radius, top));
+    for (edge, corner) in [
+        (point(right - radius, top), point(right, top + radius)),
+        (point(right, bottom - radius), point(right - radius, bottom)),
+        (point(left + radius, bottom), point(left, bottom - radius)),
+        (point(left, top + radius), point(left + radius, top)),
+    ] {
+        path.line_to(edge);
+        path.arc_to(point(radius, radius), px(0.), false, true, corner);
+    }
+    path.close();
+    path.build().expect("valid canvas rounded rectangle")
+}
+
+#[test]
+fn canvas_path_preserves_fractional_bounds() {
+    use gpui::{point, px, size};
+    for radius in [0., 1.5] {
+        let bounds = Bounds::new(point(px(10.25), px(20.125)), size(px(3.), px(13.375)));
+        let path = canvas_round_rect_path(bounds, px(radius));
+        assert_eq!(path.bounds, bounds);
+    }
+}
+
 /// Paints a repeating two-color Lab gradient with a hard stop halfway through each CSS-pixel period.
 /// Colors retain their unrounded sRGB channels. The period must be finite and positive.
 pub fn paint_horizontal_stripes(
@@ -254,6 +362,95 @@ pub fn paint_horizontal_stripes(
             ));
             index ^= 1;
             top += half;
+        }
+    }
+}
+
+/// Draws a vertical color-to-transparent fade in its compositor layer's raster coordinates.
+/// The fade must share the layer's left edge; `layer_offset_y` is its distance below the layer top.
+/// For example, `vertical_fade(color, px(56.))` follows a 56 px sticky toolbar.
+/// macOS preserves the original dithering; other platforms use the native gradient.
+pub fn vertical_fade(color: Hsla, layer_offset_y: Pixels) -> impl IntoElement {
+    VerticalFade {
+        color,
+        layer_offset_y,
+    }
+}
+
+struct VerticalFade {
+    color: Hsla,
+    layer_offset_y: Pixels,
+}
+
+impl IntoElement for VerticalFade {
+    type Element = Self;
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl gpui::Element for VerticalFade {
+    type RequestLayoutState = gpui::LayoutId;
+    type PrepaintState = Bounds<Pixels>;
+
+    fn id(&self) -> Option<gpui::ElementId> {
+        None
+    }
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+        let (id, _) = gpui::div()
+            .absolute()
+            .size_full()
+            .request_layout(None, None, window, cx);
+        (id, id)
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        mut bounds: Bounds<Pixels>,
+        id: &mut gpui::LayoutId,
+        window: &mut Window,
+        _: &mut App,
+    ) -> Bounds<Pixels> {
+        bounds.origin.x += window.layout_origin_residual_x(*id);
+        bounds.origin.y += window.layout_origin_residual_y(*id);
+        bounds
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&gpui::GlobalElementId>,
+        _: Option<&gpui::InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut gpui::LayoutId,
+        bounds: &mut Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        #[cfg(target_os = "macos")]
+        skia::paint_vertical_fade(self.color.into(), self.layer_offset_y, *bounds, window, cx);
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (cx, self.layer_offset_y);
+            window.paint_quad(gpui::fill(
+                *bounds,
+                gpui::linear_gradient(
+                    180.,
+                    gpui::linear_color_stop(self.color, 0.),
+                    gpui::linear_color_stop(self.color.opacity(0.), 1.),
+                ),
+            ));
         }
     }
 }
@@ -449,6 +646,27 @@ pub fn with_rounded_clip<R>(
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (radius, corner, bounds, layers);
+        paint(window)
+    }
+}
+
+/// Runs `paint` inside an anti-aliased rounded rectangle at `bounds`' unsnapped device
+/// geometry, as Skia clips by a `clip-path: inset(.. round radius)` (Blink does not snap it)
+/// the boxes that do snap to whole px: at a fractional edge the box's last px row blends at the
+/// clip's coverage, and the corners follow the clip's arcs. As `with_rounded_clip` with
+/// `layers: false`, what `paint` paints in nested layers rasters without it. macOS only;
+/// elsewhere `paint` just runs.
+pub fn with_unsnapped_clip<R>(
+    bounds: Bounds<Pixels>,
+    radius: Corners<Pixels>,
+    window: &mut Window,
+    paint: impl FnOnce(&mut Window) -> R,
+) -> R {
+    #[cfg(target_os = "macos")]
+    return skia::with_unsnapped_clip(bounds, radius, window, paint);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (bounds, radius);
         paint(window)
     }
 }
@@ -712,5 +930,26 @@ fn quads(d: &Decoration, bounds: Bounds<Pixels>, window: &mut Window) {
                 BorderStyle::Solid
             },
         ));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::scaled_rect;
+
+    #[test]
+    fn scaled_rect_keeps_blink_transform_origin_fraction() {
+        // The Explore dot at 110% on a 2x display: the 16 px box snaps to [62, 97] device px,
+        // and `scale(0.5)` is about 50% of its 35.1875 px layout box from the snapped offset.
+        let origin = [62. + 35.1875 / 2., 497. + 35.1875 / 2.];
+        assert_eq!(
+            scaled_rect([62., 497., 35., 35.], origin, 0.5),
+            [70.796875, 497. + 8.796875, 17.5, 17.5]
+        );
+        // At 2x every edge is whole: the 32 px box scales to 16 px about its center.
+        assert_eq!(
+            scaled_rect([64., 464., 32., 32.], [80., 480.], 0.5),
+            [72., 472., 16., 16.]
+        );
     }
 }
