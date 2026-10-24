@@ -81,6 +81,7 @@ pub(super) struct Active {
     selection: Range<usize>,
     pub(super) submit_when_finished: bool,
     pub(super) levels: std::collections::VecDeque<f32>,
+    pub(super) waveform_started_at: Option<std::time::Instant>,
     recorded: bool,
     pub(super) recording_url: Option<String>,
 }
@@ -170,6 +171,7 @@ impl Composer {
             selection: self.selected_range.clone(),
             submit_when_finished: false,
             levels: std::collections::VecDeque::new(),
+            waveform_started_at: None,
             recorded: false,
             recording_url: None,
         });
@@ -243,6 +245,9 @@ impl Composer {
             Event::Recording => {
                 if let Some(active) = &mut self.dictation {
                     active.starting = false;
+                    active
+                        .waveform_started_at
+                        .get_or_insert_with(|| cx.background_executor().now());
                 }
             }
             Event::Level(rms) => {

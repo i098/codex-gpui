@@ -418,8 +418,8 @@ Opening an unloaded chat reads its history and resumes the thread before showing
 The composer restores that thread's returned model, reasoning effort, and permissions instead of using startup defaults.
 An unset effort stays unset in requests; the picker shows Medium.
 The composer labels modified workspace policies as Custom.
-The default pinned-summary layout hides the thread identity in a single pane.
-Opening a right pane restores the header identity; the toolbar actions stay available.
+A titled thread shows its header identity, also in a single pane.
+An untitled thread shows it only when a right pane is open; the toolbar actions stay available.
 
 `LocalHost` serves `native-desktop-apps` and `native-desktop-app-by-bundle-id` through the desktop fetch boundary.
 On macOS, the adapter reads Spotlight metadata, applies the original app exclusions, and supports usage or display-name ordering.
@@ -526,6 +526,7 @@ Rasterize these images during paint, when the layer context is available.
 Wrap a sparse viewport layer's decorated subtree in `ui::recorded_bounds`.
 It collects painted bounds, including shadows, without adding an opacity layer.
 The Toaster uses this scope to match Chromium's shifted tile grid and local corner geometry.
+The thread titlebar reports its icon and divider bounds so the tile grid follows painted content, including untitled states.
 
 Wrap a tightly bounded compositor layer in `ui::composited_bounds`.
 It keeps the exact shadow bounds and uses Chromium's dense tile sizes.

@@ -5,22 +5,35 @@ const SPINNER: &[u8] = include_bytes!(concat!(
     "/../../assets/icons/sidebar-cmd-spinner.svg"
 ));
 
+const DICTATION_STOP: &[u8] = br#"<svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M4.5 5.75C4.5 5.05964 5.05964 4.5 5.75 4.5H14.25C14.9404 4.5 15.5 5.05964 15.5 5.75V14.25C15.5 14.9404 14.9404 15.5 14.25 15.5H5.75C5.05964 15.5 4.5 14.9404 4.5 14.25V5.75Z"/></svg>"#;
+
 fn paint_spinner(bounds: Bounds<Pixels>, color: Hsla, window: &mut Window, cx: &App) {
-    if !shapes::paint_icon(
+    paint_inline_icon(
         SPINNER,
         "composer-loading-spinner",
         bounds,
-        false,
         color,
         Some(bounds.origin),
         window,
         cx,
-    ) {
+    );
+}
+
+fn paint_inline_icon(
+    svg: &'static [u8],
+    key: &'static str,
+    bounds: Bounds<Pixels>,
+    color: Hsla,
+    layer: Option<Point<Pixels>>,
+    window: &mut Window,
+    cx: &App,
+) {
+    if !shapes::paint_icon(svg, key, bounds, false, color, layer, window, cx) {
         window
             .paint_svg(
                 bounds,
-                "composer-loading-spinner".into(),
-                Some(SPINNER),
+                key.into(),
+                Some(svg),
                 gpui::TransformationMatrix::default(),
                 color,
                 cx,
@@ -218,7 +231,7 @@ impl Composer {
     fn recording_waveform(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let entity = cx.entity().downgrade();
         let color = t.text;
-        gpui::canvas(
+        let waveform = gpui::canvas(
             |_, _, _| {},
             move |bounds, (), window, cx| {
                 let Some(entity) = entity.upgrade() else {
@@ -227,29 +240,43 @@ impl Composer {
                 let Some(active) = &entity.read(cx).dictation else {
                     return;
                 };
+                // The original canvas advances one 6 px slot per 200 ms.
+                let reduced_motion = cx.reduce_motion();
+                let phase = if reduced_motion {
+                    0.
+                } else {
+                    active.waveform_started_at.map_or(0., |started| {
+                        (cx.background_executor()
+                            .now()
+                            .saturating_duration_since(started)
+                            .as_secs_f64()
+                            / 0.2)
+                            .fract() as f32
+                    })
+                };
+                if !reduced_motion {
+                    window.request_animation_frame();
+                }
                 let count = (f32::from(bounds.size.width) / 6.).floor() as usize + 1;
                 let available = active.levels.len().min(count);
                 for index in 0..count {
                     let sample = index.checked_sub(count - available).and_then(|offset| {
                         active.levels.get(active.levels.len() - available + offset)
                     });
-                    let height =
-                        3. + (f32::from(bounds.size.height) - 3.) * sample.copied().unwrap_or(0.);
+                    let height = ((f32::from(bounds.size.height) - 3.)
+                        * sample.copied().unwrap_or(0.))
+                    .max(3.);
                     let rect = Bounds::new(
                         point(
                             bounds.origin.x + bounds.size.width
-                                - px((count - index - 1) as f32 * 6.),
+                                - px((count - index - 1) as f32 * 6. + phase * 6.),
                             bounds.center().y - px(height / 2.),
                         ),
                         size(px(3.), px(height)),
                     );
-                    shapes::paint(
-                        &deco(
-                            1.5,
-                            color.opacity(if sample.is_some() { 0.5 } else { 0.2 }),
-                            vec![],
-                        ),
-                        Some(rect.origin),
+                    shapes::paint_canvas_round_rect(
+                        px(1.5),
+                        color.opacity(if sample.is_some() { 0.5 } else { 0.2 }),
                         rect,
                         window,
                         cx,
@@ -257,8 +284,15 @@ impl Composer {
                 }
             },
         )
-        .w_full()
-        .h(px(28.))
+        .size_full();
+        div()
+            .relative()
+            .w_full()
+            .h(px(28.))
+            .layer()
+            .overflow_hidden()
+            .child(waveform)
+            .child(shapes::x_fade(px(6.), px(6.)))
     }
 
     fn recording_footer(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
@@ -360,11 +394,22 @@ impl Composer {
         if loading {
             loading_model(foreground).into_any_element()
         } else if action == 1 {
-            div()
-                .size(px(8.8))
-                .relative()
-                .child(shapes::decoration(deco(1., foreground, vec![])))
-                .into_any_element()
+            gpui::canvas(
+                |_, _, _| {},
+                move |bounds, (), window, cx| {
+                    paint_inline_icon(
+                        DICTATION_STOP,
+                        "dictation-stop",
+                        bounds,
+                        foreground,
+                        None,
+                        window,
+                        cx,
+                    );
+                },
+            )
+            .size(px(16.))
+            .into_any_element()
         } else {
             icon(
                 if action == 0 {

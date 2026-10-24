@@ -1012,7 +1012,9 @@ A row above that names a `crates/ui` owner needs that change first. The changes 
 
 `crates/app/tests/s016.rs` replays `refs/interactions/s016.json` on the Mac headless app.
 The test opens a chat, opens and dismisses `Chat actions`, and checks the header tooltips.
-It checks the title, menu labels, menu pixels, tooltip position, and outgoing thread requests.
+It checks title data, summary-toggle title-region stability, menu labels, menu pixels, tooltip position, and outgoing thread requests.
+The existing `parity_thread` compares the visible no-side-pane titlebar with the original full frames.
+The workspace summary shows project information and does not replace or duplicate the thread titlebar identity.
 The menu uses the original labels, icons, separators, and shortcuts.
 The `Toggle summary` tooltip stays inside the window.
 The recorded `Chat actions` button has no tooltip.
