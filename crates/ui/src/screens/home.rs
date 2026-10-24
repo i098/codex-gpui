@@ -9,7 +9,7 @@ use gpui::{
     AnyView, AnyWindowHandle, App, AppContext as _, Context, Corners, Div, Entity, Global, Hsla,
     InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement, Pixels, Render,
     ScrollHandle, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window, actions,
-    div, px,
+    div, px, relative,
 };
 use theme::{ActiveTheme as _, Theme};
 
@@ -222,7 +222,8 @@ impl Render for HomeMain {
             .flex_col()
             .items_center()
             .gap(px(24.))
-            .child(icon("codex-logo", 56., Hsla { a: 0.3, ..t.text }))
+            // `opacity-30` on the logo's box.
+            .child(icon("codex-logo", 56., t.text).opacity(0.3))
             .child(
                 div()
                     .id("home-project-title")
@@ -235,16 +236,20 @@ impl Render for HomeMain {
                                 window.dispatch_action(Box::new(OpenFolder), cx)
                             })
                     })
-                    .child(text(
-                        self.project.as_ref().map_or_else(
-                            || "What should we build?".to_owned(),
-                            |project| format!("What should we build in {project}?"),
-                        ),
-                        28.,
-                        33.6,
-                        400.,
-                        t.text,
-                    )),
+                    .child(
+                        text(
+                            self.project.as_ref().map_or_else(
+                                || "What should we build?".to_owned(),
+                                |project| format!("What should we build in {project}?"),
+                            ),
+                            28.,
+                            33.6,
+                            400.,
+                            t.text,
+                        )
+                        // `.heading-xl`: a unitless `line-height: 1.2`.
+                        .line_height(relative(1.2)),
+                    ),
             );
         let column = div()
             .w_full()
@@ -272,7 +277,32 @@ impl Render for HomeMain {
                     .items_end()
                     .justify_center()
                     .pb(px(96.))
-                    .child(hero),
+                    // The original's chain: `flex w-full justify-center`, `mx-auto flex
+                    // w-[min(100%,768px)] justify-center px-panel`, `flex min-h-28 w-full items-end
+                    // justify-center`, then the hero `flex w-full flex-col items-center`. The outer
+                    // `justify-center` has no effect: the child's auto margins take the free space
+                    // first (taffy would apply both).
+                    .child(
+                        div().w_full().flex().child(
+                            div()
+                                .mx_auto()
+                                .flex()
+                                .w_full()
+                                .max_w(px(768.))
+                                .min_w_0()
+                                .justify_center()
+                                .px(px(20.))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .min_h(px(112.))
+                                        .w_full()
+                                        .items_end()
+                                        .justify_center()
+                                        .child(hero.w_full()),
+                                ),
+                        ),
+                    ),
             )
             .child(
                 div()

@@ -1047,36 +1047,6 @@ impl LocalHost {
         Ok(json!({"item": item}))
     }
 
-    /// The next and nominal run times after a status update; a paused task has none.
-    fn scheduled_run(
-        &self,
-        item: &Value,
-        id: &str,
-        rule: &str,
-        status: &str,
-        now: i64,
-    ) -> Result<(Option<i64>, Option<i64>)> {
-        // Resume always recalculates; a cached database time is never reused.
-        if status == "PAUSED" {
-            ensure!(
-                automation_schedule::valid(rule, now),
-                "invalid automation recurrence"
-            );
-            return Ok((None, None));
-        }
-        // Original ZF: an unreadable salt is replaced, and a failed save still schedules this run.
-        let (next, nominal) = automation_schedule::next_run(
-            rule,
-            item["kind"].as_str().context("missing automation kind")?,
-            id,
-            now,
-            rrule::Tz::LOCAL,
-            &self.jitter_salt(),
-        )
-        .context(automation_schedule::NO_FUTURE_RUN)?;
-        Ok((Some(next), Some(nominal)))
-    }
-
     /// Applies the original inbox read-state update, restricted to local, unowned automations.
     pub fn mark_inbox_read(&self, thread_id: &str, read_at: Option<i64>) -> Result<bool> {
         let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? else {
@@ -2156,8 +2126,6 @@ fn ensure_unowned_automation(db: &Connection, id: &str) -> Result<()> {
     );
     Ok(())
 }
-
-/// Applies an update's text fields to `item`; every other field must keep its stored value.
 
 fn definition(id: &str, contents: &str) -> Result<Value> {
     check_automation_id(id)?;

@@ -1102,10 +1102,12 @@ impl Render for HomeSidebar {
                 // bottom edge. The extent ends 16 px past Recents: its wrapper's `pb-4`
                 // (cancelled in layout by `-mb-4`) reaches past the scroller's own 8 px
                 // `pb-row-x`, and Chromium's scrollable overflow takes the farther one.
+                // `[contain:layout_paint]` drops a fractional (zoomed) origin for its content.
                 div()
                     .id("sidebar-sections")
                     .flex_1()
                     .overflow_y_scroll()
+                    .snap_origin()
                     .track_scroll(&self.scroll)
                     .flex()
                     .flex_col()

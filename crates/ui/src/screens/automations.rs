@@ -141,55 +141,6 @@ fn day_time(at_ms: i64, utc_offset: i64) -> (String, String) {
     )
 }
 
-impl Task {
-    fn rule(&self, key: &str) -> Option<&str> {
-        self.rrule.split([';', '\n']).find_map(|part| {
-            part.trim_start_matches("RRULE:")
-                .strip_prefix(key)?
-                .strip_prefix('=')
-        })
-    }
-
-    fn cadence(&self) -> &'static str {
-        match self.rule("FREQ") {
-            Some("MINUTELY" | "HOURLY") => "Interval",
-            Some("DAILY") => "Daily",
-            Some("WEEKLY") if self.rule("BYDAY") == Some("MO,TU,WE,TH,FR") => "Weekdays",
-            Some("WEEKLY") => "Weekly",
-            Some("MONTHLY") => "Monthly",
-            Some("YEARLY") => "Yearly",
-            _ => "Custom",
-        }
-    }
-    /// Card schedule: `Fridays at 9:00 AM`, `Daily at 8:00 AM`.
-    fn schedule(&self) -> String {
-        let hour = self.rule("BYHOUR").and_then(|h| h.parse::<u32>().ok());
-        let minute = self.rule("BYMINUTE").and_then(|m| m.parse::<u32>().ok());
-        let (Some(hour), Some(minute)) = (hour, minute) else {
-            return self.cadence().to_owned();
-        };
-        let time = format!(
-            "{}:{minute:02} {}",
-            match hour % 12 {
-                0 => 12,
-                h => h,
-            },
-            if hour < 12 { "AM" } else { "PM" }
-        );
-        let day = match (self.rule("FREQ"), self.rule("BYDAY")) {
-            (Some("WEEKLY"), Some("MO")) => "Mondays",
-            (Some("WEEKLY"), Some("TU")) => "Tuesdays",
-            (Some("WEEKLY"), Some("WE")) => "Wednesdays",
-            (Some("WEEKLY"), Some("TH")) => "Thursdays",
-            (Some("WEEKLY"), Some("FR")) => "Fridays",
-            (Some("WEEKLY"), Some("SA")) => "Saturdays",
-            (Some("WEEKLY"), Some("SU")) => "Sundays",
-            _ => self.cadence(),
-        };
-        format!("{day} at {time}")
-    }
-}
-
 fn rule_part<'a>(rrule: &'a str, key: &str) -> Option<&'a str> {
     rrule.split([';', '\n']).find_map(|part| {
         part.trim_start_matches("RRULE:")

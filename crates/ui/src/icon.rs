@@ -7,15 +7,16 @@
 //! 2. The svg's paths rasterized at runtime with Chromium's Skia (`shapes::paint_icon`).
 //! 3. The plain svg mask (Linux, svg features the rasterizer does not parse).
 //!
-//! Opacity: put it in the color (`color.opacity(op)`) or on the icon itself (`.opacity(op)`),
-//! not on an ancestor. Icons that Chromium paints into a composited layer (inside a scroll
-//! container) round differently: give them the layer's origin ([`Icon::composited`]).
+//! Opacity: a color alpha (`color.opacity(op)`) is the svg paths' own alpha; the icon's
+//! `.opacity(op)` is CSS `opacity` on it, a group. Not on an ancestor. Icons that Chromium
+//! paints into a composited layer (inside a scroll container) round differently: give them the
+//! layer's origin ([`Icon::composited`]).
 
 use gpui::{
     App, Bounds, Corners, Element, ElementId, GlobalElementId, Hitbox, Hsla, Image, ImageFormat,
-    InspectorElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point,
-    RenderImage, Rgba, SharedString, StyleRefinement, Styled, Transformation, Window, point, px,
-    size,
+    InspectorElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Length, Pixels,
+    Point, RenderImage, Rgba, SharedString, Size, StyleRefinement, Styled, Transformation, Window,
+    point, px, size,
 };
 use std::{
     collections::HashMap,
@@ -25,7 +26,10 @@ use std::{
 /// `size` x `size` CSS px icon `assets/icons/<name>.svg` in `color` (same signature as
 /// `crate::icon`).
 pub fn icon(name: &str, size: f32, color: Hsla) -> Icon {
-    icon_sized(name, size, size, color)
+    Icon {
+        authored: true,
+        ..icon_sized(name, size, size, color)
+    }
 }
 
 /// An icon whose box is not square, e.g. `codex-wordmark` (53.22 x 18).
@@ -34,10 +38,13 @@ pub fn icon_sized(name: &str, width: f32, height: f32, color: Hsla) -> Icon {
         name: name.into(),
         width,
         height,
+        authored: false,
+        aspect: None,
         flip_x: false,
         composited: None,
         own_layer: false,
         runtime: false,
+        image: false,
         saved_opacity: None,
         transformation: None,
         interactivity: Interactivity::new(),
@@ -53,16 +60,47 @@ pub struct Icon {
     /// CSS size: the svg's viewBox maps onto it unsnapped.
     width: f32,
     height: f32,
+    /// An authored CSS size (`size-4`), which Blink's LayoutUnit truncates: 16 px at 110% is
+    /// a 35.1875 device px box, and the svg scales to it.
+    authored: bool,
+    /// `width: auto` (`h-[1em] w-auto`): Blink takes the width from the height in LayoutUnits
+    /// times the viewBox's aspect, truncated to a LayoutUnit: 95.765625 device px for the
+    /// wordmark at 90%, not the authored 53.22 px's 95.78125.
+    aspect: Option<f32>,
     flip_x: bool,
     composited: Option<Point<Pixels>>,
     own_layer: bool,
     runtime: bool,
+    /// An `<img>`: Blink draws the svg image into its snapped dest rect.
+    image: bool,
     saved_opacity: Option<u8>,
     transformation: Option<Transformation>,
     interactivity: Interactivity,
 }
 
 impl Icon {
+    /// The CSS box: an authored size truncated to LayoutUnit (`authored`), or the `aspect`
+    /// box of `width: auto`.
+    fn css_size(&self, scale: f32) -> Size<Pixels> {
+        let css = size(px(self.width), px(self.height));
+        let unit = scale * 64.;
+        let layout_unit = |v: f32| (v * unit).trunc() / unit;
+        if let Some(aspect) = self.aspect {
+            let height = layout_unit(self.height);
+            return size(px(layout_unit(height * aspect)), px(height));
+        }
+        if !self.authored {
+            return css;
+        }
+        css.map(|v| px(layout_unit(f32::from(v))))
+    }
+
+    /// `width: auto` from the height and the viewBox's `aspect` (width / height), as above.
+    pub fn auto_width(mut self, aspect: f32) -> Self {
+        self.aspect = Some(aspect);
+        self
+    }
+
     /// Mirrored horizontally, like the original's `-scale-x-100` (Forward = Back mirrored).
     pub fn flip_x(mut self) -> Self {
         self.flip_x = true;
@@ -92,6 +130,13 @@ impl Icon {
     /// body) does not have.
     pub fn runtime(mut self) -> Self {
         self.runtime = true;
+        self
+    }
+
+    /// An `<img>` of an svg: Blink draws the image into the box's snapped device rect (35 px
+    /// for 16 px at 110%), not the LayoutUnit box an inline svg fills (35.1875 px).
+    pub fn image(mut self) -> Self {
+        self.image = true;
         self
     }
 
@@ -166,12 +211,20 @@ impl Element for Icon {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, LayoutId) {
+        let (authored, given) = (self.authored, size(px(self.width), px(self.height)));
+        let css = self.css_size(window.scale_factor());
         let layout_id = self.interactivity.request_layout(
             global_id,
             inspector_id,
             window,
             cx,
-            |style, window, cx| window.request_layout(style, None, cx),
+            |mut style, window, cx| {
+                // The box Blink lays out, unless the caller sized the icon otherwise.
+                if authored && style.size == given.map(Length::from) {
+                    style.size = css.map(Length::from);
+                }
+                window.request_layout(style, None, cx)
+            },
         );
         (layout_id, layout_id)
     }
@@ -216,13 +269,18 @@ impl Element for Icon {
         window: &mut Window,
         cx: &mut App,
     ) {
-        // The icon's own opacity goes into the color (and the fitted images' key).
+        // The icon's own opacity goes into the fitted images' key; the runtime raster draws the
+        // svg opaque into a `saveLayerAlpha` with it, as Skia does for CSS `opacity`.
         let opacity = self.interactivity.base_style.opacity.take().unwrap_or(1.);
         let (name, flip_x, own_layer) = (self.name.clone(), self.flip_x, self.own_layer);
         let (composited, runtime) = (self.composited, self.runtime);
         let saved_opacity = self.saved_opacity;
         let transformation = self.transformation;
-        let css = size(px(self.width), px(self.height));
+        let css = if self.image {
+            bounds.size
+        } else {
+            self.css_size(window.scale_factor())
+        };
         let mut ink_bounds = Bounds::new(bounds.origin, css);
         if saved_opacity.is_some() {
             ink_bounds.origin.x += window.layout_origin_residual_x(*layout_id);
@@ -288,6 +346,21 @@ impl Element for Icon {
                                 window,
                                 cx,
                             )
+                        } else if opacity < 1. {
+                            let alpha = (opacity * 255.).round() as u8;
+                            let opaque = style.text.color.unwrap_or(color);
+                            shapes::with_layer(alpha, bounds, window, |window| {
+                                shapes::paint_icon(
+                                    &src,
+                                    &path,
+                                    Bounds::new(bounds.origin, css),
+                                    flip_x,
+                                    opaque,
+                                    layer,
+                                    window,
+                                    cx,
+                                )
+                            })
                         } else {
                             shapes::paint_icon(
                                 &src,
