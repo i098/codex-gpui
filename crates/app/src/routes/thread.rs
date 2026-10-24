@@ -69,19 +69,31 @@ fn resumed_settings(mut response: Value, id: &str) -> Result<RendererState> {
         permission,
     })
 }
+
+fn find_in_workspace(root: &mut Root, window: &mut Window, cx: &mut Context<Root>) {
+    if !matches!(root.state.route, Route::Thread(_)) {
+        return;
+    }
+    let full = root.workspace_layout() == WorkspaceLayout::Full;
+    if root.side_visible(SidePanel::Changes)
+        && let Some(panel) = &root.diff
+        && panel.update(cx, |panel, cx| {
+            if full {
+                panel.focus(window, cx);
+            }
+            panel.open_find(window, cx)
+        })
+    {
+        return;
+    }
+    if !full && let Some(thread) = &root.thread {
+        thread.update(cx, |thread, cx| thread.open_find(window, cx));
+    }
+}
+
 pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     root.on_action(cx.listener(|this, _: &FindInThread, window, cx| {
-        if matches!(this.state.route, Route::Thread(_)) {
-            if this.side == Some(SidePanel::Changes)
-                && let Some(panel) = &this.diff
-                && panel.update(cx, |panel, cx| panel.open_find(window, cx))
-            {
-                return;
-            }
-            if let Some(thread) = &this.thread {
-                thread.update(cx, |thread, cx| thread.open_find(window, cx));
-            }
-        }
+        find_in_workspace(this, window, cx);
     }))
     .on_action(cx.listener(|this, _: &FindNext, _, cx| {
         if let Some(thread) = &this.thread {
@@ -100,7 +112,7 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
         }),
     )
     .on_action(cx.listener(|this, _: &ToggleChangesPanel, window, cx| {
-        if this.side == Some(SidePanel::Changes) {
+        if this.side_visible(SidePanel::Changes) {
             this.close_side(SidePanel::Changes, window, cx)
         } else {
             this.set_side(SidePanel::Changes, window, cx)
@@ -127,7 +139,7 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
         if let Some(thread) = &this.thread {
             thread.update(cx, |thread, cx| thread.select_terminal(Some(&action.0), cx));
         }
-        if this.side == Some(SidePanel::Terminal) {
+        if this.side_visible(SidePanel::Terminal) {
             this.sync(window, cx);
         } else {
             this.set_side(SidePanel::Terminal, window, cx);
