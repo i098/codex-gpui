@@ -1,7 +1,7 @@
 use crate::{
     AbsoluteLength, App, Bounds, DefiniteLength, Edges, GridTemplate, Length, Pixels, Point, Size,
     Style, Window, size,
-    util::{round_half_up, round_stroke_to_device_pixel, round_to_device_pixel},
+    util::{round_half_up, round_to_device_pixel, snap_border_to_device_pixel},
 };
 use collections::{FxHashMap, FxHashSet};
 use std::{fmt::Debug, ops::Range};
@@ -366,7 +366,9 @@ impl TaffyLayoutEngine {
                     .absolute_outer_origins
                     .get(&parent_id)
                     .expect("parent absolute outer origin should be cached");
-                parent_origin + Point::from(layout_location)
+                parent_origin
+                    + Point::from(layout_location)
+                    + Point::from(self.flex_center_correction(parent_id.0, id.0))
             }
             None => Point::from(layout_location),
         };
@@ -420,6 +422,97 @@ impl TaffyLayoutEngine {
         let y = self.absolute_outer_origins[&id].y;
         Pixels((y - round_half_up(y)) / scale_factor)
     }
+
+    /// Blink's main- and cross-axis centering offsets minus taffy's, in device px, for a flex
+    /// item. Blink works in LayoutUnits (1/64 device px): `align-items: center` and
+    /// `justify-content: center` place an item at `free_space / 2`, which truncates toward zero,
+    /// and auto margins share the free space with `LayoutUnitDiffuser`, which gives the odd
+    /// unit to the first margin. Taffy keeps exact halves.
+    // ponytail: reverse directions and one-sided auto margins keep taffy's offsets (nothing
+    // uses them); model them when a screen does.
+    fn flex_center_correction(&self, parent: NodeId, child: NodeId) -> TaffyPoint<f32> {
+        use taffy::style::{Display, FlexDirection, FlexWrap};
+        let style = self.taffy.style(parent).expect(EXPECT_MESSAGE);
+        if style.display != Display::Flex
+            || style.flex_wrap != FlexWrap::NoWrap
+            || !self.in_flow(child)
+        {
+            return TaffyPoint { x: 0., y: 0. };
+        }
+        let row = matches!(
+            style.flex_direction,
+            FlexDirection::Row | FlexDirection::RowReverse
+        );
+        let cross = self.cross_center_fix(parent, child, row);
+        let main = self.main_center_fix(parent, child, row);
+        if row {
+            TaffyPoint { x: main, y: cross }
+        } else {
+            TaffyPoint { x: cross, y: main }
+        }
+    }
+
+    fn in_flow(&self, node: NodeId) -> bool {
+        let position = self.taffy.style(node).expect(EXPECT_MESSAGE).position;
+        position != taffy::style::Position::Absolute
+    }
+
+    /// `node`'s margin box offset from `parent`'s content box, along x (`horizontal`) or y.
+    fn content_offset(&self, parent: NodeId, node: NodeId, horizontal: bool) -> f32 {
+        let p = self.taffy.layout(parent).expect(EXPECT_MESSAGE);
+        let l = self.taffy.layout(node).expect(EXPECT_MESSAGE);
+        if horizontal {
+            l.location.x - l.margin.left - (p.padding.left + p.border.left)
+        } else {
+            l.location.y - l.margin.top - (p.padding.top + p.border.top)
+        }
+    }
+
+    /// The cross-axis fix: `align-items` or `align-self: center`.
+    fn cross_center_fix(&self, parent: NodeId, child: NodeId, row: bool) -> f32 {
+        let style = self.taffy.style(parent).expect(EXPECT_MESSAGE);
+        let align = self.taffy.style(child).expect(EXPECT_MESSAGE).align_self;
+        let centered = align.or(style.align_items).map(|a| a.keyword)
+            == Some(taffy::style::AlignItemsKeyword::Center);
+        if !centered {
+            return 0.;
+        }
+        blink_half(self.content_offset(parent, child, !row))
+    }
+
+    /// The main-axis fix: auto margins on both sides, else `justify-content: center` (the first
+    /// in-flow item's offset).
+    fn main_center_fix(&self, parent: NodeId, child: NodeId, row: bool) -> f32 {
+        let style = self.taffy.style(parent).expect(EXPECT_MESSAGE);
+        let margin = &self.taffy.style(child).expect(EXPECT_MESSAGE).margin;
+        let auto = if row {
+            margin.left.is_auto() && margin.right.is_auto()
+        } else {
+            margin.top.is_auto() && margin.bottom.is_auto()
+        };
+        if auto {
+            let c = self.taffy.layout(child).expect(EXPECT_MESSAGE);
+            let half = if row { c.margin.left } else { c.margin.top };
+            let units = (half * 128.).round() as i64;
+            return ((units + 1) / 2) as f32 / 64. - half;
+        }
+        if style.justify_content.map(|j| j.keyword)
+            != Some(taffy::style::AlignContentKeyword::Center)
+        {
+            return 0.;
+        }
+        (0..self.taffy.child_count(parent))
+            .map(|i| self.taffy.child_at_index(parent, i).expect(EXPECT_MESSAGE))
+            .find(|&n| self.in_flow(n))
+            .map_or(0., |first| {
+                blink_half(self.content_offset(parent, first, row))
+            })
+    }
+}
+
+/// Blink's `free_space / 2` in LayoutUnits (truncated toward zero) minus taffy's exact `half`.
+fn blink_half(half: f32) -> f32 {
+    ((half * 128.).round() as i64 / 2) as f32 / 64. - half
 }
 
 /// A unique identifier for a layout node, generated when requesting a layout from Taffy
@@ -468,7 +561,7 @@ fn border_widths_to_taffy(
     scale_factor: f32,
 ) -> TaffyRect<taffy::style::LengthPercentage> {
     let snap = |w: &AbsoluteLength| {
-        taffy::style::LengthPercentage::length(round_stroke_to_device_pixel(
+        taffy::style::LengthPercentage::length(snap_border_to_device_pixel(
             w.to_pixels(rem_size).0,
             scale_factor,
         ))
@@ -570,10 +663,15 @@ impl ToTaffy<taffy::style::Style> for Style {
 }
 
 impl ToTaffy<f32> for AbsoluteLength {
-    /// Blink keeps authored lengths as LayoutUnit (`FromFloatRound`, 1/64 device px); boxes
-    /// snap to device pixels in `layout_bounds`, text keeps the fraction.
+    /// Blink resolves an authored length with `LayoutUnit(float)` (1/64 device px), which
+    /// truncates: 16 px at 110% is 35.1875 device px, not 35.203125. Boxes snap to device
+    /// pixels in `layout_bounds`; text keeps the fraction.
     fn to_taffy(&self, rem_size: Pixels, scale_factor: f32) -> f32 {
-        (self.to_pixels(rem_size).0 * scale_factor * 64.).round() / 64.
+        let units = self.to_pixels(rem_size).0 * scale_factor * 64.;
+        // Truncated as Blink's `LayoutUnit(float)`. The tolerance, a few f32 ulps of `units`,
+        // keeps values already on the grid (measured run widths, `ui::run_width`) there.
+        let tolerance = units.abs() * f32::EPSILON * 4.;
+        (units + tolerance.copysign(units)).trunc() / 64.
     }
 }
 
@@ -798,7 +896,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn border_widths_to_taffy_use_stroke_snapping() {
+    fn border_widths_to_taffy_snap_as_blink_border_widths() {
         let border_widths = Edges {
             top: Pixels(0.0).into(),
             right: Pixels(0.4).into(),
@@ -821,8 +919,134 @@ mod tests {
         );
         assert_eq!(
             taffy_border.left,
-            taffy::style::LengthPercentage::length(2.0)
+            taffy::style::LengthPercentage::length(1.0)
         );
+        // 1 px at 90% zoom on a 2x display is 1.8 device px: 1, not 2.
+        let zoomed = border_widths_to_taffy(&Edges::all(Pixels(1.0).into()), Pixels(16.0), 1.8);
+        assert_eq!(zoomed.top, taffy::style::LengthPercentage::length(1.0));
+    }
+
+    #[test]
+    fn authored_lengths_truncate_like_blink_layout_units() {
+        let padding = Edges::all(DefiniteLength::from(Pixels(16.0)));
+        // 110% zoom on a 2x display: 35.2 device px is 35.1875 (2252/64), not 35.203125.
+        let zoomed: TaffyRect<taffy::style::LengthPercentage> =
+            padding.to_taffy(Pixels(16.0), 2.2);
+        assert_eq!(
+            zoomed.left,
+            taffy::style::LengthPercentage::length(2252. / 64.)
+        );
+        let whole: TaffyRect<taffy::style::LengthPercentage> = padding.to_taffy(Pixels(16.0), 2.0);
+        assert_eq!(whole.top, taffy::style::LengthPercentage::length(32.));
+        // A length already on the LayoutUnit grid stays on it despite f32 error.
+        let on_grid = AbsoluteLength::Pixels(Pixels(2252. / (2.2 * 64.)));
+        let units: f32 = on_grid.to_taffy(Pixels(16.0), 2.2);
+        assert_eq!(units, 2252. / 64.);
+    }
+
+    #[test]
+    fn flex_centering_follows_blink_layout_units() {
+        // Device px throughout (taffy runs at the scale factor), at 90% and 110% zoom.
+        let leaf = |style: taffy::style::Style| style;
+        let mut engine = TaffyLayoutEngine::new();
+        // A `py-[5px]` row 54 px tall at 90%: its 37.796875 px line overflows the 36 px content
+        // box by 115 LayoutUnits; Blink offsets it by -115 / 2 = -57 units (toward zero).
+        let line = engine
+            .taffy
+            .new_leaf(leaf(taffy::style::Style {
+                size: TaffySize {
+                    width: taffy::style_helpers::length(100.),
+                    height: taffy::style_helpers::length(2419. / 64.),
+                },
+                flex_shrink: 0.,
+                ..Default::default()
+            }))
+            .unwrap();
+        let row = engine
+            .taffy
+            .new_with_children(
+                taffy::style::Style {
+                    display: taffy::style::Display::Flex,
+                    align_items: Some(taffy::style::AlignItems::CENTER),
+                    padding: TaffyRect {
+                        left: taffy::style_helpers::length(0.),
+                        right: taffy::style_helpers::length(0.),
+                        top: taffy::style_helpers::length(9.),
+                        bottom: taffy::style_helpers::length(9.),
+                    },
+                    size: TaffySize {
+                        width: taffy::style_helpers::length(200.),
+                        height: taffy::style_helpers::length(54.),
+                    },
+                    ..Default::default()
+                },
+                &[line],
+            )
+            .unwrap();
+        // `mx-auto` at 110%: 7207 units of free space; the left margin gets 3604.
+        let boxed = engine
+            .taffy
+            .new_leaf(taffy::style::Style {
+                size: TaffySize {
+                    width: taffy::style_helpers::length(108134. / 64.),
+                    height: taffy::style_helpers::length(10.),
+                },
+                margin: TaffyRect {
+                    left: taffy::style_helpers::auto(),
+                    right: taffy::style_helpers::auto(),
+                    top: taffy::style_helpers::zero(),
+                    bottom: taffy::style_helpers::zero(),
+                },
+                ..Default::default()
+            })
+            .unwrap();
+        let outer = engine
+            .taffy
+            .new_with_children(
+                taffy::style::Style {
+                    display: taffy::style::Display::Flex,
+                    size: TaffySize {
+                        width: taffy::style_helpers::length(115341. / 64.),
+                        height: taffy::style_helpers::length(10.),
+                    },
+                    ..Default::default()
+                },
+                &[boxed],
+            )
+            .unwrap();
+        let root = engine
+            .taffy
+            .new_with_children(
+                taffy::style::Style {
+                    display: taffy::style::Display::Flex,
+                    flex_direction: taffy::style::FlexDirection::Column,
+                    ..Default::default()
+                },
+                &[row, outer],
+            )
+            .unwrap();
+        engine
+            .taffy
+            .compute_layout(
+                root,
+                TaffySize {
+                    width: TaffyAvailableSpace::MaxContent,
+                    height: TaffyAvailableSpace::MaxContent,
+                },
+            )
+            .unwrap();
+        let scale = 1.;
+        let unsnapped = |engine: &mut TaffyLayoutEngine, id: NodeId| {
+            let id = LayoutId::from(id);
+            let bounds = engine.layout_bounds(id, scale);
+            (
+                bounds.origin.x + engine.layout_origin_residual_x(id, scale),
+                bounds.origin.y + engine.layout_origin_residual_y(id, scale),
+            )
+        };
+        assert_eq!(unsnapped(&mut engine, line).1, Pixels(9. - 57. / 64.));
+        let outer_x = unsnapped(&mut engine, outer).0;
+        assert_eq!(unsnapped(&mut engine, boxed).0 - outer_x, Pixels(3604. / 64.));
     }
 
     #[test]
