@@ -109,7 +109,7 @@ def compile_wrapper(directory, compiler, flags, source, source_file):
 
 def write_package(output, library, manifest_path):
     with output.open("wb") as raw:
-        with gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as compressed:
+        with gzip.GzipFile(filename="", fileobj=raw, mode="wb", mtime=0) as compressed:
             with tarfile.open(fileobj=compressed, mode="w") as package:
                 add_file(package, library, "libskia_hairline.a")
                 add_file(package, manifest_path, "manifest.json")

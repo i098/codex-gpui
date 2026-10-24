@@ -3,5 +3,5 @@
 [env]
 SKIA_BINARIES_URL = "https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/skia-chromium-bf51045792b42afcba4ded9cccf2b885d7b2a9ad35c9cb0a/{tag}/skia-binaries-{key}.tar.gz?skia-chromium-bf51045792b42afcba4ded9cccf2b885d7b2a9ad35c9cb0a"
 # Narrow C scanner wrapper (tools/shapes/build-skia-hairline.py), linked against the Skia above.
-SKIA_HAIRLINE_BINARIES_URL = "https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/skia-chromium-4f0cc17f01254e97f9f5ebb49492a5caaa50798dd80e1eca/skia-hairline-sys-0.1.0-aarch64-apple-darwin.tar.gz"
-SKIA_HAIRLINE_PACKAGE_SHA256 = "98d5c1f00b2a4547ddf31b2501f102e7d40cb62f4e8050b314c4bbccf265138e"
+SKIA_HAIRLINE_BINARIES_URL = "https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/skia-chromium-60f01c77f096e73f928f9676f216e138943d85b76fe46fcc/skia-hairline-sys-0.1.0-aarch64-apple-darwin.tar.gz"
+SKIA_HAIRLINE_PACKAGE_SHA256 = "37f9e8993460f2a4842e6bd2f52f23704c66f7a053e8bd392bd7ed69c1484fdf"
