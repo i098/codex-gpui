@@ -20,11 +20,10 @@ mod search;
 mod section_actions;
 mod settings_subtrees;
 mod signin;
+mod storage;
 pub mod updater;
 mod usage;
 mod window_shell;
-mod storage;
-pub mod updater;
 pub mod windows;
 
 use anyhow::{Context as _, Result, ensure};
