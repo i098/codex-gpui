@@ -164,6 +164,16 @@ pub struct Decoration {
     pub shadows: Vec<Shadow>,
 }
 
+/// Reports a box that something other than a decoration paints (an icon's raster box, a
+/// quad) into the [`recorded_bounds`] being collected, as cc's recorded bounds cover every
+/// painted op. Outside a collection it does nothing.
+pub fn record_painted(bounds: Bounds<Pixels>, window: &Window) {
+    #[cfg(target_os = "macos")]
+    skia::record_decoration(&Decoration::default(), bounds, window);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (bounds, window);
+}
+
 /// An element covering its parent's box that paints `d`.
 pub fn decoration(d: Decoration) -> impl IntoElement {
     translated_decoration(d, Point::default())
@@ -222,6 +232,61 @@ pub fn paint(
     {
         let _ = (cx, layer);
         quads(d, bounds, window);
+    }
+}
+
+/// Fills a canvas rounded rectangle without snapping its bounds to device pixels.
+/// The radius must be finite and nonnegative; it is constrained to half the shorter side.
+/// macOS uses Skia; other platforms use GPUI's fractional path renderer.
+pub fn paint_canvas_round_rect(
+    radius: Pixels,
+    color: Hsla,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    assert!(f32::from(radius).is_finite() && radius >= gpui::px(0.));
+    if bounds.is_empty() {
+        return;
+    }
+    let radius = radius
+        .min(bounds.size.width / 2.)
+        .min(bounds.size.height / 2.);
+    #[cfg(target_os = "macos")]
+    skia::paint_canvas_round_rect(radius, color, bounds, window, cx);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = cx;
+        window.paint_path(canvas_round_rect_path(bounds, radius), color);
+    }
+}
+
+#[cfg(any(not(target_os = "macos"), test))]
+fn canvas_round_rect_path(bounds: Bounds<Pixels>, radius: Pixels) -> gpui::Path<Pixels> {
+    use gpui::{PathBuilder, point, px};
+    let (left, top, right, bottom) = (bounds.left(), bounds.top(), bounds.right(), bounds.bottom());
+    let mut path = PathBuilder::fill();
+    path.move_to(point(left + radius, top));
+    for (edge, corner) in [
+        (point(right - radius, top), point(right, top + radius)),
+        (point(right, bottom - radius), point(right - radius, bottom)),
+        (point(left + radius, bottom), point(left, bottom - radius)),
+        (point(left, top + radius), point(left + radius, top)),
+    ] {
+        path.line_to(edge);
+        path.arc_to(point(radius, radius), px(0.), false, true, corner);
+    }
+    path.close();
+    path.build().expect("valid canvas rounded rectangle")
+}
+
+#[test]
+fn canvas_path_preserves_fractional_bounds() {
+    use gpui::{point, px, size};
+    for radius in [0., 1.5] {
+        let bounds = Bounds::new(point(px(10.25), px(20.125)), size(px(3.), px(13.375)));
+        let path = canvas_round_rect_path(bounds, px(radius));
+        assert_eq!(path.bounds, bounds);
     }
 }
 

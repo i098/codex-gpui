@@ -1898,12 +1898,13 @@ impl Render for SplitScreen {
             .on_key_down(crate::focus::tab)
             .child(self.shell.clone())
             .when(open, |d| {
-                d.child(
+                d.child(titlebar_layer(
+                    Some(sidebar_width),
                     self.thread
                         .update(cx, |view, cx| view.titlebar_header(left.is_some(), cx))
-                        .left(sidebar_width)
                         .when_some(left, |h, left| h.w(left - sidebar_width)),
-                )
+                    sidebar_width,
+                ))
             })
             // Without a panel the shell's `New tab` group follows the header behind a divider.
             .when(open && left.is_none(), |d| {
@@ -1968,6 +1969,24 @@ impl Render for SplitScreen {
                 },
             )
     }
+}
+
+/// Chromium's composited `group/titlebar` layer around the thread `header` at `header_left`:
+/// from the end of the leading titlebar controls (`TITLEBAR_LAYER_X`), or from the titlebar
+/// box where that starts further left (the rail, with no open sidebar), to the window's right
+/// edge. cc tiles only its recorded bounds, the union of what the header paints.
+fn titlebar_layer(sidebar: Option<Pixels>, header: Div, header_left: Pixels) -> Div {
+    let layer_left = TITLEBAR_LAYER_X.min(sidebar.unwrap_or(crate::RAIL_WIDTH));
+    div()
+        .absolute()
+        .top_0()
+        .left(layer_left)
+        .right_0()
+        .h(Theme::TITLEBAR_HEIGHT)
+        .layer()
+        .child(crate::recorded_bounds(
+            header.left(header_left - layer_left),
+        ))
 }
 
 /// Left edge of Chromium's composited `group/titlebar` layer.
