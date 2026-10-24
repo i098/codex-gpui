@@ -11,7 +11,7 @@ use gpui::{
     RenderOnce, Role, Stateful, StatefulInteractiveElement, Styled, Window, actions, div, img, px,
     rgba,
 };
-use theme::{ActiveTheme as _, Appearance, Theme};
+use theme::{ActiveTheme as _, Appearance};
 
 actions!(
     recovery,
@@ -28,11 +28,27 @@ pub struct Recovery;
 impl RenderOnce for Recovery {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = cx.theme().clone();
-        // `--color-surface-recovery`: `--app-color-background-recovery` in light, else
-        // `--color-surface-secondary` (the dark surface-under).
-        let background = match t.appearance {
-            Appearance::Dark => t.surface_secondary,
-            Appearance::Light => color(0xf8f7f5ff),
+        // `--color-surface-recovery`: `--app-color-background-recovery` (#f8f7f5) in light;
+        // the opaque dark surface-under (black) otherwise.
+        let (background, title, description, fill, hover, label, border) = match t.appearance {
+            Appearance::Dark => (
+                color(0x000000ff),
+                color(0xdfdfdfff),
+                color(0xdfdfdfa6),
+                color(0xdfdfdfff),
+                color(0xdfdfdfcc),
+                color(0x181818ff),
+                color(0xffffff14),
+            ),
+            Appearance::Light => (
+                color(0xf8f7f5ff),
+                color(0x1a1c1fff),
+                color(0x1a1c1fa6),
+                color(0x0d0d0dff),
+                color(0x0d0d0dcc),
+                color(0xffffffff),
+                color(0x00000014),
+            ),
         };
         div()
             .id("recovery")
@@ -67,14 +83,14 @@ impl RenderOnce for Recovery {
                             .max_w(px(448.))
                             .flex_col()
                             .flex_shrink_0()
-                            .gap(px(4.))
-                            .child(text("ChatGPT hit a snag", 28., 39.2, 600., t.text))
+                            .gap(px(12.))
+                            .child(text("ChatGPT hit a snag", 28., 39.2, 600., title))
                             .child(text(
                                 "Something went wrong. Try again to continue",
                                 14.,
                                 21.,
-                                400.,
-                                t.text_secondary,
+                                430.,
+                                description,
                             )),
                     )
                     .child(
@@ -89,10 +105,9 @@ impl RenderOnce for Recovery {
                                     "try-again",
                                     "Try again",
                                     &TryAgain,
-                                    true,
+                                    (fill, hover, border, label),
                                     window,
                                     cx,
-                                    &t,
                                 )),
                         ),
                     ),
@@ -105,31 +120,18 @@ fn color(bytes: u32) -> Hsla {
     rgba(bytes).into()
 }
 
-/// An `Ir` solid button, `size: large` (36 px, 10 px radius, 12 px gutter, 14/20 w400).
+/// The `Ir` primary button at rest, `size: large`: a 36 px pill (`9999px` radius,
+/// `8px 20px` padding, 14/18 w430) — values probed from the original page.
 fn button<A: Action + Default + Clone>(
     id: &'static str,
     label: &'static str,
     action: &A,
-    primary: bool,
+    colors: (Hsla, Hsla, Hsla, Hsla),
     window: &mut Window,
     cx: &mut App,
-    t: &Theme,
 ) -> Stateful<Div> {
-    let dark = matches!(t.appearance, Appearance::Dark);
-    // `--color-background-*-solid` and its hover, gray-1000/gray-0 inverted for primary.
-    let (background, hover, label_color) = if primary {
-        (
-            t.button_primary_solid,
-            color(if dark { 0xedededff } else { 0x333333ff }),
-            color(if dark { 0x0d0d0dff } else { 0xffffffff }),
-        )
-    } else {
-        (
-            color(if dark { 0x414141ff } else { 0x5d5d5dff }),
-            color(if dark { 0x4f4f4fff } else { 0x414141ff }),
-            t.text,
-        )
-    };
+    let (fill, hover, border, label_color) = colors;
+
     let action = action.clone();
     let key_action = action.clone();
     let control = focus::handle(id, 0, window, cx);
@@ -152,18 +154,20 @@ fn button<A: Action + Default + Clone>(
         .aria_label(label)
         .track_focus(&control.read(cx).handle)
         .h(px(36.))
-        .px(px(12.))
+        .px(px(20.))
         .flex()
         .items_center()
         .justify_center()
-        .rounded(px(10.))
-        .bg(background)
+        .rounded_full()
+        .border_1()
+        .border_color(border)
+        .bg(fill)
         .hover(|state| state.bg(hover))
         .text_color(label_color)
         .on_click(click)
         .on_key_down(key)
-        .child(text(label, 14., 20., 400., label_color));
-    focus::ring(button, &control, px(10.), px(2.), cx)
+        .child(text(label, 14., 18., 430., label_color));
+    focus::ring(button, &control, px(999.), px(2.), cx)
 }
 
 /// The startup loader (SH-147): the `index.html` `startup-loader` at rest, its 56 px
@@ -174,10 +178,13 @@ pub struct StartupLoader;
 impl RenderOnce for StartupLoader {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let t = cx.theme();
-        // `--startup-logo-shimmer-base`: the only visible layer once the fade-in settles.
-        let blossom = match t.appearance {
-            Appearance::Dark => color(0xffffffad),
-            Appearance::Light => color(0x0000003d),
+        // The `startup-loader` CSS is transparent; the native window's
+        // `backgroundColor` shows through (`#202020` dark, `#ffffff` light, from the
+        // original main bundle). `--startup-logo-shimmer-base` is the only visible
+        // layer once the fade-in settles.
+        let (window_background, blossom) = match t.appearance {
+            Appearance::Dark => (color(0x202020ff), color(0xffffff94)),
+            Appearance::Light => (color(0xffffffff), color(0x00000034)),
         };
         div()
             .id("startup-loader")
@@ -185,7 +192,7 @@ impl RenderOnce for StartupLoader {
             .size_full()
             .items_center()
             .justify_center()
-            .bg(t.background_surface_under)
+            .bg(window_background)
             .child(crate::icon::icon("blossom", 56., blossom))
     }
 }

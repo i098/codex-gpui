@@ -16,9 +16,10 @@ fn crash_page_shows_when_the_app_server_dies() -> Result<()> {
     fx.advance(Duration::ZERO)?;
     #[cfg(target_os = "macos")]
     {
-        // Dark recovery surface (#141414), not the page surface (#303030+).
-        let corner = fx.shot()?.get_pixel(8, 8);
-        ensure!(corner.0[0] < 32, "recovery background: {corner:?}");
+        // Dark recovery surface (#000000), not the page surface.
+        let shot = fx.shot()?;
+        let corner = shot.get_pixel(8, 8);
+        ensure!(corner.0[0] < 8, "recovery background: {corner:?}");
     }
     Ok(())
 }
@@ -65,13 +66,19 @@ fn loader_shows_until_the_app_server_answers() -> Result<()> {
     );
     #[cfg(target_os = "macos")]
     {
+        // The blossom's center is hollow between the petals; probe the region.
         let loader = fx.shot()?;
         let (w, h) = (loader.width(), loader.height());
-        let center = loader.get_pixel(w / 2, h / 2);
-        let corner = loader.get_pixel(8, 8);
+        let corner = loader.get_pixel(8, 8).0[0];
+        let ink = (w / 2 - 120..w / 2 + 120)
+            .step_by(4)
+            .flat_map(|x| (h / 2 - 120..h / 2 + 120).step_by(4).map(move |y| (x, y)))
+            .map(|(x, y)| loader.get_pixel(x, y).0[0])
+            .max()
+            .unwrap_or(0);
         ensure!(
-            center.0[0].abs_diff(corner.0[0]) > 60,
-            "blossom visible at center: {center:?} vs {corner:?}"
+            ink.abs_diff(corner) > 60,
+            "blossom visible near center: ink={ink} corner={corner}"
         );
     }
     fx.wait("ready", |fx| fx.read(|root, _| root.ready()))?;
@@ -81,5 +88,37 @@ fn loader_shows_until_the_app_server_answers() -> Result<()> {
         let center = app.get_pixel(app.width() / 2, app.height() / 2);
         ensure!(center.0[0] < 100, "loader replaced by the app: {center:?}");
     }
+    Ok(())
+}
+
+/// Pixel pairs against the original error-shell refs (`refs/error-shell`, dark
+/// 1280x832, captured through `tools/route1/exp-recovery.mjs`).
+#[test]
+#[cfg(target_os = "macos")]
+fn error_shell_matches_the_original() -> Result<()> {
+    let refs = std::path::Path::new(common::ROOT).join("refs");
+    let out = std::env::temp_dir().join("cgx-error-shell-parity");
+    let mut fx = Fx::crashed()?;
+    fx.wait("crash page", |fx| fx.read(|root, _| root.crashed()))?;
+    fx.advance(Duration::ZERO)?;
+    let metrics = parity::diff_ref(&refs, &out, "error-shell/crash-page", "dark", &fx.shot()?)?;
+    ensure!(
+        metrics.pass,
+        "crash page: outside={} text={:.3}%",
+        metrics.counts.diff_px_outside_text,
+        metrics.counts.text_diff_ratio * 100.
+    );
+    let mut fx = Fx::loading()?;
+    ensure!(
+        !fx.read(|root, _| root.ready()),
+        "loader is visible pre-ready"
+    );
+    let metrics = parity::diff_ref(&refs, &out, "error-shell/loader", "dark", &fx.shot()?)?;
+    ensure!(
+        metrics.pass,
+        "loader: outside={} text={:.3}%",
+        metrics.counts.diff_px_outside_text,
+        metrics.counts.text_diff_ratio * 100.
+    );
     Ok(())
 }
