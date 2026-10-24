@@ -5620,13 +5620,6 @@ impl Render for Root {
                     .on_action(cx.listener(|this, _: &recovery::TryAgain, window, cx| {
                         this.restart(window, cx);
                     }))
-                    .on_action(cx.listener(|_, _: &recovery::SendFeedback, _, cx| {
-                        // shortcut: the in-app feedback form is not built; open the report
-                        // URL its dialog links to instead.
-                        cx.open_url(
-                            "https://github.com/openai/codex/issues/new?template=1-codex-app.yml",
-                        );
-                    }))
                     .child(recovery::Recovery),
                 self,
                 cx,

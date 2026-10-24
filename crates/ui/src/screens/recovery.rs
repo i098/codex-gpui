@@ -18,12 +18,10 @@ actions!(
     [
         /// Crash page: spawn a new app-server and resume.
         TryAgain,
-        /// Crash page: report the error.
-        SendFeedback,
     ]
 );
 
-/// The crash page: the original's `T8s` on an `uBn` shell.
+/// The crash page: the original's `uBn` error-boundary page at its defaults.
 #[derive(IntoElement)]
 pub struct Recovery;
 
@@ -71,27 +69,13 @@ impl RenderOnce for Recovery {
                             .flex_shrink_0()
                             .gap(px(4.))
                             .child(text("ChatGPT hit a snag", 28., 39.2, 600., t.text))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(12.))
-                                    .text_left()
-                                    .child(text(
-                                        "Try again or update ChatGPT if this keeps happening",
-                                        14.,
-                                        21.,
-                                        400.,
-                                        t.text_secondary,
-                                    ))
-                                    .child(text(
-                                        "Send feedback to help us make the app better.",
-                                        14.,
-                                        21.,
-                                        400.,
-                                        t.text_secondary,
-                                    )),
-                            ),
+                            .child(text(
+                                "Something went wrong. Try again to continue",
+                                14.,
+                                21.,
+                                400.,
+                                t.text_secondary,
+                            )),
                     )
                     .child(
                         div().flex().flex_1().flex_col().items_center().child(
@@ -106,15 +90,6 @@ impl RenderOnce for Recovery {
                                     "Try again",
                                     &TryAgain,
                                     true,
-                                    window,
-                                    cx,
-                                    &t,
-                                ))
-                                .child(button(
-                                    "send-feedback",
-                                    "Send feedback",
-                                    &SendFeedback,
-                                    false,
                                     window,
                                     cx,
                                     &t,
