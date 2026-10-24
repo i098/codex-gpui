@@ -104,6 +104,32 @@ pub const SANS: &str = ".SystemUIFont";
 /// `ui-monospace`, which Chromium on macOS resolves to Menlo.
 pub const MONO: &str = "Menlo";
 
+/// A native destination shown after the rail divider.
+pub struct RailDestination {
+    pub id: &'static str,
+    pub icon: &'static str,
+    pub label: &'static str,
+    pub mcp_entrypoints: &'static [(&'static str, &'static str)],
+}
+
+pub const RAIL_DESTINATIONS: &[RailDestination] = &[
+    RailDestination {
+        id: "builtin:pull-requests",
+        icon: "rail-code-review",
+        label: "Code Review",
+        mcp_entrypoints: &[
+            ("code-review", "pull_requests.open"),
+            ("connector_openai_code_review", "pull_requests.open"),
+        ],
+    },
+    RailDestination {
+        id: "builtin:sites",
+        icon: "sites",
+        label: "Sites",
+        mcp_entrypoints: &[],
+    },
+];
+
 pub struct Shell {
     pub sidebar_open: bool,
     /// The toggle's spring: its start and the progress it left from
@@ -140,6 +166,8 @@ pub struct Shell {
     pub main_clips_right: bool,
     /// A chat needs attention (unread): the rail's Home item carries the unread dot.
     pub attention: bool,
+    /// Unseen, unpinned MCP destinations; `None` while their source is unavailable.
+    pub unread_destinations: Option<Arc<[SharedString]>>,
     /// The profile avatar's menu is open.
     pub profile_menu: bool,
     /// Pointer over the avatar: its own click toggles the menu, so a press there must not
@@ -187,6 +215,7 @@ impl Shell {
             main_opaque_scroll: None,
             main_clips_right: false,
             attention: false,
+            unread_destinations: None,
             profile_menu: false,
             avatar_hovered: false,
             sidebar,
@@ -854,11 +883,21 @@ impl Shell {
                         item("plugins").on_click(dispatch::<OpenPlugins>),
                         "Plugins",
                     ))
-                    // Explore with its unread dot; it shows no tooltip.
-                    .child(item("explore").child(dot(4.)))
+                    // Explore has no tooltip; its marker follows the bound destination state.
+                    .child(
+                        item("explore").when(
+                            self.unread_destinations
+                                .as_ref()
+                                .is_some_and(|ids| !ids.is_empty()),
+                            |item| item.child(dot(4.)),
+                        ),
+                    )
                     .child(div().w(px(24.)).h(px(1.)).bg(t.border))
-                    .child(rail_tip(item("rail-code-review"), "Code Review"))
-                    .child(rail_tip(item("sites"), "Sites"))
+                    .children(
+                        RAIL_DESTINATIONS
+                            .iter()
+                            .map(|destination| rail_tip(item(destination.icon), destination.label)),
+                    )
                     .child(shapes::top_fade(px(16.))),
             )
             .child(

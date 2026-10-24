@@ -2074,6 +2074,8 @@ impl Render for Composer {
                     .role(gpui::Role::TextInput)
                     .aria_label(self.placeholder.clone())
                     .aria_value(self.content.clone())
+                    .h(self.editor_line_height())
+                    .overflow_hidden()
                     .child(self.editor(cx)),
             );
         }

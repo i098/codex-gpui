@@ -282,6 +282,7 @@ pub struct DiffPanel {
     filter_focus: Option<FocusHandle>,
     scroll: ScrollHandle,
     standalone: bool,
+    container_width: Option<Pixels>,
     base_branch: Option<String>,
     commit: Option<String>,
     cwd: String,
@@ -414,11 +415,19 @@ impl DiffPanel {
             filter_focus: None,
             scroll: ScrollHandle::new(),
             standalone: false,
+            container_width: None,
             base_branch: None,
             commit: None,
             cwd: cwd.to_owned(),
             full_files: false,
             content_generation: 0,
+        }
+    }
+
+    pub fn set_container_width(&mut self, width: Pixels, cx: &mut Context<Self>) {
+        if self.container_width != Some(width) {
+            self.container_width = Some(width);
+            cx.notify();
         }
     }
 
@@ -1171,11 +1180,13 @@ impl Render for DiffPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.request_visible_full_files(cx);
         let t = cx.theme().clone();
-        let width = if self.standalone {
-            window.viewport_size().width
-        } else {
-            panel_width(window, cx) - px(1.)
-        };
+        let width = self.container_width.unwrap_or_else(|| {
+            if self.standalone {
+                window.viewport_size().width
+            } else {
+                panel_width(window, cx) - px(1.)
+            }
+        });
         let wide = width >= px(625.);
         let tree = self.show_tree.then(|| self.file_tree(width, window, cx));
         let code_width = width
@@ -1898,12 +1909,13 @@ impl Render for SplitScreen {
             .on_key_down(crate::focus::tab)
             .child(self.shell.clone())
             .when(open, |d| {
-                d.child(
+                d.child(titlebar_layer(
+                    Some(sidebar_width),
                     self.thread
                         .update(cx, |view, cx| view.titlebar_header(left.is_some(), cx))
-                        .left(sidebar_width)
                         .when_some(left, |h, left| h.w(left - sidebar_width)),
-                )
+                    sidebar_width,
+                ))
             })
             // Without a panel the shell's `New tab` group follows the header behind a divider.
             .when(open && left.is_none(), |d| {
@@ -1968,6 +1980,24 @@ impl Render for SplitScreen {
                 },
             )
     }
+}
+
+/// Chromium's composited `group/titlebar` layer around the thread `header` at `header_left`:
+/// from the end of the leading titlebar controls (`TITLEBAR_LAYER_X`), or from the titlebar
+/// box where that starts further left (the rail, with no open sidebar), to the window's right
+/// edge. cc tiles only its recorded bounds, the union of what the header paints.
+fn titlebar_layer(sidebar: Option<Pixels>, header: Div, header_left: Pixels) -> Div {
+    let layer_left = TITLEBAR_LAYER_X.min(sidebar.unwrap_or(crate::RAIL_WIDTH));
+    div()
+        .absolute()
+        .top_0()
+        .left(layer_left)
+        .right_0()
+        .h(Theme::TITLEBAR_HEIGHT)
+        .layer()
+        .child(crate::recorded_bounds(
+            header.left(header_left - layer_left),
+        ))
 }
 
 /// Left edge of Chromium's composited `group/titlebar` layer.
@@ -2474,12 +2504,16 @@ fn capsule(t: &Theme, clamped: bool) -> Div {
         ))
 }
 
+pub(crate) fn stats_features(size: f32) -> FontFeatures {
+    let mut features = vec![("tnum".into(), 1), ("cv01".into(), 1), ("cv02".into(), 1)];
+    features.extend(textsys::letter_spacing(-0.025 * size).0.iter().cloned());
+    FontFeatures(Arc::new(features))
+}
+
 /// `+N -M` in git colors, `size` px with `tracking-tight` (-0.025em letter spacing),
 /// `tabular-nums` and `disambiguated-digits` (`cv01`, `cv02`).
 pub fn stats(added: usize, removed: usize, size: f32, t: &Theme) -> Div {
-    let mut features = vec![("tnum".into(), 1), ("cv01".into(), 1), ("cv02".into(), 1)];
-    features.extend(textsys::letter_spacing(-0.025 * size).0.iter().cloned());
-    let features = FontFeatures(Arc::new(features));
+    let features = stats_features(size);
     let tracked =
         |s: String, color: Hsla| text(s, size, size, 430., color).font_features(features.clone());
     div()
