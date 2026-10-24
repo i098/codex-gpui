@@ -345,6 +345,17 @@ fn run(root: &Path, args: &[&str]) -> Result<Output> {
                 root,
                 std::env::var_os("PATH")
             );
+            eprintln!(
+                "DBG root_exists={} pwd={:?} ws={:?} git={:?}",
+                root.exists(),
+                std::env::current_dir(),
+                std::env::var_os("GITHUB_WORKSPACE"),
+                std::process::Command::new("git")
+                    .arg("--version")
+                    .output()
+                    .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+                    .err()
+            );
             Err(anyhow::anyhow!(format!("{error}")).context("run local Git"))
         }
     }
