@@ -16,6 +16,7 @@ pub mod qa;
 mod routes;
 pub use routes::Route;
 mod plugins;
+pub mod screenshot;
 mod search;
 mod section_actions;
 mod settings_subtrees;
@@ -157,6 +158,7 @@ pub fn init(cx: &mut App) {
     ui::composer::bind_keys(cx);
     features::init(cx);
     native_menus::init(cx);
+    screenshot::init(cx);
     cx.on_action(|_: &Quit, cx| cx.defer(routes::request_quit));
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
