@@ -66,7 +66,7 @@ fn main() {
 
     let manifest = fs::read_to_string(out.join("manifest.json")).expect("package manifest");
     for identity in [
-        format!("\"package\":\"skia-hairline-sys\""),
+        "\"package\":\"skia-hairline-sys\"".into(),
         format!("\"version\":\"{VERSION}\""),
         "\"target\":\"aarch64-apple-darwin\"".into(),
         format!("\"skia_revision\":\"{SKIA_REVISION}\""),
