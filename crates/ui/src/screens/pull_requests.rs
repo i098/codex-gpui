@@ -2414,16 +2414,11 @@ fn status_icon(item: &model::Item, t: &theme::Theme) -> Div {
         .flex_none()
         .child(icon(glyph, 20., color));
     if item.state == "open" && !item.is_draft {
-        let color = status_color(item, t);
-        icon_box = icon_box.child(
-            div()
-                .absolute()
-                .left(px(12.))
-                .top(px(12.))
-                .size(px(6.282))
-                .rounded_full()
-                .bg(color),
-        );
+        icon_box = icon_box.child(div().absolute().top_0().left_0().child(icon(
+            "pull-request-status-dot",
+            20.,
+            status_color(item, t),
+        )));
     }
     icon_box
 }
