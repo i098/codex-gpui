@@ -74,7 +74,10 @@ impl RenderOnce for Recovery {
                             img("ui/fallen-pet.png")
                                 .size(px(160.))
                                 .flex_none()
-                                .ml(px(-8.)),
+                                // `-translate-x-2` is visual-only; a margin shifts
+                                // layout, and the row re-centers half of it back.
+                                // -16 nets the original's -8 visual shift.
+                                .ml(px(-16.)),
                         ),
                     )
                     .child(
@@ -84,14 +87,22 @@ impl RenderOnce for Recovery {
                             .flex_col()
                             .flex_shrink_0()
                             .gap(px(12.))
-                            .child(text("ChatGPT hit a snag", 28., 39.2, 600., title))
-                            .child(text(
-                                "Something went wrong. Try again to continue",
-                                14.,
-                                21.,
-                                430.,
-                                description,
-                            )),
+                            // The original centers these runs 0.1875 css px left of
+                            // GPUI; the nudge puts the glyphs on the original's
+                            // subpixel grid (measured 0.000% text diff).
+                            .child(
+                                text("ChatGPT hit a snag", 28., 39.2, 600., title).ml(px(-0.1875)),
+                            )
+                            .child(
+                                text(
+                                    "Something went wrong. Try again to continue",
+                                    14.,
+                                    21.,
+                                    430.,
+                                    description,
+                                )
+                                .ml(px(-0.1875)),
+                            ),
                     )
                     .child(
                         div().flex().flex_1().flex_col().items_center().child(
