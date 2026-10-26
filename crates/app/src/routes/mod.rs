@@ -10,7 +10,7 @@ mod settings;
 mod thread;
 
 pub(crate) use settings::request_quit;
-pub(crate) use thread::load_thread;
+pub(crate) use thread::{forked_thread, load_thread};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Route {
@@ -122,6 +122,7 @@ impl Root {
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     pub(crate) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_native_menus(window, cx);
         self.remember_recent_chat();
         self.flush_settings(cx);
         self.settings_page = None;
@@ -160,6 +161,7 @@ impl Root {
             page.update(cx, |shell, _| {
                 shell.can_go_back = can_back;
                 shell.can_go_forward = can_forward;
+                shell.unread_destinations = self.unread_destinations.clone();
             });
         }
         let thread_id = match &self.state.route {
@@ -188,7 +190,6 @@ impl Root {
         } else {
             self.shell.clone()
         };
-        window.focus(&self.route_focus(cx), cx);
         let home = matches!(
             self.state.route,
             Route::Home | Route::Thread(_) | Route::Remote { .. }
@@ -208,8 +209,9 @@ impl Root {
         });
         self.split = view.map(|view| {
             let panel = self.side_tabs_view(&view, cx);
-            with_side_tabs(shell.clone(), view, panel, cx)
+            with_side_tabs(shell.clone(), view, panel, self.workspace_layout(), cx)
         });
+        window.focus(&self.route_focus(cx), cx);
         if let Some(id) = thread_id
             && self
                 .thread
@@ -218,6 +220,7 @@ impl Root {
         {
             self.list_queue(id, cx);
         }
+        self.sync_terminal_panel(cx);
         self.save(window, cx);
         cx.notify();
     }
@@ -240,7 +243,15 @@ impl Root {
                     }
                 })
                 .unwrap_or_else(|| self.focus.clone()),
-            Route::Thread(id) if open(id) => self.thread_composer.focus_handle(cx),
+            Route::Thread(id) if open(id) => {
+                if self.workspace_layout() == WorkspaceLayout::Full
+                    && let Some(split) = &self.split
+                {
+                    split.focus_handle(cx)
+                } else {
+                    self.thread_composer.focus_handle(cx)
+                }
+            }
             _ if self.page.is_some() => self.focus.clone(),
             Route::Thread(_) => self.focus.clone(),
             _ => self.home.read(cx).composer.focus_handle(cx),

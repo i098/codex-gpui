@@ -12,6 +12,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
 impl Root {
     /// `⌘N`, the `New chat` row and rail Home: Home with an empty, focused composer.
     pub(crate) fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.shortcut_state.new_chat_mode = features::shortcuts::NewChatMode::Project;
+        self.home.update(cx, |home, cx| {
+            home.project = self.state.project_root.as_deref().map(project_name);
+            cx.notify();
+        });
         self.new_chat_section = None;
         if self.state.route == Route::Home {
             self.back
@@ -22,7 +27,7 @@ impl Root {
         }
         self.navigate(Route::Home, window, cx);
         let composer = self.home.read(cx).composer.clone();
-        composer.update(cx, |c, cx| c.set_text("", cx));
+        composer.update(cx, |c, cx| c.clear_session(cx));
         window.focus(&composer.focus_handle(cx), cx);
     }
 }

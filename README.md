@@ -19,7 +19,7 @@ The app drives the real `codex app-server` over stdio, the same JSON-RPC transpo
 The workspace also builds on Linux, with GPUI's no-op text system, for CI (fmt, clippy, tests).
 The self-hosted CI job disables dev/test debug information and incremental compilation.
 It uses only its own workspace's `target` directory and removes that directory after success or failure.
-CI skips draft pull requests: marking a PR ready for review starts its run. A newer push to a PR cancels that PR's older run; pushes to `main` always run. A pull request that changes only the listed documentation files (`paths-ignore` in `.github/workflows/ci.yml`) starts no run.
+CI skips draft pull requests by default. Marking a pull request ready for review starts the normal run; maintainers can also use Actions > ci > Run workflow to test a draft branch. A newer push to a pull request cancels its older run; pushes to `main` always run. A pull request that changes only the listed documentation files (`paths-ignore` in `.github/workflows/ci.yml`) starts no run.
 
 ## Computer use runtime
 
@@ -308,22 +308,61 @@ Manage opens Settings > Plugins, which owns the management tabs and marketplace 
 The existing 36 reference frames do not cover these routes.
 Run `cargo test -p app --test plugins -- --test-threads=1` on macOS for the native failure and draft checks.
 
+Settings > Usage & billing reads plan limits and reset credits from the app-server.
+It keeps the original account gates for credit controls, enterprise usage requests, analytics, and balance history.
+Reset retries keep the same idempotency key; billing changes keep their confirmed state when a request fails.
+An uncertain reset keeps its original credit list until the server confirms the result.
+Account changes clear drafts and reset confirmations before the next control action.
+Analytics refreshes keep the selected period; credit speed groups use the recorded speed.
+The input fields reuse `Composer::settings_field`, including selection, clipboard access, and input methods.
+The renderer paints each limit card within the scroll layer and paints the sticky tabs in a separate layer.
+The sticky fade uses the original compositor layer's pixel origin to preserve gradient dithering.
+Disabled Analytics arrows use their painted bounds for the opacity layer.
+Card contents keep the original rounded overflow clip.
+Thin SVG strokes use Skia's original hairline alpha adjustment before rasterization.
+Run `cargo test -p ui -p app --lib usage` for the protocol and validation checks.
+Run `cargo run -p ui --example usage -- /path/to/usage.png` for the recorded native screen.
+Add `confirm-reset` after the output path to capture the confirmation state without redeeming a reset.
+Add `analytics` or `reset-error` to capture the recorded error states.
+Add `links` to check plan, credit, and billing destinations without opening a browser.
+Add `account-switch` to check that an account change discards the previous reset confirmation.
 
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
-Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
+Create saves the definition through `automation-create` to `CODEX_HOME/automations/<id>/automation.toml`.
 The app reloads the task list after a successful write and retains the draft if the write fails.
 The existing host schedules these definitions; this app does not start another scheduler.
 The row menu's `Run now` sends `automation-run-now`; the host starts one `codex app-server` thread and turn per task folder.
 It runs tasks with project folders or a project target (the project's first root from `.codex-global-state.json`), in a new Git worktree for the original default environment or in the folder for the local one.
 For a project target, the host saves the new thread's local project assignment before it starts the turn.
 An assignment write failure stops the run; legacy folder tasks do not change project assignments.
+Cron threads receive the original memory rules, inbox response rules, and desktop developer context through `thread/start`.
+The app-server retains saved base instructions.
+On macOS, automation threads use executable local app tools through a private native pipe.
+The tools need the `codex-app-tools` adapter and Node runtime installed with `ChatGPT.app`.
+If the adapter or pipe cannot start, the task keeps the app-server's original configuration.
+The pipe stops safely if its temporary directory is removed.
+The catalog exposes automation creation, full updates, deletion, local project and thread lists, history, pin, archive, and title changes.
+Unsupported delegation, remote hosts, plugin management, and terminal operations stay out of the catalog.
+Proposal cards open the shared task editor. Cancel changes nothing; saving preserves the reviewed definition.
+Completed task tools use only this card, not a second MCP activity row.
+The card clips its foreground to the original 20 px squircle; its background and shadow remain outside the clip.
 Projectless tasks use an owned folder under `~/Documents/Codex/<local-date>/<prompt-name>/`, with separate `work` and `outputs` folders.
 The `projectlessWorkspaceRoot` host setting overrides the root.
 The host saves projectless thread IDs, workspace-root hints, and output paths in `.codex-global-state.json`.
 Heartbeat tasks resume their existing thread with its selected model and permissions.
 The app opens that thread after a successful start, unless you navigate away while the run starts.
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
+The New task options menu also opens the full manual editor or a new chat with the original task setup prompt.
+The manual editor saves Name, multiline Prompt, Interval, Daily, Weekdays, Weekly, Monthly, and Custom schedules.
+Custom schedules support Hourly, Daily, Weekly, Monthly, and Yearly repeats, with interval, weekday, month-day, month, minute, and local time fields.
+The time presets use 09:00, 14:00, 18:00, and 22:00.
+The row menu's Edit action updates the task through `automation-update`, without changing its identity or unrelated definition fields.
+The editor keeps an existing advanced rule unchanged when only Name or Prompt changes.
+Prefilled drafts stay in Create mode until their data includes an existing task ID.
+Escape closes an open schedule picker first; otherwise, it discards the editor without saving.
+Run `cargo test -p app --test task_create editor:: -- --test-threads=1` on macOS for the native editor, schedule, and Create menu checks.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
+Use `-- --include-ignored` on macOS to check the installed adapter.
 
 ### Legacy Codex Cloud threads
 
@@ -434,7 +473,7 @@ That command does not close QA or any normal app.
 |---|---|
 | `bridge` | JSON-RPC client for `codex app-server` over stdio or durable cloud WebSocket, protocol types, recorded sessions, and the ACP backend. |
 | `ui` | The window shell (titlebar, navigation rail, sidebar, main panel), the page modules in `screens/`, the composer, the thread view, the diff view and the icons. |
-| `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths. It links Skia. |
+| `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths and circles. It links Skia. |
 | `textsys` | A GPUI text system that puts glyphs on the same pixels as Chromium on macOS. It also holds the vendored `gpui` and `gpui_apple`. |
 | `theme` | Color tokens, metrics and the bundled fonts, extracted from the original renderer CSS. |
 | `parity` | The pixel-parity harness: it renders each screen headless and compares it with the reference screenshot. |
@@ -450,8 +489,16 @@ Opening an unloaded chat reads its history and resumes the thread before showing
 The composer restores that thread's returned model, reasoning effort, and permissions instead of using startup defaults.
 An unset effort stays unset in requests; the picker shows Medium.
 The composer labels modified workspace policies as Custom.
-The default pinned-summary layout hides the thread identity in a single pane.
-Opening a right pane restores the header identity; the toolbar actions stay available.
+A titled thread shows its header identity, also in a single pane.
+An untitled thread shows it only when a right pane is open; the toolbar actions stay available.
+
+In a loaded chat with an open content tab, `Cmd+Shift+F` switches between full and split view.
+`Cmd+Shift+B` changes full view to split view, hides the tabs, or restores the retained tabs beside Chat.
+Hiding tabs keeps their selected content; opening the same file, terminal, or Changes tab shows it again.
+Full view focuses the content pane and does not send typed text to the hidden composer.
+Find in full view searches the visible Changes panel, not the hidden chat.
+These commands do not create a browser tab when no content tab is open.
+Run `cargo test -p app --test workspace_layout -- --test-threads=1` for the native interaction checks.
 
 `LocalHost` serves `native-desktop-apps` and `native-desktop-app-by-bundle-id` through the desktop fetch boundary.
 On macOS, the adapter reads Spotlight metadata, applies the original app exclusions, and supports usage or display-name ordering.
@@ -542,6 +589,10 @@ An extra layer changes glyph edge bytes even when its opacity is one.
 
 `shapes` links Skia binaries built with Chromium's `SkUserConfig.h` legacy defines.
 `.cargo/config.toml` points `SKIA_BINARIES_URL` to these binaries.
+The rasterizer reuses identical inverse-blend probe results across icon positions without changing their pixels.
+`skia-hairline-sys` links a narrow C scanner wrapper for Skia revision `61e7ca4e99062cdd0ab69445d5963fb3365778f6`.
+It records the ordered legacy hairline operations that the sprite renderer replays.
+`.cargo/config.toml` points `SKIA_HAIRLINE_BINARIES_URL` and `SKIA_HAIRLINE_PACKAGE_SHA256` to its versioned package.
 
 Raster output buffers stop at the visible viewport.
 Compositor tiles keep their original size, so long scrollers preserve edge rasterization.
@@ -558,6 +609,7 @@ Rasterize these images during paint, when the layer context is available.
 Wrap a sparse viewport layer's decorated subtree in `ui::recorded_bounds`.
 It collects painted bounds, including shadows, without adding an opacity layer.
 The Toaster uses this scope to match Chromium's shifted tile grid and local corner geometry.
+The thread titlebar reports its icon and divider bounds so the tile grid follows painted content, including untitled states.
 
 Wrap a tightly bounded compositor layer in `ui::composited_bounds`.
 It keeps the exact shadow bounds and uses Chromium's dense tile sizes.
@@ -605,6 +657,7 @@ It prints a Markdown table for a PR body.
 | Icon SVGs | `python3 tools/extract/icons.py` | Writes `assets/icons/<name>.svg` from the references. |
 | Icon images | `uv run -p /usr/bin/python3 --with numpy --with pillow tools/icons/build.py` | Fits the per-pixel icon images in `assets/icons/px/` and `tools/icons/check.json`. |
 | Skia binaries | `tools/shapes/skia.sh` | Builds Skia with Chromium's defines and uploads it for `SKIA_BINARIES_URL`. |
+| Hairline scanner package | `tools/shapes/build-skia-hairline.py` | Builds `skia-hairline-sys` against the installed Skia archive twice and writes the versioned package and receipt. |
 
 The labs `tools/shapes/run.sh`, `tools/shapes/blur.sh` and `tools/text/measure.sh` compare shapes, blur and text with Chromium case by case.
 
@@ -680,6 +733,13 @@ The terminal command opens an existing background command, not an interactive sh
 Unsupported destinations remain known gaps; this change does not implement logout, git operations, cloud operations, or the project picker.
 Recorded command rows, ranking, and keyboard-editing checks remain unchanged.
 
+A hidden native menu item dispatches the shared `NewStandaloneChat` action and keeps its keyboard shortcut.
+Its first message creates a separate projectless workspace.
+File > New Temporary Chat uses the existing ephemeral mode and does not add a Recents entry.
+The temporary action is unavailable for ACP backends.
+Settings hides Toggle Sidebar and disables its action.
+Leaving Settings restores that item without changing the sidebar.
+Keyboard shortcut edits preserve the active window's menu visibility.
 The native menu lives in `crates/app/src/native_menus.rs`.
 Edit supports plain-text Paste and Match Style and selection-only Delete, including undo.
 View contains Find; Help opens the Codex changelog, troubleshooting guide, and service status page.
@@ -701,6 +761,14 @@ Images in the composer and tool output support Copy Image and Save Image As.
 Images with a local source also support Reveal in Finder.
 Saving writes the original bytes and replaces the destination only after the write succeeds.
 The headless Save-dialog hook allows tests to select a destination without opening a native window.
+On macOS, Control+Shift+4 attaches a selected screen region to the primary window's current chat.
+Control+Option+Shift+4 opens a new chat before selection.
+Starting a new chat clears the previous Home draft, including its attachments.
+Both shortcuts use the native selection tool and leave the screenshot unsent.
+Enlarged image previews retain their edge colors instead of sampling adjacent texture data.
+Escape cancels selection without an error; changing the chat or account discards an unfinished capture.
+The shortcuts use `codex-command-keybindings` overrides and never change Screen Recording permissions.
+Run `cargo test -p app --lib screenshot:: -- --test-threads=1` for isolated capture, attachment, and macOS image-edge checks.
 
 ```sh
 tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'
