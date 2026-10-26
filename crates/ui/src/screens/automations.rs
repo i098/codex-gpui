@@ -19,9 +19,33 @@ use gpui::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-use std::{collections::HashSet, fs, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    fs,
+    path::Path,
+};
 use theme::{ActiveTheme as _, Theme};
 
+pub mod editor;
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum CreationMode {
+    Codex,
+    ChatGPT,
+    Manual,
+}
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct CreateAutomation {
+    pub mode: CreationMode,
+}
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct EditAutomation {
+    pub id: String,
+}
 actions!(
     automations,
     [
@@ -46,6 +70,13 @@ pub struct OpenAutomation {
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = automations, no_json)]
 pub struct ToggleAutomation {
+    pub id: String,
+}
+
+/// Row menu `Delete`: asks to delete the task `id` (AM-026); the app confirms first.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct DeleteAutomation {
     pub id: String,
 }
 
@@ -121,53 +152,171 @@ fn day_time(at_ms: i64, utc_offset: i64) -> (String, String) {
     )
 }
 
-impl Task {
-    fn rule(&self, key: &str) -> Option<&str> {
-        self.rrule
-            .split(';')
-            .find_map(|part| part.strip_prefix(key)?.strip_prefix('='))
-    }
+fn rule_part<'a>(rrule: &'a str, key: &str) -> Option<&'a str> {
+    rrule.split([';', '\n']).find_map(|part| {
+        part.trim_start_matches("RRULE:")
+            .strip_prefix(key)?
+            .strip_prefix('=')
+    })
+}
 
-    /// Sidebar cadence: `scheduled.sidebar.weekly` / `.daily`.
-    /// ponytail: the original's `pr()` labels every rrule shape; the port covers the
-    /// `New task` dialog's weekly and daily rules and reads everything else as daily.
-    fn cadence(&self) -> &'static str {
-        match self.rule("FREQ") {
-            Some("WEEKLY") => "Weekly",
-            _ => "Daily",
-        }
+fn cadence(rrule: &str) -> &'static str {
+    match rule_part(rrule, "FREQ") {
+        Some("MINUTELY" | "HOURLY") => "Interval",
+        Some("DAILY") => "Daily",
+        Some("WEEKLY") if rule_part(rrule, "BYDAY") == Some("MO,TU,WE,TH,FR") => "Weekdays",
+        Some("WEEKLY") => "Weekly",
+        Some("MONTHLY") => "Monthly",
+        Some("YEARLY") => "Yearly",
+        _ => "Custom",
     }
+}
 
-    /// Card schedule: `Fridays at 9:00 AM`, `Daily at 8:00 AM`.
-    fn schedule(&self) -> String {
-        let hour: u32 = self
-            .rule("BYHOUR")
-            .and_then(|h| h.parse().ok())
-            .unwrap_or(9);
-        let minute: u32 = self
-            .rule("BYMINUTE")
-            .and_then(|m| m.parse().ok())
-            .unwrap_or(0);
-        let time = format!(
-            "{}:{minute:02} {}",
-            match hour % 12 {
-                0 => 12,
-                h => h,
-            },
-            if hour < 12 { "AM" } else { "PM" }
-        );
-        let day = match self.rule("BYDAY") {
-            Some("MO") => "Mondays",
-            Some("TU") => "Tuesdays",
-            Some("WE") => "Wednesdays",
-            Some("TH") => "Thursdays",
-            Some("FR") => "Fridays",
-            Some("SA") => "Saturdays",
-            Some("SU") => "Sundays",
-            _ => "Daily",
-        };
-        format!("{day} at {time}")
+pub fn schedule_summary(rrule: &str) -> String {
+    let frequency = rule_part(rrule, "FREQ");
+    if matches!(frequency, Some("MINUTELY" | "HOURLY")) {
+        let interval = rule_part(rrule, "INTERVAL")
+            .and_then(|n| n.parse::<u64>().ok())
+            .unwrap_or(1);
+        let minutes = interval.saturating_mul(if frequency == Some("HOURLY") { 60 } else { 1 });
+        return interval_summary(minutes);
     }
+    let hour = rule_part(rrule, "BYHOUR").and_then(|h| h.parse::<u32>().ok());
+    let minute = rule_part(rrule, "BYMINUTE").and_then(|m| m.parse::<u32>().ok());
+    let (Some(hour), Some(minute)) = (hour, minute) else {
+        return cadence(rrule).to_owned();
+    };
+    let time = format!(
+        "{}:{minute:02} {}",
+        if hour % 12 == 0 { 12 } else { hour % 12 },
+        if hour < 12 { "AM" } else { "PM" }
+    );
+    format!("{} at {time}", day_label(rrule))
+}
+
+fn interval_summary(minutes: u64) -> String {
+    match minutes {
+        1 => "Every minute".into(),
+        60 => "Hourly".into(),
+        1440 => "Daily".into(),
+        10080 => "Weekly".into(),
+        n if n.is_multiple_of(10080) => format!("Every {} weeks", n / 10080),
+        n if n.is_multiple_of(1440) => format!("Every {} days", n / 1440),
+        n if n.is_multiple_of(60) => format!("Every {} hours", n / 60),
+        n => format!("Every {n} minutes"),
+    }
+}
+
+/// The weekday of a single-day weekly rule, else its cadence.
+fn day_label(rrule: &str) -> &'static str {
+    match (rule_part(rrule, "FREQ"), rule_part(rrule, "BYDAY")) {
+        (Some("WEEKLY"), Some("MO")) => "Mondays",
+        (Some("WEEKLY"), Some("TU")) => "Tuesdays",
+        (Some("WEEKLY"), Some("WE")) => "Wednesdays",
+        (Some("WEEKLY"), Some("TH")) => "Thursdays",
+        (Some("WEEKLY"), Some("FR")) => "Fridays",
+        (Some("WEEKLY"), Some("SA")) => "Saturdays",
+        (Some("WEEKLY"), Some("SU")) => "Sundays",
+        _ => cadence(rrule),
+    }
+}
+
+// The card uses the original 24 px clock, not the sidebar's 20 px asset.
+const CARD_CLOCK: &[u8] = br#"<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 6.25C12.4142 6.25003 12.75 6.58581 12.75 7V11.793C12.75 12.1244 12.6182 12.4424 12.3838 12.6768L10.0303 15.0303C9.73739 15.3232 9.26262 15.3231 8.96973 15.0303C8.67683 14.7374 8.67683 14.2626 8.96973 13.9697L11.25 11.6895V7C11.25 6.58579 11.5858 6.25 12 6.25Z" fill="black"/><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2.25C17.3848 2.25 21.75 6.61522 21.75 12C21.75 17.3848 17.3848 21.75 12 21.75C6.61522 21.75 2.25 17.3848 2.25 12C2.25 6.61522 6.61522 2.25 12 2.25ZM12 3.75C7.44365 3.75 3.75 7.44365 3.75 12C3.75 16.5563 7.44365 20.25 12 20.25C16.5563 20.25 20.25 16.5563 20.25 12C20.25 7.44365 16.5563 3.75 12 3.75Z" fill="black"/></svg>"#;
+
+pub fn task_card(name: SharedString, detail: SharedString, can_open: bool, t: &Theme) -> Div {
+    let clock_color = gpui::Hsla {
+        a: 0.65,
+        ..t.text_secondary
+    };
+    let content = div()
+        .size_full()
+        .p(px(12.))
+        .flex()
+        .items_center()
+        .gap(px(10.))
+        .child(
+            div()
+                .size(px(40.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .relative()
+                .child(fill(px(12.5), t.surface_secondary.opacity(0.92)))
+                .child(
+                    canvas(
+                        |_, _, _| {},
+                        move |bounds, (), window, cx| {
+                            if !shapes::paint_icon(
+                                CARD_CLOCK,
+                                "automation-card-clock",
+                                bounds,
+                                false,
+                                clock_color,
+                                None,
+                                window,
+                                cx,
+                            ) {
+                                let _ = window.paint_svg(
+                                    bounds,
+                                    "icons/scheduled.svg".into(),
+                                    None,
+                                    gpui::TransformationMatrix::unit(),
+                                    clock_color,
+                                    cx,
+                                );
+                            }
+                        },
+                    )
+                    .size(px(24.)),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(
+                    text(name, 14., 21., 500., t.text)
+                        .overflow_hidden()
+                        .text_ellipsis(),
+                )
+                .child(text(detail, 13., 19.5, 430., t.text_secondary)),
+        )
+        .when(can_open, |card| {
+            card.child(
+                div()
+                    .relative()
+                    .h(px(28.))
+                    .px(px(9.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(12.5)),
+                        corner: shapes::Corner::Squircle,
+                        border: Some((px(1.), t.border)),
+                        ..Default::default()
+                    }))
+                    .flex()
+                    .items_center()
+                    .child(text("Open", 14., 18., 430., t.text)),
+            )
+        });
+    div()
+        .relative()
+        .h(px(64.5))
+        .child(shapes::decoration(shapes::Decoration {
+            radius: Corners::all(px(20.)),
+            corner: shapes::Corner::Squircle,
+            fill: Some(t.surface_elevated_secondary.opacity(0.5)),
+            shadows: vec![crate::composer::shadow(t.border_strong, 0., 0., 0.5, false)],
+            ..Default::default()
+        }))
+        .child(crate::rounded_clip(
+            px(20.),
+            shapes::Corner::Squircle,
+            content,
+        ))
 }
 
 /// One `/suggested_automations` entry (or a built-in landing example).
@@ -298,6 +447,8 @@ fn shell_with(
         menu_button_hovered: false,
         menu_focus: cx.focus_handle(),
         return_focus: None,
+        create_menu: cx.new(editor::CreateMenu::new),
+        buttons: HashMap::new(),
     });
     let mut page = None;
     let main: AnyView = match selected {
@@ -342,7 +493,14 @@ pub struct ScheduledSidebar {
     menu_button_hovered: bool,
     menu_focus: FocusHandle,
     return_focus: Option<FocusHandle>,
+    create_menu: Entity<editor::CreateMenu>,
+    /// The `Scheduled task actions` button each opened menu came from: focus returns there
+    /// after a dialog from the menu closes.
+    buttons: HashMap<String, FocusHandle>,
 }
+
+/// The original's trash icon (`settings.automations.delete`), 16 px.
+const DELETE_ICON: &[u8] = br##"<svg height="16" viewBox="0 0 16 16" width="16" xmlns="http://www.w3.org/2000/svg"><path d="M6.66724 6.80762C6.95696 6.80788 7.19263 7.04322 7.19263 7.33301V10.6729C7.19256 10.9626 6.95692 11.197 6.66724 11.1973C6.37733 11.1973 6.14192 10.9627 6.14185 10.6729V7.33301C6.14185 7.04306 6.37729 6.80762 6.66724 6.80762Z" fill="currentColor"></path> <path d="M9.33325 6.80762C9.6232 6.80762 9.85864 7.04306 9.85864 7.33301V10.6729C9.85857 10.9627 9.62316 11.1973 9.33325 11.1973C9.04335 11.1973 8.80793 10.9627 8.80786 10.6729V7.33301C8.80786 7.04306 9.0433 6.80762 9.33325 6.80762Z" fill="currentColor"></path> <path fill-rule="evenodd" clip-rule="evenodd" d="M8.00024 1.25391C9.66003 1.25407 11.0236 2.52186 11.177 4.1416H13.6663C13.9562 4.1416 14.1917 4.37704 14.1917 4.66699C14.1914 4.95672 13.956 5.19238 13.6663 5.19238H13.1692L12.6995 12.1787C12.6105 13.5045 11.5096 14.5349 10.1809 14.5352H5.8313C4.50407 14.535 3.40273 13.5068 3.31177 12.1826L2.83228 5.19238H2.33325C2.04347 5.19238 1.80813 4.95672 1.80786 4.66699C1.80786 4.37704 2.0433 4.1416 2.33325 4.1416H4.82251C4.976 2.52175 6.34031 1.25391 8.00024 1.25391ZM4.35962 12.1104C4.41275 12.8838 5.05604 13.4842 5.8313 13.4844H10.1809C10.957 13.4841 11.6006 12.8828 11.6526 12.1084L12.1165 5.19238H3.88403L4.35962 12.1104ZM8.00024 2.30469C6.92101 2.30469 6.03114 3.10331 5.88306 4.1416H10.1174C9.96932 3.10342 9.07933 2.30485 8.00024 2.30469Z" fill="currentColor"></path></svg>"##;
 
 impl ScheduledSidebar {
     pub fn set_tasks(&mut self, tasks: Vec<Task>, cx: &mut Context<Self>) {
@@ -372,6 +530,17 @@ impl ScheduledSidebar {
     /// The task whose actions menu is open.
     pub fn open_menu(&self) -> Option<&str> {
         self.menu.as_deref()
+    }
+
+    /// The task's `Scheduled task actions` button, where focus returns after its delete
+    /// confirmation closes.
+    pub fn trigger_focus(&self, id: &str) -> Option<FocusHandle> {
+        self.buttons.get(id).cloned()
+    }
+
+    fn delete(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_menu(window, cx);
+        window.dispatch_action(Box::new(DeleteAutomation { id: id.to_owned() }), cx);
     }
 
     fn run_now(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -405,6 +574,7 @@ impl ScheduledSidebar {
         }
         self.menu = Some(id.to_owned());
         self.menu_item = None;
+        self.buttons.insert(id.to_owned(), button.clone());
         self.return_focus = Some(button);
         window.focus(&self.menu_focus, cx);
         cx.stop_propagation();
@@ -423,14 +593,26 @@ impl ScheduledSidebar {
                 if let Some(id) = self.menu.clone() {
                     if self.menu_item == Some(0) {
                         self.run_now(&id, window, cx);
+                    } else if self.menu_item == Some(2) {
+                        self.close_menu(window, cx);
+                        window.dispatch_action(Box::new(EditAutomation { id }), cx);
+                    } else if self.menu_item == Some(3) {
+                        self.delete(&id, window, cx);
                     } else {
                         self.toggle(&id, window, cx);
                     }
                 }
             }
             "up" | "down" | "home" | "end" => {
-                let last = matches!(event.keystroke.key.as_str(), "down" | "end");
-                self.menu_item = Some(usize::from(last));
+                const ITEMS: usize = 4;
+                let next = match (event.keystroke.key.as_str(), self.menu_item) {
+                    ("home", _) | ("down", None) => 0,
+                    ("end", _) | ("up", None) => ITEMS - 1,
+                    ("down", Some(i)) => (i + 1) % ITEMS,
+                    (_, Some(i)) => (i + ITEMS - 1) % ITEMS,
+                    (_, None) => 0,
+                };
+                self.menu_item = Some(next);
                 cx.stop_propagation();
                 cx.notify();
             }
@@ -498,6 +680,70 @@ impl ScheduledSidebar {
                     .child(status_icon(paused, t.text)),
             )
             .child(text(label, 13., 18.5714, 430., t.text));
+        let edit_id = task.id.clone();
+        let edit = div()
+            .id("edit-automation")
+            .role(Role::MenuItem)
+            .aria_label("Edit")
+            .h(px(28.5625))
+            .px(px(8.))
+            .rounded(px(15.))
+            .flex()
+            .items_center()
+            .when(self.menu_item == Some(2), |d| d.bg(hover))
+            .hover(move |s| s.bg(hover))
+            .child(text("Edit", 13., 18.5714, 430., t.text))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.close_menu(window, cx);
+                window.dispatch_action(
+                    Box::new(EditAutomation {
+                        id: edit_id.clone(),
+                    }),
+                    cx,
+                );
+            }));
+        let delete_id = task.id.clone();
+        let danger = t.text_error;
+        let delete = div()
+            .id("delete-task")
+            .group("delete-task-item")
+            .role(Role::MenuItem)
+            .aria_label("Delete")
+            .h(px(28.5625))
+            .px(px(8.))
+            .rounded(px(15.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .when(self.menu_item == Some(2), |d| d.bg(hover))
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(move |this, _, window, cx| this.delete(&delete_id, window, cx)))
+            .child(
+                div()
+                    .size(px(16.))
+                    .flex_none()
+                    .opacity(0.75)
+                    .group_hover("delete-task-item", |s| s.opacity(1.))
+                    .child(
+                        canvas(
+                            |_, _, _| {},
+                            move |bounds, (), window, cx| {
+                                shapes::paint_icon(
+                                    DELETE_ICON,
+                                    "task-menu-delete",
+                                    bounds,
+                                    false,
+                                    danger,
+                                    None,
+                                    window,
+                                    cx,
+                                );
+                            },
+                        )
+                        .size(px(16.)),
+                    ),
+            )
+            .child(text("Delete", 13., 18.5714, 430., danger));
         let menu = div()
             .id("task-actions-menu")
             .occlude()
@@ -511,7 +757,7 @@ impl ScheduledSidebar {
                 }
             }))
             .child(crate::composer::popover(t, 220., |menu| {
-                menu.child(run).child(item)
+                menu.child(run).child(item).child(edit).child(delete)
             }));
         deferred(
             div().absolute().top(px(30.)).right(px(1.)).child(
@@ -676,7 +922,11 @@ impl ScheduledSidebar {
             .child(
                 secondary
                     .child(text(
-                        if paused { "Paused" } else { task.cadence() },
+                        if paused {
+                            "Paused"
+                        } else {
+                            cadence(&task.rrule)
+                        },
                         12.,
                         16.,
                         430.,
@@ -765,7 +1015,8 @@ impl Render for ScheduledSidebar {
                             )
                             .on_click(crate::dispatch::<NewTask>)
                             .child(icon("automations-plus", 16., t.text_default_nav))
-                            .child(text("New task", 14., 21., 430., t.text_default_nav)),
+                            .child(text("New task", 14., 21., 430., t.text_default_nav))
+                            .child(div().ml_auto().child(self.create_menu.clone())),
                     ),
             )
             .child(
@@ -1086,65 +1337,13 @@ impl Render for AutomationThread {
                                 .whitespace_normal(),
                             )
                             .child(
-                                div()
-                                    .relative()
-                                    .mt(px(24.))
-                                    .h(px(65.))
-                                    .p(px(12.))
-                                    .child(fill(px(20.), t.surface_elevated_secondary.opacity(0.5)))
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(10.))
-                                    .child(
-                                        div()
-                                            .size(px(40.))
-                                            .flex_none()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .relative()
-                                            .child(fill(
-                                                px(12.5),
-                                                t.surface_secondary.opacity(0.92),
-                                            ))
-                                            .child(icon("scheduled", 24., t.text_secondary)),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .flex()
-                                            .flex_col()
-                                            .child(
-                                                text(
-                                                    self.task.name.clone(),
-                                                    14.,
-                                                    21.,
-                                                    500.,
-                                                    t.text,
-                                                )
-                                                .overflow_hidden()
-                                                .text_ellipsis(),
-                                            )
-                                            .child(text(
-                                                self.task.schedule(),
-                                                13.,
-                                                20.,
-                                                430.,
-                                                t.text_secondary,
-                                            )),
-                                    )
-                                    .child(
-                                        div()
-                                            .h(px(28.))
-                                            .px(px(8.))
-                                            .rounded(px(12.5))
-                                            .border_1()
-                                            .border_color(t.border)
-                                            .flex()
-                                            .items_center()
-                                            .child(text("Open", 14., 18., 430., t.text)),
-                                    ),
+                                task_card(
+                                    self.task.name.clone(),
+                                    schedule_summary(&self.task.rrule).into(),
+                                    true,
+                                    t,
+                                )
+                                .mt(px(24.)),
                             ),
                     )
                     // Room for the docked composer.

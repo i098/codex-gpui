@@ -78,6 +78,7 @@ use self::a11y::ROOT_NODE_ID;
 use crate::util::{
     atomic_incr_if_not_zero, ceil_to_device_pixel, floor_to_device_pixel, round_half_toward_zero,
     round_half_toward_zero_f64, round_half_up, round_stroke_to_device_pixel, round_to_device_pixel,
+    snap_border_to_device_pixel,
 };
 pub use prompts::*;
 
@@ -2936,14 +2937,16 @@ impl Window {
             }
             let size = self.viewport_size.to_device_pixels(self.scale_factor());
             let opaque = checkpoint.is_none()
-                && self.platform_window.background_appearance() == WindowBackgroundAppearance::Opaque;
+                && self.platform_window.background_appearance()
+                    == WindowBackgroundAppearance::Opaque;
             let scene = if let Some((epoch, start)) = checkpoint {
                 anyhow::ensure!(
                     epoch == self.scene_epoch && start <= self.next_frame.scene.len(),
                     "stale scene checkpoint"
                 );
                 self.scene_capture_scratch.clear();
-                self.scene_capture_scratch.replay(start..self.next_frame.scene.len(), &self.next_frame.scene);
+                self.scene_capture_scratch
+                    .replay(start..self.next_frame.scene.len(), &self.next_frame.scene);
                 self.scene_capture_scratch.finish();
                 &self.scene_capture_scratch
             } else {
@@ -3403,7 +3406,8 @@ impl Window {
 
     #[inline]
     fn snap_border_widths(&self, edges: Edges<Pixels>) -> Edges<ScaledPixels> {
-        edges.map(|e| self.snap_stroke(*e))
+        let scale = self.scale_factor();
+        edges.map(|e| ScaledPixels(snap_border_to_device_pixel(e.0, scale)))
     }
 
     /// Floors the near edge and ceils the far edge, producing a strict superset of the raw region.
