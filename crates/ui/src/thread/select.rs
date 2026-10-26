@@ -1,10 +1,12 @@
 //! Text selection over the answer markdown (TH-127, TH-128, SH-132): the words register
-//! themselves at prepaint, in reading order, in a per-frame [`Selection`] global; the view keeps
-//! the anchor and head carets. Everything is in the scroller's content px, so the selection
-//! stays put while the thread scrolls.
+//! themselves at prepaint, in reading order, in their transcript's per-frame registry of the
+//! [`Selection`] global (a side chat shows a second transcript); the view keeps the anchor and
+//! head carets. Everything is in the scroller's content px, so the selection stays put while
+//! the thread scrolls.
 
 use super::*;
 use gpui::{Global, Point, canvas, fill, point};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A caret: `y` is the middle of its line box, `x` the pointer's x; both in content px.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -41,14 +43,10 @@ enum Entry {
     Break(usize),
 }
 
-/// This frame's words (written at prepaint) and the range they highlight (written at render).
+/// This frame's registry of every transcript on screen, in prepaint order.
 #[derive(Default)]
 pub struct Selection {
-    entries: Vec<Entry>,
-    /// Ordered `(start, end)`, when the view has a non-empty selection.
-    range: Option<(Caret, Caret)>,
-    /// Window y of content y 0 this frame.
-    origin: Pixels,
+    transcripts: Vec<Transcript>,
 }
 
 impl Global for Selection {}
@@ -58,6 +56,25 @@ impl Selection {
         cx.default_global::<Self>()
     }
 
+    /// The registry of the transcript with carets `id`, as its last frame left it.
+    fn of(&self, id: usize) -> Option<&Transcript> {
+        self.transcripts.iter().find(|t| t.carets == id)
+    }
+}
+
+/// One transcript's words (written at prepaint) and the range they highlight (written at
+/// render).
+struct Transcript {
+    /// Its view's [`Carets::id`].
+    carets: usize,
+    entries: Vec<Entry>,
+    /// Ordered `(start, end)`, when the view has a non-empty selection.
+    range: Option<(Caret, Caret)>,
+    /// Window y of content y 0 this frame.
+    origin: Pixels,
+}
+
+impl Transcript {
     /// Chars `[start, end)` of `word` inside the range: byte offsets of its text. `wraps`: the
     /// word ends its line, so its trailing space hangs past the wrap: a caret on that line
     /// stops before the space, as Chrome's does, and a caret on a later line takes it.
@@ -185,7 +202,7 @@ fn run(s: &str, weight: f32, family: Option<&'static str>) -> TextRun {
     }
 }
 
-/// The selection highlight under a word's glyphs: registers the word for [`Selection::text`]
+/// The selection highlight under a word's glyphs: registers the word for [`Carets::text`]
 /// at prepaint (the whole tree prepaints before it paints, so the word after it is known at
 /// paint) and paints the selected span over its line box (Chrome paints the line box, not the
 /// glyph box). `pad`: where the glyphs start inside the painted bounds.
@@ -195,10 +212,12 @@ pub(super) fn highlight(
     weight: f32,
     family: Option<&'static str>,
     pad: f32,
-) -> gpui::Canvas<usize> {
+) -> gpui::Canvas<Option<(usize, usize)>> {
     canvas(
         move |bounds, _, cx| {
-            let entries = &mut Selection::get(cx).entries;
+            let transcripts = &mut Selection::get(cx).transcripts;
+            let at = transcripts.len().checked_sub(1)?;
+            let entries = &mut transcripts[at].entries;
             entries.push(Entry::Word(Word {
                 bounds,
                 pad: px(pad),
@@ -207,14 +226,17 @@ pub(super) fn highlight(
                 weight,
                 family,
             }));
-            entries.len() - 1
+            Some((at, entries.len() - 1))
         },
-        move |bounds, i, window, cx| {
-            let sel = Selection::get(cx);
-            let Entry::Word(word) = &sel.entries[i] else {
+        move |bounds, at, window, cx| {
+            let Some((at, i)) = at else { return };
+            let Some(t) = Selection::get(cx).transcripts.get(at) else {
                 return;
             };
-            let span = sel.span(word, Selection::wraps(&sel.entries, i), window);
+            let Some(Entry::Word(word)) = t.entries.get(i) else {
+                return;
+            };
+            let span = t.span(word, Transcript::wraps(&t.entries, i), window);
             if let Some((_, _, x0, x1)) = span {
                 let left = bounds.left() + px(pad);
                 let r = Bounds::from_corners(
@@ -230,29 +252,56 @@ pub(super) fn highlight(
 /// Marks the end of a block in reading order: `newlines` is what Chrome emits after it.
 pub(super) fn block_end(newlines: usize) -> gpui::Canvas<()> {
     canvas(
-        move |_, _, cx| Selection::get(cx).entries.push(Entry::Break(newlines)),
+        move |_, _, cx| {
+            if let Some(t) = Selection::get(cx).transcripts.last_mut() {
+                t.entries.push(Entry::Break(newlines));
+            }
+        },
         |_, (), _, _| (),
     )
 }
 
-/// Starts the frame's registry: first inside the scroller, before any word.
-pub(super) fn frame_start(scroll: ScrollHandle) -> gpui::Canvas<()> {
+/// Starts the transcript's registry for this frame: first inside the scroller, before any
+/// word, with the range `carets` select. A transcript that registered already means a new
+/// frame: every registry of the last one goes.
+pub(super) fn frame_start(carets: &Carets, scroll: ScrollHandle) -> gpui::Canvas<()> {
+    let (id, range) = (carets.id, carets.range());
     canvas(
         move |_, _, cx| {
             let sel = Selection::get(cx);
-            sel.entries.clear();
-            sel.origin = scroll.bounds().top() + scroll.offset().y;
+            if sel.of(id).is_some() {
+                sel.transcripts.clear();
+            }
+            sel.transcripts.push(Transcript {
+                carets: id,
+                entries: Vec::new(),
+                range,
+                origin: scroll.bounds().top() + scroll.offset().y,
+            });
         },
         |_, (), _, _| (),
     )
 }
 
 /// The view's anchor and head carets while it has or drags a selection.
-#[derive(Default)]
 pub(super) struct Carets {
+    /// Names the view's [`Transcript`].
+    id: usize,
     pub anchor: Option<Caret>,
     pub head: Option<Caret>,
     pub dragging: bool,
+}
+
+impl Default for Carets {
+    fn default() -> Self {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        Self {
+            id: NEXT.fetch_add(1, Ordering::Relaxed),
+            anchor: None,
+            head: None,
+            dragging: false,
+        }
+    }
 }
 
 impl Carets {
@@ -267,14 +316,14 @@ impl Carets {
         }
     }
 
-    /// Content point of a window point this frame.
-    pub fn content(p: Point<Pixels>, cx: &mut App) -> Point<Pixels> {
-        point(p.x, p.y - Selection::get(cx).origin)
+    /// The caret under window point `p`, in this view's transcript.
+    fn caret(&self, p: Point<Pixels>, cx: &mut App) -> Option<Caret> {
+        let t = Selection::get(cx).of(self.id)?;
+        t.caret(point(p.x, p.y - t.origin))
     }
 
     pub fn press(&mut self, p: Point<Pixels>, cx: &mut App) {
-        let p = Self::content(p, cx);
-        let caret = Selection::get(cx).caret(p);
+        let caret = self.caret(p, cx);
         self.anchor = caret;
         self.head = caret;
         self.dragging = caret.is_some();
@@ -282,14 +331,16 @@ impl Carets {
 
     pub fn drag(&mut self, p: Point<Pixels>, cx: &mut App) {
         if self.dragging {
-            let p = Self::content(p, cx);
-            self.head = Selection::get(cx).caret(p);
+            self.head = self.caret(p, cx);
         }
     }
 
-    /// Publishes the range for this frame's paint.
-    pub fn publish(&self, cx: &mut App) {
-        Selection::get(cx).range = self.range();
+    /// The selected text of this view's transcript.
+    pub fn text(&self, window: &Window, cx: &App) -> String {
+        cx.try_global::<Selection>()
+            .and_then(|sel| sel.of(self.id))
+            .map(|t| t.text(window))
+            .unwrap_or_default()
     }
 }
 
@@ -326,7 +377,8 @@ mod tests {
             weight: 430.,
             family: None,
         };
-        let sel = Selection {
+        let sel = Transcript {
+            carets: 0,
             entries: vec![
                 Entry::Word(word(0.)),
                 Entry::Break(2),

@@ -191,7 +191,7 @@ fn file_reads_preserve_text_and_identify_image_formats() -> Result<()> {
     for (name, bytes, mime) in [
         (
             "image.png",
-            &include_bytes!("../../ui/assets/avatar.png")[..],
+            &include_bytes!("../../ui/assets/avatar-decoded-64.png")[..],
             "image/png",
         ),
         ("image.webp", webp.as_slice(), "image/webp"),
