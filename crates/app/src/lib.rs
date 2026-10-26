@@ -5298,6 +5298,7 @@ impl Root {
                 .and_then(|id| self.owner(id, cx))
                 .flatten(),
             Event::Request { .. } => None,
+            Event::Closed => None,
         };
         match event {
             Event::Notification { method, params } => match method.as_str() {
