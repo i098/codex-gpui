@@ -1493,7 +1493,13 @@ pub(crate) fn surface_pixels(
     draw: impl FnOnce(&Canvas),
 ) -> (Vec<u8>, usize) {
     let info = ImageInfo::new_n32_premul(size, cs);
-    let mut surface = surfaces::raster(&info, None, None).expect("shapes: tile surface");
+    if size.0 <= 0 || size.1 <= 0 {
+        return (Vec::new(), 0);
+    }
+    let mut surface = match surfaces::raster(&info, None, None) {
+        Some(surface) => surface,
+        None => panic!("shapes: tile surface"),
+    };
     let canvas = surface.canvas();
     canvas.clear(clear);
     canvas.translate((-o[0] as f32, -o[1] as f32));

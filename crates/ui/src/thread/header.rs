@@ -23,6 +23,13 @@ impl ThreadView {
         }
     }
 
+    pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
+        if self.title != title {
+            self.title = title;
+            cx.notify();
+        }
+    }
+
     pub fn chat_action_labels(&self) -> Option<impl Iterator<Item = &'static str>> {
         self.chat_actions
             .as_ref()
