@@ -390,7 +390,7 @@ pub fn set_pointer_interactive(
     })?
 }
 
-pub fn reopen(cx: &mut App) -> Result<()> {
+pub(crate) fn primary(cx: &mut App) -> Result<WindowHandle<Root>> {
     let handle = cx.try_global::<Windows>().and_then(|windows| {
         windows
             .last_primary
@@ -404,11 +404,22 @@ pub fn reopen(cx: &mut App) -> Result<()> {
             .map(|entry| entry.handle)
     });
     if let Some(handle) = handle {
-        return show(handle, Presentation::Foreground, cx);
+        return handle
+            .downcast::<Root>()
+            .context("primary window has no app root");
     }
     let cwd = std::env::current_dir().context("read launch directory")?;
-    open_primary(State::load(), cwd.to_string_lossy().into_owned(), cx)?;
-    Ok(())
+    open_primary_with_presentation(
+        State::load(),
+        cwd.to_string_lossy().into_owned(),
+        Presentation::Hidden,
+        cx,
+    )
+}
+
+pub fn reopen(cx: &mut App) -> Result<()> {
+    let handle = primary(cx)?;
+    show(handle.into(), Presentation::Foreground, cx)
 }
 
 fn connect(cwd: &Path) -> Result<(Bridge, Receiver<Event>)> {
@@ -424,6 +435,15 @@ fn connect(cwd: &Path) -> Result<(Bridge, Receiver<Event>)> {
 }
 
 pub fn open_primary(state: State, cwd: String, cx: &mut App) -> Result<WindowHandle<Root>> {
+    open_primary_with_presentation(state, cwd, Presentation::Foreground, cx)
+}
+
+fn open_primary_with_presentation(
+    state: State,
+    cwd: String,
+    presentation: Presentation,
+    cx: &mut App,
+) -> Result<WindowHandle<Root>> {
     if !cx.has_global::<host_settings::Settings>() {
         let settings = match &state.path {
             Some(path) => host_settings::Settings::load(path.with_file_name("host-settings.json"))?,
@@ -441,6 +461,7 @@ pub fn open_primary(state: State, cwd: String, cx: &mut App) -> Result<WindowHan
         },
     );
     spec.bounds = Some(primary_bounds(&state, cx));
+    spec.presentation = presentation;
     open(spec, cx, |window, cx| {
         cx.new(|cx| Root::new(state, bridge, events, cwd, window, cx))
     })
@@ -536,6 +557,7 @@ pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             theme: this.state.theme,
             confirm_before_close: this.state.confirm_before_close,
             project_root: this.state.project_root.clone(),
+            zoom: this.state.zoom,
             path: this.state.path.clone(),
         };
         if let Err(error) = open_primary(state, this.cwd.clone(), cx) {

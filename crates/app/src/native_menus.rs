@@ -5,7 +5,7 @@ pub(crate) mod navigation;
 use crate::{
     CloseWindow, FindInThread, GoBack, GoForward, Hide, HideOthers, LogOut, Minimize, NewChat,
     NextChat, OpenFolder, OpenSettings, PreviousChat, Quit, ShowAll, ShowKeyboardShortcuts,
-    ToggleChangesPanel, ToggleSidebar, Zoom,
+    ToggleChangesPanel, ToggleSidebar, Zoom, features,
 };
 use gpui::{
     App, Context, Div, InteractiveElement as _, KeyBinding, Menu, MenuItem, OsAction,
@@ -105,8 +105,40 @@ fn bring_all_to_front(cx: &mut App) {
     let _ = cx;
 }
 
+struct NativeMenuState(bool);
+impl gpui::Global for NativeMenuState {}
+
+pub(crate) fn refresh_menus(cx: &mut App) {
+    let sidebar_collapsible = cx
+        .try_global::<NativeMenuState>()
+        .is_none_or(|state| state.0);
+    cx.set_menus(menus_for_route(sidebar_collapsible));
+}
+
+impl crate::Root {
+    /// Settings hides Toggle Sidebar; every other route shows it.
+    pub(crate) fn sync_native_menus(&self, window: &gpui::Window, cx: &mut Context<Self>) {
+        if cx.active_window().is_some() && !window.is_window_active() {
+            return;
+        }
+        let sidebar_collapsible = self.state.route != crate::Route::Settings;
+        if cx
+            .try_global::<NativeMenuState>()
+            .is_some_and(|state| state.0 == sidebar_collapsible)
+        {
+            return;
+        }
+        cx.set_global(NativeMenuState(sidebar_collapsible));
+        refresh_menus(cx);
+    }
+}
+
 /// Builds the native menu items backed by the app's registered actions.
 pub(crate) fn menus() -> Vec<Menu> {
+    menus_for_route(true)
+}
+
+fn menus_for_route(sidebar_collapsible: bool) -> Vec<Menu> {
     vec![
         Menu::new("Codex").items([
             MenuItem::action("About Codex", ShowAbout),
@@ -124,6 +156,13 @@ pub(crate) fn menus() -> Vec<Menu> {
         ]),
         Menu::new("File").items([
             MenuItem::action("New Chat", NewChat),
+            MenuItem::action("New Temporary Chat", features::shortcuts::NewTemporaryChat),
+            MenuItem::action(
+                "New standalone chat",
+                features::shortcuts::NewStandaloneChat,
+            )
+            .hidden(true),
+            MenuItem::separator(),
             MenuItem::action("Open Folder…", OpenFolder),
             MenuItem::separator(),
             MenuItem::action("Close", CloseWindow),
@@ -146,7 +185,7 @@ pub(crate) fn menus() -> Vec<Menu> {
             ])),
         ]),
         Menu::new("View").items([
-            MenuItem::action("Toggle Sidebar", ToggleSidebar),
+            MenuItem::action("Toggle Sidebar", ToggleSidebar).hidden(!sidebar_collapsible),
             MenuItem::action("Toggle Pinned Summary", TogglePinnedSummary),
             MenuItem::action("Toggle navigation panel", ToggleNavigationPanel),
             MenuItem::action("Toggle Changes Panel", ToggleChangesPanel),
@@ -157,6 +196,10 @@ pub(crate) fn menus() -> Vec<Menu> {
             MenuItem::action("Next Chat", NextChat),
             MenuItem::action("Back", GoBack),
             MenuItem::action("Forward", GoForward),
+            MenuItem::separator(),
+            MenuItem::action("Zoom In", features::shortcuts::ZoomIn),
+            MenuItem::action("Zoom Out", features::shortcuts::ZoomOut),
+            MenuItem::action("Actual Size", features::shortcuts::ActualSize),
         ]),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),

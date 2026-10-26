@@ -178,7 +178,7 @@ The repair is tracked in [the Sidebar issue](https://github.com/i098/codex-gpui/
 | 3 | `⌘⇧S`, `⌘B` | shortcut | Toggle sidebar. | Shell sidebar toggles. | PASS (`sidebar_toggle_keys`) |
 | 4 | `⌘[`, `⌘]` | shortcut | Back, Forward (`navigateBack`, `navigateForward`). | Route history over Home, threads, Settings. | PASS (`back_forward_keys`) |
 | 5 | `⌘⇧[`, `⌘⇧]`, `⌘⌥←`, `⌘⌥→` | shortcut | Previous / next chat. | Previous / next Recents row; no wrap. | PASS (`previous_next_chat`) |
-| 6 | `⌘1`…`⌘9` | shortcut | Go to chat N (`thread1..9`). | Opens Recents row N. | PASS (`cmd_digit_goes_to_chat`) |
+| 6 | Number shortcuts | shortcut | Swap primary-number shortcuts between chats and tabs. | The saved number target selects Command-number or Control-number for chats; the other chord selects panel tabs. | PASS (`keyboard_shortcuts`; Linux) |
 | 7 | `⌘W` | shortcut | Close tab, else close window. | Closes the thread route's selected side panel tab, else the window. | PASS (`cmd_w_closes_window`, `s029::panel_tabs_replay`) |
 | 8 | Menu bar: Codex ▸ Settings…, File ▸ New Chat, View ▸ Toggle Sidebar, Toggle Changes Panel, Previous Chat, Next Chat, Back, Forward | click | Same commands as the keys. | `app::menus()` items dispatch their actions. | PASS (`menu_bar_actions`, `changes_panel_keys`) |
 | 9 | System appearance and Settings ▸ Appearance ▸ Theme | click | Light / Dark / System applies at once. | `State.theme` (`ThemeSetting`) is applied on each appearance change and by `Root::set_theme`. | PASS (`theme_switch`) |
@@ -189,10 +189,10 @@ The repair is tracked in [the Sidebar issue](https://github.com/i098/codex-gpui/
 | 14 | `⌘K`, `⌘⇧P` | shortcut | Command menu. | `CommandMenu` over live Recents, focused; Escape or a click outside closes it; Enter or a click runs the row (chat, `New chat`, `Manage scheduled tasks`, settings pages). | PASS (`command_menu_keys`, `command_menu_settings_page`) |
 | 15 | `⌘F` | shortcut | Find in chat. | — | NOT WIRED (`crates/ui/src/thread.rs`: no find bar) |
 | 16 | `⌥⌘B` | shortcut | Toggle Changes panel. | The thread route's side panel (`ui::screens::diff::panel::with_side_tabs`) shows the last turn's diff in a `Changes` tab beside the other open tabs; the tab's close button closes it. | PASS (`changes_panel_keys`) |
-| 17 | `⌘J` | shortcut | Toggle bottom panel. | — | NOT WIRED (`crates/ui/src/lib.rs` `Shell`: no bottom panel) |
-| 18 | `⌘⇧N`, `⌘⌥O` | shortcut | Temporary chat, standalone chat. | — | NOT WIRED (`crates/app/src/lib.rs`: no projects or temporary chats) |
+| 17 | `⌘J` | shortcut | Toggle bottom panel. | Opens or hides a real PTY terminal without discarding its process or buffer. | PASS (`shortcut_actions`; native) |
+| 18 | `⌘⇧N`, `⌘⌥O` | shortcut | Temporary chat, standalone chat. | Temporary chats use ephemeral app-server threads. Standalone chats allocate and record a projectless workspace. | PASS (`shortcut_chat_modes`; Linux) |
 | 19 | `⌘⌥1`…`⌘⌥6` | shortcut | Go to recent chat N (`recentThread1..6`: the chats by last update, newest first). | `GoToRecentChat`: the Nth Recents thread by `updatedAt`; past the end does nothing. | PASS (`recent_chat_keys`) |
-| 20 | `⌘+`, `⌘-`, `⌘0` | shortcut | Zoom in, zoom out, actual size. | — | NOT WIRED (`crates/ui/src/lib.rs`: no UI scale) |
+| 20 | `⌘+`, `⌘-`, `⌘0` | shortcut | Zoom in, zoom out, actual size. | Scales layout, paint, pointer input, and IME bounds. Saves the zoom and shows its timed control banner. | PASS (`keyboard_shortcuts`; Linux); native pixels pending |
 
 F1d covers SH-020 and SH-135 with `refs/interactions/f1d.json` and `cargo test -p app --test f1d`.
 The original Mac recording proves a native 1280×832 viewport at scale 2.
@@ -770,10 +770,19 @@ The editor provides a keyboard-accessible Learn more link to the original instru
 Its textarea grip resizes the field vertically, down to the original's 96 px `min-h-24` box.
 ST-094 saves through `codex-agents-md-save`; the host replaces the file atomically and preserves its permissions.
 Success shows `Instructions updated`; failure shows `Unable to save instructions` and retains the draft.
+ST-095 reads the original `2826489636` feature gate from the authenticated Statsig bootstrap.
+The gate keeps the legacy editor unchanged when it is off or unavailable.
+When the gate is on, the AGENTS.md editor switches between Markdown preview and source without replacing its draft.
+ST-096 reads the sibling `AGENTS.override.md` file and shows the original override notice when that file contains non-whitespace text.
+Missing or empty override files do not show the notice.
+Other override read failures use the existing instruction load error instead of reporting a false absence.
 Cancel discards the draft.
 Navigation, Back, window close, and Quit ask `Discard changes?` while edits remain.
 Application-wide Quit checks every open Root window before it exits.
 After discard, native close uses the existing window lifecycle and retains the final primary window on macOS.
+The multiline field resizes vertically and keeps its document while its viewport changes.
+The field keeps its border outside the scrolling content.
+Typing scrolls the caret into view; the field keeps a minimum height of 96 pixels.
 The instructions tests use owned files and cover save, cancel, discard, load failure, and save retry.
 The coordinate-based instructions cases run on macOS because Linux uses the no-op text system.
 The remaining action and host tests also run on Linux.
@@ -784,6 +793,29 @@ Skip creates an unused `New project` folder under `~/Documents/ChatGPT`, registe
 Existing names get a numeric suffix; the host does not overwrite an existing project.
 The workspace tests use an owned host root and the native path-prompt test hook.
 They do not create folders in the normal profile.
+
+### Memory and Writing
+
+Memory reads the selected computer's configuration and its paginated experimental feature list.
+Enabling memory updates `features.memories`, `memories.generate_memories`, and `memories.use_memories`.
+Disabling also turns off Chronicle on the local computer.
+The tool-assisted switch writes `memories.disable_on_external_context` and removes the legacy alias.
+Reads and writes use the user configuration layer when it supplies a file path.
+After a partial failure, the page shows the values that the server actually saved.
+Delete requires confirmation before `memory/reset`; failure keeps the confirmation available for retry.
+
+Writing is available to a ChatGPT account through its existing authenticated host.
+The page reads the canonical Writing plugin and the installed plugin list.
+Enable installs or enables that plugin; disable uninstalls it.
+A failed operation retries the requested value, not its inverse.
+Account identity checks prevent a later response or write from switching accounts.
+Enabling Writing replaces Settings with its previous route before it opens setup.
+Setup uses the existing discard guard before it replaces an edited instruction document.
+Cancel keeps the document and its unsaved draft.
+Setup keeps the same account snapshot until it closes.
+The setup dialog supports optional app connections through their supplied browser URLs.
+A dialog that cannot open leaves Writing retryable instead of waiting for authorization.
+Show me opens a prepared draft; it does not start a turn.
 
 
 ## 15.1 Automations ("Scheduled")
@@ -885,6 +917,17 @@ The recurrence uses the vendored `rrule` 0.14.0 with the original limits: `INTER
 The `host` checks match the retained original oracle.
 
 AM-022, AM-023 and AM-028 use the existing sidebar task list.
+
+Task delete (AM-026, AM-027) is the last item of the row menu: the red trash `Delete` after `Run now` and `Pause` or `Resume`.
+The dialog `Delete {name}?` names the task the host lists, starts on `Cancel`, and sends nothing until `Delete scheduled task`.
+Escape and `Cancel` close it without a request and return focus to the row's button; both are ignored while the delete runs.
+Confirm sends `automation-delete` through `LocalHost`, which removes the definition directory, its cached `automations` row and its `automation_runs` like the original `aI`.
+The answer is `{item, success, status}`; `deleted` and `not_found` succeed, and account-owned rows are never touched.
+Success drops the row at once, reads the list again, and closes the deleted task's page to `Scheduled`.
+Failure closes the dialog like the original, shows the toast `Could not delete scheduled task` with `Copy error` for the host status, and keeps the task for another try.
+The failure toast shows `Try again` for an unsuccessful host response and the error message for a failed host request.
+The page-list row's inline delete icon and tooltip (AM-029) belong to the original page list, which the native route does not draw.
+`crates/app/tests/task_delete.rs` proves the host contract in disposable stores and, on macOS, the native Escape, Cancel, confirm, failed removal and retry path.
 The `Scheduled task actions` menu opens under the row button like the original (right edge 1 px inside the button, 220 px wide); its first item is `Pause` or `Resume`.
 The row status control shows `Pause` or `Resume` on hover or keyboard focus, with a named accessible action.
 Both send `automation-update` with the original cron or heartbeat request, block duplicate writes and refetch the list.
@@ -1383,3 +1426,31 @@ Set `CGX_STORAGE_HOME` to an owned fixture, `CGX_STORAGE_CAPTURE` to its output 
 `CGX_STORAGE_REPLAY` supplies additional recorded read responses; `CGX_STORAGE_REVIEW_Y` selects the cleanup-dialog capture.
 `CGX_STORAGE_ACTIONS` reads an ordered JSON array of `[name, [x, y]]` clicks for additional full-window captures.
 Compare those extra images with their matching original states; this option does not replace the default state's gate.
+
+## Keyboard preferences and app actions
+
+The Keyboard shortcuts page uses the original Codex command registry and flat-card layout.
+Text search includes commands and the browser-link preference. Keystroke search filters effective bindings.
+The existing host settings store saves bindings, the number target, and the browser-link modifier.
+Conflicts and failed writes leave the previous bindings active.
+Reset restores default bindings and the link modifier without changing the number target.
+App bindings update immediately, including menu and sidebar labels.
+Unmodified app shortcuts do not intercept editable text.
+Focused binding capture blocks normal key dispatch and publishes `KeyboardState.capture_owner` for the global-shortcut owner.
+
+Standalone chats use the existing projectless workspace allocator and app-server requests.
+Temporary chats send `ephemeral: true` and stay out of recents and saved route state.
+Undo and redo apply recorded rename, section, and archive actions through their app-server methods.
+A failed undo retains its entry for another attempt.
+Clear all unreads uses a confirmation dialog and saves the optional confirmation preference.
+
+The interactive terminal keeps its real PTY process when the bottom panel hides.
+UI zoom keeps layout, painting, pointer input, and IME bounds in the same coordinate system.
+The zoom banner waits two seconds and remains visible while the pointer is over it.
+Reopening a saved window restores its zoom.
+Original-versus-native visual approval remains separate from the Linux functional checks.
+
+
+Native checks cover reset confirmation, number/link menus, and modifier-only capture in `keyboard_shortcuts`.
+The `project_picker` scenario checks folder selection, cancellation, and the directory used by new chats.
+The `shortcut_actions` checks cover attention navigation, undo/redo, unread confirmation, and live terminal retention.
