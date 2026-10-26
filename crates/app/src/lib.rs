@@ -22,6 +22,7 @@ mod plugins;
 pub mod screenshot;
 mod search;
 mod section_actions;
+pub(crate) mod settings_integrations;
 mod settings_subtrees;
 mod signin;
 mod storage;
@@ -504,6 +505,7 @@ impl Root {
             }
         }
         features::install_shortcuts(cx);
+        cx.set_global(settings::integrations::State::default());
         let this = cx.weak_entity();
         usage::install(this.clone(), cx);
         let computer_use = this.clone();
@@ -5366,6 +5368,7 @@ impl Root {
             cx.notify();
             return;
         }
+        self.settings_integration_event(&event, cx);
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             return;
@@ -6697,6 +6700,21 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.navigate(Route::Settings, window, cx)
             }))
+            .on_action(cx.listener(
+                |this, _: &settings::integrations::OpenPluginManager, window, cx| {
+                    this.open_settings_section("Plugins", window, cx)
+                },
+            ))
+            .on_action(cx.listener(
+                |this, action: &settings::integrations::OpenExtensionDirectory, window, cx| {
+                    this.open_plugins(action.0, window, cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |this, _: &settings::integrations::OpenPluginCreator, window, cx| {
+                    this.open_plugin_creator(window, cx);
+                },
+            ))
             .on_action(cx.listener(|this, _: &LogOut, window, cx| {
                 if !this.logout_pending {
                     let email = this.account_email.clone();

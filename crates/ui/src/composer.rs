@@ -879,6 +879,16 @@ impl Composer {
         editor.request_compact = true;
         editor
     }
+    pub fn settings_compact_field(
+        placeholder: &'static str,
+        value: &str,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut editor = Self::settings_field(placeholder, value, false, cx);
+        editor.request_compact = true;
+        editor
+    }
+
     pub fn field_text(&self) -> &str {
         &self.content
     }
@@ -2300,6 +2310,8 @@ impl Render for Composer {
                                 })),
                                 corner: shapes::Corner::Squircle,
                                 border: Some((px(1.), t.border_strong)),
+                                fill: (self.request_parent.is_none() && self.request_compact)
+                                    .then_some(t.control_background.opacity(0.96)),
                                 ..Default::default()
                             }))
                     })
