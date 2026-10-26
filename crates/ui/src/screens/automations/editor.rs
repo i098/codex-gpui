@@ -1,5 +1,5 @@
 use crate::{
-    composer::Composer,
+    composer::{Composer, ModifiedSubmit},
     icon::icon,
     text,
     tooltip::{Side, tooltip},
@@ -242,7 +242,6 @@ impl Editor {
             _ => 5,
         }
     }
-
     pub fn saving(&self) -> bool {
         self.saving
     }
@@ -796,6 +795,10 @@ impl Render for Editor {
                     this.submit(window, cx);
                     cx.stop_propagation();
                 }
+            }))
+            .capture_action(cx.listener(|this, _: &ModifiedSubmit, window, cx| {
+                this.submit(window, cx);
+                cx.stop_propagation();
             }))
             .child(
                 div()

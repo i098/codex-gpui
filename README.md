@@ -316,6 +316,17 @@ The row menu's `Run now` sends `automation-run-now`; the host starts one `codex 
 It runs tasks with project folders or a project target (the project's first root from `.codex-global-state.json`), in a new Git worktree for the original default environment or in the folder for the local one.
 For a project target, the host saves the new thread's local project assignment before it starts the turn.
 An assignment write failure stops the run; legacy folder tasks do not change project assignments.
+Cron threads receive the original memory rules, inbox response rules, and desktop developer context through `thread/start`.
+The app-server retains saved base instructions.
+On macOS, automation threads use executable local app tools through a private native pipe.
+The tools need the `codex-app-tools` adapter and Node runtime installed with `ChatGPT.app`.
+If the adapter or pipe cannot start, the task keeps the app-server's original configuration.
+The pipe stops safely if its temporary directory is removed.
+The catalog exposes automation creation, full updates, deletion, local project and thread lists, history, pin, archive, and title changes.
+Unsupported delegation, remote hosts, plugin management, and terminal operations stay out of the catalog.
+Proposal cards open the shared task editor. Cancel changes nothing; saving preserves the reviewed definition.
+Completed task tools use only this card, not a second MCP activity row.
+The card clips its foreground to the original 20 px squircle; its background and shadow remain outside the clip.
 Projectless tasks use an owned folder under `~/Documents/Codex/<local-date>/<prompt-name>/`, with separate `work` and `outputs` folders.
 The `projectlessWorkspaceRoot` host setting overrides the root.
 The host saves projectless thread IDs, workspace-root hints, and output paths in `.codex-global-state.json`.
@@ -329,8 +340,10 @@ The time presets use 09:00, 14:00, 18:00, and 22:00.
 The row menu's Edit action updates the task through `automation-update`, without changing its identity or unrelated definition fields.
 The editor keeps an existing advanced rule unchanged when only Name or Prompt changes.
 Prefilled drafts stay in Create mode until their data includes an existing task ID.
+Escape closes an open schedule picker first; otherwise, it discards the editor without saving.
 Run `cargo test -p app --test task_create editor:: -- --test-threads=1` on macOS for the native editor, schedule, and Create menu checks.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
+Use `-- --include-ignored` on macOS to check the installed adapter.
 
 ### Legacy Codex Cloud threads
 
@@ -557,6 +570,7 @@ An extra layer changes glyph edge bytes even when its opacity is one.
 
 `shapes` links Skia binaries built with Chromium's `SkUserConfig.h` legacy defines.
 `.cargo/config.toml` points `SKIA_BINARIES_URL` to these binaries.
+The rasterizer reuses identical inverse-blend probe results across icon positions without changing their pixels.
 `skia-hairline-sys` links a narrow C scanner wrapper for Skia revision `61e7ca4e99062cdd0ab69445d5963fb3365778f6`.
 It records the ordered legacy hairline operations that the sprite renderer replays.
 `.cargo/config.toml` points `SKIA_HAIRLINE_BINARIES_URL` and `SKIA_HAIRLINE_PACKAGE_SHA256` to its versioned package.

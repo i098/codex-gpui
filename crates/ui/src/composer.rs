@@ -1577,6 +1577,8 @@ impl Composer {
             && let Some(cancel) = self.on_cancel_edit.clone()
         {
             cancel(window, cx);
+        } else if self.plain_field.is_some() {
+            cx.propagate();
         }
     }
 
