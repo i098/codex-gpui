@@ -1289,6 +1289,7 @@ impl Shell {
     /// (`background-clip: padding-box`) paint with the page in `render`: with the sidebar open
     /// the left edge is square and the right corners are rounded by its `clip-path`; with it
     /// closed it is a plain 12 px rounded box. `left` is its edge, `open` its shape.
+    #[allow(clippy::too_many_arguments)]
     fn main_panel(
         &self,
         left: Pixels,
