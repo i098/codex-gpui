@@ -698,7 +698,6 @@ impl Composer {
                     || self.plain_field == Some(true)
                     || self.request_parent.is_some()
                     || self.request_compact
-                    || self.search_field
                 {
                     0.
                 } else {
