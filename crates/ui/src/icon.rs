@@ -7,15 +7,16 @@
 //! 2. The svg's paths rasterized at runtime with Chromium's Skia (`shapes::paint_icon`).
 //! 3. The plain svg mask (Linux, svg features the rasterizer does not parse).
 //!
-//! Opacity: put it in the color (`color.opacity(op)`) or on the icon itself (`.opacity(op)`),
-//! not on an ancestor. Icons that Chromium paints into a composited layer (inside a scroll
-//! container) round differently: give them the layer's origin ([`Icon::composited`]).
+//! Opacity: a color alpha (`color.opacity(op)`) is the svg paths' own alpha; the icon's
+//! `.opacity(op)` is CSS `opacity` on it, a group. Not on an ancestor. Icons that Chromium
+//! paints into a composited layer (inside a scroll container) round differently: give them the
+//! layer's origin ([`Icon::composited`]).
 
 use gpui::{
     App, Bounds, Corners, Element, ElementId, GlobalElementId, Hitbox, Hsla, Image, ImageFormat,
-    InspectorElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Pixels, Point,
-    RenderImage, Rgba, SharedString, StyleRefinement, Styled, TransformationMatrix, Window, point,
-    px, size,
+    InspectorElementId, InteractiveElement, Interactivity, IntoElement, LayoutId, Length, Pixels,
+    Point, RenderImage, Rgba, SharedString, Size, StyleRefinement, Styled, Transformation, Window,
+    point, px, size,
 };
 use std::{
     collections::HashMap,
@@ -25,7 +26,10 @@ use std::{
 /// `size` x `size` CSS px icon `assets/icons/<name>.svg` in `color` (same signature as
 /// `crate::icon`).
 pub fn icon(name: &str, size: f32, color: Hsla) -> Icon {
-    icon_sized(name, size, size, color)
+    Icon {
+        authored: true,
+        ..icon_sized(name, size, size, color)
+    }
 }
 
 /// An icon whose box is not square, e.g. `codex-wordmark` (53.22 x 18).
@@ -34,10 +38,15 @@ pub fn icon_sized(name: &str, width: f32, height: f32, color: Hsla) -> Icon {
         name: name.into(),
         width,
         height,
+        authored: false,
+        aspect: None,
         flip_x: false,
         composited: None,
         own_layer: false,
         runtime: false,
+        image: false,
+        saved_opacity: None,
+        transformation: None,
         interactivity: Interactivity::new(),
     }
     .w(px(width))
@@ -51,14 +60,47 @@ pub struct Icon {
     /// CSS size: the svg's viewBox maps onto it unsnapped.
     width: f32,
     height: f32,
+    /// An authored CSS size (`size-4`), which Blink's LayoutUnit truncates: 16 px at 110% is
+    /// a 35.1875 device px box, and the svg scales to it.
+    authored: bool,
+    /// `width: auto` (`h-[1em] w-auto`): Blink takes the width from the height in LayoutUnits
+    /// times the viewBox's aspect, truncated to a LayoutUnit: 95.765625 device px for the
+    /// wordmark at 90%, not the authored 53.22 px's 95.78125.
+    aspect: Option<f32>,
     flip_x: bool,
     composited: Option<Point<Pixels>>,
     own_layer: bool,
     runtime: bool,
+    /// An `<img>`: Blink draws the svg image into its snapped dest rect.
+    image: bool,
+    saved_opacity: Option<u8>,
+    transformation: Option<Transformation>,
     interactivity: Interactivity,
 }
 
 impl Icon {
+    /// The CSS box: an authored size truncated to LayoutUnit (`authored`), or the `aspect`
+    /// box of `width: auto`.
+    fn css_size(&self, scale: f32) -> Size<Pixels> {
+        let css = size(px(self.width), px(self.height));
+        let unit = scale * 64.;
+        let layout_unit = |v: f32| (v * unit).trunc() / unit;
+        if let Some(aspect) = self.aspect {
+            let height = layout_unit(self.height);
+            return size(px(layout_unit(height * aspect)), px(height));
+        }
+        if !self.authored {
+            return css;
+        }
+        css.map(|v| px(layout_unit(f32::from(v))))
+    }
+
+    /// `width: auto` from the height and the viewBox's `aspect` (width / height), as above.
+    pub fn auto_width(mut self, aspect: f32) -> Self {
+        self.aspect = Some(aspect);
+        self
+    }
+
     /// Mirrored horizontally, like the original's `-scale-x-100` (Forward = Back mirrored).
     pub fn flip_x(mut self) -> Self {
         self.flip_x = true;
@@ -90,6 +132,38 @@ impl Icon {
         self.runtime = true;
         self
     }
+
+    /// An `<img>` of an svg: Blink draws the image into the box's snapped device rect (35 px
+    /// for 16 px at 110%), not the LayoutUnit box an inline svg fills (35.1875 px).
+    pub fn image(mut self) -> Self {
+        self.image = true;
+        self
+    }
+
+    /// Applies CSS opacity to the SVG's painted bounds, preserving its fill and stroke composition.
+    pub fn saved_opacity(mut self, alpha: u8) -> Self {
+        self.saved_opacity = Some(alpha);
+        self.runtime = true;
+        self
+    }
+    /// Transforms the rendered icon without changing its layout or hitbox.
+    pub fn with_transformation(mut self, transformation: Transformation) -> Self {
+        self.transformation = Some(transformation);
+        self
+    }
+}
+
+fn with_saved_opacity<R>(
+    alpha: Option<u8>,
+    bounds: Option<Bounds<Pixels>>,
+    window: &mut Window,
+    paint: impl FnOnce(&mut Window) -> R,
+) -> R {
+    match (alpha, bounds) {
+        (Some(alpha), Some(bounds)) => shapes::with_layer(alpha, bounds, window, paint),
+        (Some(alpha), None) => window.with_skia_layer(alpha, paint),
+        (None, _) => paint(window),
+    }
 }
 
 /// Decoded images by asset path; `None` = no image for that path.
@@ -119,7 +193,7 @@ fn color_key(color: Hsla) -> String {
 }
 
 impl Element for Icon {
-    type RequestLayoutState = ();
+    type RequestLayoutState = LayoutId;
     type PrepaintState = Option<Hitbox>;
 
     fn id(&self) -> Option<ElementId> {
@@ -136,15 +210,23 @@ impl Element for Icon {
         inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
-    ) -> (LayoutId, ()) {
+    ) -> (LayoutId, LayoutId) {
+        let (authored, given) = (self.authored, size(px(self.width), px(self.height)));
+        let css = self.css_size(window.scale_factor());
         let layout_id = self.interactivity.request_layout(
             global_id,
             inspector_id,
             window,
             cx,
-            |style, window, cx| window.request_layout(style, None, cx),
+            |mut style, window, cx| {
+                // The box Blink lays out, unless the caller sized the icon otherwise.
+                if authored && style.size == given.map(Length::from) {
+                    style.size = css.map(Length::from);
+                }
+                window.request_layout(style, None, cx)
+            },
         );
-        (layout_id, ())
+        (layout_id, layout_id)
     }
 
     fn prepaint(
@@ -152,10 +234,20 @@ impl Element for Icon {
         global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut (),
+        _: &mut LayoutId,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<Hitbox> {
+        // The raster box `paint` uses: the svg origin snapped to the device px (half up), its
+        // size rounded up to whole device px.
+        let scale = window.scale_factor();
+        let snap = |v: Pixels| px((f32::from(v) * scale + 0.5).floor() / scale);
+        let up = |v: f32| px((v * scale).ceil() / scale);
+        let origin = point(snap(bounds.origin.x), snap(bounds.origin.y));
+        shapes::record_painted(
+            Bounds::new(origin, size(up(self.width), up(self.height))),
+            window,
+        );
         self.interactivity.prepaint(
             global_id,
             inspector_id,
@@ -172,16 +264,28 @@ impl Element for Icon {
         global_id: Option<&GlobalElementId>,
         inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        _: &mut (),
+        layout_id: &mut LayoutId,
         hitbox: &mut Option<Hitbox>,
         window: &mut Window,
         cx: &mut App,
     ) {
-        // The icon's own opacity goes into the color (and the fitted images' key).
+        // The icon's own opacity goes into the fitted images' key; the runtime raster draws the
+        // svg opaque into a `saveLayerAlpha` with it, as Skia does for CSS `opacity`.
         let opacity = self.interactivity.base_style.opacity.take().unwrap_or(1.);
         let (name, flip_x, own_layer) = (self.name.clone(), self.flip_x, self.own_layer);
         let (composited, runtime) = (self.composited, self.runtime);
-        let css = size(px(self.width), px(self.height));
+        let saved_opacity = self.saved_opacity;
+        let transformation = self.transformation;
+        let css = if self.image {
+            bounds.size
+        } else {
+            self.css_size(window.scale_factor())
+        };
+        let mut ink_bounds = Bounds::new(bounds.origin, css);
+        if saved_opacity.is_some() {
+            ink_bounds.origin.x += window.layout_origin_residual_x(*layout_id);
+            ink_bounds.origin.y += window.layout_origin_residual_y(*layout_id);
+        }
         self.interactivity.paint(
             global_id,
             inspector_id,
@@ -196,6 +300,9 @@ impl Element for Icon {
                 // Chromium snaps the svg origin to the nearest device pixel (half up) and
                 // rasterizes its box rounded up to whole device pixels.
                 let scale = window.scale_factor();
+                let transform = transformation
+                    .map(|value| value.into_matrix(bounds.center(), scale))
+                    .unwrap_or_default();
                 let snap = |v: Pixels| (f32::from(v) * scale + 0.5).floor();
                 let (x, y) = (snap(bounds.origin.x), snap(bounds.origin.y));
                 let dev = |v: Pixels| (f32::from(v) * scale).ceil();
@@ -207,7 +314,10 @@ impl Element for Icon {
                     load(format!("{dir}@{x}_{y}.png"), cx)
                         .or_else(|| load(format!("{dir}.png"), cx))
                 };
-                if let Some(image) = (!own_layer && !runtime).then(fitted).flatten() {
+                if let Some(image) = (!own_layer && !runtime && transformation.is_none())
+                    .then(fitted)
+                    .flatten()
+                {
                     let device = Bounds {
                         origin: point(px(x / scale), px(y / scale)),
                         size: size(px(w / scale), px(h / scale)),
@@ -221,21 +331,60 @@ impl Element for Icon {
                     return;
                 }
                 let path = format!("icons/{name}.svg");
-                if let Ok(Some(src)) = cx.asset_source().load(&path)
-                    && shapes::paint_icon(
-                        &src,
-                        &path,
-                        Bounds::new(bounds.origin, css),
-                        flip_x,
-                        color,
-                        composited.or(own_layer.then_some(bounds.origin)),
-                        window,
-                        cx,
-                    )
-                {
-                    return;
+                if let Ok(Some(src)) = cx.asset_source().load(&path) {
+                    let layer = composited.or(own_layer.then_some(bounds.origin));
+                    let paint = |window: &mut Window, cx: &mut App| {
+                        if transformation.is_some() {
+                            shapes::paint_icon_transformed(
+                                &src,
+                                &path,
+                                Bounds::new(bounds.origin, css),
+                                flip_x,
+                                color,
+                                layer,
+                                transform,
+                                window,
+                                cx,
+                            )
+                        } else if opacity < 1. {
+                            let alpha = (opacity * 255.).round() as u8;
+                            let opaque = style.text.color.unwrap_or(color);
+                            shapes::with_layer(alpha, bounds, window, |window| {
+                                shapes::paint_icon(
+                                    &src,
+                                    &path,
+                                    Bounds::new(bounds.origin, css),
+                                    flip_x,
+                                    opaque,
+                                    layer,
+                                    window,
+                                    cx,
+                                )
+                            })
+                        } else {
+                            shapes::paint_icon(
+                                &src,
+                                &path,
+                                Bounds::new(bounds.origin, css),
+                                flip_x,
+                                color,
+                                layer,
+                                window,
+                                cx,
+                            )
+                        }
+                    };
+                    let ink = saved_opacity.map(|_| {
+                        shapes::icon_paint_bounds(&src, &path, ink_bounds, flip_x, window)
+                            .unwrap_or(bounds)
+                    });
+                    let painted =
+                        with_saved_opacity(saved_opacity, ink, window, |window| paint(window, cx));
+                    if painted {
+                        return;
+                    }
                 }
-                let mut matrix = TransformationMatrix::unit();
+                let mut matrix = transform;
                 if flip_x {
                     let center = bounds.center();
                     matrix = matrix
@@ -243,9 +392,10 @@ impl Element for Icon {
                         .scale(size(-1., 1.))
                         .translate(center.scale(-scale));
                 }
-                window
-                    .paint_svg(bounds, path.into(), None, matrix, color, cx)
-                    .ok();
+                let paint = |window: &mut Window| {
+                    window.paint_svg(bounds, path.into(), None, matrix, color, cx)
+                };
+                with_saved_opacity(saved_opacity, None, window, paint).ok();
             },
         )
     }
@@ -280,6 +430,7 @@ impl InteractiveElement for Icon {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+    use gpui::prelude::FluentBuilder as _;
     use gpui::{
         AppContext as _, HeadlessAppContext, ParentElement, Render, Transformation, div, rgb, rgba,
         svg,
@@ -451,5 +602,115 @@ mod tests {
             "total"
         );
         assert_eq!(a, 0, "icons differ from Chromium");
+    }
+
+    struct RecordedIcon(bool);
+
+    impl Render for RecordedIcon {
+        fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            let content = div()
+                .size_full()
+                .when(self.0, |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .left(px(116.))
+                            .top(px(12.))
+                            .w(px(1.))
+                            .h(px(20.))
+                            .child(shapes::decoration(shapes::Decoration {
+                                fill: Some(gpui::white()),
+                                ..Default::default()
+                            })),
+                    )
+                })
+                .child(
+                    icon("thread-summary", 16., rgba(0xffffff7f).into())
+                        .runtime()
+                        .absolute()
+                        .left(px(985.))
+                        .top(px(14.)),
+                );
+            div().size_full().bg(rgb(0x242424)).child(
+                div()
+                    .absolute()
+                    .left(px(224.))
+                    .right_0()
+                    .h(px(44.))
+                    .layer()
+                    .child(crate::recorded_bounds(content)),
+            )
+        }
+    }
+
+    #[test]
+    fn recorded_children_set_the_icon_raster_grid() -> anyhow::Result<()> {
+        let mut cx = HeadlessAppContext::with_platform(
+            Arc::new(gpui::NoopTextSystem::new()),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        // Original Chrome 155: the same path differs when earlier paint extends its recording.
+        for (leading, expected) in [(false, 51), (true, 52)] {
+            let window = cx.open_window(size(px(1280.), px(60.)), |_, cx| {
+                cx.new(|_| RecordedIcon(leading))
+            })?;
+            cx.run_until_parked();
+            let image = cx.capture_screenshot(window.into())?;
+            assert_eq!(
+                image.get_pixel(2429, 33).0,
+                [expected, expected, expected, 255]
+            );
+            cx.update_window(window.into(), |_, window, _| window.remove_window())?;
+        }
+        Ok(())
+    }
+
+    struct RotatingIcon(f32);
+
+    impl Render for RotatingIcon {
+        fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            div().size_full().bg(rgb(0x181818)).child(
+                icon("sidebar-cmd-spinner", 28., gpui::white().opacity(0.65))
+                    .own_layer(None)
+                    .with_transformation(Transformation::rotate(gpui::radians(self.0)))
+                    .absolute()
+                    .left(px(18.))
+                    .top(px(18.)),
+            )
+        }
+    }
+
+    #[test]
+    fn native_icon_rotation_preserves_its_raster() -> anyhow::Result<()> {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut cx = HeadlessAppContext::with_platform(
+            Arc::new(gpui::NoopTextSystem::new()),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        let mut images = Vec::new();
+        for angle in [0., std::f32::consts::FRAC_PI_2] {
+            let window = cx.open_window(size(px(64.), px(64.)), |_, cx| {
+                cx.new(|_| RotatingIcon(angle))
+            })?;
+            cx.run_until_parked();
+            images.push(cx.capture_screenshot(window.into())?);
+            cx.update_window(window.into(), |_, window, _| window.remove_window())?;
+        }
+        assert_eq!(images[0].get_pixel(64, 47).0, [190, 190, 190, 255]);
+        for y in 0..128 {
+            for x in 0..128 {
+                assert_eq!(
+                    images[1].get_pixel(x, y),
+                    images[0].get_pixel(y, 127 - x),
+                    "clockwise quarter turn at {x},{y}",
+                );
+            }
+        }
+        Ok(())
     }
 }

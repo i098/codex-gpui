@@ -1,6 +1,6 @@
 use super::*;
 use crate::{focus, screens::settings::button};
-use gpui::{AnyElement, ClipboardItem};
+use gpui::{AnyElement, ClipboardItem, Div};
 
 impl Page {
     pub(super) fn render_page(
@@ -23,52 +23,7 @@ impl Page {
             .gap(px(16.))
             .pb(px(24.))
             .child(text(heading, 28., 36., 600., t.text));
-        let mut actions = div().flex().items_center().gap(px(8.));
-        if self.detail.is_some() {
-            actions = actions.child(self.action_button(
-                "back",
-                "Back",
-                Action::Navigate("/plugins".into()),
-                true,
-                window,
-                cx,
-            ));
-        } else {
-            actions = actions.child(self.action_button(
-                "refresh",
-                "Refresh",
-                Action::Refresh,
-                true,
-                window,
-                cx,
-            ));
-            if self.tab == Tab::Skills {
-                let available = self
-                    .data
-                    .skills
-                    .value()
-                    .into_iter()
-                    .flatten()
-                    .any(|skill| skill["name"] == "skill-creator" && skill["enabled"] == true);
-                actions = actions.child(self.action_button(
-                    "new-skill",
-                    "New skill",
-                    Action::NewSkill,
-                    available,
-                    window,
-                    cx,
-                ));
-            }
-            actions = actions.child(self.action_button(
-                "manage",
-                "Manage",
-                Action::Manage,
-                true,
-                window,
-                cx,
-            ));
-        }
-        toolbar = toolbar.child(actions);
+        toolbar = toolbar.child(self.toolbar_actions(window, cx));
         let mut body = div().id("plugins-body").flex().flex_col().gap(px(24.));
         if self.detail.is_none() {
             let mut tabs = div()
@@ -157,6 +112,55 @@ impl Page {
             page = page.child(self.modal_view(modal, window, cx));
         }
         page.into_any_element()
+    }
+
+    fn toolbar_actions(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let mut actions = div().flex().items_center().gap(px(8.));
+        if self.detail.is_some() {
+            actions = actions.child(self.action_button(
+                "back",
+                "Back",
+                Action::Navigate("/plugins".into()),
+                true,
+                window,
+                cx,
+            ));
+        } else {
+            actions = actions.child(self.action_button(
+                "refresh",
+                "Refresh",
+                Action::Refresh,
+                true,
+                window,
+                cx,
+            ));
+            if self.tab == Tab::Skills {
+                let available = self
+                    .data
+                    .skills
+                    .value()
+                    .into_iter()
+                    .flatten()
+                    .any(|skill| skill["name"] == "skill-creator" && skill["enabled"] == true);
+                actions = actions.child(self.action_button(
+                    "new-skill",
+                    "New skill",
+                    Action::NewSkill,
+                    available,
+                    window,
+                    cx,
+                ));
+            }
+            actions = actions.child(self.action_button(
+                "manage",
+                "Manage",
+                Action::Manage,
+                true,
+                window,
+                cx,
+            ));
+        }
+        actions
     }
 
     fn action_button(
@@ -285,89 +289,97 @@ impl Page {
                     )
                     .into_any_element()
             }
-            Tab::Skills => {
-                let skills = match &self.data.skills {
-                    Resource::Loading => return self.status("Loading skills…", None, cx),
-                    Resource::Failed(error) => {
-                        return self.status("Failed to load skills", Some(error), cx);
-                    }
-                    Resource::Ready(value) => value,
-                };
-                let filtered: Vec<_> = skills
-                    .iter()
-                    .filter(|skill| skill["pluginId"].is_null() && matches_value(skill, query))
-                    .collect();
-                if filtered.is_empty() {
-                    return self.status("No skills found", None, cx);
-                }
+            Tab::Skills => self.skills_list(query, &t, window, cx),
+        }
+    }
+
+    fn skills_list(
+        &self,
+        query: &str,
+        t: &theme::Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let skills = match &self.data.skills {
+            Resource::Loading => return self.status("Loading skills…", None, cx),
+            Resource::Failed(error) => {
+                return self.status("Failed to load skills", Some(error), cx);
+            }
+            Resource::Ready(value) => value,
+        };
+        let filtered: Vec<_> = skills
+            .iter()
+            .filter(|skill| skill["pluginId"].is_null() && matches_value(skill, query))
+            .collect();
+        if filtered.is_empty() {
+            return self.status("No skills found", None, cx);
+        }
+        div()
+            .grid()
+            .grid_cols(2)
+            .gap(px(16.))
+            .children(filtered.into_iter().map(|skill| {
+                let path = string(skill, "path");
+                let enabled = skill["enabled"].as_bool().unwrap_or(true);
                 div()
-                    .grid()
-                    .grid_cols(2)
-                    .gap(px(16.))
-                    .children(filtered.into_iter().map(|skill| {
-                        let path = string(skill, "path");
-                        let enabled = skill["enabled"].as_bool().unwrap_or(true);
+                    .flex()
+                    .flex_col()
+                    .gap(px(12.))
+                    .p(px(16.))
+                    .rounded(px(12.))
+                    .border_1()
+                    .border_color(t.border)
+                    .child(text(
+                        skill["interface"]["displayName"]
+                            .as_str()
+                            .unwrap_or(string(skill, "name"))
+                            .to_owned(),
+                        16.,
+                        24.,
+                        500.,
+                        t.text,
+                    ))
+                    .child(text(
+                        string(skill, "description").to_owned(),
+                        14.,
+                        20.,
+                        400.,
+                        t.text_secondary,
+                    ))
+                    .child(
                         div()
                             .flex()
-                            .flex_col()
-                            .gap(px(12.))
-                            .p(px(16.))
-                            .rounded(px(12.))
-                            .border_1()
-                            .border_color(t.border)
-                            .child(text(
-                                skill["interface"]["displayName"]
-                                    .as_str()
-                                    .unwrap_or(string(skill, "name"))
-                                    .to_owned(),
-                                16.,
-                                24.,
-                                500.,
-                                t.text,
+                            .gap(px(8.))
+                            .child(self.modal_button(
+                                format!("skill-{path}"),
+                                "View skill",
+                                Modal::Skill(skill.clone()),
+                                window,
+                                cx,
                             ))
-                            .child(text(
-                                string(skill, "description").to_owned(),
-                                14.,
-                                20.,
-                                400.,
-                                t.text_secondary,
+                            .child(self.action_button(
+                                format!("skill-toggle-{path}"),
+                                if enabled { "Disable" } else { "Enable" },
+                                Action::EnableSkill {
+                                    name: string(skill, "name").into(),
+                                    path: path.into(),
+                                    enabled: !enabled,
+                                },
+                                true,
+                                window,
+                                cx,
                             ))
-                            .child(
-                                div()
-                                    .flex()
-                                    .gap(px(8.))
-                                    .child(self.modal_button(
-                                        format!("skill-{path}"),
-                                        "View skill",
-                                        Modal::Skill(skill.clone()),
-                                        window,
-                                        cx,
-                                    ))
-                                    .child(self.action_button(
-                                        format!("skill-toggle-{path}"),
-                                        if enabled { "Disable" } else { "Enable" },
-                                        Action::EnableSkill {
-                                            name: string(skill, "name").into(),
-                                            path: path.into(),
-                                            enabled: !enabled,
-                                        },
-                                        true,
-                                        window,
-                                        cx,
-                                    ))
-                                    .child(self.action_button(
-                                        format!("skill-open-{path}"),
-                                        "Open",
-                                        Action::OpenSkill(path.into()),
-                                        true,
-                                        window,
-                                        cx,
-                                    )),
-                            )
-                    }))
-                    .into_any_element()
-            }
-        }
+                            .child(self.action_button(
+                                format!("skill-open-{path}"),
+                                "Open",
+                                Action::OpenSkill(path.into()),
+                                true,
+                                window,
+                                cx,
+                            )),
+                    )
+            }))
+            .into_any_element()
     }
 
     fn plugin_card(
@@ -547,6 +559,56 @@ impl Page {
                 400.,
                 t.text_secondary,
             ));
+        view = view.child(self.detail_actions(plugin, detail, &t, window, cx));
+        if let Some(reason) = plugin.disabled_reason() {
+            view = view.child(text(reason, 14., 20., 500., t.text_secondary));
+        }
+        for (field, label) in [
+            ("apps", "Apps"),
+            ("skills", "Skills"),
+            ("mcpServers", "MCP servers"),
+        ] {
+            if array(detail, field).is_empty() {
+                continue;
+            }
+            let mut rows = div()
+                .flex()
+                .flex_col()
+                .gap(px(12.))
+                .child(text(label, 18., 26., 500., t.text));
+            for value in array(detail, field) {
+                rows = rows.child(if field == "apps" {
+                    self.app_row(value, window, cx)
+                } else {
+                    let title = value.as_str().unwrap_or_else(|| string(value, "name"));
+                    div()
+                        .child(text(title.to_owned(), 14., 20., 400., t.text_secondary))
+                        .into_any_element()
+                });
+            }
+            view = view.child(rows);
+        }
+        let caps = array(&plugin.summary["interface"], "capabilities");
+        if !caps.is_empty() {
+            view = view
+                .child(text("Capabilities", 18., 26., 500., t.text))
+                .children(
+                    caps.iter()
+                        .filter_map(Value::as_str)
+                        .map(|cap| text(cap.to_owned(), 14., 20., 400., t.text_secondary)),
+                );
+        }
+        view.into_any_element()
+    }
+
+    fn detail_actions(
+        &self,
+        plugin: &Arc<Plugin>,
+        detail: &Value,
+        t: &theme::Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let mut actions = div().flex().gap(px(8.));
         if plugin.installed() {
             actions = actions
@@ -609,53 +671,14 @@ impl Page {
         } else if let Some(url) = detail["shareUrl"].as_str() {
             let url = url.to_owned();
             actions = actions.child(
-                button("Copy link", t.text_alpha_5, None, &t)
+                button("Copy link", t.text_alpha_5, None, t)
                     .id("copy-plugin-link")
                     .on_click(move |_, _, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(url.clone()))
                     }),
             );
         }
-        view = view.child(actions);
-        if let Some(reason) = plugin.disabled_reason() {
-            view = view.child(text(reason, 14., 20., 500., t.text_secondary));
-        }
-        for (field, label) in [
-            ("apps", "Apps"),
-            ("skills", "Skills"),
-            ("mcpServers", "MCP servers"),
-        ] {
-            if array(detail, field).is_empty() {
-                continue;
-            }
-            let mut rows = div()
-                .flex()
-                .flex_col()
-                .gap(px(12.))
-                .child(text(label, 18., 26., 500., t.text));
-            for value in array(detail, field) {
-                rows = rows.child(if field == "apps" {
-                    self.app_row(value, window, cx)
-                } else {
-                    let title = value.as_str().unwrap_or_else(|| string(value, "name"));
-                    div()
-                        .child(text(title.to_owned(), 14., 20., 400., t.text_secondary))
-                        .into_any_element()
-                });
-            }
-            view = view.child(rows);
-        }
-        let caps = array(&plugin.summary["interface"], "capabilities");
-        if !caps.is_empty() {
-            view = view
-                .child(text("Capabilities", 18., 26., 500., t.text))
-                .children(
-                    caps.iter()
-                        .filter_map(Value::as_str)
-                        .map(|cap| text(cap.to_owned(), 14., 20., 400., t.text_secondary)),
-                );
-        }
-        view.into_any_element()
+        actions
     }
 
     fn modal_view(&self, modal: &Modal, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {

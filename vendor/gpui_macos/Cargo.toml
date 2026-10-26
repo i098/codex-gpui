@@ -1,4 +1,4 @@
-# Dependency requirements and lints match Zed 3e145061d861ed32bb6a08dad7b03f2b5e455ad8.
+# Dependency requirements match Zed 3e145061d861ed32bb6a08dad7b03f2b5e455ad8.
 [package]
 name = "gpui_macos"
 version = "0.1.0"

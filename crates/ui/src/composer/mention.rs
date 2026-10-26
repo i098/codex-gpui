@@ -310,6 +310,7 @@ impl Composer {
         let files = ACTIONS.len() + self.slash.skills.len();
         let (label, link, icon) = match ACTIONS.get(index) {
             Some(action) if action.id == "files-and-folders" => {
+                self.cancel_dictation(cx);
                 let range = self.splice(self.slash.range.clone(), "");
                 self.selected_range = range.start..range.start;
                 self.marked_range = None;
@@ -336,6 +337,7 @@ impl Composer {
                 (file.name.clone(), link, icon)
             }
         };
+        self.cancel_dictation(cx);
         self.remember(&self.slash.range.clone());
         let range = self.splice(self.slash.range.clone(), &format!("{ICON_SLOT}{label} "));
         let end = range.start + ICON_SLOT.len() + label.len();
@@ -361,6 +363,8 @@ impl Composer {
     /// Replaces `range` of `content` with `text`: a chip the range touches goes whole, the
     /// chips after it shift. Returns the range replaced.
     pub(super) fn splice(&mut self, mut range: Range<usize>, text: &str) -> Range<usize> {
+        self.dictation = None;
+        self.dictation_error = None;
         self.mentions.retain(|m| {
             let hit = m.range.start < range.end && m.range.end > range.start;
             if hit {

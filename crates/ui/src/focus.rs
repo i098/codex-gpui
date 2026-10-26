@@ -2,14 +2,33 @@
 //! Mouse movement preserves a keyboard ring. A pointer press clears it.
 
 use gpui::{
-    App, Corners, DispatchPhase, Div, ElementId, Entity, FocusHandle, InteractiveElement,
-    KeyDownEvent, MouseDownEvent, ParentElement, Pixels, Stateful, Styled, Window, canvas, px, rgb,
+    AnyElement, App, BoxShadow, Corners, DispatchPhase, Div, ElementId, Entity, FocusHandle,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseDownEvent, ParentElement, Pixels, Stateful,
+    StyleRefinement, Styled, Window, canvas, point, px, rgb,
 };
 use std::cell::Cell;
+
+const RING_WIDTH: Pixels = px(2.);
+
+pub(super) fn trigger_focus(style: StyleRefinement) -> StyleRefinement {
+    style.shadow(vec![BoxShadow {
+        color: rgb(0x3a83f7).into(),
+        offset: point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: RING_WIDTH,
+        inset: false,
+    }])
+}
 
 pub struct ControlFocus {
     pub handle: FocusHandle,
     keyboard: Cell<bool>,
+}
+
+impl ControlFocus {
+    fn visible(&self, window: &Window) -> bool {
+        self.handle.is_focused(window) && (self.keyboard.get() || window.last_input_was_keyboard())
+    }
 }
 
 pub fn handle(
@@ -47,6 +66,26 @@ pub fn shadow_ring(
     paint_ring(control, focus, radius, spread, true, cx)
 }
 
+/// Paints a 2px CSS outline at a signed offset from the border box.
+/// An offset of -2px keeps the outline inside the control.
+/// Active outlines use a bounded local recording for their corner coverage.
+pub fn inset_outline(
+    control: Stateful<Div>,
+    focus: &Entity<ControlFocus>,
+    radius: Pixels,
+    offset: Pixels,
+    window: &Window,
+    cx: &App,
+) -> AnyElement {
+    let visible = focus.read(cx).visible(window);
+    let control = ring(control, focus, radius, RING_WIDTH + offset, cx);
+    if visible {
+        crate::composited_bounds(control.top_layer()).into_any_element()
+    } else {
+        control.into_any_element()
+    }
+}
+
 fn paint_ring(
     control: Stateful<Div>,
     focus: &Entity<ControlFocus>,
@@ -57,7 +96,6 @@ fn paint_ring(
 ) -> Stateful<Div> {
     let state = focus.clone();
     let handle = state.read(cx).handle.clone();
-    let ring_width = px(2.);
     control.track_focus(&handle).child(
         canvas(
             |_, _, _| {},
@@ -66,7 +104,7 @@ fn paint_ring(
                 if handle.is_focused(window) && window.last_input_was_keyboard() {
                     focus.keyboard.set(true);
                 }
-                if handle.is_focused(window) && focus.keyboard.get() {
+                if focus.visible(window) {
                     shapes::paint(
                         &shapes::Decoration {
                             radius: Corners::all(if shadow { radius } else { radius + outset }),
@@ -75,13 +113,13 @@ fn paint_ring(
                             } else {
                                 shapes::Corner::Squircle
                             },
-                            border: (!shadow).then(|| (ring_width, rgb(0x3a83f7).into())),
+                            border: (!shadow).then(|| (RING_WIDTH, rgb(0x3a83f7).into())),
                             shadows: if shadow {
                                 vec![shapes::Shadow {
                                     color: rgb(0x3a83f7).into(),
                                     offset: gpui::point(px(0.), px(0.)),
                                     blur: px(0.),
-                                    spread: ring_width,
+                                    spread: RING_WIDTH,
                                     inset: false,
                                 }]
                             } else {
@@ -157,6 +195,37 @@ mod tests {
         }
     }
 
+    struct InsetOutline {
+        focus: Entity<ControlFocus>,
+    }
+
+    impl Render for InsetOutline {
+        fn render(
+            &mut self,
+            window: &mut Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            div()
+                .size_full()
+                .relative()
+                .bg(rgb(0x1d1d1d))
+                .child(inset_outline(
+                    div()
+                        .id("inset-outline-test")
+                        .absolute()
+                        .left(px(60.))
+                        .top(px(96.))
+                        .w(px(272.))
+                        .h(px(30.)),
+                    &self.focus,
+                    px(12.5),
+                    px(-2.),
+                    window,
+                    cx,
+                ))
+        }
+    }
+
     #[test]
     fn shadow_ring_matches_original_edge_and_corner() -> anyhow::Result<()> {
         std::panic::set_hook(Box::new(|info| {
@@ -185,6 +254,54 @@ mod tests {
             (920, 1410, [58, 131, 247, 255]),
         ] {
             assert_eq!(image.get_pixel(x, y).0, expected, "ring ({x}, {y})");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn inset_outline_matches_original_corners_and_stays_inside() -> anyhow::Result<()> {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        for keyboard in [true, false] {
+            let mut cx = HeadlessAppContext::with_platform(
+                textsys::text_system(),
+                Arc::new(()),
+                gpui_platform::current_headless_renderer,
+            );
+            let window = cx.open_window(size(px(1280.), px(832.)), move |window, cx| {
+                let focus = cx.new(|cx| ControlFocus {
+                    handle: cx.focus_handle(),
+                    keyboard: Cell::new(keyboard),
+                });
+                let handle = focus.read(cx).handle.clone();
+                window.focus(&handle, cx);
+                cx.new(|_| InsetOutline { focus })
+            })?;
+            cx.run_until_parked();
+            let image = cx.capture_screenshot(window.into())?;
+            for (x, y, expected) in [
+                (134, 192, [36, 55, 84, 255]),
+                (643, 192, [53, 115, 212, 255]),
+                (124, 235, [46, 90, 159, 255]),
+                (300, 193, [58, 131, 247, 255]),
+                (300, 191, [29, 29, 29, 255]),
+                (119, 220, [29, 29, 29, 255]),
+                (664, 220, [29, 29, 29, 255]),
+                (300, 252, [29, 29, 29, 255]),
+            ] {
+                let expected = if keyboard {
+                    expected
+                } else {
+                    [29, 29, 29, 255]
+                };
+                assert_eq!(
+                    image.get_pixel(x, y).0,
+                    expected,
+                    "keyboard={keyboard}, outline ({x}, {y})"
+                );
+            }
         }
         Ok(())
     }

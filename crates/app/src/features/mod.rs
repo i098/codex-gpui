@@ -6,20 +6,38 @@
 //! 2. call `<slice>::init(cx)` in [`init`] for key bindings and app-level `cx.on_action`s;
 //! 3. call `<slice>::actions(root, cx)` in [`actions`] for `root.on_action(cx.listener(..))`.
 //!
+//! Page-family actions and activation belong in `crate::routes`, not in interaction slices.
+//!
 //! Slice modules are children of the crate root, so they reach the private fields of [`Root`].
 
 use crate::Root;
 use gpui::{App, Context, Div};
 
 mod command_destinations;
+mod keymap;
+pub(crate) mod shortcuts;
+pub(crate) mod terminal;
+mod workspace;
 pub(crate) use command_destinations::OpenThreadInNewWindow;
 
 /// Called by [`crate::init`], after the app's own bindings.
 pub(crate) fn init(cx: &mut App) {
-    command_destinations::init(cx);
+    shortcuts::init(cx);
+    workspace::init(cx);
+}
+
+pub(crate) fn install_shortcuts(cx: &mut App) {
+    keymap::install(cx);
 }
 
 /// Called by `Root::render` on the root element, after the app's own actions.
-pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
-    command_destinations::actions(crate::windows::actions(root, cx), cx)
+pub(crate) fn actions(root: Div, owner: &Root, cx: &mut Context<Root>) -> Div {
+    workspace::actions(
+        shortcuts::actions(
+            command_destinations::actions(crate::windows::actions(root, cx), cx),
+            owner,
+            cx,
+        ),
+        cx,
+    )
 }

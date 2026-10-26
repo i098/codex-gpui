@@ -13,9 +13,10 @@
 //! (`getAuthStatus` with `includeToken`) plus the account route from `account/read`, retries once
 //! after a 401 with a refreshed token, and answers the original wire shapes, including errors.
 //! The token never reaches logs, errors, or `Debug` output.
-//! Local fetches support `list-automations`, `create-automation`, `automation-update`, `automation-run-now`, `inbox-items`, the `git-*` endpoints, `create-worktree`, `set-worktree-owner-thread`, and `paths-exist`; other endpoints return errors.
+//! Local fetches support automations, Git, scoped file reads, native app discovery, open-in requests, personal instructions, and first-run workspace creation.
+//! Unsupported endpoints return errors.
 //! `Root` loads the automation list off the UI thread when the Scheduled route opens.
-//! Consumers read the result through `Root::automations`; this service slice does not change the static screens.
+//! `Root` owns the loading state and displays failures from these services.
 //!
 //! Storage evidence: Codex 26.1007.30912, `src-BJv5Mk7n.js` functions `jF`, `NF`, `QF`,
 //! `Z$`, `Q$`, and `$$`. HTTP evidence: `main-CqEoQDOU.js` `performDesktopFetch`, `fetchHttp`,
@@ -36,15 +37,31 @@ use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
+use ui::screens::diff::panel::ReviewRepository;
 use ui::screens::sidebar::Project;
 use url::Url;
 
+mod app_tools;
+pub use app_tools::{AppToolEvents, AppTools, ToolEvent};
 mod automation_schedule;
 pub mod computer_use;
 pub mod computer_use_native;
+mod context_files;
+mod diff_files;
+mod diff_repositories;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod directories;
+mod environments;
 mod git;
+pub mod git_pr;
+mod native_apps;
+mod open_in;
 mod projectless;
+pub use projectless::Workspace;
 pub(crate) mod run_now;
+mod settings_git;
+mod skills;
+mod ssh_discovery;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
@@ -69,8 +86,28 @@ impl Request {
 
 pub trait Host: Send + Sync {
     /// Returns the original wire response. Call this off the UI thread for a local host.
+    /// Only trusted native UI code calls this service.
+    /// Derive `cwd` from the active workspace, never from model-provided input.
     fn fetch(&self, request: &Request) -> Result<Value>;
 
+    /// Binds context-file events to this host's view, replacing any prior binding.
+    fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
+        None
+    }
+
+    fn stream(
+        &self,
+        request: &Request,
+        cancelled: &std::sync::atomic::AtomicBool,
+        on_event: &mut dyn FnMut(Value) -> bool,
+    ) -> Result<()> {
+        let response = self.fetch(request)?;
+        let wire = response_wire(&response);
+        let status = wire["status"].as_u64().context("missing stream status")?;
+        ensure!((200..300).contains(&status), "stream HTTP status {status}");
+        let body = wire["body"].as_str().context("missing stream body")?;
+        event_stream(std::io::Cursor::new(body), cancelled, on_event)
+    }
     fn computer_use_native(&self) -> Option<Arc<computer_use_native::NativeComputerUse>> {
         None
     }
@@ -82,13 +119,40 @@ pub trait Host: Send + Sync {
     /// Invalidates cached account credentials after a login or logout.
     fn invalidate_identity(&self) {}
 
+    fn take_app_tool_events(&self) -> Option<AppToolEvents> {
+        None
+    }
+
+    fn app_tool_thread_config(
+        &self,
+        _thread_id: &str,
+        _thread_source: Option<&str>,
+    ) -> Result<Option<Value>> {
+        Ok(None)
+    }
     /// Reads the original sidebar project state off the UI thread.
     fn projects(&self) -> Result<Vec<Project>> {
         bail!("sidebar project state is unsupported by this host")
     }
 
+    fn review_repositories(&self, _thread: &str, _cwd: &str) -> Result<Vec<ReviewRepository>> {
+        bail!("review repositories are unsupported by this host")
+    }
+
     fn add_project(&self, _root: &Path) -> Result<String> {
         bail!("adding a local project is unsupported by this host")
+    }
+
+    fn prepare_projectless(&self, _prompt: &str) -> Result<Workspace> {
+        bail!("projectless workspaces are unsupported by this host")
+    }
+
+    fn record_projectless(&self, _thread: &str, _workspace: &Workspace) -> Result<()> {
+        bail!("projectless thread storage is unsupported by this host")
+    }
+
+    fn clear_inbox_unreads(&self) -> Result<()> {
+        bail!("Clearing unread tasks is unsupported by this host")
     }
 
     /// Returns the trusted native Settings service, never a model-callable tool.
@@ -115,29 +179,6 @@ pub struct Identity {
     pub account_id: String,
     pub user_id: String,
     pub device_id: String,
-}
-
-/// The webview client's models read that starts a suggested task's guided conversation
-/// (`conversation-actions` `J`: `query.getOrFetch` of the TPP models before the conversation
-/// is prepared), as recorded in `refs/interactions/s035b.json`.
-pub fn tpp_models(identity: &Identity) -> Request {
-    Request::Http(json!({
-        "url": "/tpp/models/?iim=false&include_icons=false",
-        "method": "GET",
-        "headers": {
-            "x-openai-web-frontend": "codex_webview",
-            "x-oai-mcp-form-version": "2",
-            "x-openai-codex-window-type": "electron",
-            "OAI-Language": "en-US",
-            "oai-did": identity.device_id,
-            "X-OpenAI-Attach-Auth": "1",
-            "X-OpenAI-Attach-Desktop-Surface": "1",
-            "X-OpenAI-Attach-Integrity-State": "1",
-            "ChatGPT-Account-ID": identity.account_id,
-        },
-        "expectedIdentity": {"accountId": identity.account_id, "userId": identity.user_id},
-        "returnErrorResponse": true,
-    }))
 }
 
 /// The Scheduled page's read-only suggestion request.
@@ -441,13 +482,17 @@ fn is_worktree_path(path: &str, managed_root: &str, windows: bool) -> bool {
     })
 }
 
+pub fn response_wire(response: &Value) -> &Value {
+    let response = response.get("value").unwrap_or(response);
+    response.pointer("/response/__response").unwrap_or(response)
+}
+
 /// Decodes a JSON response without turning HTTP errors or binary bodies into empty data.
 pub fn json_body(response: &Value) -> Result<Value> {
-    let response = response.get("value").unwrap_or(response);
+    let response = response_wire(response);
     if response["responseType"] == "error" {
         bail!("host error {}: {}", response["status"], response["error"]);
     }
-    let response = response.pointer("/response/__response").unwrap_or(response);
     let status = response["status"].as_u64().context("missing host status")?;
     ensure!((200..300).contains(&status), "host HTTP status {status}");
     let body = response
@@ -460,13 +505,18 @@ pub fn json_body(response: &Value) -> Result<Value> {
 
 pub struct LocalHost {
     home: PathBuf,
+    workspace_parent: PathBuf,
+    ssh_home: Option<PathBuf>,
     /// The `codex app-server` that `automation-run-now` starts runs on; the original's main
     /// process holds the same connection.
     bridge: Option<Arc<Bridge>>,
+    #[cfg(target_os = "macos")]
+    app_tools: Mutex<Option<Arc<AppTools>>>,
     opener: PathBuf,
-    host_settings_path: PathBuf,
+    settings: Option<crate::host_settings::Settings>,
     computer_use_settings: Option<computer_use::ComputerUseSettings>,
     native_computer_use: Arc<computer_use_native::NativeComputerUse>,
+    context_files: context_files::ContextFiles,
 }
 
 impl LocalHost {
@@ -475,11 +525,15 @@ impl LocalHost {
         Self {
             computer_use_settings: None,
             native_computer_use: Arc::new(computer_use_native::NativeComputerUse::new(&home)),
+            workspace_parent: home.join("projects"),
             home,
+            ssh_home: std::env::var_os("HOME").map(PathBuf::from),
             bridge: None,
+            #[cfg(target_os = "macos")]
+            app_tools: Mutex::new(None),
             opener: "/usr/bin/open".into(),
-            host_settings_path: PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                .join("Library/Application Support/codex-gpui/host-settings.json"),
+            settings: None,
+            context_files: context_files::ContextFiles::default(),
         }
     }
 
@@ -488,8 +542,22 @@ impl LocalHost {
         self
     }
 
-    pub fn with_host_settings_path(mut self, path: impl Into<PathBuf>) -> Self {
-        self.host_settings_path = path.into();
+    pub fn app_tools(&self) -> Result<Option<Arc<AppTools>>> {
+        #[cfg(target_os = "macos")]
+        if let Some(bridge) = self.bridge.as_ref().filter(|bridge| !bridge.is_acp()) {
+            let mut cached = self.app_tools.lock().unwrap();
+            if let Some(tools) = cached.as_ref() {
+                return Ok(Some(tools.clone()));
+            }
+            let tools = Arc::new(AppTools::start(&self.home, bridge.clone())?);
+            *cached = Some(tools.clone());
+            return Ok(Some(tools));
+        }
+        Ok(None)
+    }
+
+    pub fn with_settings(mut self, settings: Option<crate::host_settings::Settings>) -> Self {
+        self.settings = settings;
         self
     }
 
@@ -501,7 +569,12 @@ impl LocalHost {
         self
     }
 
-    /// Launches editors through `opener`, which takes macOS `open`'s `[-a App] file` arguments.
+    pub fn with_ssh_home(mut self, home: impl Into<PathBuf>) -> Self {
+        self.ssh_home = Some(home.into());
+        self
+    }
+
+    /// Uses an alternate OS application opener with macOS `open` arguments.
     pub fn with_opener(mut self, opener: impl Into<PathBuf>) -> Self {
         self.opener = opener.into();
         self
@@ -520,7 +593,25 @@ impl LocalHost {
             .map(PathBuf::from)
             .filter(|home| home.is_absolute())
             .map(|home| computer_use::ComputerUseSettings::new(home, &host.home));
+        host.workspace_parent =
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join("Documents/ChatGPT");
         host
+    }
+
+    fn read_global_state(&self) -> Result<Value> {
+        let path = self.home.join(".codex-global-state.json");
+        let contents = match fs::read(&path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(json!({})),
+            Err(error) => return Err(error).context("read original sidebar project state"),
+        };
+        let state: Value =
+            serde_json::from_slice(&contents).context("decode original sidebar project state")?;
+        ensure!(
+            state.is_object(),
+            "original sidebar project state must be an object"
+        );
+        Ok(state)
     }
 
     fn update_global_state(&self, update: impl FnOnce(&mut Value) -> Result<bool>) -> Result<()> {
@@ -560,6 +651,76 @@ impl LocalHost {
             assignments.insert(thread_id.to_owned(), assignment);
             Ok(true)
         })
+    }
+
+    fn agents_md_path(&self) -> Result<PathBuf> {
+        fs::create_dir_all(&self.home)?;
+        let path = self.home.join("AGENTS.md");
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error).context("create personal instructions"),
+        }
+        Ok(path)
+    }
+
+    fn agents_md(&self) -> Result<Value> {
+        let path = self.agents_md_path()?;
+        let contents = fs::read_to_string(&path).context("read personal instructions")?;
+        let has_override = match fs::read_to_string(path.with_file_name("AGENTS.override.md")) {
+            Ok(contents) => !contents.trim().is_empty(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error).context("read personal instructions override"),
+        };
+        Ok(json!({"path": path, "contents": contents, "hasOverride": has_override}))
+    }
+
+    fn save_agents_md(&self, contents: &str) -> Result<Value> {
+        let path = self.agents_md_path()?;
+        let target = path.canonicalize()?;
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&target)
+            .context("open personal instructions for writing")?;
+        let mut file =
+            tempfile::NamedTempFile::new_in(target.parent().context("instructions parent")?)?;
+        file.as_file()
+            .set_permissions(fs::metadata(&target)?.permissions())?;
+        file.write_all(contents.as_bytes())?;
+        file.as_file().sync_all()?;
+        file.persist(target).context("save personal instructions")?;
+        Ok(json!({"path": path}))
+    }
+
+    fn onboarding_workspace(&self) -> Result<Value> {
+        fs::create_dir_all(&self.workspace_parent)?;
+        for index in 1usize.. {
+            let name = if index == 1 {
+                "New project".to_owned()
+            } else {
+                format!("New project {index}")
+            };
+            let path = self.workspace_parent.join(name);
+            match fs::create_dir(&path) {
+                Ok(()) => {
+                    let root = match self.add_project(&path) {
+                        Ok(root) => root,
+                        Err(error) => {
+                            let _ = fs::remove_dir(&path);
+                            return Err(error);
+                        }
+                    };
+                    return Ok(json!({"success": true, "root": root}));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error).context("create onboarding project"),
+            }
+        }
+        unreachable!()
     }
 
     fn database(&self, flags: OpenFlags) -> Result<Option<Connection>> {
@@ -661,8 +822,16 @@ impl LocalHost {
             "unsupported worktree starting state"
         );
         let environment = params["localEnvironmentConfigPath"].as_str().map(Path::new);
-        let worktree = git::create_worktree(&root, cwd, start["branchName"].as_str(), environment)?
-            .context("Not a git repository")?;
+        let worktree = if params["worktreesRoot"]
+            .as_str()
+            .is_some_and(|root| !root.trim().is_empty())
+        {
+            self.refresh_worktree_upstream(cwd);
+            git::create_worktree(&root, cwd, start["branchName"].as_str(), environment)?
+        } else {
+            self.managed_worktree(cwd, start["branchName"].as_str(), environment)?
+        }
+        .context("Not a git repository")?;
         Ok(json!({"worktreeGitRoot": worktree.git_root,
             "worktreeWorkspaceRoot": worktree.workspace_root, "setupError": null}))
     }
@@ -678,39 +847,17 @@ impl LocalHost {
         let name = required("name")?;
         let prompt = required("prompt")?;
         let rrule = required("rrule")?;
-        let mut parts = rrule.split(';');
-        match parts.next() {
-            Some("FREQ=DAILY") => {}
-            Some("FREQ=WEEKLY") => ensure!(
-                matches!(
-                    parts.next(),
-                    Some(
-                        "BYDAY=MO"
-                            | "BYDAY=TU"
-                            | "BYDAY=WE"
-                            | "BYDAY=TH"
-                            | "BYDAY=FR"
-                            | "BYDAY=SA"
-                            | "BYDAY=SU"
-                    )
-                ),
-                "invalid weekly schedule"
-            ),
-            _ => bail!("unsupported schedule frequency"),
-        }
-        let hour = parts
-            .next()
-            .and_then(|s| s.strip_prefix("BYHOUR="))
-            .and_then(|s| s.parse::<u8>().ok());
-        let minute = parts
-            .next()
-            .and_then(|s| s.strip_prefix("BYMINUTE="))
-            .and_then(|s| s.parse::<u8>().ok());
         ensure!(
-            hour.is_some_and(|h| h < 24)
-                && minute.is_some_and(|m| m < 60)
-                && parts.next().is_none(),
-            "invalid schedule time"
+            automation_schedule::next_run(
+                rrule,
+                "cron",
+                "new",
+                chrono::Utc::now().timestamp_millis(),
+                rrule::Tz::LOCAL,
+                "",
+            )
+            .is_some(),
+            "invalid automation recurrence or no future runs"
         );
         let cwds: Vec<String> = serde_json::from_value(params["cwds"].clone())?;
         ensure!(
@@ -726,7 +873,77 @@ impl LocalHost {
         });
         let contents = toml::to_string(&raw)?;
         self.write_automation(&id, &contents)?;
-        definition(&id, &contents)
+        Ok(json!({"item": definition(&id, &contents)?}))
+    }
+
+    /// `automation-delete` (original `src-BJv5Mk7n.js` `aI`, wrapped like the main process's
+    /// `delete`): removes the definition directory and its cached row and answers
+    /// `{item, success, status}`. `deleted` and `not_found` succeed; account-owned rows are
+    /// outside LocalHost and answer `not_found` untouched.
+    fn delete_automation(&self, params: &Value) -> Result<Value> {
+        let id = params["id"].as_str().context("missing automation id")?;
+        let valid = !id.is_empty() && id != "." && id != ".." && !id.contains(['/', '\\', '\0']);
+        let directory = self.home.join("automations").join(id);
+        let item = valid
+            .then(|| fs::read_to_string(directory.join("automation.toml")).ok())
+            .flatten()
+            .and_then(|text| definition(id, &text).ok());
+        let status = if valid {
+            self.remove_automation(id, &directory)?
+        } else {
+            "invalid_id"
+        };
+        let success = matches!(status, "deleted" | "not_found");
+        Ok(json!({"item": item, "success": success, "status": status}))
+    }
+
+    fn remove_automation(&self, id: &str, directory: &Path) -> Result<&'static str> {
+        let db = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let mut cached = false;
+        if let Some(db) = &db {
+            let owner = db
+                .query_row(
+                    "SELECT account_id IS NOT NULL OR user_id IS NOT NULL OR installation_id IS NOT NULL
+                     FROM automations WHERE id = ?",
+                    [id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .optional()?;
+            if owner == Some(true) {
+                return Ok("not_found");
+            }
+            cached = owner.is_some();
+        }
+        let present = match fs::symlink_metadata(directory) {
+            Ok(_) => {
+                let root = self.home.join("automations").canonicalize()?;
+                ensure!(
+                    directory.canonicalize()?.parent() == Some(root.as_path())
+                        && root.starts_with(self.home.canonicalize()?),
+                    "automation directory escapes CODEX_HOME"
+                );
+                true
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            Err(e) => return Err(e.into()),
+        };
+        let existed = present && directory.join("automation.toml").exists() || cached;
+        if let Some(db) = &db
+            && db
+                .execute("DELETE FROM automations WHERE id = ?", [id])
+                .is_err()
+        {
+            return Ok("state_cleanup_failed");
+        }
+        if present && fs::remove_dir_all(directory).is_err() && directory.exists() {
+            return Ok("remove_failed");
+        }
+        if let Some(db) = &db {
+            // The original clears the runs of a removed definition and ignores failure.
+            db.execute("DELETE FROM automation_runs WHERE automation_id = ?", [id])
+                .ok();
+        }
+        Ok(if existed { "deleted" } else { "not_found" })
     }
 
     /// Saves a validated original-format definition, not an automation scheduling command.
@@ -734,16 +951,7 @@ impl LocalHost {
     pub fn write_automation(&self, id: &str, contents: &str) -> Result<()> {
         definition(id, contents)?;
         if let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_ONLY)? {
-            let owned: bool = db.query_row(
-                "SELECT EXISTS(SELECT 1 FROM automations WHERE id = ? AND
-                 (account_id IS NOT NULL OR user_id IS NOT NULL OR installation_id IS NOT NULL))",
-                [id],
-                |row| row.get(0),
-            )?;
-            ensure!(
-                !owned,
-                "cannot write an account-owned automation through LocalHost"
-            );
+            ensure_unowned_automation(&db, id)?;
         }
         let root = self.home.join("automations");
         fs::create_dir_all(&root)?;
@@ -767,10 +975,7 @@ impl LocalHost {
 
     fn update_automation(&self, params: &Value) -> Result<Value> {
         let id = params["id"].as_str().context("missing automation id")?;
-        ensure!(
-            !id.is_empty() && id != "." && id != ".." && !id.contains(['/', '\\', '\0']),
-            "invalid automation id"
-        );
+        check_automation_id(id)?;
         let status = params["status"]
             .as_str()
             .context("missing automation status")?;
@@ -800,59 +1005,40 @@ impl LocalHost {
             root.starts_with(self.home.canonicalize()?) && path.starts_with(&root),
             "automation directory escapes CODEX_HOME"
         );
-        let mut db = self
-            .database(OpenFlags::SQLITE_OPEN_READ_WRITE)?
-            .context("automation database is unavailable")?;
-        let transaction = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let owned: bool = transaction.query_row(
-            "SELECT EXISTS(SELECT 1 FROM automations WHERE id = ? AND
-             (account_id IS NOT NULL OR user_id IS NOT NULL OR installation_id IS NOT NULL))",
-            [id],
-            |row| row.get(0),
-        )?;
-        ensure!(
-            !owned,
-            "cannot write an account-owned automation through LocalHost"
-        );
+        let mut db = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        let transaction = db
+            .as_mut()
+            .map(|db| db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate))
+            .transpose()?;
+        if let Some(transaction) = &transaction {
+            ensure_unowned_automation(transaction, id)?;
+        }
         let original = fs::read_to_string(&path).map_err(read_error)?;
         let mut item = definition(id, &original)?;
         ensure!(item["status"] != "DELETED", "{missing}");
-        for (key, value) in params
-            .as_object()
-            .context("host parameters must be an object")?
-        {
-            if matches!(key.as_str(), "id" | "status" | "hostId") {
-                continue;
-            }
-            let stored = if key == "projectId" {
-                &item["target"]["projectId"]
-            } else {
-                &item[key]
-            };
-            // Original `ugi` sends a legacy task's first cwd as `projectId`.
-            let legacy_cwd = key == "projectId"
-                && item["target"].is_null()
-                && item["cwds"].get(0) == Some(value)
-                && value != "~";
-            ensure!(
-                stored == value || legacy_cwd,
-                "status-only automation update cannot change {key}"
-            );
-        }
-        let last: Option<i64> = transaction
-            .query_row(
-                "SELECT last_run_at FROM automations WHERE id = ?",
-                [id],
-                |row| row.get(0),
-            )
-            .optional()?
-            .flatten();
+        apply_automation_edits(&mut item, params)?;
+        let last: Option<i64> = if let Some(transaction) = &transaction {
+            transaction
+                .query_row(
+                    "SELECT last_run_at FROM automations WHERE id = ?",
+                    [id],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .flatten()
+        } else {
+            None
+        };
         let rule = item["rrule"]
             .as_str()
             .context("missing automation recurrence")?;
         let now = chrono::Utc::now().timestamp_millis();
         // Resume always recalculates; a cached database time is never reused.
         let (next, nominal) = if status == "PAUSED" {
+            ensure!(
+                automation_schedule::valid(rule, now),
+                "invalid automation recurrence"
+            );
             (None, None)
         } else {
             // Original ZF: an unreadable salt is replaced, and a failed save still schedules this run.
@@ -878,8 +1064,9 @@ impl LocalHost {
             .context(automation_schedule::NO_FUTURE_RUN)?;
             (Some(next), Some(nominal))
         };
-        transaction.execute(
-            "INSERT INTO automations
+        if let Some(transaction) = &transaction {
+            transaction.execute(
+                "INSERT INTO automations
              (id, name, prompt, status, next_run_at, next_run_nominal_at, last_run_at, cwds,
               target_type, project_id, rrule, model, reasoning_effort, created_at, updated_at,
               kind, target_thread_id, execution_environment, local_environment_config_path,
@@ -888,42 +1075,48 @@ impl LocalHost {
                      ?16, ?17, ?18, ?19, ?20, ?21, ?22)
              ON CONFLICT(id) DO UPDATE SET status=excluded.status, next_run_at=excluded.next_run_at,
               next_run_nominal_at=excluded.next_run_nominal_at, updated_at=excluded.updated_at,
-              rrule=excluded.rrule",
-            params![
-                id,
-                item["name"].as_str(),
-                item["prompt"].as_str(),
-                status,
-                next,
-                nominal,
-                last,
-                item.get("cwds")
-                    .map_or_else(|| "[]".to_owned(), Value::to_string),
-                item["target"]["type"].as_str(),
-                item["target"]["projectId"].as_str(),
-                rule,
-                item["model"].as_str(),
-                item["reasoningEffort"].as_str(),
-                item["createdAt"].as_i64(),
-                now,
-                item["kind"].as_str(),
-                item["targetThreadId"].as_str(),
-                item["executionEnvironment"].as_str(),
-                item["localEnvironmentConfigPath"].as_str(),
-                item["pluginTemplateId"].as_str(),
-                item["notificationPolicy"].as_str(),
-                item["autoArchive"].as_bool().unwrap_or(false)
-            ],
-        )?;
+              rrule=excluded.rrule, name=excluded.name, prompt=excluded.prompt",
+                params![
+                    id,
+                    item["name"].as_str(),
+                    item["prompt"].as_str(),
+                    status,
+                    next,
+                    nominal,
+                    last,
+                    item.get("cwds")
+                        .map_or_else(|| "[]".to_owned(), Value::to_string),
+                    item["target"]["type"].as_str(),
+                    item["target"]["projectId"].as_str(),
+                    rule,
+                    item["model"].as_str(),
+                    item["reasoningEffort"].as_str(),
+                    item["createdAt"].as_i64(),
+                    now,
+                    item["kind"].as_str(),
+                    item["targetThreadId"].as_str(),
+                    item["executionEnvironment"].as_str(),
+                    item["localEnvironmentConfigPath"].as_str(),
+                    item["pluginTemplateId"].as_str(),
+                    item["notificationPolicy"].as_str(),
+                    item["autoArchive"].as_bool().unwrap_or(false)
+                ],
+            )?;
+        }
         let mut raw: toml::Table = toml::from_str(&original)?;
         raw.insert("status".into(), status.into());
         raw.insert("updated_at".into(), now.into());
+        for key in ["name", "prompt", "rrule"] {
+            raw.insert(key.into(), item[key].as_str().unwrap().into());
+        }
         self.write_automation(id, &toml::to_string(&raw)?)?;
-        if let Err(error) = transaction.commit() {
+        if let Some(transaction) = transaction
+            && let Err(error) = transaction.commit()
+        {
             self.write_automation(id, &original).context(format!(
                 "restore automation after database commit failed: {error}"
             ))?;
-            return Err(error).context("persist automation status");
+            return Err(error).context("persist automation update");
         }
         item["status"] = json!(status);
         item["updatedAt"] = json!(now);
@@ -1002,6 +1195,88 @@ impl LocalHost {
 }
 
 impl Host for LocalHost {
+    fn take_app_tool_events(&self) -> Option<AppToolEvents> {
+        self.app_tools()
+            .ok()?
+            .and_then(|tools| tools.subscribe_events())
+    }
+
+    fn app_tool_thread_config(
+        &self,
+        thread_id: &str,
+        thread_source: Option<&str>,
+    ) -> Result<Option<Value>> {
+        #[cfg(target_os = "macos")]
+        {
+            let attempt = (|| -> Result<Option<Value>> {
+                let registered = self
+                    .app_tools
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .is_some_and(|tools| tools.owns_thread(thread_id));
+                let owned = if registered || thread_source == Some("automation") {
+                    true
+                } else if let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_ONLY)? {
+                    db.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM automation_runs AS r JOIN automations AS a ON a.id=r.automation_id WHERE r.thread_id=?1 AND a.account_id IS NULL AND a.user_id IS NULL AND a.installation_id IS NULL)
+                         OR EXISTS(SELECT 1 FROM automations WHERE kind='heartbeat' AND target_thread_id=?1 AND account_id IS NULL AND user_id IS NULL AND installation_id IS NULL)",
+                        [thread_id], |row| row.get::<_, bool>(0),
+                    )?
+                } else {
+                    false
+                };
+                if !owned {
+                    return Ok(None);
+                }
+                let Some(tools) = self.app_tools()? else {
+                    return Ok(None);
+                };
+                let config = tools.thread_config()?;
+                tools.register_thread(thread_id);
+                Ok(Some(config))
+            })();
+            match attempt {
+                Ok(config) => Ok(config),
+                Err(error) => {
+                    eprintln!(
+                        "codex-gpui: optional app tools are unavailable for this thread: {error:#}"
+                    );
+                    Ok(None)
+                }
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (thread_id, thread_source);
+            Ok(None)
+        }
+    }
+
+    fn clear_inbox_unreads(&self) -> Result<()> {
+        if let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? {
+            db.execute(
+                "UPDATE automation_runs SET read_at = ? WHERE read_at IS NULL
+                 AND status IN ('PENDING_REVIEW', 'ACCEPTED') AND automation_id IN
+                 (SELECT id FROM automations WHERE account_id IS NULL AND user_id IS NULL AND installation_id IS NULL)",
+                params![chrono::Utc::now().timestamp_millis()],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
+        Some(self.context_files.bind())
+    }
+
+    fn prepare_projectless(&self, prompt: &str) -> Result<Workspace> {
+        self.create_projectless_workspace(prompt)
+    }
+
+    fn record_projectless(&self, thread: &str, workspace: &Workspace) -> Result<()> {
+        self.record_projectless_thread(thread, workspace)
+    }
+
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.computer_use_settings
             .as_ref()
@@ -1013,21 +1288,14 @@ impl Host for LocalHost {
     }
 
     fn projects(&self) -> Result<Vec<Project>> {
-        let path = self.home.join(".codex-global-state.json");
-        let contents = match fs::read(&path) {
-            Ok(contents) => contents,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(error) => return Err(error).context("read original sidebar project state"),
-        };
-        let state: Value =
-            serde_json::from_slice(&contents).context("decode original sidebar project state")?;
-        ensure!(
-            state.is_object(),
-            "original sidebar project state must be an object"
-        );
+        let state = self.read_global_state()?;
         project_rows(&state, &self.home, |path, _| {
             Ok(Some(Path::new(path).exists()))
         })
+    }
+
+    fn review_repositories(&self, thread: &str, cwd: &str) -> Result<Vec<ReviewRepository>> {
+        diff_repositories::discover(&self.home, thread, cwd)
     }
 
     fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {
@@ -1104,16 +1372,78 @@ impl Host for LocalHost {
             "remote host is unsupported by LocalHost"
         );
         let body = match endpoint {
+            "codex-agents-md" => self.agents_md()?,
+            "codex-agents-md-save" => self.save_agents_md(
+                params["contents"]
+                    .as_str()
+                    .context("missing instructions contents")?,
+            )?,
+            "electron-onboarding-skip-workspace" => self.onboarding_workspace()?,
+            "get-global-state" => {
+                let key = params["key"].as_str().context("missing global state key")?;
+                let value = self
+                    .read_global_state()?
+                    .get_mut(key)
+                    .map(Value::take)
+                    .unwrap_or(Value::Null);
+                Value::Object(serde_json::Map::from_iter([("value".into(), value)]))
+            }
             "list-automations" => self.automations()?,
-            "create-automation" => self.create_automation(&params)?,
+            "automation-create" => self.create_automation(&params)?,
+            "automation-delete" => self.delete_automation(&params)?,
             "automation-update" => self.update_automation(&params)?,
             "automation-run-now" => self.automation_run_now(&params)?,
+            "apply-automation-proposal" => {
+                let tools = self
+                    .app_tools()?
+                    .context("Native app tools are unavailable")?;
+                let thread = params["threadId"].as_str().context("missing threadId")?;
+                tools.register_thread(thread);
+                let saved = tools.apply_proposal(&params["arguments"], thread)?;
+                let item = self.automations()?["items"]
+                    .as_array()
+                    .and_then(|items| {
+                        items
+                            .iter()
+                            .find(|item| item["id"] == saved["automationId"])
+                    })
+                    .cloned()
+                    .context("The saved scheduled task could not be loaded")?;
+                json!({"item": item})
+            }
             "inbox-items" => self.inbox(&params)?,
+            "apply-patch" => git::apply_cloud_patch(&params)?,
+            "local-environments" => environments::list(Path::new(
+                params["workspaceRoot"]
+                    .as_str()
+                    .context("missing workspace root")?,
+            ))?,
+            "local-environment-config" => environments::read(Path::new(
+                params["configPath"]
+                    .as_str()
+                    .context("missing environment path")?,
+            ))?,
+            "local-environment-config-save" => environments::save(&params)?,
+            "local-environment-select" => self.select_environment(
+                params["workspaceRoot"]
+                    .as_str()
+                    .context("missing workspace root")?,
+                params["configPath"]
+                    .as_str()
+                    .context("missing environment path")?,
+            )?,
+            "codex-worktrees" => self.worktrees()?,
+            "worktree-delete" => {
+                self.delete_worktree(params["worktree"].as_str().context("missing worktree")?)?
+            }
+            "git-pr-watch-update" => self.update_pr_watchers(&params)?,
             "git-changes" | "git-stage" | "git-unstage" | "git-revert" | "git-init-repo"
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
-            | "git-checkout" => git::fetch(endpoint, &params)?,
+            | "git-checkout" | "git-cat-file" | "git-review-patch" | "git-file-url" => {
+                git::fetch(endpoint, &params)?
+            }
             "create-worktree" => self.create_worktree(&params)?,
-            "set-worktree-owner-thread" => {
+            "set-worktree-owner-thread" | "worktree-set-owner-thread" => {
                 let worktree = params["worktree"].as_str().context("missing worktree")?;
                 let thread = params["conversationId"]
                     .as_str()
@@ -1122,7 +1452,27 @@ impl Host for LocalHost {
                     .context("Failed to set thread worktree owner")?;
                 json!({"success": true})
             }
-            "open-file" => open_file(&self.opener, &params)?,
+            "open-in" => self.open_in(&params)?,
+            "add-context-file" => self.context_files.add(&params)?,
+            "open-in-targets" => self.open_in_targets(&params)?,
+            "discover-remote-ssh-connections" => {
+                let home = self
+                    .ssh_home
+                    .as_deref()
+                    .context("Home directory is unavailable")?;
+                json!({"sshAliases": ssh_discovery::discover(home)?})
+            }
+            "read-file" => diff_files::text(&params)?,
+            "read-file-binary" => diff_files::binary(&params)?,
+            "read-git-file-binary" => diff_files::git_binary(&params)?,
+            "recommended-skills" => skills::recommended(&self.home, &params),
+            "install-recommended-skill" => skills::install(&self.home, &params),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            "workspace-directory-entries" => directories::read(&params)?,
+            "native-desktop-apps" => json!({"apps": native_apps::list(&params)?}),
+            "native-desktop-app-by-bundle-id" => {
+                json!({"app": native_apps::by_bundle_id(&params)?})
+            }
             "paths-exist" => {
                 let paths: Vec<String> =
                     serde_json::from_value(params.get("paths").cloned().unwrap_or(json!([])))?;
@@ -1141,77 +1491,6 @@ impl Host for LocalHost {
             "headers": {"content-type": "application/json"}, "bodyJsonString": body.to_string()}),
         )
     }
-}
-
-/// The original's editor targets (`openIn.getTargets` ids) and their macOS application names.
-const EDITORS: [(&str, &str); 11] = [
-    ("vscode", "Visual Studio Code"),
-    ("vscodeInsiders", "Visual Studio Code - Insiders"),
-    ("cursor", "Cursor"),
-    ("devin", "Devin Desktop"),
-    ("bbedit", "BBEdit"),
-    ("emacs", "Emacs"),
-    ("sublimeText", "Sublime Text"),
-    ("zed", "Zed"),
-    ("windsurf", "Windsurf"),
-    ("antigravity", "Antigravity"),
-    ("xcode", "Xcode"),
-];
-
-/// Opens a file or directory in the selected editor.
-/// The canonical path must remain inside the project root, including through symlinks.
-fn open_file(opener: &Path, params: &Value) -> Result<Value> {
-    let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
-    let path = Path::new(params["path"].as_str().context("missing path")?);
-    ensure!(
-        cwd.is_absolute() && path.is_absolute(),
-        "cwd and path must be absolute"
-    );
-    let root = std::process::Command::new("git")
-        .arg("-C")
-        .arg(cwd)
-        .args(["rev-parse", "--show-toplevel"])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map_or_else(
-            || cwd.to_path_buf(),
-            |root| PathBuf::from(root.trim_end_matches('\n')),
-        );
-    let root = root.canonicalize().context("resolve the project folder")?;
-    let file = path
-        .canonicalize()
-        .with_context(|| format!("{} no longer exists", path.display()))?;
-    ensure!(file.starts_with(&root), "file is outside the project");
-    ensure!(
-        file.is_file() || file.is_dir(),
-        "{} is not a file or directory",
-        file.display()
-    );
-    let mut command = std::process::Command::new(opener);
-    match params["target"].as_str() {
-        None | Some("systemDefault") => {}
-        Some(id) => {
-            let app = EDITORS
-                .iter()
-                .find(|(known, _)| *known == id)
-                .map(|(_, app)| *app)
-                .with_context(|| format!("unsupported editor target: {id}"))?;
-            command.args(["-a", app]);
-        }
-    }
-    let output = command
-        .arg(&file)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .with_context(|| format!("run {}", opener.display()))?;
-    ensure!(
-        output.status.success(),
-        "editor failed: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
-    Ok(json!({"path": file}))
 }
 
 /// The sign-in the cloud transport attaches: the ChatGPT token and the workspace route.
@@ -1317,6 +1596,11 @@ impl CloudHost {
         self
     }
 
+    pub fn with_settings(mut self, settings: Option<crate::host_settings::Settings>) -> Self {
+        self.local = self.local.with_settings(settings);
+        self
+    }
+
     /// Cached sign-in, reloaded on `refresh`. Failures carry the original's messages only.
     fn credentials(&self, refresh: bool) -> std::result::Result<Credentials, Refusal> {
         let mut cached = self.cached.lock().unwrap_or_else(PoisonError::into_inner);
@@ -1349,11 +1633,29 @@ impl CloudHost {
 
     /// The original's `performDesktopFetch` for one request, with its single 401 retry.
     fn send(&self, url: &str, request: &Value) -> std::result::Result<Value, Refusal> {
+        self.send_response(url, request, None)
+            .and_then(|response| wire(response, request["returnErrorResponse"] == true))
+    }
+
+    fn send_response(
+        &self,
+        url: &str,
+        request: &Value,
+        body_timeout: Option<Duration>,
+    ) -> std::result::Result<ureq::http::Response<ureq::Body>, Refusal> {
         let method = request["method"]
             .as_str()
             .unwrap_or("GET")
             .to_ascii_uppercase();
         let body = request["body"].as_str().map(str::to_owned);
+        let binary_body = request["bodyBase64"]
+            .as_str()
+            .map(|body| {
+                STANDARD
+                    .decode(body)
+                    .map_err(|error| (400, error.to_string()))
+            })
+            .transpose()?;
         let mut headers: Headers = request["headers"]
             .as_object()
             .map(|h| {
@@ -1417,7 +1719,6 @@ impl CloudHost {
                 set_header(&mut headers, "User-Agent", user_agent());
             }
         }
-        let return_error_response = request["returnErrorResponse"] == true;
         let expected_identity = request.get("expectedIdentity").filter(|v| v.is_object());
         let mut retry = request["retry"] != "never";
         let mut credentials = attach_auth.then(|| self.credentials(false)).transpose()?;
@@ -1481,9 +1782,14 @@ impl CloudHost {
                 builder = builder.header(name.as_str(), value.as_str());
             }
             let bad = |e: ureq::http::Error| (400, e.to_string());
-            let response = match &body {
-                Some(body) => self.agent.run(builder.body(body.clone()).map_err(bad)?),
-                None => self.agent.run(builder.body(()).map_err(bad)?),
+            let response = match (&binary_body, &body) {
+                (Some(body), _) => {
+                    self.run_request(builder.body(body.clone()).map_err(bad)?, body_timeout)
+                }
+                (None, Some(body)) => {
+                    self.run_request(builder.body(body.clone()).map_err(bad)?, body_timeout)
+                }
+                (None, None) => self.run_request(builder.body(()).map_err(bad)?, body_timeout),
             }
             .map_err(|e| (500, e.to_string()))?;
             if integrity {
@@ -1494,8 +1800,22 @@ impl CloudHost {
                 credentials = Some(self.credentials(true)?);
                 continue;
             }
-            return wire(response, return_error_response);
+            return Ok(response);
         }
+    }
+
+    fn run_request<B: ureq::AsSendBody>(
+        &self,
+        request: ureq::http::Request<B>,
+        body_timeout: Option<Duration>,
+    ) -> std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+        use ureq::RequestExt as _;
+        request
+            .with_agent(&self.agent)
+            .configure()
+            .timeout_recv_body(body_timeout)
+            .build()
+            .run()
     }
 
     /// Keeps `X-OAI-IS-Update` only when the state it answers is the one this host sent.
@@ -1523,6 +1843,33 @@ impl CloudHost {
 }
 
 impl Host for CloudHost {
+    fn take_app_tool_events(&self) -> Option<AppToolEvents> {
+        self.local.take_app_tool_events()
+    }
+
+    fn app_tool_thread_config(
+        &self,
+        thread_id: &str,
+        thread_source: Option<&str>,
+    ) -> Result<Option<Value>> {
+        self.local.app_tool_thread_config(thread_id, thread_source)
+    }
+
+    fn clear_inbox_unreads(&self) -> Result<()> {
+        self.local.clear_inbox_unreads()
+    }
+
+    fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
+        self.local.bind_context_files()
+    }
+
+    fn prepare_projectless(&self, prompt: &str) -> Result<Workspace> {
+        self.local.prepare_projectless(prompt)
+    }
+
+    fn record_projectless(&self, thread: &str, workspace: &Workspace) -> Result<()> {
+        self.local.record_projectless(thread, workspace)
+    }
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.local.computer_use_settings()
     }
@@ -1543,6 +1890,10 @@ impl Host for CloudHost {
         self.local.projects()
     }
 
+    fn review_repositories(&self, thread: &str, cwd: &str) -> Result<Vec<ReviewRepository>> {
+        self.local.review_repositories(thread, cwd)
+    }
+
     fn add_project(&self, root: &Path) -> Result<String> {
         self.local.add_project(root)
     }
@@ -1558,6 +1909,46 @@ impl Host for CloudHost {
         }
     }
 
+    fn stream(
+        &self,
+        request: &Request,
+        cancelled: &std::sync::atomic::AtomicBool,
+        on_event: &mut dyn FnMut(Value) -> bool,
+    ) -> Result<()> {
+        let Request::Http(request) = request else {
+            bail!("streams require HTTP transport");
+        };
+        let url = request["url"].as_str().context("HTTP request has no url")?;
+        let mut response = self
+            // ponytail: renew streams after 30 seconds; asynchronous I/O can replace this bounded blocking read.
+            .send_response(url, request, Some(Duration::from_secs(30)))
+            .map_err(|(status, message)| {
+                anyhow::anyhow!("stream HTTP status {status}: {message}")
+            })?;
+        ensure!(
+            response.status().is_success(),
+            "stream HTTP status {}",
+            response.status()
+        );
+        match event_stream(
+            std::io::BufReader::new(response.body_mut().as_reader()),
+            cancelled,
+            on_event,
+        ) {
+            Err(error)
+                if error.chain().any(|cause| {
+                    matches!(
+                        cause.downcast_ref::<ureq::Error>(),
+                        Some(ureq::Error::Timeout(ureq::Timeout::RecvBody))
+                    )
+                }) =>
+            {
+                Ok(())
+            }
+            result => result,
+        }
+    }
+
     fn supports_cloud_search(&self) -> bool {
         true
     }
@@ -1570,6 +1961,42 @@ impl Host for CloudHost {
             device_id: self.device_id.clone(),
         })
     }
+}
+
+fn event_stream(
+    reader: impl std::io::BufRead,
+    cancelled: &std::sync::atomic::AtomicBool,
+    on_event: &mut dyn FnMut(Value) -> bool,
+) -> Result<()> {
+    if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+        return Ok(());
+    }
+    let mut data = String::new();
+    for line in reader.lines() {
+        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            return Ok(());
+        }
+        let line = line?;
+        if line.is_empty() {
+            if !data.is_empty() {
+                if data.trim() == "[DONE]" {
+                    return Ok(());
+                }
+                let event = serde_json::from_str(data.trim_end())?;
+                if !on_event(event) {
+                    return Ok(());
+                }
+                data.clear();
+            }
+        } else if let Some(value) = line.strip_prefix("data:") {
+            data.push_str(value.strip_prefix(' ').unwrap_or(value));
+            data.push('\n');
+        }
+    }
+    if !data.is_empty() && data.trim() != "[DONE]" {
+        on_event(serde_json::from_str(data.trim_end())?);
+    }
+    Ok(())
 }
 
 /// A random v4 UUID from the standard library's hasher keys.
@@ -1742,11 +2169,62 @@ fn set_header(headers: &mut Headers, name: &str, value: impl Into<String>) {
     headers.push((name.to_owned(), value.into()));
 }
 
-fn definition(id: &str, contents: &str) -> Result<Value> {
+fn check_automation_id(id: &str) -> Result<()> {
     ensure!(
         !id.is_empty() && id != "." && id != ".." && !id.contains(['/', '\\', '\0']),
         "invalid automation id"
     );
+    Ok(())
+}
+fn apply_automation_edits(item: &mut Value, params: &Value) -> Result<()> {
+    for (key, value) in params
+        .as_object()
+        .context("host parameters must be an object")?
+    {
+        if matches!(key.as_str(), "id" | "status" | "hostId") {
+            continue;
+        }
+        if matches!(key.as_str(), "name" | "prompt" | "rrule") {
+            let text = value
+                .as_str()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .with_context(|| format!("missing automation {key}"))?;
+            item[key] = json!(text);
+            continue;
+        }
+        let stored = if key == "projectId" {
+            &item["target"]["projectId"]
+        } else {
+            &item[key]
+        };
+        // Original `ugi` sends a legacy task's first cwd as `projectId`.
+        let legacy_cwd = key == "projectId"
+            && item["target"].is_null()
+            && item["cwds"].get(0) == Some(value)
+            && value != "~";
+        ensure!(
+            stored == value || legacy_cwd,
+            "automation update cannot change {key}"
+        );
+    }
+    Ok(())
+}
+
+fn ensure_unowned_automation(db: &Connection, id: &str) -> Result<()> {
+    let owned: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM automations WHERE id = ? AND (account_id IS NOT NULL OR user_id IS NOT NULL OR installation_id IS NOT NULL))",
+        [id], |row| row.get(0),
+    )?;
+    ensure!(
+        !owned,
+        "cannot write an account-owned automation through LocalHost"
+    );
+    Ok(())
+}
+
+fn definition(id: &str, contents: &str) -> Result<Value> {
+    check_automation_id(id)?;
     let raw: Value = toml::from_str(contents)?;
     ensure!(
         raw["id"] == id,
@@ -1854,4 +2332,55 @@ fn definition(id: &str, contents: &str) -> Result<Value> {
         };
     }
     Ok(item)
+}
+
+#[cfg(test)]
+mod cloud_stream_tests {
+    use super::event_stream;
+    use serde_json::{Value, json};
+
+    #[test]
+    fn events_join_data_lines_and_stop_before_later_messages() {
+        let input = b": keepalive\r\ndata: {\"item_type\":\"log\",\r\ndata: \"line\":\"ready\"}\r\n\r\ndata: {\"line\":\"ignored\"}\n\n";
+        let mut received = Vec::<Value>::new();
+        event_stream(
+            std::io::Cursor::new(input),
+            &std::sync::atomic::AtomicBool::new(false),
+            &mut |event| {
+                received.push(event);
+                false
+            },
+        )
+        .unwrap();
+        assert_eq!(received, [json!({"item_type":"log","line":"ready"})]);
+    }
+
+    #[test]
+    fn invalid_event_is_an_error_not_a_successful_empty_stream() {
+        assert!(
+            event_stream(
+                std::io::Cursor::new(b"data: invalid\n\n"),
+                &std::sync::atomic::AtomicBool::new(false),
+                &mut |_| true
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn cancelled_stream_does_not_deliver_buffered_events() {
+        let cancelled = std::sync::atomic::AtomicBool::new(false);
+        let mut received = Vec::new();
+        event_stream(
+            std::io::Cursor::new(b"data: 1\n\n: keepalive\n\ndata: 2\n\n"),
+            &cancelled,
+            &mut |event| {
+                received.push(event);
+                cancelled.store(true, std::sync::atomic::Ordering::Release);
+                true
+            },
+        )
+        .unwrap();
+        assert_eq!(received, [json!(1)]);
+    }
 }
