@@ -308,7 +308,6 @@ impl Editor {
             _ => 5,
         }
     }
-
     pub fn saving(&self) -> bool {
         self.saving
     }

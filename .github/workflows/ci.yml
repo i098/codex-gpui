@@ -1,5 +1,6 @@
 name: ci
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -22,7 +23,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   rust:
-    if: ${{ !github.event.pull_request.draft }}
+    if: ${{ github.event_name == 'workflow_dispatch' || !github.event.pull_request.draft }}
     runs-on: [self-hosted, codex-gpui]
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"

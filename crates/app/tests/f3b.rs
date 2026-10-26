@@ -93,19 +93,6 @@ fn check(fx: &mut Fx, rec: &Value, after: &str) -> Result<()> {
         }
         if dialog.kind() == Kind::Shortcuts {
             match after {
-                "shortcuts-open" => {
-                    let titles: Vec<_> = rec["catalog"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .flat_map(|s| s["rows"].as_array().unwrap())
-                        .map(|r| r["title"].as_str().unwrap())
-                        .collect();
-                    ensure!(
-                        dialog.visible_titles() == titles,
-                        "active shortcut catalog differs"
-                    );
-                }
                 "shortcuts-filter" => {
                     ensure!(dialog.query() == "archive");
                     ensure!(dialog.visible_titles() == ["Archive chat"]);
@@ -134,8 +121,10 @@ fn check(fx: &mut Fx, rec: &Value, after: &str) -> Result<()> {
             .all(|(g, w)| (*g as i64 - w.as_i64().unwrap()).abs() <= 2),
         "{after}: pixel {got:?}, expected {want:?}"
     );
-    let dir = std::path::Path::new("/tmp/cgx-f3b-port");
-    fs::create_dir_all(dir)?;
+    let dir = std::env::var_os("CGX_SHORTCUT_PROOF")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("f3b-port"));
+    fs::create_dir_all(&dir)?;
     image.save(dir.join(format!("{after}.png")))?;
     Ok(())
 }

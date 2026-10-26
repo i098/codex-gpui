@@ -527,50 +527,70 @@ fn draw_layer(target: &mut Pixmap, f: &Filtered) {
 }
 
 fn raster_layer(f: &Filtered, area: [i32; 4], origin: [f32; 2]) -> Pixmap {
-    // Chromium rasters the box's composited layer: Skia's dither matrix and the shadow's mask
-    // blur (cut at the device edge) start at its origin.
+    // Chromium rasters the box's composited layer once per cc tile: Skia's dither matrix and
+    // the shadow's mask blur (cut at the device edge) start at each tile's origin.
     let r = layer_rect(f);
+    let size = [r[2] - r[0], r[3] - r[1]];
+    let local = [
+        area[0] - r[0],
+        area[1] - r[1],
+        area[2] - r[0],
+        area[3] - r[1],
+    ];
     let mut layer = Pixmap::new(area);
-    layer.blit(
-        intersect(r, area),
-        Color::TRANSPARENT,
-        [r[0], r[1]],
-        Some((r[2] - r[0], r[3] - r[1])),
-        ColorSpace::new_srgb(),
-        |c| {
-            let [x, y] = origin;
-            c.translate((x, y));
-            for &(op, color) in &f.ops {
-                let op = op.moved([-x, -y]);
-                c.save();
-                match (op, f.gradient) {
-                    // A `background-image`: Blink clips to the shape and draws the image rect;
-                    // Skia dithers gradients.
-                    (Op::Fill(contour), Some(color)) => {
-                        let [x, y, w, h] = contour.rr.r;
-                        let rect = Rect::from_xywh(x, y, w, h);
-                        let colors = [color, color];
-                        let gradient = gradient::Gradient::new(
-                            gradient::Colors::new_evenly_spaced(&colors, TileMode::Clamp, None),
-                            gradient::Interpolation::default(),
-                        );
-                        let shader = gradient::shaders::linear_gradient(
-                            (rect.tl(), skia_safe::Point::new(x, y + h)),
-                            &gradient,
-                            None,
-                        )
-                        .expect("gradient shader");
-                        let mut paint = Paint::default();
-                        paint.set_shader(shader).set_dither(true);
-                        contour.clip(c, ClipOp::Intersect);
-                        c.draw_rect(rect, &paint);
-                    }
-                    _ => op.draw(c, color),
+    let draw = |c: &Canvas| {
+        let [x, y] = origin;
+        c.translate((x, y));
+        for &(op, color) in &f.ops {
+            let op = op.moved([-x, -y]);
+            c.save();
+            match (op, f.gradient) {
+                // A `background-image`: Blink clips to the shape and draws the image rect;
+                // Skia dithers gradients.
+                (Op::Fill(contour), Some(color)) => {
+                    let [x, y, w, h] = contour.rr.r;
+                    let rect = Rect::from_xywh(x, y, w, h);
+                    let colors = [color, color];
+                    let gradient = gradient::Gradient::new(
+                        gradient::Colors::new_evenly_spaced(&colors, TileMode::Clamp, None),
+                        gradient::Interpolation::default(),
+                    );
+                    let shader = gradient::shaders::linear_gradient(
+                        (rect.tl(), skia_safe::Point::new(x, y + h)),
+                        &gradient,
+                        None,
+                    )
+                    .expect("gradient shader");
+                    let mut paint = Paint::default();
+                    paint.set_shader(shader).set_dither(true);
+                    contour.clip(c, ClipOp::Intersect);
+                    c.draw_rect(rect, &paint);
                 }
-                c.restore();
+                _ => op.draw(c, color),
             }
-        },
-    );
+            c.restore();
+        }
+    };
+    for (o, ts, owned) in skia::tiles(local, size, skia::cc_tile(size)) {
+        let owned = [
+            owned[0] + r[0],
+            owned[1] + r[1],
+            owned[2] + r[0],
+            owned[3] + r[1],
+        ];
+        let target = intersect(owned, area);
+        if target[0] < target[2] && target[1] < target[3] {
+            let o = [o[0] + r[0], o[1] + r[1]];
+            layer.blit(
+                target,
+                Color::TRANSPARENT,
+                o,
+                Some(ts),
+                ColorSpace::new_srgb(),
+                draw,
+            );
+        }
+    }
     layer
 }
 

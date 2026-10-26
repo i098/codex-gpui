@@ -5,11 +5,21 @@ use gpui::Div;
 
 pub(crate) async fn load_thread(
     bridge: &Bridge,
+    this: &WeakEntity<Root>,
     id: &str,
-    resume: Option<Value>,
+    resume: bool,
+    cx: &mut AsyncWindowContext,
 ) -> Result<(Thread, Option<RendererState>)> {
-    let thread = bridge.thread_read(id, true).await?.thread;
-    let settings = if let Some(params) = resume {
+    let response: Value = bridge
+        .request("thread/read", json!({"threadId": id, "includeTurns": true}))
+        .await?;
+    if response["thread"]["threadSource"] == "automation" {
+        this.update(cx, |this, _| this.automation_threads.insert(id.to_owned()))?;
+    }
+    let thread = serde_json::from_value::<ThreadReadResponse>(response)?.thread;
+    let settings = if resume {
+        let mut params = resume_params(this, id, cx).await?;
+        params["excludeTurns"] = json!(true);
         let response = bridge.request::<_, Value>("thread/resume", params).await?;
         Some(resumed_settings(response, id)?)
     } else {
@@ -18,8 +28,34 @@ pub(crate) async fn load_thread(
     Ok((thread, settings))
 }
 
+pub(crate) fn forked_thread(mut response: Value) -> Result<(Thread, RendererState)> {
+    let thread: Thread = serde_json::from_value(
+        response
+            .get_mut("thread")
+            .context("missing forked thread")?
+            .take(),
+    )?;
+    let collaboration_mode = json!({
+        "mode": "default",
+        "settings": {
+            "model": response["model"],
+            "reasoning_effort": response["reasoningEffort"],
+        },
+    });
+    let settings = run_settings(&response, collaboration_mode)?;
+    Ok((thread, settings))
+}
+
 fn resumed_settings(mut response: Value, id: &str) -> Result<RendererState> {
     ensure!(response["thread"]["id"] == id, "resumed a different thread");
+    let mode = response
+        .get_mut("collaborationMode")
+        .context("missing resumed model settings")?
+        .take();
+    run_settings(&response, mode)
+}
+
+fn run_settings(response: &Value, collaboration_mode: Value) -> Result<RendererState> {
     let sandbox = match response["sandbox"]["type"].as_str() {
         Some("readOnly") => "read-only",
         Some("workspaceWrite") => "workspace-write",
@@ -46,7 +82,6 @@ fn resumed_settings(mut response: Value, id: &str) -> Result<RendererState> {
             "sandbox_mode": sandbox,
         }))
     };
-    let collaboration_mode = response["collaborationMode"].take();
     ensure!(
         collaboration_mode["mode"].is_string()
             && collaboration_mode["settings"]["model"]
@@ -59,19 +94,31 @@ fn resumed_settings(mut response: Value, id: &str) -> Result<RendererState> {
         permission,
     })
 }
+
+fn find_in_workspace(root: &mut Root, window: &mut Window, cx: &mut Context<Root>) {
+    if !matches!(root.state.route, Route::Thread(_)) {
+        return;
+    }
+    let full = root.workspace_layout() == WorkspaceLayout::Full;
+    if root.side_visible(SidePanel::Changes)
+        && let Some(panel) = &root.diff
+        && panel.update(cx, |panel, cx| {
+            if full {
+                panel.focus(window, cx);
+            }
+            panel.open_find(window, cx)
+        })
+    {
+        return;
+    }
+    if !full && let Some(thread) = &root.thread {
+        thread.update(cx, |thread, cx| thread.open_find(window, cx));
+    }
+}
+
 pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     root.on_action(cx.listener(|this, _: &FindInThread, window, cx| {
-        if matches!(this.state.route, Route::Thread(_)) {
-            if this.side == Some(SidePanel::Changes)
-                && let Some(panel) = &this.diff
-                && panel.update(cx, |panel, cx| panel.open_find(window, cx))
-            {
-                return;
-            }
-            if let Some(thread) = &this.thread {
-                thread.update(cx, |thread, cx| thread.open_find(window, cx));
-            }
-        }
+        find_in_workspace(this, window, cx);
     }))
     .on_action(cx.listener(|this, _: &FindNext, _, cx| {
         if let Some(thread) = &this.thread {
@@ -83,14 +130,14 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             thread.update(cx, |thread, cx| thread.next_find(true, cx));
         }
     }))
-    .on_action(cx.listener(|this, _: &ui::composer::Stop, _, cx| this.stop(cx)))
+    .on_action(cx.listener(|this, _: &ui::composer::Stop, _, cx| this.stop(None, cx)))
     .on_action(
         cx.listener(|this, _: &ui::composer::RequestFullAccess, window, cx| {
             this.open_dialog(DialogKind::FullAccess, window, cx);
         }),
     )
     .on_action(cx.listener(|this, _: &ToggleChangesPanel, window, cx| {
-        if this.side == Some(SidePanel::Changes) {
+        if this.side_visible(SidePanel::Changes) {
             this.close_side(SidePanel::Changes, window, cx)
         } else {
             this.set_side(SidePanel::Changes, window, cx)
@@ -117,7 +164,7 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
         if let Some(thread) = &this.thread {
             thread.update(cx, |thread, cx| thread.select_terminal(Some(&action.0), cx));
         }
-        if this.side == Some(SidePanel::Terminal) {
+        if this.side_visible(SidePanel::Terminal) {
             this.sync(window, cx);
         } else {
             this.set_side(SidePanel::Terminal, window, cx);
@@ -207,6 +254,13 @@ mod tests {
                 Permission::Custom,
                 "{field}"
             );
+        }
+    }
+
+    #[test]
+    fn malformed_fork_reply_returns_an_error() {
+        for response in [Value::Null, json!("invalid"), json!([]), json!({})] {
+            assert!(forked_thread(response).is_err());
         }
     }
 

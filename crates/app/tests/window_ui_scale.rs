@@ -88,7 +88,13 @@ fn scroll_limits_ignore_paint_rounding_and_clamp_at_both_ends() -> Result<()> {
     for scale in [1., 2.] {
         for origin in [0.1, 0.3] {
             for (client, content, border, padding, expected) in [
-                ((100.25, 565.203125), (125.6, 800.), false, 0., (26., 235.)),
+                (
+                    (100.25, 36_173. / 64.),
+                    (125.6, 800.),
+                    false,
+                    0.,
+                    (26., 235.),
+                ),
                 ((100.75, 50.75), (100.1, 50.2), false, 0., (0., 0.)),
                 ((100.25, 50.49), (101.49, 50.5), false, 0., (1., 1.)),
                 ((100.25, 50.5), (101.5, 51.5), false, 0., (2., 1.)),
