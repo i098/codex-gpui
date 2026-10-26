@@ -241,6 +241,7 @@ fn project_selection_changes_new_chats_but_not_existing_chats() -> Result<()> {
     use common::{CWD, Fx, GREETING, exchange, recorded_thread, script};
     use std::{process::Command, sync::Arc};
 
+    common::install_panic_hook();
     let temp = tempfile::tempdir()?;
     let alpha = temp.path().join("alpha");
     let beta = temp.path().join("beta");

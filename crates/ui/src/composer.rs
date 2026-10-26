@@ -689,6 +689,7 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    search_field: bool,
     field_min_height: Pixels,
     /// The grip drag of a plain multiline field: pointer y and field height at its start.
     field_resize: Option<(Pixels, Pixels)>,
@@ -774,6 +775,7 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            search_field: false,
             field_min_height: px(48.),
             field_resize: None,
             dictation: None,
@@ -792,6 +794,12 @@ impl Composer {
         editor.plain_field = Some(multiline);
         editor.set_text(value, cx);
         editor
+    }
+
+    pub fn search_field(placeholder: &'static str, cx: &mut Context<Self>) -> Self {
+        let mut field = Self::settings_field(placeholder, "", false, cx);
+        field.search_field = true;
+        field
     }
 
     pub fn embedded_field(
@@ -2098,7 +2106,9 @@ impl Render for Composer {
             } else {
                 card.key_context(KEY_CONTEXT)
                     .when(
-                        self.request_parent.is_none() && !self.request_compact,
+                        self.request_parent.is_none()
+                            && !self.request_compact
+                            && !self.search_field,
                         |d| {
                             d.border_1()
                                 .border_color(t.border)
@@ -2109,8 +2119,6 @@ impl Render for Composer {
                         },
                     )
                     .when(self.request_parent.is_none() && self.request_compact, |d| {
-                        // The sign-in `input`: `rounded-md bg-primary-soft border
-                        // border-primary-outline focus:border-ring`, `--codex-corner-shape`.
                         d.px(px(1.))
                             .py(px(8.))
                             .child(shapes::decoration(shapes::Decoration {
