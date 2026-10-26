@@ -73,6 +73,10 @@ use markdown::{markdown, tones};
 pub use select::Selection;
 use select::{Carets, block_end, frame_start, highlight};
 
+pub fn markdown_preview(source: &str, window: &Window, t: &Theme) -> Div {
+    markdown::document_preview(source, window, t)
+}
+
 pub fn render_markdown(source: &str, window: &Window, theme: &Theme) -> Div {
     markdown::detail(source, window, theme)
 }

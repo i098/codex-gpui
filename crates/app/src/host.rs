@@ -640,7 +640,12 @@ impl LocalHost {
     fn agents_md(&self) -> Result<Value> {
         let path = self.agents_md_path()?;
         let contents = fs::read_to_string(&path).context("read personal instructions")?;
-        Ok(json!({"path": path, "contents": contents}))
+        let has_override = match fs::read_to_string(path.with_file_name("AGENTS.override.md")) {
+            Ok(contents) => !contents.trim().is_empty(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => return Err(error).context("read personal instructions override"),
+        };
+        Ok(json!({"path": path, "contents": contents, "hasOverride": has_override}))
     }
 
     fn save_agents_md(&self, contents: &str) -> Result<Value> {

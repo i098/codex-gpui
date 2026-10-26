@@ -12,6 +12,7 @@ mod features;
 pub mod host;
 pub mod host_settings;
 pub mod native_menus;
+mod personalization;
 pub mod qa;
 mod routes;
 pub use routes::Route;
@@ -60,6 +61,7 @@ use ui::screens::diff::panel::{
     with_side_tabs,
 };
 use ui::screens::home::{HomeMain, OpenFolder};
+use ui::screens::settings::personalization::WritingPreference;
 use ui::screens::settings::{self, AppServer, SettingChanged, workspace};
 use ui::screens::sidebar::{
     ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
@@ -318,6 +320,7 @@ enum SettingsLeave {
     Window,
     NativeWindow,
     LogOut,
+    WritingSetup,
     Quit,
 }
 
@@ -371,6 +374,7 @@ pub struct Root {
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
+    writing_dialog_preference: Option<Arc<WritingPreference>>,
     pending_settings_leave: Option<SettingsLeave>,
     workspace: Entity<workspace::Workspace>,
     /// `⌘K` command menu over the window.
@@ -681,6 +685,7 @@ impl Root {
             plugins_page: None,
             settings_section: None,
             settings_page: None,
+            writing_dialog_preference: None,
             pending_settings_leave: None,
             workspace: cx.new(workspace::Workspace::new),
             command_menu: None,
@@ -2605,9 +2610,33 @@ impl Root {
         {
             thread.update(cx, |view, cx| view.close_summary(cx));
         }
+        let previous_focus = window.focused(cx);
         cx.subscribe_in(&dialog, window, move |this, dialog, outcome, window, cx| {
+            match outcome {
+                DialogOutcome::WritingConnect(id) => {
+                    this.connect_writing_source(dialog.clone(), id, window, cx);
+                    return;
+                }
+                DialogOutcome::WritingRetry => {
+                    if dialog.read(cx).writing_authorizations().is_some() {
+                        this.authorize_writing(dialog.clone(), window, cx);
+                    } else {
+                        this.load_writing_apps(dialog.clone(), cx);
+                    }
+                    return;
+                }
+                DialogOutcome::WritingSample => {
+                    this.start_writing_sample(dialog.clone(), window, cx);
+                    return;
+                }
+                _ => {}
+            }
             if let DialogOutcome::DeleteTask { id } = outcome {
                 this.delete_task(id.clone(), window, cx);
+                return;
+            }
+            if let DialogOutcome::DeleteMemories = outcome {
+                this.delete_memories(dialog.clone(), window, cx);
                 return;
             }
             if let DialogOutcome::ScheduleTask { prompt, rrule } = outcome {
@@ -2653,6 +2682,7 @@ impl Root {
             }
             dialog.read(cx).release_artwork(window);
             this.dialog = None;
+            this.writing_dialog_preference = None;
             let focus = if std::mem::take(&mut this.dialog_to_composer) {
                 this.composer(cx).focus_handle(cx)
             } else {
@@ -2661,6 +2691,9 @@ impl Root {
             match outcome {
                 DialogOutcome::Dismiss => {
                     this.pending_settings_leave = None;
+                    if dialog.read(cx).writing_authorizations().is_some() {
+                        this.refresh_writing(cx);
+                    }
                     if git_dialog {
                         this.commit_cwd = None;
                         window.focus(&this.composer(cx).focus_handle(cx), cx);
@@ -2670,6 +2703,10 @@ impl Root {
                         }) {
                             window.focus(&focus, cx);
                         }
+                    } else if dialog.read(cx).kind() == DialogKind::DeleteMemories {
+                        if let Some(focus) = &previous_focus {
+                            window.focus(focus, cx);
+                        }
                     } else if dialog.read(cx).kind() == DialogKind::DeleteTask {
                         let id = dialog.read(cx).task().to_owned();
                         this.focus_task_trigger(&id, window, cx);
@@ -2678,6 +2715,9 @@ impl Root {
                     }
                 }
                 DialogOutcome::LogOut => this.logout(window, cx),
+                DialogOutcome::WritingManage => {
+                    this.open_settings_section("Personalization", window, cx)
+                }
                 DialogOutcome::RevertChanges { .. } => window.focus(&this.focus, cx),
                 DialogOutcome::DiscardInstructions => this.finish_instructions_leave(window, cx),
                 DialogOutcome::DismissAnnouncement(model)
@@ -2739,7 +2779,11 @@ impl Root {
                 DialogOutcome::ScheduleTask { .. }
                 | DialogOutcome::DeleteTask { .. }
                 | DialogOutcome::CheckoutBranch { .. }
-                | DialogOutcome::CommitBeforeCheckout => unreachable!(),
+                | DialogOutcome::CommitBeforeCheckout
+                | DialogOutcome::DeleteMemories
+                | DialogOutcome::WritingConnect(_)
+                | DialogOutcome::WritingRetry
+                | DialogOutcome::WritingSample => unreachable!(),
             }
             cx.notify();
         })
@@ -4272,8 +4316,87 @@ impl Root {
                 let dialog = cx.new(|cx| Dialog::logout(self.account_email.clone(), cx));
                 self.show_dialog(dialog, window, cx);
             }
+            SettingsLeave::WritingSetup => self.open_writing_setup(window, cx),
             SettingsLeave::Quit => cx.defer(routes::request_quit),
         }
+    }
+
+    /// Reads the personal instructions for `view`'s load `generation`.
+    fn load_instructions(
+        &mut self,
+        view: Entity<settings::personalization::Personalization>,
+        generation: u64,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            host.fetch(&host::Request::post(
+                "codex-agents-md",
+                Some(json!({"hostId": "local"})),
+            ))
+            .and_then(|response| host::json_body(&response))
+            .map_err(|error| error.to_string())
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = read.await;
+            this.update_in(cx, |this, window, cx| {
+                if this
+                    .settings_page
+                    .as_ref()
+                    .is_some_and(|page| page.read(cx).personalization == view)
+                    && view.read(cx).opened()
+                {
+                    view.update(cx, |view, cx| view.loaded(generation, result, window, cx));
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Writes the personal instructions and reports the result on `view`.
+    fn save_instructions(
+        &mut self,
+        view: Entity<settings::personalization::Personalization>,
+        contents: String,
+        cx: &mut Context<Self>,
+    ) {
+        let host = self.host.clone();
+        let params = json!({"hostId": "local", "contents": contents});
+        let write = cx.background_spawn(async move {
+            host.fetch(&host::Request::post("codex-agents-md-save", Some(params)))
+                .and_then(|response| host::json_body(&response))
+                .and_then(|value| {
+                    anyhow::ensure!(value["path"].is_string(), "saved instructions have no path");
+                    Ok(())
+                })
+        });
+        cx.spawn(async move |this, cx| {
+            let result = write.await;
+            this.update(cx, |this, cx| {
+                if !this
+                    .settings_page
+                    .as_ref()
+                    .is_some_and(|page| page.read(cx).personalization == view)
+                {
+                    return;
+                }
+                match result {
+                    Ok(()) => {
+                        view.update(cx, |view, cx| view.saved(contents, cx));
+                        this.toast(Toast::success("Instructions updated"), cx);
+                    }
+                    Err(error) => {
+                        eprintln!("codex-gpui: save personal instructions: {error:#}");
+                        view.update(cx, |view, cx| view.save_failed(cx));
+                        this.toast(Toast::danger("Unable to save instructions"), cx);
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn instructions_event(
@@ -4288,72 +4411,10 @@ impl Root {
         let view = page.read(cx).personalization.clone();
         match event {
             settings::personalization::Event::Load(generation) => {
-                let generation = *generation;
-                let host = self.host.clone();
-                let read = cx.background_spawn(async move {
-                    host.fetch(&host::Request::post(
-                        "codex-agents-md",
-                        Some(json!({"hostId": "local"})),
-                    ))
-                    .and_then(|response| host::json_body(&response))
-                    .map_err(|error| error.to_string())
-                });
-                cx.spawn_in(window, async move |this, cx| {
-                    let result = read.await;
-                    this.update_in(cx, |this, window, cx| {
-                        if this
-                            .settings_page
-                            .as_ref()
-                            .is_some_and(|page| page.read(cx).personalization == view)
-                            && view.read(cx).opened()
-                        {
-                            view.update(cx, |view, cx| view.loaded(generation, result, window, cx));
-                        }
-                    })
-                    .ok();
-                })
-                .detach();
+                self.load_instructions(view, *generation, window, cx)
             }
             settings::personalization::Event::Save(contents) => {
-                let contents = contents.clone();
-                let host = self.host.clone();
-                let params = json!({"hostId": "local", "contents": contents});
-                let write = cx.background_spawn(async move {
-                    host.fetch(&host::Request::post("codex-agents-md-save", Some(params)))
-                        .and_then(|response| host::json_body(&response))
-                        .and_then(|value| {
-                            anyhow::ensure!(
-                                value["path"].is_string(),
-                                "saved instructions have no path"
-                            );
-                            Ok(())
-                        })
-                });
-                cx.spawn(async move |this, cx| {
-                    let result = write.await;
-                    this.update(cx, |this, cx| {
-                        if !this
-                            .settings_page
-                            .as_ref()
-                            .is_some_and(|page| page.read(cx).personalization == view)
-                        {
-                            return;
-                        }
-                        match result {
-                            Ok(()) => {
-                                view.update(cx, |view, cx| view.saved(contents, cx));
-                                this.toast(Toast::success("Instructions updated"), cx);
-                            }
-                            Err(error) => {
-                                eprintln!("codex-gpui: save personal instructions: {error:#}");
-                                view.update(cx, |view, cx| view.save_failed(cx));
-                                this.toast(Toast::danger("Unable to save instructions"), cx);
-                            }
-                        }
-                    })
-                    .ok();
-                })
-                .detach();
+                self.save_instructions(view, contents.clone(), cx)
             }
             settings::personalization::Event::Leave => {
                 if self.instructions_changed(cx) {
@@ -4368,6 +4429,15 @@ impl Root {
                 } else {
                     page.update(cx, |page, cx| page.select_section(label, cx));
                 }
+            }
+            settings::personalization::Event::LoadMemory => self.refresh_memory(cx),
+            settings::personalization::Event::Memory(change) => self.change_memory(*change, cx),
+            settings::personalization::Event::DeleteMemory => {
+                self.open_dialog(DialogKind::DeleteMemories, window, cx);
+            }
+            settings::personalization::Event::LoadWriting => self.refresh_writing(cx),
+            settings::personalization::Event::Writing(enabled) => {
+                self.change_writing(*enabled, window, cx)
             }
         }
     }
@@ -4887,6 +4957,9 @@ impl Root {
                     && let Some(menu) = &this.command_menu
                 {
                     menu.update(cx, |menu, cx| menu.enable_cloud_search(cx));
+                }
+                if this.settings_page.is_some() {
+                    this.refresh_writing(cx);
                 }
             })
         });
