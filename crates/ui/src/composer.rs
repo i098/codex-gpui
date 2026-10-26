@@ -787,7 +787,7 @@ impl Composer {
             dictation: None,
             dictation_error: None,
             embedded_field: None,
-}
+        }
     }
 
     pub fn settings_field(
