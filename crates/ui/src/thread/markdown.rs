@@ -1025,7 +1025,9 @@ impl<'a> Markdown<'a> {
         let limit = LINE_WIDTH.with(|w| w.get()) - 6.;
         let chunks: Vec<&str> = code
             .split_inclusive(' ')
-            .flat_map(|word| break_long(self.window, word, font_size, 430., Some(code_font()), limit))
+            .flat_map(|word| {
+                break_long(self.window, word, font_size, 430., Some(code_font()), limit)
+            })
             .collect();
         let count = chunks.len();
         self.record_table_width(px(12.), 0);
