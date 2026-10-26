@@ -178,7 +178,7 @@ The repair is tracked in [the Sidebar issue](https://github.com/i098/codex-gpui/
 | 3 | `⌘⇧S`, `⌘B` | shortcut | Toggle sidebar. | Shell sidebar toggles. | PASS (`sidebar_toggle_keys`) |
 | 4 | `⌘[`, `⌘]` | shortcut | Back, Forward (`navigateBack`, `navigateForward`). | Route history over Home, threads, Settings. | PASS (`back_forward_keys`) |
 | 5 | `⌘⇧[`, `⌘⇧]`, `⌘⌥←`, `⌘⌥→` | shortcut | Previous / next chat. | Previous / next Recents row; no wrap. | PASS (`previous_next_chat`) |
-| 6 | `⌘1`…`⌘9` | shortcut | Go to chat N (`thread1..9`). | Opens Recents row N. | PASS (`cmd_digit_goes_to_chat`) |
+| 6 | Number shortcuts | shortcut | Swap primary-number shortcuts between chats and tabs. | The saved number target selects Command-number or Control-number for chats; the other chord selects panel tabs. | PASS (`keyboard_shortcuts`; Linux) |
 | 7 | `⌘W` | shortcut | Close tab, else close window. | Closes the thread route's selected side panel tab, else the window. | PASS (`cmd_w_closes_window`, `s029::panel_tabs_replay`) |
 | 8 | Menu bar: Codex ▸ Settings…, File ▸ New Chat, View ▸ Toggle Sidebar, Toggle Changes Panel, Previous Chat, Next Chat, Back, Forward | click | Same commands as the keys. | `app::menus()` items dispatch their actions. | PASS (`menu_bar_actions`, `changes_panel_keys`) |
 | 9 | System appearance and Settings ▸ Appearance ▸ Theme | click | Light / Dark / System applies at once. | `State.theme` (`ThemeSetting`) is applied on each appearance change and by `Root::set_theme`. | PASS (`theme_switch`) |
@@ -189,10 +189,12 @@ The repair is tracked in [the Sidebar issue](https://github.com/i098/codex-gpui/
 | 14 | `⌘K`, `⌘⇧P` | shortcut | Command menu. | `CommandMenu` over live Recents, focused; Escape or a click outside closes it; Enter or a click runs the row (chat, `New chat`, `Manage scheduled tasks`, settings pages). | PASS (`command_menu_keys`, `command_menu_settings_page`) |
 | 15 | `⌘F` | shortcut | Find in chat. | — | NOT WIRED (`crates/ui/src/thread.rs`: no find bar) |
 | 16 | `⌥⌘B` | shortcut | Toggle Changes panel. | The thread route's side panel (`ui::screens::diff::panel::with_side_tabs`) shows the last turn's diff in a `Changes` tab beside the other open tabs; the tab's close button closes it. | PASS (`changes_panel_keys`) |
-| 17 | `⌘J` | shortcut | Toggle bottom panel. | — | NOT WIRED (`crates/ui/src/lib.rs` `Shell`: no bottom panel) |
-| 18 | `⌘⇧N`, `⌘⌥O` | shortcut | Temporary chat, standalone chat. | — | NOT WIRED (`crates/app/src/lib.rs`: no projects or temporary chats) |
+| 17 | `⌘J` | shortcut | Toggle bottom panel. | Opens or hides a real PTY terminal without discarding its process or buffer. | PASS (`shortcut_actions`; native) |
+| 18 | `⌘⇧N`, `⌘⌥O` | shortcut | Temporary chat, standalone chat. | Temporary chats use ephemeral app-server threads. Standalone chats allocate and record a projectless workspace. | PASS (`shortcut_chat_modes`; Linux) |
 | 19 | `⌘⌥1`…`⌘⌥6` | shortcut | Go to recent chat N (`recentThread1..6`: the chats by last update, newest first). | `GoToRecentChat`: the Nth Recents thread by `updatedAt`; past the end does nothing. | PASS (`recent_chat_keys`) |
-| 20 | `⌘+`, `⌘-`, `⌘0` | shortcut | Zoom in, zoom out, actual size. | — | NOT WIRED (`crates/ui/src/lib.rs`: no UI scale) |
+| 20 | `⌘+`, `⌘-`, `⌘0` | shortcut | Zoom in, zoom out, actual size. | Scales layout, paint, pointer input, and IME bounds. Saves the zoom and shows its timed control banner. | PASS (`keyboard_shortcuts`; Linux); native pixels pending |
+| 21 | Startup loader | loading | 56 px blossom centered on the window background until `initialize` answers. | Shows until the first app-server answer; then the app's own screens take over. | PASS (`error_shell::loader_shows_until_the_app_server_answers`) |
+| 22 | App-server death | error | Crash page: `ChatGPT hit a snag`, `Something went wrong. Try again to continue`, Try again, the fallen-pet illustration. | `Event::Closed` shows the recovery page; Try again reconnects through `windows::connect`. | PASS (`error_shell::crash_page_shows_when_the_app_server_dies`, `error_shell::try_again_respawns_the_app_server`) |
 
 F1d covers SH-020 and SH-135 with `refs/interactions/f1d.json` and `cargo test -p app --test f1d`.
 The original Mac recording proves a native 1280×832 viewport at scale 2.
@@ -265,8 +267,8 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 | 1 | Sidebar visible | entry | Rail 52 px plus panel 288 px at 1280 px. | Open at launch; parity: see `parity_home`. | PASS (`launch_home`, `parity_home`) |
 | 2 | `Codex ⌄` mode switch | click | Menu: ChatGPT, Codex, Work. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `mode-switch`) |
 | 3 | `⌃1` `⌃2` `⌃3` | shortcut | Switch mode. | — | NOT WIRED (`crates/ui/src/lib.rs`: no modes; then bind in `crates/app/src/lib.rs` `init`) |
-| 4 | Bell `View activity` | click | Toggles the activity view. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `activity`) |
-| 5 | `⌘⌥U` | shortcut | Toggles the activity view. | — | NOT WIRED (`crates/ui/src/screens/sidebar.rs`: no activity view) |
+| 4 | Bell `View activity` | click | Toggles the activity view. | `ToggleActivity` selects the existing Home sidebar's priority view. | Behavior passes S003; pixel and availability gates remain open. |
+| 5 | `⌘⌥U` | shortcut | Toggles the activity view. | Keeps a Thread route, returns other routes to Home, and opens a hidden sidebar. | Behavior passes `priority_activity`; availability gate remains open. |
 | 6 | Search | click | Opens the command menu in chat-search mode. | `OpenCommandMenu`: the command menu over live Recents. | PASS (`command_menu_search_click`, `parity_sidebar`) |
 | 7 | `⌘K` | shortcut | Opens the command menu. | Same as shell row 14. | PASS (`command_menu_keys`) |
 | 8 | `Your dot` row | click | Opens the dot (orbit) thread. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `your-dot`) |
@@ -280,11 +282,16 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 | 16 | `⌘⇧S` / `⌘B` | shortcut | Toggle sidebar. | Toggles. | PASS (`sidebar_toggle_keys`) |
 | 17 | Titlebar `Hide sidebar` | click | Collapses the left panel over a 300 ms spring (main surface slides, sidebar rows fade and shift 16 px); label changes to `Show sidebar`; instant under reduced motion. | The main surface and the sidebar content follow `motion::spring_300` from the toggle's progress; the recorded tooltip stays `Toggle sidebar ⇧⌘S` in both states. | PASS (`sidebar_toggle_titlebar`; `crates/app/tests/s004.rs`; spring frames: `crates/app/tests/ms2.rs` against `refs/interactions/ms2.json`) |
 | 18 | Row focus | focus ring | 2 px ring, offset -2 px. | Tab moves through rows and their Pin and Archive actions; focus reveals the actions. | PASS (`crates/app/tests/f1b.rs`) |
-| 19 | Empty lists | empty | `No projects`, `No chats`; activity `Nothing needs attention`. | Empty `thread/list` gives no Recents (`No chats` branch); `No projects` always. No activity view. | PASS (`sidebar_empty_lists`) |
-| 20 | Lists loading | loading | Activity: `Checking unread chats…`. | — | NOT WIRED (`crates/ui/src/screens/sidebar.rs`: no activity view or loading state) |
-| 21 | Load error | error | `Projects couldn't be loaded` + `Retry`; `Could not load chats`. | A `thread/list` error stops `Root::connect`, so no route shows. | FAIL (`crates/app/src/lib.rs` `connect` treats it as fatal; `crates/ui/src/screens/sidebar.rs` has no error state) |
+| 19 | Empty lists | empty | `No projects`, `No chats`; activity `Nothing needs attention`. | Keeps the normal empty labels and renders the priority empty state. | Behavior passes S003; original-pixel comparison remains open. |
+| 20 | Lists loading | loading | Activity: `Checking unread chats…`. | Shared `ListState` renders the priority loading message. | Implemented; loading-state capture remains open. |
+| 21 | Load error | error | `Projects couldn't be loaded` + `Retry`; `Could not load chats`. | Keeps Home available after a failed initial list read; Retry restores the list. | PASS (`startup_chat_failure_keeps_home_available_and_retry_restores_chats`, `project_load_failure_retries_the_owned_state_file`) |
 | 22 | Sidebar drag-resize | resize | The recorded edge clamps to 290…520 px; dragging below 145 px collapses it. | The 16 px handle resizes the sidebar and main surface, retains the width on toggle, and saves it on release. | PASS (`crates/app/tests/s004.rs`, `refs/interactions/s004.json`) |
 | 23 | Resize | resize | Below 768 px the panel is hidden; it opens as an overlay. | Hidden at 767 and 600 px, shown at 1280 px; the user's choice is kept. `⌘B` opens it docked, not as an overlay. | FAIL (overlay: `crates/ui/src/lib.rs` `Shell`; hide/show checked by `resize_three_widths`) |
+
+The original `isPriorityFilterEnabled` requires feature `4039078146` and access status `allowed` or `loading`.
+The retained Statsig response enables the feature, but the native shared access provider remains unavailable.
+The activity action is not complete until it uses that provider.
+
 
 S001 replays `refs/interactions/s001.json` with `cargo test -p app --test s001` on macOS.
 The recording uses the original renderer with isolated host and app-server fixtures.
@@ -371,6 +378,10 @@ The shared Composer session API includes `finish_dictation(window, cx)` and `Com
 Success follows transcript processing; failure and cancellation remain distinct.
 Consumers can wait before submitting a draft. A closed event stream fails instead of leaving the session active.
 `cargo test -p ui --lib composer::dictation` checks completion order, cancellation, and closed streams without microphone access.
+
+`Dispatcher::new` receives the initiating `Window` and `App`, so a capture service can select that window's host.
+Typing, IME edits, mentions, and slash commands cancel dictation and emit `Completion::Cancelled`.
+Comment owners call `finish_dictation` and wait for `Completion::Succeeded` before saving the inserted transcript.
 
 ## 14.4 Thread view
 
@@ -459,7 +470,7 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 | 11 | Permissions dropdown | click | Ask / Approve for me / Full access / Custom. | Opens. | PASS (`permissions_popover`) |
 | 12 | Submit while running | click | Stop; with text Queue or Steer. | Stop interrupts the active turn. Queue adds a server-owned submission; Steer sends input into the active turn. | PASS (`s023`, `s023b`) |
 | 13 | Stop | click | `turn/interrupt`. | Sends the active thread and turn IDs; completion removes Stop. Errors show `Failed to stop chat`. | PASS (`s023::stop_interrupts_only_the_active_turn`) |
-| 14 | Queued message row | click | Steer, Edit, Delete, Retry. | Steer sends the selected submission once. Delete removes it; Cmd+Z restores its text, identity, order, and chat location. The `…` menu (`Queued message actions`) holds `Edit message` and `Turn off queueing` / `Turn on queueing`. `Edit message` sends `thread/queue/delete`, then moves the exact text and local images back to the composer (a draft already there stays below it; remote images, audio, skills and mentions wait in the app and go out with the next send). Sending queues it again (`thread/queue/add`) and `thread/queue/reorder` puts it before the row that followed it, else after the one before it. If the server already took the submission, only the tray refreshes. The queueing item writes `desktop.followUpQueueMode`, so the next submit queues or steers; a refused write toasts `Couldn’t save your changes. Try again` and keeps the label of the behavior that applies. `Open in side chat` is not in the menu: the original shows it only where a side chat can open, and the port has none (`New side chat`, `/side` and `⌥⌘S` have no handler). Retry and side chats remain outside this slice. | PARTIAL (CP-113/114 pass in `s023b`; CP-115 Edit and queueing pass in `queue_options`; `Open in side chat` and Retry remain open) |
+| 14 | Queued message row | click | Steer, Edit, Delete, Retry. | Steer sends the selected submission once. Delete removes it; Cmd+Z restores its text, identity, order, and chat location. The `…` menu (`Queued message actions`) holds `Edit message`, `Open in side chat` and `Turn off queueing` / `Turn on queueing`. `Edit message` sends `thread/queue/delete`, then moves the exact text and local images back to the composer (a draft already there stays below it; remote images, audio, skills and mentions wait in the app and go out with the next send). Sending queues it again (`thread/queue/add`) and `thread/queue/reorder` puts it before the row that followed it, else after the one before it. If the server already took the submission, only the tray refreshes. `Open in side chat` sends `thread/queue/delete`, then `thread/fork` (`ephemeral`, `excludeTurns`, the original's side-conversation developer instructions) and `thread/inject_items` (the boundary message), and starts the fork's first turn with the queued input (`turn/start`, `turnTrigger: queued_side_chat`, same `clientUserMessageId`). The fork opens as a selected side panel tab, titled with the message, with its own transcript and focused composer; the chat and its draft stay. Each conversation takes only its own thread's notifications, queue, approvals and `Stop`; a side chat's Delete has no Cmd+Z undo. Closing the tab interrupts a running side turn and sends `thread/unsubscribe` for the fork only. A failed fork, injection or first turn closes the tab, queues the message again in its old place (`thread/queue/add`, `thread/queue/reorder`) and toasts `Failed to open side chat`. The item is hidden for a chat archived in this session. The queueing item writes `desktop.followUpQueueMode`, so the next submit queues or steers; a refused write toasts `Couldn’t save your changes. Try again` and keeps the label of the behavior that applies. Retry remains outside this slice. | PARTIAL (CP-113/114 pass in `s023b`; CP-115 Edit, `Open in side chat` and queueing pass in `queue_options`; Retry remains open) |
 | 15 | Submit blocked | error | `Unable to send message`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 16 | Upload in progress | loading | `Files uploading…`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 17 | Upload failure | error | `Unable to upload file`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
@@ -467,6 +478,12 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 | 19 | Focus ring | focus ring | Send button ring. | — | NOT WIRED (`crates/ui/src/composer.rs`: no `focus_visible` ring) |
 | 20 | Resize | resize | Below 40rem the editor and footer stack. | Only the 475 px compact footer. | FAIL (`crates/ui/src/composer.rs`) |
 | 21 | `+` Add menu | click | Opens the mention list without inserting `@`; Escape keeps the draft. | Reuses the S019 query state; keys skip disabled actions, and a second click closes the list. | PASS (`s018::add_menu_replay`) |
+
+Queued side chats restore the fork response's model, effort, and permission settings without changing the primary composer.
+Their tab shows activity while a turn runs.
+Turns without a server start time measure elapsed time from their first notification without adding a message timestamp.
+The queue replay matches the retained running state at one second.
+The original/native pixel comparison still fails for transcript geometry, queue controls, and surface colors.
 
 S018 records CP-039 and CP-040 in `refs/interactions/s018.json`.
 Its Add replay checks local actions, selection, query text, focus, Escape, reopen, and the second trigger click.
@@ -725,6 +742,9 @@ The menu-bar switch persists through the local `settings.write` service.
 Session rows keep their values for the session.
 Leaving and reopening Settings shows the kept value (`settings_value_round_trip`).
 
+The shared single-select menu searches labels and aliases, skips disabled choices, and returns focus to its trigger.
+`settings_kit` checks these interactions and the existing checkbox-menu, cancellation, and external-link behavior.
+
 S034 covers ST-003 and ST-026 with the unchanged off/on samples in `refs/interactions/s034.json`.
 The replay advances the virtual clock by the original 150 ms transition before checking settled pixels.
 Enabled switches use the existing GPUI native click path for Enter and Space, without duplicate key handlers.
@@ -766,10 +786,19 @@ The editor provides a keyboard-accessible Learn more link to the original instru
 Its textarea grip resizes the field vertically, down to the original's 96 px `min-h-24` box.
 ST-094 saves through `codex-agents-md-save`; the host replaces the file atomically and preserves its permissions.
 Success shows `Instructions updated`; failure shows `Unable to save instructions` and retains the draft.
+ST-095 reads the original `2826489636` feature gate from the authenticated Statsig bootstrap.
+The gate keeps the legacy editor unchanged when it is off or unavailable.
+When the gate is on, the AGENTS.md editor switches between Markdown preview and source without replacing its draft.
+ST-096 reads the sibling `AGENTS.override.md` file and shows the original override notice when that file contains non-whitespace text.
+Missing or empty override files do not show the notice.
+Other override read failures use the existing instruction load error instead of reporting a false absence.
 Cancel discards the draft.
 Navigation, Back, window close, and Quit ask `Discard changes?` while edits remain.
 Application-wide Quit checks every open Root window before it exits.
 After discard, native close uses the existing window lifecycle and retains the final primary window on macOS.
+The multiline field resizes vertically and keeps its document while its viewport changes.
+The field keeps its border outside the scrolling content.
+Typing scrolls the caret into view; the field keeps a minimum height of 96 pixels.
 The instructions tests use owned files and cover save, cancel, discard, load failure, and save retry.
 The coordinate-based instructions cases run on macOS because Linux uses the no-op text system.
 The remaining action and host tests also run on Linux.
@@ -802,6 +831,29 @@ It covered MCP toggling, saving, trust, invalid-save preservation, deletion, mar
 Those earlier checks do not validate this revision's state ownership or appearance.
 Strict original/native pairs remain blocked on capture recovery.
 ST-155 remains gated while the native MCP app sandbox is absent; the manager never reports a synthetic data-clear success.
+
+### Memory and Writing
+
+Memory reads the selected computer's configuration and its paginated experimental feature list.
+Enabling memory updates `features.memories`, `memories.generate_memories`, and `memories.use_memories`.
+Disabling also turns off Chronicle on the local computer.
+The tool-assisted switch writes `memories.disable_on_external_context` and removes the legacy alias.
+Reads and writes use the user configuration layer when it supplies a file path.
+After a partial failure, the page shows the values that the server actually saved.
+Delete requires confirmation before `memory/reset`; failure keeps the confirmation available for retry.
+
+Writing is available to a ChatGPT account through its existing authenticated host.
+The page reads the canonical Writing plugin and the installed plugin list.
+Enable installs or enables that plugin; disable uninstalls it.
+A failed operation retries the requested value, not its inverse.
+Account identity checks prevent a later response or write from switching accounts.
+Enabling Writing replaces Settings with its previous route before it opens setup.
+Setup uses the existing discard guard before it replaces an edited instruction document.
+Cancel keeps the document and its unsaved draft.
+Setup keeps the same account snapshot until it closes.
+The setup dialog supports optional app connections through their supplied browser URLs.
+A dialog that cannot open leaves Writing retryable instead of waiting for authorization.
+Show me opens a prepared draft; it does not start a turn.
 
 
 ## 15.1 Automations ("Scheduled")
@@ -892,7 +944,7 @@ Its native window proof also checks pending state, duplicate suppression, succes
 On macOS, its native row-menu replay starts a task, then displays the real app-server refusal through the same toast component.
 
 `LocalHost` implements the original `automation-update` status change for local tasks (issue https://github.com/i098/codex-gpui/issues/226).
-It accepts `{id, status}` or the original full cron or heartbeat body; any other changed field fails.
+It accepts `{id, status}` or the original full cron or heartbeat body, including edits to `name`, `prompt`, and `rrule`.
 Like the original `ugi`, a task without a target sends its first cwd as `projectId`; the host compares that value with the stored cwd.
 `PAUSED` clears `next_run_at` and `next_run_nominal_at`.
 `ACTIVE` recalculates the original nominal and actual next run with `GF`/`KF`/`JF`/`XF` and the persisted `.run-jitter-salt`; it never reuses a cached time.
@@ -903,6 +955,17 @@ The recurrence uses the vendored `rrule` 0.14.0 with the original limits: `INTER
 The `host` checks match the retained original oracle.
 
 AM-022, AM-023 and AM-028 use the existing sidebar task list.
+
+Task delete (AM-026, AM-027) is the last item of the row menu: the red trash `Delete` after `Run now` and `Pause` or `Resume`.
+The dialog `Delete {name}?` names the task the host lists, starts on `Cancel`, and sends nothing until `Delete scheduled task`.
+Escape and `Cancel` close it without a request and return focus to the row's button; both are ignored while the delete runs.
+Confirm sends `automation-delete` through `LocalHost`, which removes the definition directory, its cached `automations` row and its `automation_runs` like the original `aI`.
+The answer is `{item, success, status}`; `deleted` and `not_found` succeed, and account-owned rows are never touched.
+Success drops the row at once, reads the list again, and closes the deleted task's page to `Scheduled`.
+Failure closes the dialog like the original, shows the toast `Could not delete scheduled task` with `Copy error` for the host status, and keeps the task for another try.
+The failure toast shows `Try again` for an unsuccessful host response and the error message for a failed host request.
+The page-list row's inline delete icon and tooltip (AM-029) belong to the original page list, which the native route does not draw.
+`crates/app/tests/task_delete.rs` proves the host contract in disposable stores and, on macOS, the native Escape, Cancel, confirm, failed removal and retry path.
 The `Scheduled task actions` menu opens under the row button like the original (right edge 1 px inside the button, 220 px wide); its first item is `Pause` or `Resume`.
 The row status control shows `Pause` or `Resume` on hover or keyboard focus, with a named accessible action.
 Both send `automation-update` with the original cron or heartbeat request, block duplicate writes and refetch the list.
@@ -926,17 +989,35 @@ A failure removes only the worktree that the call made, after its cleanup script
 `crates/app/tests/automation_worktree.rs` proves these effects against disposable repositories and a local bare remote, and the `host::git` unit tests prove the cleanup refusals and the name collision.
 Run now calls `create_worktree` and `set_owner_thread` directly for worktree tasks.
 
+The sidebar New task options menu offers `Create with Codex`, `Create with ChatGPT`, and `Set up manually`.
+The chat actions open a new native chat with the original setup prompt.
+They do not send a turn until the user submits the composer.
+The manual editor uses the existing Composer text fields for Name and multiline Prompt.
+It supports Interval, Daily, Weekdays, Weekly, Monthly, and Custom schedules.
+Custom supports Hourly, Daily, Weekly, Monthly, and Yearly, with the matching time, interval, weekday, month-day, month, and minute controls.
+Morning, Afternoon, Evening, and Night select 09:00, 14:00, 18:00, and 22:00.
+Empty names, empty prompts, invalid numbers, invalid times, and empty weekly day selections disable Save.
+The existing recurrence parser validates the host request.
+The editor retains the draft on a write error and reloads the saved task after success.
+Row Edit loads the stored Name, Prompt, and recurrence into the same editor.
+Text-only edits retain an existing advanced recurrence without rewriting it.
+`automation-update` writes Name, Prompt, and recurrence to the original TOML and database stores while preserving unrelated fields and rollback.
+A profile without the original database saves the definition without creating a parallel database.
+`task_create::editor` exercises the native fields, menu, schedule controls, failed write, create, edit, and fresh-host read.
+`host` checks persistence across the accepted recurrence variants and rejects invalid changes before writing.
+
+
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Rail `Scheduled` | entry | Automations page, `ScheduledSidebar`. | `Route::Scheduled` with `ScheduledSidebar` and the page. | PASS (`rail_scheduled`, `parity_automations`) |
-| 2 | Deep link `/scheduled?automationId=…` | entry | Page with the task selected. | — | NOT WIRED (`crates/app/src/lib.rs`: no URL routing; no tasks without the host) |
-| 3 | `New task` | click | Create flow. | Dispatches `NewTask`; no handler. | NOT WIRED (no host: `automation-create` is a host fetch) |
-| 4 | `Create` menu | click | Create with Codex / ChatGPT / manually. | — | NOT WIRED (no host: `automation-create`) |
+| 2 | Deep link `/scheduled?automationId=…` | entry | Page with the task selected. | `codex://scheduled?automationId=…` parses to `Route::Automation` and opens the task's page (`crates/app/src/deep_link.rs`). | PASS (`deep_link::settings_automations_and_launch_links_route`) |
+| 3 | `New task` | click | Create flow. | The recorded compact schedule dialog saves through `automation-create` and retains the draft on a write error. | PASS (`task_create`, `s036`) |
+| 4 | `Create` menu | click | Create with Codex / ChatGPT / manually. | The sidebar split control opens both chat actions with the original setup prompt, or the full manual editor. | PASS (`task_create::editor`) |
 | 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (no host: `list-automations`) |
 | 6 | Status filter | click | All / Active / Paused. | — | NOT WIRED (no host: `list-automations`) |
 | 7 | Task row | click | Detail panel. | Selects the task and opens its thread. | PASS (`s037::task_row_hover_and_click_match_original`) |
-| 8 | Row actions | click | Edit, Run now, Pause, Delete. | `Run now` (through `automation-run-now`) and `Pause` / `Resume` in the row menu; the status control persists through `automation-update`. Edit and Delete remain outside this slice. | PARTIAL (`automation_run_now`; `s037::task_status_controls_persist_through_the_real_local_host`) |
-| 9 | Editor fields | focus | Name, Prompt, schedule. | — | NOT WIRED (no host: `automation-create`) |
+| 8 | Row actions | click | Edit, Run now, Pause, Delete. | Edit opens the stored definition in the full editor; Run now and Pause / Resume retain their existing host paths. Delete has a separate owner. | PARTIAL (`task_create::editor`, `automation_run_now`, `s037`) |
+| 9 | Editor fields | focus | Name, Prompt, schedule. | Editable Name and multiline Prompt, six schedule modes, custom frequencies, time presets, and day fields persist through the existing host. | PASS (`task_create::editor`, `host`) |
 | 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
 | 11 | Row hover | hover | Row highlight. | The recorded row fill and actions match; the status icon changes to Pause on hover or keyboard focus. | PASS (`s037::task_row_hover_and_click_match_original`; suggestion hover: `s035::suggestion_hover_matches_original`) |
 | 12 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
@@ -1036,6 +1117,16 @@ The original's default Recents section uses infinite paging, with ten more rows 
 The recording shows 20 rows after initial layout and 40 after scrolling.
 The port loads cursor pages and shows `Could not load more chats` after a failed page; a click retries that cursor.
 The test checks both the paging requests and the retry transition.
+
+Activity uses `HomeSidebar` for selection, unread state, running state, rows, and paging.
+Its session keeps priority items after reading or completion and retains the original recent timestamps until the next activation.
+The options change Priority, Pinned, and Scheduled visibility, mark items read, and confirm archive requests.
+The native S003 checks cover those transitions and the initial-list recovery path.
+`priority_activity` checks keyboard navigation from a hidden sidebar and Settings without requiring a GPU.
+`ui`'s `screens::sidebar::priority::tests` checks the session snapshot and the seven-day boundary.
+The active bell preserves the Oklab color conversion's blue-channel overshoot and 13% alpha for the float rendering path.
+Its edges match the original in both themes; the shared sidebar corner still differs by seven dark and three light pixels.
+
 
 The original hides timestamps in every Home sidebar list, including project groups.
 It shows an unread dot after a failed background turn, rather than an error icon.
@@ -1351,3 +1442,63 @@ Control-Shift-G opens the existing Changes tab.
 `crates/app/tests/shortcut_navigation.rs` checks these paths on recorded threads.
 The [original/native picker pair](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/9a2941014013a3237d6c7389b13d9c4a3a00e15a0eba9abb/report.html) uses a 520×134 CSS-pixel crop at scale 2.
 It has zero outside-text differences and 45 differing pixels inside 147631 text pixels (0.0305%).
+
+## Storage settings (ST-159, ST-160, ST-161)
+
+`Settings > Storage` measures the app-server's Codex home without following file symlinks.
+The usage bar separates chats, subagents, archived chats, unclassified chats, worktrees, and other files.
+Refresh reports completed categories separately from a failed or active scan.
+It keeps cached category values until each replacement measurement completes.
+The page uses actual file lengths and app-server thread metadata.
+
+`Clean up old chats` requires descendant discovery support.
+The review starts with archived chats last updated more than 90 days ago.
+The age filter also offers 30, 180, and 365 days; the scope filter also offers all chats.
+Only inactive, non-ephemeral roots and complete, inactive descendant trees can enter the selection.
+The final confirmation warns that deletion is permanent.
+Before deleting, the app reloads the inventory, discovers descendants, and checks each thread's update time and active state.
+It skips changed trees and reports deleted, skipped, and failed root counts.
+The deletion request goes through `thread/delete`; the UI never removes rollout files directly.
+The cleanup lock and result toast survive navigation away from Storage.
+Keyboard activation runs once per completed Enter or Space press.
+Deleting a chat clears its cached view, so Back cannot reuse the deleted chat.
+
+The management controls route through `Root::open_settings_section` for Worktrees and Archived chats.
+Their destination pages remain owned by their separate settings families.
+The focused checks run with `cargo test -p bridge -p ui --lib storage -- --test-threads=1`.
+They cover measured categories, partial metadata, symlink exclusion, descendant safety, version eligibility, cached refresh state, and keyboard cancellation.
+The `storage_capture` test also checks cached-view invalidation after a deletion notification.
+The UI unit captures use synthetic interaction data and do not establish pixel parity.
+The ignored `storage_capture` integration test captures the real Root and can apply the unchanged parity gate.
+Set `CGX_STORAGE_HOME` to an owned fixture, `CGX_STORAGE_CAPTURE` to its output directory, and `CGX_STORAGE_REFS` to the original references.
+`CGX_STORAGE_REPLAY` supplies additional recorded read responses; `CGX_STORAGE_REVIEW_Y` selects the cleanup-dialog capture.
+`CGX_STORAGE_ACTIONS` reads an ordered JSON array of `[name, [x, y]]` clicks for additional full-window captures.
+Compare those extra images with their matching original states; this option does not replace the default state's gate.
+
+## Keyboard preferences and app actions
+
+The Keyboard shortcuts page uses the original Codex command registry and flat-card layout.
+Text search includes commands and the browser-link preference. Keystroke search filters effective bindings.
+The existing host settings store saves bindings, the number target, and the browser-link modifier.
+Conflicts and failed writes leave the previous bindings active.
+Reset restores default bindings and the link modifier without changing the number target.
+App bindings update immediately, including menu and sidebar labels.
+Unmodified app shortcuts do not intercept editable text.
+Focused binding capture blocks normal key dispatch and publishes `KeyboardState.capture_owner` for the global-shortcut owner.
+
+Standalone chats use the existing projectless workspace allocator and app-server requests.
+Temporary chats send `ephemeral: true` and stay out of recents and saved route state.
+Undo and redo apply recorded rename, section, and archive actions through their app-server methods.
+A failed undo retains its entry for another attempt.
+Clear all unreads uses a confirmation dialog and saves the optional confirmation preference.
+
+The interactive terminal keeps its real PTY process when the bottom panel hides.
+UI zoom keeps layout, painting, pointer input, and IME bounds in the same coordinate system.
+The zoom banner waits two seconds and remains visible while the pointer is over it.
+Reopening a saved window restores its zoom.
+Original-versus-native visual approval remains separate from the Linux functional checks.
+
+
+Native checks cover reset confirmation, number/link menus, and modifier-only capture in `keyboard_shortcuts`.
+The `project_picker` scenario checks folder selection, cancellation, and the directory used by new chats.
+The `shortcut_actions` checks cover attention navigation, undo/redo, unread confirmation, and live terminal retention.

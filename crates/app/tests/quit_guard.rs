@@ -19,7 +19,7 @@ fn quitting_from_a_window_keeps_the_scheduled_work_confirmation() -> Result<()> 
     let home = tempfile::tempdir()?;
     let host = Arc::new(LocalHost::new(home.path()));
     host.fetch(&Request::post(
-        "create-automation",
+        "automation-create",
         Some(serde_json::json!({
             "name":"Quit guard", "prompt":"Owned fixture",
             "rrule":"FREQ=WEEKLY;BYDAY=SU;BYHOUR=23;BYMINUTE=59",
