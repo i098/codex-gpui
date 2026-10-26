@@ -690,6 +690,7 @@ pub struct Composer {
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
     document_field: bool,
+    search_field: bool,
     field_min_height: Pixels,
     field_scroll: Option<ScrollHandle>,
     field_autoscroll: bool,
@@ -778,6 +779,7 @@ impl Composer {
             on_model: None,
             plain_field: None,
             document_field: false,
+            search_field: false,
             field_min_height: px(48.),
             field_scroll: None,
             field_autoscroll: false,
@@ -802,6 +804,12 @@ impl Composer {
         }
         editor.set_text(value, cx);
         editor
+    }
+
+    pub fn search_field(placeholder: &'static str, cx: &mut Context<Self>) -> Self {
+        let mut field = Self::settings_field(placeholder, "", false, cx);
+        field.search_field = true;
+        field
     }
 
     pub fn embedded_field(
@@ -2201,7 +2209,9 @@ impl Render for Composer {
             } else {
                 card.key_context(KEY_CONTEXT)
                     .when(
-                        self.request_parent.is_none() && !self.request_compact,
+                        self.request_parent.is_none()
+                            && !self.request_compact
+                            && !self.search_field,
                         |d| {
                             d.border_1()
                                 .border_color(t.border)
@@ -2212,8 +2222,6 @@ impl Render for Composer {
                         },
                     )
                     .when(self.request_parent.is_none() && self.request_compact, |d| {
-                        // The sign-in `input`: `rounded-md bg-primary-soft border
-                        // border-primary-outline focus:border-ring`, `--codex-corner-shape`.
                         d.px(px(1.))
                             .py(px(8.))
                             .child(shapes::decoration(shapes::Decoration {

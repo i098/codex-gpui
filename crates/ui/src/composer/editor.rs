@@ -686,9 +686,16 @@ impl Composer {
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
-            .px(px(if self.compact_text() { 10. } else { 12. }))
+            .px(px(if self.search_field {
+                0.
+            } else if self.compact_text() {
+                10.
+            } else {
+                12.
+            }))
             .pb(px(
-                if self.plain_field == Some(true)
+                if self.search_field
+                    || self.plain_field == Some(true)
                     || self.request_parent.is_some()
                     || self.request_compact
                 {
@@ -697,11 +704,13 @@ impl Composer {
                     4.
                 },
             ))
-            .min_h(if self.request_parent.is_some() || self.request_compact {
-                px(20.)
-            } else {
-                self.field_min_height
-            })
+            .min_h(
+                if self.search_field || self.request_parent.is_some() || self.request_compact {
+                    px(20.)
+                } else {
+                    self.field_min_height
+                },
+            )
             .cursor(CursorStyle::IBeam)
             .when(self.embedded_field.is_some(), |d| {
                 d.px_0().pb_0().min_h(self.editor_line_height())
@@ -725,7 +734,7 @@ impl Composer {
             // The sign-in `input` has neither the opacity nor the layer.
             .child(
                 div()
-                    .when(self.field_text.is_none(), |d| {
+                    .when(!self.search_field && self.field_text.is_none(), |d| {
                         d.when(
                             self.content.is_empty() && self.embedded_field.is_none(),
                             |d| d.opacity(0.5),

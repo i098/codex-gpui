@@ -34,6 +34,8 @@ use theme::{ActiveTheme as _, Theme};
 
 #[path = "computer_use.rs"]
 pub mod computer_use;
+#[path = "keyboard_shortcuts.rs"]
+pub mod keyboard_shortcuts;
 fn focus_on_pointer(
     focus: Entity<focus::ControlFocus>,
 ) -> impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) {
@@ -547,6 +549,7 @@ impl SettingsNav {
         };
         let control = div()
             .id("settings-search")
+            .key_context("Editable")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
             .on_click(cx.listener(|this, _, window, cx| this.focus.focus(window, cx)))
@@ -1446,6 +1449,9 @@ impl Render for SettingsPane {
         let section = self.page.read(cx).section;
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
+        }
+        if section == "Keyboard shortcuts" {
+            return keyboard_shortcuts::render(window, cx);
         }
         if section == "Usage & billing" {
             return usage::render(window, cx);
