@@ -67,8 +67,9 @@ use ui::screens::recovery;
 use ui::screens::settings::personalization::WritingPreference;
 use ui::screens::settings::{self, AppServer, SettingChanged, workspace};
 use ui::screens::sidebar::{
-    ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent, HomeSidebar, LoadMore, OpenThread,
-    PINNED_SECTION_ID, PinThread, RenameThread, SEARCH_LIMIT, SearchHit, SearchRequest,
+    ActivityOpened, ArchiveActivity, ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent,
+    HomeSidebar, ListState, LoadMore, OpenThread, PINNED_SECTION_ID, PinThread, RenameThread,
+    RetryActivity, RetryProjects, RetryThreads, SEARCH_LIMIT, SearchHit, SearchRequest,
     SelectProject, title as thread_title,
 };
 use ui::screens::signin::Login;
@@ -83,7 +84,8 @@ use ui::workspace::WorkspaceLayout;
 use ui::{
     Copy, Cut, GoBack, GoForward, LogOut, NewChat, OpenBackgroundTerminal, OpenChangesPanel,
     OpenCommandMenu, OpenMobileSetup, OpenScheduled, OpenSettings, Paste, Redo, SelectAll,
-    SetTheme, Shell, ShowKeyboardShortcuts, ToggleChangesPanel, ToggleSidebar, Undo,
+    SetTheme, Shell, ShowKeyboardShortcuts, ToggleActivity, ToggleChangesPanel, ToggleSidebar,
+    Undo,
 };
 
 actions!(
@@ -135,6 +137,11 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-g", FindNext, None),
         KeyBinding::new("cmd-shift-g", FindPrevious, None),
         KeyBinding::new("cmd-m", Minimize, None),
+        KeyBinding::new("cmd-k", OpenCommandMenu, None),
+        KeyBinding::new("cmd-shift-p", OpenCommandMenu, None),
+        KeyBinding::new("alt-cmd-b", ToggleChangesPanel, None),
+        KeyBinding::new("alt-cmd-u", ToggleActivity, None),
+        KeyBinding::new("cmd-shift-a", ArchiveChat, None),
     ]);
     ui::composer::bind_keys(cx);
     features::init(cx);
@@ -342,6 +349,7 @@ pub struct Root {
     recent_chats: Vec<String>,
     shortcut_state: features::shortcuts::ShortcutState,
     new_chat_section: Option<String>,
+    threads_loaded: bool,
     /// `thread/list` cursor of the page after `threads`, while the sidebar's end asks for it.
     next_cursor: Option<String>,
     loading_more: bool,
@@ -586,7 +594,12 @@ impl Root {
                 }
             }).detach();
         }
-        let sidebar = cx.new(|_| HomeSidebar::new(&[], None));
+        let sidebar = cx.new(|_| {
+            let mut sidebar = HomeSidebar::new(&[], None);
+            sidebar.threads_state = ListState::Loading;
+            sidebar.set_activity_archive_supported(!bridge.is_acp());
+            sidebar
+        });
         cx.subscribe_in(
             &sidebar,
             window,
@@ -597,6 +610,10 @@ impl Root {
         .detach();
         cx.subscribe_in(&sidebar, window, |this, _, _: &LoadMore, _, cx| {
             this.load_more_threads(cx)
+        })
+        .detach();
+        cx.subscribe_in(&sidebar, window, |this, _, _: &ActivityOpened, _, cx| {
+            this.load_activity_threads(cx)
         })
         .detach();
         let main = cx.new(|_| ui::EmptyMain).into();
@@ -669,6 +686,7 @@ impl Root {
             recent_chats: Vec::new(),
             shortcut_state: features::shortcuts::ShortcutState::default(),
             new_chat_section: None,
+            threads_loaded: false,
             next_cursor: None,
             loading_more: false,
             wide,
@@ -817,7 +835,7 @@ impl Root {
             } else {
                 Some(bridge.account_read().await?)
             };
-            let threads = bridge.thread_list().await?;
+            let threads = bridge.thread_list().await;
             let (mut catalog, config, skills) = if acp {
                 // The picker's one row says the agent picks: an empty id sends no model, and
                 // an empty effort shows no effort label.
@@ -857,8 +875,18 @@ impl Root {
                 if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
                     this.login = Some(this.new_login(window, cx));
                 }
-                this.set_threads(&threads.data, cx);
-                this.set_next_cursor(threads.next_cursor, cx);
+                match threads {
+                    Ok(threads) => {
+                        this.set_threads(&threads.data, cx);
+                        this.set_next_cursor(threads.next_cursor, cx);
+                        this.threads_loaded = true;
+                    }
+                    Err(error) => {
+                        eprintln!("codex-gpui: cannot read sidebar chats: {error:#}");
+                        this.sidebar
+                            .update(cx, |s, cx| s.set_threads_state(ListState::Failed, cx));
+                    }
+                }
                 if !acp && this.login.is_none() {
                     this.load_sections(cx);
                 }
@@ -1138,17 +1166,128 @@ impl Root {
     }
 
     fn load_projects(&mut self, cx: &mut Context<Self>) {
-        self.set_projects(Vec::new(), cx);
+        self.sidebar
+            .update(cx, |s, cx| s.set_projects_state(ListState::Loading, cx));
         let host = self.host.clone();
         let read = cx.background_spawn(async move { host.projects() });
         self.project_load = Some(cx.spawn(async move |this, cx| {
             let result = read.await;
             this.update(cx, |this, cx| match result {
                 Ok(projects) => this.set_projects(projects, cx),
-                Err(error) => eprintln!("codex-gpui: cannot read sidebar projects: {error:#}"),
+                Err(error) => {
+                    eprintln!("codex-gpui: cannot read sidebar projects: {error:#}");
+                    this.sidebar
+                        .update(cx, |s, cx| s.set_projects_state(ListState::Failed, cx));
+                }
             })
             .ok();
         }));
+    }
+
+    fn load_activity_threads(&self, cx: &mut Context<Self>) {
+        if self.signed_out() || self.sidebar.read(cx).activity_clock.is_none() {
+            return;
+        }
+        self.sidebar.update(cx, |sidebar, cx| {
+            sidebar.activity_sources_state = ListState::Loading;
+            cx.notify();
+        });
+        let host = self.host.clone();
+        let source = host.clone();
+        let read = cx
+            .background_spawn(async move { host.fetch(&host::Request::post("inbox-items", None)) });
+        cx.spawn(async move |this, cx| {
+            let result = read.await.and_then(|inbox| {
+                let inbox = host::json_body(&inbox)?;
+                let items = inbox["items"]
+                    .as_array()
+                    .context("missing activity items")?;
+                Ok(items
+                    .iter()
+                    .filter_map(|item| item["threadId"].as_str().map(str::to_owned))
+                    .collect())
+            });
+            this.update(cx, |this, cx| {
+                if this.signed_out()
+                    || !Arc::ptr_eq(&this.host, &source)
+                    || this.sidebar.read(cx).activity_clock.is_none()
+                {
+                    return;
+                }
+                match result {
+                    Ok(ids) => this
+                        .sidebar
+                        .update(cx, |s, cx| s.set_scheduled_threads(ids, cx)),
+                    Err(error) => {
+                        eprintln!("codex-gpui: cannot read activity runs: {error:#}");
+                        this.sidebar.update(cx, |sidebar, cx| {
+                            sidebar.activity_sources_state = ListState::Failed;
+                            cx.notify();
+                        });
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn toggle_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !matches!(self.state.route, Route::Home | Route::Thread(_)) {
+            self.navigate(Route::Home, window, cx);
+        }
+        let clock = self.clock.unwrap_or_else(|| Clock {
+            utc_offset: utc_offset(),
+            pinned_now: None,
+            elapsed_since: None,
+        });
+        self.sidebar
+            .update(cx, |s, cx| s.toggle_activity(clock, cx));
+        if !self.shell.read(cx).sidebar_open {
+            self.shell.update(cx, |s, cx| s.toggle_sidebar(cx));
+        }
+    }
+
+    fn archive_activity(&mut self, ids: &[String], window: &mut Window, cx: &mut Context<Self>) {
+        if ids.is_empty() || self.bridge.is_acp() {
+            return;
+        }
+        let ids = ids.to_vec();
+        let running = ids.iter().any(|id| self.sidebar.read(cx).is_running(id));
+        let plural = if ids.len() == 1 { "" } else { "s" };
+        let title = if running {
+            format!("Stop and archive {} chat{plural}?", ids.len())
+        } else {
+            format!("Archive {} priority thread{plural}?", ids.len())
+        };
+        let description = match (running, ids.len() == 1) {
+            (true, true) => {
+                "Archiving will stop any ongoing work. You can restore the chat later in settings."
+            }
+            (true, false) => {
+                "Archiving will stop any ongoing work. You can restore the chats later in settings."
+            }
+            _ => "Recent threads won’t be archived",
+        };
+        let answer = window.prompt(
+            gpui::PromptLevel::Warning,
+            &title,
+            Some(description),
+            &["Cancel", "Archive"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await.ok() != Some(1) {
+                return;
+            }
+            this.update_in(cx, |this, window, cx| {
+                for id in ids {
+                    this.archive(id, window, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// The sidebar's projects, and Home's `/project` choices: the ones with a root on disk.
@@ -2916,10 +3055,16 @@ impl Root {
                         this.automation_card_results.clear();
                         this.approvals.clear();
                         this.new_chat_section = None;
-                        this.sidebar.update(cx, |s, cx| s.clear_sections(cx));
+                        this.sidebar.update(cx, |s, cx| {
+                            if let Some(clock) = s.activity_clock {
+                                s.toggle_activity(clock, cx);
+                            }
+                            s.clear_sections(cx);
+                        });
                         this.show_approval(cx);
                         this.set_threads(&[], cx);
                         this.set_next_cursor(None, cx);
+                        this.threads_loaded = false;
                         this.automation_load = None;
                         this.project_load = None;
                         this.suggestion_load = None;
@@ -3052,6 +3197,7 @@ impl Root {
                 "Go to recent chat 5" => window.dispatch_action(Box::new(GoToRecentChat(4)), cx),
                 "Go to recent chat 6" => window.dispatch_action(Box::new(GoToRecentChat(5)), cx),
                 "Toggle sidebar" => window.dispatch_action(Box::new(ToggleSidebar), cx),
+                "Toggle activity view" => window.dispatch_action(Box::new(ToggleActivity), cx),
                 "Open Changes tab" => window.dispatch_action(Box::new(OpenChangesPanel), cx),
                 "New tab" => window.dispatch_action(Box::new(ToggleChangesPanel), cx),
                 "Open terminal" => window
@@ -5110,15 +5256,36 @@ impl Root {
 
     /// Reads the first `thread/list` page again; threads of later loaded pages stay after it.
     fn refresh_threads(&self, cx: &mut Context<Self>) {
+        if self.signed_out()
+            || (!self.threads_loaded && self.sidebar.read(cx).threads_state == ListState::Loading)
+        {
+            return;
+        }
+        if !self.threads_loaded {
+            self.sidebar
+                .update(cx, |s, cx| s.set_threads_state(ListState::Loading, cx));
+        }
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
-            let mut list = bridge.thread_list().await?;
+            let list = bridge.thread_list().await;
             this.update(cx, |this, cx| {
                 if this.signed_out() {
                     return;
                 }
-                if this.threads.is_empty() {
+                let mut list = match list {
+                    Ok(list) => list,
+                    Err(error) => {
+                        eprintln!("codex-gpui: cannot read sidebar chats: {error:#}");
+                        if !this.threads_loaded {
+                            this.sidebar
+                                .update(cx, |s, cx| s.set_threads_state(ListState::Failed, cx));
+                        }
+                        return;
+                    }
+                };
+                if !this.threads_loaded {
                     this.set_next_cursor(list.next_cursor, cx);
+                    this.threads_loaded = true;
                 }
                 let fresh: HashSet<&str> = list.data.iter().map(|t| t.id.as_str()).collect();
                 let rest: Vec<Thread> = this
@@ -6046,6 +6213,19 @@ impl Render for Root {
                     this.shell.update(cx, |shell, cx| shell.toggle_sidebar(cx))
                 }))
             })
+            .on_action(cx.listener(|this, _: &ToggleActivity, window, cx| {
+                this.toggle_activity(window, cx);
+            }))
+            .on_action(cx.listener(|this, action: &ArchiveActivity, window, cx| {
+                this.archive_activity(&action.0, window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &RetryThreads, _, cx| this.refresh_threads(cx)))
+            .on_action(cx.listener(|this, _: &RetryActivity, _, cx| this.load_activity_threads(cx)))
+            .on_action(cx.listener(|this, _: &RetryProjects, _, cx| {
+                if this.sidebar.read(cx).projects_state != ListState::Loading {
+                    this.load_projects(cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &ShowKeyboardShortcuts, window, cx| {
                 if this
                     .dialog

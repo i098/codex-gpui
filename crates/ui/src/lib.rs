@@ -41,6 +41,7 @@ actions!(
     [
         /// Show or hide the sidebar panel.
         ToggleSidebar,
+        ToggleActivity,
         /// Go to Home with an empty composer.
         NewChat,
         GoBack,
@@ -661,7 +662,7 @@ impl Render for EmptySidebar {
             .size_full()
             .flex()
             .flex_col()
-            .child(home_sidebar_header(false, cx))
+            .child(home_sidebar_header(false, false, cx))
             .child(
                 div()
                     .flex_1()
@@ -719,8 +720,23 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
 
 /// Top of the Home sidebar: `Codex ⌄` mode switch, activity bell and search, then the
 /// `New chat` and `Your dot` rows. With `unread` chats the bell carries the blue dot.
-pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
+pub fn home_sidebar_header(unread: bool, activity: bool, cx: &App) -> Div {
     let t = cx.theme();
+    // The Oklab round-trip leaves blue above one; retain it for Skia's float layer blend.
+    let activity_background = gpui::Rgba {
+        r: 0.007_846_47,
+        g: 0.521_568_5,
+        b: 1.000_000_1,
+        a: 0.13,
+    }
+    .into();
+    let activity_label = if activity {
+        "Turn off activity view"
+    } else if unread {
+        "View activity, needs attention"
+    } else {
+        "View activity"
+    };
     let keyboard_ring = |inset| {
         move |style: gpui::StyleRefinement| {
             style.shadow(vec![gpui::BoxShadow {
@@ -798,20 +814,57 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                 )
                 .child(div().flex_1())
                 .child(tooltip(
-                    icon_button(
-                        "activity",
-                        icon::icon(
-                            if unread { "bell-unread" } else { "bell" },
-                            16.,
-                            t.text_tertiary,
-                        )
-                        // The original paints the bell into its button's own composited layer.
-                        .own_layer(None),
-                        t,
-                    )
-                    .tab_index(0)
-                    .focus_visible(keyboard_ring(false)),
-                    "View activity",
+                    div()
+                        .id("activity")
+                        .relative()
+                        .flex_none()
+                        .size(px(28.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(RADIUS_BUTTON_MD)
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .when(activity, |d| {
+                            // The original button pseudo-element has will-change: transform.
+                            d.child(div().absolute().inset_0().top_layer().child(
+                                shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(RADIUS_BUTTON_MD),
+                                    corner: shapes::Corner::Squircle,
+                                    fill: Some(activity_background),
+                                    ..Default::default()
+                                }),
+                            ))
+                        })
+                        .child(motion::ButtonVisual {
+                            glyph: icon::icon(
+                                if unread { "bell-unread" } else { "bell" },
+                                16.,
+                                if activity {
+                                    t.info_solid
+                                } else {
+                                    t.text_tertiary
+                                },
+                            )
+                            .own_layer(None),
+                            radius: RADIUS_BUTTON_MD,
+                            hover: if activity {
+                                activity_background
+                            } else {
+                                t.ghost_hover
+                            },
+                            foreground: if activity {
+                                t.info_solid
+                            } else {
+                                t.text.opacity(0.85)
+                            },
+                            selected: activity,
+                        })
+                        .tab_index(0)
+                        .role(gpui::Role::Button)
+                        .aria_label(activity_label)
+                        .focus_visible(keyboard_ring(false))
+                        .on_click(dispatch::<ToggleActivity>),
+                    activity_label,
                     Some("⌥⌘U"),
                     Side::Bottom,
                 ))
