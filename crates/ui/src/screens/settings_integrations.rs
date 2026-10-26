@@ -2,9 +2,9 @@ use super::computer_use::Load;
 use super::{Layer, button, deco, on_card, probe, switch};
 use crate::{composer::popover, focus, icon::icon, text};
 use gpui::{
-    AnyElement, App, AppContext as _, BorrowAppContext as _, Context, Div, Entity, Global,
-    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
+    AnyElement, App, AppContext as _, Context, Div, Entity, InteractiveElement, IntoElement,
+    KeyDownEvent, ParentElement, Render, SharedString, Stateful, StatefulInteractiveElement,
+    Styled, Window, div, prelude::FluentBuilder as _, px,
 };
 use serde_json::Value;
 use shapes::Corner::Squircle;
@@ -42,6 +42,7 @@ pub enum Action {
     SaveServer {
         key: String,
         config: Value,
+        expected_version: String,
     },
     RemoveServer(String),
     Authenticate {
@@ -102,17 +103,20 @@ pub struct State {
     pub dispatch: Option<Dispatch>,
 }
 
-impl Global for State {}
-
-pub fn render(section: &'static str, window: &mut Window, cx: &mut App) -> AnyElement {
+pub fn render(
+    section: &'static str,
+    state: Entity<State>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
     let page = window.use_keyed_state(
         SharedString::from(format!("settings-integrations-{section}")),
         cx,
-        |_, cx| {
-            cx.observe_global::<State>(|this: &mut Manager, cx| {
-                let generation = cx.global::<State>().identity_generation;
-                if generation != this.identity_generation {
-                    this.identity_generation = generation;
+        move |_, cx| {
+            cx.observe(&state, |this: &mut Manager, state, cx| {
+                let state = state.read(cx);
+                if state.identity_generation != this.identity_generation {
+                    this.identity_generation = state.identity_generation;
                     this.form = None;
                     this.marketplace_form = None;
                     this.marketplace = None;
@@ -120,18 +124,18 @@ pub fn render(section: &'static str, window: &mut Window, cx: &mut App) -> AnyEl
                     this.menu = None;
                     this.registrations.clear();
                 }
-                let saved = cx.global::<State>().form_saved;
+                let saved = state.form_saved;
                 if saved != this.form_saved {
                     this.form = None;
                     this.form_saved = saved;
                 }
-                let added = cx.global::<State>().marketplace_added;
+                let added = state.marketplace_added;
                 if added != this.marketplace_added {
                     this.marketplace_form = None;
                     this.marketplace_added = added;
                     this.tab = Tab::Marketplace;
                 }
-                if this.marketplace.as_ref() == cx.global::<State>().removal_completed.as_ref() {
+                if this.marketplace.as_ref() == state.removal_completed.as_ref() {
                     this.marketplace = None;
                 }
                 cx.notify();
@@ -145,20 +149,17 @@ pub fn render(section: &'static str, window: &mut Window, cx: &mut App) -> AnyEl
                 layer: Layer::default(),
                 menu: None,
                 form: None,
-                form_saved: cx.try_global::<State>().map_or(0, |state| state.form_saved),
+                form_saved: state.read(cx).form_saved,
                 marketplace_form: None,
-                marketplace_added: cx
-                    .try_global::<State>()
-                    .map_or(0, |state| state.marketplace_added),
+                marketplace_added: state.read(cx).marketplace_added,
                 marketplace: None,
                 selected_hooks: None,
                 modal_focus: cx.focus_handle(),
                 return_focus: None,
                 expanded_hooks: HashSet::new(),
                 registrations: BTreeMap::new(),
-                identity_generation: cx
-                    .try_global::<State>()
-                    .map_or(0, |state| state.identity_generation),
+                identity_generation: state.read(cx).identity_generation,
+                state,
             }
         },
     );
@@ -181,6 +182,7 @@ enum Menu {
 }
 
 struct Manager {
+    state: Entity<State>,
     section: &'static str,
     tab: Tab,
     query: String,
@@ -200,11 +202,8 @@ struct Manager {
     identity_generation: u64,
 }
 
-pub(super) fn dispatch(action: Action, cx: &mut App) {
-    if let Some(dispatch) = cx
-        .try_global::<State>()
-        .and_then(|state| state.dispatch.clone())
-    {
+pub(super) fn dispatch(state: &Entity<State>, action: Action, cx: &mut App) {
+    if let Some(dispatch) = state.read(cx).dispatch.clone() {
         dispatch(action, cx);
     }
 }
@@ -479,7 +478,7 @@ impl Manager {
         self.tab = Tab::Mcps;
         self.menu = None;
         let layer = self.layer.clone();
-        let form = cx.new(|cx| form::Form::new(key, config, layer, cx));
+        let form = cx.new(|cx| form::Form::new(key, config, self.state.clone(), layer, cx));
         cx.subscribe(&form, |this, _, _: &form::Close, cx| {
             this.form = None;
             cx.notify();
@@ -630,52 +629,7 @@ impl Manager {
         let name = config.and_then(|c| c["name"].as_str()).unwrap_or(key);
         let enabled = config.is_none_or(|config| config["enabled"] != false);
         let read_only = server_read_only(&state.configuration, key);
-        let authenticate = status.is_some_and(|status| status["authStatus"] == "notLoggedIn");
-        let mut controls = div().flex().items_center().gap(px(12.));
-        if authenticate {
-            let registration = self.registrations.get(key).copied().unwrap_or("auto");
-            let label = match registration {
-                "cimd" => "CIMD",
-                "dcr" => "DCR",
-                _ => "Auto",
-            };
-            let server = key.to_owned();
-            controls = controls.child(
-                action_button(format!("registration-{key}"), label, t)
-                    .aria_label("OAuth client registration")
-                    .child(icon("chevron-down", 14., t.text_secondary))
-                    .on_activate(window, cx, move |this, _, cx| {
-                        this.menu = Some(Menu::OAuth(server.clone()));
-                        cx.notify();
-                    }),
-            );
-            let server = key.to_owned();
-            let pending = state.oauth.get(key).is_some_and(Option::is_none);
-            controls = controls.child(
-                action_button(
-                    format!("authenticate-{key}"),
-                    if pending {
-                        "Starting…"
-                    } else {
-                        "Authenticate"
-                    },
-                    t,
-                )
-                .aria_disabled(pending)
-                .when(pending, |d| d.opacity(0.4))
-                .on_activate(window, cx, move |_, _, cx| {
-                    if !pending {
-                        dispatch(
-                            Action::Authenticate {
-                                name: server.clone(),
-                                registration,
-                            },
-                            cx,
-                        );
-                    }
-                }),
-            );
-        }
+        let mut controls = self.authentication_controls(key, status, state, t, window, cx);
         if let Some(config) = config {
             let settings_key = key.to_owned();
             let value = config.clone();
@@ -712,9 +666,10 @@ impl Manager {
                 gpui::Toggled::False
             })
             .aria_disabled(read_only || state.pending)
-            .on_activate(window, cx, move |_, _, cx| {
+            .on_activate(window, cx, move |this, _, cx| {
                 if !read_only {
                     dispatch(
+                        &this.state,
                         Action::SetServerEnabled {
                             key: key.clone(),
                             enabled: !enabled,
@@ -735,6 +690,65 @@ impl Manager {
             .gap(px(16.))
             .child(text(name.to_owned(), 13., 18.571_428, 500., t.text))
             .child(controls)
+    }
+
+    fn authentication_controls(
+        &self,
+        key: &str,
+        status: Option<&Value>,
+        state: &State,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let authenticate = status.is_some_and(|status| status["authStatus"] == "notLoggedIn");
+        let mut controls = div().flex().items_center().gap(px(12.));
+        if authenticate {
+            let registration = self.registrations.get(key).copied().unwrap_or("auto");
+            let label = match registration {
+                "cimd" => "CIMD",
+                "dcr" => "DCR",
+                _ => "Auto",
+            };
+            let server = key.to_owned();
+            controls = controls.child(
+                action_button(format!("registration-{key}"), label, t)
+                    .aria_label("OAuth client registration")
+                    .child(icon("chevron-down", 14., t.text_secondary))
+                    .on_activate(window, cx, move |this, _, cx| {
+                        this.menu = Some(Menu::OAuth(server.clone()));
+                        cx.notify();
+                    }),
+            );
+            let server = key.to_owned();
+            let pending = state.oauth.get(key).is_some_and(Option::is_none);
+            controls = controls.child(
+                action_button(
+                    format!("authenticate-{key}"),
+                    if pending {
+                        "Starting…"
+                    } else {
+                        "Authenticate"
+                    },
+                    t,
+                )
+                .aria_disabled(pending)
+                .when(pending, |d| d.opacity(0.4))
+                .on_activate(window, cx, move |this, _, cx| {
+                    if !pending {
+                        dispatch(
+                            &this.state,
+                            Action::Authenticate {
+                                name: server.clone(),
+                                registration,
+                            },
+                            cx,
+                        );
+                    }
+                }),
+            );
+        }
+        controls
     }
 
     fn mcp_list(
@@ -856,7 +870,7 @@ impl Manager {
             body = body.child(action_button("reload-mcp", "Restart", t).on_activate(
                 window,
                 cx,
-                |_, _, cx| dispatch(Action::ReloadServers, cx),
+                |this, _, cx| dispatch(&this.state, Action::ReloadServers, cx),
             ));
         }
         body
@@ -871,8 +885,11 @@ impl Manager {
         cx: &mut Context<Self>,
     ) -> Div {
         message(title, Some(error), t).child(
-            action_button("integrations-retry", "Retry", t)
-                .on_activate(window, cx, |_, _, cx| dispatch(Action::Refresh, cx)),
+            action_button("integrations-retry", "Retry", t).on_activate(
+                window,
+                cx,
+                |this, _, cx| dispatch(&this.state, Action::Refresh, cx),
+            ),
         )
     }
 
@@ -928,8 +945,9 @@ impl Manager {
                 gpui::Toggled::False
             })
             .aria_disabled(state.pending)
-            .on_activate(window, cx, move |_, _, cx| {
+            .on_activate(window, cx, move |this, _, cx| {
                 dispatch(
+                    &this.state,
                     Action::SetPluginEnabled {
                         plugin: value.clone(),
                         enabled: !enabled,
@@ -1059,8 +1077,9 @@ impl Manager {
                 } else {
                     gpui::Toggled::False
                 })
-                .on_activate(window, cx, move |_, _, cx| {
+                .on_activate(window, cx, move |this, _, cx| {
                     dispatch(
+                        &this.state,
                         Action::SetAppEnabled {
                             id: id.clone(),
                             enabled: !enabled,
@@ -1157,9 +1176,10 @@ impl Manager {
                 } else {
                     gpui::Toggled::False
                 })
-                .on_activate(window, cx, move |_, _, cx| {
+                .on_activate(window, cx, move |this, _, cx| {
                     if !managed {
                         dispatch(
+                            &this.state,
                             Action::SetSkillEnabled {
                                 path: path.clone(),
                                 enabled: !enabled,
@@ -1280,9 +1300,10 @@ impl Manager {
                             .on_activate(
                                 window,
                                 cx,
-                                move |_, _, cx| {
+                                move |this, _, cx| {
                                     if can_upgrade {
                                         dispatch(
+                                            &this.state,
                                             Action::UpgradeMarketplace(upgrade_name.clone()),
                                             cx,
                                         );
@@ -1430,9 +1451,10 @@ impl Manager {
     fn begin_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.return_focus = window.focused(cx);
         self.modal_focus.focus(window, cx);
-        cx.update_global::<State, _>(|state, _| {
+        self.state.update(cx, |state, cx| {
             state.operation_error = None;
             state.removal_completed = None;
+            cx.notify();
         });
     }
 
@@ -1519,8 +1541,8 @@ impl Manager {
                     .child(
                         action_button("hooks-trust-all", "Trust all", t)
                             .aria_disabled(state.pending)
-                            .on_activate(window, cx, move |_, _, cx| {
-                                dispatch(Action::TrustHooks(trust.clone()), cx)
+                            .on_activate(window, cx, move |this, _, cx| {
+                                dispatch(&this.state, Action::TrustHooks(trust.clone()), cx)
                             }),
                     ),
             );
@@ -1540,147 +1562,7 @@ impl Manager {
                 .filter(|hook| hook["eventName"] == event)
                 .enumerate()
             {
-                let key = hook["key"].as_str().unwrap_or("").to_owned();
-                let expanded = self.expanded_hooks.contains(&key);
-                let managed = hook["isManaged"] == true;
-                let review = needs_review(hook);
-                let enabled = hook_enabled(hook);
-                let title = hook["statusMessage"]
-                    .as_str()
-                    .filter(|value| !value.trim().is_empty())
-                    .map_or_else(
-                        || format!("Hook {}", index + 1),
-                        |status| format!("{} - {status}", index + 1),
-                    );
-                let toggle_id = format!("hook-enabled-{key}");
-                let expand_id = format!("hook-expand-{key}");
-                controls.extend([expand_id.clone(), toggle_id.clone()]);
-                let expand_key = key.clone();
-                let toggle_key = key.clone();
-                let toggle = switch(
-                    SharedString::from(toggle_id),
-                    enabled,
-                    managed || review || state.pending,
-                    t,
-                )
-                .role(gpui::Role::Switch)
-                .aria_label(title.clone())
-                .aria_disabled(managed || review || state.pending)
-                .aria_toggled(if enabled {
-                    gpui::Toggled::True
-                } else {
-                    gpui::Toggled::False
-                })
-                .on_activate(window, cx, move |_, _, cx| {
-                    if !managed && !review {
-                        dispatch(
-                            Action::SetHookEnabled {
-                                key: toggle_key.clone(),
-                                enabled: !enabled,
-                            },
-                            cx,
-                        );
-                    }
-                });
-                let mut controls_row = div().flex().items_center().gap(px(8.));
-                if !managed && review {
-                    let id = format!("trust-{key}");
-                    controls.push(id.clone());
-                    let hash = hook["currentHash"].as_str().unwrap_or("").to_owned();
-                    let trust_key = key.clone();
-                    controls_row = controls_row.child(
-                        action_button(id, "Trust", t)
-                            .aria_disabled(state.pending)
-                            .on_activate(window, cx, move |_, _, cx| {
-                                dispatch(
-                                    Action::TrustHooks(vec![(trust_key.clone(), hash.clone())]),
-                                    cx,
-                                )
-                            }),
-                    );
-                }
-                controls_row = controls_row.child(toggle);
-                let mut row = div().flex().flex_col().px(px(12.)).child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .py(px(8.))
-                        .child(
-                            div()
-                                .id(SharedString::from(expand_id))
-                                .role(gpui::Role::Button)
-                                .aria_label(title.clone())
-                                .aria_expanded(expanded)
-                                .flex_1()
-                                .flex()
-                                .items_center()
-                                .gap(px(8.))
-                                .child(text(title, 13., 18., 430., t.text))
-                                .child(icon(
-                                    if expanded {
-                                        "chevron-down"
-                                    } else {
-                                        "chevron-right"
-                                    },
-                                    14.,
-                                    t.text_secondary,
-                                ))
-                                .on_activate(window, cx, move |this, _, cx| {
-                                    if !this.expanded_hooks.remove(&expand_key) {
-                                        this.expanded_hooks.insert(expand_key.clone());
-                                    }
-                                    cx.notify();
-                                }),
-                        )
-                        .child(controls_row),
-                );
-                if expanded {
-                    let detail = if hook["handlerType"] == "command" {
-                        format!("Command: {}", hook["command"].as_str().unwrap_or(""))
-                    } else if hook["handlerType"] == "mcpTool" {
-                        format!(
-                            "MCP server: {}\\nTool: {}",
-                            hook["server"].as_str().unwrap_or(""),
-                            hook["tool"].as_str().unwrap_or("")
-                        )
-                    } else {
-                        format!("Handler: {}", hook["handlerType"].as_str().unwrap_or(""))
-                    };
-                    row = row.child(
-                        div()
-                            .px(px(28.))
-                            .pb(px(12.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(8.))
-                            .child(
-                                text(detail, 12., 16., 430., t.text)
-                                    .font_family(crate::MONO)
-                                    .whitespace_normal(),
-                            )
-                            .children(hook["matcher"].as_str().map(|matcher| {
-                                text(
-                                    format!("Matcher: {matcher}"),
-                                    12.,
-                                    16.,
-                                    430.,
-                                    t.text_secondary,
-                                )
-                            }))
-                            .child(text(
-                                format!(
-                                    "Timeout: {}s",
-                                    hook["timeoutSec"].as_u64().unwrap_or_default()
-                                ),
-                                12.,
-                                16.,
-                                430.,
-                                t.text_secondary,
-                            )),
-                    );
-                }
-                rows.push(row);
+                rows.push(self.hook_row((index, hook), &mut controls, state, t, window, cx));
             }
             body = body.child(card(
                 [div()
@@ -1703,16 +1585,190 @@ impl Manager {
         (body, controls)
     }
 
+    fn hook_row(
+        &self,
+        entry: (usize, &Value),
+        controls: &mut Vec<String>,
+        state: &State,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let (index, hook) = entry;
+        let key = hook["key"].as_str().unwrap_or("").to_owned();
+        let expanded = self.expanded_hooks.contains(&key);
+        let title = hook["statusMessage"]
+            .as_str()
+            .filter(|value| !value.trim().is_empty())
+            .map_or_else(
+                || format!("Hook {}", index + 1),
+                |status| format!("{} - {status}", index + 1),
+            );
+        let expand_id = format!("hook-expand-{key}");
+        controls.push(expand_id.clone());
+        let expand_key = key.clone();
+        let controls_row = Self::hook_controls(
+            (key.as_str(), hook, title.as_str()),
+            controls,
+            state,
+            t,
+            window,
+            cx,
+        );
+        let mut row = div().flex().flex_col().px(px(12.)).child(
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .py(px(8.))
+                .child(
+                    div()
+                        .id(SharedString::from(expand_id))
+                        .role(gpui::Role::Button)
+                        .aria_label(title.clone())
+                        .aria_expanded(expanded)
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(text(title, 13., 18., 430., t.text))
+                        .child(icon(
+                            if expanded {
+                                "chevron-down"
+                            } else {
+                                "chevron-right"
+                            },
+                            14.,
+                            t.text_secondary,
+                        ))
+                        .on_activate(window, cx, move |this, _, cx| {
+                            if !this.expanded_hooks.remove(&expand_key) {
+                                this.expanded_hooks.insert(expand_key.clone());
+                            }
+                            cx.notify();
+                        }),
+                )
+                .child(controls_row),
+        );
+        if expanded {
+            row = row.child(Self::hook_body(hook, t));
+        }
+        row
+    }
+
+    fn hook_controls(
+        details: (&str, &Value, &str),
+        controls: &mut Vec<String>,
+        state: &State,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let (key, hook, title) = details;
+        let managed = hook["isManaged"] == true;
+        let review = needs_review(hook);
+        let enabled = hook_enabled(hook);
+        let disabled = managed || review || state.pending;
+        let toggle_id = format!("hook-enabled-{key}");
+        controls.push(toggle_id.clone());
+        let toggle_key = key.to_owned();
+        let toggle = switch(SharedString::from(toggle_id), enabled, disabled, t)
+            .role(gpui::Role::Switch)
+            .aria_label(title.to_owned())
+            .aria_disabled(disabled)
+            .aria_toggled(if enabled {
+                gpui::Toggled::True
+            } else {
+                gpui::Toggled::False
+            })
+            .on_activate(window, cx, move |this, _, cx| {
+                if !managed && !review {
+                    dispatch(
+                        &this.state,
+                        Action::SetHookEnabled {
+                            key: toggle_key.clone(),
+                            enabled: !enabled,
+                        },
+                        cx,
+                    );
+                }
+            });
+        let mut controls_row = div().flex().items_center().gap(px(8.));
+        if !managed && review {
+            let id = format!("trust-{key}");
+            controls.push(id.clone());
+            let hash = hook["currentHash"].as_str().unwrap_or("").to_owned();
+            let trust_key = key.to_owned();
+            controls_row = controls_row.child(
+                action_button(id, "Trust", t)
+                    .aria_disabled(state.pending)
+                    .on_activate(window, cx, move |this, _, cx| {
+                        dispatch(
+                            &this.state,
+                            Action::TrustHooks(vec![(trust_key.clone(), hash.clone())]),
+                            cx,
+                        )
+                    }),
+            );
+        }
+        controls_row = controls_row.child(toggle);
+        controls_row
+    }
+
+    fn hook_body(hook: &Value, t: &Theme) -> Div {
+        let detail = if hook["handlerType"] == "command" {
+            format!("Command: {}", hook["command"].as_str().unwrap_or(""))
+        } else if hook["handlerType"] == "mcpTool" {
+            format!(
+                "MCP server: {}\\nTool: {}",
+                hook["server"].as_str().unwrap_or(""),
+                hook["tool"].as_str().unwrap_or("")
+            )
+        } else {
+            format!("Handler: {}", hook["handlerType"].as_str().unwrap_or(""))
+        };
+        div()
+            .px(px(28.))
+            .pb(px(12.))
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(
+                text(detail, 12., 16., 430., t.text)
+                    .font_family(crate::MONO)
+                    .whitespace_normal(),
+            )
+            .children(hook["matcher"].as_str().map(|matcher| {
+                text(
+                    format!("Matcher: {matcher}"),
+                    12.,
+                    16.,
+                    430.,
+                    t.text_secondary,
+                )
+            }))
+            .child(text(
+                format!(
+                    "Timeout: {}s",
+                    hook["timeoutSec"].as_u64().unwrap_or_default()
+                ),
+                12.,
+                16.,
+                430.,
+                t.text_secondary,
+            ))
+    }
+
     fn modal(
         &self,
-        title: String,
-        content: Div,
+        content: (String, Div),
         controls: Vec<gpui::FocusHandle>,
         t: &Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let pending = cx.global::<State>().pending;
+        let pending = self.state.read(cx).pending;
+        let (title, content) = content;
         gpui::deferred(
             div()
                 .absolute()
@@ -1786,8 +1842,7 @@ impl Manager {
         if let Some(form) = &self.marketplace_form {
             let controls = form.update(cx, |form, cx| form.controls(window, cx));
             return Some(self.modal(
-                "Add plugin marketplace".into(),
-                div().child(form.clone()),
+                ("Add plugin marketplace".into(), div().child(form.clone())),
                 controls,
                 t,
                 window,
@@ -1797,8 +1852,7 @@ impl Manager {
         if let Some(source) = &self.selected_hooks {
             let (content, controls) = self.hook_details(source, state, t, window, cx);
             return Some(self.modal(
-                hook_source_title(source, state),
-                content,
+                (hook_source_title(source, state), content),
                 control_handles(controls, window, cx),
                 t,
                 window,
@@ -1806,69 +1860,96 @@ impl Manager {
             ));
         }
         if let Some(name) = &self.marketplace {
-            let plugin_id = name.strip_prefix("plugin:");
-            let listed = match &state.plugins {
-                Load::Ready(value) => Some(value),
-                _ => None,
-            };
-            let affected = listed
-                .into_iter()
-                .flat_map(|value| array(value, "marketplaces"))
-                .filter(|marketplace| plugin_id.is_some() || marketplace["name"] == *name)
-                .flat_map(|marketplace| array(marketplace, "plugins"))
-                .filter(|plugin| plugin_id.is_none_or(|id| plugin["id"] == id))
-                .collect::<Vec<_>>();
-            let title = if let Some(id) = plugin_id {
-                format!(
-                    "Uninstall {}?",
-                    affected
-                        .iter()
-                        .find(|p| p["id"] == id)
-                        .map_or(id, |p| plugin_name(p))
-                )
-            } else {
-                format!("Remove \"{name}\"?")
-            };
-            let action = if state.operation_error.is_some() {
-                "Retry"
-            } else if plugin_id.is_some() {
-                "Uninstall"
-            } else if affected.is_empty() {
-                "Remove"
-            } else {
-                "Uninstall & remove"
-            };
-            let target = name.clone();
-            let plugin = affected.first().map(|value| (*value).clone());
-            let title_label = title.clone();
-            let pending = state.pending;
-            let confirm = div().w(px(448.)).p(px(24.)).flex().flex_col().gap(px(16.)).relative()
+            return Some(self.removal_dialog(name, state, t, window, cx));
+        }
+        self.menu
+            .as_ref()
+            .map(|menu| self.menu_overlay(menu, state, t, window, cx))
+    }
+
+    fn removal_dialog(
+        &self,
+        name: &str,
+        state: &State,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let plugin_id = name.strip_prefix("plugin:");
+        let listed = match &state.plugins {
+            Load::Ready(value) => Some(value),
+            _ => None,
+        };
+        let affected = listed
+            .into_iter()
+            .flat_map(|value| array(value, "marketplaces"))
+            .filter(|marketplace| plugin_id.is_some() || marketplace["name"] == name)
+            .flat_map(|marketplace| array(marketplace, "plugins"))
+            .filter(|plugin| plugin_id.is_none_or(|id| plugin["id"] == id))
+            .collect::<Vec<_>>();
+        let title = if let Some(id) = plugin_id {
+            format!(
+                "Uninstall {}?",
+                affected
+                    .iter()
+                    .find(|p| p["id"] == id)
+                    .map_or(id, |p| plugin_name(p))
+            )
+        } else {
+            format!("Remove \"{name}\"?")
+        };
+        let empty = affected.is_empty();
+        let action = match (state.operation_error.is_some(), plugin_id.is_some(), empty) {
+            (true, _, _) => "Retry",
+            (false, true, _) => "Uninstall",
+            (false, false, true) => "Remove",
+            (false, false, false) => "Uninstall & remove",
+        };
+        let target = name.to_owned();
+        let plugin = affected.first().map(|value| (*value).clone());
+        let title_label = title.clone();
+        let pending = state.pending;
+        let confirm = div().w(px(448.)).p(px(24.)).flex().flex_col().gap(px(16.)).relative()
                 .children(state.operation_error.as_ref().map(|error| text(error.clone(), 13., 18., 430., t.text_error).whitespace_normal()))
                 .child(text(title, 18., 24., 600., t.text))
-                .child(text(if affected.is_empty() { "Its plugins will not appear or be available for installation unless you add it again" }
+                .child(text(if empty { "Its plugins will not appear or be available for installation unless you add it again" }
                     else { "The following plugins will be uninstalled, and can't be re-installed unless you add this marketplace again." }, 13., 18., 430., t.text_secondary).whitespace_normal())
                 .children(affected.iter().map(|plugin| text(plugin_name(plugin).to_owned(), 14., 20., 430., t.text)))
                 .child(div().flex().justify_end().gap(px(8.))
                     .child(action_button("cancel-removal", "Cancel", t).aria_disabled(pending).on_activate(window, cx, move |this, window, cx| { if !pending { this.close_modal(window, cx); } }))
-                    .child(action_button("confirm-removal", action, t).aria_disabled(pending).on_activate(window, cx, move |_, _, cx| {
+                    .child(action_button("confirm-removal", action, t).aria_disabled(pending).on_activate(window, cx, move |this, _, cx| {
                         if pending { return; }
-                        if let Some(plugin) = &plugin { if target.starts_with("plugin:") { dispatch(Action::RemovePlugin(plugin.clone()), cx); } else { dispatch(Action::RemoveMarketplace(target.clone()), cx); } }
-                        else { dispatch(Action::RemoveMarketplace(target.clone()), cx); }
+                        this.dispatch_removal(&target, plugin.as_ref(), cx);
                     })));
-            return Some(self.modal(
-                title_label,
-                confirm,
-                control_handles(
-                    vec!["cancel-removal".into(), "confirm-removal".into()],
-                    window,
-                    cx,
-                ),
-                t,
+        self.modal(
+            (title_label, confirm),
+            control_handles(
+                vec!["cancel-removal".into(), "confirm-removal".into()],
                 window,
                 cx,
-            ));
-        }
-        let menu = self.menu.as_ref()?;
+            ),
+            t,
+            window,
+            cx,
+        )
+    }
+
+    fn dispatch_removal(&self, target: &str, plugin: Option<&Value>, cx: &mut App) {
+        let action = match plugin {
+            Some(plugin) if target.starts_with("plugin:") => Action::RemovePlugin(plugin.clone()),
+            _ => Action::RemoveMarketplace(target.to_owned()),
+        };
+        dispatch(&self.state, action, cx);
+    }
+
+    fn menu_overlay(
+        &self,
+        menu: &Menu,
+        state: &State,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let options = match menu {
             Menu::Add => vec![
                 ("Create plugin", None),
@@ -1920,7 +2001,9 @@ impl Manager {
                                 this.open_form(None, serde_json::json!({"command":""}), cx);
                             } else {
                                 this.begin_modal(window, cx);
-                                let form = cx.new(marketplace_form::MarketplaceForm::new);
+                                let form = cx.new(|cx| {
+                                    marketplace_form::MarketplaceForm::new(this.state.clone(), cx)
+                                });
                                 cx.subscribe(&form, |this, _, _: &form::Close, cx| {
                                     this.marketplace_form = None;
                                     cx.notify();
@@ -1931,14 +2014,51 @@ impl Manager {
                             cx.notify();
                         })
                 }));
-        Some(
-            div()
-                .absolute()
-                .top(px(120.))
-                .right(px(40.))
-                .child(popover(t, 260., |d| d.child(content)))
-                .into_any_element(),
-        )
+        div()
+            .absolute()
+            .top(px(120.))
+            .right(px(40.))
+            .child(popover(t, 260., |d| d.child(content)))
+            .into_any_element()
+    }
+
+    fn select_available_tab(&mut self, state: &State) {
+        let counts = self.tab_counts(state);
+        let plugins_enabled = state.configuration["config"]["features"]["plugins"] != false;
+        if !plugins_enabled {
+            self.tab = Tab::Mcps;
+        } else if self.tab != Tab::Mcps
+            && counts
+                .iter()
+                .any(|(tab, _, count)| *tab == self.tab && *count == 0)
+            && !matches!(&state.plugins, Load::Loading)
+        {
+            self.tab = counts
+                .iter()
+                .find(|(_, _, count)| *count > 0)
+                .map_or(Tab::Mcps, |(tab, _, _)| *tab);
+        }
+    }
+
+    fn extension_body(
+        &self,
+        state: &State,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if let Some(form) = &self.form {
+            form.clone().into_any_element()
+        } else {
+            match self.tab {
+                Tab::Plugins => self.plugin_list(state, t, window, cx),
+                Tab::Apps => self.app_list(state, t, window, cx),
+                Tab::Mcps => self.mcp_list(state, t, window, cx),
+                Tab::Skills => self.skill_list(state, t, window, cx),
+                Tab::Marketplace => self.marketplace_list(state, t, window, cx),
+            }
+            .into_any_element()
+        }
     }
 }
 
@@ -2038,7 +2158,7 @@ fn hook_event(event: &str) -> (&str, &'static str) {
 
 impl Render for Manager {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let state = cx.try_global::<State>().cloned().unwrap_or_default();
+        let state = self.state.read(cx).clone();
         let t = cx.theme().clone();
         let hooks = self.section == "Hooks";
         if self.marketplace.is_none()
@@ -2049,21 +2169,7 @@ impl Render for Manager {
             focus.focus(window, cx);
         }
         if !hooks && !state.pending {
-            let counts = self.tab_counts(&state);
-            let plugins_enabled = state.configuration["config"]["features"]["plugins"] != false;
-            if !plugins_enabled {
-                self.tab = Tab::Mcps;
-            } else if self.tab != Tab::Mcps
-                && counts
-                    .iter()
-                    .any(|(tab, _, count)| *tab == self.tab && *count == 0)
-                && !matches!(&state.plugins, Load::Loading)
-            {
-                self.tab = counts
-                    .iter()
-                    .find(|(_, _, count)| *count > 0)
-                    .map_or(Tab::Mcps, |(tab, _, _)| *tab);
-            }
+            self.select_available_tab(&state);
         }
         let heading = if hooks { "Hooks" } else { "Plugins" };
         let subtitle = if hooks {
@@ -2110,9 +2216,9 @@ impl Render for Manager {
                     .justify_center()
                     .when(disabled, |d| d.opacity(0.4))
                     .child(icon("diff-refresh", 16., t.text_secondary))
-                    .on_activate(window, cx, move |_, _, cx| {
+                    .on_activate(window, cx, move |this, _, cx| {
                         if !disabled {
-                            dispatch(Action::ReloadHooks, cx);
+                            dispatch(&this.state, Action::ReloadHooks, cx);
                         }
                     }),
             );
@@ -2182,17 +2288,8 @@ impl Render for Manager {
         }
         let body = if hooks {
             self.hooks(&state, &t, window, cx).into_any_element()
-        } else if let Some(form) = &self.form {
-            form.clone().into_any_element()
         } else {
-            match self.tab {
-                Tab::Plugins => self.plugin_list(&state, &t, window, cx),
-                Tab::Apps => self.app_list(&state, &t, window, cx),
-                Tab::Mcps => self.mcp_list(&state, &t, window, cx),
-                Tab::Skills => self.skill_list(&state, &t, window, cx),
-                Tab::Marketplace => self.marketplace_list(&state, &t, window, cx),
-            }
-            .into_any_element()
+            self.extension_body(&state, &t, window, cx)
         };
         content = content.child(body);
         div()
