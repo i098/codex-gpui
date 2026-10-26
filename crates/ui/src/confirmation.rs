@@ -21,6 +21,8 @@ pub struct Confirmation {
     controls: [FocusHandle; 2],
     return_focus: Option<FocusHandle>,
     completed: bool,
+    opt_out: Option<(SharedString, bool, FocusHandle)>,
+    error: Option<SharedString>,
 }
 
 impl EventEmitter<Outcome> for Confirmation {}
@@ -51,6 +53,8 @@ impl Confirmation {
             controls,
             return_focus,
             completed: false,
+            opt_out: None,
+            error: None,
         }
     }
 
@@ -62,6 +66,29 @@ impl Confirmation {
     pub fn cancel_label(mut self, label: impl Into<SharedString>) -> Self {
         self.cancel_label = label.into();
         self
+    }
+
+    pub fn with_opt_out(mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
+        self.opt_out = Some((label.into(), false, cx.focus_handle()));
+        self
+    }
+
+    pub fn opt_out_checked(&self) -> bool {
+        self.opt_out
+            .as_ref()
+            .is_some_and(|(_, checked, _)| *checked)
+    }
+
+    pub fn failed(
+        &mut self,
+        error: impl Into<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.error = Some(error.into());
+        self.completed = false;
+        self.controls[1].focus(window, cx);
+        cx.notify();
     }
 
     fn finish(&mut self, outcome: Outcome, window: &mut Window, cx: &mut Context<Self>) {
@@ -81,13 +108,35 @@ impl Confirmation {
         match key.key.as_str() {
             "escape" => self.finish(Outcome::Cancel, window, cx),
             "tab" if !key.modifiers.platform && !key.modifiers.control && !key.modifiers.alt => {
-                let index = usize::from(self.controls[0].is_focused(window));
-                self.controls[index].focus(window, cx);
+                let count = 2 + usize::from(self.opt_out.is_some());
+                let current = self
+                    .controls
+                    .iter()
+                    .position(|focus| focus.is_focused(window))
+                    .unwrap_or(2);
+                let next = if key.modifiers.shift {
+                    (current + count - 1) % count
+                } else {
+                    (current + 1) % count
+                };
+                if next < 2 {
+                    self.controls[next].focus(window, cx);
+                } else if let Some((_, _, focus)) = &self.opt_out {
+                    focus.focus(window, cx);
+                }
                 cx.notify();
             }
             "enter" | "space"
                 if !key.modifiers.platform && !key.modifiers.control && !key.modifiers.alt =>
             {
+                if let Some((_, checked, focus)) = &mut self.opt_out
+                    && focus.is_focused(window)
+                {
+                    *checked = !*checked;
+                    cx.notify();
+                    cx.stop_propagation();
+                    return;
+                }
                 let outcome = if self.controls[1].is_focused(window) {
                     Outcome::Confirm
                 } else {
@@ -105,6 +154,41 @@ impl Render for Confirmation {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let width = 420_f32.min(f32::from(window.viewport_size().width) - 32.);
+        let checkbox = self.opt_out.as_ref().map(|(label, checked, focus)| {
+            div()
+                .id("confirmation-opt-out")
+                .role(gpui::Role::CheckBox)
+                .aria_label(label.clone())
+                .aria_toggled(if *checked {
+                    gpui::Toggled::True
+                } else {
+                    gpui::Toggled::False
+                })
+                .track_focus(focus)
+                .h(px(18.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .size(px(14.))
+                        .rounded(px(5.))
+                        .border_1()
+                        .border_color(t.border)
+                        .when(*checked, |d| {
+                            d.bg(t.text)
+                                .child(text("✓", 12., 12., 600., t.menu_background))
+                        }),
+                )
+                .child(text(label.clone(), 13., 19., 430., t.text))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if let Some((_, checked, focus)) = &mut this.opt_out {
+                        *checked = !*checked;
+                        focus.focus(window, cx);
+                        cx.notify();
+                    }
+                }))
+        });
         let buttons = [self.cancel_label.clone(), self.confirm_label.clone()]
             .into_iter()
             .enumerate()
@@ -215,6 +299,12 @@ impl Render for Confirmation {
                                         .whitespace_normal(),
                                     ),
                             )
+                            .children(
+                                self.error
+                                    .clone()
+                                    .map(|error| text(error, 13., 18., 430., t.text_error)),
+                            )
+                            .children(checkbox)
                             .child(div().flex().justify_end().gap(px(8.)).children(buttons)),
                     ),
             )
