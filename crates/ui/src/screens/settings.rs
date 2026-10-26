@@ -265,6 +265,9 @@ pub mod usage;
 #[path = "storage.rs"]
 pub mod storage;
 
+#[path = "settings_integrations.rs"]
+pub mod integrations;
+
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
@@ -281,7 +284,8 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     }
     let config: ConfigReadResponse = fixture::response("readback.jsonl", "config/read", 0);
     let skills: Value = fixture::response("readback.jsonl", "skills/list", 0);
-    let (shell, _) = shell(&config.config, &skills, None, cx);
+    let integrations = cx.new(|_| integrations::State::default());
+    let (shell, _) = shell(&config.config, &skills, None, integrations, cx);
     shell.update(cx, |shell, _| shell.can_go_back = true);
     shell.into()
 }
@@ -301,10 +305,11 @@ pub fn shell(
     config: &Value,
     skills: &Value,
     section: Option<&'static str>,
+    integrations: Entity<integrations::State>,
     cx: &mut App,
 ) -> (Entity<Shell>, Entity<SettingsPage>) {
     let page = cx.new(|cx| {
-        let mut page = SettingsPage::new(config, skills, cx);
+        let mut page = SettingsPage::new(config, skills, integrations, cx);
         if let Some(label) = section {
             page.section = label;
         }
@@ -393,12 +398,18 @@ pub struct SettingsPage {
     /// `projectlessWorkspaceRoot` default: `~/Documents/Codex`.
     projectless_root: String,
     pending_instructions: Vec<SettingChanged>,
+    integrations: Entity<integrations::State>,
     pub personalization: Entity<personalization::Personalization>,
     toaster: Option<Entity<crate::toast::Toaster>>,
 }
 
 impl SettingsPage {
-    fn new(config: &Value, skills: &Value, cx: &mut Context<Self>) -> Self {
+    fn new(
+        config: &Value,
+        skills: &Value,
+        integrations: Entity<integrations::State>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         // The fixture's home directory, from the user skills under `~/.agents`.
         let home = skills["data"][0]["skills"]
             .as_array()
@@ -419,6 +430,7 @@ impl SettingsPage {
             values,
             projectless_root,
             pending_instructions: Vec::new(),
+            integrations,
             personalization: cx.new(personalization::Personalization::new),
             toaster: None,
         }
@@ -1429,6 +1441,14 @@ impl Render for SettingsPane {
         if section == "Storage" {
             return self.storage.clone().into_any_element();
         }
+        if matches!(section, "Plugins" | "Hooks") {
+            return integrations::render(
+                section,
+                self.page.read(cx).integrations.clone(),
+                window,
+                cx,
+            );
+        }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
             "General" => self.general(&t, window, cx),
@@ -1632,7 +1652,12 @@ fn description(s: &'static str, t: &Theme) -> Div {
 /// paints the track and thumb into one `saveLayerAlpha(153)`.
 /// Toggling moves the thumb 2 px -> 14 px and fades the track colour, both 150 ms `ease-out`
 /// (`refs/interactions/ms6a.json`); the tracks stay active under reduced motion.
-pub(super) fn switch(id: &'static str, on: bool, disabled: bool, t: &Theme) -> Stateful<Div> {
+pub(super) fn switch(
+    id: impl Into<gpui::ElementId>,
+    on: bool,
+    disabled: bool,
+    t: &Theme,
+) -> Stateful<Div> {
     let (track_off, track_on) = (t.switch_track, t.switch_track_checked);
     let thumb = shapes::Decoration {
         radius: Corners::all(px(9999.)),

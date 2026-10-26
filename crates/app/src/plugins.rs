@@ -389,7 +389,12 @@ impl Root {
         }
     }
 
-    fn plugin_prefill(&mut self, prompt: &str, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn plugin_prefill(
+        &mut self,
+        prompt: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.new_chat(window, cx);
         let composer = self.home.read(cx).composer.clone();
         composer.update(cx, |composer, cx| composer.set_text(prompt, cx));

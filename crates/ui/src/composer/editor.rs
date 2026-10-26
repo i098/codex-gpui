@@ -685,6 +685,7 @@ impl Composer {
     }
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
+        let compact_settings = self.request_parent.is_none() && self.request_compact;
         div()
             .px(px(if self.search_field {
                 0.
@@ -742,12 +743,14 @@ impl Composer {
                         d.when(
                             self.content.is_empty()
                                 && self.embedded_field.is_none()
-                                && !self.search_field,
+                                && !self.search_field
+                                && !compact_settings,
                             |d| d.opacity(0.5),
                         )
                         .when(
-                            self.embedded_field.is_none() && self.plain_field != Some(true)
-                                || self.search_field,
+                            (self.embedded_field.is_none() && self.plain_field != Some(true)
+                                || self.search_field)
+                                && !compact_settings,
                             |d| d.layer(),
                         )
                     })
