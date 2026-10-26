@@ -1397,6 +1397,38 @@ Control-Shift-G opens the existing Changes tab.
 The [original/native picker pair](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/9a2941014013a3237d6c7389b13d9c4a3a00e15a0eba9abb/report.html) uses a 520×134 CSS-pixel crop at scale 2.
 It has zero outside-text differences and 45 differing pixels inside 147631 text pixels (0.0305%).
 
+## Storage settings (ST-159, ST-160, ST-161)
+
+`Settings > Storage` measures the app-server's Codex home without following file symlinks.
+The usage bar separates chats, subagents, archived chats, unclassified chats, worktrees, and other files.
+Refresh reports completed categories separately from a failed or active scan.
+It keeps cached category values until each replacement measurement completes.
+The page uses actual file lengths and app-server thread metadata.
+
+`Clean up old chats` requires descendant discovery support.
+The review starts with archived chats last updated more than 90 days ago.
+The age filter also offers 30, 180, and 365 days; the scope filter also offers all chats.
+Only inactive, non-ephemeral roots and complete, inactive descendant trees can enter the selection.
+The final confirmation warns that deletion is permanent.
+Before deleting, the app reloads the inventory, discovers descendants, and checks each thread's update time and active state.
+It skips changed trees and reports deleted, skipped, and failed root counts.
+The deletion request goes through `thread/delete`; the UI never removes rollout files directly.
+The cleanup lock and result toast survive navigation away from Storage.
+Keyboard activation runs once per completed Enter or Space press.
+Deleting a chat clears its cached view, so Back cannot reuse the deleted chat.
+
+The management controls route through `Root::open_settings_section` for Worktrees and Archived chats.
+Their destination pages remain owned by their separate settings families.
+The focused checks run with `cargo test -p bridge -p ui --lib storage -- --test-threads=1`.
+They cover measured categories, partial metadata, symlink exclusion, descendant safety, version eligibility, cached refresh state, and keyboard cancellation.
+The `storage_capture` test also checks cached-view invalidation after a deletion notification.
+The UI unit captures use synthetic interaction data and do not establish pixel parity.
+The ignored `storage_capture` integration test captures the real Root and can apply the unchanged parity gate.
+Set `CGX_STORAGE_HOME` to an owned fixture, `CGX_STORAGE_CAPTURE` to its output directory, and `CGX_STORAGE_REFS` to the original references.
+`CGX_STORAGE_REPLAY` supplies additional recorded read responses; `CGX_STORAGE_REVIEW_Y` selects the cleanup-dialog capture.
+`CGX_STORAGE_ACTIONS` reads an ordered JSON array of `[name, [x, y]]` clicks for additional full-window captures.
+Compare those extra images with their matching original states; this option does not replace the default state's gate.
+
 ## Keyboard preferences and app actions
 
 The Keyboard shortcuts page uses the original Codex command registry and flat-card layout.

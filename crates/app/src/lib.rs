@@ -23,6 +23,7 @@ mod search;
 mod section_actions;
 mod settings_subtrees;
 mod signin;
+mod storage;
 pub mod updater;
 mod usage;
 mod window_shell;
@@ -4914,6 +4915,11 @@ impl Root {
                 "thread/started" if params["thread"]["ephemeral"] != true => {
                     if let Ok(n) = serde_json::from_value::<ThreadStartedNotification>(params) {
                         self.add_thread(&n.thread, cx);
+                    }
+                }
+                "thread/deleted" => {
+                    if let Some(id) = params["threadId"].as_str() {
+                        storage::thread_deleted(self, id, cx);
                     }
                 }
                 // The row's spinner follows the thread status.

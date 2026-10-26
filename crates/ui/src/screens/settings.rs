@@ -263,6 +263,9 @@ pub mod subtrees;
 #[path = "settings/usage.rs"]
 pub mod usage;
 
+#[path = "storage.rs"]
+pub mod storage;
+
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
@@ -392,6 +395,7 @@ pub struct SettingsPage {
     projectless_root: String,
     pending_instructions: Vec<SettingChanged>,
     pub personalization: Entity<personalization::Personalization>,
+    toaster: Option<Entity<crate::toast::Toaster>>,
 }
 
 impl SettingsPage {
@@ -417,7 +421,12 @@ impl SettingsPage {
             projectless_root,
             pending_instructions: Vec::new(),
             personalization: cx.new(personalization::Personalization::new),
+            toaster: None,
         }
+    }
+
+    pub fn set_toaster(&mut self, toaster: Entity<crate::toast::Toaster>) {
+        self.toaster = Some(toaster);
     }
 
     fn get(&self, path: &str) -> &Value {
@@ -725,6 +734,7 @@ pub struct SettingsPane {
     /// Pointer over that menu: a press there is not a click outside.
     menu_hovered: bool,
     git_fields: Vec<(&'static str, Entity<Composer>)>,
+    storage: Entity<storage::StoragePage>,
 }
 
 /// `Confirm before closing a window` options, default first.
@@ -754,6 +764,7 @@ impl SettingsPane {
         })
         .detach();
         Self {
+            storage: cx.new(|cx| storage::StoragePage::new(page.clone(), cx)),
             page,
             layer: Layer::default(),
             open_select: None,
@@ -1461,6 +1472,9 @@ impl Render for SettingsPane {
                 .size_full()
                 .child(self.page.read(cx).personalization.clone())
                 .into_any_element();
+        }
+        if section == "Storage" {
+            return self.storage.clone().into_any_element();
         }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
