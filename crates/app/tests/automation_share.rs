@@ -76,7 +76,11 @@ fn share_copies_the_task_link_and_confirms_once() -> Result<()> {
             .is_some_and(|sidebar| sidebar.read(cx).open_menu().is_none())),
         "Share must close the menu"
     );
-    for keys in ["end up enter", "home down down down space", "home up up enter"] {
+    for keys in [
+        "end up enter",
+        "home down down down space",
+        "home up up enter",
+    ] {
         fx.cx.update(|cx| {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string("not a task link".into()));
         });
