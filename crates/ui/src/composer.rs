@@ -18,7 +18,7 @@ use gpui::{
     ElementId, ElementInputHandler, Entity, EntityInputHandler, ExternalPaths, FocusHandle,
     Focusable, GlobalElementId, Hsla, InspectorElementId, InteractiveElement, IntoElement,
     KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-    PathPromptOptions, Pixels, Point, Render, SharedString, Size, Stateful,
+    PathPromptOptions, Pixels, Point, Render, ScrollHandle, SharedString, Size, Stateful,
     StatefulInteractiveElement, Style, Styled, Task, TextAlign, TextRun, UTF16Selection,
     UnderlineStyle, Window, WrappedLine, actions, deferred, div, fill, point,
     prelude::FluentBuilder as _, px, relative, size,
@@ -211,7 +211,7 @@ const FONT_SIZE: Pixels = px(14.);
 const LINE_HEIGHT: Pixels = px(20.);
 /// Smallest content height the textarea grip resizes to: the original's `min-h-24` (96 px)
 /// border box less its 1 px borders and 8 px vertical padding.
-const MIN_TEXTAREA_HEIGHT: Pixels = px(78.);
+const MIN_TEXTAREA_CONTENT_HEIGHT: Pixels = px(78.);
 
 /// Composer keys (inventory §7.2): Enter sends, Shift+Enter inserts a newline. Edit menu
 /// commands (`crate::Cut`, `Copy`, `Paste`, `SelectAll`) are bound by the app.
@@ -587,6 +587,8 @@ pub enum QueueAction {
     Delete(String),
     /// `Edit message`: the queued submission with this id returns to the composer.
     Edit(String),
+    /// `Open in side chat`: the queued submission with this id continues in a side chat.
+    SideChat(String),
     /// `Turn off queueing` / `Turn on queueing`: the new `Follow-up behavior` is queue (`true`).
     Queueing(bool),
 }
@@ -602,6 +604,7 @@ pub struct QueuedMessage {
 
 const QUEUE_ACTIONS: &str = "Queued message actions";
 const QUEUE_EDIT: &str = "queuedEdit";
+const QUEUE_SIDE_CHAT: &str = "queuedSideChat";
 const QUEUE_SWITCH: &str = "queuedQueueing";
 const QUEUE_MENU_WIDTH: f32 = 220.;
 
@@ -682,6 +685,9 @@ pub struct Composer {
     queue_mode: bool,
     /// The app-server's queued follow-ups of the open thread, shown in a tray over the card.
     queued: Vec<QueuedMessage>,
+    /// The app can continue a queued row in a side chat: the row's menu offers `Open in side
+    /// chat`, as the original does when its host passes `onOpenSideChatMessage`.
+    side_chat: bool,
     queue_pending: bool,
     on_submit: Option<SubmitHandler>,
     on_cancel_edit: Option<CancelEditHandler>,
@@ -689,7 +695,11 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    document_field: bool,
+    search_field: bool,
     field_min_height: Pixels,
+    field_scroll: Option<ScrollHandle>,
+    field_autoscroll: bool,
     /// The grip drag of a plain multiline field: pointer y and field height at its start.
     field_resize: Option<(Pixels, Pixels)>,
     dictation: Option<dictation::Active>,
@@ -767,6 +777,7 @@ impl Composer {
             stop_armed: None,
             queue_mode: false,
             queued: Vec::new(),
+            side_chat: false,
             queue_pending: false,
             on_submit: None,
             on_cancel_edit: None,
@@ -774,7 +785,11 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            document_field: false,
+            search_field: false,
             field_min_height: px(48.),
+            field_scroll: None,
+            field_autoscroll: false,
             field_resize: None,
             dictation: None,
             dictation_error: None,
@@ -790,8 +805,18 @@ impl Composer {
     ) -> Self {
         let mut editor = Self::new(placeholder, false, cx);
         editor.plain_field = Some(multiline);
+        if multiline {
+            editor.field_scroll = Some(ScrollHandle::new());
+            editor.field_min_height = MIN_TEXTAREA_CONTENT_HEIGHT;
+        }
         editor.set_text(value, cx);
         editor
+    }
+
+    pub fn search_field(placeholder: &'static str, cx: &mut Context<Self>) -> Self {
+        let mut field = Self::settings_field(placeholder, "", false, cx);
+        field.search_field = true;
+        field
     }
 
     pub fn embedded_field(
@@ -814,6 +839,11 @@ impl Composer {
         self
     }
 
+    pub fn set_document_style(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.document_field = enabled;
+        cx.notify();
+    }
+
     /// 13 px text and 10 px insets: a settings textarea, a sign-in field, or a compact request
     /// field that is not secret.
     fn compact_text(&self) -> bool {
@@ -822,7 +852,9 @@ impl Composer {
     }
 
     fn editor_font_size(&self) -> Pixels {
-        if let Some(field) = self.embedded_field {
+        if self.document_field {
+            px(14.)
+        } else if let Some(field) = self.embedded_field {
             field.font_size
         } else if self.compact_text() {
             px(13.)
@@ -832,15 +864,23 @@ impl Composer {
     }
 
     fn editor_line_height(&self) -> Pixels {
-        if let Some(field) = self.embedded_field {
+        if self.document_field {
+            px(23.59375)
+        } else if let Some(field) = self.embedded_field {
             field.line_height
-        } else if self.plain_field == Some(true) {
-            px(130. / 7.)
+        } else if self.search_field || self.plain_field == Some(true) {
+            px(18.571_428)
         } else {
             LINE_HEIGHT
         }
     }
 
+    pub fn settings_search(placeholder: &'static str, cx: &mut Context<Self>) -> Self {
+        let mut editor = Self::settings_field(placeholder, "", false, cx);
+        editor.search_field = true;
+        editor.request_compact = true;
+        editor
+    }
     pub fn field_text(&self) -> &str {
         &self.content
     }
@@ -1054,6 +1094,10 @@ impl Composer {
         &self.queued
     }
 
+    pub fn set_side_chat(&mut self, available: bool) {
+        self.side_chat = available;
+    }
+
     /// `Edit message`: the queued draft returns to the editor. A draft already there stays
     /// below it ([`Self::restore_text`]) and the images join the current attachments.
     pub fn load_queued(
@@ -1080,13 +1124,15 @@ impl Composer {
     ) {
         match id {
             QUEUE_EDIT => cx.emit(QueueAction::Edit(subject)),
+            QUEUE_SIDE_CHAT => cx.emit(QueueAction::SideChat(subject)),
             QUEUE_SWITCH => cx.emit(QueueAction::Queueing(!self.queue_mode)),
             _ => self.activate_context_item(id, subject, window, cx),
         }
     }
 
-    /// The row's `Queued message actions` menu (`composer.queuedMessage.more`): `Edit message`
-    /// and the follow-up behavior switch, at the pointer like the editor's context menu.
+    /// The row's `Queued message actions` menu (`composer.queuedMessage.more`): `Edit message`,
+    /// `Open in side chat` where the app offers it, and the follow-up behavior switch, at the
+    /// pointer like the editor's context menu.
     fn open_queue_menu(
         &mut self,
         id: &str,
@@ -1097,18 +1143,19 @@ impl Composer {
         use crate::screens::thread::view::menu::{ContextMenu, Item};
         self.menu = None;
         self.slash.reset();
-        let items = vec![
-            Item::new(QUEUE_EDIT, "Edit message", true),
-            Item::new(
-                QUEUE_SWITCH,
-                if self.queue_mode {
-                    "Turn off queueing"
-                } else {
-                    "Turn on queueing"
-                },
-                true,
-            ),
-        ];
+        let mut items = vec![Item::new(QUEUE_EDIT, "Edit message", true)];
+        if self.side_chat {
+            items.push(Item::new(QUEUE_SIDE_CHAT, "Open in side chat", true));
+        }
+        items.push(Item::new(
+            QUEUE_SWITCH,
+            if self.queue_mode {
+                "Turn off queueing"
+            } else {
+                "Turn on queueing"
+            },
+            true,
+        ));
         // The original's dropdown is `align: end` under the button: the menu's right edge
         // meets the button's.
         let at = gpui::point(at.x - px(QUEUE_MENU_WIDTH - 12.), at.y + px(4.));
@@ -1167,7 +1214,7 @@ impl Composer {
                 .aria_disabled(self.queue_pending)
                 .focusable()
                 .tab_index(0)
-                .focus_visible(menu::trigger_focus)
+                .focus_visible(crate::focus::trigger_focus)
                 .opacity(if self.queue_pending { 0.4 } else { 1. })
                 .when(!self.queue_pending, |d| d.hover(|s| s.bg(t.ghost_hover)))
                 .child(match action {
@@ -1213,7 +1260,7 @@ impl Composer {
                 .aria_disabled(self.queue_pending)
                 .focusable()
                 .tab_index(0)
-                .focus_visible(menu::trigger_focus)
+                .focus_visible(crate::focus::trigger_focus)
                 .opacity(if self.queue_pending { 0.4 } else { 1. })
                 .when(!self.queue_pending, |d| d.hover(|s| s.bg(t.ghost_hover)))
                 .child(icon("diff-more", 14., t.text_tertiary))
@@ -1550,6 +1597,8 @@ impl Composer {
             && let Some(cancel) = self.on_cancel_edit.clone()
         {
             cancel(window, cx);
+        } else if self.plain_field.is_some() {
+            cx.propagate();
         }
     }
 
@@ -2080,14 +2129,38 @@ impl Render for Composer {
             );
         }
         if self.plain_field.is_some() {
+            if self.document_field {
+                return div().size_full().child(
+                    card.size_full().child(
+                        div()
+                            .id("document-scroll")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(self.field_scroll.as_ref().expect("document scroll"))
+                            .child(self.editor(cx).px_0().py_0()),
+                    ),
+                );
+            }
             let card = if self.plain_field == Some(true) {
                 let border = if self.focus_handle.is_focused(window) {
                     gpui::rgb(0x3a83f7).into()
                 } else {
                     t.border
                 };
-                card.py(px(9.))
-                    .px(px(1.))
+                let scroll = self
+                    .field_scroll
+                    .as_ref()
+                    .expect("multiline field scroll")
+                    .clone();
+                let line_height = self.editor_line_height();
+                let mut content_height = px(0.);
+                let scrolling = self.lines.iter().any(|line| {
+                    content_height += line.size(line_height).height;
+                    content_height > self.field_min_height
+                });
+                card.px(px(1.))
+                    .py(px(1.))
+                    .top_layer()
                     .child(shapes::decoration(shapes::Decoration {
                         radius: Corners::all(px(10.)),
                         corner: shapes::Corner::Squircle,
@@ -2095,10 +2168,72 @@ impl Render for Composer {
                         border: Some((px(1.), border)),
                         ..Default::default()
                     }))
+                    .child(
+                        div()
+                            .id("textarea-scroll")
+                            .h(self.field_min_height + px(16.))
+                            .overflow_y_scroll()
+                            .track_scroll(&scroll)
+                            .child(
+                                div()
+                                    .py(px(8.))
+                                    .when(scrolling, |content| content.top_layer())
+                                    .child(self.editor(cx)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("textarea-resize")
+                            .absolute()
+                            .right_0()
+                            .bottom_0()
+                            .size(px(16.))
+                            .cursor(CursorStyle::ResizeUpDown)
+                            .child(icon("textarea-resize", 16., t.text))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                                    this.field_resize =
+                                        Some((event.position.y, this.field_min_height));
+                                    this.focus_handle.focus(window, cx);
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            ),
+                    )
+                    .when_some(self.field_resize, |card, (start, height)| {
+                        let moved = cx.entity().downgrade();
+                        let released = moved.clone();
+                        card.child(crate::drag_layer(
+                            move |_, window, cx| {
+                                let next = (height + window.mouse_position().y - start)
+                                    .max(MIN_TEXTAREA_CONTENT_HEIGHT);
+                                moved
+                                    .update(cx, |this, cx| {
+                                        if this.field_min_height != next {
+                                            this.field_min_height = next;
+                                            this.field_autoscroll = true;
+                                            cx.notify();
+                                        }
+                                    })
+                                    .ok();
+                            },
+                            move |cx| {
+                                released
+                                    .update(cx, |this, cx| {
+                                        this.field_resize = None;
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            },
+                        ))
+                    })
             } else {
                 card.key_context(KEY_CONTEXT)
                     .when(
-                        self.request_parent.is_none() && !self.request_compact,
+                        self.request_parent.is_none()
+                            && !self.request_compact
+                            && !self.search_field,
                         |d| {
                             d.border_1()
                                 .border_color(t.border)
@@ -2109,8 +2244,6 @@ impl Render for Composer {
                         },
                     )
                     .when(self.request_parent.is_none() && self.request_compact, |d| {
-                        // The sign-in `input`: `rounded-md bg-primary-soft border
-                        // border-primary-outline focus:border-ring`, `--codex-corner-shape`.
                         d.px(px(1.))
                             .py(px(8.))
                             .child(shapes::decoration(shapes::Decoration {
@@ -2165,63 +2298,19 @@ impl Render for Composer {
                     )
                     .aria_placeholder(self.placeholder.clone())
                     .when(!self.secret, |d| d.aria_value(self.content.clone()))
+                    .child(
+                        self.editor(cx)
+                            .when(self.request_number, |editor| editor.pr(px(30.))),
+                    )
+                    .when(self.request_number, |d| {
+                        d.child(self.request_number_stepper(&t, cx))
+                    })
             };
-            let card = card
-                .child(
-                    self.editor(cx)
-                        .when(self.request_number, |editor| editor.pr(px(30.))),
-                )
-                .when(self.request_number, |d| {
-                    d.child(self.request_number_stepper(&t, cx))
-                });
-            if self.plain_field != Some(true) {
-                return div().w_full().child(card);
-            }
-            // The textarea's `resize: vertical` grip, in its border box's corner.
-            let grip = div()
-                .id("textarea-resize")
-                .absolute()
-                .right_0()
-                .bottom_0()
-                .size(px(16.))
-                .cursor(CursorStyle::ResizeUpDown)
-                .child(icon("textarea-resize", 16., t.text))
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                        this.field_resize = Some((event.position.y, this.field_min_height));
-                        this.focus_handle.focus(window, cx);
-                        cx.stop_propagation();
-                        cx.notify();
-                    }),
-                );
-            let drag = self.field_resize.map(|(start, height)| {
-                let moved = cx.entity().downgrade();
-                let released = moved.clone();
-                crate::drag_layer(
-                    move |_, window, cx| {
-                        let next =
-                            (height + window.mouse_position().y - start).max(MIN_TEXTAREA_HEIGHT);
-                        moved
-                            .update(cx, |this, cx| {
-                                if this.field_min_height != next {
-                                    this.field_min_height = next;
-                                    cx.notify();
-                                }
-                            })
-                            .ok();
-                    },
-                    move |cx| {
-                        released
-                            .update(cx, |this, cx| {
-                                this.field_resize = None;
-                                cx.notify();
-                            })
-                            .ok();
-                    },
-                )
-            });
-            return div().w_full().child(card.child(grip).children(drag));
+            return if self.plain_field == Some(true) {
+                div().w_full().child(crate::recorded_bounds(card))
+            } else {
+                div().w_full().child(card)
+            };
         }
         let card = card
             .flex()

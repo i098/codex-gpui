@@ -90,6 +90,25 @@ This service does not enable the Plugin or Skill directory UI.
 
 Run `cargo test -p app --lib host::skills::tests` for the catalog and installation checks.
 
+## Connector OAuth callbacks
+
+Use `Root::start_app_connection` with `oauth::ConnectRequest` to start a connector connection.
+The existing authenticated `CloudHost` sends the original start or reauthentication request.
+The provider returns through `codex://connector/oauth_callback`; pass that URL to `Root::receive_oauth_redirect`.
+The root checks the pending state, account, connector, and optional reauthentication link before it reports success.
+Duplicate callbacks do not send a second request, and failed callbacks can retry.
+Provider URLs, authorization codes, and pending OAuth state never enter saved window settings.
+
+`ConnectionEvent` reports provider opening, connection completion, failure, replacement, and cancellation to the originating control.
+That control owns its plugin resume action and connected-app refresh.
+Call `Root::cancel_app_connection` when the originating connection is cancelled.
+Health, Plaid, and mobile app-specific-password callback URLs remain gated as excluded ChatGPT or mobile products.
+OS URL delivery and scheme registration belong to the window-shell family; this module provides the in-process callback lifecycle.
+
+Run `cargo test -p app --lib oauth::model::tests` for URL and identity boundaries.
+Run `cargo test -p app --test oauth -- --test-threads=1` for native root lifecycle checks with schema-level responses.
+These checks do not sign in or change a real provider account.
+
 ## ACP backend
 
 Set `CODEX_GPUI_ACP` to the command line of an [Agent Client Protocol](https://agentclientprotocol.com) agent to use that agent instead of `codex app-server`:
@@ -277,6 +296,18 @@ Diff code and context rows paint in their own opaque scroll layer, as in the ori
 Failed reads retain the patch and provide Retry.
 Only Staged and Unstaged sources show staging actions. Uncommitted combines both states and does not expose those actions.
 
+The Plugins rail opens the native plugin directory and the Skills page.
+Both pages load app-server data and support search.
+Plugin installation, removal, enablement, and sharing wait for server responses.
+Failed operations keep the last confirmed catalog state.
+Share creates a remote link only after Copy link; only personal-marketplace plugins can publish a shared version.
+Plugins with install-time authentication require confirmed app connections before Try now.
+New skill prepares an editable draft without sending a turn.
+App connections open the original browser setup flow; Check connection reads the app list again.
+Manage opens Settings > Plugins, which owns the management tabs and marketplace controls.
+The existing 36 reference frames do not cover these routes.
+Run `cargo test -p app --test plugins -- --test-threads=1` on macOS for the native failure and draft checks.
+
 Settings > Usage & billing reads plan limits and reset credits from the app-server.
 It keeps the original account gates for credit controls, enterprise usage requests, analytics, and balance history.
 Reset retries keep the same idempotency key; billing changes keep their confirmed state when a request fails.
@@ -297,20 +328,41 @@ Add `links` to check plan, credit, and billing destinations without opening a br
 Add `account-switch` to check that an account change discards the previous reset confirmation.
 
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
-Create saves the definition through `create-automation` to `CODEX_HOME/automations/<id>/automation.toml`.
+Create saves the definition through `automation-create` to `CODEX_HOME/automations/<id>/automation.toml`.
 The app reloads the task list after a successful write and retains the draft if the write fails.
 The existing host schedules these definitions; this app does not start another scheduler.
 The row menu's `Run now` sends `automation-run-now`; the host starts one `codex app-server` thread and turn per task folder.
 It runs tasks with project folders or a project target (the project's first root from `.codex-global-state.json`), in a new Git worktree for the original default environment or in the folder for the local one.
 For a project target, the host saves the new thread's local project assignment before it starts the turn.
 An assignment write failure stops the run; legacy folder tasks do not change project assignments.
+Cron threads receive the original memory rules, inbox response rules, and desktop developer context through `thread/start`.
+The app-server retains saved base instructions.
+On macOS, automation threads use executable local app tools through a private native pipe.
+The tools need the `codex-app-tools` adapter and Node runtime installed with `ChatGPT.app`.
+If the adapter or pipe cannot start, the task keeps the app-server's original configuration.
+The pipe stops safely if its temporary directory is removed.
+The catalog exposes automation creation, full updates, deletion, local project and thread lists, history, pin, archive, and title changes.
+Unsupported delegation, remote hosts, plugin management, and terminal operations stay out of the catalog.
+Proposal cards open the shared task editor. Cancel changes nothing; saving preserves the reviewed definition.
+Completed task tools use only this card, not a second MCP activity row.
+The card clips its foreground to the original 20 px squircle; its background and shadow remain outside the clip.
 Projectless tasks use an owned folder under `~/Documents/Codex/<local-date>/<prompt-name>/`, with separate `work` and `outputs` folders.
 The `projectlessWorkspaceRoot` host setting overrides the root.
 The host saves projectless thread IDs, workspace-root hints, and output paths in `.codex-global-state.json`.
 Heartbeat tasks resume their existing thread with its selected model and permissions.
 The app opens that thread after a successful start, unless you navigate away while the run starts.
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
+The New task options menu also opens the full manual editor or a new chat with the original task setup prompt.
+The manual editor saves Name, multiline Prompt, Interval, Daily, Weekdays, Weekly, Monthly, and Custom schedules.
+Custom schedules support Hourly, Daily, Weekly, Monthly, and Yearly repeats, with interval, weekday, month-day, month, minute, and local time fields.
+The time presets use 09:00, 14:00, 18:00, and 22:00.
+The row menu's Edit action updates the task through `automation-update`, without changing its identity or unrelated definition fields.
+The editor keeps an existing advanced rule unchanged when only Name or Prompt changes.
+Prefilled drafts stay in Create mode until their data includes an existing task ID.
+Escape closes an open schedule picker first; otherwise, it discards the editor without saving.
+Run `cargo test -p app --test task_create editor:: -- --test-threads=1` on macOS for the native editor, schedule, and Create menu checks.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
+Use `-- --include-ignored` on macOS to check the installed adapter.
 
 ### Legacy Codex Cloud threads
 
@@ -440,6 +492,14 @@ The composer labels modified workspace policies as Custom.
 A titled thread shows its header identity, also in a single pane.
 An untitled thread shows it only when a right pane is open; the toolbar actions stay available.
 
+In a loaded chat with an open content tab, `Cmd+Shift+F` switches between full and split view.
+`Cmd+Shift+B` changes full view to split view, hides the tabs, or restores the retained tabs beside Chat.
+Hiding tabs keeps their selected content; opening the same file, terminal, or Changes tab shows it again.
+Full view focuses the content pane and does not send typed text to the hidden composer.
+Find in full view searches the visible Changes panel, not the hidden chat.
+These commands do not create a browser tab when no content tab is open.
+Run `cargo test -p app --test workspace_layout -- --test-threads=1` for the native interaction checks.
+
 `LocalHost` serves `native-desktop-apps` and `native-desktop-app-by-bundle-id` through the desktop fetch boundary.
 On macOS, the adapter reads Spotlight metadata, applies the original app exclusions, and supports usage or display-name ordering.
 It returns each app's path, bundle ID, and display name without launching the app.
@@ -529,6 +589,7 @@ An extra layer changes glyph edge bytes even when its opacity is one.
 
 `shapes` links Skia binaries built with Chromium's `SkUserConfig.h` legacy defines.
 `.cargo/config.toml` points `SKIA_BINARIES_URL` to these binaries.
+The rasterizer reuses identical inverse-blend probe results across icon positions without changing their pixels.
 `skia-hairline-sys` links a narrow C scanner wrapper for Skia revision `61e7ca4e99062cdd0ab69445d5963fb3365778f6`.
 It records the ordered legacy hairline operations that the sprite renderer replays.
 `.cargo/config.toml` points `SKIA_HAIRLINE_BINARIES_URL` and `SKIA_HAIRLINE_PACKAGE_SHA256` to its versioned package.
@@ -672,6 +733,13 @@ The terminal command opens an existing background command, not an interactive sh
 Unsupported destinations remain known gaps; this change does not implement logout, git operations, cloud operations, or the project picker.
 Recorded command rows, ranking, and keyboard-editing checks remain unchanged.
 
+A hidden native menu item dispatches the shared `NewStandaloneChat` action and keeps its keyboard shortcut.
+Its first message creates a separate projectless workspace.
+File > New Temporary Chat uses the existing ephemeral mode and does not add a Recents entry.
+The temporary action is unavailable for ACP backends.
+Settings hides Toggle Sidebar and disables its action.
+Leaving Settings restores that item without changing the sidebar.
+Keyboard shortcut edits preserve the active window's menu visibility.
 The native menu lives in `crates/app/src/native_menus.rs`.
 Edit supports plain-text Paste and Match Style and selection-only Delete, including undo.
 View contains Find; Help opens the Codex changelog, troubleshooting guide, and service status page.
@@ -693,6 +761,14 @@ Images in the composer and tool output support Copy Image and Save Image As.
 Images with a local source also support Reveal in Finder.
 Saving writes the original bytes and replaces the destination only after the write succeeds.
 The headless Save-dialog hook allows tests to select a destination without opening a native window.
+On macOS, Control+Shift+4 attaches a selected screen region to the primary window's current chat.
+Control+Option+Shift+4 opens a new chat before selection.
+Starting a new chat clears the previous Home draft, including its attachments.
+Both shortcuts use the native selection tool and leave the screenshot unsent.
+Enlarged image previews retain their edge colors instead of sampling adjacent texture data.
+Escape cancels selection without an error; changing the chat or account discards an unfinished capture.
+The shortcuts use `codex-command-keybindings` overrides and never change Screen Recording permissions.
+Run `cargo test -p app --lib screenshot:: -- --test-threads=1` for isolated capture, attachment, and macOS image-edge checks.
 
 ```sh
 tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'

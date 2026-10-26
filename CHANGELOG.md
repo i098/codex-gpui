@@ -10,6 +10,7 @@ There is no release yet.
 
 - A contributing guide, issue and pull request templates, a security policy, and this changelog.
 - Add native Code Review search, filters, and pull request details.
+- Add Storage usage measurement and safe review before deleting old local chats.
 
 ### Fixed
 
