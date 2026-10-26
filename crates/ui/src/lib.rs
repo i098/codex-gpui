@@ -1117,19 +1117,15 @@ impl Shell {
                             .h(px(scale.floor().max(1.) / scale))
                             .bg(t.border),
                     )
-                    .children(
-                        RAIL_DESTINATIONS
-                            .iter()
-                            .map(|destination| {
-                            rail_tip(
-                                item(destination.icon)
-                                    .when(destination.id == "builtin:pull-requests", |item| {
-                                        item.on_click(dispatch::<OpenPullRequests>)
-                                    }),
-                                destination.label,
-                            )
-                        }),
-                    )
+                    .children(RAIL_DESTINATIONS.iter().map(|destination| {
+                        rail_tip(
+                            item(destination.icon)
+                                .when(destination.id == "builtin:pull-requests", |item| {
+                                    item.on_click(dispatch::<OpenPullRequests>)
+                                }),
+                            destination.label,
+                        )
+                    }))
                     .child(shapes::top_fade(px(16.))),
             )
             .child(
