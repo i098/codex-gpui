@@ -193,6 +193,8 @@ The repair is tracked in [the Sidebar issue](https://github.com/i098/codex-gpui/
 | 18 | `⌘⇧N`, `⌘⌥O` | shortcut | Temporary chat, standalone chat. | Temporary chats use ephemeral app-server threads. Standalone chats allocate and record a projectless workspace. | PASS (`shortcut_chat_modes`; Linux) |
 | 19 | `⌘⌥1`…`⌘⌥6` | shortcut | Go to recent chat N (`recentThread1..6`: the chats by last update, newest first). | `GoToRecentChat`: the Nth Recents thread by `updatedAt`; past the end does nothing. | PASS (`recent_chat_keys`) |
 | 20 | `⌘+`, `⌘-`, `⌘0` | shortcut | Zoom in, zoom out, actual size. | Scales layout, paint, pointer input, and IME bounds. Saves the zoom and shows its timed control banner. | PASS (`keyboard_shortcuts`; Linux); native pixels pending |
+| 21 | Startup loader | loading | 56 px blossom centered on the window background until `initialize` answers. | Shows until the first app-server answer; then the app's own screens take over. | PASS (`error_shell::loader_shows_until_the_app_server_answers`) |
+| 22 | App-server death | error | Crash page: `ChatGPT hit a snag`, `Something went wrong. Try again to continue`, Try again, the fallen-pet illustration. | `Event::Closed` shows the recovery page; Try again reconnects through `windows::connect`. | PASS (`error_shell::crash_page_shows_when_the_app_server_dies`, `error_shell::try_again_respawns_the_app_server`) |
 
 F1d covers SH-020 and SH-135 with `refs/interactions/f1d.json` and `cargo test -p app --test f1d`.
 The original Mac recording proves a native 1280×832 viewport at scale 2.
@@ -975,7 +977,7 @@ A profile without the original database saves the definition without creating a 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Rail `Scheduled` | entry | Automations page, `ScheduledSidebar`. | `Route::Scheduled` with `ScheduledSidebar` and the page. | PASS (`rail_scheduled`, `parity_automations`) |
-| 2 | Deep link `/scheduled?automationId=…` | entry | Page with the task selected. | — | NOT WIRED (`crates/app/src/lib.rs`: no URL routing; no tasks without the host) |
+| 2 | Deep link `/scheduled?automationId=…` | entry | Page with the task selected. | `codex://scheduled?automationId=…` parses to `Route::Automation` and opens the task's page (`crates/app/src/deep_link.rs`). | PASS (`deep_link::settings_automations_and_launch_links_route`) |
 | 3 | `New task` | click | Create flow. | The recorded compact schedule dialog saves through `automation-create` and retains the draft on a write error. | PASS (`task_create`, `s036`) |
 | 4 | `Create` menu | click | Create with Codex / ChatGPT / manually. | The sidebar split control opens both chat actions with the original setup prompt, or the full manual editor. | PASS (`task_create::editor`) |
 | 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (no host: `list-automations`) |
