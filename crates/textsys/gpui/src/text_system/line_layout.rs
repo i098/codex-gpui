@@ -8,7 +8,7 @@ use std::{
     ops::Range,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU32, AtomicUsize, Ordering},
     },
 };
 
@@ -464,6 +464,8 @@ pub(crate) struct LineLayoutCache {
     font_generation: Arc<AtomicUsize>,
     /// Records the generation represented by both frame caches.
     cached_font_generation: AtomicUsize,
+    scale_factor: AtomicU32,
+    scale_generation: AtomicUsize,
 }
 
 #[derive(Default)]
@@ -485,9 +487,23 @@ struct FrameCache {
     used_wrapped_lines_by_hash: Vec<Arc<HashedCacheKey>>,
 }
 
+impl FrameCache {
+    fn clear(&mut self) {
+        self.lines.clear();
+        self.wrapped_lines.clear();
+        self.used_lines.clear();
+        self.used_wrapped_lines.clear();
+        self.lines_by_hash.clear();
+        self.wrapped_lines_by_hash.clear();
+        self.used_lines_by_hash.clear();
+        self.used_wrapped_lines_by_hash.clear();
+    }
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct LineLayoutIndex {
     font_generation: usize,
+    scale_generation: usize,
     lines_index: usize,
     wrapped_lines_index: usize,
     lines_by_hash_index: usize,
@@ -506,7 +522,23 @@ impl LineLayoutCache {
             platform_text_system,
             font_generation,
             cached_font_generation: AtomicUsize::new(cached_font_generation),
+            scale_factor: AtomicU32::new(2_f32.to_bits()),
+            scale_generation: AtomicUsize::new(0),
         }
+    }
+
+    pub(crate) fn set_scale_factor(&self, scale: f32) {
+        let bits = scale.to_bits();
+        if self.scale_factor.load(Ordering::Acquire) == bits {
+            return;
+        }
+        let mut frame = self.current_frame.write();
+        if self.scale_factor.swap(bits, Ordering::AcqRel) == bits {
+            return;
+        }
+        self.scale_generation.fetch_add(1, Ordering::AcqRel);
+        frame.clear();
+        self.previous_frame.lock().clear();
     }
 
     pub fn layout_index(&self) -> LineLayoutIndex {
@@ -514,6 +546,7 @@ impl LineLayoutCache {
         let frame = self.current_frame.read();
         LineLayoutIndex {
             font_generation,
+            scale_generation: self.scale_generation.load(Ordering::Acquire),
             lines_index: frame.used_lines.len(),
             wrapped_lines_index: frame.used_wrapped_lines.len(),
             lines_by_hash_index: frame.used_lines_by_hash.len(),
@@ -529,6 +562,12 @@ impl LineLayoutCache {
             return;
         }
         let mut current_frame = &mut *self.current_frame.write();
+        let scale_generation = self.scale_generation.load(Ordering::Acquire);
+        if range.start.scale_generation != scale_generation
+            || range.end.scale_generation != scale_generation
+        {
+            return;
+        }
         let mut previous_frame = &mut *self.previous_frame.lock();
 
         for key in &previous_frame.used_lines[range.start.lines_index..range.end.lines_index] {
@@ -572,6 +611,9 @@ impl LineLayoutCache {
             return;
         }
         let mut current_frame = &mut *self.current_frame.write();
+        if index.scale_generation != self.scale_generation.load(Ordering::Acquire) {
+            return;
+        }
         current_frame.used_lines.truncate(index.lines_index);
         current_frame
             .used_wrapped_lines
@@ -589,15 +631,7 @@ impl LineLayoutCache {
         let mut curr_frame = self.current_frame.write();
         let mut prev_frame = self.previous_frame.lock();
         std::mem::swap(&mut *prev_frame, &mut *curr_frame);
-        curr_frame.lines.clear();
-        curr_frame.wrapped_lines.clear();
-        curr_frame.used_lines.clear();
-        curr_frame.used_wrapped_lines.clear();
-
-        curr_frame.lines_by_hash.clear();
-        curr_frame.wrapped_lines_by_hash.clear();
-        curr_frame.used_lines_by_hash.clear();
-        curr_frame.used_wrapped_lines_by_hash.clear();
+        curr_frame.clear();
     }
 
     pub fn layout_wrapped_line<Text>(
@@ -698,9 +732,12 @@ impl LineLayoutCache {
             layout
         } else {
             let text = SharedString::from(text);
-            let mut layout = self
-                .platform_text_system
-                .layout_line(&text, font_size, runs);
+            let mut layout = self.platform_text_system.layout_line_with_scale(
+                &text,
+                font_size,
+                runs,
+                f32::from_bits(self.scale_factor.load(Ordering::Acquire)),
+            );
 
             if let Some(force_width) = force_width {
                 apply_force_width_to_layout(&mut layout, force_width);
@@ -849,9 +886,12 @@ impl LineLayoutCache {
         }
 
         let text = materialize_text();
-        let mut layout = self
-            .platform_text_system
-            .layout_line(&text, font_size, runs);
+        let mut layout = self.platform_text_system.layout_line_with_scale(
+            &text,
+            font_size,
+            runs,
+            f32::from_bits(self.scale_factor.load(Ordering::Acquire)),
+        );
 
         if let Some(force_width) = force_width {
             apply_force_width_to_layout(&mut layout, force_width);
@@ -884,8 +924,8 @@ impl LineLayoutCache {
             return font_generation;
         }
 
-        *current_frame = FrameCache::default();
-        *self.previous_frame.lock() = FrameCache::default();
+        current_frame.clear();
+        self.previous_frame.lock().clear();
         self.cached_font_generation
             .store(font_generation, Ordering::Release);
         font_generation

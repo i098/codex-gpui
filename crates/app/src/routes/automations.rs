@@ -25,12 +25,30 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.share_automation(&action.id, cx);
         }),
     )
+    .on_action(cx.listener(|this, action: &automations::EditAutomation, window, cx| {
+        this.edit_automation(Some(action.id.clone()), window, cx);
+    }))
+    .on_action(cx.listener(|this, action: &automations::CreateAutomation, window, cx| {
+        match action.mode {
+            automations::CreationMode::Manual => this.edit_automation(None, window, cx),
+            automations::CreationMode::Codex | automations::CreationMode::ChatGPT => {
+                this.new_chat(window, cx);
+                let composer = this.home.read(cx).composer.clone();
+                composer.update(cx, |composer, cx| composer.set_text(
+                    "Let's set up a scheduled task together. First, explain how scheduled tasks work in ChatGPT. Then interview me to figure out what I need scheduled and when it should run.", cx,
+                ));
+            }
+        }
+    }))
     .on_action(cx.listener(|this, _: &automations::NewTask, window, cx| {
         this.open_dialog(DialogKind::ScheduleTask, window, cx)
     }))
     .on_action(
         cx.listener(|this, _: &automations::StartSuggestedTask, _, cx| {
-            this.start_suggested_task(cx)
+            this.toast(
+                Toast::danger("Starting suggested tasks isn’t supported in this version"),
+                cx,
+            )
         }),
     )
 }
