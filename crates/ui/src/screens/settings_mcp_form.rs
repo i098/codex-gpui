@@ -13,6 +13,8 @@ pub struct Close;
 
 pub struct Form {
     key: Option<String>,
+    state: Entity<State>,
+    expected_version: Option<String>,
     initial: Value,
     http: bool,
     name: Entity<Composer>,
@@ -81,9 +83,13 @@ impl Form {
     pub(super) fn new(
         key: Option<String>,
         config: Value,
+        state: Entity<State>,
         layer: super::Layer,
         cx: &mut Context<Self>,
     ) -> Self {
+        let expected_version =
+            configuration_version(&state.read(cx).configuration).map(str::to_owned);
+        cx.observe(&state, |_, _, cx| cx.notify()).detach();
         let mut field = |placeholder, value: &str| {
             let field = cx.new(|cx| Composer::settings_compact_field(placeholder, value, cx));
             cx.observe(&field, |_, _, cx| cx.notify()).detach();
@@ -142,6 +148,8 @@ impl Form {
         }
         let mut form = Self {
             key,
+            state,
+            expected_version,
             http: config.get("url").is_some(),
             initial: config,
             name,
@@ -267,11 +275,28 @@ impl Form {
         {
             return;
         }
+        let Some(expected_version) = self.expected_version.clone() else {
+            self.state.update(cx, |state, cx| {
+                state.form_error = Some(
+                    "Configuration version unavailable. Reload settings before saving.".into(),
+                );
+                cx.notify();
+            });
+            return;
+        };
         let key = self
             .key
             .clone()
-            .unwrap_or_else(|| server_key(name, &cx.global::<State>().configuration));
-        dispatch(Action::SaveServer { key, config: value }, cx);
+            .unwrap_or_else(|| server_key(name, &self.state.read(cx).configuration));
+        dispatch(
+            &self.state,
+            Action::SaveServer {
+                key,
+                config: value,
+                expected_version,
+            },
+            cx,
+        );
     }
 
     fn field(&self, title: &'static str, field: &Entity<Composer>, t: &Theme) -> Div {
@@ -371,6 +396,48 @@ impl Form {
                     .on_activate(window, cx, move |this, _, cx| this.add_row(index, cx)),
             )
     }
+
+    fn connection_fields(
+        &self,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Div> {
+        let mut fields = Vec::new();
+        if self.http {
+            fields.push(self.field("URL", &self.url, t));
+            fields.push(self.field("Bearer token env var", &self.bearer, t));
+        } else {
+            fields.push(self.field("Command to launch", &self.command, t));
+        }
+        for (index, list) in self.lists.iter().enumerate() {
+            if self.http == matches!(list.kind, Kind::Headers | Kind::EnvHeaders) {
+                fields.push(self.list(index, t, window, cx));
+            }
+        }
+        if !self.http {
+            fields.push(self.field("Working directory", &self.cwd, t));
+        }
+        fields
+    }
+}
+fn configuration_version(configuration: &Value) -> Option<&str> {
+    configuration["layers"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .chain(
+            configuration["origins"]
+                .as_object()
+                .into_iter()
+                .flat_map(|origins| origins.values()),
+        )
+        .filter(|layer| layer["name"]["type"] == "user")
+        .find_map(|layer| {
+            layer["version"]
+                .as_str()
+                .filter(|version| !version.is_empty())
+        })
 }
 
 pub fn server_key(name: &str, configuration: &Value) -> String {
@@ -412,7 +479,7 @@ pub fn server_key(name: &str, configuration: &Value) -> String {
 impl Render for Form {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let state = cx.global::<State>().clone();
+        let state = self.state.read(cx).clone();
         let title = self.key.as_ref().map_or_else(
             || "Connect to a custom MCP".to_owned(),
             |key| format!("Update {key} MCP"),
@@ -441,7 +508,7 @@ impl Render for Form {
             header = header.child(action_button("uninstall-mcp", "Uninstall", &t).on_activate(
                 window,
                 cx,
-                move |_, _, cx| dispatch(Action::RemoveServer(key.clone()), cx),
+                move |this, _, cx| dispatch(&this.state, Action::RemoveServer(key.clone()), cx),
             ));
         }
         let mut identity = Vec::new();
@@ -522,21 +589,7 @@ impl Render for Form {
                 t.text_secondary,
             )));
         }
-        let mut fields = Vec::new();
-        if self.http {
-            fields.push(self.field("URL", &self.url, &t));
-            fields.push(self.field("Bearer token env var", &self.bearer, &t));
-        } else {
-            fields.push(self.field("Command to launch", &self.command, &t));
-        }
-        for (index, list) in self.lists.iter().enumerate() {
-            if self.http == matches!(list.kind, Kind::Headers | Kind::EnvHeaders) {
-                fields.push(self.list(index, &t, window, cx));
-            }
-        }
-        if !self.http {
-            fields.push(self.field("Working directory", &self.cwd, &t));
-        }
+        let fields = self.connection_fields(&t, window, cx);
         let value = self.value(cx);
         let disabled = state.pending
             || self.name.read(cx).field_text().trim().is_empty()
@@ -626,10 +679,12 @@ mod tests {
         );
         let initial = json!({"url":"https://old.example/mcp","oauth":{"client_id":"public-client"},"scopes":["read"],"tool_timeout_sec":90});
         let form = cx.update(|cx| {
+            let state = cx.new(|_| State::default());
             cx.new(|cx| {
                 Form::new(
                     Some("service".into()),
                     initial.clone(),
+                    state,
                     Default::default(),
                     cx,
                 )
@@ -660,10 +715,12 @@ mod tests {
             gpui_platform::current_headless_renderer,
         );
         let form = cx.update(|cx| {
+            let state = cx.new(|_| State::default());
             cx.new(|cx| {
                 Form::new(
                     Some("service".into()),
                     json!({"command":"server","env":{"TOKEN":"existing","EMPTY":""}}),
+                    state,
                     Default::default(),
                     cx,
                 )
@@ -695,10 +752,12 @@ mod tests {
         );
         let args = json!(["--label", " team ", "", "next"]);
         let form = cx.update(|cx| {
+            let state = cx.new(|_| State::default());
             cx.new(|cx| {
                 Form::new(
                     Some("service".into()),
                     json!({"command":"server","args":args,"cwd":"/old"}),
+                    state,
                     Default::default(),
                     cx,
                 )
@@ -718,5 +777,20 @@ mod tests {
         });
         assert_eq!(saved["args"], args);
         assert_eq!(saved["cwd"], "/new");
+    }
+
+    #[test]
+    fn configuration_versions_belong_to_the_user_file() {
+        let user = json!({"name":{"type":"user","file":"/home/config.toml"},"version":"user-v1"});
+        let project = json!({"name":{"type":"project","dotCodexFolder":"/project/.codex"},"version":"project-v2"});
+        assert_eq!(
+            configuration_version(&json!({"layers":[project, user.clone()]})),
+            Some("user-v1")
+        );
+        assert_eq!(
+            configuration_version(&json!({"origins":{"mcp_servers.work.command":user}})),
+            Some("user-v1")
+        );
+        assert_eq!(configuration_version(&json!({"config":{}})), None);
     }
 }

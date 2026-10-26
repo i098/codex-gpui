@@ -1122,7 +1122,7 @@ impl Layer {
 }
 
 /// Existing explicit compositor rectangles keep their tile sizing.
-fn cc_tile([w, h]: [i32; 2]) -> [i32; 2] {
+pub(crate) fn cc_tile([w, h]: [i32; 2]) -> [i32; 2] {
     const UNTILED: i32 = 2 * TILE;
     let mut d = [TILE; 2];
     if w < d[0] {

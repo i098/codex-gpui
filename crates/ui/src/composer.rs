@@ -606,14 +606,12 @@ const QUEUE_ACTIONS: &str = "Queued message actions";
 const QUEUE_EDIT: &str = "queuedEdit";
 const QUEUE_SIDE_CHAT: &str = "queuedSideChat";
 const QUEUE_SWITCH: &str = "queuedQueueing";
-const QUEUE_MENU_WIDTH: f32 = 220.;
 
 #[derive(Clone, Copy)]
 struct EmbeddedField {
     font_size: Pixels,
     line_height: Pixels,
 }
-
 pub struct Composer {
     focus_handle: FocusHandle,
     placeholder: SharedString,
@@ -1141,12 +1139,12 @@ impl Composer {
     }
 
     /// The row's `Queued message actions` menu (`composer.queuedMessage.more`): `Edit message`,
-    /// `Open in side chat` where the app offers it, and the follow-up behavior switch, at the
-    /// pointer like the editor's context menu.
+    /// `Open in side chat` where the app offers it, and the follow-up behavior switch, below its
+    /// button with the right edges aligned.
     fn open_queue_menu(
         &mut self,
         id: &str,
-        at: gpui::Point<Pixels>,
+        button: Bounds<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1166,10 +1164,13 @@ impl Composer {
             },
             true,
         ));
-        // The original's dropdown is `align: end` under the button: the menu's right edge
-        // meets the button's.
-        let at = gpui::point(at.x - px(QUEUE_MENU_WIDTH - 12.), at.y + px(4.));
-        self.context_menu = Some(ContextMenu::open(items, id.to_owned(), at, window, cx));
+        self.context_menu = Some(ContextMenu::dropdown(
+            items,
+            id.to_owned(),
+            button,
+            window,
+            cx,
+        ));
         cx.notify();
     }
 
@@ -1254,11 +1255,30 @@ impl Composer {
         &self,
         id: String,
         t: &Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> crate::tooltip::Tooltip {
+        let bounds = window.use_keyed_state(
+            SharedString::from(format!(
+                "queue-menu-bounds-{:?}-{id}",
+                cx.entity().entity_id()
+            )),
+            cx,
+            |_, _| Bounds::<Pixels>::default(),
+        );
+        let measured = bounds.clone();
         crate::tooltip::tooltip(
             div()
                 .id(SharedString::from(format!("queued-actions-{id}")))
+                .relative()
+                .child(
+                    gpui::canvas(
+                        move |rect, _, cx| measured.update(cx, |stored, _| *stored = rect),
+                        |_, (), _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
+                )
                 .size(px(24.))
                 .flex_shrink_0()
                 .flex()
@@ -1280,13 +1300,11 @@ impl Composer {
                         cx.stop_propagation();
                     }
                 }))
-                .on_click(
-                    cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                        if !this.queue_pending {
-                            this.open_queue_menu(&id, event.position(), window, cx);
-                        }
-                    }),
-                ),
+                .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+                    if !this.queue_pending {
+                        this.open_queue_menu(&id, *bounds.read(cx), window, cx);
+                    }
+                })),
             QUEUE_ACTIONS,
             None,
             crate::tooltip::Side::Top,
@@ -2461,7 +2479,7 @@ impl Render for Composer {
                             &t,
                             cx,
                         ))
-                        .child(self.queue_menu_button(row.submission.id.clone(), &t, cx))
+                        .child(self.queue_menu_button(row.submission.id.clone(), &t, window, cx))
                 }))
         });
         div()
