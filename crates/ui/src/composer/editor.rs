@@ -557,6 +557,52 @@ impl Composer {
         }
     }
 
+    fn scroll_field_to_caret(&mut self, scale: f32) -> bool {
+        if !self.field_autoscroll {
+            return false;
+        }
+        let (Some(scroll), Some(bounds)) = (&self.field_scroll, self.bounds) else {
+            return false;
+        };
+        let cursor = self.cursor();
+        let Some((start, line_y, line)) = self
+            .line_starts()
+            .find(|(start, _, line)| cursor <= start + line.len())
+        else {
+            return false;
+        };
+        let Some(caret) = line.position_for_index(cursor - start, self.editor_line_height()) else {
+            return false;
+        };
+        let font_height = f32::from(line.ascent() + line.descent());
+        let leading = (f32::from(self.editor_line_height()) - font_height) / 2.;
+        let origin = bounds.origin.y + line_y + caret.y;
+        let top = origin + px((leading * scale).ceil() / scale);
+        let bottom = origin + px(((leading + font_height) * scale).floor() / scale);
+        let viewport = scroll.bounds();
+        if viewport.size.height <= px(2.) {
+            return false;
+        }
+        let start = viewport.origin.y;
+        let end = viewport.origin.y + viewport.size.height;
+        let adjustment = if top < start {
+            start - top
+        } else if bottom > end {
+            end - bottom
+        } else {
+            px(0.)
+        };
+        self.field_autoscroll = false;
+        let mut offset = scroll.offset();
+        let next = px((f32::from(offset.y + adjustment) * scale).round() / scale);
+        if offset.y == next {
+            return false;
+        }
+        offset.y = next;
+        scroll.set_offset(offset);
+        true
+    }
+
     /// Byte offset where each shaped line starts (lines are split at `\n`).
     pub(super) fn line_starts(&self) -> impl Iterator<Item = (usize, Pixels, &WrappedLine)> {
         let mut start = 0;
@@ -640,9 +686,16 @@ impl Composer {
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
-            .px(px(if self.compact_text() { 10. } else { 12. }))
+            .px(px(if self.search_field {
+                0.
+            } else if self.compact_text() {
+                10.
+            } else {
+                12.
+            }))
             .pb(px(
-                if self.plain_field == Some(true)
+                if self.search_field
+                    || self.plain_field == Some(true)
                     || self.request_parent.is_some()
                     || self.request_compact
                     || self.search_field
@@ -652,13 +705,13 @@ impl Composer {
                     4.
                 },
             ))
-            .min_h(if self.search_field {
-                self.editor_line_height()
-            } else if self.request_parent.is_some() || self.request_compact {
-                px(20.)
-            } else {
-                self.field_min_height
-            })
+            .min_h(
+                if self.search_field || self.request_parent.is_some() || self.request_compact {
+                    px(20.)
+                } else {
+                    self.field_min_height
+                },
+            )
             .cursor(CursorStyle::IBeam)
             .when(self.embedded_field.is_some(), |d| {
                 d.px_0().pb_0().min_h(self.editor_line_height())
@@ -686,7 +739,7 @@ impl Composer {
             // The sign-in `input` has neither the opacity nor the layer.
             .child(
                 div()
-                    .when(self.field_text.is_none(), |d| {
+                    .when(!self.search_field && self.field_text.is_none(), |d| {
                         d.when(
                             self.content.is_empty()
                                 && self.embedded_field.is_none()
@@ -1012,7 +1065,9 @@ impl gpui::Element for Editor {
                 bounds.origin.x -= (cursor - bounds.size.width + px(2.)).max(px(0.));
             }
             c.bounds = Some(bounds);
-            collapse(std::mem::replace(&mut c.footer_width, width)) != collapse(width)
+            let width_changed =
+                collapse(std::mem::replace(&mut c.footer_width, width)) != collapse(width);
+            c.scroll_field_to_caret(window.scale_factor()) || width_changed
         });
         if changed {
             let entity = self.0.clone();
@@ -1071,10 +1126,14 @@ impl gpui::Element for Editor {
             .iter()
             .filter_map(|m| Some((c.point_for_index(m.range.start)?, m.icon)))
             .collect();
+        let mut y = if c.plain_field == Some(true) {
+            window.layout_origin_residual_y(*id)
+        } else {
+            px(0.)
+        };
         let lines = self.0.update(cx, |c, _| std::mem::take(&mut c.lines));
         // Glyphs land on the unsnapped LayoutUnit x, as Blink paints text.
         let x = window.layout_origin_residual_x(*id);
-        let mut y = px(0.);
         for line in &lines {
             let origin = bounds.origin + point(x, y);
             line.paint(origin, line_height, TextAlign::Left, None, window, cx)

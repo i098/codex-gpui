@@ -33,6 +33,8 @@ use theme::{ActiveTheme as _, Theme};
 
 #[path = "computer_use.rs"]
 pub mod computer_use;
+#[path = "keyboard_shortcuts.rs"]
+pub mod keyboard_shortcuts;
 fn focus_on_pointer(
     focus: Entity<focus::ControlFocus>,
 ) -> impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) {
@@ -106,6 +108,7 @@ pub mod workspace {
     impl Render for Workspace {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let t = cx.theme().clone();
+            let description_color = t.text.opacity(0.498);
             let busy = self.busy();
             let add_focus = focus::handle("workspace-add", 0, window, cx);
             let skip_focus = focus::handle("workspace-skip", 0, window, cx);
@@ -220,7 +223,7 @@ pub mod workspace {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(text(skip_label, 14., 18., 500., t.text_tertiary)),
+                    .child(text(skip_label, 14., 18., 500., description_color)),
                 &skip_focus,
                 theme::Theme::RADIUS_FULL,
                 px(2.),
@@ -244,7 +247,7 @@ pub mod workspace {
                 .child(div().w_full().flex().flex_col().gap(px(24.))
                     .child(div().flex().flex_col().gap(px(24.)).items_center()
                         .child(text("Select a project", 24., 36., 600., t.text))
-                        .child(text("ChatGPT will be able to edit files and run commands in selected folders", 16., 24., 430., t.text_tertiary)
+                        .child(text("ChatGPT will be able to edit files and run commands in selected folders", 16., 24., 430., description_color)
                             .w_full().whitespace_normal().text_center()))
                     .child(div().w_full().flex().flex_col().gap(px(12.))
                         .child(div().relative().child(add).children(menu))
@@ -545,6 +548,7 @@ impl SettingsNav {
         };
         let control = div()
             .id("settings-search")
+            .key_context("Editable")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
             .on_click(cx.listener(|this, _, window, cx| this.focus.focus(window, cx)))
@@ -1398,6 +1402,9 @@ impl Render for SettingsPane {
         let section = self.page.read(cx).section;
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
+        }
+        if section == "Keyboard shortcuts" {
+            return keyboard_shortcuts::render(window, cx);
         }
         if section == "Usage & billing" {
             return usage::render(window, cx);

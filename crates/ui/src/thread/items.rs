@@ -2,6 +2,11 @@ use super::*;
 use base64::Engine as _;
 use gpui::{Image, ImageFormat};
 
+#[path = "items/automation.rs"]
+mod automation;
+use automation::automation_item;
+pub(super) use automation::cache_automation_result;
+
 pub(super) type McpImages = RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>;
 
 /// Right-aligned user message: `bg-user-message`, 22 px squircle, at most 70% wide.
@@ -358,6 +363,7 @@ pub(super) fn activities<'a>(items: &'a [ThreadItem], running: bool) -> Vec<Acti
                 flush(&mut out, &mut group);
                 out.push(Activity::Running(command));
             }
+            ThreadItem::McpToolCall { .. } if automation_item(item).is_some() => {}
             ThreadItem::McpToolCall { .. } => {
                 flush(&mut out, &mut group);
                 out.push(Activity::Mcp(item));
