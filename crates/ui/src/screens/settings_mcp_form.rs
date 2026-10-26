@@ -78,7 +78,12 @@ impl Kind {
 }
 
 impl Form {
-    pub fn new(key: Option<String>, config: Value, cx: &mut Context<Self>) -> Self {
+    pub(super) fn new(
+        key: Option<String>,
+        config: Value,
+        layer: super::Layer,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut field = |placeholder, value: &str| {
             let field = cx.new(|cx| Composer::settings_compact_field(placeholder, value, cx));
             cx.observe(&field, |_, _, cx| cx.notify()).detach();
@@ -145,7 +150,7 @@ impl Form {
             url,
             bearer,
             lists,
-            layer: super::Layer::default(),
+            layer,
         };
         for index in 0..form.lists.len() {
             if form.lists[index].rows.is_empty() {
@@ -620,8 +625,16 @@ mod tests {
             gpui_platform::current_headless_renderer,
         );
         let initial = json!({"url":"https://old.example/mcp","oauth":{"client_id":"public-client"},"scopes":["read"],"tool_timeout_sec":90});
-        let form =
-            cx.update(|cx| cx.new(|cx| Form::new(Some("service".into()), initial.clone(), cx)));
+        let form = cx.update(|cx| {
+            cx.new(|cx| {
+                Form::new(
+                    Some("service".into()),
+                    initial.clone(),
+                    Default::default(),
+                    cx,
+                )
+            })
+        });
         let value = cx.update(|cx| {
             form.update(cx, |form, cx| {
                 form.url.update(cx, |field, cx| {
@@ -651,6 +664,7 @@ mod tests {
                 Form::new(
                     Some("service".into()),
                     json!({"command":"server","env":{"TOKEN":"existing","EMPTY":""}}),
+                    Default::default(),
                     cx,
                 )
             })
@@ -685,6 +699,7 @@ mod tests {
                 Form::new(
                     Some("service".into()),
                     json!({"command":"server","args":args,"cwd":"/old"}),
+                    Default::default(),
                     cx,
                 )
             })
