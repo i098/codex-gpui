@@ -699,7 +699,6 @@ pub struct Composer {
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
     embedded_field: Option<EmbeddedField>,
-    search_field: bool,
 }
 
 impl Composer {
@@ -788,8 +787,7 @@ impl Composer {
             dictation: None,
             dictation_error: None,
             embedded_field: None,
-            search_field: false,
-        }
+}
     }
 
     pub fn settings_field(
