@@ -121,9 +121,9 @@ fn capture_with(
     if cx.global::<Runtime>().capturing {
         return;
     }
-    if let Err(error) =
-        windows::primary(cx).and_then(|owner| begin(owner, destination, selection, cx))
-    {
+    let result =
+        windows::primary_or_open(cx).and_then(|owner| begin(owner, destination, selection, cx));
+    if let Err(error) = result {
         eprintln!("codex-gpui: cannot open screenshot destination: {error:#}");
     }
 }
