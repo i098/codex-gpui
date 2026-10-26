@@ -868,13 +868,19 @@ impl Composer {
             px(23.59375)
         } else if let Some(field) = self.embedded_field {
             field.line_height
-        } else if self.plain_field == Some(true) {
-            px(130. / 7.)
+        } else if self.search_field || self.plain_field == Some(true) {
+            px(18.571_428)
         } else {
             LINE_HEIGHT
         }
     }
 
+    pub fn settings_search(placeholder: &'static str, cx: &mut Context<Self>) -> Self {
+        let mut editor = Self::settings_field(placeholder, "", false, cx);
+        editor.search_field = true;
+        editor.request_compact = true;
+        editor
+    }
     pub fn field_text(&self) -> &str {
         &self.content
     }
@@ -1208,7 +1214,7 @@ impl Composer {
                 .aria_disabled(self.queue_pending)
                 .focusable()
                 .tab_index(0)
-                .focus_visible(menu::trigger_focus)
+                .focus_visible(crate::focus::trigger_focus)
                 .opacity(if self.queue_pending { 0.4 } else { 1. })
                 .when(!self.queue_pending, |d| d.hover(|s| s.bg(t.ghost_hover)))
                 .child(match action {
@@ -1254,7 +1260,7 @@ impl Composer {
                 .aria_disabled(self.queue_pending)
                 .focusable()
                 .tab_index(0)
-                .focus_visible(menu::trigger_focus)
+                .focus_visible(crate::focus::trigger_focus)
                 .opacity(if self.queue_pending { 0.4 } else { 1. })
                 .when(!self.queue_pending, |d| d.hover(|s| s.bg(t.ghost_hover)))
                 .child(icon("diff-more", 14., t.text_tertiary))

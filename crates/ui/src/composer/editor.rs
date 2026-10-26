@@ -715,7 +715,11 @@ impl Composer {
             .when(self.embedded_field.is_some(), |d| {
                 d.px_0().pb_0().min_h(self.editor_line_height())
             })
-            .text_size(self.editor_font_size())
+            .text_size(if self.search_field {
+                px(13.)
+            } else {
+                self.editor_font_size()
+            })
             .line_height(self.editor_line_height())
             .font_weight(gpui::FontWeight(if self.field_text.is_some() {
                 500.
@@ -736,11 +740,14 @@ impl Composer {
                 div()
                     .when(!self.search_field && self.field_text.is_none(), |d| {
                         d.when(
-                            self.content.is_empty() && self.embedded_field.is_none(),
+                            self.content.is_empty()
+                                && self.embedded_field.is_none()
+                                && !self.search_field,
                             |d| d.opacity(0.5),
                         )
                         .when(
-                            self.embedded_field.is_none() && self.plain_field != Some(true),
+                            self.embedded_field.is_none() && self.plain_field != Some(true)
+                                || self.search_field,
                             |d| d.layer(),
                         )
                     })
