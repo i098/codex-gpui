@@ -510,7 +510,8 @@ impl Manager {
     fn open_form(&mut self, key: Option<String>, config: Value, cx: &mut Context<Self>) {
         self.tab = Tab::Mcps;
         self.menu = None;
-        let form = cx.new(|cx| form::Form::new(key, config, cx));
+        let layer = self.layer.clone();
+        let form = cx.new(|cx| form::Form::new(key, config, layer, cx));
         cx.subscribe(&form, |this, _, _: &form::Close, cx| {
             this.form = None;
             cx.notify();

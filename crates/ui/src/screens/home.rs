@@ -6,11 +6,23 @@ use crate::composer::{Composer, label, pill};
 use crate::{Shell, focus, icon::icon, rounded_clip, text};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyView, App, AppContext as _, Context, Corners, Div, Entity, Hsla, InteractiveElement as _,
-    IntoElement, KeyDownEvent, ParentElement, Render, SharedString,
-    StatefulInteractiveElement as _, Styled, Window, actions, div, px,
+    AnyView, AnyWindowHandle, App, AppContext as _, Context, Corners, Div, Entity, Global, Hsla,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement, Pixels, Render,
+    ScrollHandle, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window, actions,
+    div, px, relative,
 };
 use theme::{ActiveTheme as _, Theme};
+
+static PROJECT_TOOLTIP_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
+    std::sync::LazyLock::new(|| textsys::letter_spacing(-0.15));
+static CONTROL_TEXT_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
+    std::sync::LazyLock::new(Default::default);
+
+/// Identifies the window whose scroll animation a static capture finishes.
+#[derive(Clone, Copy)]
+pub struct FinishedScrollAnimation(pub AnyWindowHandle);
+
+impl Global for FinishedScrollAnimation {}
 
 actions!(home, [OpenFolder]);
 
@@ -61,15 +73,24 @@ fn chip(
     t: &Theme,
     focus: &Entity<focus::ControlFocus>,
     cx: &App,
-) -> Div {
-    div().child(
-        focus::shadow_ring(pill(id, t), focus, Theme::RADIUS_FULL, px(2.), cx)
-            .when(id == "choose-project", |chip| {
-                chip.role(gpui::Role::Button)
-                    .aria_label("Choose project")
-                    .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenFolder), cx))
-                    .on_key_down(open_folder_key)
-            })
+) -> Stateful<Div> {
+    focus::shadow_ring(
+        div().id((id, 0_usize)).relative().flex_none(),
+        focus,
+        Theme::RADIUS_FULL,
+        px(2.),
+        cx,
+    )
+    .when(id == "choose-project", |chip| {
+        chip.role(gpui::Role::Button)
+            .font_features(PROJECT_TOOLTIP_FEATURES.clone())
+            .aria_label("Choose project")
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenFolder), cx))
+            .on_key_down(open_folder_key)
+    })
+    .child(
+        pill(id, t)
+            .font_features(CONTROL_TEXT_FEATURES.clone())
             .child(rounded_clip(
                 px(13.),
                 shapes::Corner::Round,
@@ -79,9 +100,21 @@ fn chip(
                     .items_center()
                     .px(px(8.))
                     .gap(px(6.))
-                    .child(icon(glyph, 16., fg))
+                    .child(icon(glyph, 16., fg).runtime())
                     .child(label(s, fg)),
             )),
+    )
+}
+
+fn scroll_fades(offset: Pixels, maximum: Pixels) -> (Pixels, Pixels) {
+    if maximum <= px(0.) {
+        return (px(0.), px(0.));
+    }
+    let progress = -offset / maximum;
+    // `edge-fade-horizontal` reaches full width at 0.1% and 99.9%.
+    (
+        px(16. * (progress * 1000.).clamp(0., 1.)),
+        px(16. * ((1. - progress) * 1000.).clamp(0., 1.)),
     )
 }
 
@@ -90,6 +123,25 @@ fn chip(
 fn utility_bar(project: Option<SharedString>, t: &Theme, window: &mut Window, cx: &mut App) -> Div {
     let project_focus = focus::handle("choose-project", 0, window, cx);
     let work_focus = focus::handle("work-in", 0, window, cx);
+    let scroll = window
+        .use_keyed_state("home-utility-scroll", cx, |window, cx| {
+            for (index, focus) in [&project_focus, &work_focus].into_iter().enumerate() {
+                let handle = focus.read(cx).handle.clone();
+                cx.on_focus(&handle, window, move |_, window, cx| {
+                    cx.defer_in(window, move |scroll: &mut ScrollHandle, _, cx| {
+                        scroll.scroll_to_item(index);
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            ScrollHandle::new()
+        })
+        .read(cx)
+        .clone();
+    let finished = cx
+        .try_global::<FinishedScrollAnimation>()
+        .is_some_and(|state| state.0 == window.window_handle());
     div().mx(px(13.)).pb(px(20.)).mb(px(-24.)).child(
         div()
             .px(px(4.))
@@ -106,37 +158,56 @@ fn utility_bar(project: Option<SharedString>, t: &Theme, window: &mut Window, cx
                 fill: Some(t.composer_action_bar),
                 ..Default::default()
             }))
-            // `horizontal-scroll-fade-mask` scroller (`-m-0.5`, `p-0.5`): its contents fade over
-            // 1rem at both ends (the scroll timeline is inactive) in a `saveLayer` of the page
-            // layer, so they rasterize on the page's tiles.
+            // The mask covers the viewport, not the translated scroll contents.
             .child(
                 div().py(px(3.)).child(
                     div()
                         .mx(px(-2.))
-                        .p(px(2.))
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
+                        .relative()
                         .saved_layer()
-                        .child(chip(
-                            "choose-project",
-                            "folder",
-                            project.unwrap_or_else(|| "Choose project".into()),
-                            t.text_tertiary,
-                            t,
-                            &project_focus,
-                            cx,
-                        ))
-                        .child(chip(
-                            "work-in",
-                            "laptop",
-                            "This computer".into(),
-                            t.text,
-                            t,
-                            &work_focus,
-                            cx,
-                        ))
-                        .child(shapes::x_fade(px(16.), px(16.))),
+                        .child(
+                            div()
+                                .id("home-utility-scroll")
+                                .p(px(2.))
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .overflow_x_scroll()
+                                .track_scroll(&scroll)
+                                .child(
+                                    crate::tooltip::tooltip(
+                                        chip(
+                                            "choose-project",
+                                            "folder",
+                                            project.unwrap_or_else(|| "Choose project".into()),
+                                            t.text_tertiary,
+                                            t,
+                                            &project_focus,
+                                            cx,
+                                        ),
+                                        "Select a project to run your chat in",
+                                        Some("⌥⇧⌘O"),
+                                        crate::tooltip::Side::Top,
+                                    )
+                                    .focus_handle(&project_focus.read(cx).handle),
+                                )
+                                .child(chip(
+                                    "work-in",
+                                    "laptop",
+                                    "This computer".into(),
+                                    t.text,
+                                    t,
+                                    &work_focus,
+                                    cx,
+                                )),
+                        )
+                        .child(shapes::x_fade_with(move || {
+                            if finished {
+                                (px(16.), px(0.))
+                            } else {
+                                scroll_fades(scroll.offset().x, scroll.max_offset().x)
+                            }
+                        })),
                 ),
             ),
     )
@@ -151,7 +222,8 @@ impl Render for HomeMain {
             .flex_col()
             .items_center()
             .gap(px(24.))
-            .child(icon("codex-logo", 56., Hsla { a: 0.3, ..t.text }))
+            // `opacity-30` on the logo's box.
+            .child(icon("codex-logo", 56., t.text).opacity(0.3))
             .child(
                 div()
                     .id("home-project-title")
@@ -164,16 +236,20 @@ impl Render for HomeMain {
                                 window.dispatch_action(Box::new(OpenFolder), cx)
                             })
                     })
-                    .child(text(
-                        self.project.as_ref().map_or_else(
-                            || "What should we build?".to_owned(),
-                            |project| format!("What should we build in {project}?"),
-                        ),
-                        28.,
-                        33.6,
-                        400.,
-                        t.text,
-                    )),
+                    .child(
+                        text(
+                            self.project.as_ref().map_or_else(
+                                || "What should we build?".to_owned(),
+                                |project| format!("What should we build in {project}?"),
+                            ),
+                            28.,
+                            33.6,
+                            400.,
+                            t.text,
+                        )
+                        // `.heading-xl`: a unitless `line-height: 1.2`.
+                        .line_height(relative(1.2)),
+                    ),
             );
         let column = div()
             .w_full()
@@ -201,7 +277,32 @@ impl Render for HomeMain {
                     .items_end()
                     .justify_center()
                     .pb(px(96.))
-                    .child(hero),
+                    // The original's chain: `flex w-full justify-center`, `mx-auto flex
+                    // w-[min(100%,768px)] justify-center px-panel`, `flex min-h-28 w-full items-end
+                    // justify-center`, then the hero `flex w-full flex-col items-center`. The outer
+                    // `justify-center` has no effect: the child's auto margins take the free space
+                    // first (taffy would apply both).
+                    .child(
+                        div().w_full().flex().child(
+                            div()
+                                .mx_auto()
+                                .flex()
+                                .w_full()
+                                .max_w(px(768.))
+                                .min_w_0()
+                                .justify_center()
+                                .px(px(20.))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .min_h(px(112.))
+                                        .w_full()
+                                        .items_end()
+                                        .justify_center()
+                                        .child(hero.w_full()),
+                                ),
+                        ),
+                    ),
             )
             .child(
                 div()

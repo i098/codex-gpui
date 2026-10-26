@@ -2,6 +2,11 @@ use super::*;
 use base64::Engine as _;
 use gpui::{Image, ImageFormat};
 
+#[path = "items/automation.rs"]
+mod automation;
+use automation::automation_item;
+pub(super) use automation::cache_automation_result;
+
 pub(super) type McpImages = RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>;
 
 /// Right-aligned user message: `bg-user-message`, 22 px squircle, at most 70% wide.
@@ -40,62 +45,65 @@ pub(super) fn wrap_row() -> Div {
 /// in degrees (90 = open). At rest it is the fitted icon; while it turns, the svg path is
 /// rotated about its viewBox centre and rasterized like any icon (no clipping: the path stays
 /// 5.5 px from the centre). The sprite fallback (Linux) rotates the mask instead.
-pub(super) fn disclosure(label: String, angle: f32, window: &Window, t: &Theme) -> Div {
+/// `None` draws the running status without a disclosure control.
+pub(super) fn disclosure(label: String, angle: Option<f32>, window: &Window, t: &Theme) -> Div {
     let color = t.text_tertiary;
-    let chevron = if angle == 0. {
-        icon("thread-chevron-right", 14., color).into_any_element()
-    } else {
-        canvas(
-            |_, _, _| {},
-            move |bounds, (), window, cx| {
-                let path = "icons/thread-chevron-right.svg";
-                let Ok(Some(src)) = cx.asset_source().load(path) else {
-                    return;
-                };
-                // ponytail: one parsed icon per 0.1 deg (at most 900), keyed by the angle.
-                let angle = (angle * 10.).round() / 10.;
-                let (sin, cos) = angle.to_radians().sin_cos();
-                let rotated = String::from_utf8_lossy(&src)
-                    .replacen(
-                        "><path",
-                        &format!(
-                            "><g transform=\"matrix({cos} {sin} {} {cos} {} {})\"><path",
-                            -sin,
-                            10. - 10. * cos + 10. * sin,
-                            10. - 10. * sin - 10. * cos
-                        ),
-                        1,
-                    )
-                    .replacen("</svg>", "</g></svg>", 1);
-                let key = format!("{path}@{angle:.1}");
-                if shapes::paint_icon(
-                    rotated.as_bytes(),
-                    &key,
-                    bounds,
-                    false,
-                    color,
-                    None,
-                    window,
-                    cx,
-                ) {
-                    return;
-                }
-                let scale = window.scale_factor();
-                let center = bounds.center();
-                let matrix = TransformationMatrix::unit()
-                    .translate(center.scale(scale))
-                    .rotate(radians(angle.to_radians()))
-                    .translate(center.scale(-scale));
-                window
-                    .paint_svg(bounds, path.into(), None, matrix, color, cx)
-                    .ok();
-            },
-        )
-        .flex_none()
-        .w(px(14.))
-        .h(px(14.))
-        .into_any_element()
-    };
+    let chevron = angle.map(|angle| {
+        if angle == 0. {
+            icon("thread-chevron-right", 14., color).into_any_element()
+        } else {
+            canvas(
+                |_, _, _| {},
+                move |bounds, (), window, cx| {
+                    let path = "icons/thread-chevron-right.svg";
+                    let Ok(Some(src)) = cx.asset_source().load(path) else {
+                        return;
+                    };
+                    // ponytail: one parsed icon per 0.1 deg (at most 900), keyed by the angle.
+                    let angle = (angle * 10.).round() / 10.;
+                    let (sin, cos) = angle.to_radians().sin_cos();
+                    let rotated = String::from_utf8_lossy(&src)
+                        .replacen(
+                            "><path",
+                            &format!(
+                                "><g transform=\"matrix({cos} {sin} {} {cos} {} {})\"><path",
+                                -sin,
+                                10. - 10. * cos + 10. * sin,
+                                10. - 10. * sin - 10. * cos
+                            ),
+                            1,
+                        )
+                        .replacen("</svg>", "</g></svg>", 1);
+                    let key = format!("{path}@{angle:.1}");
+                    if shapes::paint_icon(
+                        rotated.as_bytes(),
+                        &key,
+                        bounds,
+                        false,
+                        color,
+                        None,
+                        window,
+                        cx,
+                    ) {
+                        return;
+                    }
+                    let scale = window.scale_factor();
+                    let center = bounds.center();
+                    let matrix = TransformationMatrix::unit()
+                        .translate(center.scale(scale))
+                        .rotate(radians(angle.to_radians()))
+                        .translate(center.scale(-scale));
+                    window
+                        .paint_svg(bounds, path.into(), None, matrix, color, cx)
+                        .ok();
+                },
+            )
+            .flex_none()
+            .w(px(14.))
+            .h(px(14.))
+            .into_any_element()
+        }
+    });
     div()
         .flex()
         .flex_col()
@@ -106,7 +114,7 @@ pub(super) fn disclosure(label: String, angle: f32, window: &Window, t: &Theme) 
                     .items_center()
                     .gap(px(4.))
                     .child(measured(window, label, 14., 21., 430., color, None))
-                    .child(chevron),
+                    .children(chevron),
             ),
         )
         .child(
@@ -132,6 +140,7 @@ pub(super) fn diff_card(
         })
         .collect();
     let first = changes.first()?;
+    let review_path = first.path.clone();
     let (added, removed) = diff_counts(changes.iter().copied());
     let mut files: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
     files.dedup();
@@ -246,7 +255,12 @@ pub(super) fn diff_card(
                                     ),
                                 )
                                 .id("view-changes")
-                                .on_click(crate::dispatch::<crate::OpenChangesPanel>),
+                                .on_click(move |_, window, cx| {
+                                    window.dispatch_action(
+                                        Box::new(crate::ViewChanges(review_path.clone())),
+                                        cx,
+                                    )
+                                }),
                             ),
                     ),
             ),
@@ -352,6 +366,7 @@ pub(super) fn activities<'a>(items: &'a [ThreadItem], running: bool) -> Vec<Acti
                 flush(&mut out, &mut group);
                 out.push(Activity::Running(command));
             }
+            ThreadItem::McpToolCall { .. } if automation_item(item).is_some() => {}
             ThreadItem::McpToolCall { .. } => {
                 flush(&mut out, &mut group);
                 out.push(Activity::Mcp(item));
@@ -407,7 +422,7 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                 // command line without one. ponytail: `search` and `list_files` rows also read
                 // as `Ran <command>`; the original words them per action (`Searched for …`).
                 let parsed = match command_actions.as_slice() {
-                    [] => shell_command(command).to_owned(),
+                    [] => shell_command(command, command_actions).to_owned(),
                     actions => actions
                         .iter()
                         .map(|a| a.command.as_str())
@@ -429,7 +444,7 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                         stats: None,
                         shell: Some(Shell {
                             key: format!("shell-{id}"),
-                            command: shell_command(command).to_owned(),
+                            command: shell_command(command, command_actions).to_owned(),
                             output: aggregated_output
                                 .as_deref()
                                 .unwrap_or_default()
@@ -636,8 +651,19 @@ pub(super) fn activity(
                                     if let Some((_, image)) =
                                         decoded.iter().find(|(at, _)| *at == index)
                                     {
-                                        output =
-                                            output.child(gpui::img(image.clone()).max_w_full());
+                                        let context = crate::image_context::ImageContext {
+                                            image: image.clone(),
+                                            path: None,
+                                        };
+                                        output = output.child(
+                                            gpui::img(image.clone()).max_w_full()
+                                                .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                                    this.menu = Some(context.menu(event.position, window, cx));
+                                                    this.context_image = Some(context.clone());
+                                                    cx.stop_propagation();
+                                                    cx.notify();
+                                                })),
+                                        );
                                     } else {
                                         output = output.child(text(
                                             "Could not display tool image",

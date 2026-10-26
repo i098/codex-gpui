@@ -3,23 +3,24 @@
 //! (login-route chunk) that replaces the app when `account/read` reports no account.
 
 use crate::{
-    MONO, SANS, SetTheme, Shell,
-    composer::{Composer, popover, shadow},
+    MONO, SetTheme, Shell,
+    composer::{Composer, shadow},
     fixture, focus,
     icon::icon,
     in_layer, layout_color,
     motion::{self, HoverFade},
-    over, rounded_clip, sidebar_section, text,
+    over, rounded_clip,
+    screens::signin::Login,
+    sidebar_section, text,
 };
 use bridge::Bridge;
 use bridge::types::{AccountReadResponse, ConfigReadResponse};
 use gpui::{
-    Anchor, AnyElement, AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity,
-    EventEmitter, FocusHandle, Focusable, Font, FontWeight, Global, HighlightStyle, Hsla,
-    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render,
-    RenderImage, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun,
-    Window, anchored, canvas, deferred, div, font, img, point, prelude::FluentBuilder as _, px,
-    size,
+    AnyElement, AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity, EventEmitter,
+    FocusHandle, Focusable, Font, FontWeight, Global, HighlightStyle, Hsla, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render, RenderImage, SharedString,
+    Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, canvas, div, font,
+    img, point, prelude::FluentBuilder as _, px, size,
 };
 use serde_json::{Value, json};
 use shapes::Corner::{self, Round, Squircle};
@@ -32,6 +33,237 @@ use theme::{ActiveTheme as _, Theme};
 
 #[path = "computer_use.rs"]
 pub mod computer_use;
+#[path = "keyboard_shortcuts.rs"]
+pub mod keyboard_shortcuts;
+fn focus_on_pointer(
+    focus: Entity<focus::ControlFocus>,
+) -> impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) {
+    move |_, window, cx| {
+        let handle = focus.read(cx).handle.clone();
+        handle.focus(window, cx);
+        cx.stop_propagation();
+    }
+}
+
+pub mod personalization;
+pub mod workspace {
+    use crate::{SANS, composer::popover, focus, icon::icon, text};
+    use gpui::{
+        Anchor, Context, Corners, EventEmitter, InteractiveElement as _, IntoElement,
+        ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Window, anchored,
+        deferred, div, point, px,
+    };
+    use shapes::Corner::Round;
+    use theme::ActiveTheme as _;
+
+    pub enum Event {
+        PickFolder,
+        CreateProject,
+    }
+
+    #[derive(Clone, Copy)]
+    pub enum Pending {
+        Picking,
+        Creating,
+    }
+
+    pub struct Workspace {
+        pending: Option<Pending>,
+        error: Option<String>,
+        menu: bool,
+        menu_hovered: bool,
+    }
+
+    impl EventEmitter<Event> for Workspace {}
+
+    impl Workspace {
+        pub fn new(_: &mut Context<Self>) -> Self {
+            Self {
+                pending: None,
+                error: None,
+                menu: false,
+                menu_hovered: false,
+            }
+        }
+
+        pub fn busy(&self) -> bool {
+            self.pending.is_some()
+        }
+
+        pub fn begin(&mut self, pending: Pending, cx: &mut Context<Self>) {
+            self.pending = Some(pending);
+            self.error = None;
+            self.menu = false;
+            self.menu_hovered = false;
+            cx.notify();
+        }
+
+        pub fn finish(&mut self, error: Option<String>, cx: &mut Context<Self>) {
+            self.pending = None;
+            self.error = error;
+            cx.notify();
+        }
+    }
+
+    impl Render for Workspace {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let t = cx.theme().clone();
+            let description_color = t.text.opacity(0.498);
+            let busy = self.busy();
+            let add_focus = focus::handle("workspace-add", 0, window, cx);
+            let skip_focus = focus::handle("workspace-skip", 0, window, cx);
+            let button_text = match t.appearance {
+                theme::Appearance::Dark => gpui::rgb(0x2d2d2d).into(),
+                theme::Appearance::Light => t.text_inverse,
+            };
+            let mut add = focus::ring(
+                div()
+                    .id("workspace-add")
+                    .role(gpui::Role::Button)
+                    .aria_label("Add project")
+                    .relative()
+                    .w_full()
+                    .h(px(40.))
+                    .rounded_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(9999.)),
+                        corner: Round,
+                        fill: Some(t.button_primary_solid),
+                        border: Some((px(1.), t.border)),
+                        ..Default::default()
+                    }))
+                    .child(text("Add project", 13., 18., 430., button_text)),
+                &add_focus,
+                theme::Theme::RADIUS_FULL,
+                px(2.),
+                cx,
+            );
+            if busy {
+                add = add.opacity(0.5);
+            } else {
+                add = add
+                    .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(add_focus))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.menu = !this.menu;
+                        cx.notify();
+                    }))
+                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                        if !this.menu_hovered {
+                            this.menu = false;
+                            cx.notify();
+                        }
+                    }));
+            }
+            let menu = self.menu.then(|| {
+                let on_hover =
+                    cx.listener(|this, hovered: &bool, _, _| this.menu_hovered = *hovered);
+                let rows = [
+                    ("Start from scratch", false),
+                    ("Use an existing folder", true),
+                ]
+                .into_iter()
+                .map(|(label, pick)| {
+                    let focus = focus::handle(label, 0, window, cx);
+                    focus::ring(
+                        div()
+                            .id(label)
+                            .role(gpui::Role::MenuItem)
+                            .aria_label(label)
+                            .relative()
+                            .px(px(10.))
+                            .py(px(8.))
+                            .rounded(px(8.))
+                            .hover(|s| s.bg(t.menu_item_hover))
+                            .child(text(label, 14., 20., 430., t.text)),
+                        &focus,
+                        px(8.),
+                        px(0.),
+                        cx,
+                    )
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        cx.emit(if pick {
+                            Event::PickFolder
+                        } else {
+                            Event::CreateProject
+                        });
+                    }))
+                });
+                deferred(
+                    div().absolute().top_0().left_0().child(
+                        anchored()
+                            .anchor(Anchor::TopLeft)
+                            .offset(point(px(0.), px(44.)))
+                            .child(
+                                div()
+                                    .id("workspace-add-menu")
+                                    .on_hover(on_hover)
+                                    .child(popover(&t, 240., |d| d.children(rows))),
+                            ),
+                    ),
+                )
+                .into_any_element()
+            });
+            let skip_label = if matches!(self.pending, Some(Pending::Creating)) {
+                "Creating a new project…"
+            } else {
+                "Skip"
+            };
+            let mut skip = focus::ring(
+                div()
+                    .id("workspace-skip")
+                    .role(gpui::Role::Button)
+                    .aria_label(skip_label)
+                    .relative()
+                    .w_full()
+                    .h(px(36.))
+                    .rounded_full()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(text(skip_label, 14., 18., 500., description_color)),
+                &skip_focus,
+                theme::Theme::RADIUS_FULL,
+                px(2.),
+                cx,
+            );
+            if busy {
+                skip = skip.opacity(0.5);
+            } else {
+                skip = skip
+                    .on_mouse_down(gpui::MouseButton::Left, super::focus_on_pointer(skip_focus))
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(Event::CreateProject)));
+            }
+            div().size_full().bg(t.background_surface_under).font_family(SANS)
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+                if event.keystroke.key == "escape" { this.menu = false; cx.notify(); }
+            }))
+            .flex().items_center().justify_center().pt(px(12.)).px(px(20.))
+            // Chromium paints the content into a transparent composited layer, then blends it.
+            .child(div().w_full().max_w(px(330.)).flex().flex_col().items_center().gap(px(24.)).layer()
+                .child(icon("folder-add", 40., t.text))
+                .child(div().w_full().flex().flex_col().gap(px(24.))
+                    .child(div().flex().flex_col().gap(px(24.)).items_center()
+                        .child(text("Select a project", 24., 36., 600., t.text))
+                        .child(text("ChatGPT will be able to edit files and run commands in selected folders", 16., 24., 430., description_color)
+                            .w_full().whitespace_normal().text_center()))
+                    .child(div().w_full().flex().flex_col().gap(px(12.))
+                        .child(div().relative().child(add).children(menu))
+                        .children(self.error.clone().map(|error| text(error, 14., 20., 430., t.text_error).whitespace_normal().text_center()))
+                        .child(skip))))
+        }
+    }
+}
+
+#[path = "settings_subtrees.rs"]
+pub mod subtrees;
+#[path = "settings/usage.rs"]
+pub mod usage;
+
+#[path = "storage.rs"]
+pub mod storage;
 
 #[path = "settings_integrations.rs"]
 pub mod integrations;
@@ -74,11 +306,13 @@ pub fn shell(
     section: Option<&'static str>,
     cx: &mut App,
 ) -> (Entity<Shell>, Entity<SettingsPage>) {
-    let mut page = SettingsPage::new(config, skills);
-    if let Some(label) = section {
-        page.section = label;
-    }
-    let page = cx.new(|_| page);
+    let page = cx.new(|cx| {
+        let mut page = SettingsPage::new(config, skills, cx);
+        if let Some(label) = section {
+            page.section = label;
+        }
+        page
+    });
     let nav = cx.new(|cx| SettingsNav::new(page.clone(), cx)).into();
     let pane = cx.new(|cx| SettingsPane::new(page.clone(), cx)).into();
     let shell = cx.new(|_| {
@@ -90,21 +324,6 @@ pub fn shell(
         shell
     });
     (shell, page)
-}
-
-/// Sends `method` to the app-server in the background; failures are logged.
-fn send(method: &'static str, params: Value, cx: &App) {
-    let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
-        return;
-    };
-    let bridge = bridge.clone();
-    cx.background_executor()
-        .spawn(async move {
-            if let Err(e) = bridge.request::<_, Value>(method, params).await {
-                eprintln!("{method}: {e:#}");
-            }
-        })
-        .detach();
 }
 
 /// Settings navigation (`gWa` order in app-initial): `(heading, [(label, icon)])`.
@@ -170,16 +389,19 @@ const EXTERNAL: &str = "Profile";
 ///   access menu visibility, Bottom panel, Show predictions); session only.
 pub struct SettingsPage {
     section: &'static str,
+    subtree: Option<AnyView>,
     query: String,
     /// `config/read` config, plus a `host` object for host settings.
     values: Value,
     /// `projectlessWorkspaceRoot` default: `~/Documents/Codex`.
     projectless_root: String,
     pending_instructions: Vec<SettingChanged>,
+    pub personalization: Entity<personalization::Personalization>,
+    toaster: Option<Entity<crate::toast::Toaster>>,
 }
 
 impl SettingsPage {
-    fn new(config: &Value, skills: &Value) -> Self {
+    fn new(config: &Value, skills: &Value, cx: &mut Context<Self>) -> Self {
         // The fixture's home directory, from the user skills under `~/.agents`.
         let home = skills["data"][0]["skills"]
             .as_array()
@@ -195,11 +417,18 @@ impl SettingsPage {
         let values = config.clone();
         Self {
             section: "General",
+            subtree: None,
             query: String::new(),
             values,
             projectless_root,
             pending_instructions: Vec::new(),
+            personalization: cx.new(personalization::Personalization::new),
+            toaster: None,
         }
+    }
+
+    pub fn set_toaster(&mut self, toaster: Entity<crate::toast::Toaster>) {
+        self.toaster = Some(toaster);
     }
 
     fn get(&self, path: &str) -> &Value {
@@ -231,6 +460,11 @@ impl SettingsPage {
         cx.notify();
     }
 
+    pub fn show_subtree(&mut self, view: AnyView, cx: &mut Context<Self>) {
+        self.subtree = Some(view);
+        cx.notify();
+    }
+
     fn draft_instructions(&mut self, path: &'static str, value: String) {
         self.pending_instructions
             .retain(|change| change.path != path);
@@ -245,6 +479,18 @@ impl SettingsPage {
     pub fn take_pending_instructions(&mut self) -> Vec<SettingChanged> {
         std::mem::take(&mut self.pending_instructions)
     }
+
+    pub fn select_section(&mut self, label: &'static str, cx: &mut Context<Self>) {
+        let editor = self.personalization.read(cx);
+        if editor.dirty(cx) || editor.saving() {
+            cx.emit(personalization::Event::Section(label));
+            return;
+        }
+        self.personalization
+            .update(cx, |editor, cx| editor.discard(cx));
+        self.section = label;
+        cx.notify();
+    }
 }
 
 /// A settings row changed `path` (`store.key`, see [`SettingsPage`]) to `value`.
@@ -254,6 +500,7 @@ pub struct SettingChanged {
 }
 
 impl EventEmitter<SettingChanged> for SettingsPage {}
+impl EventEmitter<personalization::Event> for SettingsPage {}
 
 /// `--sidebar-navigation` background, opaque.
 fn sidebar_color(t: &Theme) -> Hsla {
@@ -287,7 +534,7 @@ impl SettingsNav {
         match (k.key.as_str(), &k.key_char) {
             ("backspace", _) => _ = query.pop(),
             ("escape", _) => query.clear(),
-            (_, Some(c)) => query.push_str(c),
+            (_, Some(c)) if !c.chars().any(char::is_control) => query.push_str(c),
             _ => return,
         }
         self.page.update(cx, |p, cx| {
@@ -297,14 +544,23 @@ impl SettingsNav {
         cx.stop_propagation();
     }
 
-    fn search(&self, query: &str, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn search(
+        &mut self,
+        query: &str,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let focus = focus::handle("settings-search", 0, window, cx);
+        self.focus = focus.read(cx).handle.clone();
         let (s, color) = if query.is_empty() {
             ("Search".to_string(), t.text_tertiary)
         } else {
             (query.to_string(), t.text)
         };
-        div()
+        let control = div()
             .id("settings-search")
+            .key_context("Editable")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
             .on_click(cx.listener(|this, _, window, cx| this.focus.focus(window, cx)))
@@ -320,7 +576,8 @@ impl SettingsNav {
                 ..Default::default()
             }))
             .child(icon("search", 16., t.text_secondary))
-            .child(text(s, 14., 18., 430., color))
+            .child(text(s, 14., 18., 430., color));
+        focus::ring(control, &focus, Theme::RADIUS_FULL, px(2.), cx)
     }
 
     /// A nav row: `overflow: hidden`, so Skia draws a runtime icon (the viewport cuts the last
@@ -331,8 +588,10 @@ impl SettingsNav {
         glyph: &'static str,
         selected: bool,
         t: &Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
+        let focus = focus::handle(label, 0, window, cx);
         let fill = over(t.list_hover, sidebar_color(t));
         let row = div()
             .id(label)
@@ -359,28 +618,41 @@ impl SettingsNav {
             )
             .when(label == EXTERNAL, |d| {
                 d.child(icon("arrow-up-right", 16., t.text_secondary).opacity(0.5))
-            })
-            .when(label != EXTERNAL, |d| {
-                d.on_click(cx.listener(move |this, _, _, cx| {
-                    this.page.update(cx, |p, cx| {
-                        p.section = label;
-                        cx.notify();
-                    })
-                }))
             });
-        div()
+        let control = div()
+            .id((gpui::ElementId::from("settings-nav-item"), label))
+            .role(gpui::Role::Button)
+            .aria_label(label)
             .relative()
             .flex()
             .flex_col()
             .when(selected, |d| {
                 d.child(deco(&self.list, 12.5, Squircle, t.list_hover, None))
             })
-            .child(rounded_clip(Theme::RADIUS_LG, Squircle, row))
+            .child(rounded_clip(Theme::RADIUS_LG, Squircle, row));
+        focus::ring(control, &focus, Theme::RADIUS_LG, px(2.), cx)
+            .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
+            .when(label != EXTERNAL, |d| {
+                d.on_click(cx.listener(move |this, _, window, cx| {
+                    if this.page.read(cx).subtree.is_some() {
+                        window.dispatch_action(
+                            Box::new(subtrees::OpenSection {
+                                label: label.into(),
+                            }),
+                            cx,
+                        );
+                        return;
+                    }
+                    this.page.update(cx, |p, cx| {
+                        p.select_section(label, cx);
+                    });
+                }))
+            })
     }
 }
 
 impl Render for SettingsNav {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let page = self.page.read(cx);
         let (section, query) = (page.section, page.query.clone());
@@ -390,7 +662,7 @@ impl Render for SettingsNav {
             let rows: Vec<_> = items
                 .iter()
                 .filter(|(label, _)| label.to_lowercase().contains(&needle))
-                .map(|&(label, glyph)| self.item(label, glyph, label == section, &t, cx))
+                .map(|&(label, glyph)| self.item(label, glyph, label == section, &t, window, cx))
                 .collect();
             if rows.is_empty() {
                 continue;
@@ -424,7 +696,7 @@ impl Render for SettingsNav {
                                 text("Settings", 18., 24., 600., t.text).font_family("OpenAI Sans"),
                             ),
                     )
-                    .child(self.search(&query, &t, cx)),
+                    .child(self.search(&query, &t, window, cx)),
             )
             .child(
                 div()
@@ -459,11 +731,9 @@ pub struct SettingsPane {
     page: Entity<SettingsPage>,
     /// The composited contents layer of the page's scroll container.
     layer: Layer,
-    /// Key of the select whose options menu is open.
-    open_select: Option<&'static str>,
-    /// Pointer over that menu: a press there is not a click outside.
-    menu_hovered: bool,
+    selects: std::collections::HashMap<&'static str, Entity<crate::settings_kit::Select>>,
     git_fields: Vec<(&'static str, Entity<Composer>)>,
+    storage: Entity<storage::StoragePage>,
 }
 
 /// `Confirm before closing a window` options, default first.
@@ -476,7 +746,7 @@ const CLOSE_OPTIONS: &[(&str, &str)] = &[
 const SEND_OPTIONS: &[(&str, &str)] = &[
     ("enter", "Enter"),
     ("cmdIfMultiline", "⌘ + Enter for multiline prompts"),
-    ("cmdEnter", "⌘ + Enter always"),
+    ("cmdAlways", "⌘ + Enter always"),
 ];
 
 impl SettingsPane {
@@ -493,10 +763,10 @@ impl SettingsPane {
         })
         .detach();
         Self {
+            storage: cx.new(|cx| storage::StoragePage::new(page.clone(), cx)),
             page,
             layer: Layer::default(),
-            open_select: None,
-            menu_hovered: false,
+            selects: std::collections::HashMap::new(),
             git_fields: Vec::new(),
         }
     }
@@ -504,67 +774,41 @@ impl SettingsPane {
     /// A select for `key` with its options menu `(value, label)`; the first option is the
     /// default. A click outside closes the menu.
     fn select_menu(
-        &self,
+        &mut self,
         key: &'static str,
         options: &'static [(&'static str, &'static str)],
-        t: &Theme,
+        width: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let current = self.page.read(cx).choice(key, options[0].0).to_string();
-        let label = options
-            .iter()
-            .find(|(value, _)| *value == current)
-            .map_or(options[0].1, |(_, label)| label);
-        let open = self.open_select == Some(key);
-        let hover = t.menu_item_hover;
-        let menu = open.then(|| {
-            let rows = options.iter().map(|&(value, label)| {
-                div()
-                    .id(value)
-                    .px(px(8.))
-                    .py(px(6.))
-                    .rounded(px(12.))
-                    .when(value == current, |d| d.bg(hover))
-                    .hover(move |s| s.bg(hover))
-                    .child(text(label, 14., 20., 430., t.text))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
-                        this.open_select = None;
-                        this.menu_hovered = false;
-                        cx.notify();
-                    }))
+        let current = self.page.read(cx).choice(key, options[0].0).to_owned();
+        let page = self.page.clone();
+        let select = self.selects.entry(key).or_insert_with(|| {
+            let choices = options
+                .iter()
+                .map(|&(value, label)| crate::settings_kit::Choice {
+                    value: value.into(),
+                    label: label.into(),
+                    checked: false,
+                    disabled: false,
+                })
+                .collect();
+            let select = cx.new(|cx| {
+                crate::settings_kit::Select::new(current.clone(), choices, None, cx)
+                    .with_width(width)
             });
-            // Below the trigger, or above it when the window's bottom edge is in the way.
-            deferred(
-                div().absolute().top_0().right_0().child(
-                    anchored()
-                        .anchor(Anchor::TopRight)
-                        .offset(point(px(0.), px(32.)))
-                        .child(
-                            div()
-                                .id("select-menu")
-                                .on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                                    this.menu_hovered = *hovered
-                                }))
-                                .child(popover(t, 280., |d| d.children(rows))),
-                        ),
-                ),
+            cx.subscribe(
+                &select,
+                move |_, _, selected: &crate::settings_kit::Selected, cx| {
+                    page.update(cx, |page, cx| {
+                        page.set(key, json!(selected.0.as_ref()), cx);
+                    });
+                },
             )
+            .detach();
+            select
         });
-        select(label, None, false, t)
-            .id(key)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_select = (!open).then_some(key);
-                cx.notify();
-            }))
-            .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
-                if open && !this.menu_hovered {
-                    this.open_select = None;
-                    cx.notify();
-                }
-            }))
-            .children(menu)
-            .into_any_element()
+        select.update(cx, |select, cx| select.set_value(current, cx));
+        select.clone().into_any_element()
     }
 
     fn toggle(
@@ -588,10 +832,7 @@ impl SettingsPane {
             px(2.),
             cx,
         )
-        .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
-            focus.read(cx).handle.clone().focus(window, cx);
-            cx.stop_propagation();
-        })
+        .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
         .on_click(cx.listener(move |this, _, _, cx| {
             let value = if key == "host.git-review-mode" {
                 json!(if on { "full" } else { "last-turn-only" })
@@ -610,6 +851,7 @@ impl SettingsPane {
         default: &'static str,
         options: &'static [(&'static str, &'static str)],
         t: &Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let current = self.page.read(cx).choice(key, default).to_string();
@@ -620,8 +862,11 @@ impl SettingsPane {
             .gap(px(2.))
             .children(options.iter().map(|&(value, label)| {
                 let selected = current == value;
-                div()
+                let focus = focus::handle((gpui::ElementId::from(key), value), 0, window, cx);
+                let control = div()
                     .id(label)
+                    .role(gpui::Role::Button)
+                    .aria_label(label)
                     .h(px(24.))
                     .px(px(9.))
                     .flex()
@@ -634,7 +879,9 @@ impl SettingsPane {
                         18.,
                         430.,
                         if selected { t.text } else { t.text_tertiary },
-                    ))
+                    ));
+                focus::ring(control.relative(), &focus, Theme::RADIUS_FULL, px(2.), cx)
+                    .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
                         if key == THEME {
@@ -648,9 +895,14 @@ impl SettingsPane {
     /// Appearance ▸ Theme: the app applies and keeps the choice (`SetTheme`).
     /// ponytail: the chrome theme, font size and motion rows are not here; add them with the
     /// settings they drive.
-    fn appearance(&self, t: &Theme, cx: &mut Context<Self>) -> Vec<(&'static str, Vec<Div>)> {
+    fn appearance(
+        &self,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<(&'static str, Vec<Div>)> {
         let options = &[("light", "Light"), ("dark", "Dark"), ("system", "System")];
-        let theme = self.segmented(THEME, "system", options, t, cx);
+        let theme = self.segmented(THEME, "system", options, t, window, cx);
         vec![("Theme", vec![settings_row("Theme", None, theme, t)])]
     }
 
@@ -748,7 +1000,7 @@ impl SettingsPane {
                     self.select_menu(
                         "host.git-pull-request-merge-method",
                         &[("merge", "Merge"), ("squash", "Squash")],
-                        t,
+                        240.,
                         cx,
                     ),
                     t,
@@ -773,6 +1025,7 @@ impl SettingsPane {
                         "inline",
                         &[("inline", "Inline"), ("detached", "Detached")],
                         t,
+                        window,
                         cx,
                     ),
                     t,
@@ -837,7 +1090,7 @@ impl SettingsPane {
     }
 
     fn general(
-        &self,
+        &mut self,
         t: &Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -927,6 +1180,7 @@ impl SettingsPane {
                             "Zed",
                             Some(app_icon(over(t.primary_soft_alpha, t.background_panel))),
                             false,
+                            false,
                             t,
                         )
                         .into_any_element(),
@@ -934,7 +1188,7 @@ impl SettingsPane {
                     row(
                         "Language",
                         Some("Language for the app UI"),
-                        select("Auto detect", None, false, t).into_any_element(),
+                        select("Auto detect", None, false, false, t).into_any_element(),
                     ),
                     row(
                         "Show in menu bar",
@@ -944,7 +1198,7 @@ impl SettingsPane {
                     row(
                         "Confirm before closing a window",
                         Some("Warn when a tab-close shortcut would close the window"),
-                        self.select_menu("host.confirm-before-close", CLOSE_OPTIONS, t, cx),
+                        self.select_menu("host.confirm-before-close", CLOSE_OPTIONS, 240., cx),
                     ),
                     row(
                         "Full view by default",
@@ -966,6 +1220,7 @@ impl SettingsPane {
                             "bottom",
                             &[("bottom", "Bottom"), ("right", "Right")],
                             t,
+                            window,
                             cx,
                         ),
                     ),
@@ -992,7 +1247,7 @@ impl SettingsPane {
                         Some(
                             "Choose how quickly ChatGPT runs across chats, subagents, and compaction",
                         ),
-                        select("Standard", None, false, t).into_any_element(),
+                        select("Standard", None, false, false, t).into_any_element(),
                     ),
                     row(
                         "Suggested prompts",
@@ -1004,14 +1259,27 @@ impl SettingsPane {
                     row(
                         "Open source licenses",
                         Some("Third-party notices for bundled dependencies"),
-                        button("View", t.text_alpha_5, None, t).into_any_element(),
+                        button("View", t.text_alpha_5, None, t)
+                            .id("open-source-licenses")
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(subtrees::OpenSubtree {
+                                        path: subtrees::LICENSES_PATH.into(),
+                                    }),
+                                    cx,
+                                );
+                            })
+                            .into_any_element(),
                     ),
                     row(
                         "Plugins",
                         Some("Allow ChatGPT to use installed plugins"),
                         self.toggle("features.plugins", true, t, window, cx),
                     ),
-                ],
+                ]
+                .into_iter()
+                .chain(crate::updater::managed_row(t, cx))
+                .collect(),
             ),
             (
                 "Composer",
@@ -1036,7 +1304,7 @@ impl SettingsPane {
                     row(
                         "Send shortcut",
                         Some("Choose when Enter sends a prompt or inserts a new line"),
-                        self.select_menu("desktop.composerEnterBehavior", SEND_OPTIONS, t, cx),
+                        self.select_menu("desktop.composerEnterBehavior", SEND_OPTIONS, 220., cx),
                     ),
                     row(
                         "Follow-up behavior",
@@ -1048,6 +1316,7 @@ impl SettingsPane {
                             "steer",
                             &[("queue", "Queue"), ("steer", "Steer")],
                             t,
+                            window,
                             cx,
                         ),
                     ),
@@ -1093,7 +1362,7 @@ impl SettingsPane {
                     row(
                         "Turn completion notifications",
                         Some("Set when ChatGPT alerts you that it's finished"),
-                        select("Only when unfocused", None, true, t).into_any_element(),
+                        select("Only when unfocused", None, true, false, t).into_any_element(),
                     ),
                     row(
                         "Enable permission notifications",
@@ -1113,7 +1382,7 @@ impl SettingsPane {
                     row(
                         "Notification sound",
                         Some("Sound for task completion, permission requests, and questions"),
-                        select("Default", None, true, t).into_any_element(),
+                        select("Default", None, true, false, t).into_any_element(),
                     ),
                 ],
             ),
@@ -1141,9 +1410,27 @@ impl SettingsPane {
 impl Render for SettingsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        if let Some(view) = &self.page.read(cx).subtree {
+            return view.clone().into_any_element();
+        }
         let section = self.page.read(cx).section;
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
+        }
+        if section == "Keyboard shortcuts" {
+            return keyboard_shortcuts::render(window, cx);
+        }
+        if section == "Usage & billing" {
+            return usage::render(window, cx);
+        }
+        if section == "Personalization" {
+            return div()
+                .size_full()
+                .child(self.page.read(cx).personalization.clone())
+                .into_any_element();
+        }
+        if section == "Storage" {
+            return self.storage.clone().into_any_element();
         }
         if matches!(section, "Plugins" | "Hooks" | "MCP servers") {
             return integrations::render(section, window, cx);
@@ -1151,7 +1438,7 @@ impl Render for SettingsPane {
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
             "General" => self.general(&t, window, cx),
-            "Appearance" => self.appearance(&t, cx),
+            "Appearance" => self.appearance(&t, window, cx),
             "Git" => self.git(&t, window, cx),
             _ => Vec::new(),
         };
@@ -1281,7 +1568,7 @@ fn middle_truncate(s: &str, fits: impl Fn(&str) -> bool) -> String {
 
 /// One settings row: title, optional description (an `<a>…</a>` span renders as the inline
 /// link) and the trailing control.
-fn settings_row(
+pub(crate) fn settings_row(
     title: &'static str,
     detail: Option<&'static str>,
     control: AnyElement,
@@ -1462,7 +1749,13 @@ pub(crate) fn button(
         .child(text(label, 13., 18., 430., t.text))
 }
 /// Dropdown trigger: value (with an optional leading app icon) and a chevron.
-fn select(label: &'static str, leading: Option<AnyElement>, disabled: bool, t: &Theme) -> Div {
+pub(crate) fn select(
+    label: impl Into<SharedString>,
+    leading: Option<AnyElement>,
+    disabled: bool,
+    open: bool,
+    t: &Theme,
+) -> Div {
     div()
         .h(px(28.))
         .px(px(13.))
@@ -1474,7 +1767,11 @@ fn select(label: &'static str, leading: Option<AnyElement>, disabled: bool, t: &
         .child(on_card(
             12.5,
             Squircle,
-            t.primary_soft_alpha,
+            if open {
+                t.ghost_hover
+            } else {
+                t.primary_soft_alpha
+            },
             Some(t.border),
         ))
         .when(disabled, |d| d.opacity(0.4))
@@ -1544,315 +1841,6 @@ fn app_icon(page: Hsla) -> AnyElement {
     .size(px(18.))
     .flex_none()
     .into_any_element()
-}
-
-/// Signed-out start (`LoginRoute`, welcome v2): ChatGPT sign-in, another way (API key), sign up.
-pub struct Login {
-    stage: Stage,
-    api_key: String,
-    focus: FocusHandle,
-    error: Option<String>,
-    restart_blocked: bool,
-}
-
-enum Stage {
-    Welcome,
-    /// Browser sign-in started: the `loginId` that `account/login/cancel` takes.
-    Pending(String),
-    OtherMethods,
-    ApiKey,
-}
-
-impl Login {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        Self {
-            stage: Stage::Welcome,
-            api_key: String::new(),
-            focus: cx.focus_handle(),
-            error: None,
-            restart_blocked: false,
-        }
-    }
-
-    pub fn restart_ready(&self) -> bool {
-        !self.restart_blocked && matches!(self.stage, Stage::Welcome) && self.api_key.is_empty()
-    }
-
-    /// `account/login/completed`: a failed sign-in shows its error and returns to the start.
-    pub fn apply(&mut self, event: &bridge::Event, cx: &mut Context<Self>) {
-        let bridge::Event::Notification { method, params } = event else {
-            return;
-        };
-        if method != "account/login/completed" || params["success"] != false {
-            return;
-        }
-        let raw = params["error"].as_str().unwrap_or_default();
-        self.stage = Stage::Welcome;
-        self.error = Some(format!("Sign-in failed: {raw}"));
-        cx.notify();
-    }
-
-    /// `account/login/start` as the original's `loginWithChatGpt`: a ChatGPT login opens its
-    /// `authUrl` in the browser and waits in `Pending` for `account/login/completed`.
-    fn start(&mut self, params: Value, cx: &mut Context<Self>) {
-        let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
-            return;
-        };
-        let bridge = bridge.clone();
-        self.restart_blocked = true;
-        cx.spawn(async move |this, cx| {
-            let result = bridge
-                .request::<_, Value>("account/login/start", params)
-                .await;
-            this.update(cx, |this, cx| {
-                match result {
-                    Ok(r) => {
-                        if let (Some(id), Some(url)) =
-                            (r["loginId"].as_str(), r["authUrl"].as_str())
-                        {
-                            cx.open_url(url);
-                            this.stage = Stage::Pending(id.into());
-                        }
-                    }
-                    Err(e) => this.error = Some(format!("Sign-in failed: {e}")),
-                }
-                cx.notify();
-            })
-        })
-        .detach();
-    }
-
-    /// The ChatGPT sign-in request of the original (`appBrand`, hosted success page).
-    fn start_chatgpt(&mut self, cx: &mut Context<Self>) {
-        self.start(
-            json!({ "type": "chatgpt", "appBrand": "chatgpt", "useHostedLoginSuccessPage": true }),
-            cx,
-        );
-    }
-
-    fn key_down(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let k = &e.keystroke;
-        match (k.key.as_str(), &k.key_char) {
-            ("backspace", _) => _ = self.api_key.pop(),
-            ("enter", _) => self.submit_api_key(cx),
-            (_, Some(c)) if !k.modifiers.platform && !k.modifiers.control => {
-                self.api_key.push_str(c)
-            }
-            _ => return,
-        }
-        cx.notify();
-    }
-
-    fn submit_api_key(&mut self, cx: &mut Context<Self>) {
-        if !self.api_key.is_empty() {
-            let key = self.api_key.clone();
-            self.start(json!({ "type": "apiKey", "apiKey": key }), cx);
-        }
-    }
-
-    fn go(&mut self, stage: Stage, cx: &mut Context<Self>) {
-        self.stage = stage;
-        self.error = None;
-        cx.notify();
-    }
-}
-
-/// 46 px outlined pill button of the sign-in screen.
-fn login_button(id: &'static str, label: &'static str, t: &Theme) -> Stateful<Div> {
-    let hover = over(t.ghost_hover, t.surface);
-    div()
-        .id(id)
-        .h(px(46.))
-        .w_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .gap(px(8.))
-        .rounded_full()
-        .border_1()
-        .border_color(over(t.border, t.surface))
-        .bg(t.surface)
-        .hover(move |s| s.bg(hover))
-        .child(text(label, 14., 20., 500., t.text))
-}
-
-impl Render for Login {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme().clone();
-        let title = |s: &'static str| {
-            text(s, 28., 36., 400., t.text)
-                .w(px(316.))
-                .whitespace_normal()
-                .text_center()
-        };
-        let (heading, body): (Div, AnyElement) = match &self.stage {
-            Stage::Welcome => (
-                title("Sign in to ChatGPT"),
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(12.))
-                    .child(
-                        div()
-                            .id("continue")
-                            .h(px(48.))
-                            .w_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .gap(px(8.))
-                            .rounded_full()
-                            .bg(t.button_primary_solid)
-                            .child(icon("codex-logo", 24., t.text_inverse))
-                            .child(text("Continue to sign in", 14., 20., 500., t.text_inverse))
-                            .on_click(cx.listener(|this, _, _, cx| this.start_chatgpt(cx))),
-                    )
-                    .child(
-                        login_button("another-way", "Sign in another way", &t).on_click(
-                            cx.listener(|this, _, _, cx| this.go(Stage::OtherMethods, cx)),
-                        ),
-                    )
-                    .child(
-                        div()
-                            .id("sign-up")
-                            .h(px(36.))
-                            .px(px(8.))
-                            .flex()
-                            .items_center()
-                            .child(text("Sign up", 14., 20., 500., t.text_description).underline())
-                            .on_click(cx.listener(|this, _, _, cx| this.start_chatgpt(cx))),
-                    )
-                    .into_any_element(),
-            ),
-            Stage::Pending(id) => {
-                let id = id.clone();
-                (
-                    text(
-                        "Continue signing in with your browser",
-                        14.,
-                        20.,
-                        400.,
-                        t.text_description,
-                    ),
-                    login_button("cancel", "Cancel sign-in", &t)
-                        .h(px(42.))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            send("account/login/cancel", json!({ "loginId": id }), cx);
-                            this.go(Stage::Welcome, cx);
-                        }))
-                        .into_any_element(),
-                )
-            }
-            Stage::OtherMethods => (
-                title("Sign in another way"),
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(12.))
-                    .child(
-                        login_button("api-key", "OpenAI API Key", &t)
-                            .on_click(cx.listener(|this, _, _, cx| this.go(Stage::ApiKey, cx))),
-                    )
-                    .child(
-                        div()
-                            .id("back")
-                            .h(px(36.))
-                            .px(px(12.))
-                            .flex()
-                            .items_center()
-                            .child(text("Back", 14., 20., 500., t.text_tertiary))
-                            .on_click(cx.listener(|this, _, _, cx| this.go(Stage::Welcome, cx))),
-                    )
-                    .into_any_element(),
-            ),
-            Stage::ApiKey => {
-                let (value, color) = if self.api_key.is_empty() {
-                    ("sk-…".to_string(), t.text_tertiary)
-                } else {
-                    ("•".repeat(self.api_key.chars().count()), t.text)
-                };
-                (
-                    title("Sign in with an API key"),
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_col()
-                        .gap(px(32.))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(px(8.))
-                                .child(text("OpenAI API key", 14., 20., 500., t.text))
-                                .child(
-                                    div()
-                                        .id("api-key-field")
-                                        .track_focus(&self.focus)
-                                        .on_key_down(cx.listener(Self::key_down))
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.focus.focus(window, cx)
-                                        }))
-                                        .h(px(40.))
-                                        .px(px(12.))
-                                        .flex()
-                                        .items_center()
-                                        .rounded(Theme::RADIUS_LG)
-                                        .border_1()
-                                        .border_color(over(t.border, t.surface))
-                                        .child(text(value, 14., 20., 430., color)),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(12.))
-                                .child(login_button("api-cancel", "Cancel", &t).flex_1().on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.api_key.clear();
-                                        this.go(Stage::OtherMethods, cx)
-                                    }),
-                                ))
-                                .child(
-                                    login_button("api-continue", "Continue", &t)
-                                        .flex_1()
-                                        .when(self.api_key.is_empty(), |d| d.opacity(0.5))
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.submit_api_key(cx)),
-                                        ),
-                                ),
-                        )
-                        .into_any_element(),
-                )
-            }
-        };
-        div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .pb(px(48.))
-            .font_family(SANS)
-            .bg(t.surface)
-            .child(
-                div()
-                    .w(px(340.))
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(32.))
-                    .child(icon("codex-logo", 40., t.text))
-                    .child(heading)
-                    .child(body)
-                    .children(self.error.clone().map(|e| {
-                        text(SharedString::from(e), 14., 20., 430., t.text_error)
-                            .whitespace_normal()
-                    })),
-            )
-    }
 }
 
 #[cfg(test)]

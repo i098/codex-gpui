@@ -68,6 +68,16 @@ fn loading_model(color: Hsla) -> impl IntoElement {
     .flex_none()
 }
 
+fn effort_icon(effort: &str) -> &'static str {
+    match effort {
+        "none" | "minimal" => "composer-model-none",
+        "low" => "composer-model",
+        "high" => "composer-model-high",
+        "xhigh" | "max" | "ultra" | "persistent" => "composer-model-extra-high",
+        _ => "composer-model-medium",
+    }
+}
+
 impl Composer {
     pub(super) fn footer(&self, window: &Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let open = matches!(self.menu, Some(Menu::Effort | Menu::Models));
@@ -86,8 +96,11 @@ impl Composer {
             )
             .when(model.is_some(), |d| {
                 d.child(
-                    label(effort_label(&self.effort).to_string(), t.text_tertiary)
-                        .when(open, |d| d.invisible()),
+                    label(
+                        effort_label(self.displayed_effort()).to_string(),
+                        t.text_tertiary,
+                    )
+                    .when(open, |d| d.invisible()),
                 )
             })
             .when(open, |d| {
@@ -102,20 +115,23 @@ impl Composer {
             });
         let trigger = if loading {
             let value = "Loading model…";
-            let width = window
-                .text_system()
-                .layout_line(
-                    value,
-                    px(13.),
-                    &[TextRun {
-                        len: value.len(),
-                        font: gpui::font(crate::SANS),
-                        color: t.text_tertiary,
-                        ..Default::default()
-                    }],
-                    None,
-                )
-                .width;
+            let width = crate::run_width(
+                window
+                    .text_system()
+                    .layout_line(
+                        value,
+                        px(13.),
+                        &[TextRun {
+                            len: value.len(),
+                            font: gpui::font(crate::SANS),
+                            color: t.text_tertiary,
+                            ..Default::default()
+                        }],
+                        None,
+                    )
+                    .width,
+                window,
+            );
             pill("model-picker", t)
                 .aria_label(value)
                 .aria_disabled(true)
@@ -127,7 +143,11 @@ impl Composer {
             pill("model-picker", t)
                 .w(px(28.))
                 .justify_center()
-                .child(icon("composer-model", 16., t.text_tertiary))
+                .child(icon(
+                    effort_icon(self.displayed_effort()),
+                    16.,
+                    t.text_tertiary,
+                ))
         } else {
             pill("model-picker", t)
                 .px(px(8.))
@@ -155,7 +175,7 @@ impl Composer {
             .child(
                 trigger
                     .track_focus(&self.model_focus)
-                    .focus_visible(menu::trigger_focus)
+                    .focus_visible(crate::focus::trigger_focus)
                     .when(!loading, |d| {
                         d.on_hover(cx.listener(|this, hovered: &bool, _, _| {
                             this.menu_trigger_hovered = *hovered
@@ -195,7 +215,7 @@ impl Composer {
                         .aria_label("Add files and more")
                         .aria_expanded(self.slash.open && self.slash.mention)
                         .tab_index(0)
-                        .focus_visible(menu::trigger_focus)
+                        .focus_visible(crate::focus::trigger_focus)
                         .w(px(28.))
                         .justify_center()
                         .child(footer_icon("plus", t.text))
@@ -224,7 +244,7 @@ impl Composer {
                     .child(
                         pill("permissions", t)
                             .track_focus(&self.permissions_focus)
-                            .focus_visible(menu::trigger_focus)
+                            .focus_visible(crate::focus::trigger_focus)
                             .on_hover(cx.listener(|this, hovered: &bool, _, _| {
                                 this.menu_trigger_hovered = *hovered
                             }))
@@ -233,7 +253,14 @@ impl Composer {
                             }))
                             .px(px(6.))
                             .gap(px(4.))
-                            .child(footer_icon("permissions", t.text_tertiary))
+                            .child(footer_icon(
+                                if self.permission == Permission::Ask {
+                                    "composer-permission-ask"
+                                } else {
+                                    "permissions"
+                                },
+                                t.text_tertiary,
+                            ))
                             .when(self.footer_width > SM_WIDTH, |d| {
                                 d.child(
                                     text(
@@ -328,7 +355,7 @@ impl Composer {
             .child(
                 pill("dictate", t)
                     .tab_index(0)
-                    .focus_visible(menu::trigger_focus)
+                    .focus_visible(crate::focus::trigger_focus)
                     .w(px(28.))
                     .justify_center()
                     .child(footer_icon("mic", t.text)),
