@@ -390,8 +390,19 @@ pub fn set_pointer_interactive(
     })?
 }
 
-pub(crate) fn primary(cx: &mut App) -> Result<WindowHandle<Root>> {
-    let handle = cx.try_global::<Windows>().and_then(|windows| {
+pub fn reopen(cx: &mut App) -> Result<()> {
+    if let Some(handle) = primary(cx) {
+        return show(handle, Presentation::Foreground, cx);
+    }
+    let cwd = std::env::current_dir().context("read launch directory")?;
+    open_primary(State::load(), cwd.to_string_lossy().into_owned(), cx)?;
+    Ok(())
+}
+
+/// The last active primary window, else any primary: the window a deep link or Dock
+/// reopen addresses.
+pub fn primary(cx: &App) -> Option<AnyWindowHandle> {
+    cx.try_global::<Windows>().and_then(|windows| {
         windows
             .last_primary
             .and_then(|id| windows.entries.get(&id))
@@ -402,11 +413,14 @@ pub(crate) fn primary(cx: &mut App) -> Result<WindowHandle<Root>> {
                     .find(|entry| entry.kind == Kind::Primary)
             })
             .map(|entry| entry.handle)
-    });
-    if let Some(handle) = handle {
-        return handle
-            .downcast::<Root>()
-            .context("primary window has no app root");
+    })
+}
+
+/// `primary` as a typed root, opening a hidden primary when none exists: the
+/// window screenshot capture addresses.
+pub(crate) fn primary_or_open(cx: &mut App) -> Result<WindowHandle<Root>> {
+    if let Some(handle) = primary(cx).and_then(|handle| handle.downcast::<Root>()) {
+        return Ok(handle);
     }
     let cwd = std::env::current_dir().context("read launch directory")?;
     open_primary_with_presentation(
@@ -417,12 +431,7 @@ pub(crate) fn primary(cx: &mut App) -> Result<WindowHandle<Root>> {
     )
 }
 
-pub fn reopen(cx: &mut App) -> Result<()> {
-    let handle = primary(cx)?;
-    show(handle.into(), Presentation::Foreground, cx)
-}
-
-fn connect(cwd: &Path) -> Result<(Bridge, Receiver<Event>)> {
+pub(crate) fn connect(cwd: &Path) -> Result<(Bridge, Receiver<Event>)> {
     if let Some(mut command) = bridge::acp_command() {
         command.current_dir(cwd);
         Bridge::spawn_acp(command)

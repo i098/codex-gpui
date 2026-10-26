@@ -51,6 +51,8 @@ pub enum Event {
         method: String,
         params: Value,
     },
+    /// A spawned server process exited (stdout closed); replayed transcripts never send it.
+    Closed,
 }
 
 /// JSON-RPC error returned by the server; reach it with `err.downcast_ref::<RpcError>()`.
@@ -266,7 +268,14 @@ impl Bridge {
     ) -> (Bridge, Receiver<Event>) {
         let (sink, events) = Sink::new();
         let listener = sink.clone();
-        std::thread::spawn(move || read_loop(BufReader::new(read), &listener));
+        let spawned = child.is_some();
+        std::thread::spawn(move || {
+            read_loop(BufReader::new(read), &listener);
+            if spawned {
+                listener.event(Event::Closed);
+            }
+            listener.close();
+        });
         let backend = Box::new(Lines(Box::new(write)));
         (Self::new(backend, sink, child, false), events)
     }
@@ -489,7 +498,6 @@ fn read_loop(reader: impl BufRead, sink: &Sink) {
         };
         sink.incoming(msg);
     }
-    sink.close();
 }
 
 #[cfg(test)]

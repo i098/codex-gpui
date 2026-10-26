@@ -23,13 +23,23 @@ out=$2 mode=$3 revision=$4
 [[ $(uname -s) == Darwin && $out == /tmp/* && ! -L $out ]] || { echo 'assembly requires an owned /tmp directory on macOS' >&2; exit 2; }
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/app/Cargo.toml)
 name='Codex GPUI' identifier=dev.codexgpui.app
+# The normal bundle declares the `codex://` URL scheme (the original's packaged
+# CFBundleURLTypes); the QA bundle stays out of it so it never contends with the real
+# ChatGPT.app for the scheme on a shared Mac.
+url_scheme=''
 export CODEX_GPUI_REVISION=$revision
 unset CODEX_GPUI_QA
 if [[ $mode == qa ]]; then
     name='Codex GPUI QA' identifier=dev.codexgpui.qa
     export CODEX_GPUI_QA=1
-elif [[ $mode != normal ]]; then
+elif [[ $mode == normal ]]; then
+    url_scheme='codex'
+else
     exit 2
+fi
+url_types=""
+if [[ -n $url_scheme ]]; then
+    url_types="<key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>$identifier</string><key>CFBundleURLSchemes</key><array><string>$url_scheme</string></array></dict></array>"
 fi
 cargo build --locked --release -p app
 mkdir -p "$out"
@@ -54,9 +64,9 @@ cat >"$app/Contents/Info.plist" <<PLIST
 <key>CFBundleShortVersionString</key><string>$version</string>
 <key>CFBundleVersion</key><string>$version</string>
 <key>CodexGPUIRevision</key><string>$revision</string>
-<key>LSMinimumSystemVersion</key><string>13.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
+$url_types
 </dict></plist>
 PLIST
 plutil -lint "$app/Contents/Info.plist"
