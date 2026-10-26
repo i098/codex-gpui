@@ -31,7 +31,10 @@ impl<const CHUNK_SIZE: usize> StackReadBuffer<CHUNK_SIZE> {
 
     /// Create a input buffer filled with previously read data.
     pub fn from_partially_read(part: Vec<u8>) -> Self {
-        Self { storage: Cursor::new(part), chunk: [0; CHUNK_SIZE] }
+        Self {
+            storage: Cursor::new(part),
+            chunk: [0; CHUNK_SIZE],
+        }
     }
 
     /// Get a cursor to the data storage.
@@ -58,7 +61,9 @@ impl<const CHUNK_SIZE: usize> StackReadBuffer<CHUNK_SIZE> {
     pub fn read_from<S: Read>(&mut self, stream: &mut S) -> IoResult<usize> {
         self.clean_up();
         let size = stream.read(&mut self.chunk)?;
-        self.storage.get_mut().extend_from_slice(&self.chunk[..size]);
+        self.storage
+            .get_mut()
+            .extend_from_slice(&self.chunk[..size]);
         Ok(size)
     }
 
@@ -115,7 +120,9 @@ fn benchmark(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("buffers");
     group.throughput(Throughput::Bytes(STREAM_SIZE as u64));
-    group.bench_function("InputBuffer", |b| b.iter(|| input_buffer(black_box(stream.clone()))));
+    group.bench_function("InputBuffer", |b| {
+        b.iter(|| input_buffer(black_box(stream.clone())))
+    });
     group.bench_function("ReadBuffer (stack)", |b| {
         b.iter(|| stack_read_buffer(black_box(stream.clone())));
     });

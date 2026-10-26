@@ -5,11 +5,21 @@ use gpui::Div;
 
 pub(crate) async fn load_thread(
     bridge: &Bridge,
+    this: &WeakEntity<Root>,
     id: &str,
-    resume: Option<Value>,
+    resume: bool,
+    cx: &mut AsyncWindowContext,
 ) -> Result<(Thread, Option<RendererState>)> {
-    let thread = bridge.thread_read(id, true).await?.thread;
-    let settings = if let Some(params) = resume {
+    let response: Value = bridge
+        .request("thread/read", json!({"threadId": id, "includeTurns": true}))
+        .await?;
+    if response["thread"]["threadSource"] == "automation" {
+        this.update(cx, |this, _| this.automation_threads.insert(id.to_owned()))?;
+    }
+    let thread = serde_json::from_value::<ThreadReadResponse>(response)?.thread;
+    let settings = if resume {
+        let mut params = resume_params(this, id, cx).await?;
+        params["excludeTurns"] = json!(true);
         let response = bridge.request::<_, Value>("thread/resume", params).await?;
         Some(resumed_settings(response, id)?)
     } else {

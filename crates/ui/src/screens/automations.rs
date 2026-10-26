@@ -152,54 +152,171 @@ fn day_time(at_ms: i64, utc_offset: i64) -> (String, String) {
     )
 }
 
-impl Task {
-    fn rule(&self, key: &str) -> Option<&str> {
-        self.rrule.split([';', '\n']).find_map(|part| {
-            part.trim_start_matches("RRULE:")
-                .strip_prefix(key)?
-                .strip_prefix('=')
-        })
-    }
+fn rule_part<'a>(rrule: &'a str, key: &str) -> Option<&'a str> {
+    rrule.split([';', '\n']).find_map(|part| {
+        part.trim_start_matches("RRULE:")
+            .strip_prefix(key)?
+            .strip_prefix('=')
+    })
+}
 
-    fn cadence(&self) -> &'static str {
-        match self.rule("FREQ") {
-            Some("MINUTELY" | "HOURLY") => "Interval",
-            Some("DAILY") => "Daily",
-            Some("WEEKLY") if self.rule("BYDAY") == Some("MO,TU,WE,TH,FR") => "Weekdays",
-            Some("WEEKLY") => "Weekly",
-            Some("MONTHLY") => "Monthly",
-            Some("YEARLY") => "Yearly",
-            _ => "Custom",
-        }
+fn cadence(rrule: &str) -> &'static str {
+    match rule_part(rrule, "FREQ") {
+        Some("MINUTELY" | "HOURLY") => "Interval",
+        Some("DAILY") => "Daily",
+        Some("WEEKLY") if rule_part(rrule, "BYDAY") == Some("MO,TU,WE,TH,FR") => "Weekdays",
+        Some("WEEKLY") => "Weekly",
+        Some("MONTHLY") => "Monthly",
+        Some("YEARLY") => "Yearly",
+        _ => "Custom",
     }
+}
 
-    /// Card schedule: `Fridays at 9:00 AM`, `Daily at 8:00 AM`.
-    fn schedule(&self) -> String {
-        let hour = self.rule("BYHOUR").and_then(|h| h.parse::<u32>().ok());
-        let minute = self.rule("BYMINUTE").and_then(|m| m.parse::<u32>().ok());
-        let (Some(hour), Some(minute)) = (hour, minute) else {
-            return self.cadence().to_owned();
-        };
-        let time = format!(
-            "{}:{minute:02} {}",
-            match hour % 12 {
-                0 => 12,
-                h => h,
-            },
-            if hour < 12 { "AM" } else { "PM" }
-        );
-        let day = match (self.rule("FREQ"), self.rule("BYDAY")) {
-            (Some("WEEKLY"), Some("MO")) => "Mondays",
-            (Some("WEEKLY"), Some("TU")) => "Tuesdays",
-            (Some("WEEKLY"), Some("WE")) => "Wednesdays",
-            (Some("WEEKLY"), Some("TH")) => "Thursdays",
-            (Some("WEEKLY"), Some("FR")) => "Fridays",
-            (Some("WEEKLY"), Some("SA")) => "Saturdays",
-            (Some("WEEKLY"), Some("SU")) => "Sundays",
-            _ => self.cadence(),
-        };
-        format!("{day} at {time}")
+pub fn schedule_summary(rrule: &str) -> String {
+    let frequency = rule_part(rrule, "FREQ");
+    if matches!(frequency, Some("MINUTELY" | "HOURLY")) {
+        let interval = rule_part(rrule, "INTERVAL")
+            .and_then(|n| n.parse::<u64>().ok())
+            .unwrap_or(1);
+        let minutes = interval.saturating_mul(if frequency == Some("HOURLY") { 60 } else { 1 });
+        return interval_summary(minutes);
     }
+    let hour = rule_part(rrule, "BYHOUR").and_then(|h| h.parse::<u32>().ok());
+    let minute = rule_part(rrule, "BYMINUTE").and_then(|m| m.parse::<u32>().ok());
+    let (Some(hour), Some(minute)) = (hour, minute) else {
+        return cadence(rrule).to_owned();
+    };
+    let time = format!(
+        "{}:{minute:02} {}",
+        if hour % 12 == 0 { 12 } else { hour % 12 },
+        if hour < 12 { "AM" } else { "PM" }
+    );
+    format!("{} at {time}", day_label(rrule))
+}
+
+fn interval_summary(minutes: u64) -> String {
+    match minutes {
+        1 => "Every minute".into(),
+        60 => "Hourly".into(),
+        1440 => "Daily".into(),
+        10080 => "Weekly".into(),
+        n if n.is_multiple_of(10080) => format!("Every {} weeks", n / 10080),
+        n if n.is_multiple_of(1440) => format!("Every {} days", n / 1440),
+        n if n.is_multiple_of(60) => format!("Every {} hours", n / 60),
+        n => format!("Every {n} minutes"),
+    }
+}
+
+/// The weekday of a single-day weekly rule, else its cadence.
+fn day_label(rrule: &str) -> &'static str {
+    match (rule_part(rrule, "FREQ"), rule_part(rrule, "BYDAY")) {
+        (Some("WEEKLY"), Some("MO")) => "Mondays",
+        (Some("WEEKLY"), Some("TU")) => "Tuesdays",
+        (Some("WEEKLY"), Some("WE")) => "Wednesdays",
+        (Some("WEEKLY"), Some("TH")) => "Thursdays",
+        (Some("WEEKLY"), Some("FR")) => "Fridays",
+        (Some("WEEKLY"), Some("SA")) => "Saturdays",
+        (Some("WEEKLY"), Some("SU")) => "Sundays",
+        _ => cadence(rrule),
+    }
+}
+
+// The card uses the original 24 px clock, not the sidebar's 20 px asset.
+const CARD_CLOCK: &[u8] = br#"<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 6.25C12.4142 6.25003 12.75 6.58581 12.75 7V11.793C12.75 12.1244 12.6182 12.4424 12.3838 12.6768L10.0303 15.0303C9.73739 15.3232 9.26262 15.3231 8.96973 15.0303C8.67683 14.7374 8.67683 14.2626 8.96973 13.9697L11.25 11.6895V7C11.25 6.58579 11.5858 6.25 12 6.25Z" fill="black"/><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2.25C17.3848 2.25 21.75 6.61522 21.75 12C21.75 17.3848 17.3848 21.75 12 21.75C6.61522 21.75 2.25 17.3848 2.25 12C2.25 6.61522 6.61522 2.25 12 2.25ZM12 3.75C7.44365 3.75 3.75 7.44365 3.75 12C3.75 16.5563 7.44365 20.25 12 20.25C16.5563 20.25 20.25 16.5563 20.25 12C20.25 7.44365 16.5563 3.75 12 3.75Z" fill="black"/></svg>"#;
+
+pub fn task_card(name: SharedString, detail: SharedString, can_open: bool, t: &Theme) -> Div {
+    let clock_color = gpui::Hsla {
+        a: 0.65,
+        ..t.text_secondary
+    };
+    let content = div()
+        .size_full()
+        .p(px(12.))
+        .flex()
+        .items_center()
+        .gap(px(10.))
+        .child(
+            div()
+                .size(px(40.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .relative()
+                .child(fill(px(12.5), t.surface_secondary.opacity(0.92)))
+                .child(
+                    canvas(
+                        |_, _, _| {},
+                        move |bounds, (), window, cx| {
+                            if !shapes::paint_icon(
+                                CARD_CLOCK,
+                                "automation-card-clock",
+                                bounds,
+                                false,
+                                clock_color,
+                                None,
+                                window,
+                                cx,
+                            ) {
+                                let _ = window.paint_svg(
+                                    bounds,
+                                    "icons/scheduled.svg".into(),
+                                    None,
+                                    gpui::TransformationMatrix::unit(),
+                                    clock_color,
+                                    cx,
+                                );
+                            }
+                        },
+                    )
+                    .size(px(24.)),
+                ),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .child(
+                    text(name, 14., 21., 500., t.text)
+                        .overflow_hidden()
+                        .text_ellipsis(),
+                )
+                .child(text(detail, 13., 19.5, 430., t.text_secondary)),
+        )
+        .when(can_open, |card| {
+            card.child(
+                div()
+                    .relative()
+                    .h(px(28.))
+                    .px(px(9.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(12.5)),
+                        corner: shapes::Corner::Squircle,
+                        border: Some((px(1.), t.border)),
+                        ..Default::default()
+                    }))
+                    .flex()
+                    .items_center()
+                    .child(text("Open", 14., 18., 430., t.text)),
+            )
+        });
+    div()
+        .relative()
+        .h(px(64.5))
+        .child(shapes::decoration(shapes::Decoration {
+            radius: Corners::all(px(20.)),
+            corner: shapes::Corner::Squircle,
+            fill: Some(t.surface_elevated_secondary.opacity(0.5)),
+            shadows: vec![crate::composer::shadow(t.border_strong, 0., 0., 0.5, false)],
+            ..Default::default()
+        }))
+        .child(crate::rounded_clip(
+            px(20.),
+            shapes::Corner::Squircle,
+            content,
+        ))
 }
 
 /// One `/suggested_automations` entry (or a built-in landing example).
@@ -805,7 +922,11 @@ impl ScheduledSidebar {
             .child(
                 secondary
                     .child(text(
-                        if paused { "Paused" } else { task.cadence() },
+                        if paused {
+                            "Paused"
+                        } else {
+                            cadence(&task.rrule)
+                        },
                         12.,
                         16.,
                         430.,
@@ -1216,65 +1337,13 @@ impl Render for AutomationThread {
                                 .whitespace_normal(),
                             )
                             .child(
-                                div()
-                                    .relative()
-                                    .mt(px(24.))
-                                    .h(px(65.))
-                                    .p(px(12.))
-                                    .child(fill(px(20.), t.surface_elevated_secondary.opacity(0.5)))
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(10.))
-                                    .child(
-                                        div()
-                                            .size(px(40.))
-                                            .flex_none()
-                                            .flex()
-                                            .items_center()
-                                            .justify_center()
-                                            .relative()
-                                            .child(fill(
-                                                px(12.5),
-                                                t.surface_secondary.opacity(0.92),
-                                            ))
-                                            .child(icon("scheduled", 24., t.text_secondary)),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .flex()
-                                            .flex_col()
-                                            .child(
-                                                text(
-                                                    self.task.name.clone(),
-                                                    14.,
-                                                    21.,
-                                                    500.,
-                                                    t.text,
-                                                )
-                                                .overflow_hidden()
-                                                .text_ellipsis(),
-                                            )
-                                            .child(text(
-                                                self.task.schedule(),
-                                                13.,
-                                                20.,
-                                                430.,
-                                                t.text_secondary,
-                                            )),
-                                    )
-                                    .child(
-                                        div()
-                                            .h(px(28.))
-                                            .px(px(8.))
-                                            .rounded(px(12.5))
-                                            .border_1()
-                                            .border_color(t.border)
-                                            .flex()
-                                            .items_center()
-                                            .child(text("Open", 14., 18., 430., t.text)),
-                                    ),
+                                task_card(
+                                    self.task.name.clone(),
+                                    schedule_summary(&self.task.rrule).into(),
+                                    true,
+                                    t,
+                                )
+                                .mt(px(24.)),
                             ),
                     )
                     // Room for the docked composer.

@@ -2937,14 +2937,16 @@ impl Window {
             }
             let size = self.viewport_size.to_device_pixels(self.scale_factor());
             let opaque = checkpoint.is_none()
-                && self.platform_window.background_appearance() == WindowBackgroundAppearance::Opaque;
+                && self.platform_window.background_appearance()
+                    == WindowBackgroundAppearance::Opaque;
             let scene = if let Some((epoch, start)) = checkpoint {
                 anyhow::ensure!(
                     epoch == self.scene_epoch && start <= self.next_frame.scene.len(),
                     "stale scene checkpoint"
                 );
                 self.scene_capture_scratch.clear();
-                self.scene_capture_scratch.replay(start..self.next_frame.scene.len(), &self.next_frame.scene);
+                self.scene_capture_scratch
+                    .replay(start..self.next_frame.scene.len(), &self.next_frame.scene);
                 self.scene_capture_scratch.finish();
                 &self.scene_capture_scratch
             } else {

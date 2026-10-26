@@ -31,6 +31,7 @@ use gpui::{
     Task, TextRun, TransformationMatrix, Window, canvas, div, font, prelude::*, px, radians,
     relative, rgb, rgba, white,
 };
+use serde_json::Value;
 use theme::{ActiveTheme as _, Appearance, Theme};
 
 use crate::icon::icon;
@@ -68,10 +69,22 @@ pub enum GitAction {
 
 impl gpui::EventEmitter<GitAction> for ThreadView {}
 
-use items::{activity, diff_card, disclosure, user_bubble, wrap_row};
+pub struct OpenAutomationCard {
+    pub arguments: Value,
+    pub thread_id: String,
+    pub call_id: String,
+}
+
+impl gpui::EventEmitter<OpenAutomationCard> for ThreadView {}
+
+use items::{activity, cache_automation_result, diff_card, disclosure, user_bubble, wrap_row};
 use markdown::{markdown, tones};
 pub use select::Selection;
 use select::{Carets, block_end, frame_start, highlight};
+
+pub fn markdown_preview(source: &str, window: &Window, t: &Theme) -> Div {
+    markdown::document_preview(source, window, t)
+}
 
 pub fn render_markdown(source: &str, window: &Window, theme: &Theme) -> Div {
     markdown::detail(source, window, theme)
@@ -575,7 +588,10 @@ impl ThreadView {
     }
 
     /// `composer` is docked under the transcript.
-    pub fn new(thread: Thread, clock: Clock, composer: AnyView) -> Self {
+    pub fn new(mut thread: Thread, clock: Clock, composer: AnyView) -> Self {
+        for item in thread.turns.iter_mut().flat_map(|turn| &mut turn.items) {
+            cache_automation_result(item);
+        }
         Self {
             title: title(&thread),
             chat_actions: None,
@@ -1443,7 +1459,7 @@ impl ThreadView {
         }
         match method.as_str() {
             "turn/started" | "turn/completed" => {
-                let Ok(n) = serde_json::from_value::<TurnNotification>(params.clone()) else {
+                let Ok(mut n) = serde_json::from_value::<TurnNotification>(params.clone()) else {
                     return;
                 };
                 if n.turn.status == TurnStatus::InProgress {
@@ -1462,9 +1478,13 @@ impl ThreadView {
                         turn.error = n.turn.error;
                         if turn.items.is_empty() {
                             turn.items = n.turn.items;
+                            turn.items.iter_mut().for_each(cache_automation_result);
                         }
                     }
-                    None => self.turns.push(n.turn),
+                    None => {
+                        n.turn.items.iter_mut().for_each(cache_automation_result);
+                        self.turns.push(n.turn);
+                    }
                 }
                 if self.is_running() {
                     self.tick(cx);
@@ -1477,6 +1497,7 @@ impl ThreadView {
                 let Some(turn) = self.turns.iter_mut().find(|t| t.id == n.turn_id) else {
                     return;
                 };
+                cache_automation_result(&mut n.item);
                 let id = item_id(&n.item).map(str::to_owned);
                 if let Some(id) = &id {
                     self.mcp_images.borrow_mut().remove(id);
@@ -1816,6 +1837,7 @@ impl ThreadView {
                     content
                 });
             }
+            col = col.child(self.automation_cards(&turn.items, window, t, cx));
             col = col.child(div().h(px(16.))).child(markdown::with_find(
                 answer,
                 window,
@@ -1860,6 +1882,7 @@ impl ThreadView {
                     t.text_tertiary,
                 )))
             })
+            .child(self.automation_cards(&turn.items, window, t, cx))
     }
 
     /// The still-fading streamed segments of agent message `item`.
