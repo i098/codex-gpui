@@ -152,6 +152,45 @@ mod editor {
     use ui::screens::automations::{CreateAutomation, CreationMode, EditAutomation};
 
     #[test]
+    fn escape_closes_the_picker_before_discarding_the_editor() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let mut fx = Fx::new()?;
+        fx.root.update(&mut fx.cx, |root, cx| {
+            root.set_host(Arc::new(LocalHost::new(home.path())), cx)
+        });
+        fx.click(RAIL_SCHEDULED)?;
+        fx.wait("initial task list", |fx| {
+            fx.read(|root, _| root.automations().is_some())
+        })?;
+        for focus in 0..3 {
+            fx.cx.update_window(fx.window, |_, window, cx| {
+                window.dispatch_action(
+                    Box::new(CreateAutomation {
+                        mode: CreationMode::Manual,
+                    }),
+                    cx,
+                )
+            })?;
+            fx.advance(Duration::from_millis(20))?;
+            fx.type_text("Discard this draft")?;
+            if focus > 0 {
+                fx.keys("tab")?;
+                fx.type_text("Do not save this prompt.")?;
+            }
+            if focus == 2 {
+                fx.keys("tab enter down enter enter escape")?;
+                ensure!(fx.read(|root, _| root.automation_editor().is_some()));
+            }
+            fx.keys("escape")?;
+            fx.wait("Escape discards the editor", |fx| {
+                fx.read(|root, _| root.automation_editor().is_none())
+            })?;
+        }
+        ensure!(!home.path().join("automations").exists());
+        Ok(())
+    }
+
+    #[test]
     fn manual_task_keeps_text_schedule_and_draft_through_save_failure_and_reload() -> Result<()> {
         let home = tempfile::tempdir()?;
         let mut fx = Fx::new()?;

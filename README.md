@@ -316,6 +316,17 @@ The row menu's `Run now` sends `automation-run-now`; the host starts one `codex 
 It runs tasks with project folders or a project target (the project's first root from `.codex-global-state.json`), in a new Git worktree for the original default environment or in the folder for the local one.
 For a project target, the host saves the new thread's local project assignment before it starts the turn.
 An assignment write failure stops the run; legacy folder tasks do not change project assignments.
+Cron threads receive the original memory rules, inbox response rules, and desktop developer context through `thread/start`.
+The app-server retains saved base instructions.
+On macOS, automation threads use executable local app tools through a private native pipe.
+The tools need the `codex-app-tools` adapter and Node runtime installed with `ChatGPT.app`.
+If the adapter or pipe cannot start, the task keeps the app-server's original configuration.
+The pipe stops safely if its temporary directory is removed.
+The catalog exposes automation creation, full updates, deletion, local project and thread lists, history, pin, archive, and title changes.
+Unsupported delegation, remote hosts, plugin management, and terminal operations stay out of the catalog.
+Proposal cards open the shared task editor. Cancel changes nothing; saving preserves the reviewed definition.
+Completed task tools use only this card, not a second MCP activity row.
+The card clips its foreground to the original 20 px squircle; its background and shadow remain outside the clip.
 Projectless tasks use an owned folder under `~/Documents/Codex/<local-date>/<prompt-name>/`, with separate `work` and `outputs` folders.
 The `projectlessWorkspaceRoot` host setting overrides the root.
 The host saves projectless thread IDs, workspace-root hints, and output paths in `.codex-global-state.json`.
@@ -329,8 +340,10 @@ The time presets use 09:00, 14:00, 18:00, and 22:00.
 The row menu's Edit action updates the task through `automation-update`, without changing its identity or unrelated definition fields.
 The editor keeps an existing advanced rule unchanged when only Name or Prompt changes.
 Prefilled drafts stay in Create mode until their data includes an existing task ID.
+Escape closes an open schedule picker first; otherwise, it discards the editor without saving.
 Run `cargo test -p app --test task_create editor:: -- --test-threads=1` on macOS for the native editor, schedule, and Create menu checks.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
+Use `-- --include-ignored` on macOS to check the installed adapter.
 
 ### Legacy Codex Cloud threads
 
@@ -460,6 +473,14 @@ The composer labels modified workspace policies as Custom.
 A titled thread shows its header identity, also in a single pane.
 An untitled thread shows it only when a right pane is open; the toolbar actions stay available.
 
+In a loaded chat with an open content tab, `Cmd+Shift+F` switches between full and split view.
+`Cmd+Shift+B` changes full view to split view, hides the tabs, or restores the retained tabs beside Chat.
+Hiding tabs keeps their selected content; opening the same file, terminal, or Changes tab shows it again.
+Full view focuses the content pane and does not send typed text to the hidden composer.
+Find in full view searches the visible Changes panel, not the hidden chat.
+These commands do not create a browser tab when no content tab is open.
+Run `cargo test -p app --test workspace_layout -- --test-threads=1` for the native interaction checks.
+
 `LocalHost` serves `native-desktop-apps` and `native-desktop-app-by-bundle-id` through the desktop fetch boundary.
 On macOS, the adapter reads Spotlight metadata, applies the original app exclusions, and supports usage or display-name ordering.
 It returns each app's path, bundle ID, and display name without launching the app.
@@ -549,6 +570,7 @@ An extra layer changes glyph edge bytes even when its opacity is one.
 
 `shapes` links Skia binaries built with Chromium's `SkUserConfig.h` legacy defines.
 `.cargo/config.toml` points `SKIA_BINARIES_URL` to these binaries.
+The rasterizer reuses identical inverse-blend probe results across icon positions without changing their pixels.
 `skia-hairline-sys` links a narrow C scanner wrapper for Skia revision `61e7ca4e99062cdd0ab69445d5963fb3365778f6`.
 It records the ordered legacy hairline operations that the sprite renderer replays.
 `.cargo/config.toml` points `SKIA_HAIRLINE_BINARIES_URL` and `SKIA_HAIRLINE_PACKAGE_SHA256` to its versioned package.
@@ -692,6 +714,13 @@ The terminal command opens an existing background command, not an interactive sh
 Unsupported destinations remain known gaps; this change does not implement logout, git operations, cloud operations, or the project picker.
 Recorded command rows, ranking, and keyboard-editing checks remain unchanged.
 
+A hidden native menu item dispatches the shared `NewStandaloneChat` action and keeps its keyboard shortcut.
+Its first message creates a separate projectless workspace.
+File > New Temporary Chat uses the existing ephemeral mode and does not add a Recents entry.
+The temporary action is unavailable for ACP backends.
+Settings hides Toggle Sidebar and disables its action.
+Leaving Settings restores that item without changing the sidebar.
+Keyboard shortcut edits preserve the active window's menu visibility.
 The native menu lives in `crates/app/src/native_menus.rs`.
 Edit supports plain-text Paste and Match Style and selection-only Delete, including undo.
 View contains Find; Help opens the Codex changelog, troubleshooting guide, and service status page.
@@ -713,6 +742,14 @@ Images in the composer and tool output support Copy Image and Save Image As.
 Images with a local source also support Reveal in Finder.
 Saving writes the original bytes and replaces the destination only after the write succeeds.
 The headless Save-dialog hook allows tests to select a destination without opening a native window.
+On macOS, Control+Shift+4 attaches a selected screen region to the primary window's current chat.
+Control+Option+Shift+4 opens a new chat before selection.
+Starting a new chat clears the previous Home draft, including its attachments.
+Both shortcuts use the native selection tool and leave the screenshot unsent.
+Enlarged image previews retain their edge colors instead of sampling adjacent texture data.
+Escape cancels selection without an error; changing the chat or account discards an unfinished capture.
+The shortcuts use `codex-command-keybindings` overrides and never change Screen Recording permissions.
+Run `cargo test -p app --lib screenshot:: -- --test-threads=1` for isolated capture, attachment, and macOS image-edge checks.
 
 ```sh
 tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'

@@ -33,6 +33,8 @@ pub mod settings_kit;
 pub mod toast;
 pub mod tooltip;
 pub mod updater;
+pub mod workspace;
+pub mod zoom;
 
 actions!(
     shell,
@@ -58,6 +60,8 @@ actions!(
         OpenChangesPanel,
         /// Thread summary ▸ `Background processes` row: the command's terminal tab.
         OpenBackgroundTerminal,
+        ShowWorkspaceTabView,
+        StepWorkspaceLayout,
         /// `⌘K`, `⌘⇧P`, sidebar `Search`: the command menu.
         OpenCommandMenu,
     ]
@@ -193,6 +197,7 @@ pub struct Shell {
     avatar_hovered: bool,
     sidebar: AnyView,
     main: AnyView,
+    bottom: Option<AnyView>,
 }
 
 /// The fixture account's 24 px avatar (`rounded-full object-cover` `<img>`), rasterized the way
@@ -280,12 +285,33 @@ impl Shell {
             avatar_hovered: false,
             sidebar,
             main,
+            bottom: None,
         }
     }
 
     pub fn set_main(&mut self, main: AnyView, cx: &mut Context<Self>) {
         self.main = main;
         cx.notify();
+    }
+
+    pub fn set_bottom(&mut self, bottom: Option<AnyView>, cx: &mut Context<Self>) {
+        if self.bottom.as_ref().map(|view| view.entity_id())
+            != bottom.as_ref().map(|view| view.entity_id())
+        {
+            self.bottom = bottom;
+            cx.notify();
+        }
+    }
+
+    pub fn main_width(&self, window: &Window, cx: &App) -> Pixels {
+        let progress = self.sidebar_progress(cx.background_executor().now());
+        let left = RAIL_WIDTH + (self.sidebar_width - RAIL_WIDTH) * progress;
+        let border = if progress > 0.1 {
+            MAIN_HAIRLINE
+        } else {
+            px(0.)
+        };
+        (window.viewport_size().width - left - PAGE_INSET - border).max(px(0.))
     }
 
     pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
@@ -1263,6 +1289,7 @@ impl Shell {
         open: bool,
         focus: &gpui::FocusHandle,
         window: &Window,
+        theme: &Theme,
         hairline_width: Pixels,
     ) -> Div {
         let r = Theme::RADIUS_XL_BASE;
@@ -1276,7 +1303,26 @@ impl Shell {
             .right(PAGE_INSET)
             .bottom(PAGE_INSET)
             .overflow_hidden()
-            .child(self.main.clone());
+            .child(if let Some(bottom) = &self.bottom {
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(div().flex_1().min_h_0().child(self.main.clone()))
+                    .child(
+                        div()
+                            .h(px(280.))
+                            .min_h(px(160.))
+                            .max_h(gpui::relative(0.5))
+                            .flex_none()
+                            .border_t_1()
+                            .border_color(theme.border)
+                            .child(bottom.clone()),
+                    )
+                    .into_any_element()
+            } else {
+                self.main.clone().into_any_element()
+            });
         if self.main_composited {
             return panel.left(if open { left + hairline_width } else { left });
         }
@@ -1784,7 +1830,7 @@ impl Render for Shell {
                         .child(self.sidebar_panel(&t, progress)),
                 )
             })
-            .child(self.main_panel(main_left, open, &main_focus, window, hairline_width))
+            .child(self.main_panel(main_left, open, &main_focus, window, &t, hairline_width))
             .when(composited || self.main_backgrounds > 0, |d| {
                 d.child(corners)
             })

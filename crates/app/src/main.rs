@@ -112,6 +112,7 @@ fn main() {
             eprintln!("codex-gpui: cannot open the primary window: {error:#}");
             std::process::exit(1)
         });
+        app::screenshot::register(cx);
         app::qa::monitor(handle, cx);
         if !app::qa::ENABLED {
             cx.activate(true);
