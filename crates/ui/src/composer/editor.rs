@@ -557,6 +557,52 @@ impl Composer {
         }
     }
 
+    fn scroll_field_to_caret(&mut self, scale: f32) -> bool {
+        if !self.field_autoscroll {
+            return false;
+        }
+        let (Some(scroll), Some(bounds)) = (&self.field_scroll, self.bounds) else {
+            return false;
+        };
+        let cursor = self.cursor();
+        let Some((start, line_y, line)) = self
+            .line_starts()
+            .find(|(start, _, line)| cursor <= start + line.len())
+        else {
+            return false;
+        };
+        let Some(caret) = line.position_for_index(cursor - start, self.editor_line_height()) else {
+            return false;
+        };
+        let font_height = f32::from(line.ascent() + line.descent());
+        let leading = (f32::from(self.editor_line_height()) - font_height) / 2.;
+        let origin = bounds.origin.y + line_y + caret.y;
+        let top = origin + px((leading * scale).ceil() / scale);
+        let bottom = origin + px(((leading + font_height) * scale).floor() / scale);
+        let viewport = scroll.bounds();
+        if viewport.size.height <= px(2.) {
+            return false;
+        }
+        let start = viewport.origin.y;
+        let end = viewport.origin.y + viewport.size.height;
+        let adjustment = if top < start {
+            start - top
+        } else if bottom > end {
+            end - bottom
+        } else {
+            px(0.)
+        };
+        self.field_autoscroll = false;
+        let mut offset = scroll.offset();
+        let next = px((f32::from(offset.y + adjustment) * scale).round() / scale);
+        if offset.y == next {
+            return false;
+        }
+        offset.y = next;
+        scroll.set_offset(offset);
+        true
+    }
+
     /// Byte offset where each shaped line starts (lines are split at `\n`).
     pub(super) fn line_starts(&self) -> impl Iterator<Item = (usize, Pixels, &WrappedLine)> {
         let mut start = 0;
@@ -640,34 +686,46 @@ impl Composer {
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         div()
-            .px(px(
-                if self.plain_field == Some(true)
-                    || (self.request_parent.is_some() && self.request_compact && !self.secret)
-                {
-                    10.
-                } else {
-                    12.
-                },
-            ))
+            .px(px(if self.search_field {
+                0.
+            } else if self.compact_text() {
+                10.
+            } else {
+                12.
+            }))
             .pb(px(
-                if self.plain_field == Some(true) || self.request_parent.is_some() {
+                if self.search_field
+                    || self.plain_field == Some(true)
+                    || self.request_parent.is_some()
+                    || self.request_compact
+                {
                     0.
                 } else {
                     4.
                 },
             ))
-            .min_h(px(if self.request_parent.is_some() {
-                20.
-            } else {
-                48.
-            }))
+            .min_h(
+                if self.search_field || self.request_parent.is_some() || self.request_compact {
+                    px(20.)
+                } else {
+                    self.field_min_height
+                },
+            )
             .cursor(CursorStyle::IBeam)
             .when(self.embedded_field.is_some(), |d| {
                 d.px_0().pb_0().min_h(self.editor_line_height())
             })
-            .text_size(self.editor_font_size())
+            .text_size(if self.search_field {
+                px(13.)
+            } else {
+                self.editor_font_size()
+            })
             .line_height(self.editor_line_height())
-            .font_weight(gpui::FontWeight(430.))
+            .font_weight(gpui::FontWeight(if self.field_text.is_some() {
+                500.
+            } else {
+                430.
+            }))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_click))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -677,13 +735,22 @@ impl Composer {
             // Chromium's: blitted into a transparent layer (`_ComposerLayoutInput`'s
             // `overflow-y: auto` contents), then composited onto the card. A settings textarea
             // never scrolls here, so it has no such layer: its text blends onto the field's fill.
+            // The sign-in `input` has neither the opacity nor the layer.
             .child(
                 div()
-                    .when(
-                        self.content.is_empty() && self.embedded_field.is_none(),
-                        |d| d.opacity(0.5),
-                    )
-                    .when(self.plain_field != Some(true), |d| d.layer())
+                    .when(!self.search_field && self.field_text.is_none(), |d| {
+                        d.when(
+                            self.content.is_empty()
+                                && self.embedded_field.is_none()
+                                && !self.search_field,
+                            |d| d.opacity(0.5),
+                        )
+                        .when(
+                            self.embedded_field.is_none() && self.plain_field != Some(true)
+                                || self.search_field,
+                            |d| d.layer(),
+                        )
+                    })
                     .child(Editor(cx.entity())),
             )
     }
@@ -773,6 +840,7 @@ impl EntityInputHandler for Composer {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.cancel_dictation(cx);
         let single_line;
         let new_text = if self.plain_field == Some(false) && new_text.contains(['\n', '\r']) {
             single_line = new_text.replace(['\n', '\r'], "");
@@ -907,7 +975,17 @@ pub(super) fn shape(
         .collect::<Vec<_>>();
     window
         .text_system()
-        .shape_text(s.into(), composer.editor_font_size(), &runs, width, None)
+        .shape_text(
+            s.into(),
+            composer.editor_font_size(),
+            &runs,
+            if composer.embedded_field.is_some() {
+                None
+            } else {
+                width
+            },
+            None,
+        )
         .map(|lines| lines.into_iter().collect())
         .unwrap_or_default()
 }
@@ -964,9 +1042,10 @@ impl gpui::Element for Editor {
         cx: &mut App,
     ) {
         let t = cx.theme().clone();
+        let composer = self.0.read(cx);
         let lines = shape(
-            self.0.read(cx),
-            t.text,
+            composer,
+            composer.field_text.unwrap_or(t.text),
             t.text_tertiary,
             chip_color(&t),
             Some(bounds.size.width),
@@ -977,8 +1056,17 @@ impl gpui::Element for Editor {
         let collapse = |w: f32| (w <= SM_WIDTH, w <= XS_WIDTH);
         let changed = self.0.update(cx, |c, _| {
             c.lines = lines;
+            let mut bounds = bounds;
+            if c.embedded_field.is_some() {
+                let cursor = c
+                    .point_for_index(c.cursor())
+                    .map_or(px(0.), |point| point.x);
+                bounds.origin.x -= (cursor - bounds.size.width + px(2.)).max(px(0.));
+            }
             c.bounds = Some(bounds);
-            collapse(std::mem::replace(&mut c.footer_width, width)) != collapse(width)
+            let width_changed =
+                collapse(std::mem::replace(&mut c.footer_width, width)) != collapse(width);
+            c.scroll_field_to_caret(window.scale_factor()) || width_changed
         });
         if changed {
             let entity = self.0.clone();
@@ -999,8 +1087,13 @@ impl gpui::Element for Editor {
         let focus = self.0.read(cx).focus_handle.clone();
         window.handle_input(&focus, ElementInputHandler::new(bounds, self.0.clone()), cx);
         let selection_color = cx.theme().text_selection;
-        let caret_color = cx.theme().text;
         let c = self.0.read(cx);
+        let caret_color = c.field_text.unwrap_or(cx.theme().text);
+        let bounds = if c.embedded_field.is_some() {
+            c.bounds.unwrap_or(bounds)
+        } else {
+            bounds
+        };
         let line_height = c.editor_line_height();
         if !c.selected_range.is_empty()
             && let (Some(a), Some(b)) = (
@@ -1032,10 +1125,14 @@ impl gpui::Element for Editor {
             .iter()
             .filter_map(|m| Some((c.point_for_index(m.range.start)?, m.icon)))
             .collect();
+        let mut y = if c.plain_field == Some(true) {
+            window.layout_origin_residual_y(*id)
+        } else {
+            px(0.)
+        };
         let lines = self.0.update(cx, |c, _| std::mem::take(&mut c.lines));
         // Glyphs land on the unsnapped LayoutUnit x, as Blink paints text.
         let x = window.layout_origin_residual_x(*id);
-        let mut y = px(0.);
         for line in &lines {
             let origin = bounds.origin + point(x, y);
             line.paint(origin, line_height, TextAlign::Left, None, window, cx)

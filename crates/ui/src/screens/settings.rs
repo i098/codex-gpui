@@ -3,23 +3,24 @@
 //! (login-route chunk) that replaces the app when `account/read` reports no account.
 
 use crate::{
-    MONO, SANS, SetTheme, Shell,
-    composer::{Composer, popover, shadow},
+    MONO, SetTheme, Shell,
+    composer::{Composer, shadow},
     fixture, focus,
     icon::icon,
     in_layer, layout_color,
     motion::{self, HoverFade},
-    over, rounded_clip, sidebar_section, text,
+    over, rounded_clip,
+    screens::signin::Login,
+    sidebar_section, text,
 };
 use bridge::Bridge;
 use bridge::types::{AccountReadResponse, ConfigReadResponse};
 use gpui::{
-    Anchor, AnyElement, AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity,
-    EventEmitter, FocusHandle, Focusable, Font, FontWeight, Global, HighlightStyle, Hsla,
-    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render,
-    RenderImage, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun,
-    Window, anchored, canvas, deferred, div, font, img, point, prelude::FluentBuilder as _, px,
-    size,
+    AnyElement, AnyView, App, AppContext as _, Bounds, Context, Corners, Div, Entity, EventEmitter,
+    FocusHandle, Focusable, Font, FontWeight, Global, HighlightStyle, Hsla, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render, RenderImage, SharedString,
+    Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, canvas, div, font,
+    img, point, prelude::FluentBuilder as _, px, size,
 };
 use serde_json::{Value, json};
 use shapes::Corner::{self, Round, Squircle};
@@ -32,6 +33,8 @@ use theme::{ActiveTheme as _, Theme};
 
 #[path = "computer_use.rs"]
 pub mod computer_use;
+#[path = "keyboard_shortcuts.rs"]
+pub mod keyboard_shortcuts;
 fn focus_on_pointer(
     focus: Entity<focus::ControlFocus>,
 ) -> impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) {
@@ -105,6 +108,7 @@ pub mod workspace {
     impl Render for Workspace {
         fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
             let t = cx.theme().clone();
+            let description_color = t.text.opacity(0.498);
             let busy = self.busy();
             let add_focus = focus::handle("workspace-add", 0, window, cx);
             let skip_focus = focus::handle("workspace-skip", 0, window, cx);
@@ -219,7 +223,7 @@ pub mod workspace {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(text(skip_label, 14., 18., 500., t.text_tertiary)),
+                    .child(text(skip_label, 14., 18., 500., description_color)),
                 &skip_focus,
                 theme::Theme::RADIUS_FULL,
                 px(2.),
@@ -243,7 +247,7 @@ pub mod workspace {
                 .child(div().w_full().flex().flex_col().gap(px(24.))
                     .child(div().flex().flex_col().gap(px(24.)).items_center()
                         .child(text("Select a project", 24., 36., 600., t.text))
-                        .child(text("ChatGPT will be able to edit files and run commands in selected folders", 16., 24., 430., t.text_tertiary)
+                        .child(text("ChatGPT will be able to edit files and run commands in selected folders", 16., 24., 430., description_color)
                             .w_full().whitespace_normal().text_center()))
                     .child(div().w_full().flex().flex_col().gap(px(12.))
                         .child(div().relative().child(add).children(menu))
@@ -255,6 +259,11 @@ pub mod workspace {
 
 #[path = "settings_subtrees.rs"]
 pub mod subtrees;
+#[path = "settings/usage.rs"]
+pub mod usage;
+
+#[path = "storage.rs"]
+pub mod storage;
 
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
@@ -312,21 +321,6 @@ pub fn shell(
         shell
     });
     (shell, page)
-}
-
-/// Sends `method` to the app-server in the background; failures are logged.
-fn send(method: &'static str, params: Value, cx: &App) {
-    let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
-        return;
-    };
-    let bridge = bridge.clone();
-    cx.background_executor()
-        .spawn(async move {
-            if let Err(e) = bridge.request::<_, Value>(method, params).await {
-                eprintln!("{method}: {e:#}");
-            }
-        })
-        .detach();
 }
 
 /// Settings navigation (`gWa` order in app-initial): `(heading, [(label, icon)])`.
@@ -400,6 +394,7 @@ pub struct SettingsPage {
     projectless_root: String,
     pending_instructions: Vec<SettingChanged>,
     pub personalization: Entity<personalization::Personalization>,
+    toaster: Option<Entity<crate::toast::Toaster>>,
 }
 
 impl SettingsPage {
@@ -425,7 +420,12 @@ impl SettingsPage {
             projectless_root,
             pending_instructions: Vec::new(),
             personalization: cx.new(personalization::Personalization::new),
+            toaster: None,
         }
+    }
+
+    pub fn set_toaster(&mut self, toaster: Entity<crate::toast::Toaster>) {
+        self.toaster = Some(toaster);
     }
 
     fn get(&self, path: &str) -> &Value {
@@ -557,6 +557,7 @@ impl SettingsNav {
         };
         let control = div()
             .id("settings-search")
+            .key_context("Editable")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
             .on_click(cx.listener(|this, _, window, cx| this.focus.focus(window, cx)))
@@ -727,11 +728,9 @@ pub struct SettingsPane {
     page: Entity<SettingsPage>,
     /// The composited contents layer of the page's scroll container.
     layer: Layer,
-    /// Key of the select whose options menu is open.
-    open_select: Option<&'static str>,
-    /// Pointer over that menu: a press there is not a click outside.
-    menu_hovered: bool,
+    selects: std::collections::HashMap<&'static str, Entity<crate::settings_kit::Select>>,
     git_fields: Vec<(&'static str, Entity<Composer>)>,
+    storage: Entity<storage::StoragePage>,
 }
 
 /// `Confirm before closing a window` options, default first.
@@ -761,10 +760,10 @@ impl SettingsPane {
         })
         .detach();
         Self {
+            storage: cx.new(|cx| storage::StoragePage::new(page.clone(), cx)),
             page,
             layer: Layer::default(),
-            open_select: None,
-            menu_hovered: false,
+            selects: std::collections::HashMap::new(),
             git_fields: Vec::new(),
         }
     }
@@ -772,77 +771,41 @@ impl SettingsPane {
     /// A select for `key` with its options menu `(value, label)`; the first option is the
     /// default. A click outside closes the menu.
     fn select_menu(
-        &self,
+        &mut self,
         key: &'static str,
         options: &'static [(&'static str, &'static str)],
-        t: &Theme,
-        window: &mut Window,
+        width: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let current = self.page.read(cx).choice(key, options[0].0).to_string();
-        let label = options
-            .iter()
-            .find(|(value, _)| *value == current)
-            .map_or(options[0].1, |(_, label)| label);
-        let open = self.open_select == Some(key);
-        let hover = t.menu_item_hover;
-        let menu = open.then(|| {
-            let on_hover = cx.listener(|this, hovered: &bool, _, _| {
-                this.menu_hovered = *hovered;
+        let current = self.page.read(cx).choice(key, options[0].0).to_owned();
+        let page = self.page.clone();
+        let select = self.selects.entry(key).or_insert_with(|| {
+            let choices = options
+                .iter()
+                .map(|&(value, label)| crate::settings_kit::Choice {
+                    value: value.into(),
+                    label: label.into(),
+                    checked: false,
+                    disabled: false,
+                })
+                .collect();
+            let select = cx.new(|cx| {
+                crate::settings_kit::Select::new(current.clone(), choices, None, cx)
+                    .with_width(width)
             });
-            let rows = options.iter().map(|&(value, label)| {
-                let focus = focus::handle((gpui::ElementId::from(key), value), 0, window, cx);
-                let row = div()
-                    .id(value)
-                    .role(gpui::Role::MenuItem)
-                    .aria_label(label)
-                    .px(px(8.))
-                    .py(px(6.))
-                    .rounded(px(12.))
-                    .when(value == current, |d| d.bg(hover))
-                    .hover(move |s| s.bg(hover))
-                    .child(text(label, 14., 20., 430., t.text));
-                focus::ring(row.relative(), &focus, px(12.), px(0.), cx)
-                    .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
-                        this.open_select = None;
-                        this.menu_hovered = false;
-                        cx.notify();
-                    }))
-            });
-            // Below the trigger, or above it when the window's bottom edge is in the way.
-            deferred(
-                div().absolute().top_0().right_0().child(
-                    anchored()
-                        .anchor(Anchor::TopRight)
-                        .offset(point(px(0.), px(32.)))
-                        .child(div().id("select-menu").on_hover(on_hover).child(popover(
-                            t,
-                            280.,
-                            |d| d.children(rows),
-                        ))),
-                ),
+            cx.subscribe(
+                &select,
+                move |_, _, selected: &crate::settings_kit::Selected, cx| {
+                    page.update(cx, |page, cx| {
+                        page.set(key, json!(selected.0.as_ref()), cx);
+                    });
+                },
             )
+            .detach();
+            select
         });
-        let focus = focus::handle(key, 0, window, cx);
-        let trigger = select(label, None, false, t).id(key);
-        focus::ring(trigger.relative(), &focus, Theme::RADIUS_LG, px(2.), cx)
-            .role(gpui::Role::Button)
-            .aria_label(label)
-            .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_select = (!open).then_some(key);
-                cx.notify();
-            }))
-            .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
-                if open && !this.menu_hovered {
-                    this.open_select = None;
-                    cx.notify();
-                }
-            }))
-            .children(menu)
-            .into_any_element()
+        select.update(cx, |select, cx| select.set_value(current, cx));
+        select.clone().into_any_element()
     }
 
     fn toggle(
@@ -1034,8 +997,7 @@ impl SettingsPane {
                     self.select_menu(
                         "host.git-pull-request-merge-method",
                         &[("merge", "Merge"), ("squash", "Squash")],
-                        t,
-                        window,
+                        240.,
                         cx,
                     ),
                     t,
@@ -1125,7 +1087,7 @@ impl SettingsPane {
     }
 
     fn general(
-        &self,
+        &mut self,
         t: &Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1215,6 +1177,7 @@ impl SettingsPane {
                             "Zed",
                             Some(app_icon(over(t.primary_soft_alpha, t.background_panel))),
                             false,
+                            false,
                             t,
                         )
                         .into_any_element(),
@@ -1222,7 +1185,7 @@ impl SettingsPane {
                     row(
                         "Language",
                         Some("Language for the app UI"),
-                        select("Auto detect", None, false, t).into_any_element(),
+                        select("Auto detect", None, false, false, t).into_any_element(),
                     ),
                     row(
                         "Show in menu bar",
@@ -1232,7 +1195,7 @@ impl SettingsPane {
                     row(
                         "Confirm before closing a window",
                         Some("Warn when a tab-close shortcut would close the window"),
-                        self.select_menu("host.confirm-before-close", CLOSE_OPTIONS, t, window, cx),
+                        self.select_menu("host.confirm-before-close", CLOSE_OPTIONS, 240., cx),
                     ),
                     row(
                         "Full view by default",
@@ -1281,7 +1244,7 @@ impl SettingsPane {
                         Some(
                             "Choose how quickly ChatGPT runs across chats, subagents, and compaction",
                         ),
-                        select("Standard", None, false, t).into_any_element(),
+                        select("Standard", None, false, false, t).into_any_element(),
                     ),
                     row(
                         "Suggested prompts",
@@ -1338,13 +1301,7 @@ impl SettingsPane {
                     row(
                         "Send shortcut",
                         Some("Choose when Enter sends a prompt or inserts a new line"),
-                        self.select_menu(
-                            "desktop.composerEnterBehavior",
-                            SEND_OPTIONS,
-                            t,
-                            window,
-                            cx,
-                        ),
+                        self.select_menu("desktop.composerEnterBehavior", SEND_OPTIONS, 220., cx),
                     ),
                     row(
                         "Follow-up behavior",
@@ -1402,7 +1359,7 @@ impl SettingsPane {
                     row(
                         "Turn completion notifications",
                         Some("Set when ChatGPT alerts you that it's finished"),
-                        select("Only when unfocused", None, true, t).into_any_element(),
+                        select("Only when unfocused", None, true, false, t).into_any_element(),
                     ),
                     row(
                         "Enable permission notifications",
@@ -1422,7 +1379,7 @@ impl SettingsPane {
                     row(
                         "Notification sound",
                         Some("Sound for task completion, permission requests, and questions"),
-                        select("Default", None, true, t).into_any_element(),
+                        select("Default", None, true, false, t).into_any_element(),
                     ),
                 ],
             ),
@@ -1457,11 +1414,20 @@ impl Render for SettingsPane {
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
         }
+        if section == "Keyboard shortcuts" {
+            return keyboard_shortcuts::render(window, cx);
+        }
+        if section == "Usage & billing" {
+            return usage::render(window, cx);
+        }
         if section == "Personalization" {
             return div()
                 .size_full()
                 .child(self.page.read(cx).personalization.clone())
                 .into_any_element();
+        }
+        if section == "Storage" {
+            return self.storage.clone().into_any_element();
         }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
@@ -1756,7 +1722,12 @@ fn probe(l: &Layer) -> impl IntoElement {
 
 /// Toolbar `_Button` (`Change`, `View`: `bg-text/5`, transparent 1 px border; `Open System
 /// Settings`: outlined).
-fn button(label: &'static str, fill: Hsla, border: Option<Hsla>, t: &Theme) -> Div {
+pub(crate) fn button(
+    label: impl Into<SharedString>,
+    fill: Hsla,
+    border: Option<Hsla>,
+    t: &Theme,
+) -> Div {
     div()
         .h(px(28.))
         .px(px(9.))
@@ -1767,7 +1738,13 @@ fn button(label: &'static str, fill: Hsla, border: Option<Hsla>, t: &Theme) -> D
         .child(text(label, 13., 18., 430., t.text))
 }
 /// Dropdown trigger: value (with an optional leading app icon) and a chevron.
-fn select(label: &'static str, leading: Option<AnyElement>, disabled: bool, t: &Theme) -> Div {
+pub(crate) fn select(
+    label: impl Into<SharedString>,
+    leading: Option<AnyElement>,
+    disabled: bool,
+    open: bool,
+    t: &Theme,
+) -> Div {
     div()
         .h(px(28.))
         .px(px(13.))
@@ -1779,7 +1756,11 @@ fn select(label: &'static str, leading: Option<AnyElement>, disabled: bool, t: &
         .child(on_card(
             12.5,
             Squircle,
-            t.primary_soft_alpha,
+            if open {
+                t.ghost_hover
+            } else {
+                t.primary_soft_alpha
+            },
             Some(t.border),
         ))
         .when(disabled, |d| d.opacity(0.4))
@@ -1851,550 +1832,8 @@ fn app_icon(page: Hsla) -> AnyElement {
     .into_any_element()
 }
 
-/// Signed-out start (`LoginRoute`, welcome v2): ChatGPT sign-in, another way (API key), sign up.
-pub struct Login {
-    stage: Stage,
-    api_key: String,
-    focus: FocusHandle,
-    error: Option<String>,
-    restart_blocked: bool,
-    allow_api_key: bool,
-    allow_chatgpt: bool,
-    starting: bool,
-    forced_login_method: Value,
-}
-
-pub struct LoggedIn;
-
-impl EventEmitter<LoggedIn> for Login {}
-
-pub struct LoginMethodsLoaded;
-
-impl EventEmitter<LoginMethodsLoaded> for Login {}
-
-enum Stage {
-    LoadingRequirements,
-    RequirementsError(&'static str),
-    Welcome,
-    /// Browser sign-in started: the `loginId` that `account/login/cancel` takes.
-    Pending(String),
-    OtherMethods,
-    ApiKey,
-}
-
-fn allowed_login_methods(
-    requirements: &Value,
-    forced: &Value,
-) -> Result<(bool, bool), &'static str> {
-    if requirements.is_null() {
-        return match forced {
-            Value::Null => Ok((true, true)),
-            Value::String(method) if method == "api" => Ok((true, false)),
-            Value::String(method) if method == "chatgpt" => Ok((false, true)),
-            _ => Err("Unable to load sign-in requirements"),
-        };
-    }
-    match requirements.get("allowedLoginMethods") {
-        Some(Value::Null) => Ok((true, true)),
-        Some(Value::Array(methods))
-            if methods
-                .iter()
-                .all(|method| method == "api" || method == "chatgpt") =>
-        {
-            Ok((
-                methods.iter().any(|method| method == "api"),
-                methods.iter().any(|method| method == "chatgpt"),
-            ))
-        }
-        None => Err("Update Codex on this machine to read its managed sign-in requirements"),
-        _ => Err("Unable to load sign-in requirements"),
-    }
-}
-
-impl Login {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        Self::with_login_policy(Value::Null, cx)
-    }
-
-    pub fn with_login_policy(forced_login_method: Value, cx: &mut Context<Self>) -> Self {
-        let live = cx.has_global::<AppServer>();
-        let mut login = Self {
-            stage: Stage::Welcome,
-            api_key: String::new(),
-            focus: cx.focus_handle().tab_stop(true),
-            error: None,
-            restart_blocked: false,
-            allow_api_key: !live,
-            allow_chatgpt: !live,
-            starting: false,
-            forced_login_method,
-        };
-        if live {
-            login.load_requirements(cx);
-        }
-        login
-    }
-
-    fn load_requirements(&mut self, cx: &mut Context<Self>) {
-        let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
-            return;
-        };
-        let bridge = bridge.clone();
-        let forced_login_method = self.forced_login_method.clone();
-        self.stage = Stage::LoadingRequirements;
-        self.allow_api_key = false;
-        self.allow_chatgpt = false;
-        self.error = None;
-        cx.notify();
-        cx.spawn(async move |this, cx| {
-            let result = async {
-                let response: Value = bridge
-                    .request("configRequirements/read", Value::Null)
-                    .await
-                    .map_err(|error| {
-                        if error
-                            .downcast_ref::<bridge::RpcError>()
-                            .is_some_and(|error| error.code == -32601)
-                        {
-                            "Update Codex on this machine to read its managed sign-in requirements"
-                        } else {
-                            "Unable to load sign-in requirements"
-                        }
-                    })?;
-                let requirements = response.get("requirements").ok_or(
-                    "Update Codex on this machine to read its managed sign-in requirements",
-                )?;
-                allowed_login_methods(requirements, &forced_login_method)
-            }
-            .await;
-            this.update(cx, |this, cx| {
-                this.stage = match result {
-                    Ok((false, false)) => Stage::RequirementsError(
-                        "Your administrator has disabled all available sign-in methods",
-                    ),
-                    Ok((api, chatgpt)) => {
-                        this.allow_api_key = api;
-                        this.allow_chatgpt = chatgpt;
-                        if chatgpt {
-                            Stage::Welcome
-                        } else {
-                            Stage::ApiKey
-                        }
-                    }
-                    Err(message) => Stage::RequirementsError(message),
-                };
-                cx.emit(LoginMethodsLoaded);
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-    }
-
-    pub fn restart_ready(&self) -> bool {
-        !self.restart_blocked && matches!(self.stage, Stage::Welcome) && self.api_key.is_empty()
-    }
-
-    /// `account/login/completed`: a failed sign-in shows its error and returns to the start.
-    pub fn apply(&mut self, event: &bridge::Event, cx: &mut Context<Self>) -> bool {
-        let bridge::Event::Notification { method, params } = event else {
-            return false;
-        };
-        let Stage::Pending(id) = &self.stage else {
-            return false;
-        };
-        if method != "account/login/completed" || params["loginId"].as_str() != Some(id.as_str()) {
-            return false;
-        }
-        if params["success"] == true {
-            return true;
-        }
-        if params["success"] == false {
-            let raw = params["error"].as_str().unwrap_or_default();
-            self.stage = Stage::Welcome;
-            self.error = Some(format!("Sign-in failed: {raw}"));
-            cx.notify();
-        }
-        false
-    }
-
-    /// `account/login/start` as the original's `loginWithChatGpt`: a ChatGPT login opens its
-    /// `authUrl` in the browser and waits in `Pending` for `account/login/completed`.
-    fn start(&mut self, params: Value, cx: &mut Context<Self>) {
-        if self.starting {
-            return;
-        }
-        let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
-            return;
-        };
-        let bridge = bridge.clone();
-        self.restart_blocked = true;
-        self.starting = true;
-        self.error = None;
-        cx.spawn(async move |this, cx| {
-            let result = bridge
-                .request::<_, Value>("account/login/start", params)
-                .await;
-            this.update(cx, |this, cx| {
-                this.starting = false;
-                match result {
-                    Ok(r) => {
-                        if let (Some(id), Some(url)) =
-                            (r["loginId"].as_str(), r["authUrl"].as_str())
-                        {
-                            cx.open_url(url);
-                            this.stage = Stage::Pending(id.into());
-                        } else if r["type"] == "apiKey" {
-                            this.api_key.clear();
-                            cx.emit(LoggedIn);
-                        } else {
-                            this.error = Some("Sign-in failed: invalid login response".into());
-                        }
-                    }
-                    Err(e) => this.error = Some(format!("Sign-in failed: {e}")),
-                }
-                cx.notify();
-            })
-        })
-        .detach();
-    }
-
-    /// The ChatGPT sign-in request of the original (`appBrand`, hosted success page).
-    fn start_chatgpt(&mut self, cx: &mut Context<Self>) {
-        if !self.allow_chatgpt {
-            return;
-        }
-        self.start(
-            json!({ "type": "chatgpt", "appBrand": "chatgpt", "useHostedLoginSuccessPage": true }),
-            cx,
-        );
-    }
-
-    fn key_down(&mut self, e: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let k = &e.keystroke;
-        match (k.key.as_str(), &k.key_char) {
-            ("backspace", _) => _ = self.api_key.pop(),
-            ("enter", _) => self.submit_api_key(cx),
-            (_, Some(c))
-                if !k.modifiers.platform
-                    && !k.modifiers.control
-                    && !c.chars().any(char::is_control) =>
-            {
-                self.api_key.push_str(c)
-            }
-            _ => return,
-        }
-        cx.notify();
-    }
-
-    fn submit_api_key(&mut self, cx: &mut Context<Self>) {
-        if self.allow_api_key && !self.api_key.is_empty() {
-            let key = self.api_key.clone();
-            self.start(json!({ "type": "apiKey", "apiKey": key }), cx);
-        }
-    }
-
-    fn go(&mut self, stage: Stage, cx: &mut Context<Self>) {
-        self.stage = stage;
-        self.error = None;
-        cx.notify();
-    }
-}
-
-/// 46 px outlined pill button of the sign-in screen. Skia paints its fill and border, as
-/// Chromium does in the page's composited layer; the hover fill lies inside the border.
-fn login_button(id: &'static str, label: &'static str, color: Hsla, t: &Theme) -> Stateful<Div> {
-    let hover = over(t.ghost_hover, t.surface);
-    div()
-        .id(id)
-        .group(id)
-        .relative()
-        .h(px(46.))
-        .w_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .gap(px(8.))
-        .child(shapes::decoration(shapes::Decoration {
-            radius: Corners::all(px(9999.)),
-            corner: Round,
-            fill: Some(t.surface),
-            border: Some((px(1.), t.border)),
-            ..Default::default()
-        }))
-        .child(
-            div()
-                .absolute()
-                .inset(px(1.))
-                .rounded_full()
-                .group_hover(id, move |s| s.bg(hover)),
-        )
-        .child(text(label, 14., 20., 500., color))
-}
-
-impl Render for Login {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme().clone();
-        let requirements = matches!(
-            self.stage,
-            Stage::LoadingRequirements | Stage::RequirementsError(_)
-        );
-        let title = |s: &'static str| {
-            text(s, 28., 36., 400., t.text)
-                .w(px(316.))
-                .whitespace_normal()
-                .text_center()
-        };
-        let (heading, body): (Div, AnyElement) = match &self.stage {
-            Stage::LoadingRequirements => (
-                div().child(
-                    div()
-                        .id("login-requirements-status")
-                        .role(gpui::Role::Status)
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .child(icon("sidebar-cmd-spinner", 16., t.text))
-                        .child(text(
-                            "Loading sign-in requirements…",
-                            14.,
-                            20.,
-                            430.,
-                            t.text_description,
-                        )),
-                ),
-                div().into_any_element(),
-            ),
-            Stage::RequirementsError(message) => (
-                text(*message, 14., 20., 430., t.text_description)
-                    .w(px(340.))
-                    .whitespace_normal()
-                    .text_center(),
-                login_button("retry-requirements", "Retry", t.text, &t)
-                    .on_click(cx.listener(|this, _, _, cx| this.load_requirements(cx)))
-                    .into_any_element(),
-            ),
-            Stage::Welcome => (
-                title("Sign in to ChatGPT"),
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(12.))
-                    .child(
-                        div()
-                            .id("continue")
-                            .h(px(48.))
-                            .w_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .gap(px(8.))
-                            .rounded_full()
-                            .bg(t.button_primary_solid)
-                            .child(icon("codex-logo", 24., t.text_inverse))
-                            .child(text("Continue to sign in", 14., 20., 500., t.text_inverse))
-                            .on_click(cx.listener(|this, _, _, cx| this.start_chatgpt(cx))),
-                    )
-                    .when(self.allow_api_key, |d| {
-                        d.child(
-                            login_button("another-way", "Sign in another way", t.text, &t)
-                                .on_click(
-                                    cx.listener(|this, _, _, cx| this.go(Stage::OtherMethods, cx)),
-                                ),
-                        )
-                    })
-                    .child(
-                        div()
-                            .id("sign-up")
-                            .h(px(36.))
-                            .px(px(8.))
-                            .flex()
-                            .items_center()
-                            .child(text("Sign up", 14., 20., 500., t.text_description).underline())
-                            .on_click(cx.listener(|this, _, _, cx| this.start_chatgpt(cx))),
-                    )
-                    .into_any_element(),
-            ),
-            Stage::Pending(id) => {
-                let id = id.clone();
-                (
-                    text(
-                        "Continue signing in with your browser",
-                        14.,
-                        20.,
-                        400.,
-                        t.text_tertiary,
-                    ),
-                    login_button("cancel", "Cancel sign-in", t.text_tertiary, &t)
-                        .h(px(42.))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            send("account/login/cancel", json!({ "loginId": id }), cx);
-                            this.go(Stage::Welcome, cx);
-                        }))
-                        .into_any_element(),
-                )
-            }
-            Stage::OtherMethods => (
-                title("Sign in another way"),
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(12.))
-                    .child(
-                        login_button("api-key", "OpenAI API Key", t.text, &t)
-                            .on_click(cx.listener(|this, _, _, cx| this.go(Stage::ApiKey, cx))),
-                    )
-                    .child(
-                        div()
-                            .id("back")
-                            .h(px(36.))
-                            .px(px(12.))
-                            .flex()
-                            .items_center()
-                            .child(text("Back", 14., 20., 500., t.text_tertiary))
-                            .on_click(cx.listener(|this, _, _, cx| this.go(Stage::Welcome, cx))),
-                    )
-                    .into_any_element(),
-            ),
-            Stage::ApiKey => {
-                let (value, color) = if self.api_key.is_empty() {
-                    ("sk-…".to_string(), t.text_tertiary)
-                } else {
-                    ("•".repeat(self.api_key.chars().count()), t.text)
-                };
-                (
-                    title("Sign in with an API key"),
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_col()
-                        .gap(px(32.))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap(px(8.))
-                                .child(text("OpenAI API key", 14., 20., 500., t.text))
-                                .child(
-                                    div()
-                                        .id("api-key-field")
-                                        .track_focus(&self.focus)
-                                        .on_key_down(cx.listener(Self::key_down))
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.focus.focus(window, cx)
-                                        }))
-                                        .h(px(40.))
-                                        .px(px(12.))
-                                        .flex()
-                                        .items_center()
-                                        .rounded(Theme::RADIUS_LG)
-                                        .border_1()
-                                        .border_color(over(t.border, t.surface))
-                                        .child(text(value, 14., 20., 430., color)),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .gap(px(12.))
-                                .child(
-                                    login_button("api-cancel", "Cancel", t.text, &t)
-                                        .flex_1()
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.api_key.clear();
-                                            this.go(Stage::OtherMethods, cx)
-                                        })),
-                                )
-                                .child(
-                                    login_button("api-continue", "Continue", t.text, &t)
-                                        .flex_1()
-                                        .when(self.api_key.is_empty(), |d| d.opacity(0.5))
-                                        .on_click(
-                                            cx.listener(|this, _, _, cx| this.submit_api_key(cx)),
-                                        ),
-                                ),
-                        )
-                        .into_any_element(),
-                )
-            }
-        };
-        div()
-            .size_full()
-            .on_key_down(focus::tab)
-            .flex()
-            .items_center()
-            .justify_center()
-            .pb(px(if requirements { 0. } else { 48. }))
-            .font_family(SANS)
-            .bg(t.surface)
-            .child(
-                div()
-                    .w(px(340.))
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(if requirements { 12. } else { 32. }))
-                    // As on the workspace page: a transparent composited layer.
-                    .layer()
-                    .when(!requirements, |d| {
-                        d.child(icon(
-                            "login-logo",
-                            40.,
-                            match t.appearance {
-                                theme::Appearance::Dark => gpui::rgb(0xdfdfdf).into(),
-                                theme::Appearance::Light => t.text,
-                            },
-                        ))
-                    })
-                    .child(heading)
-                    .when(!matches!(self.stage, Stage::LoadingRequirements), |d| {
-                        d.child(body)
-                    })
-                    .children(self.error.clone().map(|e| {
-                        text(SharedString::from(e), 14., 20., 430., t.text_error)
-                            .whitespace_normal()
-                    })),
-            )
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn managed_login_policy_has_precedence_and_rejects_unknown_methods() {
-        use super::allowed_login_methods;
-        use serde_json::{Value, json};
-        assert_eq!(
-            allowed_login_methods(&Value::Null, &json!("api")),
-            Ok((true, false))
-        );
-        assert_eq!(
-            allowed_login_methods(&Value::Null, &json!("chatgpt")),
-            Ok((false, true))
-        );
-        assert_eq!(
-            allowed_login_methods(&json!({"allowedLoginMethods": ["chatgpt"]}), &json!("api")),
-            Ok((false, true))
-        );
-        assert_eq!(
-            allowed_login_methods(&json!({"allowedLoginMethods": []}), &Value::Null),
-            Ok((false, false))
-        );
-        assert!(
-            allowed_login_methods(
-                &json!({"allowedLoginMethods": ["chatgpt", "future"]}),
-                &Value::Null
-            )
-            .is_err()
-        );
-        assert!(allowed_login_methods(&json!({}), &Value::Null).is_err());
-        assert!(allowed_login_methods(&Value::Null, &json!("future")).is_err());
-    }
-
     #[test]
     fn middle_truncate_matches_reference() {
         // One cell per character, 26 cells wide (the reference's `w-48` at 12 px).
