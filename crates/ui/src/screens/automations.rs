@@ -492,8 +492,8 @@ pub struct ScheduledSidebar {
     pending: HashSet<String>,
     /// Tasks whose run is starting: their row reads `Starting run…` and `Run now` is off.
     starting: HashSet<String>,
-    /// The keyboard-active menu item (`0` Run now, `1` Pause or Resume, `2` Edit, `3` Share,
-    /// `4` Delete) once an arrow key moved it.
+    /// The keyboard-active menu item (`0` Pause or Resume, `1` Run now, `2` Edit, `3` Share,
+    /// `4` Delete; the original lists the status item first) once an arrow key moved it.
     menu_item: Option<usize>,
     /// The row whose `Scheduled task actions` menu is open.
     menu: Option<String>,
@@ -605,7 +605,7 @@ impl ScheduledSidebar {
             "escape" => self.close_menu(window, cx),
             "enter" | "space" => {
                 if let Some(id) = self.menu.clone() {
-                    if self.menu_item == Some(0) {
+                    if self.menu_item == Some(1) {
                         self.run_now(&id, window, cx);
                     } else if self.menu_item == Some(2) {
                         self.close_menu(window, cx);
@@ -654,7 +654,7 @@ impl ScheduledSidebar {
             .rounded(px(15.))
             .flex()
             .items_center()
-            .when(self.menu_item == Some(0) && !off, |d| d.bg(hover))
+            .when(self.menu_item == Some(1) && !off, |d| d.bg(hover))
             .when(off, |d| d.opacity(0.4))
             .when(!off, |d| {
                 d.hover(move |s| s.bg(hover)).on_click(
@@ -680,7 +680,7 @@ impl ScheduledSidebar {
             .flex()
             .items_center()
             .gap(px(6.))
-            .when(self.menu_item == Some(1), |d| d.bg(hover))
+            .when(self.menu_item == Some(0), |d| d.bg(hover))
             .hover(move |s| s.bg(hover))
             .on_click(cx.listener(move |this, _, window, cx| this.toggle(&id, window, cx)))
             .child(
@@ -799,8 +799,8 @@ impl ScheduledSidebar {
                 }
             }))
             .child(crate::composer::popover(t, 220., |menu| {
-                menu.child(run)
-                    .child(item)
+                menu.child(item)
+                    .child(run)
                     .child(edit)
                     .child(share)
                     .child(delete)

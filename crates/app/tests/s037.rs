@@ -284,11 +284,13 @@ fn task_status_controls_persist_through_the_real_local_host() -> Result<()> {
     shot(&mut fx, "1-before")?;
 
     // AM-022: pointer opens the row menu; Escape sends nothing; the keyboard reopens it and pauses.
+    // Home selects the first item, which is the status item in the original order (`statusFirst`).
     fx.click((310., 192.))?;
     shot(&mut fx, "2-menu")?;
     native_key(&mut fx, "escape")?;
     ensure!(host.updates().is_empty(), "Escape updated an automation");
     native_key(&mut fx, "enter")?;
+    native_key(&mut fx, "home")?;
     native_key(&mut fx, "enter")?;
     fx.wait("pause success", |fx| {
         toast_count(fx, "Successfully paused automation") == 1
