@@ -271,10 +271,11 @@ impl Theme {
             surface: rgba(0xffffffff).into(),
             page_surface_layout: rgba(0xf6f6f6d9).into(),
             // oklab(0.999994 0.0000455678 0.0000200868 / 0.65): the float pipeline's ties
-            // round up in red and blue, down in green (lab: corner coverage 50, 130, 250).
+            // round up in red and blue; green is two f32 steps under 1 (1 - 2^-23), so it rounds
+            // down at coverage 30, 50, 110, 130 and 250, but up at 230 (90% and 110% zoom arcs).
             sidebar_background: Rgba {
                 r: 1.00003,
-                g: 0.99999,
+                g: 0.999_999_9,
                 b: 1.00003,
                 a: 0.65,
             }

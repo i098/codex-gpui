@@ -229,6 +229,111 @@ pub(crate) fn paint(
     });
 }
 
+/// `crate::paint_icon_in_backdrop` on macOS: draws the icon in an `opacity` layer on the layer
+/// of the innermost painted backdrop box that holds its box, then shows that box's blurred
+/// backdrop and layer under the icon's box; `clip`: the box clips its content to its contour
+/// (`overflow: hidden`). False when no such box was painted this frame.
+pub(crate) fn paint_icon(
+    src: &[u8],
+    key: &str,
+    bounds: Bounds<Pixels>,
+    color: gpui::Hsla,
+    opacity: f32,
+    clip: bool,
+    window: &mut Window,
+) -> bool {
+    let s = window.scale_factor();
+    let snap = |v: Pixels| (f32::from(v) * s + 0.5).floor() as i32;
+    let rect = [
+        snap(bounds.left()),
+        snap(bounds.top()),
+        snap(bounds.right()),
+        snap(bounds.bottom()),
+    ];
+    let frame_key = (
+        window.window_handle().window_id(),
+        window.scene_checkpoint().0,
+    );
+    let painted = FRAME.with_borrow_mut(|frame| {
+        if frame.key != Some(frame_key) {
+            return None;
+        }
+        let index = frame.surfaces.iter().rposition(|surface| {
+            let r = snapped(&surface.filtered.contour);
+            surface.raster.is_none()
+                && r[0] <= rect[0]
+                && r[1] <= rect[1]
+                && rect[2] <= r[2]
+                && rect[3] <= r[3]
+        })?;
+        let surface = &mut frame.surfaces[index];
+        if surface.layer.is_none() {
+            blur_backdrop(&mut surface.backdrop, &surface.filtered);
+            let mut layer = Pixmap::new(surface.backdrop.r);
+            draw_layer(&mut layer, &surface.filtered);
+            surface.layer = Some(layer);
+        }
+        let (origin, contour) = (layer_rect(&surface.filtered), surface.filtered.contour);
+        let layer = surface.layer.as_mut().unwrap();
+        let out = intersect(rect, layer.r);
+        if out[0] >= out[2] || out[1] >= out[3] {
+            return None;
+        }
+        // Chromium rasters the icon's opacity group on the box's composited layer.
+        let (before, at) = (layer.image(), [layer.r[0] as f32, layer.r[1] as f32]);
+        let mut drawn = true;
+        layer.blit(
+            out,
+            Color::TRANSPARENT,
+            [origin[0], origin[1]],
+            Some((origin[2] - origin[0], origin[3] - origin[1])),
+            ColorSpace::new_srgb(),
+            |c| {
+                let mut copy = Paint::default();
+                copy.set_blend_mode(skia_safe::BlendMode::Src);
+                c.draw_image(&before, (at[0], at[1]), Some(&copy));
+                c.save();
+                if clip {
+                    contour.clip(c, ClipOp::Intersect);
+                }
+                c.save_layer_alpha_f(None, opacity);
+                drawn = skia::draw_icon(c, src, key, bounds, color, s);
+                c.restore();
+                c.restore();
+            },
+        );
+        if !drawn {
+            return None;
+        }
+        let mut hasher = DefaultHasher::new();
+        surface.backdrop.px.hash(&mut hasher);
+        layer.px.hash(&mut hasher);
+        let image_key = format!("icon{out:?}{}", hasher.finish());
+        let backdrop = &surface.backdrop;
+        let image = cached_image(image_key, window, || compose_layer(backdrop, layer, out));
+        Some((image, out, index))
+    });
+    let Some((image, out, index)) = painted else {
+        return false;
+    };
+    let at = Bounds::new(
+        point(px(out[0] as f32 / s), px(out[1] as f32 / s)),
+        gpui::size(
+            px((out[2] - out[0]) as f32 / s),
+            px((out[3] - out[1]) as f32 / s),
+        ),
+    );
+    window
+        .with_unlayered_paint(|window| {
+            window.paint_image(at, at, Corners::default(), image, 0, false)
+        })
+        .ok();
+    // Nested boxes capture what paints after the icon, not the icon's composed px again.
+    let checkpoint = window.scene_checkpoint();
+    FRAME.with_borrow_mut(|frame| frame.surfaces[index].checkpoint = checkpoint);
+    true
+}
+
 fn cached_image(
     key: String,
     window: &mut Window,
@@ -422,50 +527,70 @@ fn draw_layer(target: &mut Pixmap, f: &Filtered) {
 }
 
 fn raster_layer(f: &Filtered, area: [i32; 4], origin: [f32; 2]) -> Pixmap {
-    // Chromium rasters the box's composited layer: Skia's dither matrix and the shadow's mask
-    // blur (cut at the device edge) start at its origin.
+    // Chromium rasters the box's composited layer once per cc tile: Skia's dither matrix and
+    // the shadow's mask blur (cut at the device edge) start at each tile's origin.
     let r = layer_rect(f);
+    let size = [r[2] - r[0], r[3] - r[1]];
+    let local = [
+        area[0] - r[0],
+        area[1] - r[1],
+        area[2] - r[0],
+        area[3] - r[1],
+    ];
     let mut layer = Pixmap::new(area);
-    layer.blit(
-        intersect(r, area),
-        Color::TRANSPARENT,
-        [r[0], r[1]],
-        Some((r[2] - r[0], r[3] - r[1])),
-        ColorSpace::new_srgb(),
-        |c| {
-            let [x, y] = origin;
-            c.translate((x, y));
-            for &(op, color) in &f.ops {
-                let op = op.moved([-x, -y]);
-                c.save();
-                match (op, f.gradient) {
-                    // A `background-image`: Blink clips to the shape and draws the image rect;
-                    // Skia dithers gradients.
-                    (Op::Fill(contour), Some(color)) => {
-                        let [x, y, w, h] = contour.rr.r;
-                        let rect = Rect::from_xywh(x, y, w, h);
-                        let colors = [color, color];
-                        let gradient = gradient::Gradient::new(
-                            gradient::Colors::new_evenly_spaced(&colors, TileMode::Clamp, None),
-                            gradient::Interpolation::default(),
-                        );
-                        let shader = gradient::shaders::linear_gradient(
-                            (rect.tl(), skia_safe::Point::new(x, y + h)),
-                            &gradient,
-                            None,
-                        )
-                        .expect("gradient shader");
-                        let mut paint = Paint::default();
-                        paint.set_shader(shader).set_dither(true);
-                        contour.clip(c, ClipOp::Intersect);
-                        c.draw_rect(rect, &paint);
-                    }
-                    _ => op.draw(c, color),
+    let draw = |c: &Canvas| {
+        let [x, y] = origin;
+        c.translate((x, y));
+        for &(op, color) in &f.ops {
+            let op = op.moved([-x, -y]);
+            c.save();
+            match (op, f.gradient) {
+                // A `background-image`: Blink clips to the shape and draws the image rect;
+                // Skia dithers gradients.
+                (Op::Fill(contour), Some(color)) => {
+                    let [x, y, w, h] = contour.rr.r;
+                    let rect = Rect::from_xywh(x, y, w, h);
+                    let colors = [color, color];
+                    let gradient = gradient::Gradient::new(
+                        gradient::Colors::new_evenly_spaced(&colors, TileMode::Clamp, None),
+                        gradient::Interpolation::default(),
+                    );
+                    let shader = gradient::shaders::linear_gradient(
+                        (rect.tl(), skia_safe::Point::new(x, y + h)),
+                        &gradient,
+                        None,
+                    )
+                    .expect("gradient shader");
+                    let mut paint = Paint::default();
+                    paint.set_shader(shader).set_dither(true);
+                    contour.clip(c, ClipOp::Intersect);
+                    c.draw_rect(rect, &paint);
                 }
-                c.restore();
+                _ => op.draw(c, color),
             }
-        },
-    );
+            c.restore();
+        }
+    };
+    for (o, ts, owned) in skia::tiles(local, size, skia::cc_tile(size)) {
+        let owned = [
+            owned[0] + r[0],
+            owned[1] + r[1],
+            owned[2] + r[0],
+            owned[3] + r[1],
+        ];
+        let target = intersect(owned, area);
+        if target[0] < target[2] && target[1] < target[3] {
+            let o = [o[0] + r[0], o[1] + r[1]];
+            layer.blit(
+                target,
+                Color::TRANSPARENT,
+                o,
+                Some(ts),
+                ColorSpace::new_srgb(),
+                draw,
+            );
+        }
+    }
     layer
 }
 
