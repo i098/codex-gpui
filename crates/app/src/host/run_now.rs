@@ -29,6 +29,8 @@ const MODES: [&str; 5] = [
     "full-access",
 ];
 
+const CRON_INSTRUCTIONS: &str = include_str!("automation_instructions.txt");
+
 /// What `Al` returns for a run: the turn's approvals and sandbox.
 #[derive(Debug, PartialEq)]
 pub(super) struct Permissions {
@@ -409,7 +411,7 @@ impl LocalHost {
             .context("Scheduled run skipped: no folders configured")
     }
 
-    fn global_state(&self) -> Value {
+    pub(super) fn global_state(&self) -> Value {
         fs::read(self.home.join(".codex-global-state.json"))
             .ok()
             .and_then(|contents| serde_json::from_slice(&contents).ok())
@@ -483,7 +485,7 @@ impl LocalHost {
     }
 
     /// The run salt for the schedule jitter (`ZF`): the stored one, else a new one that is kept.
-    fn jitter_salt(&self) -> String {
+    pub(super) fn jitter_salt(&self) -> String {
         let path = self.home.join("automations/.run-jitter-salt");
         let stored = fs::read_to_string(&path)
             .map(|s| s.trim().to_owned())
@@ -756,6 +758,20 @@ impl LocalHost {
             projectless_target || !cwds.is_empty(),
             "Scheduled run skipped: no folders configured"
         );
+        let app_tools = self.app_tools().unwrap_or_else(|error| {
+            eprintln!("codex-gpui: optional app tools are unavailable: {error:#}");
+            None
+        });
+        let app_tool_config = app_tools.as_ref().and_then(|tools| {
+            tools
+                .thread_config()
+                .map_err(|error| {
+                    eprintln!(
+                        "codex-gpui: optional app tools configuration is unavailable: {error:#}"
+                    );
+                })
+                .ok()
+        });
         self.record_run_now(&item, chrono::Utc::now().timestamp_millis());
         let name = item["name"].as_str().unwrap_or_default();
         let last = item["lastRunAt"].as_i64().map_or_else(
@@ -844,17 +860,22 @@ impl LocalHost {
                         agent_mode.as_deref(),
                         projectless.is_some(),
                     )?;
-                    let mut params = json!({"cwd": run_cwd, "model": model,
-                        "approvalPolicy": first.approval_policy,
+                    let mut params = json!({"cwd": run_cwd, "model": model, "approvalPolicy": first.approval_policy,
                         "approvalsReviewer": first.reviewer, "sandbox": first.sandbox_mode(),
                         "threadSource": "automation"});
-                    if let Some(workspace) = &projectless {
-                        params["developerInstructions"] = json!(workspace.instructions());
+                    params["developerInstructions"] = match &projectless {
+                        Some(workspace) => format!("{CRON_INSTRUCTIONS}\n\n{}", workspace.instructions()).into(),
+                        None => CRON_INSTRUCTIONS.into(),
+                    };
+                    if let Some(config) = &app_tool_config {
+                        params["config"] = config.clone();
+                        params["dynamicTools"] = json!([]);
                     }
                     let thread: Value = bridge.request("thread/start", params).await?;
                     let thread_id = thread["thread"]["id"]
                         .as_str()
                         .context("thread/start returned no thread")?;
+                    if app_tool_config.is_some() && let Some(app_tools) = &app_tools { app_tools.register_thread(thread_id); }
                     Ok::<_, anyhow::Error>((config, thread_id.to_owned()))
                 });
                 let (config, thread_id) = match started {
@@ -1122,12 +1143,15 @@ pub(crate) mod heartbeat {
                             format!("{}\n\n{HEARTBEAT_INSTRUCTIONS}", base.trim())
                         });
                 }
-                let resumed: Value = bridge
-                    .request(
-                        "thread/resume",
-                        json!({"threadId": id, "cwd": thread["cwd"], "path": thread["path"]}),
-                    )
-                    .await?;
+                let mut resume_params =
+                    json!({"threadId": id, "cwd": thread["cwd"], "path": thread["path"]});
+                if let Some(config) =
+                    crate::host::Host::app_tool_thread_config(self, id, Some("automation"))?
+                {
+                    resume_params["config"] = config;
+                    resume_params["dynamicTools"] = json!([]);
+                }
+                let resumed: Value = bridge.request("thread/resume", resume_params).await?;
                 ensure!(
                     resumed["thread"]["id"] == id,
                     "Heartbeat resume returned a different thread."

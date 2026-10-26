@@ -725,10 +725,18 @@ impl Composer {
     }
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
+        let compact_settings = self.request_parent.is_none() && self.request_compact;
         div()
-            .px(px(if self.compact_text() { 10. } else { 12. }))
+            .px(px(if self.search_field {
+                0.
+            } else if self.compact_text() {
+                10.
+            } else {
+                12.
+            }))
             .pb(px(
-                if self.plain_field == Some(true)
+                if self.search_field
+                    || self.plain_field == Some(true)
                     || self.request_parent.is_some()
                     || self.request_compact
                 {
@@ -737,16 +745,22 @@ impl Composer {
                     4.
                 },
             ))
-            .min_h(if self.request_parent.is_some() || self.request_compact {
-                px(20.)
-            } else {
-                self.field_min_height
-            })
+            .min_h(
+                if self.search_field || self.request_parent.is_some() || self.request_compact {
+                    px(20.)
+                } else {
+                    self.field_min_height
+                },
+            )
             .cursor(CursorStyle::IBeam)
             .when(self.embedded_field.is_some(), |d| {
                 d.px_0().pb_0().min_h(self.editor_line_height())
             })
-            .text_size(self.editor_font_size())
+            .text_size(if self.search_field {
+                px(13.)
+            } else {
+                self.editor_font_size()
+            })
             .line_height(self.editor_line_height())
             .font_weight(gpui::FontWeight(if self.field_text.is_some() {
                 500.
@@ -765,12 +779,20 @@ impl Composer {
             // The sign-in `input` has neither the opacity nor the layer.
             .child(
                 div()
-                    .when(self.field_text.is_none(), |d| {
+                    .when(!self.search_field && self.field_text.is_none(), |d| {
                         d.when(
-                            self.content.is_empty() && self.embedded_field.is_none(),
+                            self.content.is_empty()
+                                && self.embedded_field.is_none()
+                                && !self.search_field
+                                && !compact_settings,
                             |d| d.opacity(0.5),
                         )
-                        .when(self.plain_field != Some(true), |d| d.layer())
+                        .when(
+                            (self.embedded_field.is_none() && self.plain_field != Some(true)
+                                || self.search_field)
+                                && !compact_settings,
+                            |d| d.layer(),
+                        )
                     })
                     .child(Editor(cx.entity())),
             )
@@ -861,6 +883,7 @@ impl EntityInputHandler for Composer {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.cancel_dictation(cx);
         let new_selected_range_utf16 = if self.document_field && new_text.contains('\r') {
             new_selected_range_utf16.map(|range| normalized_range(new_text.encode_utf16(), range))
         } else {
@@ -1004,7 +1027,17 @@ pub(super) fn shape(
         .collect::<Vec<_>>();
     window
         .text_system()
-        .shape_text(s.into(), composer.editor_font_size(), &runs, width, None)
+        .shape_text(
+            s.into(),
+            composer.editor_font_size(),
+            &runs,
+            if composer.embedded_field.is_some() {
+                None
+            } else {
+                width
+            },
+            None,
+        )
         .map(|lines| lines.into_iter().collect())
         .unwrap_or_default()
 }
@@ -1075,6 +1108,13 @@ impl gpui::Element for Editor {
         let collapse = |w: f32| (w <= SM_WIDTH, w <= XS_WIDTH);
         let changed = self.0.update(cx, |c, _| {
             c.lines = lines;
+            let mut bounds = bounds;
+            if c.embedded_field.is_some() {
+                let cursor = c
+                    .point_for_index(c.cursor())
+                    .map_or(px(0.), |point| point.x);
+                bounds.origin.x -= (cursor - bounds.size.width + px(2.)).max(px(0.));
+            }
             c.bounds = Some(bounds);
             let width_changed =
                 collapse(std::mem::replace(&mut c.footer_width, width)) != collapse(width);
@@ -1101,6 +1141,11 @@ impl gpui::Element for Editor {
         let selection_color = cx.theme().text_selection;
         let c = self.0.read(cx);
         let caret_color = c.field_text.unwrap_or(cx.theme().text);
+        let bounds = if c.embedded_field.is_some() {
+            c.bounds.unwrap_or(bounds)
+        } else {
+            bounds
+        };
         let line_height = c.editor_line_height();
         if !c.selected_range.is_empty()
             && let (Some(a), Some(b)) = (

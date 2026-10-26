@@ -584,6 +584,7 @@ impl Personalization {
                 "Local",
                 Some(icon("memory-computer", 16., t.text).into_any_element()),
                 false,
+                self.host_menu,
                 &t,
             )
             .id("memory-host")

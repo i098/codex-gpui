@@ -26,7 +26,7 @@ fn contains_ignore_ascii_case(text: &str, query: &str) -> bool {
             .any(|part| part.eq_ignore_ascii_case(query.as_bytes()))
 }
 
-type Shortcut = (&'static str, &'static str, &'static [&'static str]);
+type Shortcut = crate::screens::settings::keyboard_shortcuts::Shortcut;
 
 type ArtworkCache = Rc<
     RefCell<
@@ -143,6 +143,8 @@ pub enum Kind {
     ModelAnnouncement,
     /// `Schedule a task`: the Scheduled sidebar's `New task` create editor (AM-005).
     ScheduleTask,
+    /// `Delete {name}?` from a Scheduled task's menu (AM-026, `automation-delete-confirmation-dialog`).
+    DeleteTask,
     /// `Rename chat` from a Recents row's menu (RS-091, refs/interactions/s002.json): the
     /// `Chat title` input, prefilled and selected, `Cancel`, `Save` and `Close dialog`.
     Rename,
@@ -190,6 +192,10 @@ pub enum Outcome {
     ScheduleTask {
         prompt: String,
         rrule: String,
+    },
+    /// `Delete scheduled task`: the app runs `automation-delete` for task `id`.
+    DeleteTask {
+        id: String,
     },
     /// A submitted commit form: the app creates the branch, commits and pushes.
     Commit {
@@ -281,6 +287,7 @@ pub struct Dialog {
     commit: Option<CommitForm>,
     branch: Option<BranchForm>,
     writing: Option<WritingSetup>,
+    shortcuts: Vec<Shortcut>,
 }
 impl EventEmitter<Outcome> for Dialog {}
 impl Focusable for Dialog {
@@ -290,6 +297,16 @@ impl Focusable for Dialog {
 }
 impl Dialog {
     pub fn new(kind: Kind, cx: &mut Context<Self>) -> Self {
+        if kind == Kind::Shortcuts {
+            cx.observe_global::<crate::screens::settings::keyboard_shortcuts::KeyboardState>(
+                |this, cx| {
+                    this.shortcuts =
+                        crate::screens::settings::keyboard_shortcuts::active_shortcuts(cx);
+                    cx.notify();
+                },
+            )
+            .detach();
+        }
         Self {
             kind,
             controls: std::array::from_fn(|_| cx.focus_handle()),
@@ -312,6 +329,11 @@ impl Dialog {
             commit: None,
             branch: None,
             writing: None,
+            shortcuts: if kind == Kind::Shortcuts {
+                crate::screens::settings::keyboard_shortcuts::active_shortcuts(cx)
+            } else {
+                Vec::new()
+            },
         }
     }
 
@@ -1039,6 +1061,19 @@ impl Dialog {
                     )),
             )
     }
+
+    /// `Delete {name}?` for the Scheduled task `id`; `Cancel` has the first focus.
+    pub fn delete_task(id: String, name: String, cx: &mut Context<Self>) -> Self {
+        Self {
+            query: name,
+            thread: id,
+            ..Self::new(Kind::DeleteTask, cx)
+        }
+    }
+    /// The id of the Scheduled task a `DeleteTask` dialog asks about.
+    pub fn task(&self) -> &str {
+        &self.thread
+    }
     /// `Commit or push` for the repository `repo` describes.
     pub fn commit(repo: CommitRepository, cx: &mut Context<Self>) -> Self {
         let form = CommitForm {
@@ -1462,6 +1497,8 @@ impl Dialog {
             (Kind::RevertChanges, _) => "Don't ask again",
             (Kind::FullAccess, 0) => "Cancel",
             (Kind::FullAccess, _) => "Confirm",
+            (Kind::DeleteTask, 0) => "Cancel",
+            (Kind::DeleteTask, _) => "Delete scheduled task",
             (Kind::LogOut, 0) => "Cancel",
             (Kind::LogOut, _) => "Log out",
             (Kind::ArchiveSection, 0) => "Cancel",
@@ -1577,9 +1614,9 @@ impl Dialog {
     pub fn saving(&self) -> bool {
         self.saving
     }
-    fn visible(&self) -> impl Iterator<Item = &'static Shortcut> + '_ {
+    fn visible(&self) -> impl Iterator<Item = &Shortcut> + '_ {
         let query = self.query.trim();
-        SHORTCUTS
+        self.shortcuts
             .iter()
             .filter(move |(_, title, _)| contains_ignore_ascii_case(title, query))
     }
@@ -1637,6 +1674,13 @@ impl Dialog {
                     });
                     cx.notify();
                 }
+            }
+            (Kind::DeleteTask, 1) => {
+                self.saving = true;
+                cx.emit(Outcome::DeleteTask {
+                    id: self.thread.clone(),
+                });
+                cx.notify();
             }
             (Kind::ScheduleTask, 0 | 4) => {}
             (Kind::FullAccess, 1) => cx.emit(Outcome::FullAccess),
@@ -1874,6 +1918,7 @@ impl Dialog {
                     | Kind::ArchiveSection
                     | Kind::DiscardInstructions => vec![0, 1],
                     Kind::DeleteMemories => vec![0, 1, 2],
+                    Kind::DeleteTask => vec![0, 1],
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
                     Kind::Branches => vec![0, 1],
                     Kind::BranchConflict => vec![1, 2],
@@ -1916,6 +1961,7 @@ impl Dialog {
                         | Kind::FullAccess
                         | Kind::LogOut
                         | Kind::ArchiveSection
+                        | Kind::DeleteTask
                         | Kind::ModelAnnouncement
                         | Kind::RevertChanges
                         | Kind::DiscardInstructions
@@ -1974,6 +2020,7 @@ impl Dialog {
                         | Kind::RevertChanges
                         | Kind::ArchiveSection
                         | Kind::DiscardInstructions
+                        | Kind::DeleteTask
                 ),
                 |d| {
                     d.h(px(36.)).rounded(px(18.)).bg(if primary {
@@ -2018,6 +2065,9 @@ impl Dialog {
                         ..Default::default()
                     }))
             })
+            .when(self.saving && self.kind == Kind::DeleteTask, |d| {
+                d.opacity(0.5)
+            })
             .child(text(
                 label,
                 14.,
@@ -2030,6 +2080,7 @@ impl Dialog {
                         | Kind::ArchiveSection
                         | Kind::DiscardInstructions
                         | Kind::DeleteMemories
+                        | Kind::DeleteTask
                 ) && primary
                 {
                     t.text_error
@@ -2464,6 +2515,36 @@ impl Dialog {
             .child(div().absolute().bottom(px(20.)).right(px(20.)).flex().gap(px(12.))
                 .child(self.button(0, "Cancel", 88., t, cx))
                 .child(self.button(1, "Confirm", 115., t, cx)))
+    }
+
+    fn delete_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        div()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .child(
+                text(format!("Delete {}?", self.query), 20., 28., 600., t.text).whitespace_normal(),
+            )
+            .child(
+                text(
+                    "This will permanently delete the scheduled task and stop future runs",
+                    14.,
+                    20.,
+                    400.,
+                    t.text_secondary,
+                )
+                .mt(px(8.))
+                .whitespace_normal(),
+            )
+            .child(
+                div()
+                    .mt(px(20.))
+                    .flex()
+                    .justify_end()
+                    .gap(px(12.))
+                    .child(self.button(0, "Cancel", 80., t, cx))
+                    .child(self.button(1, "Delete scheduled task", 178., t, cx)),
+            )
     }
 
     fn close_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
@@ -3025,7 +3106,7 @@ impl Dialog {
     fn shortcuts_content(&self, visible: &[&Shortcut], t: &Theme, cx: &Context<Self>) -> Div {
         let mut list = div().flex().flex_col().pr(px(22.));
         let mut heading = "";
-        for (index, &&(section, title, keys)) in visible.iter().enumerate() {
+        for (index, &&(section, title, ref keys)) in visible.iter().enumerate() {
             if section != heading {
                 list = list.child(
                     div()
@@ -3056,7 +3137,7 @@ impl Dialog {
                             .px(px(6.))
                             .py(px(2.))
                             .bg(t.list_hover)
-                            .child(text(*key, 12., 12., 400., t.text))
+                            .child(text(key.clone(), 12., 12., 400., t.text))
                     }))),
             );
         }
@@ -3786,6 +3867,11 @@ impl Render for Dialog {
             Kind::Shortcuts => (600., shortcuts_height),
             Kind::CloseWindow => (420., 171.),
             Kind::RevertChanges => (420., 199.),
+            // ponytail: the title wraps by character count (about 32 per 380 px line, 3 lines).
+            Kind::DeleteTask => (
+                420.,
+                144. + 28. * (self.query.chars().count() + 8).div_ceil(32).clamp(1, 3) as f32,
+            ),
             Kind::ScheduleTask => (680., 422.),
             Kind::Rename | Kind::NewSection | Kind::EditSection => (420., 185.),
             Kind::ArchiveSection => (420., 181.),
@@ -3812,6 +3898,7 @@ impl Render for Dialog {
         let content = match self.kind {
             Kind::Shortcuts => self.shortcuts_content(&visible, t, cx),
             Kind::CloseWindow | Kind::RevertChanges => self.close_content(t, cx),
+            Kind::DeleteTask => self.delete_content(t, cx),
             Kind::ScheduleTask => self.schedule_content(t, cx),
             Kind::Rename | Kind::NewSection | Kind::EditSection => self.rename_content(t, cx),
             Kind::ArchiveSection => self.archive_section_content(t, cx),
@@ -3853,11 +3940,13 @@ impl Render for Dialog {
             .child(
                 div()
                     .id("modal-dialog")
+                    .key_context("Editable")
                     .role(gpui::Role::Dialog)
                     .aria_label(match self.kind {
                         Kind::Shortcuts => "Keyboard shortcuts".into(),
                         Kind::CloseWindow => "Are you sure you want to close the window?".into(),
                         Kind::RevertChanges => "Revert changes?".into(),
+                        Kind::DeleteTask => format!("Delete {}?", self.query).into(),
                         Kind::ScheduleTask => "Schedule a task".into(),
                         Kind::Rename | Kind::NewSection | Kind::EditSection => {
                             self.name_title().into()
@@ -4086,80 +4175,3 @@ impl Render for Dialog {
             )
     }
 }
-
-const SHORTCUTS: &[(&str, &str, &[&str])] = &[
-    ("Chat", "New chat", &["⌘N", "⇧⌘O"]),
-    ("Chat", "Archive chat", &["⇧⌘A"]),
-    ("Chat", "New standalone chat", &["⌥⌘O"]),
-    ("Chat", "Toggle pin", &["⌥⌘P"]),
-    ("Navigation", "Find", &["⌘F"]),
-    ("Navigation", "Focus tab 1", &["⌘1"]),
-    ("Navigation", "Focus tab 2", &["⌘2"]),
-    ("Navigation", "Focus tab 3", &["⌘3"]),
-    ("Navigation", "Focus tab 4", &["⌘4"]),
-    ("Navigation", "Focus tab 5", &["⌘5"]),
-    ("Navigation", "Focus tab 6", &["⌘6"]),
-    ("Navigation", "Focus tab 7", &["⌘7"]),
-    ("Navigation", "Focus tab 8", &["⌘8"]),
-    ("Navigation", "Focus tab 9", &["⌘9"]),
-    ("Navigation", "Back", &["⌘[", "Mouse Back"]),
-    ("Navigation", "Forward", &["⌘]", "Mouse Forward"]),
-    ("Navigation", "Next recently viewed chat", &["⌃Tab"]),
-    ("Navigation", "Next tab", &["⌃Tab", "⇧⌘]", "⌥⌘→"]),
-    ("Navigation", "Next chat", &["⇧⌘]", "⌥⌘→"]),
-    ("Navigation", "Next chat needing attention", &["⌥⌘A"]),
-    ("Navigation", "Open your dot", &["⌘."]),
-    ("Navigation", "Previous recently viewed chat", &["⌃⇧Tab"]),
-    ("Navigation", "Previous tab", &["⌃⇧Tab", "⇧⌘[", "⌥⌘←"]),
-    ("Navigation", "Previous chat", &["⇧⌘[", "⌥⌘←"]),
-    ("Navigation", "Go to recent chat 1", &["⌥⌘1"]),
-    ("Navigation", "Go to recent chat 2", &["⌥⌘2"]),
-    ("Navigation", "Go to recent chat 3", &["⌥⌘3"]),
-    ("Navigation", "Go to recent chat 4", &["⌥⌘4", "⇧⌘9"]),
-    ("Navigation", "Go to recent chat 5", &["⌥⌘5", "⇧⌘8"]),
-    ("Navigation", "Go to recent chat 6", &["⌥⌘6"]),
-    ("Navigation", "Toggle activity view", &["⌥⌘U"]),
-    ("Panels", "Open browser tab", &["⌘T"]),
-    ("Panels", "Reopen closed tab", &["⇧⌘T"]),
-    ("Panels", "New tab in full view", &["⇧⌘F"]),
-    ("Panels", "Cycle workspace layout", &["⇧⌘B"]),
-    ("Panels", "Toggle bottom panel", &["⌘J"]),
-    ("Panels", "Toggle navigation panel", &["⇧⌘E"]),
-    ("Panels", "Toggle sidebar", &["⇧⌘S", "⌘B"]),
-    ("Panels", "New tab", &["⌥⌘B"]),
-    ("Panels", "Open terminal", &["⌃`"]),
-    ("Project", "Open folder", &["⌘O"]),
-    ("App", "Clear all unreads", &["⇧Esc"]),
-    ("App", "Show Mini", &["⌥Space"]),
-    ("App", "Settings", &["⌘,"]),
-    ("General", "Close other tabs", &["⌥⌘W"]),
-    ("General", "Close Tab", &["⌘W"]),
-    ("General", "Close", &["⌘W"]),
-    ("General", "Select effort", &["⌃⇧M"]),
-    ("General", "Open project picker", &["⌥⇧⌘O"]),
-    ("General", "Open recent models", &["⌃⌘M"]),
-    ("General", "Toggle voice chat", &["⌃⇧V"]),
-    ("General", "Send message in background", &["⌘⏎"]),
-    ("General", "Copy conversation path", &["⌥⇧⌘C"]),
-    ("General", "Copy deeplink", &["⌥⌘L"]),
-    ("General", "Copy working directory", &["⇧⌘C"]),
-    ("General", "Force Reload Browser Page", &["⇧⌘R"]),
-    ("General", "Voice in Mini", &["⌥V"]),
-    ("General", "Open command menu", &["⌘K", "⇧⌘P"]),
-    ("General", "Reload Browser Page", &["⌘R"]),
-    ("General", "Rename chat", &["⌥⌘R"]),
-    ("General", "Screenshot selection to current chat", &["⌃⇧4"]),
-    ("General", "Screenshot selection to new chat", &["⌃⌥⇧4"]),
-    ("General", "Search Files…", &["⌘P"]),
-    ("General", "Show keyboard shortcuts", &["⌘/"]),
-    ("General", "Go to chat 1", &["⌃1"]),
-    ("General", "Go to chat 2", &["⌃2"]),
-    ("General", "Go to chat 3", &["⌃3"]),
-    ("General", "Go to chat 4", &["⌃4"]),
-    ("General", "Go to chat 5", &["⌃5"]),
-    ("General", "Go to chat 6", &["⌃6"]),
-    ("General", "Go to chat 7", &["⌃7"]),
-    ("General", "Go to chat 8", &["⌃8"]),
-    ("General", "Go to chat 9", &["⌃9"]),
-    ("General", "Toggle Notch", &["⌥C"]),
-];

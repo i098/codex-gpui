@@ -449,7 +449,7 @@ fn the_instructions_grip_resizes_the_field_down_to_its_minimum() -> Result<()> {
     let home = tempfile::tempdir()?;
     std::fs::write(home.path().join("AGENTS.md"), "Use spaces.\n")?;
     let host = std::sync::Arc::new(app::host::LocalHost::new(home.path()));
-    let mut fx = Fx::new()?;
+    let mut fx = Fx::scripted(script(None, |_| {})?)?;
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
     open_instructions(&mut fx)?;
@@ -817,8 +817,21 @@ fn enabling_memory_updates_the_persisted_state_and_the_switch() -> Result<()> {
     let mut enabled = initial.clone();
     enabled["config"]["memories"] = json!({"generate_memories": true, "use_memories": true});
     enabled["config"]["features"]["memories"] = true.into();
+    let features = lines
+        .iter()
+        .find_map(|line| {
+            (line["dir"] == "recv"
+                && line["msg"]["result"]["data"]
+                    .as_array()
+                    .is_some_and(|features| {
+                        features.iter().any(|feature| feature["name"] == "memories")
+                    }))
+            .then(|| line["msg"]["result"].clone())
+        })
+        .context("initial memory features")?;
     lines.extend(exchange("config/read", initial));
     lines.extend(exchange("config/read", enabled));
+    lines.extend(exchange("experimentalFeature/list", features));
     lines.extend(exchange(
         "experimentalFeature/list",
         json!({
@@ -829,6 +842,11 @@ fn enabling_memory_updates_the_persisted_state_and_the_switch() -> Result<()> {
     lines.extend(exchange("config/batchWrite", Value::Null));
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     prepare_instructions(&mut fx)?;
+    ensure!(fx.read(|root, cx| {
+        root.personal_instructions(cx)
+            .and_then(|view| view.read(cx).memory())
+            .is_some_and(|memory| !memory.enabled())
+    }));
     fx.click((1140., 270.))?;
     fx.wait("enabled memory", |fx| {
         fx.read(|root, cx| {
@@ -848,6 +866,22 @@ fn enabling_memory_updates_the_persisted_state_and_the_switch() -> Result<()> {
     assert_eq!(
         fx.read(|root, _| root.config()["memories"]["use_memories"].clone()),
         json!(true)
+    );
+    let writes: Vec<_> = fx
+        .sent()?
+        .into_iter()
+        .filter(|request| request["method"] == "config/batchWrite")
+        .map(|request| request["params"]["edits"].clone())
+        .collect();
+    assert_eq!(
+        writes,
+        [
+            json!([{"keyPath": "features.memories", "value": true, "mergeStrategy": "upsert"}]),
+            json!([
+                {"keyPath": "memories.generate_memories", "value": true, "mergeStrategy": "upsert"},
+                {"keyPath": "memories.use_memories", "value": true, "mergeStrategy": "upsert"}
+            ])
+        ]
     );
     evidence(&mut fx, "memory-enabled")?;
     Ok(())
