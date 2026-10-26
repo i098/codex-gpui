@@ -2,13 +2,23 @@
 //! Mouse movement preserves a keyboard ring. A pointer press clears it.
 
 use gpui::{
-    AnyElement, App, Corners, DispatchPhase, Div, ElementId, Entity, FocusHandle,
+    AnyElement, App, BoxShadow, Corners, DispatchPhase, Div, ElementId, Entity, FocusHandle,
     InteractiveElement, IntoElement, KeyDownEvent, MouseDownEvent, ParentElement, Pixels, Stateful,
-    Styled, Window, canvas, px, rgb,
+    StyleRefinement, Styled, Window, canvas, point, px, rgb,
 };
 use std::cell::Cell;
 
 const RING_WIDTH: Pixels = px(2.);
+
+pub(super) fn trigger_focus(style: StyleRefinement) -> StyleRefinement {
+    style.shadow(vec![BoxShadow {
+        color: rgb(0x3a83f7).into(),
+        offset: point(px(0.), px(0.)),
+        blur_radius: px(0.),
+        spread_radius: RING_WIDTH,
+        inset: false,
+    }])
+}
 
 pub struct ControlFocus {
     pub handle: FocusHandle,

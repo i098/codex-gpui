@@ -389,7 +389,7 @@ impl ComputerUse {
         let open = self.sound_open;
         let handle = focus::handle("computer-use-sound", 0, window, cx);
         let trigger = focus::ring(
-            select(mode.label(), None, pending, &t).id("computer-use-sound"),
+            select(mode.label(), None, pending, false, &t).id("computer-use-sound"),
             &handle,
             px(12.5),
             px(2.),
