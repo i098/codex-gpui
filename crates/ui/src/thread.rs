@@ -156,6 +156,7 @@ pub struct ThreadView {
     composer: AnyView,
     embedded: bool,
     _tick: Option<Task<()>>,
+    running_since: HashMap<String, Instant>,
     stream_fades: HashMap<String, Vec<StreamSegment>>,
     mcp_images: items::McpImages,
     /// Open disclosures: turns whose `Worked for` is expanded, by turn id, and activity groups
@@ -614,6 +615,7 @@ impl ThreadView {
             composer,
             embedded: false,
             _tick: None,
+            running_since: HashMap::new(),
             stream_fades: HashMap::new(),
             mcp_images: RefCell::default(),
             expanded: HashSet::new(),
@@ -654,6 +656,12 @@ impl ThreadView {
         &self.turns
     }
 
+    pub fn is_running(&self) -> bool {
+        self.turns
+            .iter()
+            .any(|turn| turn.status == TurnStatus::InProgress)
+    }
+
     /// Projects the visible question's turn from the root request queue.
     pub fn set_pending_question(&mut self, turn_id: Option<String>, cx: &mut Context<Self>) {
         if self.pending_question != turn_id {
@@ -671,7 +679,7 @@ impl ThreadView {
     /// The selected answer text (TH-127), as Chrome's `Selection.toString` joins it.
     pub fn selected_text(&self, window: &Window, cx: &App) -> Option<String> {
         self.carets.range()?;
-        Some(cx.global::<Selection>().text(window)).filter(|s| !s.is_empty())
+        Some(self.carets.text(window, cx)).filter(|s| !s.is_empty())
     }
 
     /// `Copy` (⌘C) with a transcript selection: writes it as plain text (SH-132, TH-128).
@@ -1454,6 +1462,13 @@ impl ThreadView {
                 let Ok(mut n) = serde_json::from_value::<TurnNotification>(params.clone()) else {
                     return;
                 };
+                if n.turn.status == TurnStatus::InProgress {
+                    self.running_since
+                        .entry(n.turn.id.clone())
+                        .or_insert_with(|| cx.background_executor().now());
+                } else {
+                    self.running_since.remove(&n.turn.id);
+                }
                 match self.turns.iter_mut().find(|t| t.id == n.turn.id) {
                     Some(turn) => {
                         turn.status = n.turn.status;
@@ -1471,11 +1486,7 @@ impl ThreadView {
                         self.turns.push(n.turn);
                     }
                 }
-                if self
-                    .turns
-                    .iter()
-                    .any(|t| t.status == TurnStatus::InProgress)
-                {
+                if self.is_running() {
                     self.tick(cx);
                 }
             }
@@ -1624,10 +1635,7 @@ impl ThreadView {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 let running = this.update(cx, |this, cx| {
                     cx.notify();
-                    let running = this
-                        .turns
-                        .iter()
-                        .any(|t| t.status == TurnStatus::InProgress);
+                    let running = this.is_running();
                     if !running {
                         this._tick = None;
                     }
@@ -1638,6 +1646,17 @@ impl ThreadView {
                 }
             }
         }));
+    }
+
+    fn running_seconds(&self, turn: &Turn, now: Instant) -> i64 {
+        turn.started_at.map_or_else(
+            || {
+                self.running_since.get(&turn.id).map_or(0, |started| {
+                    now.saturating_duration_since(*started).as_secs() as i64
+                })
+            },
+            |started| (self.clock.now() - started).max(0),
+        )
     }
 
     fn turn(
@@ -1765,30 +1784,35 @@ impl ThreadView {
                 )
             };
             col = col.child(div().h(px(16.))).child(
-                disclosure(format!("Worked for {}", duration(secs)), angle, window, t)
-                    .id(group.clone())
-                    // `select-none` in the original: a press here leaves the text selection.
-                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |view, _, _, cx| {
-                        let open = !view.expanded.remove(&id);
-                        if open {
-                            view.expanded.insert(id.clone());
-                        }
-                        let instant = motion::reduced(cx);
-                        state.update(cx, |(epoch, d), cx| {
-                            let now = cx.background_executor().now() - *epoch;
-                            let target = open as u8 as f32;
-                            d.chevron
-                                .transition(target, now, motion::BASIC, motion::EASE_IN_OUT);
-                            let (duration, ease) = match (instant, open) {
-                                (true, _) => (Duration::ZERO, motion::EASE_ENTER),
-                                (false, true) => (motion::RELAXED, motion::EASE_ENTER),
-                                (false, false) => (motion::BASIC, motion::EASE_ENTER_SNAPPY),
-                            };
-                            d.content.transition(target, now, duration, ease);
-                        });
-                        cx.notify();
-                    })),
+                disclosure(
+                    format!("Worked for {}", duration(secs)),
+                    Some(angle),
+                    window,
+                    t,
+                )
+                .id(group.clone())
+                // `select-none` in the original: a press here leaves the text selection.
+                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |view, _, _, cx| {
+                    let open = !view.expanded.remove(&id);
+                    if open {
+                        view.expanded.insert(id.clone());
+                    }
+                    let instant = motion::reduced(cx);
+                    state.update(cx, |(epoch, d), cx| {
+                        let now = cx.background_executor().now() - *epoch;
+                        let target = open as u8 as f32;
+                        d.chevron
+                            .transition(target, now, motion::BASIC, motion::EASE_IN_OUT);
+                        let (duration, ease) = match (instant, open) {
+                            (true, _) => (Duration::ZERO, motion::EASE_ENTER),
+                            (false, true) => (motion::RELAXED, motion::EASE_ENTER),
+                            (false, false) => (motion::BASIC, motion::EASE_ENTER_SNAPPY),
+                        };
+                        d.content.transition(target, now, duration, ease);
+                    });
+                    cx.notify();
+                })),
             );
             if progress > 0. {
                 let natural = height.get();
@@ -1828,20 +1852,36 @@ impl ThreadView {
                 col.child(action_row(last, &group, &turn.id, answer, t))
             });
         }
-        if turn.status == TurnStatus::InProgress && (!self.embedded || has_work) {
-            let secs = self.clock.now() - turn.started_at.unwrap_or(self.clock.now());
+        let running = turn.status == TurnStatus::InProgress;
+        if running && has_work {
+            let secs = self.running_seconds(turn, cx.background_executor().now());
             col = col
                 .child(div().h(px(16.)))
                 .child(disclosure(
                     format!("Working for {}", duration(secs)),
-                    0.,
+                    None,
                     window,
                     t,
                 ))
                 .child(div().h(px(16.)));
         }
-        let running = turn.status == TurnStatus::InProgress;
+        let waiting = running
+            && !work.iter().any(|item| match item {
+                ThreadItem::CommandExecution { status, .. }
+                | ThreadItem::FileChange { status, .. }
+                | ThreadItem::McpToolCall { status, .. } => status == "inProgress",
+                _ => false,
+            });
         col.child(self.activity(work, running, window, t, cx))
+            .when(waiting, |col| {
+                col.child(div().mt(px(if has_work { 16. } else { 0. })).child(text(
+                    "Thinking",
+                    14.,
+                    21.,
+                    430.,
+                    t.text_tertiary,
+                )))
+            })
             .child(self.automation_cards(&turn.items, window, t, cx))
     }
 
@@ -1945,7 +1985,6 @@ impl Render for ThreadView {
         // ponytail: full layout while a selection exists; keep stand-ins outside the range if
         // long selected threads lag.
         let selecting = self.carets.range().is_some();
-        self.carets.publish(cx);
         let key = (window.viewport_size(), self.clip_right);
         let (view, offset) = (self.scroll.bounds().size.height, self.scroll.offset().y);
         let laid_out = self.laid_out.borrow();
@@ -2214,7 +2253,11 @@ impl Render for ThreadView {
                     // The scroller's contents are a composited layer (transparent tile).
                     .layer()
                     .pt(px(32.))
-                    .child(frame_start(self.scroll.clone()).absolute().size_0())
+                    .child(
+                        frame_start(&self.carets, self.scroll.clone())
+                            .absolute()
+                            .size_0(),
+                    )
                     .children(tracker)
                     .child(
                         div()
@@ -2587,6 +2630,58 @@ mod tests {
             assert!(matches!(&view.turns[0].items[0],
                 ThreadItem::CommandExecution { status, exit_code: Some(17), aggregated_output: Some(output), .. }
                     if status == "failed" && output == "actual output\n"));
+        });
+    }
+
+    #[gpui::test]
+    fn running_time_keeps_the_first_notification_without_inventing_a_timestamp(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let thread: Thread = serde_json::from_value(serde_json::json!({
+            "id": "timing", "preview": "", "modelProvider": "test",
+            "cwd": "/tmp/timing", "createdAt": 0, "updatedAt": 0,
+            "status": {"type": "idle"}, "turns": [],
+        }))
+        .unwrap();
+        let composer = cx.new(|_| gpui::EmptyView).into();
+        let view = cx.new(|_| {
+            ThreadView::new(
+                thread,
+                Clock {
+                    utc_offset: 0,
+                    pinned_now: Some(100),
+                    elapsed_since: None,
+                },
+                composer,
+            )
+        });
+        let event = |status: &str| Event::Notification {
+            method: if status == "inProgress" {
+                "turn/started"
+            } else {
+                "turn/completed"
+            }
+            .into(),
+            params: serde_json::json!({
+                "threadId": "timing",
+                "turn": {"id": "turn", "items": [], "status": status, "error": null},
+            }),
+        };
+        view.update(cx, |view, cx| view.apply(&event("inProgress"), cx));
+        let start = view.read_with(cx, |view, _| view.running_since["turn"]);
+        cx.executor().advance_clock(Duration::from_secs(1));
+        view.update(cx, |view, cx| view.apply(&event("inProgress"), cx));
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.running_since["turn"], start);
+            assert_eq!(
+                view.running_seconds(&view.turns[0], start + Duration::from_secs(1)),
+                1
+            );
+            assert_eq!(view.turns[0].started_at, None);
+        });
+        view.update(cx, |view, cx| view.apply(&event("completed"), cx));
+        view.read_with(cx, |view, _| {
+            assert!(!view.running_since.contains_key("turn"))
         });
     }
 
