@@ -117,6 +117,7 @@ pub fn recorded_host_settings() -> Result<app::host_settings::Settings> {
     ensure!(history.is_array(), "original host history is missing");
     let mut settings = app::host_settings::Settings::default();
     settings.write("seen-model-upgrade-list", history)?;
+    settings.write("primary-number-shortcut-target", json!("sidebar"))?;
     Ok(settings)
 }
 

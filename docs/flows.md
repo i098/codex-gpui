@@ -178,7 +178,7 @@ The repair is tracked in [the Sidebar issue](https://github.com/i098/codex-gpui/
 | 3 | `⌘⇧S`, `⌘B` | shortcut | Toggle sidebar. | Shell sidebar toggles. | PASS (`sidebar_toggle_keys`) |
 | 4 | `⌘[`, `⌘]` | shortcut | Back, Forward (`navigateBack`, `navigateForward`). | Route history over Home, threads, Settings. | PASS (`back_forward_keys`) |
 | 5 | `⌘⇧[`, `⌘⇧]`, `⌘⌥←`, `⌘⌥→` | shortcut | Previous / next chat. | Previous / next Recents row; no wrap. | PASS (`previous_next_chat`) |
-| 6 | `⌘1`…`⌘9` | shortcut | Go to chat N (`thread1..9`). | Opens Recents row N. | PASS (`cmd_digit_goes_to_chat`) |
+| 6 | Number shortcuts | shortcut | Swap primary-number shortcuts between chats and tabs. | The saved number target selects Command-number or Control-number for chats; the other chord selects panel tabs. | PASS (`keyboard_shortcuts`; Linux) |
 | 7 | `⌘W` | shortcut | Close tab, else close window. | Closes the thread route's selected side panel tab, else the window. | PASS (`cmd_w_closes_window`, `s029::panel_tabs_replay`) |
 | 8 | Menu bar: Codex ▸ Settings…, File ▸ New Chat, View ▸ Toggle Sidebar, Toggle Changes Panel, Previous Chat, Next Chat, Back, Forward | click | Same commands as the keys. | `app::menus()` items dispatch their actions. | PASS (`menu_bar_actions`, `changes_panel_keys`) |
 | 9 | System appearance and Settings ▸ Appearance ▸ Theme | click | Light / Dark / System applies at once. | `State.theme` (`ThemeSetting`) is applied on each appearance change and by `Root::set_theme`. | PASS (`theme_switch`) |
@@ -189,10 +189,10 @@ The repair is tracked in [the Sidebar issue](https://github.com/i098/codex-gpui/
 | 14 | `⌘K`, `⌘⇧P` | shortcut | Command menu. | `CommandMenu` over live Recents, focused; Escape or a click outside closes it; Enter or a click runs the row (chat, `New chat`, `Manage scheduled tasks`, settings pages). | PASS (`command_menu_keys`, `command_menu_settings_page`) |
 | 15 | `⌘F` | shortcut | Find in chat. | — | NOT WIRED (`crates/ui/src/thread.rs`: no find bar) |
 | 16 | `⌥⌘B` | shortcut | Toggle Changes panel. | The thread route's side panel (`ui::screens::diff::panel::with_side_tabs`) shows the last turn's diff in a `Changes` tab beside the other open tabs; the tab's close button closes it. | PASS (`changes_panel_keys`) |
-| 17 | `⌘J` | shortcut | Toggle bottom panel. | — | NOT WIRED (`crates/ui/src/lib.rs` `Shell`: no bottom panel) |
-| 18 | `⌘⇧N`, `⌘⌥O` | shortcut | Temporary chat, standalone chat. | — | NOT WIRED (`crates/app/src/lib.rs`: no projects or temporary chats) |
+| 17 | `⌘J` | shortcut | Toggle bottom panel. | Opens or hides a real PTY terminal without discarding its process or buffer. | PASS (`shortcut_actions`; native) |
+| 18 | `⌘⇧N`, `⌘⌥O` | shortcut | Temporary chat, standalone chat. | Temporary chats use ephemeral app-server threads. Standalone chats allocate and record a projectless workspace. | PASS (`shortcut_chat_modes`; Linux) |
 | 19 | `⌘⌥1`…`⌘⌥6` | shortcut | Go to recent chat N (`recentThread1..6`: the chats by last update, newest first). | `GoToRecentChat`: the Nth Recents thread by `updatedAt`; past the end does nothing. | PASS (`recent_chat_keys`) |
-| 20 | `⌘+`, `⌘-`, `⌘0` | shortcut | Zoom in, zoom out, actual size. | — | NOT WIRED (`crates/ui/src/lib.rs`: no UI scale) |
+| 20 | `⌘+`, `⌘-`, `⌘0` | shortcut | Zoom in, zoom out, actual size. | Scales layout, paint, pointer input, and IME bounds. Saves the zoom and shows its timed control banner. | PASS (`keyboard_shortcuts`; Linux); native pixels pending |
 | 21 | Startup loader | loading | 56 px blossom centered on the window background until `initialize` answers. | Shows until the first app-server answer; then the app's own screens take over. | PASS (`error_shell::loader_shows_until_the_app_server_answers`) |
 | 22 | App-server death | error | Crash page: `ChatGPT hit a snag`, `Something went wrong. Try again to continue`, Try again, the fallen-pet illustration. | `Event::Closed` shows the recovery page; Try again reconnects through `windows::connect`. | PASS (`error_shell::crash_page_shows_when_the_app_server_dies`, `error_shell::try_again_respawns_the_app_server`) |
 
@@ -772,10 +772,19 @@ The editor provides a keyboard-accessible Learn more link to the original instru
 Its textarea grip resizes the field vertically, down to the original's 96 px `min-h-24` box.
 ST-094 saves through `codex-agents-md-save`; the host replaces the file atomically and preserves its permissions.
 Success shows `Instructions updated`; failure shows `Unable to save instructions` and retains the draft.
+ST-095 reads the original `2826489636` feature gate from the authenticated Statsig bootstrap.
+The gate keeps the legacy editor unchanged when it is off or unavailable.
+When the gate is on, the AGENTS.md editor switches between Markdown preview and source without replacing its draft.
+ST-096 reads the sibling `AGENTS.override.md` file and shows the original override notice when that file contains non-whitespace text.
+Missing or empty override files do not show the notice.
+Other override read failures use the existing instruction load error instead of reporting a false absence.
 Cancel discards the draft.
 Navigation, Back, window close, and Quit ask `Discard changes?` while edits remain.
 Application-wide Quit checks every open Root window before it exits.
 After discard, native close uses the existing window lifecycle and retains the final primary window on macOS.
+The multiline field resizes vertically and keeps its document while its viewport changes.
+The field keeps its border outside the scrolling content.
+Typing scrolls the caret into view; the field keeps a minimum height of 96 pixels.
 The instructions tests use owned files and cover save, cancel, discard, load failure, and save retry.
 The coordinate-based instructions cases run on macOS because Linux uses the no-op text system.
 The remaining action and host tests also run on Linux.
@@ -786,6 +795,29 @@ Skip creates an unused `New project` folder under `~/Documents/ChatGPT`, registe
 Existing names get a numeric suffix; the host does not overwrite an existing project.
 The workspace tests use an owned host root and the native path-prompt test hook.
 They do not create folders in the normal profile.
+
+### Memory and Writing
+
+Memory reads the selected computer's configuration and its paginated experimental feature list.
+Enabling memory updates `features.memories`, `memories.generate_memories`, and `memories.use_memories`.
+Disabling also turns off Chronicle on the local computer.
+The tool-assisted switch writes `memories.disable_on_external_context` and removes the legacy alias.
+Reads and writes use the user configuration layer when it supplies a file path.
+After a partial failure, the page shows the values that the server actually saved.
+Delete requires confirmation before `memory/reset`; failure keeps the confirmation available for retry.
+
+Writing is available to a ChatGPT account through its existing authenticated host.
+The page reads the canonical Writing plugin and the installed plugin list.
+Enable installs or enables that plugin; disable uninstalls it.
+A failed operation retries the requested value, not its inverse.
+Account identity checks prevent a later response or write from switching accounts.
+Enabling Writing replaces Settings with its previous route before it opens setup.
+Setup uses the existing discard guard before it replaces an edited instruction document.
+Cancel keeps the document and its unsaved draft.
+Setup keeps the same account snapshot until it closes.
+The setup dialog supports optional app connections through their supplied browser URLs.
+A dialog that cannot open leaves Writing retryable instead of waiting for authorization.
+Show me opens a prepared draft; it does not start a turn.
 
 
 ## 15.1 Automations ("Scheduled")
@@ -1364,3 +1396,31 @@ Control-Shift-G opens the existing Changes tab.
 `crates/app/tests/shortcut_navigation.rs` checks these paths on recorded threads.
 The [original/native picker pair](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/9a2941014013a3237d6c7389b13d9c4a3a00e15a0eba9abb/report.html) uses a 520×134 CSS-pixel crop at scale 2.
 It has zero outside-text differences and 45 differing pixels inside 147631 text pixels (0.0305%).
+
+## Keyboard preferences and app actions
+
+The Keyboard shortcuts page uses the original Codex command registry and flat-card layout.
+Text search includes commands and the browser-link preference. Keystroke search filters effective bindings.
+The existing host settings store saves bindings, the number target, and the browser-link modifier.
+Conflicts and failed writes leave the previous bindings active.
+Reset restores default bindings and the link modifier without changing the number target.
+App bindings update immediately, including menu and sidebar labels.
+Unmodified app shortcuts do not intercept editable text.
+Focused binding capture blocks normal key dispatch and publishes `KeyboardState.capture_owner` for the global-shortcut owner.
+
+Standalone chats use the existing projectless workspace allocator and app-server requests.
+Temporary chats send `ephemeral: true` and stay out of recents and saved route state.
+Undo and redo apply recorded rename, section, and archive actions through their app-server methods.
+A failed undo retains its entry for another attempt.
+Clear all unreads uses a confirmation dialog and saves the optional confirmation preference.
+
+The interactive terminal keeps its real PTY process when the bottom panel hides.
+UI zoom keeps layout, painting, pointer input, and IME bounds in the same coordinate system.
+The zoom banner waits two seconds and remains visible while the pointer is over it.
+Reopening a saved window restores its zoom.
+Original-versus-native visual approval remains separate from the Linux functional checks.
+
+
+Native checks cover reset confirmation, number/link menus, and modifier-only capture in `keyboard_shortcuts`.
+The `project_picker` scenario checks folder selection, cancellation, and the directory used by new chats.
+The `shortcut_actions` checks cover attention navigation, undo/redo, unread confirmation, and live terminal retention.
