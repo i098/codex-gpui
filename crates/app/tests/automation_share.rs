@@ -32,8 +32,11 @@ fn share_copies_the_task_link_and_confirms_once() -> Result<()> {
     let host = LocalHost::new(home.path());
     let params = json!({"name": "Review", "prompt": "Review local changes",
         "rrule": "FREQ=DAILY;BYHOUR=9;BYMINUTE=0", "cwds": [home.path()]});
-    let created = json_body(&host.fetch(&Request::post("create-automation", Some(params)))?)?;
-    let id = created["id"].as_str().expect("created task ID").to_owned();
+    let created = json_body(&host.fetch(&Request::post("automation-create", Some(params)))?)?;
+    let id = created["item"]["id"]
+        .as_str()
+        .expect("created task ID")
+        .to_owned();
     let mut fx = Fx::new()?;
     fx.cx.update(|cx| {
         fx.root
