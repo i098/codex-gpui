@@ -835,11 +835,13 @@ Show me opens a prepared draft; it does not start a turn.
 ### MCP servers, Hooks, and the extension manager
 
 Settings owns the Plugins, Apps, MCPs, Skills, and Marketplace management tabs.
+Each Root owns its manager state and dispatch callback; another window cannot replace them.
 The manager reads the app-server and keeps confirmed state after each completed operation.
 MCP edits preserve fields outside the form, exact argument values, and empty arguments.
 Project-owned server definitions stay read-only, and new names cannot replace hidden servers.
+Form writes use the captured user-file version and retain the draft when that version is stale.
 OAuth links must use HTTP or HTTPS.
-The `mcpServer/oauthLogin/completed` notification refreshes server status, including after an operation already in progress.
+The `mcpServer/oauthLogin/completed` notification refreshes server status; a refresh queues while another operation is pending.
 Hooks stay off until their current definition is trusted.
 Managed hooks stay on and cannot be edited.
 Marketplace removal uninstalls its remaining plugins before removing the configured source.
@@ -847,11 +849,11 @@ Built-in marketplaces cannot be removed.
 The shared host reads the original Statsig bootstrap and caches its parsed evaluations for the current Root.
 
 `cargo test -p ui --lib screens::settings::integrations` checks key collisions, form preservation, skill precedence, read-only origins, and hook trust.
-`cargo test -p app --lib settings_integrations` checks OAuth boundaries, notification handling, and queued status refreshes.
-An owned-profile application smoke checked Root dispatch against the real app-server on Linux and macOS.
+`cargo test -p app --lib settings_integrations` checks OAuth boundaries, notification handling, queued status refreshes, stale writes, and window isolation.
+An earlier owned-profile application smoke checked Root dispatch against the real app-server on Linux and macOS.
 It covered MCP toggling, saving, trust, invalid-save preservation, deletion, marketplace add/remove, and directory navigation.
 The native renderer produced a manager screenshot without a new crash report.
-These checks do not establish appearance parity.
+Those earlier checks do not validate per-Root state ownership or appearance parity.
 Strict form comparisons use the original renderer at the same state and size.
 ST-155 remains gated while the native MCP app sandbox is absent; the manager never reports a synthetic data-clear success.
 

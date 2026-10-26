@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, ensure};
 use bridge::{Bridge, Event};
-use gpui::{AppContext as _, BorrowAppContext as _, Context};
+use gpui::{AppContext as _, Context};
 use serde_json::{Value, json};
 use std::{collections::HashSet, sync::Arc};
 use ui::{
@@ -19,24 +19,35 @@ const MCP_OAUTH_COMPLETED: &str = "mcpServer/oauthLogin/completed";
 
 impl Root {
     pub(crate) fn load_settings_integrations(&mut self, cx: &mut Context<Self>) {
-        if cx
-            .try_global::<State>()
-            .is_none_or(|state| state.dispatch.is_none())
-        {
+        if self.settings_integrations.read(cx).dispatch.is_none() {
             let root = cx.weak_entity();
-            cx.set_global(State {
-                configuration: Arc::new(json!({"config":self.config})),
-                plugin_creator: ui::screens::settings::integrations::plugin_creator_path(
-                    &self.skills,
-                ),
-                dispatch: Some(Arc::new(move |action, cx| {
-                    root.update(cx, |root, cx| root.settings_integration_action(action, cx))
-                        .ok();
-                })),
-                ..Default::default()
+            self.settings_integrations.update(cx, |state, cx| {
+                *state = State {
+                    configuration: Arc::new(json!({"config":self.config})),
+                    plugin_creator: ui::screens::settings::integrations::plugin_creator_path(
+                        &self.skills,
+                    ),
+                    dispatch: Some(Arc::new(move |action, cx| {
+                        root.update(cx, |root, cx| root.settings_integration_action(action, cx))
+                            .ok();
+                    })),
+                    ..Default::default()
+                };
+                cx.notify();
             });
         }
         self.settings_integration_action(Action::Refresh, cx);
+    }
+
+    pub(crate) fn invalidate_settings_integrations(&mut self, cx: &mut Context<Self>) {
+        self.settings_integration_task = None;
+        self.settings_integrations.update(cx, |state, cx| {
+            *state = State {
+                dispatch: state.dispatch.take(),
+                ..Default::default()
+            };
+            cx.notify();
+        });
     }
 
     pub(crate) fn open_plugin_creator(
@@ -44,7 +55,7 @@ impl Root {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(path) = cx.global::<State>().plugin_creator.clone() else {
+        let Some(path) = self.settings_integrations.read(cx).plugin_creator.clone() else {
             self.toast(
                 Toast::danger("The plugin-creator skill is not available"),
                 cx,
@@ -74,48 +85,48 @@ impl Root {
     }
 
     fn settings_integration_action(&mut self, action: Action, cx: &mut Context<Self>) {
-        if cx.global::<State>().pending {
-            if matches!(action, Action::Refresh) {
-                cx.update_global::<State, _>(|state, _| state.refresh_requested = true);
-            }
+        if self
+            .settings_integrations
+            .update(cx, |state, _| defer_if_busy(state, &action))
+        {
             return;
         }
-        let saved_form = matches!(action, Action::SaveServer { .. } | Action::RemoveServer(_));
         let oauth = match &action {
             Action::Authenticate { name, .. } => Some(name.clone()),
             _ => None,
         };
         if let Some(name) = &oauth {
-            if let Some(Some(url)) = cx.global::<State>().oauth.get(name) {
+            if let Some(Some(url)) = self.settings_integrations.read(cx).oauth.get(name) {
                 cx.open_url(url);
                 return;
             }
-            if cx.global::<State>().oauth.contains_key(name) {
+            if self.settings_integrations.read(cx).oauth.contains_key(name) {
                 return;
             }
         }
-        cx.update_global::<State, _>(|state, _| {
+        self.settings_integrations.update(cx, |state, cx| {
             state.pending = true;
             state.form_error = None;
             state.operation_error = None;
             if let Some(name) = &oauth {
                 state.oauth.insert(name.clone(), None);
             }
+            cx.notify();
         });
         let bridge = self.bridge.clone();
         let host = self.host.clone();
-        let roots = cx.global::<State>().roots.clone();
-        let configuration = cx.global::<State>().configuration.clone();
-        let cached_plugins = match &cx.global::<State>().plugins {
+        let roots = self.settings_integrations.read(cx).roots.clone();
+        let configuration = self.settings_integrations.read(cx).configuration.clone();
+        let cached_plugins = match &self.settings_integrations.read(cx).plugins {
             Load::Ready(value) => value.clone(),
             _ => Arc::new(Value::Null),
         };
-        let cached_gates = cx.global::<State>().gates_loaded.then(|| {
-            let state = cx.global::<State>();
+        let cached_gates = self.settings_integrations.read(cx).gates_loaded.then(|| {
+            let state = self.settings_integrations.read(cx);
             (state.evaluations.clone(), state.hidden_plugins.clone())
         });
         let operation = action.clone();
-        let generation = cx.global::<State>().identity_generation;
+        let generation = self.settings_integrations.read(cx).identity_generation;
         let read = cx.background_spawn(async move {
             let result = execute(&bridge, host.as_ref(), &operation, &roots, &configuration).await;
             let snapshot = if oauth.is_none() {
@@ -125,105 +136,68 @@ impl Root {
             };
             (result, snapshot)
         });
-        cx.spawn(async move |this, cx| {
+        self.settings_integration_task = Some(cx.spawn(async move |this, cx| {
             let (result, snapshot) = read.await;
             this.update(cx, |this, cx| {
-                if cx.global::<State>().identity_generation != generation {
+                if this.settings_integrations.read(cx).identity_generation != generation {
                     return;
                 }
-                if let Some(snapshot) = snapshot {
-                    if let Ok(configuration) = &snapshot.configuration {
-                        this.config = configuration["config"].clone();
-                    }
-                    cx.update_global::<State, _>(|state, _| snapshot.apply(state));
-                }
-                let mut notice = None;
-                let refresh = cx.update_global::<State, _>(|state, cx| {
-                    let refresh = finish_operation(state);
-                    match result {
-                        Ok(url) => {
-                            if saved_form {
-                                state.form_saved += 1;
-                            }
-                            match &action {
-                                Action::SetServerEnabled { .. }
-                                | Action::SaveServer { .. }
-                                | Action::RemoveServer(_) => state.reload_required = true,
-                                Action::ReloadServers => {
-                                    state.reload_required = false;
-                                    state.suppressed_servers.clear();
-                                }
-                                Action::AddMarketplace(_) => state.marketplace_added += 1,
-                                Action::RemoveMarketplace(name) => {
-                                    state.removal_completed = Some(name.clone())
-                                }
-                                Action::RemovePlugin(plugin) => {
-                                    state.removal_completed =
-                                        plugin["id"].as_str().map(|id| format!("plugin:{id}"))
-                                }
-                                _ => {}
-                            }
-                            if let Action::RemoveServer(key) = &action {
-                                state.suppressed_servers.insert(key.clone());
-                            }
-                            if let Action::Authenticate { name, .. } = &action
-                                && let Some(url) = url
-                                && state.oauth.contains_key(name)
-                            {
-                                state.oauth.insert(name.clone(), Some(url.clone()));
-                                cx.open_url(&url);
-                            }
-                        }
-                        Err(error) => {
-                            if let Action::Authenticate { name, .. } = &action {
-                                state.oauth.remove(name);
-                            }
-                            if saved_form {
-                                state.form_error = Some(error.to_string());
-                            } else if matches!(
-                                &action,
-                                Action::TrustHooks(_)
-                                    | Action::SetHookEnabled { .. }
-                                    | Action::RemoveMarketplace(_)
-                                    | Action::AddMarketplace(_)
-                                    | Action::RemovePlugin(_)
-                            ) {
-                                state.operation_error = Some(error.to_string());
-                            } else {
-                                notice = Some(error.to_string());
-                            }
-                        }
-                    }
-                    refresh
-                });
-                if let Some(notice) = notice {
-                    this.toast(Toast::danger(notice), cx);
-                }
-                if matches!(action, Action::ReloadHooks)
-                    && matches!(&cx.global::<State>().hooks, Load::Ready(_))
-                {
-                    this.toast(Toast::info("Refreshed hooks"), cx);
-                }
-                if refresh {
-                    this.settings_integration_action(Action::Refresh, cx);
-                }
+                this.finish_settings_integration(action, result, snapshot, cx);
             })
             .ok();
-        })
-        .detach();
+        }));
+    }
+
+    fn finish_settings_integration(
+        &mut self,
+        action: Action,
+        result: Result<Option<String>>,
+        snapshot: Option<Snapshot>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(snapshot) = snapshot {
+            if let Ok(configuration) = &snapshot.configuration {
+                self.config = configuration["config"].clone();
+            }
+            self.settings_integrations
+                .update(cx, |state, _| snapshot.apply(state));
+        }
+        let (notice, refresh_requested) = self.settings_integrations.update(cx, |state, cx| {
+            let refresh_requested = finish_operation(state);
+            let notice = match result {
+                Ok(url) => {
+                    integration_succeeded(state, &action, url, cx);
+                    None
+                }
+                Err(error) => integration_failed(state, &action, error),
+            };
+            cx.notify();
+            (notice, refresh_requested)
+        });
+        if let Some(notice) = notice {
+            self.toast(Toast::danger(notice), cx);
+        }
+        if matches!(action, Action::ReloadHooks)
+            && matches!(&self.settings_integrations.read(cx).hooks, Load::Ready(_))
+        {
+            self.toast(Toast::info("Refreshed hooks"), cx);
+        }
+        if refresh_requested {
+            self.settings_integration_action(Action::Refresh, cx);
+        }
     }
 
     pub(crate) fn settings_integration_event(&mut self, event: &Event, cx: &mut Context<Self>) {
         let Event::Notification { method, .. } = event else {
             return;
         };
-        if !cx.has_global::<State>() {
-            return;
-        }
         if method == "account/updated" {
-            let active = cx.global::<State>().dispatch.is_some();
+            let active = self.settings_integrations.read(cx).dispatch.is_some();
             self.host.invalidate_identity();
-            cx.update_global::<State, _>(|state, _| invalidate_identity(state));
+            self.settings_integrations.update(cx, |state, cx| {
+                invalidate_identity(state);
+                cx.notify();
+            });
             if active {
                 self.settings_integration_action(Action::Refresh, cx);
             }
@@ -232,7 +206,10 @@ impl Root {
         if method != MCP_OAUTH_COMPLETED {
             return;
         }
-        let completed = cx.update_global::<State, _>(|state, _| complete_oauth(state, event));
+        let completed = self.settings_integrations.update(cx, |state, cx| {
+            cx.notify();
+            complete_oauth(state, event)
+        });
         let Some(completed) = completed else {
             return;
         };
@@ -289,6 +266,71 @@ fn invalidate_identity(state: &mut State) {
         dispatch,
         ..Default::default()
     };
+}
+
+fn defer_if_busy(state: &mut State, action: &Action) -> bool {
+    if !state.pending {
+        return false;
+    }
+    state.refresh_requested |= matches!(action, Action::Refresh);
+    true
+}
+
+fn integration_succeeded(
+    state: &mut State,
+    action: &Action,
+    url: Option<String>,
+    cx: &mut gpui::App,
+) {
+    if matches!(action, Action::SaveServer { .. } | Action::RemoveServer(_)) {
+        state.form_saved += 1;
+    }
+    match action {
+        Action::SetServerEnabled { .. } | Action::SaveServer { .. } | Action::RemoveServer(_) => {
+            state.reload_required = true;
+        }
+        Action::ReloadServers => {
+            state.reload_required = false;
+            state.suppressed_servers.clear();
+        }
+        Action::AddMarketplace(_) => state.marketplace_added += 1,
+        Action::RemoveMarketplace(name) => state.removal_completed = Some(name.clone()),
+        Action::RemovePlugin(plugin) => {
+            state.removal_completed = plugin["id"].as_str().map(|id| format!("plugin:{id}"));
+        }
+        _ => {}
+    }
+    if let Action::RemoveServer(key) = action {
+        state.suppressed_servers.insert(key.clone());
+    }
+    if let Action::Authenticate { name, .. } = action
+        && let Some(url) = url
+        && state.oauth.contains_key(name)
+    {
+        state.oauth.insert(name.clone(), Some(url.clone()));
+        cx.open_url(&url);
+    }
+}
+
+fn integration_failed(state: &mut State, action: &Action, error: anyhow::Error) -> Option<String> {
+    if let Action::Authenticate { name, .. } = action {
+        state.oauth.remove(name);
+    }
+    if matches!(action, Action::SaveServer { .. } | Action::RemoveServer(_)) {
+        state.form_error = Some(error.to_string());
+    } else if matches!(
+        action,
+        Action::TrustHooks(_)
+            | Action::SetHookEnabled { .. }
+            | Action::RemoveMarketplace(_)
+            | Action::AddMarketplace(_)
+            | Action::RemovePlugin(_)
+    ) {
+        state.operation_error = Some(error.to_string());
+    } else {
+        return Some(error.to_string());
+    }
+    None
 }
 
 struct Snapshot {
@@ -536,18 +578,6 @@ async fn execute(
     roots: &[String],
     configuration: &Value,
 ) -> Result<Option<String>> {
-    let server_key = match action {
-        Action::SetServerEnabled { key, .. }
-        | Action::SaveServer { key, .. }
-        | Action::RemoveServer(key) => Some(key),
-        _ => None,
-    };
-    if let Some(key) = server_key {
-        ensure!(
-            !ui::screens::settings::integrations::server_read_only(configuration, key),
-            "Project MCP servers are read-only"
-        );
-    }
     match action {
         Action::Refresh | Action::ReloadHooks => {}
         Action::ReloadServers => {
@@ -555,62 +585,16 @@ async fn execute(
                 .request::<_, Value>("config/mcpServer/reload", json!({}))
                 .await?;
         }
-        Action::SetServerEnabled { key, enabled } => {
-            write(
-                bridge,
-                vec![edit(
-                    format!("mcp_servers.{}.enabled", quote(key)?),
-                    json!(enabled),
-                    "upsert",
-                )],
-            )
-            .await?;
-        }
-        Action::SaveServer { key, config } => {
-            ensure!(config.is_object(), "Invalid MCP configuration");
-            let field = if config.get("url").is_some() {
-                "url"
-            } else {
-                "command"
-            };
-            ensure!(
-                config[field]
-                    .as_str()
-                    .is_some_and(|value| !value.trim().is_empty()),
-                "MCP {field} is required"
-            );
-            write(
-                bridge,
-                vec![edit(
-                    format!("mcp_servers.{}", quote(key)?),
-                    config.clone(),
-                    "replace",
-                )],
-            )
-            .await?;
-        }
-        Action::RemoveServer(key) => {
-            write(
-                bridge,
-                vec![edit(
-                    format!("mcp_servers.{}", quote(key)?),
-                    Value::Null,
-                    "replace",
-                )],
-            )
-            .await?;
-        }
-        Action::Authenticate { name, registration } => {
-            let mut params = json!({"name":name});
-            if *registration != "auto" {
-                params["clientRegistration"] = (*registration).into();
-            }
-            let result: Value = bridge.request("mcpServer/oauth/login", params).await?;
-            return Ok(Some(authorization_url(&result)?.into()));
+        Action::SetServerEnabled { .. }
+        | Action::SaveServer { .. }
+        | Action::RemoveServer(_)
+        | Action::Authenticate { .. } => {
+            return execute_server_action(bridge, action, configuration).await;
         }
         Action::SetHookEnabled { key, enabled } => {
             write(
                 bridge,
+                None,
                 vec![edit(
                     format!("hooks.state.{}.enabled", quote(key)?),
                     json!(enabled),
@@ -619,64 +603,9 @@ async fn execute(
             )
             .await?;
         }
-        Action::TrustHooks(hooks) => {
-            ensure!(!hooks.is_empty(), "No hooks selected for trust");
-            let edits = hooks
-                .iter()
-                .map(|(key, hash)| {
-                    Ok(edit(
-                        format!("hooks.state.{}.trusted_hash", quote(key)?),
-                        json!(hash),
-                        "upsert",
-                    ))
-                })
-                .collect::<Result<Vec<_>>>()?;
-            write(bridge, edits).await?;
-            let loaded: Value = bridge.request("hooks/list", json!({"cwds":roots})).await?;
-            for (key, hash) in hooks {
-                let trusted = loaded["data"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .flat_map(|entry| entry["hooks"].as_array().into_iter().flatten())
-                    .any(|hook| {
-                        hook["key"] == *key
-                            && hook["currentHash"] == *hash
-                            && hook["trustStatus"] == "trusted"
-                    });
-                ensure!(
-                    trusted,
-                    "Another config layer overrides these hook settings and must be changed before approval can take effect"
-                );
-            }
-        }
+        Action::TrustHooks(hooks) => trust_hooks(bridge, hooks, roots).await?,
         Action::SetPluginEnabled { plugin, enabled } => {
-            if plugin["source"]["type"] == "remote" {
-                let id = plugin["remotePluginId"]
-                    .as_str()
-                    .context("Remote plugin has no identifier")?;
-                let id = url::form_urlencoded::byte_serialize(id.as_bytes()).collect::<String>();
-                let endpoint = if *enabled { "enable" } else { "disable" };
-                host::json_body(&host.fetch(&plugin_request(
-                    host,
-                    format!("/ps/plugins/{id}/{endpoint}"),
-                    "POST",
-                ))?)?;
-            } else {
-                let id = plugin["id"].as_str().context("Plugin has no identifier")?;
-                write(
-                    bridge,
-                    vec![edit(
-                        format!("plugins.{}.enabled", quote(id)?),
-                        json!(enabled),
-                        "upsert",
-                    )],
-                )
-                .await?;
-            }
-            bridge
-                .request::<_, Value>("config/mcpServer/reload", json!({}))
-                .await?;
+            set_plugin_enabled(bridge, host, plugin, *enabled).await?;
         }
         Action::RemovePlugin(plugin) => uninstall_plugin(bridge, plugin).await?,
         Action::RemoveMarketplace(name) => remove_marketplace(bridge, name, roots).await?,
@@ -699,6 +628,7 @@ async fn execute(
         Action::SetAppEnabled { id, enabled } => {
             write(
                 bridge,
+                None,
                 vec![edit(
                     format!("apps.{}.enabled", quote(id)?),
                     json!(enabled),
@@ -717,6 +647,162 @@ async fn execute(
         }
     }
     Ok(None)
+}
+
+async fn execute_server_action(
+    bridge: &Bridge,
+    action: &Action,
+    configuration: &Value,
+) -> Result<Option<String>> {
+    let server_key = match action {
+        Action::SetServerEnabled { key, .. }
+        | Action::SaveServer { key, .. }
+        | Action::RemoveServer(key) => Some(key),
+        _ => None,
+    };
+    if let Some(key) = server_key {
+        ensure!(
+            !ui::screens::settings::integrations::server_read_only(configuration, key),
+            "Project MCP servers are read-only"
+        );
+    }
+    match action {
+        Action::SetServerEnabled { key, enabled } => {
+            write(
+                bridge,
+                None,
+                vec![edit(
+                    format!("mcp_servers.{}.enabled", quote(key)?),
+                    json!(enabled),
+                    "upsert",
+                )],
+            )
+            .await?;
+        }
+        Action::SaveServer {
+            key,
+            config,
+            expected_version,
+        } => {
+            ensure!(
+                !expected_version.is_empty(),
+                "Configuration version is unavailable"
+            );
+            ensure!(config.is_object(), "Invalid MCP configuration");
+            let field = if config.get("url").is_some() {
+                "url"
+            } else {
+                "command"
+            };
+            ensure!(
+                config[field]
+                    .as_str()
+                    .is_some_and(|value| !value.trim().is_empty()),
+                "MCP {field} is required"
+            );
+            write(
+                bridge,
+                Some(expected_version),
+                vec![edit(
+                    format!("mcp_servers.{}", quote(key)?),
+                    config.clone(),
+                    "replace",
+                )],
+            )
+            .await?;
+        }
+        Action::RemoveServer(key) => {
+            write(
+                bridge,
+                None,
+                vec![edit(
+                    format!("mcp_servers.{}", quote(key)?),
+                    Value::Null,
+                    "replace",
+                )],
+            )
+            .await?;
+        }
+        Action::Authenticate { name, registration } => {
+            let mut params = json!({"name":name});
+            if *registration != "auto" {
+                params["clientRegistration"] = (*registration).into();
+            }
+            let result: Value = bridge.request("mcpServer/oauth/login", params).await?;
+            return Ok(Some(authorization_url(&result)?.into()));
+        }
+        _ => return Err(anyhow::anyhow!("Unsupported MCP server action")),
+    }
+    Ok(None)
+}
+
+async fn trust_hooks(bridge: &Bridge, hooks: &[(String, String)], roots: &[String]) -> Result<()> {
+    ensure!(!hooks.is_empty(), "No hooks selected for trust");
+    let edits = hooks
+        .iter()
+        .map(|(key, hash)| {
+            Ok(edit(
+                format!("hooks.state.{}.trusted_hash", quote(key)?),
+                json!(hash),
+                "upsert",
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    write(bridge, None, edits).await?;
+    let loaded: Value = bridge.request("hooks/list", json!({"cwds":roots})).await?;
+    for (key, hash) in hooks {
+        let trusted = loaded["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|entry| entry["hooks"].as_array().into_iter().flatten())
+            .any(|hook| {
+                hook["key"] == *key
+                    && hook["currentHash"] == *hash
+                    && hook["trustStatus"] == "trusted"
+            });
+        ensure!(
+            trusted,
+            "Another config layer overrides these hook settings and must be changed before approval can take effect"
+        );
+    }
+    Ok(())
+}
+
+async fn set_plugin_enabled(
+    bridge: &Bridge,
+    host: &dyn Host,
+    plugin: &Value,
+    enabled: bool,
+) -> Result<()> {
+    if plugin["source"]["type"] == "remote" {
+        let id = plugin["remotePluginId"]
+            .as_str()
+            .context("Remote plugin has no identifier")?;
+        let id = url::form_urlencoded::byte_serialize(id.as_bytes()).collect::<String>();
+        let endpoint = if enabled { "enable" } else { "disable" };
+        host::json_body(&host.fetch(&plugin_request(
+            host,
+            format!("/ps/plugins/{id}/{endpoint}"),
+            "POST",
+        ))?)?;
+    } else {
+        let id = plugin["id"].as_str().context("Plugin has no identifier")?;
+        write(
+            bridge,
+            None,
+            vec![edit(
+                format!("plugins.{}.enabled", quote(id)?),
+                json!(enabled),
+                "upsert",
+            )],
+        )
+        .await?;
+    }
+    bridge
+        .request::<_, Value>("config/mcpServer/reload", json!({}))
+        .await?;
+    Ok(())
 }
 
 fn plugin_request(host: &dyn Host, url: String, method: &str) -> Request {
@@ -814,11 +900,11 @@ fn edit(key: String, value: Value, strategy: &str) -> Value {
     json!({"keyPath":key,"value":value,"mergeStrategy":strategy})
 }
 
-async fn write(bridge: &Bridge, edits: Vec<Value>) -> Result<()> {
+async fn write(bridge: &Bridge, expected_version: Option<&str>, edits: Vec<Value>) -> Result<()> {
     let response: Value = bridge
         .request(
             "config/batchWrite",
-            json!({"edits":edits,"filePath":null,"expectedVersion":null,"reloadUserConfig":true}),
+            json!({"edits":edits,"filePath":null,"expectedVersion":expected_version,"reloadUserConfig":true}),
         )
         .await?;
     ensure!(
@@ -930,5 +1016,143 @@ mod tests {
                 .unwrap(),
             "https://service.example/authorize"
         );
+    }
+
+    #[test]
+    fn login_completion_queues_one_refresh_while_an_operation_runs() {
+        let mut state = State {
+            pending: true,
+            ..Default::default()
+        };
+        assert!(defer_if_busy(&mut state, &Action::Refresh));
+        assert!(defer_if_busy(&mut state, &Action::Refresh));
+        assert!(state.refresh_requested);
+        state.pending = false;
+        assert!(std::mem::take(&mut state.refresh_requested));
+        assert!(!defer_if_busy(&mut state, &Action::Refresh));
+        assert!(!state.refresh_requested);
+    }
+
+    #[test]
+    fn old_server_forms_do_not_overwrite_newer_settings() -> Result<()> {
+        const SERVER: &str = r#"
+import json, sys
+config = {"command":"server", "tool_timeout_sec":90}
+for line in sys.stdin:
+    request = json.loads(line)
+    params = request.get("params", {})
+    if request["method"] == "config/batchWrite":
+        if params.get("expectedVersion") != "current":
+            print(json.dumps({"id":request["id"],"error":{"code":-32001,"message":"Configuration version mismatch"}}), flush=True)
+            continue
+        config = params["edits"][0]["value"]
+        result = {"status":"ok"}
+    elif request["method"] == "config/read":
+        result = {"config":{"mcp_servers":{"service":config}}}
+    else:
+        continue
+    print(json.dumps({"id":request["id"],"result":result}), flush=True)
+"#;
+        let mut command = std::process::Command::new("python3");
+        command.args(["-u", "-c", SERVER]);
+        let (bridge, _) = Bridge::spawn(command)?;
+        let stale = Action::SaveServer {
+            key: "service".into(),
+            config: json!({"command":"updated", "tool_timeout_sec":30}),
+            expected_version: "old".into(),
+        };
+        let result = pollster::block_on(execute_server_action(&bridge, &stale, &json!({})));
+        let error = result.expect_err("a stale form must not replace newer settings");
+        assert!(error.to_string().contains("Configuration version mismatch"));
+        let mut state = State::default();
+        assert!(integration_failed(&mut state, &stale, error).is_none());
+        assert_eq!(state.form_saved, 0);
+        assert!(
+            state
+                .form_error
+                .as_deref()
+                .is_some_and(|message| message.contains("Configuration version mismatch"))
+        );
+        let current: Value = pollster::block_on(bridge.request("config/read", json!({})))?;
+        assert_eq!(
+            current["config"]["mcp_servers"]["service"]["tool_timeout_sec"],
+            90
+        );
+        let fresh = Action::SaveServer {
+            key: "service".into(),
+            config: json!({"command":"updated", "tool_timeout_sec":90}),
+            expected_version: "current".into(),
+        };
+        pollster::block_on(execute_server_action(&bridge, &fresh, &current))?;
+        let current: Value = pollster::block_on(bridge.request("config/read", json!({})))?;
+        assert_eq!(
+            current["config"]["mcp_servers"]["service"],
+            json!({"command":"updated","tool_timeout_sec":90})
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn closing_another_window_keeps_the_first_manager_connected() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let fixture =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/readback.jsonl");
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            || Ok(None),
+        );
+        cx.update(|cx| {
+            theme::load_fonts(cx);
+            cx.set_global(theme::Theme::dark());
+            cx.set_global(crate::host_settings::Settings::default());
+            crate::init(cx);
+        });
+        let open = |cx: &mut gpui::HeadlessAppContext| -> Result<_> {
+            let (bridge, events) = Bridge::replay(&fixture)?;
+            let window =
+                cx.open_window(gpui::size(gpui::px(1280.), gpui::px(832.)), |window, cx| {
+                    cx.new(|cx| {
+                        Root::new(
+                            crate::State::default(),
+                            bridge,
+                            events,
+                            home.path().display().to_string(),
+                            window,
+                            cx,
+                        )
+                    })
+                })?;
+            let root = cx.read_window(&window, |root, _| root)?;
+            cx.update(|cx| {
+                root.update(cx, |root, cx| {
+                    root.set_host(Arc::new(host::LocalHost::new(home.path())), cx);
+                    root.load_settings_integrations(cx);
+                })
+            });
+            Ok((window, root))
+        };
+        let (_first_window, first) = open(&mut cx)?;
+        let (second_window, second) = open(&mut cx)?;
+        let first_state = cx.update(|cx| first.read(cx).settings_integrations.clone());
+        let second_state = cx.update(|cx| second.read(cx).settings_integrations.clone());
+        cx.update_window(second_window.into(), |_, window, _| window.remove_window())?;
+        drop(second);
+        cx.update(|cx| {
+            first_state.update(cx, |state, _| {
+                state.pending = true;
+                state.refresh_requested = false;
+            });
+            second_state.update(cx, |state, _| state.refresh_requested = false);
+            let dispatch = first_state
+                .read(cx)
+                .dispatch
+                .clone()
+                .expect("first manager dispatch");
+            dispatch(Action::Refresh, cx);
+            assert!(first_state.read(cx).refresh_requested);
+            assert!(!second_state.read(cx).refresh_requested);
+        });
+        Ok(())
     }
 }

@@ -54,7 +54,13 @@ pub(super) fn page(root: &mut Root, window: &mut Window, cx: &mut Context<Root>)
     config[store][key] = json!(root.state.theme);
     config["host"]["confirm-before-close"] = json!(root.state.confirm_before_close);
     let section = root.settings_section.take();
-    let (shell, page) = settings::shell(&config, &root.skills, section, cx);
+    let (shell, page) = settings::shell(
+        &config,
+        &root.skills,
+        section,
+        root.settings_integrations.clone(),
+        cx,
+    );
     page.update(cx, |page, _| page.set_toaster(root.toaster.clone()));
     root.settings_page = Some(page.clone());
     if let Route::SettingsSubtree(path) = &root.state.route
