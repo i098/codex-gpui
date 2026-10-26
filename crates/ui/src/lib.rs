@@ -197,6 +197,7 @@ pub struct Shell {
     avatar_hovered: bool,
     sidebar: AnyView,
     main: AnyView,
+    main_content_inline_inset: Pixels,
     bottom: Option<AnyView>,
 }
 
@@ -285,8 +286,13 @@ impl Shell {
             avatar_hovered: false,
             sidebar,
             main,
+            main_content_inline_inset: px(0.),
             bottom: None,
         }
+    }
+
+    pub fn main_content_inline_inset(&self) -> Pixels {
+        self.main_content_inline_inset
     }
 
     pub fn set_main(&mut self, main: AnyView, cx: &mut Context<Self>) {
@@ -1283,6 +1289,7 @@ impl Shell {
     /// (`background-clip: padding-box`) paint with the page in `render`: with the sidebar open
     /// the left edge is square and the right corners are rounded by its `clip-path`; with it
     /// closed it is a plain 12 px rounded box. `left` is its edge, `open` its shape.
+    #[allow(clippy::too_many_arguments)]
     fn main_panel(
         &self,
         left: Pixels,
@@ -1291,8 +1298,24 @@ impl Shell {
         window: &Window,
         theme: &Theme,
         hairline_width: Pixels,
+        cx: &Context<Self>,
     ) -> Div {
         let r = Theme::RADIUS_XL_BASE;
+        let shell = cx.entity().downgrade();
+        let measured = canvas(
+            move |bounds, window, cx| {
+                let outer_width = window.viewport_size().width - PAGE_INSET - left;
+                shell
+                    .update(cx, |shell, _| {
+                        shell.main_content_inline_inset =
+                            (outer_width - bounds.size.width).max(px(0.));
+                    })
+                    .ok();
+            },
+            |_, (), _, _| {},
+        )
+        .absolute()
+        .size_full();
         let panel = div()
             .tab_group()
             .tab_index(3)
@@ -1322,7 +1345,8 @@ impl Shell {
                     .into_any_element()
             } else {
                 self.main.clone().into_any_element()
-            });
+            })
+            .child(measured);
         if self.main_composited {
             return panel.left(if open { left + hairline_width } else { left });
         }
@@ -1830,7 +1854,7 @@ impl Render for Shell {
                         .child(self.sidebar_panel(&t, progress)),
                 )
             })
-            .child(self.main_panel(main_left, open, &main_focus, window, &t, hairline_width))
+            .child(self.main_panel(main_left, open, &main_focus, window, &t, hairline_width, cx))
             .when(composited || self.main_backgrounds > 0, |d| {
                 d.child(corners)
             })
