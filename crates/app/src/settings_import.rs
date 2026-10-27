@@ -510,6 +510,7 @@ impl Root {
         let policy = state.policy;
         cx.update_global::<ImportState, _>(|state, _| {
             state.pending = true;
+            state.error = None;
             state.detected = Load::Loading;
             state.histories = Load::Loading;
         });

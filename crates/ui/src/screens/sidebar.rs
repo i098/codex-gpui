@@ -2756,6 +2756,10 @@ impl CommandMenu {
             ("settings-passwords", "Passwords", false),
             ("sidebar-cmd-account-external", "Account", true),
         ]
+        .into_iter()
+        .filter(|(_, label, _)| {
+            *label != "Import" || crate::screens::settings::imports::visible(cx)
+        })
         .map(|(icon, label, external)| Item {
             external,
             search_value: format!(
@@ -2773,7 +2777,8 @@ impl CommandMenu {
                 &[]
             },
             ..Item::command(Some(icon), label, "")
-        });
+        })
+        .collect::<Vec<_>>();
         let mut groups = vec![
             ("Chats", chats),
             group("Quick actions"),
@@ -4433,5 +4438,37 @@ mod tests {
             .filter_map(|(c, m)| m.then_some(c))
             .collect();
         assert_eq!(lit, "Mat");
+    }
+    #[gpui::test]
+    fn import_command_visibility_follows_the_feature_policy(cx: &mut gpui::TestAppContext) {
+        use crate::screens::settings::imports::ImportState;
+
+        cx.update(|cx| cx.set_global(ImportState::default()));
+        let disabled = cx.new(|cx| CommandMenu::with_threads(&[], &[], false, "", cx));
+        assert!(
+            !disabled
+                .read(cx)
+                .groups
+                .iter()
+                .find(|(group, _)| *group == "Settings")
+                .unwrap()
+                .1
+                .iter()
+                .any(|item| item.label.as_ref() == "Import")
+        );
+
+        cx.update(|cx| cx.update_global::<ImportState, _>(|state, _| state.policy.enabled = true));
+        let enabled = cx.new(|cx| CommandMenu::with_threads(&[], &[], false, "", cx));
+        assert!(
+            enabled
+                .read(cx)
+                .groups
+                .iter()
+                .find(|(group, _)| *group == "Settings")
+                .unwrap()
+                .1
+                .iter()
+                .any(|item| item.label.as_ref() == "Import")
+        );
     }
 }

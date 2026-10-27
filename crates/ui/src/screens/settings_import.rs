@@ -258,7 +258,12 @@ impl ImportPage {
             | Control::Save) => {
                 self.customization_control(control, state, window, cx);
             }
-            Control::Close if state.running.is_none() => self.close(window, cx),
+            Control::Close
+                if state.running.is_none()
+                    || matches!(&self.modal, Some(Modal::Customize { .. })) =>
+            {
+                self.close(window, cx)
+            }
             Control::Close => {}
             control @ (Control::History(_)
             | Control::HistoryCategory(..)
@@ -1600,6 +1605,7 @@ impl ImportPage {
     ) -> Option<AnyElement> {
         let modal = self.modal.as_ref()?;
         let review = matches!(modal, Modal::Review { .. });
+        let pending = state.running.is_some() && review;
         let t = cx.theme().clone();
         let (width, content_gap, content_fill) = if review {
             (520_f32, 16., gpui::transparent_black())
@@ -1662,7 +1668,7 @@ impl ImportPage {
             } else {
                 (t.primary_soft_alpha, t.text, Some(t.border))
             },
-            state.running.is_some(),
+            pending,
             window,
             cx,
         );
@@ -1703,7 +1709,7 @@ impl ImportPage {
                     cx,
                 ),
                 Control::Close,
-                state.running.is_some(),
+                pending,
                 cx,
             )
             .into_any_element()
@@ -1712,7 +1718,6 @@ impl ImportPage {
             .into_iter()
             .map(|id: String| focus::handle(id, 0, window, cx).read(cx).handle.clone())
             .collect();
-        let pending = state.running.is_some();
         let viewport = window.viewport_size();
         let backdrop = shapes::backdrop_blur(
             px(24.),
@@ -1855,8 +1860,47 @@ impl Render for ImportPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let state = Self::state(cx);
         let t = cx.theme().clone();
+        let header = div().pt(px(16.)).pb(px(1.)).child(
+            div().w_full().max_w(px(768.)).mx_auto().px(px(20.)).child(
+                div()
+                    .py(px(12.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(text("Import", 28., 33.6, 500., t.text))
+                    .child(
+                        text(
+                            "Bring setup, projects, and chats from other AI apps into ChatGPT",
+                            14.,
+                            24.,
+                            430.,
+                            t.text_secondary,
+                        )
+                        .whitespace_normal(),
+                    ),
+            ),
+        );
         if !state.policy.enabled {
-            return div().into_any_element();
+            return div()
+                .size_full()
+                .relative()
+                .flex()
+                .flex_col()
+                .child(div().flex_none().h(px(46.)))
+                .child(header)
+                .child(
+                    div().w_full().max_w(px(768.)).mx_auto().px(px(20.)).child(
+                        text(
+                            "Import is not available right now.",
+                            14.,
+                            21.,
+                            430.,
+                            t.text_secondary,
+                        )
+                        .whitespace_normal(),
+                    ),
+                )
+                .into_any_element();
         }
         if self.modal.is_some() && !state.modal_open {
             self.close(window, cx);
@@ -1898,18 +1942,46 @@ impl Render for ImportPage {
         let history = self.history(&state, window, cx);
         let attention = self.attention(&state, window, cx);
         let dialog = self.dialog(&state, window, cx);
-        div().size_full().relative().flex().flex_col()
+        div()
+            .size_full()
+            .relative()
+            .flex()
+            .flex_col()
             .child(div().flex_none().h(px(46.)))
-            .child(div().id("import-settings-page").flex_1().overflow_y_scroll().track_scroll(&self.scroll).when(self.composited, |d| d.layer()).child(probe(&self.layer))
-                .child(div().pt(px(16.)).pb(px(1.)).child(div().w_full().max_w(px(768.)).mx_auto().px(px(20.))
-                    .child(div().py(px(12.)).flex().flex_col().gap(px(4.))
-                        .child(text("Import", 28., 33.6, 500., t.text))
-                        .child(text("Bring setup, projects, and chats from other AI apps into ChatGPT", 14., 24., 430., t.text_secondary).whitespace_normal()))))
-                .child(div().w_full().max_w(px(768.)).mx_auto().p(px(20.)).flex().flex_col().gap(px(40.))
-                    .children(sync).child(detection).children(attention).children(history)
-                    .children(state.error.as_ref().filter(|_| self.modal.is_none()).map(|error|
-                        div().id("import-page-error").role(gpui::Role::Alert).child(text(error.clone(), 13., 18., 430., t.text_error).whitespace_normal())))))
-            .children(dialog).into_any_element()
+            .child(
+                div()
+                    .id("import-settings-page")
+                    .flex_1()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .when(self.composited, |d| d.layer())
+                    .child(probe(&self.layer))
+                    .child(header)
+                    .child(
+                        div()
+                            .w_full()
+                            .max_w(px(768.))
+                            .mx_auto()
+                            .p(px(20.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(40.))
+                            .children(sync)
+                            .child(detection)
+                            .children(attention)
+                            .children(history)
+                            .children(state.error.as_ref().filter(|_| self.modal.is_none()).map(
+                                |error| {
+                                    div().id("import-page-error").role(gpui::Role::Alert).child(
+                                        text(error.clone(), 13., 18., 430., t.text_error)
+                                            .whitespace_normal(),
+                                    )
+                                },
+                            )),
+                    ),
+            )
+            .children(dialog)
+            .into_any_element()
     }
 }
 
@@ -2661,6 +2733,12 @@ mod tests {
             })
             .unwrap();
         capture(&mut cx, "native-empty-selection.png");
+        cx.update(|cx| {
+            cx.update_global::<ImportState, _>(|state, _| {
+                state.running = Some(Arc::new(Vec::new()));
+            })
+        });
+        cx.run_until_parked();
         cx.update_window(window.into(), |_, window, cx| {
             window.dispatch_keystroke(Keystroke::parse("escape").unwrap(), cx);
         })
@@ -2668,6 +2746,9 @@ mod tests {
         cx.run_until_parked();
         window
             .update(&mut cx, |page, window, cx| {
+                assert!(page.modal.is_none());
+                page.activate(Control::Customize, window, cx);
+                page.activate(Control::Close, window, cx);
                 assert!(page.modal.is_none());
                 page.activate(Control::Customize, window, cx);
                 let Some(Modal::Customize { preferences, .. }) = &page.modal else {
