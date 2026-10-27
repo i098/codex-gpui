@@ -419,6 +419,7 @@ pub struct Root {
     writing_dialog_preference: Option<Arc<WritingPreference>>,
     settings_integrations: Entity<settings::integrations::State>,
     security_access: Entity<ui::screens::security::Access>,
+    security_access_task: Option<Task<()>>,
     settings_integration_task: Option<Task<()>>,
     pending_settings_leave: Option<SettingsLeave>,
     workspace: Entity<workspace::Workspace>,
@@ -757,6 +758,7 @@ impl Root {
             writing_dialog_preference: None,
             settings_integrations: cx.new(|_| settings::integrations::State::default()),
             security_access: cx.new(|_| ui::screens::security::Access::default()),
+            security_access_task: None,
             settings_integration_task: None,
             pending_settings_leave: None,
             workspace: cx.new(workspace::Workspace::new),
@@ -1205,6 +1207,8 @@ impl Root {
         self.refresh_git_actions(cx);
         if self.settings_page.is_some() {
             self.load_settings_integrations(cx);
+        } else if self.ready {
+            security::load(self, cx);
         }
         cx.notify();
     }
@@ -5685,6 +5689,7 @@ impl Root {
         match event {
             Event::Notification { method, params } => match method.as_str() {
                 "account/updated" if self.ready => {
+                    security::load(self, cx);
                     self.destination_load = None;
                     self.set_unread_destinations(None, cx);
                     self.read_account(None, cx);

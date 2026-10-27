@@ -40,6 +40,7 @@ impl Root {
     }
 
     pub(crate) fn invalidate_settings_integrations(&mut self, cx: &mut Context<Self>) {
+        self.security_access_task = None;
         self.settings_integration_task = None;
         self.settings_integrations.update(cx, |state, cx| {
             *state = State {
@@ -203,6 +204,7 @@ impl Root {
             return;
         };
         if method == "account/updated" {
+            self.security_access_task = None;
             let active = self.settings_integrations.read(cx).dispatch.is_some();
             self.host.invalidate_identity();
             self.settings_integrations.update(cx, |state, cx| {

@@ -10,39 +10,70 @@ pub(super) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
 pub(super) fn bind(root: &Root, cx: &mut Context<Root>) {
     cx.observe(&root.settings_integrations, |root, state, cx| {
         let state = state.read(cx);
+        if state.gates_loaded {
+            root.security_access_task = None;
+        }
         let mut access = if state.gates_loaded && !root.bridge.is_acp() {
             security::Access::from_evaluations(&state.evaluations, false, true)
         } else {
             security::Access::default()
         };
         if let Load::Ready(plugins) = &state.plugins {
-            access.plugin_available = plugins["marketplaces"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .flat_map(|marketplace| marketplace["plugins"].as_array().into_iter().flatten())
-                .any(bridge::security::Gate::plugin_ready);
+            access.plugin_available = plugin_available(plugins);
         }
-        let available = access.gate_enabled && access.plugin_available;
-        if root.security_access.read(cx) != &access {
-            root.security_access.update(cx, |state, cx| {
-                *state = access;
-                cx.notify();
-            });
-            for shell in std::iter::once(&root.shell).chain(root.page.iter()) {
-                shell.update(cx, |shell, cx| {
-                    shell.security_available = available;
-                    cx.notify();
-                });
-            }
-        }
+        publish_access(root, access, cx);
     })
     .detach();
 }
 
 pub(super) fn load(root: &mut Root, cx: &mut Context<Root>) {
-    if !root.bridge.is_acp() {
-        root.load_settings_integrations(cx);
+    if root.bridge.is_acp() || root.settings_integrations.read(cx).pending {
+        return;
+    }
+    let host = root.host.clone();
+    let bridge = root.bridge.clone();
+    root.security_access_task = Some(cx.spawn(async move |this, cx| {
+        let evaluations = cx
+            .background_spawn(async move { settings_integrations::read_bootstrap(host.as_ref()) })
+            .await
+            .unwrap_or_default();
+        let mut access = security::Access::from_evaluations(&evaluations, false, true);
+        if access.gate_enabled {
+            let plugins = bridge
+                .request::<_, Value>("plugin/installed", json!({"cwds": []}))
+                .await;
+            access.plugin_available = plugins.is_ok_and(|plugins| plugin_available(&plugins));
+        }
+        this.update(cx, |root, cx| {
+            root.security_access_task = None;
+            publish_access(root, access, cx);
+        })
+        .ok();
+    }));
+}
+
+fn plugin_available(plugins: &Value) -> bool {
+    plugins["marketplaces"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|marketplace| marketplace["plugins"].as_array().into_iter().flatten())
+        .any(bridge::security::Gate::plugin_ready)
+}
+
+fn publish_access(root: &Root, access: security::Access, cx: &mut Context<Root>) {
+    let available = access.gate_enabled && access.plugin_available;
+    if root.security_access.read(cx) != &access {
+        root.security_access.update(cx, |state, cx| {
+            *state = access;
+            cx.notify();
+        });
+        for shell in std::iter::once(&root.shell).chain(root.page.iter()) {
+            shell.update(cx, |shell, cx| {
+                shell.security_available = available;
+                cx.notify();
+            });
+        }
     }
 }
 
