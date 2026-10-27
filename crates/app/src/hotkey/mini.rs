@@ -231,13 +231,17 @@ pub(super) fn content(root: &Root, window: &Window, cx: &mut Context<Root>) -> A
         .as_ref()
         .and_then(|popout| popout.mini.as_ref())
         .is_some_and(|state| state.expanded);
-    let settings = cx
+    let id = cx
         .try_global::<crate::host_settings::Settings>()
-        .map(|settings| settings.read_all());
-    let id = settings
-        .and_then(|settings| settings.get("selected-avatar-id"))
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("codex");
+        .and_then(|settings| {
+            settings
+                .read_all()
+                .get("selected-avatar-id")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "codex".to_owned());
+    let id = id.as_str();
     let reduced_motion = ui::motion::reduced(cx);
     let viewport = window.viewport_size();
     let pet = pet_bounds(viewport);
