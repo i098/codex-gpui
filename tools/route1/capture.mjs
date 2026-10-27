@@ -97,6 +97,17 @@ const STATES = {
     await d.click(byText("Set up mobile"));
     await d.waitFor(`document.body.innerText.includes("Connect your phone to this Mac")`, "mobile setup");
   },
+  // The public plugin catalog is a ChatGPT backend read (`/ps/plugins/home`) that offline mode
+  // does not have, so this state is the page's own load failure.
+  plugins: async (d) => {
+    await d.click(byText("Plugins"));
+    await d.waitFor(`document.body.innerText.includes("Failed to load plugins")`, "plugin directory");
+  },
+  skills: async (d) => {
+    await STATES.plugins(d);
+    await d.click(byText("Skills"));
+    await d.waitFor(`document.body.innerText.includes("Extend Codex with task-specific skills") && document.body.innerText.includes("Recommended")`, "skill directory");
+  },
 };
 
 // Blink phase and running animations depend on wall time, so they are fixed before the shot:

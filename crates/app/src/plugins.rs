@@ -55,12 +55,10 @@ impl Root {
         .detach();
         self.load_plugins(page.clone(), route, cx);
         self.plugins_page = Some(page.clone());
-        let sidebar = self.sidebar.clone().into();
+        let nav = cx.new(|cx| plugins::Nav::new(page.clone(), cx)).into();
         cx.new(|_| {
-            let mut shell = Shell::new(sidebar, page.into());
+            let mut shell = Shell::new(nav, page.into());
             shell.selected_rail = Some("plugins");
-            shell.sidebar_open = false;
-            shell.chat_chrome = false;
             shell.new_tab = false;
             shell
         })

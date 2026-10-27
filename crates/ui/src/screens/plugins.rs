@@ -11,7 +11,10 @@ use std::{
 };
 use theme::ActiveTheme as _;
 
+mod nav;
 mod view;
+
+pub use nav::Nav;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Tab {
@@ -248,6 +251,10 @@ pub struct Page {
     pub modal: Option<Modal>,
     pub share_url: Option<String>,
     pub skill_file: Option<Entity<crate::screens::diff::panel::FileView>>,
+    /// The selected pill under the heading (`Public`, `Personal`, `System`, ...).
+    pub section: &'static str,
+    /// Lists expanded past their first rows by `See ...`.
+    pub expanded: std::collections::HashSet<&'static str>,
     pub generation: u64,
     pub focus: FocusHandle,
     modal_focus: FocusHandle,
@@ -268,14 +275,15 @@ impl Page {
             Tab::Plugins
         };
         let query = cx.new(|cx| {
-            Composer::settings_field(
+            Composer::embedded_field(
                 if tab == Tab::Skills {
                     "Search skills"
                 } else {
                     "Search plugins"
                 },
                 "",
-                false,
+                px(13.),
+                px(18.),
                 cx,
             )
         });
@@ -292,6 +300,12 @@ impl Page {
             modal: None,
             share_url: None,
             skill_file: None,
+            section: if tab == Tab::Skills {
+                "Personal"
+            } else {
+                "Public"
+            },
+            expanded: Default::default(),
             generation: 0,
             focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),
