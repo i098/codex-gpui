@@ -549,6 +549,9 @@ Run `tools/mac.sh -l s028-repair 'cargo test -p app --test s028 -- --nocapture -
 The open panel keeps its state across streamed updates and uses `turn/diff/updated` as the authoritative diff.
 Search chat and Search diffs keep the query while switching the active find surface.
 Enter, Shift+Enter, and the Find Next commands move the active diff highlight and scroll it into view.
+The find bar paints its shadow, border, and content in one composited layer.
+The scope icons bypass fitted images, and the next arrow uses the original path with a half-turn SVG matrix.
+Its rows sit inside the bar's anti-aliased rounded clip (padding box, 19.5 px radius), which sets the icons' edge pixels.
 The diff matcher reuses the chat's Unicode matcher and retains the total count beyond the 250 highlighted matches.
 Local repository sources keep a recursive filesystem watch while the Changes tab is active.
 The app drops the watch when the repository or active route changes.

@@ -47,9 +47,7 @@
 //! with its float raster pipeline. Limits: inset shadows paint apart from Blink's clip layer.
 //! Use [`with_composited_opacity`] for compositor opacity; [`with_layer`] retains Skia's save-layer rounding.
 
-use gpui::{
-    App, Bounds, Corners, Hsla, IntoElement, Pixels, Point, Styled as _, Window, canvas, point, px,
-};
+use gpui::{App, Bounds, Corners, Hsla, IntoElement, Pixels, Point, Styled as _, Window, canvas};
 
 #[cfg(target_os = "macos")]
 mod backdrop;
@@ -192,25 +190,6 @@ pub fn translated_decoration(d: Decoration, offset: Point<Pixels>) -> impl IntoE
             let _ = cx;
             quads(&d, Bounds::new(bounds.origin + offset, bounds.size), window);
         }
-    })
-}
-
-/// [`decoration`] for a box that Chromium paints into a transparent composited layer of its
-/// own (a fixed popup over composited content), which the compositor blends onto the page
-/// with rounding. The layer starts up and left of every shadow px: Skia's blur reaches 3
-/// sigma (blur / 2 each) past the spread box.
-pub fn composited_decoration(d: Decoration) -> impl IntoElement {
-    cover(recorded(d), |bounds, d, window, cx| {
-        let reach = |s: &Shadow, offset: Pixels| {
-            (f32::from(s.blur) * 1.5 + f32::from(s.spread) - f32::from(offset)).max(0.)
-        };
-        let (mut x, mut y) = (0f32, 0f32);
-        for s in d.shadows.iter().filter(|s| !s.inset) {
-            x = x.max(reach(s, s.offset.x));
-            y = y.max(reach(s, s.offset.y));
-        }
-        let layer = bounds.origin - point(px(x), px(y));
-        paint(&d, Some(layer), bounds, window, cx)
     })
 }
 

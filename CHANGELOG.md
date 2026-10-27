@@ -17,4 +17,5 @@ There is no release yet.
 - Replay Skia's pinned scanner operations for legacy hairline icon strokes through a new versioned `skia-hairline-sys` package.
 - Preserve page-frame occlusion under opaque scrolling content at rounded surface corners.
 - Draw the Code Review open-request status dot as the original sub-pixel SVG circle.
+- Group the diff find bar in one composited layer and paint its icons under the bar's rounded overflow clip, as the original does.
 - Clip the diff line-number gutters to the scroller so scrolled-out rows no longer paint over the panel header.
