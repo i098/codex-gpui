@@ -536,7 +536,12 @@ fn background_depth_retains_selection_scrollback_and_completed_output() -> Resul
         fx.resize(width, 832.)?;
         shot(&mut fx, &format!("refit-{}", width as u32))?;
     }
+    for width in [900., 960., 980., 984., 985., 1000., 1024.] {
+        fx.resize(width, 832.)?;
+        fx.advance(std::time::Duration::from_millis(250))?;
+    }
     fx.resize(767., 832.)?;
+    fx.advance(std::time::Duration::from_millis(300))?;
     fx.click((745., 22.))?;
     fx.hover((460., 6.))?;
     shot(&mut fx, "compact-open")?;
