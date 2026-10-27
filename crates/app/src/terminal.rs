@@ -941,14 +941,10 @@ impl Render for TerminalPanel {
         let mut panel = div()
             .id("interactive-terminal-panel")
             .relative()
-            .h(px(280.))
-            .min_h(px(120.))
-            .flex_shrink_0()
+            .size_full()
             .flex()
             .flex_col()
             .bg(theme.surface)
-            .border_t_1()
-            .border_color(theme.border)
             .child(measure)
             .child(tabs);
         let Some(session) = self.sessions.get(self.active) else {

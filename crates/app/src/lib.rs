@@ -125,6 +125,8 @@ pub struct GoToRecentChat(pub usize);
 
 /// The original collapses the sidebar at widths of 720 px or less.
 const SIDEBAR_BREAKPOINT: Pixels = px(720.);
+/// At most this wide, the side panel hides like the original's compact layout.
+const SIDE_PANEL_BREAKPOINT: Pixels = px(960.);
 
 /// Fixed platform bindings and app-level commands; configurable bindings are installed by the keymap module.
 pub fn init(cx: &mut App) {
@@ -359,6 +361,9 @@ pub struct Root {
     loading_more: bool,
     /// The window is at least [`SIDEBAR_BREAKPOINT`] wide; narrower hides the sidebar.
     wide: bool,
+    /// The layout the side panel had when the window narrowed to [`SIDE_PANEL_BREAKPOINT`] or
+    /// less (which shows the chat alone); wider again restores it.
+    layout_before_narrow: Option<WorkspaceLayout>,
     /// Holds key focus when no composer shows (Settings, a loading thread, sign-in), so
     /// shortcuts still reach the root's actions.
     focus: FocusHandle,
@@ -691,6 +696,7 @@ impl Root {
             next_cursor: None,
             loading_more: false,
             wide,
+            layout_before_narrow: None,
             focus: cx.focus_handle(),
             home: cx.new(|_| HomeMain {
                 composer: home_composer,
@@ -2328,7 +2334,21 @@ impl Root {
 
     /// Below [`SIDEBAR_BREAKPOINT`] the sidebar hides; wider again it shows as the user
     /// left it.
-    fn fit(&mut self, window: &Window, cx: &mut Context<Self>) {
+    fn fit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let narrow = window.viewport_size().width <= SIDE_PANEL_BREAKPOINT;
+        if narrow && self.layout_before_narrow.is_none() {
+            if self.workspace_layout != WorkspaceLayout::Chat {
+                self.layout_before_narrow = Some(self.workspace_layout);
+                self.workspace_layout = WorkspaceLayout::Chat;
+                self.sync(window, cx);
+            }
+        } else if !narrow
+            && let Some(layout) = self.layout_before_narrow.take()
+            && self.workspace_layout == WorkspaceLayout::Chat
+        {
+            self.workspace_layout = layout;
+            self.sync(window, cx);
+        }
         let wide = window.viewport_size().width * window.ui_scale() >= SIDEBAR_BREAKPOINT;
         if wide != self.wide {
             self.wide = wide;
