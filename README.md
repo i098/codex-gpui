@@ -787,3 +787,8 @@ Run `cargo test -p app --lib screenshot:: -- --test-threads=1` for isolated capt
 ```sh
 tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'
 ```
+`⌥⌘P` toggles the open chat's pin, `⌥⌘R` renames it and `⌘F` finds in it, all through the keymap. `⌥⌘L` copies the open chat's `codex://threads/{id}` link.
+`Next tab`/`Previous tab` and `⌥⌘W` (close other tabs) apply when focus is inside a side tab. `⌘W` closes the open side tab first; a `closeWindow`-only key closes the window.
+`⌘↩` on Home sends the message in the background: the chat starts and shows in Recents, Home stays open and the draft clears. The `⌘/` dialog lists it on Home only.
+The `⌘/` dialog searches command IDs, titles and descriptions with the same matching rules as the Settings page.
+The Keyboard shortcuts page search controls use their recorded SVG variants; the Settings sidebar keeps its own keyboard glyph.
