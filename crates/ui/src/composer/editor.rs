@@ -1151,12 +1151,25 @@ impl gpui::Element for Editor {
         let composer = self.0.read(cx);
         let lines = shape(
             composer,
-            composer.field_text.unwrap_or(t.text),
+            if composer.field_style == FieldStyle::Inline {
+                t.text_secondary
+            } else {
+                composer.field_text.unwrap_or(t.text)
+            },
             t.text_tertiary,
             chip_color(&t),
             Some(bounds.size.width),
             window,
         );
+        let mut text_bounds = bounds;
+        if self.0.read(cx).field_style == FieldStyle::Inline
+            && let Some(line) = lines.first()
+        {
+            let offset = (bounds.size.width - line.unwrapped_layout.width).max(px(0.));
+            text_bounds.origin.x += offset;
+            text_bounds.size.width -= offset;
+        }
+        // The editor spans the card minus its 12 px side padding.
         let width = f32::from(bounds.size.width)
             + if self.0.read(cx).hotkey_controls.is_some() {
                 0.
@@ -1166,7 +1179,7 @@ impl gpui::Element for Editor {
         let collapse = |w: f32| (w <= SM_WIDTH, w <= XS_WIDTH);
         let changed = self.0.update(cx, |c, _| {
             c.lines = lines;
-            let mut bounds = bounds;
+            let mut bounds = text_bounds;
             if c.embedded_field.is_some() {
                 let cursor = c
                     .point_for_index(c.cursor())
@@ -1194,6 +1207,7 @@ impl gpui::Element for Editor {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let bounds = self.0.read(cx).bounds.unwrap_or(bounds);
         let focus = self.0.read(cx).focus_handle.clone();
         window.handle_input(&focus, ElementInputHandler::new(bounds, self.0.clone()), cx);
         let selection_color = cx.theme().text_selection;
