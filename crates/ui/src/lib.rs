@@ -183,6 +183,7 @@ pub struct Shell {
     pub chat_chrome: bool,
     /// Titlebar `New tab` button (chat routes; Settings and Automations hide it).
     pub new_tab: bool,
+    pub header_actions: Option<AnyView>,
     /// Opaque background boxes the page paints under the main surface's clip that reach its
     /// rounded corners (Settings' `electron:bg-surface`): each blends the clip's anti-aliased
     /// edge once more. With any, the shell paints those corners itself, over what the main
@@ -290,6 +291,7 @@ impl Shell {
             selected_rail: Some("home"),
             chat_chrome: true,
             new_tab: true,
+            header_actions: None,
             main_backgrounds: 0,
             main_composited: false,
             main_layer: false,
@@ -1530,6 +1532,17 @@ impl Shell {
                             icon::icon("new-tab", 16., t.text_tertiary)
                                 .own_layer(Some(Point::default())),
                         ),
+                )
+            })
+            .when_some(self.header_actions.clone(), |bar, actions| {
+                bar.child(
+                    div()
+                        .absolute()
+                        .top(px(8.))
+                        .right(px(44.))
+                        .h(px(28.))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(actions),
                 )
             })
     }

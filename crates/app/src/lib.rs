@@ -20,6 +20,7 @@ mod diff_watch;
 mod features;
 pub mod host;
 pub mod host_settings;
+pub mod hotkey;
 pub mod native_menus;
 pub mod oauth;
 mod personalization;
@@ -36,6 +37,7 @@ mod signin;
 mod storage;
 pub mod updater;
 mod usage;
+mod voice;
 mod window_shell;
 pub mod windows;
 
@@ -154,6 +156,7 @@ pub fn init(cx: &mut App) {
     ]);
     ui::composer::bind_keys(cx);
     features::init(cx);
+    hotkey::init(cx);
     native_menus::init(cx);
     screenshot::init(cx);
     cx.on_action(|_: &Quit, cx| cx.defer(routes::request_quit));
@@ -410,6 +413,7 @@ pub struct Root {
     workspace: Entity<workspace::Workspace>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
+    popout: Option<hotkey::Popout>,
     dialog: Option<Entity<Dialog>>,
     diff_confirmation: Option<Entity<ui::confirmation::Confirmation>>,
     automation_editor: Option<Entity<automations::editor::Editor>>,
@@ -738,6 +742,7 @@ impl Root {
             pending_settings_leave: None,
             workspace: cx.new(workspace::Workspace::new),
             command_menu: None,
+            popout: None,
             dialog: None,
             diff_confirmation: None,
             automation_editor: None,
@@ -974,6 +979,7 @@ impl Root {
                 this.skills = skills;
                 this.models = models;
                 this.ready = this.login.is_none();
+                hotkey::policy::refresh(this, cx);
                 this.select_route(cx);
                 this.sync(window, cx);
                 if bridge.is_acp() {
@@ -1144,6 +1150,7 @@ impl Root {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
         self.host = host;
+        hotkey::policy::refresh(self, cx);
         self.automation_threads.clear();
         self.automation_card_results.clear();
         self.app_tool_events = None;
@@ -1326,6 +1333,7 @@ impl Root {
         projects: Vec<ui::screens::sidebar::Project>,
         cx: &mut Context<Self>,
     ) {
+        hotkey::projects(self, &projects, cx);
         let choices = projects
             .iter()
             .filter(|project| !project.missing)
@@ -2284,6 +2292,10 @@ impl Root {
 
     fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
         self.threads = threads.to_vec();
+        if let Some(menu) = &self.command_menu {
+            let unread = self.sidebar.read(cx).unread.clone();
+            menu.update(cx, |menu, cx| menu.update_catalog(threads, &unread, cx));
+        }
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
     }
 
@@ -2566,7 +2578,7 @@ impl Root {
                 .with_navigation_panel(navigation)
         });
         cx.subscribe_in(&menu, window, |this, _, event, window, cx| {
-            this.run_command(event, window, cx)
+            this.run_command(event, window, cx);
         })
         .detach();
         window.focus(&menu.focus_handle(cx), cx);
@@ -3115,6 +3127,7 @@ impl Root {
                     Ok(_) => {
                         this.login = Some(this.new_login(window, cx));
                         this.set_account(None, cx);
+                        hotkey::policy::clear(cx);
                         this.invalidate_oauth(cx);
                         let host = this.host.clone();
                         cx.background_spawn(async move { host.invalidate_identity() })
@@ -3217,18 +3230,24 @@ impl Root {
         event: &CommandMenuEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
+        if hotkey::command(self, event, window, cx) {
+            return true;
+        }
         match event {
             CommandMenuEvent::Search(request) => {
-                return self.search_threads(request.clone(), window, cx);
+                self.search_threads(request.clone(), window, cx);
+                return true;
             }
             CommandMenuEvent::RetryCloudSearch(request) => {
-                return self.search_cloud_threads(request.clone(), window, cx);
+                self.search_cloud_threads(request.clone(), window, cx);
+                return true;
             }
             _ => {}
         }
         if let CommandMenuEvent::SearchFiles(query) = event {
-            return self.search_command_files(query.clone(), cx);
+            self.search_command_files(query.clone(), cx);
+            return true;
         }
         self.command_menu = None;
         window.focus(&self.route_focus(cx), cx);
@@ -3299,11 +3318,14 @@ impl Root {
                 label => {
                     if let Some(section) = settings::section(label) {
                         self.open_settings_section(section, window, cx);
+                    } else {
+                        return false;
                     }
                 }
             },
         }
         cx.notify();
+        true
     }
 
     /// The command menu's content search: `thread/search` for `term` (the original's
@@ -3617,6 +3639,7 @@ impl Root {
         .detach();
         self.thread = Some(view);
         self.show_approval(cx);
+        hotkey::thread_shown(self, window, cx);
         self.refresh_git_actions(cx);
         if self.state.route == route {
             self.sync(window, cx);
@@ -5465,6 +5488,9 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        if matches!(&event, Event::Notification { method, .. } if method == "account/updated") {
+            hotkey::policy::refresh(self, cx);
+        }
         self.plugins_event(&event, cx);
         self.oauth_account_event(&event, cx);
         usage::on_event(&event, cx);
@@ -6761,13 +6787,17 @@ impl Render for Root {
                 .child(recovery::StartupLoader)
                 .into_any_element();
         }
-        let content: AnyElement = match (&self.page, &self.split) {
-            (_, Some(split)) if self.sidebar_automation.is_some() => {
-                split.clone().into_any_element()
+        let content: AnyElement = if let Some(content) = hotkey::content(self, cx) {
+            content
+        } else {
+            match (&self.page, &self.split) {
+                (_, Some(split)) if self.sidebar_automation.is_some() => {
+                    split.clone().into_any_element()
+                }
+                (Some(page), _) => page.clone().into_any_element(),
+                (None, Some(split)) => split.clone().into_any_element(),
+                (None, None) => self.shell.clone().into_any_element(),
             }
-            (Some(page), _) => page.clone().into_any_element(),
-            (None, Some(split)) => split.clone().into_any_element(),
-            (None, None) => self.shell.clone().into_any_element(),
         };
         let content = self
             .oauth
@@ -6948,6 +6978,7 @@ impl Render for Root {
             .children(self.automation_editor.clone())
             .children(self.diff_confirmation.clone());
         let root = routes::actions(root, cx);
+        let root = hotkey::actions(root, self.popout.is_some(), cx);
         native_menus::actions(
             section_actions::actions(features::actions(root, self, cx), cx),
             self,

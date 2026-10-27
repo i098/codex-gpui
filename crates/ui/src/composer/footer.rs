@@ -110,6 +110,7 @@ impl Composer {
     }
     pub(super) fn footer(&self, window: &Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let open = matches!(self.menu, Some(Menu::Effort | Menu::Models));
+        let hotkey_home = self.hotkey_controls.is_some();
         let model = self.current_model();
         let loading = model.is_none();
         let model_label = model.map_or("Loading model…".into(), |m| m.label.clone());
@@ -316,7 +317,7 @@ impl Composer {
             .id("send")
             .role(gpui::Role::Button)
             .aria_label(self.send_label())
-            .aria_disabled(waiting_for_model)
+            .aria_disabled(waiting_for_model || (hotkey_home && !has_input))
             .tab_index(0)
             .rounded(Theme::RADIUS_FULL)
             .focus_visible(move |style| {
@@ -332,6 +333,9 @@ impl Composer {
             .flex_none()
             .size(px(28.))
             .p(px(2.))
+            .when(hotkey_home && !has_input, |button| {
+                button.opacity(0.5).layer()
+            })
             .flex()
             .items_center()
             .justify_center()
@@ -356,7 +360,7 @@ impl Composer {
             .when(!stopping && !waiting_for_model, |d| {
                 d.child(
                     icon(
-                        if has_input {
+                        if has_input || hotkey_home {
                             "composer-arrow-up"
                         } else {
                             "voice"
@@ -398,6 +402,7 @@ impl Composer {
                     .overflow_hidden()
                     .child(model_button),
             )
+            .children(self.hotkey_controls.clone())
             .child(self.dictation_button(t, cx))
             .child(send);
         // Grid columns: controls, an empty column, then the right group, 5 px apart.
@@ -405,8 +410,16 @@ impl Composer {
             .flex()
             .items_center()
             .gap(px(10.))
-            .px(px(8.))
-            .pb(px(8.))
+            .px(px(if self.hotkey_controls.is_some() {
+                0.
+            } else {
+                8.
+            }))
+            .pb(px(if self.hotkey_controls.is_some() {
+                0.
+            } else {
+                8.
+            }))
             .child(left.min_w_0().flex_shrink(1.))
             .child(right)
     }

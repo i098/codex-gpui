@@ -56,6 +56,7 @@ pub(crate) struct TestWindowState {
     is_fullscreen: bool,
     scale_factor: f32,
     appearance: WindowAppearance,
+    background: WindowBackgroundAppearance,
     external_drag_files: Vec<(PathBuf, bool)>,
     start_external_drag_result: bool,
     window_moves: usize,
@@ -132,6 +133,7 @@ impl TestWindow {
             // Preserve the test platform's historical 2x default.
             scale_factor: 2.0,
             appearance: WindowAppearance::Light,
+            background: WindowBackgroundAppearance::Opaque,
             external_drag_files: Vec::new(),
             start_external_drag_result: false,
             window_moves: 0,
@@ -440,7 +442,7 @@ impl PlatformWindow for TestWindow {
     }
 
     fn background_appearance(&self) -> WindowBackgroundAppearance {
-        WindowBackgroundAppearance::Opaque
+        self.0.lock().background
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {
@@ -453,7 +455,13 @@ impl PlatformWindow for TestWindow {
 
     fn set_app_id(&mut self, _app_id: &str) {}
 
-    fn set_background_appearance(&self, _background: WindowBackgroundAppearance) {}
+    fn set_background_appearance(&self, background: WindowBackgroundAppearance) {
+        let mut state = self.0.lock();
+        state.background = background;
+        if let Some(renderer) = &mut state.renderer {
+            renderer.set_transparent(background != WindowBackgroundAppearance::Opaque);
+        }
+    }
 
     fn set_edited(&mut self, edited: bool) {
         self.0.lock().edited = edited;
