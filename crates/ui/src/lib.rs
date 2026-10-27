@@ -1520,7 +1520,7 @@ impl Shell {
                     .aria_label("New chat")
                     .absolute()
                     .left(px(190.) - fullscreen_shift)
-                    .top(px(8.))
+                    .top(px(7.725))
                     .on_click(dispatch::<NewChat>),
                     "New chat",
                     Some("⌘N"),
