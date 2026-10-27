@@ -21,17 +21,14 @@ pub fn text_system() -> Arc<dyn PlatformTextSystem> {
     Arc::new(gpui::NoopTextSystem::new())
 }
 
-/// Private `FontFeatures` tag carrying CSS `letter-spacing` (1/100 CSS px, i32 bits); textsys
+/// Private `FontFeatures` tag carrying CSS `letter-spacing` as f32 bits; textsys
 /// applies it while shaping and never passes it to HarfBuzz.
 const LETTER_SPACING_TAG: &str = "ltsp";
 
 /// CSS `letter-spacing: <px>` for a text element: `.font_features(textsys::letter_spacing(-0.45))`.
 /// Added after every character like Blink (kerning kept, optional ligatures off).
 pub fn letter_spacing(px: f32) -> FontFeatures {
-    FontFeatures(Arc::new(vec![(
-        LETTER_SPACING_TAG.into(),
-        (px * 100.).round() as i32 as u32,
-    )]))
+    FontFeatures(Arc::new(vec![(LETTER_SPACING_TAG.into(), px.to_bits())]))
 }
 
 /// Private `FontFeatures` tag carrying the CSS px per layout px of a font size (f32 bits);

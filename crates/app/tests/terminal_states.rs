@@ -299,6 +299,12 @@ fn background_ansi_output_supports_selection_and_copy() -> Result<()> {
         1280. - 4. - f32::from(ui::screens::diff::panel::panel_width(window, cx))
     })?;
     fx.hover((768., 6.))?;
+    // The originals show the Explore dot; main draws it from fetched unseen destinations, which
+    // this replay cannot supply.
+    let shell = fx.read(|root, _| root.shell().clone());
+    shell.update(&mut fx.cx, |shell, _| {
+        shell.unread_destinations = Some(["unseen".into()].into());
+    });
     shot(&mut fx, "ansi")?;
     fx.drag((left + 14., 80.), (left + 114., 112.), 4)?;
     shot(&mut fx, "selection")?;
