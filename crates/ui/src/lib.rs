@@ -1514,7 +1514,6 @@ impl Shell {
                     icon_button(
                         "titlebar-new-chat",
                         icon::icon("sidebar-cmd-new-chat", 16., t.text_tertiary).own_layer(None),
-                        t, px(14.275)))),
                         t,
                     )
                     .role(gpui::Role::Button)
