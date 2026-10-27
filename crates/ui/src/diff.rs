@@ -3458,7 +3458,9 @@ fn hunk(
                         .when_some(number, |d, n| d.child(n.to_string()))
                         .children(utility),
                 )
-                .with_priority(1),
+                .with_priority(1)
+                // Deferred only for paint order: scrolled-out rows stay inside the scroller.
+                .clipped(),
             )
             .child(
                 div()

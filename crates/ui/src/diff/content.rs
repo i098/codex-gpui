@@ -323,12 +323,19 @@ impl DiffPanel {
                 this.selection = None;
                 cx.notify();
             }));
-        header
+        let header = header
             .absolute()
             .top(offset)
             .left_0()
             .right_0()
-            .bg(t.surface)
+            .bg(t.surface);
+        if self.standalone {
+            return header.into_any_element();
+        }
+        // Sticky above the row gutters, which are deferred (priority 1) for their paint order.
+        deferred(header)
+            .with_priority(2)
+            .clipped()
             .into_any_element()
     }
 
