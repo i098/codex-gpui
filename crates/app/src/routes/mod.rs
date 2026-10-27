@@ -66,6 +66,7 @@ impl Root {
                 );
                 return;
             }
+            ui::composer::dictation::Dispatcher::cancel(window.window_handle().window_id(), cx);
             self.remember_thread_settings(cx);
             self.back.push((
                 std::mem::replace(&mut self.state.route, route),
@@ -101,6 +102,7 @@ impl Root {
             (&mut self.forward, &mut self.back)
         };
         if let Some((route, automation)) = from.pop() {
+            ui::composer::dictation::Dispatcher::cancel(window.window_handle().window_id(), cx);
             to.push((
                 std::mem::replace(&mut self.state.route, route),
                 std::mem::replace(&mut self.sidebar_automation, automation),
@@ -122,9 +124,16 @@ impl Root {
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     pub(crate) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let home = matches!(self.state.route, Route::Home);
+        if cx.has_global::<ui::screens::settings::keyboard_shortcuts::KeyboardState>() {
+            cx.update_global::<ui::screens::settings::keyboard_shortcuts::KeyboardState, _>(
+                |state, _| state.home = home,
+            );
+        }
         self.sync_native_menus(window, cx);
         self.remember_recent_chat();
         self.flush_settings(cx);
+        self.sync_diff_watch(cx);
         self.settings_page = None;
         self.suggestion_load = None;
         self.oauth.leave_page();

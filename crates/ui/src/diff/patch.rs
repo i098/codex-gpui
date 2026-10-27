@@ -91,6 +91,38 @@ fn header_path(header: &str) -> Option<Cow<'_, str>> {
     None
 }
 
+pub(super) fn counts(patch: &str, raw: Option<super::Kind>) -> (usize, usize) {
+    if let Some(kind) = raw {
+        let lines = patch.lines().count();
+        return (
+            lines * usize::from(kind == super::Kind::Added),
+            lines * usize::from(kind == super::Kind::Removed),
+        );
+    }
+    patch
+        .lines()
+        .skip_while(|line| !line.starts_with("@@ "))
+        .fold((0, 0), |(added, removed), line| {
+            (
+                added + usize::from(line.starts_with('+')),
+                removed + usize::from(line.starts_with('-')),
+            )
+        })
+}
+
+pub(super) fn empty_state(patch: &str) -> &'static str {
+    if patch
+        .lines()
+        .any(|line| line.starts_with("Binary files ") || line == "GIT binary patch")
+    {
+        "Binary file not shown"
+    } else if patch.lines().any(|line| line.starts_with("rename from ")) {
+        "File renamed without changes"
+    } else {
+        "No content"
+    }
+}
+
 /// Returns the target path from one Git file patch, or the old path for a deletion.
 /// Quoted names are decoded as UTF-8; malformed escapes or missing headers return `None`.
 /// Complete diff headers preserve no-prefix and mnemonic-prefix filenames.

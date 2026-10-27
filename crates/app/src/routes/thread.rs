@@ -120,16 +120,10 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     root.on_action(cx.listener(|this, _: &FindInThread, window, cx| {
         find_in_workspace(this, window, cx);
     }))
-    .on_action(cx.listener(|this, _: &FindNext, _, cx| {
-        if let Some(thread) = &this.thread {
-            thread.update(cx, |thread, cx| thread.next_find(false, cx));
-        }
-    }))
-    .on_action(cx.listener(|this, _: &FindPrevious, _, cx| {
-        if let Some(thread) = &this.thread {
-            thread.update(cx, |thread, cx| thread.next_find(true, cx));
-        }
-    }))
+    .on_action(cx.listener(Root::find_in_chat))
+    .on_action(cx.listener(Root::find_in_diff))
+    .on_action(cx.listener(|this, _: &FindNext, _, cx| this.next_search_result(false, cx)))
+    .on_action(cx.listener(|this, _: &FindPrevious, _, cx| this.next_search_result(true, cx)))
     .on_action(cx.listener(|this, _: &ui::composer::Stop, _, cx| this.stop(None, cx)))
     .on_action(
         cx.listener(|this, _: &ui::composer::RequestFullAccess, window, cx| {
