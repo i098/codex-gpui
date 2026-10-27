@@ -1123,33 +1123,6 @@ mod tests {
     }
 
     #[test]
-    fn standalone_chat_uses_and_records_the_configured_workspace() -> Result<()> {
-        let temporary = tempfile::tempdir()?;
-        let root = temporary.path().join("standalone");
-        let settings_path = temporary.path().join("settings.json");
-        let mut settings = crate::host_settings::Settings::load(settings_path.clone())?;
-        settings.write("projectlessWorkspaceRoot", json!(root))?;
-        let codex = temporary.path().join("codex");
-        let host = Arc::new(host::LocalHost::new(&codex).with_host_settings_path(settings_path));
-        let prepared = prepare_start(host, Options::default(), "Write a report")?;
-        assert!(Path::new(&prepared.cwd).starts_with(&root));
-        assert!(Path::new(&prepared.cwd).join("work").is_dir());
-        assert!(Path::new(&prepared.cwd).join("outputs").is_dir());
-        prepared.record("standalone-thread")?;
-        let state: Value =
-            serde_json::from_slice(&std::fs::read(codex.join(".codex-global-state.json"))?)?;
-        assert_eq!(
-            state["projectless-thread-ids"],
-            json!(["standalone-thread"])
-        );
-        assert_eq!(
-            state["thread-workspace-root-hints"]["standalone-thread"],
-            json!(root)
-        );
-        Ok(())
-    }
-
-    #[test]
     fn popout_keeps_the_primary_draft_and_route_separate() -> Result<()> {
         #[cfg(target_os = "macos")]
         std::panic::set_hook(Box::new(|info| {

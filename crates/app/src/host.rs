@@ -564,11 +564,6 @@ impl LocalHost {
         Ok(None)
     }
 
-    pub fn with_host_settings_path(mut self, path: impl Into<PathBuf>) -> Self {
-        self.host_settings_path = path.into();
-        self
-    }
-
     pub fn with_settings(mut self, settings: Option<crate::host_settings::Settings>) -> Self {
         self.settings = settings;
         self
