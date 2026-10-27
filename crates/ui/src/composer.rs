@@ -979,7 +979,6 @@ impl Composer {
         editor.request_compact = true;
         editor
     }
-
     pub fn field_text(&self) -> &str {
         &self.content
     }
@@ -2354,6 +2353,14 @@ impl Render for Composer {
                 .font_weight(gpui::FontWeight(400.));
             let field = card
                 .w_full()
+                .role(gpui::Role::TextInput)
+                .aria_label(
+                    self.request_label
+                        .clone()
+                        .unwrap_or(self.placeholder.clone()),
+                )
+                .aria_placeholder(self.placeholder.clone())
+                .aria_value(self.content.clone())
                 .when(!inline, |d| {
                     d.p(px(1.)).child(shapes::decoration(shapes::Decoration {
                         radius: Corners::all(px(20.)),

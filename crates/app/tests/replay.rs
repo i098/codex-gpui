@@ -433,6 +433,7 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
                 Route::Automation(id) => format!("scheduled?automationId={id}"),
                 Route::Mobile => "mobile".to_owned(),
                 Route::Security => "security".to_owned(),
+                Route::RemoteConnections => "remote-connections".to_owned(),
                 Route::Archive => "archive".to_owned(),
                 Route::SelectWorkspace => "select-workspace".to_owned(),
                 Route::Plugins(path) => path,
