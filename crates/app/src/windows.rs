@@ -302,6 +302,21 @@ pub fn handles(kind: Kind, cx: &App) -> Vec<AnyWindowHandle> {
         .collect()
 }
 
+pub(crate) fn set_kind(window: &Window, kind: Kind, cx: &mut App) {
+    if let Some(entry) = cx
+        .try_global::<Windows>()
+        .and_then(|windows| windows.entries.get(&window.window_handle().window_id()))
+    {
+        let id = entry.handle.window_id();
+        cx.global_mut::<Windows>()
+            .entries
+            .get_mut(&id)
+            .unwrap()
+            .kind = kind;
+        platform::configure(window, kind);
+    }
+}
+
 /// Keep the final primary window and its draft alive on macOS.
 pub fn allow_close(window: &mut Window, cx: &mut App) -> bool {
     let id = window.window_handle().window_id();
@@ -354,6 +369,18 @@ pub fn show(handle: AnyWindowHandle, presentation: Presentation, cx: &mut App) -
         }
         Ok(())
     })?
+}
+
+pub fn is_visible(handle: AnyWindowHandle, cx: &mut App) -> Result<bool> {
+    handle.update(cx, |_, window, _| platform::is_visible(window))?
+}
+
+pub(crate) fn set_keyboard_interactive(window: &Window, interactive: bool) -> Result<()> {
+    platform::set_keyboard_interactive(window, interactive)
+}
+
+pub(crate) fn set_pointer_interactive_window(window: &Window, interactive: bool) -> Result<()> {
+    platform::set_pointer_interactive(window, interactive)
 }
 
 pub fn set_bounds(
@@ -472,9 +499,11 @@ fn open_primary_with_presentation(
     );
     spec.bounds = Some(primary_bounds(&state, cx));
     spec.presentation = presentation;
-    open(spec, cx, |window, cx| {
+    let handle = open(spec, cx, |window, cx| {
         cx.new(|cx| Root::new(state, bridge, events, cwd, window, cx))
-    })
+    })?;
+    crate::hotkey::primary(handle, cx);
+    Ok(handle)
 }
 
 fn primary_bounds(state: &State, cx: &App) -> WindowBounds {
@@ -549,6 +578,7 @@ pub(crate) fn bind_root(window: &mut Window, cx: &mut Context<Root>) {
         if window.is_window_active() {
             cx.set_global(ui::screens::settings::AppServer(root.bridge.clone()));
         }
+        crate::hotkey::activation_changed(root, window, cx);
     })
     .detach();
 }

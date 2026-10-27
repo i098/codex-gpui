@@ -8,6 +8,7 @@ pub fn deferred(child: impl IntoElement) -> Deferred {
     Deferred {
         child: Some(child.into_any_element()),
         priority: 0,
+        clipped: false,
     }
 }
 
@@ -16,6 +17,7 @@ pub fn deferred(child: impl IntoElement) -> Deferred {
 pub struct Deferred {
     child: Option<AnyElement>,
     priority: usize,
+    clipped: bool,
 }
 
 impl Deferred {
@@ -24,6 +26,14 @@ impl Deferred {
     /// with higher values being drawn on top.
     pub fn with_priority(mut self, priority: usize) -> Self {
         self.priority = priority;
+        self
+    }
+
+    /// Paints the child under its ancestors' content mask (their overflow clips), so content
+    /// deferred only for its paint order stays inside the scroller or surface holding it. An
+    /// overlay leaves this unset to escape those clips.
+    pub fn clipped(mut self) -> Self {
+        self.clipped = true;
         self
     }
 }
@@ -62,7 +72,8 @@ impl Element for Deferred {
     ) {
         let child = self.child.take().unwrap();
         let element_offset = window.element_offset();
-        window.defer_draw(child, element_offset, self.priority, None)
+        let content_mask = self.clipped.then(|| window.content_mask());
+        window.defer_draw(child, element_offset, self.priority, content_mask)
     }
 
     fn paint(

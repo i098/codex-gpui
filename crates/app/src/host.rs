@@ -62,6 +62,7 @@ pub(crate) mod run_now;
 mod settings_git;
 mod skills;
 mod ssh_discovery;
+pub mod voice;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
@@ -135,6 +136,10 @@ pub trait Host: Send + Sync {
         bail!("sidebar project state is unsupported by this host")
     }
 
+    fn terminal_workspaces(&self, _thread_id: &str, cwd: &str) -> Result<Vec<String>> {
+        Ok(vec![cwd.to_owned()])
+    }
+
     fn review_repositories(&self, _thread: &str, _cwd: &str) -> Result<Vec<ReviewRepository>> {
         bail!("review repositories are unsupported by this host")
     }
@@ -158,6 +163,10 @@ pub trait Host: Send + Sync {
     /// Returns the trusted native Settings service, never a model-callable tool.
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         bail!("Computer Use settings are unsupported by this host")
+    }
+
+    fn voice_settings(&self) -> Result<voice::Settings> {
+        bail!("Voice settings are unsupported by this host")
     }
 
     /// Finish the initial automation turn and settle its automatic archive before reading the inbox.
@@ -301,6 +310,16 @@ impl Host for ReplayHost {
             .as_ref()
             .context("no recorded sidebar project snapshot")?
             .rows()
+    }
+
+    fn terminal_workspaces(&self, thread_id: &str, cwd: &str) -> Result<Vec<String>> {
+        Ok(crate::terminal::source_directories(
+            self.project_snapshot
+                .as_ref()
+                .map(|snapshot| &snapshot.state),
+            thread_id,
+            cwd,
+        ))
     }
 
     /// The identity of the first recorded request that carries one.
@@ -513,6 +532,7 @@ pub struct LocalHost {
     #[cfg(target_os = "macos")]
     app_tools: Mutex<Option<Arc<AppTools>>>,
     opener: PathBuf,
+    host_settings_path: PathBuf,
     settings: Option<crate::host_settings::Settings>,
     computer_use_settings: Option<computer_use::ComputerUseSettings>,
     native_computer_use: Arc<computer_use_native::NativeComputerUse>,
@@ -532,6 +552,8 @@ impl LocalHost {
             #[cfg(target_os = "macos")]
             app_tools: Mutex::new(None),
             opener: "/usr/bin/open".into(),
+            host_settings_path: PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                .join("Library/Application Support/codex-gpui/host-settings.json"),
             settings: None,
             context_files: context_files::ContextFiles::default(),
         }
@@ -1319,6 +1341,12 @@ impl Host for LocalHost {
         self.record_projectless_thread(thread, workspace)
     }
 
+    fn voice_settings(&self) -> Result<voice::Settings> {
+        Ok(voice::Settings::new(
+            self.home.clone(),
+            self.host_settings_path.clone(),
+        ))
+    }
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.computer_use_settings
             .as_ref()
@@ -1334,6 +1362,19 @@ impl Host for LocalHost {
         project_rows(&state, &self.home, |path, _| {
             Ok(Some(Path::new(path).exists()))
         })
+    }
+
+    fn terminal_workspaces(&self, thread_id: &str, cwd: &str) -> Result<Vec<String>> {
+        let state = match fs::read(self.home.join(".codex-global-state.json")) {
+            Ok(bytes) => Some(serde_json::from_slice::<Value>(&bytes)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        Ok(crate::terminal::source_directories(
+            state.as_ref(),
+            thread_id,
+            cwd,
+        ))
     }
 
     fn review_repositories(&self, thread: &str, cwd: &str) -> Result<Vec<ReviewRepository>> {
@@ -1930,6 +1971,10 @@ impl Host for CloudHost {
 
     fn projects(&self) -> Result<Vec<Project>> {
         self.local.projects()
+    }
+
+    fn terminal_workspaces(&self, thread_id: &str, cwd: &str) -> Result<Vec<String>> {
+        self.local.terminal_workspaces(thread_id, cwd)
     }
 
     fn review_repositories(&self, thread: &str, cwd: &str) -> Result<Vec<ReviewRepository>> {

@@ -1,0 +1,14 @@
+{"dir":"client","msg":{"id":2,"method":"command/exec","params":{"command":["/bin/sh","-i"],"cwd":"/tmp/cgx-fam-terminal-smoke","processId":"terminal-smoke","tty":true,"disableTimeout":true,"disableOutputCap":true,"size":{"rows":8,"cols":40},"env":{"TERM":"xterm-256color"}}}}
+{"dir":"server","msg":{"method":"command/exec/outputDelta","params":{"processId":"terminal-smoke","stream":"stdout","deltaBase64":"G1s/MTAzNGhzaC0zLjIkIA==","capReached":false},"emittedAtMs":1792538326110}}
+{"dir":"client","msg":{"id":3,"method":"command/exec/resize","params":{"processId":"terminal-smoke","size":{"rows":9,"cols":60}}}}
+{"dir":"client","msg":{"id":4,"method":"command/exec/write","params":{"processId":"terminal-smoke","deltaBase64":"cHJpbnRmICdcMDMzWzMxbVRFUk1JTkFMX1NNT0tFXDAzM1swbVxuJzsgZXhpdCA3DQ=="}}}
+{"dir":"server","msg":{"id":3,"result":{}}}
+{"dir":"server","msg":{"method":"command/exec/outputDelta","params":{"processId":"terminal-smoke","stream":"stdout","deltaBase64":"DRtbS3NoLTMuMiQg","capReached":false},"emittedAtMs":1792538326111}}
+{"dir":"server","msg":{"method":"command/exec/outputDelta","params":{"processId":"terminal-smoke","stream":"stdout","deltaBase64":"cHI=","capReached":false},"emittedAtMs":1792538326111}}
+{"dir":"server","msg":{"method":"command/exec/outputDelta","params":{"processId":"terminal-smoke","stream":"stdout","deltaBase64":"aW50ZiAnXDAzM1szMW1URVJNSU5BTF8=","capReached":false},"emittedAtMs":1792538326111}}
+{"dir":"server","msg":{"method":"command/exec/outputDelta","params":{"processId":"terminal-smoke","stream":"stdout","deltaBase64":"U01PS0VcMDMzWzA=","capReached":false},"emittedAtMs":1792538326111}}
+{"dir":"server","msg":{"id":4,"result":{}}}
+{"dir":"server","msg":{"method":"command/exec/outputDelta","params":{"processId":"terminal-smoke","stream":"stdout","deltaBase64":"bVxuJzsgZXhpdCA3DQo=","capReached":false},"emittedAtMs":1792538326112}}
+{"dir":"server","msg":{"method":"command/exec/outputDelta","params":{"processId":"terminal-smoke","stream":"stdout","deltaBase64":"G1szMW1URVJNSU5BTF9TTU9LRRtbMG0NCg==","capReached":false},"emittedAtMs":1792538326112}}
+{"dir":"server","msg":{"method":"command/exec/outputDelta","params":{"processId":"terminal-smoke","stream":"stdout","deltaBase64":"ZXhpdA0K","capReached":false},"emittedAtMs":1792538326112}}
+{"dir":"server","msg":{"id":2,"result":{"exitCode":7,"stdout":"","stderr":""}}}

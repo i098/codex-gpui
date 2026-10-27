@@ -1104,7 +1104,9 @@ impl DiffPanel {
                 .h(px(81.))
                 .rounded(px(20.))
                 .p(px(0.5))
-                .child(shapes::decoration(Decoration {
+                // The fixed bar overlaps composited content: Chromium paints it into a layer
+                // of its own and blends that onto the page.
+                .child(shapes::composited_decoration(Decoration {
                     fill: Some(t.surface_secondary),
                     border: Some((px(0.5), t.border)),
                     radius: Corners::all(px(20.)),
@@ -2412,22 +2414,30 @@ impl Render for SplitScreen {
                 crate::RAIL_WIDTH
             }),
         };
-        // ponytail: like refs/thread, the header only follows the open-sidebar titlebar layout.
         let open = self.shell.read(cx).sidebar_open;
+        let chat = self.layout == WorkspaceLayout::Chat;
+        self.thread
+            .update(cx, |view, cx| view.set_clips(chat, chat && !open, cx));
         let sidebar_width = self.shell.read(cx).sidebar_width;
+        // Without an open sidebar the header starts where the leading titlebar controls end.
+        let header_left = if open {
+            sidebar_width
+        } else {
+            TITLEBAR_LAYER_X
+        };
         div()
             .size_full()
             .relative()
             .font_family(SANS)
             .on_key_down(crate::focus::tab)
             .child(self.shell.clone())
-            .when(open && self.layout != WorkspaceLayout::Full, |d| {
+            .when(self.layout != WorkspaceLayout::Full, |d| {
                 d.child(titlebar_layer(
-                    Some(sidebar_width),
+                    open.then_some(sidebar_width),
                     self.thread
                         .update(cx, |view, cx| view.titlebar_header(left.is_some(), cx))
-                        .when_some(left, |h, left| h.w(left - sidebar_width)),
-                    sidebar_width,
+                        .when_some(left, |h, left| h.w(left - header_left)),
+                    header_left,
                 ))
             })
             // Without a panel the shell's `New tab` group follows the header behind a divider.
@@ -2601,8 +2611,8 @@ pub fn with_side_tabs(
     let (main, panel_focus) =
         workspace_content(&thread, panel.as_ref().map(|(view, ..)| view), layout, cx);
     shell.update(cx, |shell, cx| {
-        // A panel's tab strip brings its own `New tab`.
-        shell.new_tab = panel.is_none();
+        // A visible panel's tab strip brings its own `New tab`.
+        shell.new_tab = layout == WorkspaceLayout::Chat;
         // File and Changes panels also composite the surface itself.
         shell.main_composited = true;
         shell.main_opaque_scroll = panel.as_ref().and_then(|(view, ..)| {
@@ -2618,9 +2628,6 @@ pub fn with_side_tabs(
         // A lone thread draws its own px at the surface's right corners.
         shell.main_clips_right = layout == WorkspaceLayout::Chat;
         shell.set_main(main, cx);
-    });
-    thread.update(cx, |thread, _| {
-        thread.clip_right = layout == WorkspaceLayout::Chat
     });
     let (tabs, active) = panel
         .map(|(_, tabs, active)| (tabs, active))
@@ -3637,7 +3644,8 @@ fn hunk(
                                 .border_color(t.surface)
                                 .bg(gutter_color),
                         )
-                        .with_priority(1),
+                        .with_priority(1)
+                        .clipped(),
                     )
                     .child(
                         deferred(
@@ -3647,7 +3655,10 @@ fn hunk(
                                 .flex_none()
                                 .child(comment),
                         )
-                        .with_priority(0),
+                        .with_priority(0)
+                        // Deferred only for paint order: the card stays inside the surface's
+                        // `overflow: hidden` and the scroller, as in Chromium.
+                        .clipped(),
                     )
             }))
     };
