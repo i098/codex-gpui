@@ -135,6 +135,10 @@ pub trait Host: Send + Sync {
         bail!("sidebar project state is unsupported by this host")
     }
 
+    fn terminal_workspaces(&self, _thread_id: &str, cwd: &str) -> Result<Vec<String>> {
+        Ok(vec![cwd.to_owned()])
+    }
+
     fn review_repositories(&self, _thread: &str, _cwd: &str) -> Result<Vec<ReviewRepository>> {
         bail!("review repositories are unsupported by this host")
     }
@@ -301,6 +305,16 @@ impl Host for ReplayHost {
             .as_ref()
             .context("no recorded sidebar project snapshot")?
             .rows()
+    }
+
+    fn terminal_workspaces(&self, thread_id: &str, cwd: &str) -> Result<Vec<String>> {
+        Ok(crate::terminal::source_directories(
+            self.project_snapshot
+                .as_ref()
+                .map(|snapshot| &snapshot.state),
+            thread_id,
+            cwd,
+        ))
     }
 
     /// The identity of the first recorded request that carries one.
@@ -1294,6 +1308,19 @@ impl Host for LocalHost {
         })
     }
 
+    fn terminal_workspaces(&self, thread_id: &str, cwd: &str) -> Result<Vec<String>> {
+        let state = match fs::read(self.home.join(".codex-global-state.json")) {
+            Ok(bytes) => Some(serde_json::from_slice::<Value>(&bytes)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        Ok(crate::terminal::source_directories(
+            state.as_ref(),
+            thread_id,
+            cwd,
+        ))
+    }
+
     fn review_repositories(&self, thread: &str, cwd: &str) -> Result<Vec<ReviewRepository>> {
         diff_repositories::discover(&self.home, thread, cwd)
     }
@@ -1888,6 +1915,10 @@ impl Host for CloudHost {
 
     fn projects(&self) -> Result<Vec<Project>> {
         self.local.projects()
+    }
+
+    fn terminal_workspaces(&self, thread_id: &str, cwd: &str) -> Result<Vec<String>> {
+        self.local.terminal_workspaces(thread_id, cwd)
     }
 
     fn review_repositories(&self, thread: &str, cwd: &str) -> Result<Vec<ReviewRepository>> {

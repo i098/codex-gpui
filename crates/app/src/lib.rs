@@ -17,6 +17,7 @@ pub mod oauth;
 mod personalization;
 pub mod qa;
 mod routes;
+pub mod terminal;
 pub use routes::Route;
 mod plugins;
 pub mod screenshot;
@@ -78,7 +79,7 @@ use ui::screens::signin::Login;
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
     Clock, EditMessage, ForkThread, GitAction, History, OpenAutomationCard, RetryHistory,
-    RevertTurn, ThreadView, UsageLimitNotice,
+    RevertTurn, ThreadPressed, ThreadView, UsageLimitNotice,
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
@@ -122,8 +123,8 @@ pub struct GoToChat(pub usize);
 #[action(namespace = app, no_json)]
 pub struct GoToRecentChat(pub usize);
 
-/// `(min-width: 768px)`: below it the original hides the sidebar panel.
-const SIDEBAR_BREAKPOINT: Pixels = px(768.);
+/// The original collapses the sidebar at widths of 720 px or less.
+const SIDEBAR_BREAKPOINT: Pixels = px(720.);
 
 /// Fixed platform bindings and app-level commands; configurable bindings are installed by the keymap module.
 pub fn init(cx: &mut App) {
@@ -380,6 +381,7 @@ pub struct Root {
     file: Option<Entity<FileView>>,
     /// The open thread in the main shell, with its side panel if any.
     split: Option<Entity<SplitScreen>>,
+    terminal: terminal::Terminals,
     /// Side panel tabs of the thread route in opening order, and the selected one (always in
     /// `tabs`); kept across threads like the original's panel.
     tabs: Vec<SidePanel>,
@@ -705,6 +707,7 @@ impl Root {
             diff: None,
             file: None,
             split: None,
+            terminal: terminal::Terminals::default(),
             tabs: Vec::new(),
             side: None,
             workspace_layout: WorkspaceLayout::Split,
@@ -2445,7 +2448,7 @@ impl Root {
     ) -> Option<(AnyView, Vec<Tab>, usize)> {
         let file = self.file.clone();
         let chats = &self.side_chats;
-        let console = self.shortcut_state.terminal.is_some();
+        let console = self.terminal_panel().is_some();
         self.tabs.retain(|side| {
             Self::side_tab(*side, view, file.as_ref(), chats, console, cx).is_some()
         });
@@ -2463,7 +2466,7 @@ impl Root {
         let view: AnyView = match self.tabs[active] {
             SidePanel::Changes => self.diff.as_ref()?.clone().into(),
             SidePanel::Terminal => cx.new(|cx| Xterm::new(view.clone(), cx)).into(),
-            SidePanel::Console => self.shortcut_state.terminal.as_ref()?.clone().into(),
+            SidePanel::Console => self.terminal_panel()?.clone().into(),
             SidePanel::File => self.file.as_ref()?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
         };
@@ -3138,6 +3141,9 @@ impl Root {
         }
         if self.instructions_changed(cx) {
             self.confirm_instructions_leave(SettingsLeave::Window, window, cx);
+            return;
+        }
+        if self.close_focused_terminal(window, cx) {
             return;
         }
         if let Some(side) = self
@@ -5120,6 +5126,7 @@ impl Root {
                 };
                 self.toast(Toast::danger(message), cx);
             } else {
+                self.sync_terminal(cx);
                 let message = match key {
                     "git-branch-prefix" => Some("Saved branch prefix".to_owned()),
                     "git-pull-request-merge-method" => {
@@ -5724,6 +5731,7 @@ impl Root {
     pub fn set_theme(&mut self, theme: ThemeSetting, window: &mut Window, cx: &mut Context<Self>) {
         self.state.theme = theme;
         self.apply_theme(window, cx);
+        self.sync_terminal(cx);
         self.save(window, cx);
     }
 
