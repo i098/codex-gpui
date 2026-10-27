@@ -24,6 +24,7 @@ pub mod host_settings;
 pub mod hotkey;
 pub mod native_menus;
 pub mod oauth;
+pub mod onboarding;
 mod personalization;
 pub mod qa;
 mod routes;
@@ -419,6 +420,9 @@ pub struct Root {
     settings_integration_task: Option<Task<()>>,
     pending_settings_leave: Option<SettingsLeave>,
     workspace: Entity<workspace::Workspace>,
+    onboarding_page: Option<Entity<ui::screens::onboarding::Onboarding>>,
+    onboarding_load: Option<Task<()>>,
+    onboarding_context: Option<onboarding::ContextData>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
     popout: Option<hotkey::Popout>,
@@ -753,6 +757,9 @@ impl Root {
             settings_integration_task: None,
             pending_settings_leave: None,
             workspace: cx.new(workspace::Workspace::new),
+            onboarding_page: None,
+            onboarding_load: None,
+            onboarding_context: None,
             command_menu: None,
             popout: None,
             dialog: None,
@@ -997,6 +1004,7 @@ impl Root {
                 hotkey::policy::refresh(this, cx);
                 this.select_route(cx);
                 this.sync(window, cx);
+                this.maybe_onboard(window, cx);
                 if bridge.is_acp() {
                     let note = format!(
                         "{} over ACP: only chats, streaming, Stop and approvals work",
@@ -3205,6 +3213,9 @@ impl Root {
                         this.set_account(None, cx);
                         hotkey::policy::clear(cx);
                         this.invalidate_oauth(cx);
+                        this.onboarding_load = None;
+                        this.onboarding_context = None;
+                        this.onboarding_page = None;
                         let host = this.host.clone();
                         cx.background_spawn(async move { host.invalidate_identity() })
                             .detach();
@@ -5671,7 +5682,7 @@ impl Root {
                 "account/updated" if self.ready => {
                     self.destination_load = None;
                     self.set_unread_destinations(None, cx);
-                    self.read_account(cx);
+                    self.read_account(None, cx);
                 }
                 "mcpServer/startupStatus/updated" | "mcpServer/oauthLogin/completed"
                     if self.ready && !self.signed_out() =>
@@ -5820,9 +5831,9 @@ impl Root {
         .detach();
     }
 
-    fn finish_sign_in(&mut self, cx: &mut Context<Self>) {
+    fn finish_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.login = None;
-        self.read_account(cx);
+        self.read_account(Some(window), cx);
         self.refresh_threads(cx);
         self.load_projects(cx);
         self.load_sections(cx);
@@ -5853,7 +5864,8 @@ impl Root {
         }
     }
 
-    fn read_account(&self, cx: &mut Context<Self>) {
+    fn read_account(&self, window: Option<&Window>, cx: &mut Context<Self>) {
+        let handle = window.map(|window| window.window_handle());
         let bridge = self.bridge.clone();
         let host = self.host.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
@@ -5871,7 +5883,13 @@ impl Root {
                 if this.settings_page.is_some() {
                     this.refresh_writing(cx);
                 }
-            })
+            })?;
+            if let Some(handle) = handle {
+                cx.update_window(handle, |_, window, cx| {
+                    this.update(cx, |this, cx| this.maybe_onboard(window, cx))
+                })??;
+            }
+            Ok(())
         });
         log_err(task, cx);
     }
@@ -6818,7 +6836,16 @@ impl Render for Root {
             )
             .into_any_element();
         }
-        if let Some(login) = &self.login {
+        let exclusive = self
+            .login
+            .as_ref()
+            .map(|view| view.clone().into_any_element())
+            .or_else(|| {
+                self.onboarding_page
+                    .as_ref()
+                    .map(|view| view.clone().into_any_element())
+            });
+        if let Some(exclusive) = exclusive {
             return native_menus::actions(
                 div()
                     .size_full()
@@ -6831,7 +6858,7 @@ impl Render for Root {
                     }))
                     .on_action(|_: &Minimize, window, _| window.minimize_window())
                     .on_action(|_: &Zoom, window, _| window.zoom_window())
-                    .child(login.clone())
+                    .child(exclusive)
                     .children(self.dialog.clone()),
                 self,
                 cx,
