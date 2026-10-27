@@ -3,8 +3,8 @@ use super::{Layer, button, deco, on_card, probe, switch};
 use crate::{composer::popover, focus, icon::icon, text};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Div, Entity, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Render, SharedString, Stateful, StatefulInteractiveElement,
-    Styled, Window, div, prelude::FluentBuilder as _, px,
+    KeyDownEvent, ParentElement, Render, ScrollHandle, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
 use serde_json::Value;
 use shapes::Corner::Squircle;
@@ -157,6 +157,8 @@ pub fn render(
                 query: String::new(),
                 focus: cx.focus_handle().tab_stop(true),
                 layer: Layer::default(),
+                scroll: ScrollHandle::new(),
+                composited: false,
                 menu: None,
                 form: None,
                 form_saved: state.read(cx).form_saved,
@@ -208,6 +210,9 @@ struct Manager {
     query: String,
     focus: gpui::FocusHandle,
     layer: Layer,
+    scroll: ScrollHandle,
+    /// Chromium composites the page scroller only while its content overflows.
+    composited: bool,
     menu: Option<Menu>,
     form: Option<Entity<form::Form>>,
     form_saved: u64,
@@ -425,7 +430,7 @@ impl Activate for Stateful<Div> {
 
 pub(super) fn card<E: IntoElement>(
     rows: impl IntoIterator<Item = E>,
-    layer: &Layer,
+    layer: Option<&Layer>,
     t: &Theme,
 ) -> Div {
     let mut rows = rows.into_iter().peekable();
@@ -449,17 +454,19 @@ pub(super) fn card<E: IntoElement>(
         .flex()
         .flex_col()
         .p(px(1.))
-        .child(deco(
-            layer,
-            20.,
-            Squircle,
-            t.background_panel,
-            Some(t.border),
-        ))
+        .child(match layer {
+            Some(layer) => deco(layer, 20., Squircle, t.background_panel, Some(t.border)),
+            None => on_card(20., Squircle, t.background_panel, Some(t.border)),
+        })
         .child(crate::rounded_clip(px(19.), Squircle, content))
 }
 
-fn section_card(title: &str, rows: impl IntoIterator<Item = Div>, layer: &Layer, t: &Theme) -> Div {
+fn section_card(
+    title: &str,
+    rows: impl IntoIterator<Item = Div>,
+    layer: Option<&Layer>,
+    t: &Theme,
+) -> Div {
     div()
         .flex()
         .flex_col()
@@ -502,6 +509,11 @@ impl Manager {
         self.form = None;
         self.menu = None;
         cx.notify();
+    }
+
+    /// The card surfaces' layer: Chromium paints them onto the page while it does not scroll.
+    fn card_layer(&self) -> Option<&Layer> {
+        self.composited.then_some(&self.layer)
     }
 
     fn open_form(&mut self, key: Option<String>, config: Value, cx: &mut Context<Self>) {
@@ -860,7 +872,7 @@ impl Manager {
         }
         let empty = custom.is_empty() && provided.is_empty();
         if !custom.is_empty() {
-            body = body.child(section_card("Servers", custom, &self.layer, t));
+            body = body.child(section_card("Servers", custom, self.card_layer(), t));
         } else if empty {
             body = body.child(section_card(
                 "Servers",
@@ -891,12 +903,12 @@ impl Manager {
                             ),
                         )
                     })],
-                &self.layer,
+                self.card_layer(),
                 t,
             ));
         }
         if !provided.is_empty() {
-            body = body.child(section_card("From plugins", provided, &self.layer, t));
+            body = body.child(section_card("From plugins", provided, self.card_layer(), t));
         }
         if state.reload_required {
             body = body.child(action_button("reload-mcp", "Restart", t).on_activate(
@@ -1392,7 +1404,7 @@ impl Manager {
                         430.,
                         t.text_secondary,
                     ))],
-                &self.layer,
+                self.card_layer(),
                 t,
             );
         }
@@ -1448,7 +1460,7 @@ impl Manager {
                 body = body.child(section_card(
                     group,
                     rows.into_iter().map(|row| div().child(row)),
-                    &self.layer,
+                    self.card_layer(),
                     t,
                 ));
             }
@@ -1606,7 +1618,7 @@ impl Manager {
                     .child(text(description, 12., 16., 430., t.text_secondary))]
                 .into_iter()
                 .chain(rows),
-                &self.layer,
+                self.card_layer(),
                 t,
             ));
         }
@@ -2203,6 +2215,16 @@ impl Render for Manager {
         if !hooks && !state.pending {
             self.select_available_tab(&state);
         }
+        let view = cx.entity().downgrade();
+        window.on_next_frame(move |_, cx| {
+            let _ = view.update(cx, |this, cx| {
+                let composited = this.scroll.max_offset().y > px(0.);
+                if this.composited != composited {
+                    this.composited = composited;
+                    cx.notify();
+                }
+            });
+        });
         let mcp = self.section == "MCP servers";
         let heading = if hooks {
             "Hooks"
@@ -2257,7 +2279,7 @@ impl Render for Manager {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .when(disabled, |d| d.opacity(0.4))
+                    .when(disabled, |d| d.layer().opacity(0.4))
                     .child(icon("settings-hooks-reload", 16., t.text_tertiary))
                     .on_activate(window, cx, move |this, _, cx| {
                         if !disabled {
@@ -2346,7 +2368,8 @@ impl Render for Manager {
                     .id("settings-integrations-page")
                     .flex_1()
                     .overflow_y_scroll()
-                    .layer()
+                    .track_scroll(&self.scroll)
+                    .when(self.composited, |d| d.layer())
                     .child(probe(&self.layer))
                     .child(
                         div()
