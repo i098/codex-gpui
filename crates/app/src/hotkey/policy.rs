@@ -153,7 +153,7 @@ pub(crate) fn refresh(root: &Root, cx: &mut Context<Root>) {
             .await
         }
         .await;
-        let _ = cx.update(|cx| {
+        cx.update(|cx| {
             if cx.global::<super::Runtime>().policy_generation != generation {
                 return;
             }

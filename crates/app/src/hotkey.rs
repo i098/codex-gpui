@@ -317,7 +317,7 @@ fn install_bindings(bindings: Vec<platform::Binding>, cx: &mut App) -> Result<()
     };
     let listener = cx.spawn(async move |cx| {
         while let Ok(event) = receiver.recv().await {
-            let _ = cx.update(|cx| match event.shortcut {
+            cx.update(|cx| match event.shortcut {
                 Shortcut::Spotlight if event.pressed => launch(Target::Spotlight, cx),
                 Shortcut::Popout if event.pressed => launch(Target::Home, cx),
                 Shortcut::ScreenshotCurrent if event.pressed => screenshot(false, cx),
@@ -401,10 +401,10 @@ fn launch(target: Target, cx: &mut App) {
         Target::Spotlight => cx.global::<Runtime>().spotlight,
         _ => None,
     };
-    if let Some(handle) = existing {
-        if windows::show(handle.into(), windows::Presentation::Foreground, cx).is_ok() {
-            return;
-        }
+    if let Some(handle) = existing
+        && windows::show(handle.into(), windows::Presentation::Foreground, cx).is_ok()
+    {
+        return;
     }
     if let Err(error) = open(owner, target, cx) {
         eprintln!("codex-gpui: cannot open popout: {error:#}");
@@ -749,14 +749,14 @@ impl Prepared {
             if let Some(workspace) = self.workspace {
                 host.record_projectless(id, &workspace)?;
             }
-            if self.worktree {
-                if let Err(error) = crate::git_call(
+            if self.worktree
+                && let Err(error) = crate::git_call(
                     &*host,
                     "set-worktree-owner-thread",
                     json!({"worktree": self.cwd, "conversationId": id}),
-                ) {
-                    eprintln!("codex-gpui: cannot record worktree owner: {error:#}");
-                }
+                )
+            {
+                eprintln!("codex-gpui: cannot record worktree owner: {error:#}");
             }
         }
         Ok(())

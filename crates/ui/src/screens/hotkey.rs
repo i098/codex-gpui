@@ -52,6 +52,8 @@ pub struct Options {
     pub environment_error: Option<String>,
 }
 
+type Entry = (String, Option<Change>, Option<Menu>, Option<&'static str>);
+
 impl Options {
     pub fn placeholder(&self) -> String {
         if self.projectless {
@@ -145,10 +147,7 @@ impl Controls {
         cx.notify();
     }
 
-    fn entries(
-        &self,
-        cx: &App,
-    ) -> Vec<(String, Option<Change>, Option<Menu>, Option<&'static str>)> {
+    fn entries(&self, cx: &App) -> Vec<Entry> {
         match self.open.unwrap_or(Menu::Settings) {
             Menu::Settings => {
                 let project = self
