@@ -1028,7 +1028,14 @@ impl app::host::Host for ActivityFixtureHost {
                         .expect("recorded Statsig payload"),
                 )
                 .expect("Statsig JSON");
-                let body = json!({"statsigPayload": json!({"feature_gates": {"4039078146": payload["feature_gates"]["4039078146"]}}).to_string()});
+                // Activity and the Import settings entry; every recorded settings capture shows Import.
+                let gates: serde_json::Map<_, _> = ["4039078146", "3278809559", "2373428540"]
+                    .into_iter()
+                    .filter_map(|id| {
+                        Some((id.to_owned(), payload["feature_gates"].get(id)?.clone()))
+                    })
+                    .collect();
+                let body = json!({"statsigPayload": json!({"feature_gates": gates}).to_string()});
                 json!({"status": 200, "body": body.to_string()})
             });
             return Ok(POLICY.clone());
