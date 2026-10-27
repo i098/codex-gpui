@@ -829,6 +829,8 @@ fn enabling_memory_updates_the_persisted_state_and_the_switch() -> Result<()> {
             .then(|| line["msg"]["result"].clone())
         })
         .context("initial memory features")?;
+    // Opening Settings reads the configuration once before the Memory read.
+    lines.extend(exchange("config/read", initial.clone()));
     lines.extend(exchange("config/read", initial));
     lines.extend(exchange("config/read", enabled));
     lines.extend(exchange("experimentalFeature/list", features));
@@ -936,6 +938,10 @@ impl app::host::Host for WritingSequenceHost {
         })
     }
 
+    fn projects(&self) -> Result<Vec<ui::screens::sidebar::Project>> {
+        Ok(Vec::new())
+    }
+
     fn fetch(&self, request: &app::host::Request) -> Result<Value> {
         let app::host::Request::Http(request) = request else {
             anyhow::bail!("unexpected local request");
@@ -943,7 +949,7 @@ impl app::host::Host for WritingSequenceHost {
         let url = request["url"].as_str().context("HTTP URL")?;
         let body = if url.starts_with("/ps/plugins/canonical-app/") {
             json!({"plugin_id": "writing-plugin"})
-        } else if url.starts_with("/ps/plugins/installed?") {
+        } else if url == "/ps/plugins/installed?limit=1000" {
             let mut states = self.states.lock().unwrap();
             let enabled = if states.len() > 1 {
                 states.pop_front().unwrap()
@@ -1045,11 +1051,12 @@ fn writing_setup_opens_the_sample_draft_without_starting_a_turn() -> Result<()> 
     let mut lines = script(None, |_| {})?;
     for _ in 0..2 {
         lines.extend(exchange("skills/list", json!({"data": []})));
+        // Opening Settings also lists apps before the Writing setup reads them.
+        lines.extend(exchange(
+            "app/list",
+            json!({"data": [], "nextCursor": null}),
+        ));
     }
-    lines.extend(exchange(
-        "app/list",
-        json!({"data": [], "nextCursor": null}),
-    ));
     lines.extend(exchange(
         "plugin/installed",
         json!({"marketplaces": [], "marketplaceLoadErrors": []}),
