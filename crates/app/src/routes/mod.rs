@@ -135,6 +135,18 @@ impl Root {
         self.remember_recent_chat();
         self.flush_settings(cx);
         self.sync_diff_watch(cx);
+        ui::screens::settings::imports::deactivate(cx);
+        if self.ready
+            && matches!(
+                self.state.route,
+                Route::Settings | Route::SettingsSubtree(_)
+            )
+            && cx
+                .try_global::<ui::screens::settings::imports::ImportState>()
+                .is_some_and(|state| state.policy_request == 0)
+        {
+            self.load_import_policy(cx);
+        }
         self.settings_page = None;
         self.suggestion_load = None;
         self.oauth.leave_page();

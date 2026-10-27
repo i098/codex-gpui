@@ -925,7 +925,7 @@ async fn write(bridge: &Bridge, expected_version: Option<&str>, edits: Vec<Value
     Ok(())
 }
 
-fn authorization_url(response: &Value) -> Result<&str> {
+pub(crate) fn authorization_url(response: &Value) -> Result<&str> {
     let url = response["authorizationUrl"]
         .as_str()
         .context("MCP OAuth login returned an empty authorization URL")?;
