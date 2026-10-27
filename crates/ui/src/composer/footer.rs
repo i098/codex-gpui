@@ -298,6 +298,7 @@ impl Composer {
                 }])
             })
             .ml(px(8.))
+            .flex_none()
             .size(px(28.))
             .p(px(2.))
             .flex()
@@ -348,12 +349,27 @@ impl Composer {
                     this.submit(&Submit, window, cx);
                 }
             }));
+        // The original's right group: the model picker's slot is `flex-1 min-w-0` and takes what
+        // the microphone and send (`shrink-0`) leave, so it clips to nothing in a narrow
+        // footer; the fixed pair overflows to the left of the footer's end.
         let right = div()
             .flex()
+            .flex_1()
+            .min_w_0()
+            .justify_end()
             .items_center()
-            .child(model_button)
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .justify_end()
+                    .overflow_hidden()
+                    .child(model_button),
+            )
             .child(
                 pill("dictate", t)
+                    .flex_none()
                     .tab_index(0)
                     .focus_visible(crate::focus::trigger_focus)
                     .w(px(28.))
@@ -361,13 +377,14 @@ impl Composer {
                     .child(footer_icon("mic", t.text)),
             )
             .child(send);
+        // Grid columns: controls, an empty column, then the right group, 5 px apart.
         div()
             .flex()
             .items_center()
-            .justify_between()
+            .gap(px(10.))
             .px(px(8.))
             .pb(px(8.))
-            .child(left)
+            .child(left.min_w_0().flex_shrink(1.))
             .child(right)
     }
 }

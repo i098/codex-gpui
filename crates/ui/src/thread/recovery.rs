@@ -227,6 +227,7 @@ impl Render for History {
                                         ),
                                         (0., f32::from(bounds.top()) - 44.),
                                         true,
+                                        true,
                                         window.scale_factor(),
                                     )
                                 },
