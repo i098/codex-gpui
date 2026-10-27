@@ -211,7 +211,7 @@ fn workspace_navigation_reads_files_without_changing_them() -> Result<()> {
     assert!(!fx.read(|_, cx| file.read(cx).is_preview()));
     fx.menu("View", "Toggle navigation panel")?;
     assert!(!fx.read(|_, cx| file.read(cx).file_tree_open()));
-    fx.menu("View", "Toggle navigation panel")?;
+    fx.keys("cmd-shift-e")?;
     assert!(fx.read(|_, cx| file.read(cx).file_tree_open()));
     let opened = fx.read(|_, cx| file.read(cx).path.clone());
     for path in [
