@@ -174,13 +174,7 @@ fn find_keeps_its_input_focus_after_the_command_menu_closes() -> Result<()> {
 
 #[test]
 fn panel_commands_keep_the_selected_chat_and_existing_tabs() -> Result<()> {
-    let mut lines = script(None, |_| {})?;
-    lines.extend(exchange(
-        "command/exec",
-        json!({"exitCode":0,"stdout":"","stderr":""}),
-    ));
-    lines.extend(exchange("command/exec/resize", json!({})));
-    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    let mut fx = Fx::new()?;
     fx.keys("cmd-2")?;
     fx.wait_thread(SUBTRACT)?;
     command(&mut fx, "Open Changes tab")?;

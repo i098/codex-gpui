@@ -2164,11 +2164,6 @@ fn titlebar_layer(sidebar: Option<Pixels>, header: Div, header_left: Pixels) -> 
 /// Left edge of Chromium's composited `group/titlebar` layer.
 const TITLEBAR_LAYER_X: Pixels = px(224.);
 
-/// The compact titlebar's controls (`compact_controls`): a `w-px` divider, then `Enter full
-/// view` and `Show tabs` (`size-7`), `gap-1.5` apart, inside `pe-2`. The thread's toolbar ends
-/// at the divider.
-const COMPACT_CONTROLS_WIDTH: Pixels = px(1. + 6. + 28. + 6. + 28. + 8.);
-
 /// A thread route (refs/thread): `thread` beside the sidebar; with `panel` (refs/diff,
 /// refs/terminal) the panel view on the right under a titlebar tab `(view, icon, label)`.
 pub fn split_screen(

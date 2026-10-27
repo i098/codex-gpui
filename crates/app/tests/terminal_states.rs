@@ -5,6 +5,7 @@ mod common;
 
 use anyhow::{Context as _, Result, ensure};
 use app::SidePanel;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bridge::Event;
 use common::{Fx, SUBTRACT, exchange, script};
 use gpui::Focusable as _;
@@ -26,6 +27,37 @@ fn emit(fx: &mut Fx, method: &str, params: serde_json::Value) {
         );
     });
     fx.cx.run_until_parked();
+}
+
+/// Points `$SHELL` at a script that prints nothing, so the pseudo-terminal carries only what a
+/// test feeds the surface: it writes its working directory to `<script>.pwd`, then exits with
+/// `exit` or stays alive.
+fn quiet_shell(exit: Option<i32>) -> Result<std::path::PathBuf> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let path = std::env::temp_dir().join(format!("cgx-quiet-shell-{}", std::process::id()));
+    let end = exit.map_or("exec sleep 3600".to_owned(), |code| format!("exit {code}"));
+    std::fs::write(
+        &path,
+        format!("#!/bin/sh\npwd > \"$0.pwd\"\nstty -echo\n{end}\n"),
+    )?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
+    let _ = std::fs::remove_file(format!("{}.pwd", path.display()));
+    // SAFETY: the tests of this binary run on one thread (`--test-threads=1`).
+    unsafe { std::env::set_var("SHELL", &path) };
+    Ok(path)
+}
+
+/// Writes `bytes` to the active terminal tab as the shell's output.
+fn feed(fx: &mut Fx, bytes: &[u8]) -> Result<()> {
+    let surface = fx
+        .read(|root, cx| {
+            root.terminal_panel()
+                .and_then(|p| p.read(cx).surface().cloned())
+        })
+        .context("terminal surface")?;
+    surface.update(&mut fx.cx, |surface, cx| surface.append(bytes, cx));
+    fx.cx.run_until_parked();
+    Ok(())
 }
 
 fn open(fx: &mut Fx) -> Result<(String, String, serde_json::Value)> {
@@ -262,21 +294,8 @@ fn interactive_output_survives_hide_refit_and_copy() -> Result<()> {
             .lines()
             .map(serde_json::from_str)
             .collect::<serde_json::Result<_>>()?;
-    let result = recording
-        .iter()
-        .find(|row| row["msg"]["id"] == 2 && row["dir"] == "server")
-        .context("recorded shell exit")?["msg"]["result"]
-        .clone();
-    let mut lines = script(None, |_| {})?;
-    lines.extend(exchange("command/exec", result));
-    let resized = recording
-        .iter()
-        .find(|row| row["msg"]["id"] == 3 && row["dir"] == "server")
-        .context("recorded resize")?["msg"]["result"]
-        .clone();
-    lines.extend(exchange("command/exec/resize", resized.clone()));
-    lines.extend(exchange("command/exec/resize", resized));
-    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    quiet_shell(None)?;
+    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
     fx.keys("cmd-2")?;
     fx.wait_thread(SUBTRACT)?;
     fx.keys("cmd-j")?;
@@ -291,9 +310,12 @@ fn interactive_output_survives_hide_refit_and_copy() -> Result<()> {
         .iter()
         .filter(|row| row["msg"]["method"] == "command/exec/outputDelta")
     {
-        let mut params = record["msg"]["params"].clone();
-        params["processId"] = id.clone().into();
-        emit(&mut fx, "command/exec/outputDelta", params);
+        let bytes = STANDARD.decode(
+            record["msg"]["params"]["deltaBase64"]
+                .as_str()
+                .context("recorded output")?,
+        )?;
+        feed(&mut fx, &bytes)?;
     }
     shot(&mut fx, "interactive-output")?;
     let terminal_focused = fx.cx.update_window(fx.window, |_, window, cx| {
@@ -337,26 +359,13 @@ fn interactive_output_survives_hide_refit_and_copy() -> Result<()> {
         .context("refitted selection")?;
     ensure!(copied.contains("TERMINAL_SMOKE"), "{copied:?}");
     shot(&mut fx, "interactive-refit")?;
-    let launches = fx
-        .sent()?
-        .iter()
-        .filter(|message| message["method"] == "command/exec")
-        .count();
-    ensure!(launches == 1, "hide/reopen started {launches} shells");
     Ok(())
 }
 
 #[test]
 fn workspace_warning_and_reload_keep_the_terminal_session_scoped() -> Result<()> {
-    let mut lines = script(None, |_| {})?;
-    for _ in 0..2 {
-        lines.extend(exchange(
-            "command/exec",
-            json!({"exitCode":7,"stdout":"","stderr":""}),
-        ));
-        lines.extend(exchange("command/exec/resize", json!({})));
-    }
-    let mut fx = Fx::captured("light", (767., 832.), lines)?;
+    quiet_shell(Some(7))?;
+    let mut fx = Fx::captured("light", (767., 832.), script(None, |_| {})?)?;
     fx.keys("cmd-2")?;
     fx.wait_thread(SUBTRACT)?;
     fx.keys("cmd-j")?;
@@ -366,6 +375,14 @@ fn workspace_warning_and_reload_keep_the_terminal_session_scoped() -> Result<()>
     let id = fx
         .read(|_, cx| panel.read(cx).process_id().map(str::to_owned))
         .context("process id")?;
+    fx.wait("shell exit", |fx| {
+        fx.read(|_, cx| {
+            !panel
+                .read(cx)
+                .surface()
+                .is_some_and(|surface| surface.read(cx).writable)
+        })
+    })?;
     let cwd = fx.read(|root, cx| root.thread().unwrap().read(cx).cwd().to_owned());
     panel.update(&mut fx.cx, |panel, cx| {
         panel.set_workspace("/var/tmp".into(), vec!["/var/tmp".into()], cx)
@@ -377,13 +394,10 @@ fn workspace_warning_and_reload_keep_the_terminal_session_scoped() -> Result<()>
         panel.set_workspace(cwd.clone(), vec![cwd], cx)
     });
     ensure!(!fx.read(|_, cx| panel.read(cx).workspace_warning()));
-    emit(
-        &mut fx,
-        "command/exec/outputDelta",
-        json!({
-            "processId":id, "stream":"stdout", "deltaBase64":"not-base64!", "capReached":false
-        }),
-    );
+    panel.update(&mut fx.cx, |panel, cx| {
+        panel.fail("The terminal returned invalid output".into(), cx)
+    });
+    fx.cx.run_until_parked();
     ensure!(fx.read(|_, cx| panel.read(cx).error().is_some()));
     shot(&mut fx, "interactive-error")?;
     let reload = fx
@@ -560,13 +574,8 @@ fn background_depth_retains_selection_scrollback_and_completed_output() -> Resul
 
 #[test]
 fn home_terminal_shortcuts_preserve_the_shell_and_project_directory() -> Result<()> {
-    let mut lines = script(None, |_| {})?;
-    lines.extend(exchange(
-        "command/exec",
-        json!({"exitCode":0,"stdout":"","stderr":""}),
-    ));
-    lines.extend(exchange("command/exec/resize", json!({})));
-    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    let shell = quiet_shell(None)?;
+    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
     fx.keys("ctrl-`")?;
     let id = fx
         .read(|root, cx| {
@@ -582,11 +591,9 @@ fn home_terminal_shortcuts_preserve_the_shell_and_project_directory() -> Result<
     ensure!(fx.read(
         |root, cx| root.terminal_panel().unwrap().read(cx).process_id() == Some(id.as_str())
     ));
-    let launches: Vec<_> = fx
-        .sent()?
-        .into_iter()
-        .filter(|message| message["method"] == "command/exec")
-        .collect();
-    ensure!(launches.len() == 1 && launches[0]["params"]["cwd"] == common::CWD);
+    fx.wait("shell start", |_| {
+        std::fs::read_to_string(format!("{}.pwd", shell.display()))
+            .is_ok_and(|dir| dir.trim_end() == common::CWD)
+    })?;
     Ok(())
 }

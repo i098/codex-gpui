@@ -12,8 +12,8 @@ use std::{
     collections::HashMap,
     io::{Read, Write},
     sync::{
-        mpsc,
         atomic::{AtomicU64, Ordering},
+        mpsc,
     },
 };
 use theme::ActiveTheme as _;
@@ -197,7 +197,7 @@ impl Root {
         let Some((id, cwd)) = self.terminal_target(cx) else {
             return;
         };
-        if !self.terminal.panels.contains_key(&id) {
+        if let std::collections::hash_map::Entry::Vacant(slot) = self.terminal.panels.entry(id) {
             let panel = cx.new(|cx| TerminalPanel::new(cwd, cx));
             cx.subscribe_in(&panel, window, |root, _, _: &PanelChanged, window, cx| {
                 if root.side == Some(SidePanel::Console)
@@ -210,7 +210,7 @@ impl Root {
                 root.sync_terminal(cx)
             })
             .detach();
-            self.terminal.panels.insert(id, panel);
+            slot.insert(panel);
         }
         if let Some(panel) = self.terminal_panel().cloned()
             && panel.read(cx).sessions.is_empty()
@@ -233,8 +233,11 @@ impl Root {
             self.sync_terminal(cx);
             self.set_side(SidePanel::Console, window, cx);
         }
-        if let Some(panel) = self.terminal_panel() {
-            panel.read(cx).focus(window, cx);
+        let surface = self
+            .terminal_panel()
+            .and_then(|panel| panel.read(cx).surface().cloned());
+        if let Some(surface) = surface {
+            surface.focus_handle(cx).focus(window, cx);
         }
     }
 
@@ -253,7 +256,8 @@ impl Root {
     }
 
     pub fn terminal_visible(&self) -> bool {
-        self.terminal_panel().is_some() && (self.terminal.visible || self.side == Some(SidePanel::Console))
+        self.terminal_panel().is_some()
+            && (self.terminal.visible || self.side == Some(SidePanel::Console))
     }
 
     /// The active tab's screen text.
@@ -269,7 +273,6 @@ impl Root {
                 .join("\n"),
         )
     }
-
 
     pub(crate) fn sync_terminal(&mut self, cx: &mut Context<Self>) {
         let theme_key = if cx.theme().appearance == theme::Appearance::Dark {
@@ -354,10 +357,7 @@ impl Root {
         } else {
             &self.shell
         };
-        shell.update(cx, |shell: &mut Shell, cx| {
-            shell.bottom = bottom;
-            cx.notify();
-        });
+        shell.update(cx, |shell: &mut Shell, cx| shell.set_bottom(bottom, cx));
     }
 
     pub(crate) fn close_focused_terminal(

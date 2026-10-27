@@ -213,7 +213,7 @@ pub struct Shell {
     sidebar: AnyView,
     main: AnyView,
     main_content_inline_inset: Pixels,
-    bottom: Option<AnyView>,
+    pub bottom: Option<AnyView>,
 }
 
 /// The fixture account's 24 px avatar (`rounded-full object-cover` `<img>`), rasterized the way

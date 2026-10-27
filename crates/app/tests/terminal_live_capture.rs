@@ -2,11 +2,8 @@
 #[path = "common/mod.rs"]
 mod common;
 use anyhow::{Context as _, Result, ensure};
-use bridge::{Bridge, Event};
 use common::{Fx, SUBTRACT};
 use serde_json::json;
-use std::io::Write as _;
-use std::process::Command;
 
 fn wait_prompt(fx: &mut Fx) -> Result<()> {
     fx.wait("real shell prompt", |fx| {
@@ -26,48 +23,24 @@ fn wait_prompt(fx: &mut Fx) -> Result<()> {
 }
 
 #[test]
-fn proxy() {
-    common::proxy_child();
-}
-
-#[test]
 #[ignore]
 fn capture_live_terminal() -> Result<()> {
     common::install_panic_hook();
-    let proxy = std::env::var("CGX_TERMINAL_PROXY").context("CGX_TERMINAL_PROXY")?;
-    let record = std::env::var("CGX_TERMINAL_RECORD").context("CGX_TERMINAL_RECORD")?;
     let out = std::path::PathBuf::from(
         std::env::var("CGX_TERMINAL_EVIDENCE").context("CGX_TERMINAL_EVIDENCE")?,
     );
     std::fs::create_dir_all(&out)?;
-    let mut fixture = tempfile::NamedTempFile::new()?;
-    for row in common::script(None, |_| {})? {
-        writeln!(fixture, "{row}")?;
-    }
-    let log = tempfile::NamedTempFile::new()?;
     let home = tempfile::tempdir()?;
     std::fs::write(
         home.path().join(".profile"),
         "PS1='fixture$ '\nexport PS1\n",
     )?;
-    let mut command = Command::new("python3");
-    command
-        .args(["-u", &proxy])
-        .arg(std::env::current_exe()?)
-        .arg(fixture.path())
-        .arg(log.path())
-        .arg(record)
-        .env("CODEX_HOME", home.path())
-        .env("HOME", home.path())
-        .env("SHELL", "/bin/sh");
-    let (bridge, events) = Bridge::spawn(command)?;
-    let mut fx = Fx::boot(
-        "dark",
-        (1280., 832.),
-        bridge,
-        events,
-        common::recorded_host_settings()?,
-    )?;
+    // SAFETY: this ignored test is the only one in its binary.
+    unsafe {
+        std::env::set_var("HOME", home.path());
+        std::env::set_var("SHELL", "/bin/sh");
+    }
+    let mut fx = Fx::captured("dark", (1280., 832.), common::script(None, |_| {})?)?;
     let source_home = tempfile::tempdir()?;
     let directories = std::env::var_os("CGX_SOURCE_DIRECTORIES").is_some();
     if directories {
@@ -124,17 +97,8 @@ fn capture_live_terminal() -> Result<()> {
         let panel = fx
             .read(|root, _| root.terminal_panel().cloned())
             .context("terminal panel")?;
-        let id = fx
-            .read(|_, cx| panel.read(cx).process_id().map(str::to_owned))
-            .context("terminal process")?;
-        fx.root.update(&mut fx.cx, |root, cx| {
-            root.on_event(
-                Event::Notification {
-                    method: "command/exec/outputDelta".into(),
-                    params: json!({"processId":id,"deltaBase64":"not-base64!"}),
-                },
-                cx,
-            )
+        panel.update(&mut fx.cx, |panel, cx| {
+            panel.fail("The terminal returned invalid output".into(), cx)
         });
         fx.cx.run_until_parked();
         fx.shot()?.save(out.join("render-error.png"))?;
