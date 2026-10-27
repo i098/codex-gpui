@@ -310,7 +310,9 @@ impl Fx {
         // No project state yet; a scenario that expects rows installs its own host.
         let host_home = tempfile::tempdir()?;
         let settings = cx.update(|cx| cx.try_global::<app::host_settings::Settings>().cloned());
-        let host = Arc::new(app::host::LocalHost::new(host_home.path()).with_settings(settings));
+        let host = Arc::new(ActivityFixtureHost(
+            app::host::LocalHost::new(host_home.path()).with_settings(settings),
+        ));
         cx.update(|cx| root.update(cx, |root, cx| root.set_host(host, cx)));
         let mut fx = Self {
             cx,
@@ -997,4 +999,107 @@ pub fn open_recorded_sidebar_search(fx: &mut Fx) -> Result<Arc<SidebarSearchHost
         },
     )?;
     Ok(host)
+}
+
+pub struct ActivityFixtureHost(pub app::host::LocalHost);
+
+impl app::host::Host for ActivityFixtureHost {
+    fn fetch(&self, request: &app::host::Request) -> Result<Value> {
+        if matches!(request, app::host::Request::Http(http) if http["url"] == "/wham/statsig/bootstrap")
+        {
+            static POLICY: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
+                let recording: Value =
+                    serde_json::from_str(include_str!("../../../../refs/interactions/host.json"))
+                        .expect("host recording");
+                let response = recording["exchanges"]
+                    .as_array()
+                    .expect("host exchanges")
+                    .iter()
+                    .find(|entry| entry["request"]["request"]["url"] == "/wham/statsig/bootstrap")
+                    .expect("recorded feature gates");
+                let body =
+                    app::host::json_body(&response["response"]).expect("recorded bootstrap body");
+                let payload: Value = serde_json::from_str(
+                    body["statsigPayload"]
+                        .as_str()
+                        .expect("recorded Statsig payload"),
+                )
+                .expect("Statsig JSON");
+                let body = json!({"statsigPayload": json!({"feature_gates": {"4039078146": payload["feature_gates"]["4039078146"]}}).to_string()});
+                json!({"status": 200, "body": body.to_string()})
+            });
+            return Ok(POLICY.clone());
+        }
+        self.0.fetch(request)
+    }
+
+    fn identity(&self) -> Option<app::host::Identity> {
+        Some(app::host::Identity {
+            account_id: "00000000-0000-4000-8000-000000000000".into(),
+            user_id: "user-000000000000000000000000".into(),
+            device_id: "activity-fixture".into(),
+        })
+    }
+
+    fn take_app_tool_events(&self) -> Option<app::host::AppToolEvents> {
+        self.0.take_app_tool_events()
+    }
+
+    fn app_tool_thread_config(&self, thread: &str, source: Option<&str>) -> Result<Option<Value>> {
+        self.0.app_tool_thread_config(thread, source)
+    }
+
+    fn clear_inbox_unreads(&self) -> Result<()> {
+        self.0.clear_inbox_unreads()
+    }
+
+    fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
+        self.0.bind_context_files()
+    }
+
+    fn prepare_projectless(&self, prompt: &str) -> Result<app::host::Workspace> {
+        self.0.prepare_projectless(prompt)
+    }
+
+    fn record_projectless(&self, thread: &str, workspace: &app::host::Workspace) -> Result<()> {
+        self.0.record_projectless(thread, workspace)
+    }
+
+    fn voice_settings(&self) -> Result<app::host::voice::Settings> {
+        self.0.voice_settings()
+    }
+
+    fn computer_use_settings(&self) -> Result<&app::host::computer_use::ComputerUseSettings> {
+        self.0.computer_use_settings()
+    }
+
+    fn computer_use_native(
+        &self,
+    ) -> Option<Arc<app::host::computer_use_native::NativeComputerUse>> {
+        self.0.computer_use_native()
+    }
+
+    fn projects(&self) -> Result<Vec<ui::screens::sidebar::Project>> {
+        self.0.projects()
+    }
+
+    fn terminal_workspaces(&self, thread: &str, cwd: &str) -> Result<Vec<String>> {
+        self.0.terminal_workspaces(thread, cwd)
+    }
+
+    fn review_repositories(
+        &self,
+        thread: &str,
+        cwd: &str,
+    ) -> Result<Vec<ui::screens::diff::panel::ReviewRepository>> {
+        self.0.review_repositories(thread, cwd)
+    }
+
+    fn finish_automation_run(&self, thread: &str, turn: &Value) -> Result<bool> {
+        self.0.finish_automation_run(thread, turn)
+    }
+
+    fn add_project(&self, root: &Path) -> Result<String> {
+        self.0.add_project(root)
+    }
 }

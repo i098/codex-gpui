@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use ui::screens::settings::voice::Policy;
 use url::Url;
 
-fn request(
+pub(crate) fn request(
     host: &dyn host::Host,
     identity: &host::Identity,
     method: &str,
@@ -26,12 +26,10 @@ fn request(
         request["body"] = body.to_string().into();
     }
     let response = host.fetch(&host::Request::Http(request))?;
-    let current = host
-        .identity()
-        .context("Dictation authentication is unavailable")?;
+    let current = host.identity().context("Authentication is unavailable")?;
     ensure!(
         current == *identity,
-        "Dictation authentication changed during the request"
+        "Authentication changed during the request"
     );
     let response = response.get("value").unwrap_or(&response);
     let response = response.pointer("/response/__response").unwrap_or(response);
@@ -39,6 +37,10 @@ fn request(
         return Ok(Value::Null);
     }
     host::json_body(response)
+}
+
+pub(crate) fn consumer_plan(plan: &str) -> bool {
+    matches!(plan, "free" | "go" | "plus" | "prolite" | "pro" | "promax")
 }
 
 fn policy_inputs(
@@ -63,7 +65,7 @@ fn policy_inputs(
             .as_str()
             .context("Missing Statsig payload")?,
     )?;
-    let consumer = matches!(plan, "free" | "go" | "plus" | "prolite" | "pro" | "promax");
+    let consumer = consumer_plan(plan);
     let policy = if consumer {
         Value::Null
     } else {
