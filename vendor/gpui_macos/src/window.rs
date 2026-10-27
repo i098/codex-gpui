@@ -30,8 +30,9 @@ use gpui::{
     Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformFrameSignal, PlatformInput,
     PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    SharedString, Size, SystemWindowTab, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, WindowKind, WindowParams, WindowVisibility, point, px, size,
+    SharedString, Size, SystemWindowTab, TextInputConfiguration, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams,
+    WindowVisibility, point, px, size,
 };
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
@@ -234,6 +235,7 @@ unsafe fn build_classes() {
             );
 
             decl.add_protocol(Protocol::get("NSTextInputClient").unwrap());
+            crate::text_substitutions::register(&mut decl);
             decl.add_method(
                 sel!(validAttributesForMarkedText),
                 valid_attributes_for_marked_text as extern "C" fn(&Object, Sel) -> id,
@@ -1088,6 +1090,7 @@ impl MacWindow {
             let native_view: id = msg_send![VIEW_CLASS, alloc];
             let native_view = NSView::initWithFrame_(native_view, NSView::bounds(content_view));
             assert!(!native_view.is_null());
+            crate::text_substitutions::initialize(native_view);
 
             let state = Arc::new(Mutex::new(MacWindowState {
                 handle,
@@ -1697,7 +1700,21 @@ impl PlatformWindow for MacWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
-        self.0.as_ref().lock().input_handler = Some(input_handler);
+        let focus = input_handler.focus_id();
+        let view = {
+            let mut state = self.0.as_ref().lock();
+            state.input_handler = Some(input_handler);
+            state.native_view
+        };
+        crate::text_substitutions::focus_changed(unsafe { view.as_ref() }, focus);
+    }
+
+    fn set_text_input_configuration(&mut self, configuration: TextInputConfiguration) {
+        let view = self.0.as_ref().lock().native_view;
+        crate::text_substitutions::configure(
+            unsafe { view.as_ref() },
+            configuration.text_substitutions,
+        );
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
@@ -2491,6 +2508,7 @@ extern "C" fn dealloc_window(this: &Object, _: Sel) {
 
 extern "C" fn dealloc_view(this: &Object, _: Sel) {
     unsafe {
+        crate::text_substitutions::destroy(this);
         drop_window_state(this);
         let _: () = msg_send![super(this, class!(NSView)), dealloc];
     }
@@ -3387,7 +3405,10 @@ extern "C" fn selected_range(this: &Object, _: Sel) -> NSRange {
     })
     .flatten();
 
-    selected_range_result.map_or(NSRange::invalid(), |selection| selection.range.into())
+    let range =
+        selected_range_result.map_or(NSRange::invalid(), |selection| selection.range.into());
+
+    range
 }
 
 extern "C" fn first_rect_for_character_range(
@@ -3446,9 +3467,26 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
 
         let text = text.to_str();
         let replacement_range = replacement_range.to_range();
-        with_input_handler(this, |input_handler| {
-            input_handler.replace_text_in_range(replacement_range, text)
-        });
+
+        let inserted = with_input_handler(this, |input_handler| {
+            let before = input_handler.text_length_utf16();
+            let replaced = replacement_range
+                .clone()
+                .or_else(|| input_handler.marked_text_range())
+                .or_else(|| input_handler.selected_text_range(false).map(|s| s.range));
+            input_handler.replace_text_in_range(replacement_range, text);
+            let after = input_handler.text_length_utf16();
+            match (replaced, before, after) {
+                (Some(range), Some(before), Some(after)) => {
+                    crate::text_substitutions::accepted_range(range, before, after)
+                }
+                _ => None,
+            }
+        })
+        .flatten();
+        if let Some(range) = inserted {
+            crate::text_substitutions::inserted(this, range);
+        }
     }
 }
 
@@ -3773,7 +3811,7 @@ fn drag_event_position(window_state: &Mutex<MacWindowState>, dragging_info: id) 
     convert_mouse_position(drag_location, window_state.lock().content_size().height)
 }
 
-fn with_input_handler<F, R>(window: &Object, f: F) -> Option<R>
+pub(super) fn with_input_handler<F, R>(window: &Object, f: F) -> Option<R>
 where
     F: FnOnce(&mut PlatformInputHandler) -> R,
 {

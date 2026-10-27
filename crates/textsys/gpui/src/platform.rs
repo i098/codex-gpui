@@ -2569,6 +2569,8 @@ pub struct TextInputConfiguration {
     pub autocapitalize: Autocapitalize,
     /// Whether software keyboards may offer word suggestions and spellcheck.
     pub suggestions: bool,
+    /// Allow native substitutions for editable, non-secret text.
+    pub text_substitutions: bool,
     /// The action advertised on a software keyboard's confirm ("enter") key.
     pub input_action: TextInputAction,
 }
