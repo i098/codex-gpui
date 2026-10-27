@@ -14,7 +14,9 @@ use crate::Root;
 use gpui::{App, Context, Div};
 
 mod command_destinations;
+mod copy_directory;
 mod keymap;
+mod path_identity;
 pub(crate) mod shortcuts;
 mod workspace;
 pub(crate) use command_destinations::OpenThreadInNewWindow;
@@ -22,7 +24,6 @@ pub(crate) use command_destinations::OpenThreadInNewWindow;
 /// Called by [`crate::init`], after the app's own bindings.
 pub(crate) fn init(cx: &mut App) {
     shortcuts::init(cx);
-    workspace::init(cx);
 }
 
 pub(crate) fn install_shortcuts(cx: &mut App) {
@@ -33,7 +34,10 @@ pub(crate) fn install_shortcuts(cx: &mut App) {
 pub(crate) fn actions(root: Div, owner: &Root, cx: &mut Context<Root>) -> Div {
     workspace::actions(
         shortcuts::actions(
-            command_destinations::actions(crate::windows::actions(root, cx), cx),
+            copy_directory::actions(
+                command_destinations::actions(crate::windows::actions(root, cx), cx),
+                cx,
+            ),
             owner,
             cx,
         ),

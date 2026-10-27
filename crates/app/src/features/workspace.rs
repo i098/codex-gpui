@@ -1,13 +1,6 @@
 use crate::*;
 use ui::{ShowWorkspaceTabView, StepWorkspaceLayout};
 
-pub(super) fn init(cx: &mut App) {
-    cx.bind_keys([
-        KeyBinding::new("cmd-shift-f", ShowWorkspaceTabView, None),
-        KeyBinding::new("cmd-shift-b", StepWorkspaceLayout, None),
-    ]);
-}
-
 pub(super) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
     root.on_action(cx.listener(|this, _: &ShowWorkspaceTabView, window, cx| {
         this.set_workspace_layout(this.workspace_layout.toggle_full(), window, cx);
