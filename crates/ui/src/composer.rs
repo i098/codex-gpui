@@ -2521,28 +2521,32 @@ impl Render for Composer {
                                 .py(px(8.))
                         },
                     )
-                    .when(self.request_parent.is_none() && self.request_compact, |d| {
-                        d.px(px(1.))
-                            .py(px(8.))
-                            .child(shapes::decoration(shapes::Decoration {
-                                radius: Corners::all(Theme::RADIUS_MD),
-                                corner: shapes::Corner::Squircle,
-                                fill: Some(if t.appearance == Appearance::Dark {
-                                    gpui::rgba(0x2d2d2df5).into()
-                                } else {
-                                    t.background_panel
-                                }),
-                                border: Some((
-                                    px(1.),
-                                    if self.focus_handle.is_focused(window) {
-                                        gpui::rgba(0x83c3ffc2).into()
+                    // The select search row is a bare input inside the menu, as in the original.
+                    .when(
+                        self.request_parent.is_none() && self.request_compact && !self.search_field,
+                        |d| {
+                            d.px(px(1.))
+                                .py(px(8.))
+                                .child(shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(Theme::RADIUS_MD),
+                                    corner: shapes::Corner::Squircle,
+                                    fill: Some(if t.appearance == Appearance::Dark {
+                                        gpui::rgba(0x2d2d2df5).into()
                                     } else {
-                                        t.border_strong
-                                    },
-                                )),
-                                ..Default::default()
-                            }))
-                    })
+                                        t.background_panel
+                                    }),
+                                    border: Some((
+                                        px(1.),
+                                        if self.focus_handle.is_focused(window) {
+                                            gpui::rgba(0x83c3ffc2).into()
+                                        } else {
+                                            t.border_strong
+                                        },
+                                    )),
+                                    ..Default::default()
+                                }))
+                        },
+                    )
                     .when(self.request_parent.is_some(), |d| {
                         d.px(px(1.))
                             .py(px(if self.secret {

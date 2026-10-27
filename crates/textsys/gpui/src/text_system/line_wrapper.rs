@@ -1012,7 +1012,8 @@ mod tests {
         assert_eq!(result, text);
         assert_eq!(kept.first().unwrap().len, text.len());
         // Wide enough for the ellipsis and a glyph: truncated as before.
-        let (result, _) = wrapper.truncate_line(text.into(), px(30.), "…", &runs, TruncateFrom::End);
+        let (result, _) =
+            wrapper.truncate_line(text.into(), px(30.), "…", &runs, TruncateFrom::End);
         assert!(result.ends_with('…') && result.len() < text.len() + '…'.len_utf8());
     }
 

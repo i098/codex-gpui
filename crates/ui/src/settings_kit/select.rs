@@ -484,7 +484,8 @@ impl Render for Select {
                                         .items_center()
                                         .gap(px(6.))
                                         .px(px(8.))
-                                        .py(px(5.))
+                                        // The original row: 5 px padding around an 18.57 px input.
+                                        .h(px(28.571_428))
                                         .child(crate::icon::icon("search", 14., t.text_tertiary))
                                         .child(div().flex_1().min_w_0().child(search))
                                 }))

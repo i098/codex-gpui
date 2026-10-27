@@ -7,15 +7,14 @@ There is no release yet.
 ## [Unreleased]
 
 ### Added
-
 - A contributing guide, issue and pull request templates, a security policy, and this changelog.
 - Add Storage usage measurement and safe review before deleting old local chats.
 - Add Import settings for Claude Code and Cursor, with saved sync choices and preserved imported workspaces.
 - Add the native Security workbench for scans, repository history, finding triage, remediation, and source viewing.
 - Add Settings > Connections with saved SSH hosts, SSH discovery, remote-control setup, and `codex://settings/connections/<tab>` deep links.
+- Add the searchable General `Language` menu, which saves `desktop.localeOverride` and clears it with `Auto detect`.
 
 ### Fixed
-
 - Use each window's current account for dictation and stop stalled transcription requests after 60 seconds.
 - Reuse shared bootstrap data for Security startup without extra policy requests or navigation catalog reads.
 - Apply the shared feature and account access checks to activity entry points, and use the configured activity shortcut.
@@ -26,3 +25,4 @@ There is no release yet.
 - Draw the Code Review open-request status dot as the original sub-pixel SVG circle.
 - Group the diff find bar in one composited layer and paint its icons under the bar's rounded overflow clip, as the original does.
 - Clip the diff line-number gutters to the scroller so scrolled-out rows no longer paint over the panel header.
+- Measure text x-height at the requested optical size on macOS so CoreText metrics match the rendered font size
