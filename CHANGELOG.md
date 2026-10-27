@@ -18,6 +18,7 @@ There is no release yet.
 - Add the Cloud environment UI with repository selection and saved setup flows
 
 ### Fixed
+- Draw the bottom terminal panel's tab close glyph once, and snap a selected tab at a fractional position to the device grid as the original does.
 - Show the original Steer, Delete, and menu icons on queued messages, and place the queued-message menu where the original opens it.
 - Match the original Keyboard shortcuts dialog list, search field, keycaps and close icon, and the original Keyboard settings row, menu check and search text offsets.
 - Use one local environment parser for Settings and worktree setup, reject stale saves without losing external edits, and keep a disabled environment selection.

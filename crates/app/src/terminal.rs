@@ -818,11 +818,14 @@ impl Render for TerminalPanel {
             } else {
                 format!("{name} {}", index + 1)
             };
+            let slot_origin = self.strip_left + 8. + slot_width * index as f32;
+            let slot_snap = (slot_origin * 2. + 0.5).floor() / 2. - slot_origin;
             let content = ui::screens::terminal::panel_tab(
                 label.clone().into(),
                 selected,
                 hovered,
                 tab_width,
+                slot_snap,
                 window,
                 cx,
             );
@@ -859,17 +862,9 @@ impl Render for TerminalPanel {
                     .top(px(6.))
                     .right(px(7.))
                     .size(px(20.))
-                    .px_0()
-                    .justify_center()
-                    .child(ui::icon::icon(
-                        "diff-tab-close",
-                        14.,
-                        theme.text_tertiary,
-                    )),
+                    .px_0(),
                 );
             }
-            let slot_origin = self.strip_left + 8. + slot_width * index as f32;
-            let slot_snap = (slot_origin * 2. + 0.5).floor() / 2. - slot_origin;
             if index + 1 < self.sessions.len()
                 && !selected
                 && !hovered

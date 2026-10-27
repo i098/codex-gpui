@@ -30,11 +30,14 @@ gpui::actions!(ui, [StopBackgroundTerminals]);
 /// `hovered` (the caller's 20 px close control at `top-1.5 end-1.75` holds no glyph). The
 /// original blits the selected tab's glyphs onto the translucent fill of its composited
 /// `_SelectedSurface`, and every other glyph of the strip into a layer of its own.
+/// `snap` moves that surface to the device grid: Chromium rounds a composited layer's origin
+/// and keeps its unrounded size.
 pub fn panel_tab(
     label: SharedString,
     selected: bool,
     hovered: bool,
     tab_width: f32,
+    snap: f32,
     window: &Window,
     cx: &App,
 ) -> Div {
@@ -90,9 +93,9 @@ pub fn panel_tab(
                     .child(
                         div()
                             .absolute()
-                            .left(px(1.))
+                            .left(px(1. + snap))
                             .top_0()
-                            .right(px(1.))
+                            .right(px(1. - snap))
                             .h(px(32.))
                             .child(shapes::decoration(shapes::Decoration {
                                 radius: Corners::all(theme::Theme::RADIUS_MD),
