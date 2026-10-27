@@ -69,15 +69,21 @@ The Connections page and protected pairing flows remain separate work.
 
 Run `cargo test -p app --lib --test host ssh_discovery` for the parser and host-service checks.
 
-## Background terminal output
+## Terminals
 
-Background command output displays ANSI colors and supports text selection.
-Copy preserves the selected text without ANSI control bytes.
-Like the original app, the view keeps 1,000 scrollback rows plus the visible screen.
-The terminal fixture in `fixtures/terminal-depth.json` contains recorded `thread/shellCommand` output.
+Open a chat, then choose **View > Open Terminal**.
+Use `Cmd+J` or `Ctrl+\`` to show or hide the bottom panel without restarting its shell.
+The panel sends PTY input, output, resize, and termination through the app-server `command/exec` methods.
+Before typing, use `Option+number` on macOS or `Alt+number` to choose a source directory in a multi-root project.
+The terminal warns when its shell belongs outside the chat's current workspaces.
 
-Run `cargo test -p ui --lib terminal` for parser and command-label checks.
-Run `cargo test -p app --test terminal_states background_ansi_output_supports_selection_and_copy` on macOS for the native selection check.
+Background command tabs retain their output after completion.
+Both terminal views support ANSI colors, text selection, copy, scrollback, HTTP(S) links, and font/theme changes.
+Like the original app, the views keep 1,000 scrollback rows plus the visible screen.
+Output follows the bottom only while the view is already at the bottom.
+The recorded PTY stream in `fixtures/sessions/terminal-shell.jsonl` comes from the bundled macOS app-server.
+Run `cargo test -p app --test terminal_states` on macOS for native terminal checks.
+
 
 ## Recommended skills
 
@@ -574,6 +580,14 @@ The adapter applies window magnification and handles both view orientations.
 Call it on the main thread with the unchanged selection.
 Headless windows return their native-handle error; the adapter has no URL or clipboard fallback.
 
+On macOS, `TextInputConfiguration::text_substitutions` enables native text substitutions for an editable field.
+The composer enables this option only for non-secret text.
+Edit > Substitutions controls smart quotes, smart dashes, and text replacement for the window.
+`NSSpellChecker` supplies the edits; the adapter preserves UTF-16 ranges and the caret.
+Each check requests up to 512 UTF-16 units of context on either side of the accepted edit.
+`cargo run -p app --example native_substitutions` checks the input path in a hidden native window.
+The check uses process-local replacement options without changing shared OS settings or activating the app.
+
 On macOS, `SystemNotification::reply_placeholder` adds a text-input notification action.
 Register `App::on_system_notification_reply` before posting; it receives the notification identifier and reply text on the main thread.
 Without a registered handler, the notification omits the reply field.
@@ -762,7 +776,7 @@ tools/mac.sh -l f2b 'cargo test -p app --test f2b -- --test-threads=1'
 The command menu uses the existing app actions for new chats, archive, Find, navigation, six recent-chat slots, sidebar visibility, panels, and scheduled tasks.
 Find keeps focus in its search field after the menu closes.
 Panel commands keep the selected chat and the existing tabs.
-The terminal command opens an existing background command, not an interactive shell.
+The terminal command opens or hides the interactive bottom panel without restarting its shell.
 Unsupported destinations remain known gaps; this change does not implement logout, git operations, cloud operations, or the project picker.
 Recorded command rows, ranking, and keyboard-editing checks remain unchanged.
 
@@ -806,3 +820,8 @@ Run `cargo test -p app --lib screenshot:: -- --test-threads=1` for isolated capt
 ```sh
 tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch --test s025 --test s025_rank --test s026 -- --test-threads=1'
 ```
+`⌥⌘P` toggles the open chat's pin, `⌥⌘R` renames it and `⌘F` finds in it, all through the keymap. `⌥⌘L` copies the open chat's `codex://threads/{id}` link.
+`Next tab`/`Previous tab` and `⌥⌘W` (close other tabs) apply when focus is inside a side tab. `⌘W` closes the open side tab first; a `closeWindow`-only key closes the window.
+`⌘↩` on Home sends the message in the background: the chat starts and shows in Recents, Home stays open and the draft clears. The `⌘/` dialog lists it on Home only.
+The `⌘/` dialog searches command IDs, titles and descriptions with the same matching rules as the Settings page.
+The Keyboard shortcuts page search controls use their recorded SVG variants; the Settings sidebar keeps its own keyboard glyph.

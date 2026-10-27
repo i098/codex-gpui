@@ -100,6 +100,7 @@ fn reveal<E: InteractiveElement>(e: E, group: &SharedString, color: Hsla) -> E {
 
 impl RenderOnce for UserMessage {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let bubble = user_bubble(&self.id, &self.message, self.find.as_ref(), window, cx);
         let state = window.use_keyed_state(self.id.clone(), cx, |_, cx| MessageActions {
             copied: false,
             focus: cx.focus_handle(),
@@ -190,30 +191,6 @@ impl RenderOnce for UserMessage {
                     }),
             );
         // Keep the existing 30 px reserve: revealing controls must not move the transcript.
-        let bubble = match &self.find {
-            None => user_bubble(&self.message, t),
-            Some(find) => div().flex().flex_col().items_end().pb(px(30.)).child(
-                div()
-                    .relative()
-                    .max_w(relative(0.7))
-                    .py(px(10.))
-                    .px(px(16.))
-                    .child(shapes::decoration(shapes::Decoration {
-                        radius: Corners::all(px(22.)),
-                        corner: shapes::Corner::Squircle,
-                        fill: Some(t.user_message_background),
-                        ..Default::default()
-                    }))
-                    .child(
-                        div()
-                            .text_size(px(14.))
-                            .line_height(px(22.75))
-                            .font_weight(FontWeight(430.))
-                            .text_color(white())
-                            .child(find.text(&self.message, 0)),
-                    ),
-            ),
-        };
         bubble
             .relative()
             .id(self.id)
@@ -399,21 +376,66 @@ pub struct ForkThread(pub String);
 #[action(namespace = thread, no_json)]
 pub struct RevertTurn(pub String);
 
+/// A press inside the conversation of thread `id`: the original marks the open thread read.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = thread, no_json)]
+pub struct ThreadPressed(pub String);
+
 /// Copy, Read aloud, Rate response, Fork chat from here: shown under the latest turn; earlier
 /// turns (group `group`) show them on hover.
 /// ponytail: Read aloud (ChatGPT voice playback) and Rate response (feedback menu) have no
 /// handler; wire them with a voice backend and the feedback menu.
+/// Focus handles of a turn's buttons. The original's `group-focus-within` shows a turn's hover
+/// UI (action row time, diff card subtitle) while any of them has focus.
+#[derive(Clone)]
+pub(super) struct TurnFocus {
+    pub thread_id: String,
+    pub undo: FocusHandle,
+    pub view: FocusHandle,
+    pub copy: FocusHandle,
+    pub fork: FocusHandle,
+    /// One of them has focus.
+    pub engaged: bool,
+}
+
+impl TurnFocus {
+    pub(super) fn new(
+        thread_id: String,
+        undo: FocusHandle,
+        view: FocusHandle,
+        copy: FocusHandle,
+        fork: FocusHandle,
+        window: &Window,
+    ) -> Self {
+        let engaged = [&undo, &view, &copy, &fork]
+            .iter()
+            .any(|handle| handle.is_focused(window));
+        Self {
+            thread_id,
+            undo,
+            view,
+            copy,
+            fork,
+            engaged,
+        }
+    }
+}
+
+/// `sent_at` is the turn's `Wednesday 9:54 PM`, shown beside the actions on hover or focus.
 pub(super) fn action_row(
     last: bool,
     group: &SharedString,
     turn_id: &str,
     answer: &str,
+    sent_at: Option<String>,
+    focus: &TurnFocus,
     t: &Theme,
 ) -> Div {
+    let engaged = focus.engaged;
     let action = |name: &'static str| {
         let color = t.text_tertiary;
         // `Icon` folds its own opacity into the color, so the hover sets the color.
-        let icon = if last {
+        let icon = if last || engaged {
             icon(name, 16., color)
         } else {
             icon(name, 16., color.opacity(0.))
@@ -431,16 +453,17 @@ pub(super) fn action_row(
     div()
         .mt(px(6.))
         .ml(px(-4.))
-        .h(px(26.))
+        .min_h(px(26.))
         .flex()
+        .flex_wrap()
+        .items_center()
         .gap(px(2.))
         .child(tooltip(
             action("thread-copy")
                 .id("copy-response")
                 .aria_label("Copy")
                 .role(gpui::Role::Button)
-                .focusable()
-                .tab_index(0)
+                .track_focus(&focus.copy)
                 .on_click(move |_, _, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(answer.clone()));
                     #[cfg(target_os = "macos")]
@@ -476,8 +499,7 @@ pub(super) fn action_row(
                 .id("fork-thread")
                 .aria_label("Fork chat from here")
                 .role(gpui::Role::Button)
-                .focusable()
-                .tab_index(0)
+                .track_focus(&focus.fork)
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(Box::new(ForkThread(turn_id.clone())), cx)
                 }),
@@ -485,6 +507,22 @@ pub(super) fn action_row(
             None,
             Side::Top,
         ))
+        .children(sent_at.map(|time| {
+            let mut stamp = div()
+                .ml(px(6.))
+                .h(px(20.))
+                .flex()
+                .items_center()
+                .child(text(time, 12., 16., 430., t.text_tertiary));
+            stamp = if engaged {
+                stamp
+            } else {
+                stamp
+                    .invisible()
+                    .group_hover(group.clone(), |s| s.visible())
+            };
+            stamp
+        }))
 }
 
 #[cfg(all(test, target_os = "macos"))]
