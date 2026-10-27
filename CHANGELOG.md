@@ -12,6 +12,7 @@ There is no release yet.
 - Add Storage usage measurement and safe review before deleting old local chats.
 - Add Import settings for Claude Code and Cursor, with saved sync choices and preserved imported workspaces.
 - Add the native Security workbench for scans, repository history, finding triage, remediation, and source viewing.
+- Add the searchable General `Language` menu, which saves `desktop.localeOverride` and clears it with `Auto detect`.
 
 ### Fixed
 
