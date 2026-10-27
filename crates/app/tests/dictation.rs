@@ -249,7 +249,7 @@ fn closed_composer_cannot_retarget_a_late_result_to_another_window() -> Result<(
     let (sender, events) = async_channel::unbounded();
     let (commands, _receiver) = mpsc::channel();
     fx.cx.update(|cx| {
-        cx.set_global(Dispatcher::new(move || {
+        cx.set_global(Dispatcher::new(move |_, _| {
             Ok(Session {
                 commands: commands.clone(),
                 events: events.clone(),

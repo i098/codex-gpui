@@ -372,12 +372,20 @@ impl<'a> Iterator for BatchIterator<'a> {
                 Some(PrimitiveBatch::Shadows(shadows_start..shadows_end))
             }
             PrimitiveKind::Quad => {
+                #[cfg(target_vendor = "apple")]
+                let layered = self.quads_iter.peek().unwrap().layers != [0; 4];
                 let quads_start = self.quads_start;
                 let mut quads_end = quads_start + 1;
                 self.quads_iter.next();
                 while self
                     .quads_iter
-                    .next_if(|quad| (quad.order, batch_kind) < max_order_and_kind)
+                    .next_if(|quad| {
+                        #[cfg(target_vendor = "apple")]
+                        if (quad.layers != [0; 4]) != layered {
+                            return false;
+                        }
+                        (quad.order, batch_kind) < max_order_and_kind
+                    })
                     .is_some()
                 {
                     quads_end += 1;
@@ -566,6 +574,10 @@ impl PrimitiveBatch {
 pub struct Quad {
     pub order: DrawOrder,
     pub border_style: BorderStyle,
+    #[cfg(target_vendor = "apple")]
+    pub layers: [u16; 4],
+    #[cfg(target_vendor = "apple")]
+    pub dither_offset: Point<ScaledPixels>,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub background: Background,
