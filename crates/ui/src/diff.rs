@@ -99,6 +99,9 @@ const MIN_CHAT: f32 = 320.;
 /// `--diffs-font-size`, `--diffs-line-height`.
 const CODE_SIZE: f32 = 12.;
 const CODE_LINE: f32 = 21.6;
+/// The row box: Blink rounds the 1.8 line height to 2765/64 device px at 2x, while an authored
+/// length truncates (`to_taffy`), so 21.6 would leave each row 1/64 px short.
+const CODE_ROW: f32 = 2765. / 128.;
 const FILE_LINE_HEIGHT: f32 = 22.;
 /// Menlo advance at 12 px (0.602em); `--diffs-min-number-column-width` is 4ch.
 const CH: f32 = 7.224_609_4;
@@ -3333,7 +3336,13 @@ fn change_marker(kind: Kind, split: bool, t: &Theme) -> Div {
     } else {
         t.git_deleted
     };
-    let marker = div().absolute().left_0().top_0().w(px(4.)).h_full();
+    // The original's `contain: strict` marker ends two device px (at 2x) above the row box.
+    let marker = div()
+        .absolute()
+        .left_0()
+        .top_0()
+        .bottom(px(1. / 64.))
+        .w(px(4.));
     if kind != Kind::Removed || split {
         return marker.child(shapes::decoration(Decoration {
             fill: Some(color),
@@ -3411,8 +3420,8 @@ fn hunk(
                bar: Option<Kind>,
                utility: Option<gpui::AnyElement>| {
         div()
-            .h(px(CODE_LINE))
-            .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_LINE)))
+            .h(px(CODE_ROW))
+            .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_ROW)))
             .flex()
             .gap(px(2.))
             .child(
@@ -3444,7 +3453,7 @@ fn hunk(
                     .relative()
                     .flex_1()
                     .h_full()
-                    .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_LINE)).min_w_0())
+                    .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_ROW)).min_w_0())
                     .flex()
                     .items_center()
                     .when(panel.wrap, |d| d.flex_col().items_stretch())
@@ -3686,7 +3695,7 @@ fn hunk(
                                 .flex_1()
                                 .min_w_0()
                                 .overflow_hidden()
-                                .min_h(px(CODE_LINE))
+                                .min_h(px(CODE_ROW))
                                 .children(old.map(|i| {
                                     render_line(
                                         &h.lines[i],
@@ -3701,7 +3710,7 @@ fn hunk(
                                 .flex_1()
                                 .min_w_0()
                                 .overflow_hidden()
-                                .min_h(px(CODE_LINE))
+                                .min_h(px(CODE_ROW))
                                 .children(new.map(|i| {
                                     render_line(
                                         &h.lines[i],
