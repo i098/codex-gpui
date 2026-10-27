@@ -6873,6 +6873,15 @@ impl Render for Root {
                 },
             ))
             .on_action(cx.listener(
+                |this, action: &settings::integrations::OpenMcpSettings, window, cx| {
+                    this.open_settings_section("MCP servers", window, cx);
+                    this.settings_integrations.update(cx, |state, cx| {
+                        state.mcp_search = Some(action.0.clone());
+                        cx.notify();
+                    });
+                },
+            ))
+            .on_action(cx.listener(
                 |this, action: &settings::integrations::OpenExtensionDirectory, window, cx| {
                     this.open_plugins(action.0, window, cx);
                 },

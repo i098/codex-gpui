@@ -1447,7 +1447,7 @@ impl Render for SettingsPane {
         if section == "Storage" {
             return self.storage.clone().into_any_element();
         }
-        if matches!(section, "Plugins" | "Hooks") {
+        if matches!(section, "Plugins" | "Hooks" | "MCP servers") {
             return integrations::render(
                 section,
                 self.page.read(cx).integrations.clone(),
