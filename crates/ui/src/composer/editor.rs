@@ -737,6 +737,8 @@ impl Composer {
         div()
             .px(px(if self.search_field || comment {
                 0.
+            } else if self.small_input {
+                8.
             } else if self.compact_text() {
                 10.
             } else {
@@ -782,6 +784,7 @@ impl Composer {
             } else {
                 430.
             }))
+            .when(self.monospace, |d| d.font_family(crate::MONO))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_click))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -796,7 +799,8 @@ impl Composer {
                             self.content.is_empty()
                                 && self.embedded_field.is_none()
                                 && !self.search_field
-                                && !compact_settings,
+                                && !compact_settings
+                                && !self.input_style,
                             |d| d.opacity(0.5),
                         )
                         .when(

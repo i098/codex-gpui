@@ -791,6 +791,12 @@ pub struct Composer {
     dictation_error: Option<String>,
     embedded_field: Option<EmbeddedField>,
     on_settings_paste: Option<SettingsPasteHandler>,
+    /// Script and command fields use the original code textarea's monospace text.
+    monospace: bool,
+    /// A textarea in the original settings input style: strong border, unfaded placeholder.
+    input_style: bool,
+    /// The original's 28 px settings input (`h-7`, 8 px inline padding).
+    small_input: bool,
 }
 
 impl Composer {
@@ -889,6 +895,9 @@ impl Composer {
             dictation_error: None,
             embedded_field: None,
             on_settings_paste: None,
+            monospace: false,
+            input_style: false,
+            small_input: false,
         }
     }
 
@@ -998,6 +1007,26 @@ impl Composer {
 
     pub fn with_field_min_height(mut self, height: Pixels) -> Self {
         self.field_min_height = height;
+        self
+    }
+
+    pub fn input_style(mut self) -> Self {
+        self.input_style = true;
+        self
+    }
+
+    pub fn small_input(mut self) -> Self {
+        self.small_input = true;
+        self
+    }
+
+    pub fn monospace_field(mut self) -> Self {
+        self.monospace = true;
+        self
+    }
+
+    pub fn field_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.request_label = Some(label.into());
         self
     }
 
@@ -1489,7 +1518,11 @@ impl Composer {
         &self.placeholder
     }
 
-    pub(crate) fn set_placeholder(&mut self, placeholder: &'static str, cx: &mut Context<Self>) {
+    pub(crate) fn set_placeholder(
+        &mut self,
+        placeholder: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
         self.placeholder = placeholder.into();
         cx.notify();
     }
@@ -2110,7 +2143,7 @@ pub fn label(s: impl Into<SharedString>, color: Hsla) -> Div {
 }
 
 /// The model name sits in a `tabular-nums` span (`GPT-6`'s digit takes its tabular advance).
-fn tabular(d: Div) -> Div {
+pub(crate) fn tabular(d: Div) -> Div {
     d.font_features(gpui::FontFeatures(std::sync::Arc::new(vec![(
         "tnum".into(),
         1,
@@ -2525,6 +2558,8 @@ impl Render for Composer {
             let card = if self.textarea() {
                 let border = if self.focus_handle.is_focused(window) {
                     gpui::rgb(0x3a83f7).into()
+                } else if self.input_style {
+                    t.border_strong
                 } else {
                     t.border
                 };
@@ -2636,7 +2671,7 @@ impl Render for Composer {
                         self.request_parent.is_none() && self.request_compact && !self.search_field,
                         |d| {
                             d.px(px(1.))
-                                .py(px(8.))
+                                .py(px(if self.small_input { 4. } else { 8. }))
                                 .child(shapes::decoration(shapes::Decoration {
                                     radius: Corners::all(Theme::RADIUS_MD),
                                     corner: shapes::Corner::Squircle,
