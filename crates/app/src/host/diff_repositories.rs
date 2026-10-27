@@ -77,7 +77,7 @@ pub(super) fn discover(home: &Path, thread: &str, cwd: &str) -> Result<Vec<Revie
         if assignment["projectKind"] == "local" {
             assignment["projectId"]
                 .as_str()
-                .and_then(|id| projects.get(id))
+                .and_then(|id| projects.values().find(|project| project["id"] == id))
         } else {
             projects
                 .values()
@@ -103,32 +103,30 @@ pub(super) fn discover(home: &Path, thread: &str, cwd: &str) -> Result<Vec<Revie
         .filter_map(Value::as_str)
         .map(PathBuf::from)
         .collect::<Vec<_>>();
-    if !candidates
-        .iter()
-        .any(|root| root.canonicalize().is_ok_and(|root| cwd.starts_with(root)))
-    {
-        candidates.push(cwd.to_path_buf());
-    }
+    candidates.push(cwd.to_path_buf());
     let mut seen = HashSet::new();
-    let mut choices = Vec::new();
+    let mut choices: Vec<ReviewRepository> = Vec::new();
     for candidate in candidates {
         ensure!(candidate.is_absolute(), "project roots must be absolute");
         let Some(root) = git_root(&candidate)? else {
             continue;
         };
+        let candidate = candidate.canonicalize().context("resolve project path")?;
         if !seen.insert(root.clone()) {
+            if candidate == cwd
+                && let Some(selected) = choices
+                    .iter_mut()
+                    .find(|choice| Path::new(&choice.root) == root)
+            {
+                selected.cwd = candidate.to_string_lossy().into_owned();
+            }
             continue;
         }
         let name = root
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_else(|| root.display().to_string());
-        let directory = if cwd.starts_with(&root) {
-            cwd
-        } else {
-            candidate.as_path()
-        };
-        choices.push(choice(&root, directory, name));
+        choices.push(choice(&root, &candidate, name));
     }
     let mut worktrees = Vec::new();
     for repository in &choices {

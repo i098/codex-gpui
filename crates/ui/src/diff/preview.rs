@@ -23,6 +23,8 @@ pub struct PreviewRequest {
     pub source: PreviewSource,
     pub page: usize,
     pub width: u32,
+    /// Device px per CSS px at request time.
+    pub scale: f32,
     pub pdf: bool,
     pub data: Option<Arc<Vec<u8>>>,
 }
@@ -42,7 +44,8 @@ impl PreviewContent {
         svg: SvgRenderer,
     ) -> anyhow::Result<Self> {
         if request.pdf {
-            let (pixels, pages) = super::pdf::render(&bytes, request.page, request.width)?;
+            let (pixels, pages) =
+                super::pdf::render(&bytes, request.page, request.width, request.scale)?;
             let mut bgra = pixels.clone();
             for pixel in bgra.pixels_mut() {
                 pixel.0.swap(0, 2);
@@ -334,6 +337,7 @@ impl DiffPanel {
             source,
             page: value.page,
             width: preview.raster_width(width, scale),
+            scale,
             pdf: preview.pdf,
             data: value.content.as_ref().and_then(|value| value.data.clone()),
         }));
@@ -437,17 +441,7 @@ impl DiffPanel {
                         "Image preview"
                     })
                     .relative()
-                    .child(shapes::decoration(Decoration {
-                        radius: Corners::all(px(7.5)),
-                        shadows: vec![shapes::Shadow {
-                            color: gpui::black().opacity(20. / 255.),
-                            offset: point(px(0.), px(1.)),
-                            blur: px(2.),
-                            spread: px(-1.),
-                            inset: false,
-                        }],
-                        ..Default::default()
-                    }))
+                    .child(shapes::decoration(frame(None)))
                     .child(picture)
                     .into_any_element()
             } else {
@@ -588,6 +582,11 @@ fn picture(
         |_, _, _| {},
         move |bounds, (), window, _cx| {
             let scale = window.scale_factor();
+            let snap = |value: Pixels| px((f32::from(value) * scale).round() / scale);
+            let at = Bounds::from_corners(
+                point(snap(bounds.left()), snap(bounds.top())),
+                point(snap(bounds.right()), snap(bounds.bottom())),
+            );
             let cached = cache
                 .borrow()
                 .as_ref()
@@ -600,25 +599,22 @@ fn picture(
                     bounds.size - size(padding * 2., padding * 2.),
                 );
                 if pdf {
-                    destination.size.width = destination.size.width.floor();
+                    // The canvas's own device px, painted 1:1 from the box's snapped origin.
+                    let (w, h) = pixels.dimensions();
+                    let canvas = size(px(w as f32 / scale), px(h as f32 / scale));
+                    destination = Bounds::new(at.origin, canvas);
                 }
-                let image = Arc::new(shapes::raster_images(
+                let image = Arc::new(shapes::raster_decorated_images(
                     &[(&pixels, destination)],
                     bounds,
-                    Corners::all(px(7.5)),
-                    shapes::Corner::Round,
-                    shapes::ImageComposition::Direct(if svg || pdf { gpui::white() } else { page }),
+                    &frame((svg || pdf).then(gpui::white)),
+                    shapes::ImageComposition::Direct(page),
                     window,
                 )?);
                 *cache.borrow_mut() = Some((bounds, scale, page, image.clone()));
                 Some(image)
             });
             if let Some(image) = image {
-                let snap = |value: Pixels| px((f32::from(value) * scale).round() / scale);
-                let at = Bounds::from_corners(
-                    point(snap(bounds.left()), snap(bounds.top())),
-                    point(snap(bounds.right()), snap(bounds.bottom())),
-                );
                 window
                     .paint_image(at, at, Corners::default(), image, 0, false)
                     .ok();
@@ -636,6 +632,22 @@ fn picture(
             }
         },
     )
+}
+
+/// The preview box (`overflow-hidden rounded-sm shadow-sm`; PDF and svg pages on white).
+fn frame(fill: Option<Hsla>) -> Decoration {
+    Decoration {
+        radius: Corners::all(px(7.5)),
+        fill,
+        shadows: vec![shapes::Shadow {
+            color: gpui::black().opacity(20. / 255.),
+            offset: point(px(0.), px(1.)),
+            blur: px(2.),
+            spread: px(-1.),
+            inset: false,
+        }],
+        ..Default::default()
+    }
 }
 
 #[cfg(test)]

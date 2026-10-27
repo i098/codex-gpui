@@ -7,7 +7,10 @@ impl Composer {
             return div();
         };
         let efforts = model.efforts.clone();
-        let selected = efforts.iter().position(|e| *e == self.effort).unwrap_or(0);
+        let selected = efforts
+            .iter()
+            .position(|e| e == self.displayed_effort())
+            .unwrap_or(0);
         let corner = |id: &'static str, name: &'static str, color: Hsla| {
             let hover = t.ghost_hover;
             div()
@@ -80,7 +83,7 @@ impl Composer {
                             .flex_col()
                             .items_center()
                             .child(text(
-                                effort_label(&self.effort).to_string(),
+                                effort_label(self.displayed_effort()).to_string(),
                                 14.,
                                 20.,
                                 500.,
@@ -216,7 +219,7 @@ impl Composer {
                                 .w(px(step))
                                 .h_full()
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.effort = effort.clone();
+                                    this.effort = Some(effort.clone());
                                     this.picked(cx);
                                     cx.notify();
                                 }))
@@ -457,13 +460,19 @@ impl Composer {
             }))
             .child(menu);
         let slot = div().absolute().bottom(px(36.)).flex();
+        // The original's popper places the menu with `transform: translate()` rounded to device
+        // px (floating-ui `roundByDPR`), so its origin keeps no fraction of the anchor's.
         deferred(match center_width {
-            Some(w) => slot
-                .left_0()
-                .right_0()
-                .justify_center()
-                .child(div().flex_none().w(px(w)).pl(px(1.)).pb(px(1.)).child(menu)),
-            None => slot.left_0().child(menu),
+            Some(w) => slot.left_0().right_0().justify_center().child(
+                div()
+                    .flex_none()
+                    .w(px(w))
+                    .pl(px(1.))
+                    .pb(px(1.))
+                    .snap_origin()
+                    .child(menu),
+            ),
+            None => slot.left_0().child(menu.snap_origin()),
         })
         .with_priority(1)
         .into_any_element()

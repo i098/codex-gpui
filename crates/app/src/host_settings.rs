@@ -50,6 +50,32 @@ impl Settings {
         self.update(key, |_| Ok(value))
     }
 
+    /// Writes every pair under one lock and one save; a failed save restores all of them.
+    pub fn write_batch<'a>(
+        &mut self,
+        pairs: impl IntoIterator<Item = (&'a str, Value)>,
+    ) -> Result<()> {
+        let mut values = self.read_all();
+        let previous: Vec<_> = pairs
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), values.insert(key.to_owned(), value)))
+            .collect();
+        if let Err(error) = self.save(&values) {
+            for (key, value) in previous.into_iter().rev() {
+                match value {
+                    Some(value) => {
+                        values.insert(key, value);
+                    }
+                    None => {
+                        values.remove(&key);
+                    }
+                }
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
     pub(crate) fn update(
         &mut self,
         key: &str,

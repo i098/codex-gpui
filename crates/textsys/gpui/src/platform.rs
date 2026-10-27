@@ -1446,6 +1446,9 @@ pub trait PlatformHeadlessRenderer {
 
     /// Returns the sprite atlas used by this renderer.
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+
+    /// Clears to transparent instead of opaque black, as a transparent window does.
+    fn set_transparent(&mut self, _transparent: bool) {}
 }
 
 /// Type alias for runnables with metadata.
@@ -1528,6 +1531,18 @@ pub trait PlatformTextSystem: Send + Sync {
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
     /// Get the advance width for a glyph.
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>>;
+    /// Returns the glyph advance at the requested logical size, without layout spacing.
+    fn advance_at_size(
+        &self,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+    ) -> Result<Size<Pixels>> {
+        Ok(
+            self.advance(font_id, glyph_id)? / self.font_metrics(font_id).units_per_em as f32
+                * font_size,
+        )
+    }
     /// Get the glyph ID for a character.
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
     /// Get raster bounds for a glyph.
@@ -1540,6 +1555,16 @@ pub trait PlatformTextSystem: Send + Sync {
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     /// Layout a line of text with the given font runs.
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+    /// Layout text using the window's device scale for native metric rounding.
+    fn layout_line_with_scale(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+        _scale_factor: f32,
+    ) -> LineLayout {
+        self.layout_line(text, font_size, runs)
+    }
     /// Returns the recommended text rendering mode for the given font and size.
     fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
     -> TextRenderingMode;
@@ -2126,7 +2151,16 @@ impl PlatformInputHandler {
 
     pub fn bounds_for_range(&mut self, range_utf16: Range<usize>) -> Option<Bounds<Pixels>> {
         self.cx
-            .update(|window, cx| self.handler.bounds_for_range(range_utf16, window, cx))
+            .update(|window, cx| {
+                self.handler
+                    .bounds_for_range(range_utf16, window, cx)
+                    .map(|bounds| {
+                        Bounds::new(
+                            bounds.origin.map(|value| value * window.ui_scale()),
+                            bounds.size.map(|value| value * window.ui_scale()),
+                        )
+                    })
+            })
             .ok()
             .flatten()
     }
@@ -2134,8 +2168,14 @@ impl PlatformInputHandler {
     pub fn selection_bounds_for_range(&mut self, range_utf16: Range<usize>) -> Vec<Bounds<Pixels>> {
         self.cx
             .update(|window, cx| {
-                self.handler
-                    .selection_bounds_for_range(range_utf16, window, cx)
+                let mut bounds = self
+                    .handler
+                    .selection_bounds_for_range(range_utf16, window, cx);
+                for bounds in &mut bounds {
+                    bounds.origin = bounds.origin.map(|value| value * window.ui_scale());
+                    bounds.size = bounds.size.map(|value| value * window.ui_scale());
+                }
+                bounds
             })
             .unwrap_or_default()
     }
@@ -2203,7 +2243,13 @@ impl PlatformInputHandler {
     #[allow(unused)]
     pub fn character_index_for_point(&mut self, point: Point<Pixels>) -> Option<usize> {
         self.cx
-            .update(|window, cx| self.handler.character_index_for_point(point, window, cx))
+            .update(|window, cx| {
+                self.handler.character_index_for_point(
+                    point.map(|value| value / window.ui_scale()),
+                    window,
+                    cx,
+                )
+            })
             .ok()
             .flatten()
     }
@@ -2526,6 +2572,8 @@ pub struct TextInputConfiguration {
     pub autocapitalize: Autocapitalize,
     /// Whether software keyboards may offer word suggestions and spellcheck.
     pub suggestions: bool,
+    /// Allow native substitutions for editable, non-secret text.
+    pub text_substitutions: bool,
     /// The action advertised on a software keyboard's confirm ("enter") key.
     pub input_action: TextInputAction,
 }

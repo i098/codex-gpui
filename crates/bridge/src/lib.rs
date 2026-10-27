@@ -19,6 +19,8 @@ pub use automation::AutomationTurn;
 mod cloud;
 pub use cloud::CLOUD_ENDPOINT;
 mod replay;
+pub mod security;
+pub mod storage;
 pub mod types;
 
 use std::collections::HashMap;
@@ -50,6 +52,8 @@ pub enum Event {
         method: String,
         params: Value,
     },
+    /// A spawned server process exited (stdout closed); replayed transcripts never send it.
+    Closed,
 }
 
 /// JSON-RPC error returned by the server; reach it with `err.downcast_ref::<RpcError>()`.
@@ -90,15 +94,15 @@ impl Drop for PendingRequest<'_> {
 
 /// Where a [`Bridge`] sends the client's requests, notifications and answers.
 trait Backend: Send {
-    fn send(&mut self, msg: &Value) -> Result<()>;
+    fn send(&mut self, msg: Value) -> Result<()>;
 }
 
 /// Newline-delimited JSON as is: the `codex app-server` transport.
 struct Lines(Box<dyn Write + Send>);
 
 impl Backend for Lines {
-    fn send(&mut self, msg: &Value) -> Result<()> {
-        let mut line = serde_json::to_string(msg)?;
+    fn send(&mut self, msg: Value) -> Result<()> {
+        let mut line = serde_json::to_string(&msg)?;
         line.push('\n');
         self.0.write_all(line.as_bytes())?;
         self.0.flush()?;
@@ -188,6 +192,7 @@ pub struct Bridge {
     initialized: async_lock::Mutex<Option<InitializeResponse>>,
     child: Option<Child>,
     acp: bool,
+    cloud_account_id: Option<String>,
     automation_turns: Mutex<HashMap<String, Arc<AutomationTurn>>>,
     subscribers: Subscribers,
 }
@@ -264,7 +269,14 @@ impl Bridge {
     ) -> (Bridge, Receiver<Event>) {
         let (sink, events) = Sink::new();
         let listener = sink.clone();
-        std::thread::spawn(move || read_loop(BufReader::new(read), &listener));
+        let spawned = child.is_some();
+        std::thread::spawn(move || {
+            read_loop(BufReader::new(read), &listener);
+            if spawned {
+                listener.event(Event::Closed);
+            }
+            listener.close();
+        });
         let backend = Box::new(Lines(Box::new(write)));
         (Self::new(backend, sink, child, false), events)
     }
@@ -288,6 +300,7 @@ impl Bridge {
             next_id: AtomicI64::new(1),
             child,
             acp,
+            cloud_account_id: None,
             automation_turns: Mutex::new(HashMap::new()),
             subscribers: sink.subscribers,
         }
@@ -350,7 +363,7 @@ impl Bridge {
             id,
             pending: &self.pending,
         };
-        self.write(&msg)?;
+        self.write(msg)?;
         let result = rx
             .recv()
             .await
@@ -359,15 +372,15 @@ impl Bridge {
     }
 
     pub fn notify(&self, method: &str, params: impl Serialize) -> Result<()> {
-        self.write(&message(method, params)?)
+        self.write(message(method, params)?)
     }
 
     /// Answers a server [`Event::Request`].
     pub fn respond(&self, id: Value, result: impl Serialize) -> Result<()> {
-        self.write(&json!({ "id": id, "result": serde_json::to_value(result)? }))
+        self.write(json!({ "id": id, "result": serde_json::to_value(result)? }))
     }
 
-    fn write(&self, msg: &Value) -> Result<()> {
+    fn write(&self, msg: Value) -> Result<()> {
         self.backend.lock().send(msg)
     }
 
@@ -486,7 +499,6 @@ fn read_loop(reader: impl BufRead, sink: &Sink) {
         };
         sink.incoming(msg);
     }
-    sink.close();
 }
 
 #[cfg(test)]
