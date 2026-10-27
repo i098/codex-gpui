@@ -26,7 +26,47 @@ fn is_word(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
+fn normalized_range(units: impl Iterator<Item = u16>, range: Range<usize>) -> Range<usize> {
+    let mut start = range.start;
+    let mut end = range.end;
+    let mut previous = 0;
+    for (index, unit) in units.take(range.end).enumerate() {
+        if previous == u16::from(b'\r') && unit == u16::from(b'\n') {
+            if index < range.start {
+                start -= 1;
+            }
+            end -= 1;
+        }
+        previous = unit;
+    }
+    start..end
+}
+
 impl Composer {
+    pub(super) fn normalize_document(&mut self) {
+        for (content, selection, _) in self.history.undo.iter_mut().chain(&mut self.history.redo) {
+            if content.contains('\r') {
+                *selection = normalized_range(content.bytes().map(u16::from), selection.clone());
+                *content = normalize_newlines(content).into_owned();
+            }
+        }
+        if !self.content.contains('\r') {
+            return;
+        }
+        self.selected_range = normalized_range(
+            self.content.bytes().map(u16::from),
+            self.selected_range.clone(),
+        );
+        self.marked_range = self
+            .marked_range
+            .take()
+            .map(|range| normalized_range(self.content.bytes().map(u16::from), range));
+        if let Some((_, offset)) = &mut self.history.last {
+            *offset = normalized_range(self.content.bytes().map(u16::from), *offset..*offset).start;
+        }
+        self.content = normalize_newlines(&self.content).into_owned();
+    }
+
     /// Makes the captured caret transparent without changing focus, selection, or input.
     pub fn set_caret_transparent(cx: &mut App, transparent: bool) {
         cx.default_global::<TransparentCaret>().0 = transparent;
@@ -845,10 +885,19 @@ impl EntityInputHandler for Composer {
         cx: &mut Context<Self>,
     ) {
         self.cancel_dictation(cx);
+        let new_selected_range_utf16 = if self.document_field && new_text.contains('\r') {
+            new_selected_range_utf16.map(|range| normalized_range(new_text.encode_utf16(), range))
+        } else {
+            new_selected_range_utf16
+        };
+        let normalized;
         let single_line;
         let new_text = if self.plain_field == Some(false) && new_text.contains(['\n', '\r']) {
             single_line = new_text.replace(['\n', '\r'], "");
             single_line.as_str()
+        } else if self.document_field {
+            normalized = normalize_newlines(new_text);
+            normalized.as_ref()
         } else {
             new_text
         };
@@ -1102,12 +1151,25 @@ impl gpui::Element for Editor {
         let composer = self.0.read(cx);
         let lines = shape(
             composer,
-            composer.field_text.unwrap_or(t.text),
+            if composer.field_style == FieldStyle::Inline {
+                t.text_secondary
+            } else {
+                composer.field_text.unwrap_or(t.text)
+            },
             t.text_tertiary,
             chip_color(&t),
             Some(bounds.size.width),
             window,
         );
+        let mut text_bounds = bounds;
+        if self.0.read(cx).field_style == FieldStyle::Inline
+            && let Some(line) = lines.first()
+        {
+            let offset = (bounds.size.width - line.unwrapped_layout.width).max(px(0.));
+            text_bounds.origin.x += offset;
+            text_bounds.size.width -= offset;
+        }
+        // The editor spans the card minus its 12 px side padding.
         let width = f32::from(bounds.size.width)
             + if self.0.read(cx).hotkey_controls.is_some() {
                 0.
@@ -1117,7 +1179,7 @@ impl gpui::Element for Editor {
         let collapse = |w: f32| (w <= SM_WIDTH, w <= XS_WIDTH);
         let changed = self.0.update(cx, |c, _| {
             c.lines = lines;
-            let mut bounds = bounds;
+            let mut bounds = text_bounds;
             if c.embedded_field.is_some() {
                 let cursor = c
                     .point_for_index(c.cursor())
@@ -1145,6 +1207,7 @@ impl gpui::Element for Editor {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let bounds = self.0.read(cx).bounds.unwrap_or(bounds);
         let focus = self.0.read(cx).focus_handle.clone();
         window.handle_input(&focus, ElementInputHandler::new(bounds, self.0.clone()), cx);
         let selection_color = cx.theme().text_selection;
@@ -1231,6 +1294,81 @@ impl gpui::Element for Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::AppContext as _;
+    use std::sync::Arc;
+
+    fn with_editor(
+        test: impl FnOnce(&mut Composer, &mut Window, &mut Context<Composer>),
+    ) -> anyhow::Result<()> {
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut app = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            theme::load_fonts(cx);
+            cx.set_global(theme::Theme::dark());
+        });
+        let window = app.open_window(size(px(800.), px(600.)), |_, cx| {
+            cx.new(|cx| Composer::settings_field("", "", true, cx))
+        })?;
+        window.update(&mut app, test)?;
+        Ok(())
+    }
+
+    #[test]
+    fn document_ime_cursor_stays_before_following_text() -> anyhow::Result<()> {
+        with_editor(|editor, window, cx| {
+            editor.set_document_style(true, cx);
+            for prefix in ["A", "😀"] {
+                editor.set_text("XY", cx);
+                let input = format!("{prefix}\r\nB");
+                let cursor = input.encode_utf16().count();
+                editor.replace_and_mark_text_in_range(
+                    Some(0..0),
+                    &input,
+                    Some(cursor..cursor),
+                    window,
+                    cx,
+                );
+                editor.unmark_text(window, cx);
+                editor.replace_text_in_range(None, "Z", window, cx);
+                assert_eq!(editor.field_text(), format!("{prefix}\nBZXY"));
+            }
+        })
+    }
+
+    #[test]
+    fn enabling_document_mode_preserves_undo_redo_and_cursor() -> anyhow::Result<()> {
+        with_editor(|editor, window, cx| {
+            for undo_before_enable in [false, true] {
+                editor.set_document_style(false, cx);
+                editor.set_text("First\r\nSecond\r\n", cx);
+                editor.selected_range = 7..7;
+                editor.replace_text_in_range(Some(7..13), "Edited", window, cx);
+                if undo_before_enable {
+                    editor.undo(&crate::Undo, window, cx);
+                }
+                editor.set_document_style(true, cx);
+                if undo_before_enable {
+                    editor.redo(&crate::Redo, window, cx);
+                }
+                assert_eq!(editor.field_text(), "First\nEdited\n");
+                assert_eq!(editor.cursor(), 12);
+                editor.undo(&crate::Undo, window, cx);
+                assert_eq!(editor.field_text(), "First\nSecond\n");
+                assert_eq!(editor.cursor(), 6);
+                editor.redo(&crate::Redo, window, cx);
+                assert_eq!(editor.field_text(), "First\nEdited\n");
+                assert_eq!(editor.cursor(), 12);
+            }
+        })
+    }
 
     #[test]
     fn spelling_actions_replace_learn_and_ignore_stale_words() {

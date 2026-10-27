@@ -371,6 +371,18 @@ pub fn show(handle: AnyWindowHandle, presentation: Presentation, cx: &mut App) -
     })?
 }
 
+pub fn is_visible(handle: AnyWindowHandle, cx: &mut App) -> Result<bool> {
+    handle.update(cx, |_, window, _| platform::is_visible(window))?
+}
+
+pub(crate) fn set_keyboard_interactive(window: &Window, interactive: bool) -> Result<()> {
+    platform::set_keyboard_interactive(window, interactive)
+}
+
+pub(crate) fn set_pointer_interactive_window(window: &Window, interactive: bool) -> Result<()> {
+    platform::set_pointer_interactive(window, interactive)
+}
+
 pub fn set_bounds(
     handle: AnyWindowHandle,
     bounds: Bounds<gpui::Pixels>,
