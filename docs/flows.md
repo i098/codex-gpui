@@ -937,6 +937,7 @@ Managed hooks stay on and cannot be edited.
 Marketplace removal uninstalls its remaining plugins before removing the configured source.
 Built-in marketplaces cannot be removed.
 The shared host reads the original Statsig bootstrap and caches its parsed evaluations for the current Root.
+The manager page uses a composited layer only while its content scrolls, as the original does; a short page such as empty Hooks paints directly.
 
 `cargo test -p ui --lib screens::settings::integrations` checks key collisions, form preservation, skill precedence, read-only origins, and hook trust.
 `cargo test -p app --lib settings_integrations` checks OAuth boundaries, notification handling, queued status refreshes, stale writes, and window isolation.
