@@ -1156,7 +1156,7 @@ impl Render for ArchivedChats {
             Some(Ok(threads)) if threads.is_empty() && self.cloud.is_empty() => {
                 content = content.child(self.message_row("No archived chats", None, cx))
             }
-            Some(_) if self.groups.is_empty() && self.pending.is_empty() => {
+            Some(_) if self.groups.is_empty() && self.pending.is_empty() && !show_error => {
                 content = content.child(self.message_row("No matching archived chats", None, cx))
             }
             _ => {
