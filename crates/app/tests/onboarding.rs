@@ -170,7 +170,7 @@ fn account_completion_is_checked_after_a_previous_local_completion() -> Result<(
         serde_json::from_str(include_str!("../../../refs/interactions/s034b.json"))?;
     let login = &recording["result"]["login"]["loginStart"];
     let mut lines = script(None, |_| {})?;
-    let account = ui::fixture::response("readback.jsonl", "account/read", 0);
+    let account: Value = ui::fixture::response("readback.jsonl", "account/read", 0);
     for line in &mut lines {
         if line["dir"] == "send" && line["msg"]["method"] == "account/read" {
             // Match both reads identically so startup consumes the signed-out response first.
@@ -188,7 +188,10 @@ fn account_completion_is_checked_after_a_previous_local_completion() -> Result<(
         "account/login/start",
         json!({"type":"chatgpt","loginId":login["loginId"],"authUrl":login["authUrl"]}),
     ));
-    lines.extend(exchange("account/read", account));
+    // Startup's usage and hotkey readers consume recorded reads before the sign-in reader.
+    for _ in 0..3 {
+        lines.extend(exchange("account/read", account.clone()));
+    }
     let mut settings = common::recorded_host_settings()?;
     settings.write("electron:onboarding-projectless-completed", json!(true))?;
     let mut fx = Fx::captured_with_host_settings("dark", (1280., 832.), lines, settings)?;
