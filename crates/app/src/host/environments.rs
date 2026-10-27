@@ -205,7 +205,6 @@ pub(super) fn list(workspace: &Path) -> Result<Value> {
             component => normalized.push(component),
         }
     }
-    ensure!(normalized.is_dir(), "Workspace must be a directory");
     let mut paths = Vec::new();
     for (distance, ancestor) in normalized.ancestors().take(50).enumerate() {
         match fs::read_dir(ancestor.join(DIRECTORY)) {
@@ -348,7 +347,8 @@ fn workspace_key(workspace: &Path) -> Result<Option<String>> {
 }
 
 fn selection_value(value: &Value) -> Result<Selection> {
-    if value.is_null() {
+    // Earlier native builds stored the worktree `__none__` sentinel here for "disabled".
+    if value.is_null() || value == git::NO_ENVIRONMENT {
         return Ok(Selection::Disabled);
     }
     Ok(Selection::Config(
@@ -593,6 +593,15 @@ mod tests {
         state["electron-persisted-atom-state"][SELECTIONS][exact] = json!(path);
         fs::write(&state_path, serde_json::to_vec(&state)?)?;
         assert_eq!(selection(&host, &workspace)?, Selection::Config(path));
+        state["electron-persisted-atom-state"][SELECTIONS][workspace_key(&workspace)?.unwrap()] =
+            json!(git::NO_ENVIRONMENT);
+        fs::write(&state_path, serde_json::to_vec(&state)?)?;
+        assert_eq!(selection(&host, &workspace)?, Selection::Disabled);
+        // A moved or deleted project lists nothing instead of failing every project.
+        assert_eq!(
+            list(&home.path().join("missing"))?["environments"],
+            json!([])
+        );
         assert_eq!(selection(&host, Path::new("/"))?, Selection::Unset);
         Ok(())
     }
