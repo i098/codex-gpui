@@ -102,6 +102,15 @@ fn main() -> anyhow::Result<()> {
             })),
             ..Default::default()
         });
+        // The original account shows Import and an unseen Explore destination.
+        cx.set_global(settings::imports::ImportState {
+            policy: bridge::imports::Policy {
+                enabled: true,
+                sync: true,
+                cursor: true,
+            },
+            ..Default::default()
+        });
     });
     let config: bridge::types::ConfigReadResponse =
         ui::fixture::response("readback.jsonl", "config/read", 0);
@@ -115,7 +124,10 @@ fn main() -> anyhow::Result<()> {
             integrations,
             cx,
         );
-        shell.update(cx, |shell, _| shell.can_go_back = true);
+        shell.update(cx, |shell, _| {
+            shell.can_go_back = true;
+            shell.unread_destinations = Some(["unseen".into()].into());
+        });
         cx.new(|_| Preview(shell.into()))
     })?;
     cx.run_until_parked();
