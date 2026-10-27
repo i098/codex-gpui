@@ -1620,7 +1620,7 @@ impl Dialog {
             (!query.is_empty()).then(|| crate::screens::sidebar::MatchPattern::new(query));
         self.shortcuts.iter().filter(move |(_, command, _)| {
             pattern.as_ref().is_none_or(|pattern| {
-                [command.id, command.title, command.detail]
+                [command.id, command.dialog_title(), command.detail]
                     .iter()
                     .any(|value| pattern.score(value) > 0)
             })
@@ -1628,7 +1628,7 @@ impl Dialog {
     }
     pub fn visible_titles(&self) -> Vec<&'static str> {
         self.visible()
-            .map(|(_, command, _)| command.title)
+            .map(|(_, command, _)| command.dialog_title())
             .collect()
     }
     fn dismiss(&self, cx: &mut Context<Self>) {
@@ -3139,7 +3139,7 @@ impl Dialog {
                     .items_center()
                     .justify_between()
                     .opacity(0.75)
-                    .child(text(command.title, 14., 18., 430., t.text))
+                    .child(text(command.dialog_title(), 14., 18., 430., t.text))
                     .child(div().flex().gap(px(8.)).children(keys.iter().map(|key| {
                         div()
                             .rounded(px(10.))

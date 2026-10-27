@@ -932,4 +932,5 @@ tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch 
 `Next tab`/`Previous tab` and `⌥⌘W` (close other tabs) apply when focus is inside a side tab. `⌘W` closes the open side tab first; a `closeWindow`-only key closes the window.
 `⌘↩` on Home sends the message in the background: the chat starts and shows in Recents, Home stays open and the draft clears. The `⌘/` dialog lists it on Home only.
 The `⌘/` dialog searches command IDs, titles and descriptions with the same matching rules as the Settings page.
+`⇧⌘C` and `⌥⇧⌘C` copy the open chat's newest attached worktree root (else its working directory); a failed attachment refresh copies nothing. `⇧⌘F` and `⇧⌘B` follow the editable keymap.
 The Keyboard shortcuts page search controls use their recorded SVG variants; the Settings sidebar keeps its own keyboard glyph.

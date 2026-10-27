@@ -198,6 +198,8 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "openReviewTab" => Box::new(OpenChangesPanel),
         "toggleSidePanel" => Box::new(ToggleChangesPanel),
         "toggleFileTreePanel" => Box::new(crate::native_menus::ToggleNavigationPanel),
+        "showWorkspaceTabView" => Box::new(ui::ShowWorkspaceTabView),
+        "stepWorkspaceLayout" => Box::new(ui::StepWorkspaceLayout),
         "undoAppAction" => Box::new(Undo),
         "redoAppAction" => Box::new(Redo),
         "openFolder" | "composer.openProjectPicker" => Box::new(OpenFolder),
@@ -218,6 +220,9 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "renameThread" => Box::new(shortcuts::RenameOpenChat),
         "findInThread" => Box::new(FindInThread),
         "copyDeeplink" => Box::new(shortcuts::CopyDeeplink),
+        "copyWorkingDirectory" | "copyConversationPath" => {
+            Box::new(super::copy_directory::CopyWorkingDirectory)
+        }
         "composer.submit" => Box::new(ui::composer::Submit),
         "composer.submitInBackground" => Box::new(ui::composer::SubmitInBackground),
         id => {

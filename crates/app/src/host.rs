@@ -201,6 +201,19 @@ pub trait Host: Send + Sync {
     fn identity(&self) -> Option<Identity> {
         None
     }
+
+    /// The managed worktrees of `thread_id` that the original's archive queue has already
+    /// detached or is still archiving for the signed-in owner (`getPendingArchives`); none
+    /// without a ChatGPT sign-in. Call this off the UI thread.
+    fn pending_worktree_archives(&self, _thread_id: &str) -> Result<Vec<PendingArchive>> {
+        Ok(Vec::new())
+    }
+}
+
+/// A worktree root with a pending archive (`electron-managed-worktree-archives`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingArchive {
+    pub root: String,
 }
 
 /// What the webview client sends with a ChatGPT backend request: the account and user of
@@ -656,6 +669,32 @@ impl LocalHost {
             "original sidebar project state must be an object"
         );
         Ok(state)
+    }
+
+    /// `getPendingArchives` over the original's persisted queue: the entries of `owner` for this
+    /// host's `thread_id` that are neither completed, detaching nor failed.
+    fn queued_archives(&self, owner: &str, thread_id: &str) -> Result<Vec<PendingArchive>> {
+        let state = self.read_global_state()?;
+        Ok(state["electron-managed-worktree-archives"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|entry| {
+                entry["kind"] == "attached"
+                    && entry["owner"] == owner
+                    && entry["hostId"] == "local"
+                    && entry["threadId"] == thread_id
+                    && !matches!(
+                        entry["phase"].as_str(),
+                        Some("completed" | "detaching" | "failed")
+                    )
+            })
+            .filter_map(|entry| {
+                Some(PendingArchive {
+                    root: entry["root"].as_str()?.to_owned(),
+                })
+            })
+            .collect())
     }
 
     fn update_global_state(&self, update: impl FnOnce(&mut Value) -> Result<bool>) -> Result<()> {
@@ -2103,6 +2142,14 @@ impl Host for CloudHost {
         true
     }
 
+    fn pending_worktree_archives(&self, thread_id: &str) -> Result<Vec<PendingArchive>> {
+        let Some(identity) = self.identity() else {
+            return Ok(Vec::new());
+        };
+        let owner = serde_json::to_string(&[identity.account_id, identity.user_id])?;
+        self.local.queued_archives(&owner, thread_id)
+    }
+
     fn identity(&self) -> Option<Identity> {
         let claims = claims(&self.credentials(false).ok()?.token);
         Some(Identity {
@@ -2642,5 +2689,43 @@ mod cloud_stream_tests {
         )
         .unwrap();
         assert_eq!(received, [json!(1)]);
+    }
+}
+
+#[cfg(test)]
+mod pending_archive_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_owners_live_attached_entries_of_the_thread_count() {
+        let home = tempfile::tempdir().unwrap();
+        let host = LocalHost::new(home.path());
+        assert!(host.queued_archives("o", "t").unwrap().is_empty());
+        let entry = |owner: &str, thread: &str, phase: &str, root: &str| {
+            json!({"kind": "attached", "owner": owner, "hostId": "local", "threadId": thread,
+                "phase": phase, "root": root})
+        };
+        let state = json!({"electron-managed-worktree-archives": [
+            entry("o", "t", "archiving", "/w/live"),
+            entry("o", "t", "removing", "/w/live2"),
+            entry("o", "t", "detaching", "/w/detaching"),
+            entry("o", "t", "failed", "/w/failed"),
+            entry("o", "t", "completed", "/w/done"),
+            entry("other", "t", "archiving", "/w/other-owner"),
+            entry("o", "u", "archiving", "/w/other-thread"),
+            {"kind": "thread", "owner": "o", "hostId": "local", "threadId": "t", "phase": "archiving", "root": "/w/thread-kind"},
+        ]});
+        fs::write(
+            home.path().join(".codex-global-state.json"),
+            state.to_string(),
+        )
+        .unwrap();
+        let roots: Vec<_> = host
+            .queued_archives("o", "t")
+            .unwrap()
+            .into_iter()
+            .map(|a| a.root)
+            .collect();
+        assert_eq!(roots, ["/w/live", "/w/live2"]);
     }
 }

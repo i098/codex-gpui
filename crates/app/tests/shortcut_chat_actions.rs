@@ -218,3 +218,59 @@ fn the_dialog_lists_send_in_background_on_home_only() -> Result<()> {
     ensure!(!rows(&mut fx)?, "an open chat does not");
     Ok(())
 }
+
+fn copy_directory_fx(attachments: Option<serde_json::Value>) -> Result<Fx> {
+    let mut recording = script(None, |_| {})?;
+    if let Some(page) = attachments {
+        for _ in 0..2 {
+            recording.extend(exchange("thread/attachment/list", page.clone()));
+        }
+    }
+    Fx::scripted(recording)
+}
+
+fn clipboard(fx: &mut Fx) -> Option<String> {
+    fx.cx
+        .update(|cx| cx.read_from_clipboard())
+        .and_then(|item| item.text())
+}
+
+#[test]
+fn copy_working_directory_prefers_the_newest_attached_worktree() -> Result<()> {
+    let worktree = |root: &str, workspace: &str, at: i64| {
+        json!({ "attachmentType": "worktree", "identityKey": root, "createdAt": at,
+            "payload": { "root": root, "workspaceRoot": workspace } })
+    };
+    let mut fx = copy_directory_fx(Some(json!({
+        "data": [worktree("/w/old", "/w/old/app", 1), worktree("/w/new", "/w/new/app", 2)],
+        "nextCursor": null
+    })))?;
+    fx.keys("cmd-1")?;
+    fx.wait_thread(GREETING)?;
+    for keys in ["cmd-shift-c", "alt-cmd-shift-c"] {
+        fx.cx
+            .update(|cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(String::new())));
+        fx.keys(keys)?;
+        fx.wait(keys, |fx| {
+            clipboard(fx).is_some_and(|text| !text.is_empty())
+        })?;
+        ensure!(
+            clipboard(&mut fx).as_deref() == Some("/w/new/app"),
+            "{keys}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn copy_working_directory_does_not_copy_a_stale_cwd_after_a_failed_refresh() -> Result<()> {
+    let mut fx = copy_directory_fx(None)?;
+    fx.keys("cmd-1")?;
+    fx.wait_thread(GREETING)?;
+    fx.cx
+        .update(|cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string("untouched".into())));
+    fx.keys("cmd-shift-c")?;
+    fx.advance(std::time::Duration::from_millis(500))?;
+    ensure!(clipboard(&mut fx).as_deref() == Some("untouched"));
+    Ok(())
+}

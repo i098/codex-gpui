@@ -30,6 +30,18 @@ pub struct Command {
     pub visible: bool,
 }
 
+impl Command {
+    /// The `⌘/` dialog row label: the original names these two by their command-menu title,
+    /// not the Settings title (recorded Home dialog, Codex 26.1007.30912).
+    pub fn dialog_title(&self) -> &'static str {
+        match self.id {
+            "showWorkspaceTabView" => "New tab in full view",
+            "toggleSidePanel" => "New tab",
+            _ => self.title,
+        }
+    }
+}
+
 include!("keyboard_shortcuts_data.rs");
 
 pub fn commands() -> &'static [Command] {
