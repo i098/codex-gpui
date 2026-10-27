@@ -3,6 +3,7 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+mod activity_access;
 mod cloud_task;
 pub use cloud_task::parse_task_response;
 pub mod computer_use_requests;
@@ -155,7 +156,6 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-k", OpenCommandMenu, None),
         KeyBinding::new("cmd-shift-p", OpenCommandMenu, None),
         KeyBinding::new("alt-cmd-b", ToggleChangesPanel, None),
-        KeyBinding::new("alt-cmd-u", ToggleActivity, None),
         KeyBinding::new("cmd-shift-a", ArchiveChat, None),
     ]);
     ui::composer::bind_keys(cx);
@@ -436,6 +436,7 @@ pub struct Root {
     usage_limit_notice: UsageLimitNotice,
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
+    activity_access: activity_access::Runtime,
     oauth: oauth::Connections,
     project_load: Option<Task<()>>,
     destination_load: Option<Task<()>>,
@@ -626,6 +627,7 @@ impl Root {
             let mut sidebar = HomeSidebar::new(&[], None);
             sidebar.threads_state = ListState::Loading;
             sidebar.set_activity_archive_supported(!bridge.is_acp());
+            sidebar.activity_available = false;
             sidebar
         });
         cx.subscribe_in(
@@ -767,6 +769,7 @@ impl Root {
                     .with_bridge(bridge.clone())
                     .with_settings(cx.try_global::<host_settings::Settings>().cloned()),
             ),
+            activity_access: activity_access::Runtime::default(),
             oauth: oauth::Connections::default(),
             bridge,
             automations: None,
@@ -1165,6 +1168,7 @@ impl Root {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
         self.host = host;
+        self.refresh_activity_access(cx);
         hotkey::policy::refresh(self, cx);
         self.automation_threads.clear();
         self.automation_card_results.clear();
@@ -1288,6 +1292,9 @@ impl Root {
     }
 
     fn toggle_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.sidebar.read(cx).activity_available {
+            return;
+        }
         if !matches!(self.state.route, Route::Home | Route::Thread(_)) {
             self.navigate(Route::Home, window, cx);
         }
@@ -2611,6 +2618,9 @@ impl Root {
                 .with_cloud_search(cloud)
                 .with_navigation_panel(navigation)
         });
+        menu.update(cx, |menu, cx| {
+            menu.set_activity_available(self.sidebar.read(cx).activity_available, cx)
+        });
         cx.subscribe_in(&menu, window, |this, _, event, window, cx| {
             this.run_command(event, window, cx);
         })
@@ -3212,9 +3222,6 @@ impl Root {
                         this.approvals.clear();
                         this.new_chat_section = None;
                         this.sidebar.update(cx, |s, cx| {
-                            if let Some(clock) = s.activity_clock {
-                                s.toggle_activity(clock, cx);
-                            }
                             s.clear_sections(cx);
                         });
                         this.show_approval(cx);
@@ -5821,6 +5828,8 @@ impl Root {
     }
 
     fn set_account(&mut self, account: Option<&AccountReadResponse>, cx: &mut Context<Self>) {
+        self.activity_access.account = account.and_then(|account| account.account.clone());
+        self.refresh_activity_access(cx);
         self.account_email = account.and_then(chatgpt_email);
         self.chatgpt_account =
             account.is_some_and(|account| matches!(account.account, Some(Account::Chatgpt { .. })));

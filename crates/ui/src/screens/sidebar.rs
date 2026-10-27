@@ -284,6 +284,7 @@ pub struct HomeSidebar {
     pub threads_state: ListState,
     pub projects_state: ListState,
     pub activity_clock: Option<crate::screens::thread::view::Clock>,
+    pub activity_available: bool,
     activity_started_at: i64,
     activity_recency: HashMap<String, i64>,
     activity_priority: bool,
@@ -381,6 +382,7 @@ impl HomeSidebar {
             threads_state: ListState::Ready,
             projects_state: ListState::Ready,
             activity_clock: None,
+            activity_available: true,
             activity_started_at: 0,
             activity_recency: HashMap::new(),
             activity_priority: true,
@@ -1258,6 +1260,7 @@ impl Render for HomeSidebar {
             .child(home_sidebar_header(
                 !self.unread.is_empty(),
                 self.activity_clock.is_some(),
+                self.activity_available,
                 cx,
             ))
             .child(
@@ -2131,6 +2134,7 @@ pub struct CommandMenu {
     thread_open: bool,
     git_available: bool,
     navigation_available: bool,
+    activity_available: bool,
     /// Bumped on every query change; a debounced search only fires for the latest.
     search_gen: usize,
     search_scheduled: bool,
@@ -2806,6 +2810,7 @@ impl CommandMenu {
             thread_open,
             git_available: false,
             navigation_available: false,
+            activity_available: true,
             search_gen: 0,
             search_scheduled: false,
             searching: false,
@@ -3173,6 +3178,13 @@ impl CommandMenu {
         cx.notify();
     }
 
+    pub fn set_activity_available(&mut self, available: bool, cx: &mut Context<Self>) {
+        let selected = self.selected_key();
+        self.activity_available = available;
+        self.restore_selection(selected);
+        cx.notify();
+    }
+
     /// Keep registered groups; rank matches within each group.
     fn visible(&self) -> Vec<(&'static str, Vec<&Item>)> {
         if self.recent_cycle {
@@ -3211,6 +3223,7 @@ impl CommandMenu {
                     .chain(items.iter())
                     .filter(|item| self.thread_open || !item.thread_only)
                     .filter(|item| item.label != "Commit or push" || self.git_available)
+                    .filter(|item| item.label != "Toggle activity view" || self.activity_available)
                     .filter(|item| {
                         item.label != "Toggle navigation panel" || self.navigation_available
                     })

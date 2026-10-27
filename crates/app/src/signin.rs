@@ -399,7 +399,7 @@ use ui::screens::signin::bedrock::GovCloud;
 use ui::screens::signin::{Login, LoginEvent, Options, Provider};
 use url::Url;
 
-const ORIGINAL_APP_VERSION: &str = "26.1007.30912";
+pub(crate) const ORIGINAL_APP_VERSION: &str = "26.1007.30912";
 
 impl Root {
     pub(crate) fn new_login(
