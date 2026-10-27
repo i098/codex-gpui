@@ -102,6 +102,13 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
         }
         page
     });
+    if cx
+        .try_global::<ImportState>()
+        .is_some_and(|state| state.active)
+    {
+        return page.into_any_element();
+    }
+
     let refresh = cx.update_global::<ImportState, _>(|state, _| {
         state.active = true;
         if state.stale && !state.pending {
