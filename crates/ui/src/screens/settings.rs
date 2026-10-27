@@ -426,6 +426,7 @@ pub struct SettingsPage {
     integrations: Entity<integrations::State>,
     pub personalization: Entity<personalization::Personalization>,
     toaster: Option<Entity<crate::toast::Toaster>>,
+    cloud: Option<Entity<super::cloud::CloudPage>>,
 }
 
 impl SettingsPage {
@@ -458,6 +459,7 @@ impl SettingsPage {
             integrations,
             personalization: cx.new(personalization::Personalization::new),
             toaster: None,
+            cloud: None,
         }
     }
 
@@ -486,6 +488,12 @@ impl SettingsPage {
         // `IndexMut` makes a missing store an object on its first key.
         self.values[store][key] = value.clone();
         cx.emit(SettingChanged { path, value });
+        cx.notify();
+    }
+
+    pub fn set_cloud(&mut self, cloud: Entity<super::cloud::CloudPage>, cx: &mut Context<Self>) {
+        self.cloud = Some(cloud);
+        self.open_cloud_section(cx);
         cx.notify();
     }
 
@@ -523,7 +531,18 @@ impl SettingsPage {
         self.personalization
             .update(cx, |editor, cx| editor.discard(cx));
         self.section = label;
+        self.subtree = None;
+        self.open_cloud_section(cx);
         cx.notify();
+    }
+
+    fn open_cloud_section(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.section, "Codex Cloud" | "Legacy Codex Cloud")
+            && let Some(cloud) = &self.cloud
+        {
+            cloud.update(cx, |cloud, cx| cloud.open_section(self.section, cx));
+            self.subtree = Some(cloud.clone().into());
+        }
     }
 }
 
@@ -694,12 +713,23 @@ impl Render for SettingsNav {
         let (section, query) = (page.section, page.query.clone());
         let needle = query.to_lowercase();
         let import_visible = imports::visible(cx);
+        let cloud_access = page
+            .cloud
+            .as_ref()
+            .map(|cloud| cloud.read(cx).access())
+            .unwrap_or_default();
         let mut sections = Vec::new();
         for (heading, items) in NAV {
             let rows: Vec<_> = items
                 .iter()
                 .filter(|(label, _)| label.to_lowercase().contains(&needle))
                 .filter(|(label, _)| *label != "Import" || import_visible)
+                .filter(|(label, _)| match *label {
+                    "Cloud computer" => false,
+                    "Codex Cloud" => cloud_access.cloud,
+                    "Legacy Codex Cloud" => cloud_access.legacy,
+                    _ => true,
+                })
                 .map(|&(label, glyph)| self.item(label, glyph, label == section, &t, window, cx))
                 .collect();
             if rows.is_empty() {
@@ -1488,6 +1518,20 @@ pub(crate) fn settings_row(
     control: AnyElement,
     t: &Theme,
 ) -> Div {
+    settings_row_content(
+        title,
+        detail.map(|value| description(value, t).into_any_element()),
+        control,
+        t,
+    )
+}
+
+pub(crate) fn settings_row_content(
+    title: &'static str,
+    detail: Option<AnyElement>,
+    control: AnyElement,
+    t: &Theme,
+) -> Div {
     div()
         .relative()
         .flex()
@@ -1504,7 +1548,7 @@ pub(crate) fn settings_row(
                 .flex_col()
                 .gap(px(2.))
                 .child(text(title, 13., 18.571_428, 500., t.text))
-                .children(detail.map(|s| description(s, t))),
+                .children(detail),
         )
         .child(
             div()
@@ -1641,7 +1685,7 @@ pub(super) fn deco(
 
 /// A control's surface on a settings card: Chromium blits it onto the card's opaque pixels in
 /// the scroller's layer, as on the page (`shapes` takes the `.layer()` origin for its tiles).
-fn on_card(radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> AnyElement {
+pub(crate) fn on_card(radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> AnyElement {
     shapes::decoration(surface(radius, corner, fill, border)).into_any_element()
 }
 
@@ -1783,6 +1827,33 @@ fn app_icon(page: Hsla) -> AnyElement {
 
 #[cfg(test)]
 mod tests {
+    use gpui::AppContext as _;
+    use serde_json::json;
+
+    #[test]
+    fn leaving_cloud_restores_the_selected_settings_page() {
+        let mut app = gpui::HeadlessAppContext::with_asset_source(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+        );
+        app.update(|cx| {
+            let integrations = cx.new(|_| super::integrations::State::default());
+            let (_, settings) = super::shell(
+                &json!({}),
+                &json!({}),
+                Some("Codex Cloud"),
+                integrations,
+                cx,
+            );
+            let cloud = cx.new(crate::screens::cloud::CloudPage::new);
+            settings.update(cx, |settings, cx| settings.set_cloud(cloud, cx));
+            assert!(settings.read(cx).subtree.is_some());
+            settings.update(cx, |settings, cx| settings.select_section("General", cx));
+            assert_eq!(settings.read(cx).section, "General");
+            assert!(settings.read(cx).subtree.is_none());
+        });
+    }
+
     #[test]
     fn middle_truncate_matches_reference() {
         // One cell per character, 26 cells wide (the reference's `w-48` at 12 px).

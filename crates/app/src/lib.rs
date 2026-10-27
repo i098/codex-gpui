@@ -6,6 +6,8 @@
 mod activity_access;
 mod cloud_task;
 pub use cloud_task::parse_task_response;
+mod cloud;
+pub use cloud::{CloudTaskRequest, create_cloud_task};
 pub mod computer_use_requests;
 pub mod connections;
 pub mod deep_link;
@@ -415,6 +417,7 @@ pub struct Root {
     mobile_page: Option<Entity<mobile::MobileSetupPage>>,
     cloud: Option<cloud_task::Session>,
     plugins_page: Option<Entity<ui::screens::plugins::Page>>,
+    cloud_modal: Option<Entity<ui::screens::cloud::CloudModal>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
@@ -756,6 +759,7 @@ impl Root {
             mobile_page: None,
             cloud: None,
             plugins_page: None,
+            cloud_modal: None,
             settings_section: None,
             settings_page: None,
             writing_dialog_preference: None,
@@ -1141,7 +1145,7 @@ impl Root {
     /// The composer of the route: Home's, or the one docked under the open thread.
     pub fn composer(&self, cx: &App) -> Entity<Composer> {
         match self.state.route {
-            Route::Remote { .. } => self
+            Route::Remote { .. } | Route::CloudSetup { .. } => self
                 .cloud
                 .as_ref()
                 .map(|session| session.page.read(cx).composer.clone())
@@ -1167,6 +1171,7 @@ impl Root {
         self.invalidate_oauth(cx);
         self.invalidate_settings_integrations(cx);
         self.cloud = None;
+        self.cloud_modal = None;
         self.automation_load = None;
         self.automation_editor = None;
         self.project_load = None;
@@ -2479,6 +2484,10 @@ impl Root {
             || keystroke.modifiers.platform
             || keystroke.modifiers.control
             || self.has_dialog()
+            || self
+                .cloud_modal
+                .as_ref()
+                .is_some_and(|modal| modal.read(cx).is_open(cx))
             || self.command_menu.is_some()
             || (self.split.is_some() && self.workspace_layout() == WorkspaceLayout::Full)
             || route_focus == self.focus
@@ -3235,6 +3244,7 @@ impl Root {
                         this.dialog = None;
                         this.diff_confirmation = None;
                         this.automation_editor = None;
+                        this.cloud_modal = None;
                         this.thread = None;
                         this.diff = None;
                         this.file = None;
@@ -3290,7 +3300,12 @@ impl Root {
     /// shell tab when it can (`close-active-app-shell-tab`; the main focus area counts as the
     /// right panel), else the window.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.has_dialog() {
+        if self.has_dialog()
+            || self
+                .cloud_modal
+                .as_ref()
+                .is_some_and(|modal| modal.read(cx).is_open(cx))
+        {
             return;
         }
         if self.instructions_changed(cx) {
@@ -7104,6 +7119,7 @@ impl Render for Root {
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(session.header.clone())
             }))
+            .children(self.cloud_modal.clone())
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
             .children(self.dialog.clone())

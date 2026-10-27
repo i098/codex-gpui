@@ -23,6 +23,11 @@ pub enum Route {
     },
     Settings,
     SettingsSubtree(String),
+    CloudEnvironments(String),
+    CloudSetup {
+        config_id: String,
+        repositories: Vec<Value>,
+    },
     /// Rail `Scheduled` (`/scheduled`): the Automations page.
     Scheduled,
     /// A sidebar task row (`/scheduled?automationId=<id>`): the task's thread.
@@ -159,12 +164,22 @@ impl Root {
         self.cloud = None;
         self.plugins_page = None;
         self.onboarding_page = None;
+        self.cloud_modal = None;
         self.page = match self.state.route.clone() {
             Route::Remote { task_id, hotkey } => {
                 self.load_cloud_task(task_id, hotkey, window, cx);
                 None
             }
-            Route::Settings | Route::SettingsSubtree(_) => Some(settings::page(self, window, cx)),
+            Route::CloudSetup {
+                config_id,
+                repositories,
+            } => {
+                self.load_cloud_environment(config_id, repositories, window, cx);
+                None
+            }
+            Route::Settings | Route::SettingsSubtree(_) | Route::CloudEnvironments(_) => {
+                Some(settings::page(self, window, cx))
+            }
             Route::Scheduled => Some(automations::scheduled(self, cx)),
             Route::Automation(id) => Some(automations::automation(self, id, window, cx)),
             Route::Archive => Some(archive::page(self, cx)),
@@ -225,7 +240,7 @@ impl Root {
         };
         let home = matches!(
             self.state.route,
-            Route::Home | Route::Thread(_) | Route::Remote { .. }
+            Route::Home | Route::Thread(_) | Route::Remote { .. } | Route::CloudSetup { .. }
         );
         shell.update(cx, |shell, cx| {
             shell.selected_rail = if self.sidebar_automation.is_some() {
@@ -264,7 +279,7 @@ impl Root {
         let open = |id: &str| self.thread.as_ref().is_some_and(|v| v.read(cx).id() == id);
         match &self.state.route {
             _ if self.login.is_some() => self.focus.clone(),
-            Route::Remote { .. } => self
+            Route::Remote { .. } | Route::CloudSetup { .. } => self
                 .cloud
                 .as_ref()
                 .map(|session| {
