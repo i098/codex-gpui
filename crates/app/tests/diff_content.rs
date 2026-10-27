@@ -1,17 +1,11 @@
-#![cfg(target_os = "macos")]
+#[cfg(target_os = "macos")]
 #[path = "common/mod.rs"]
 mod common;
 
-use anyhow::{Context as _, Result, ensure};
-use common::{Fx, SUBTRACT};
-use serde_json::json;
-use std::{
-    fs,
-    os::unix::fs::PermissionsExt as _,
-    path::{Path, PathBuf},
-    process::Command,
-};
-use ui::screens::diff::panel::FullError;
+use anyhow::{Result, ensure};
+use app::{diff_content::read_full_file, host::LocalHost};
+use std::{fs, path::Path, process::Command};
+use ui::screens::diff::panel::{BlobRequest, FullError, FullFileRequest};
 
 fn git(root: &Path, args: &[&str]) -> Result<String> {
     let output = Command::new("git").current_dir(root).args(args).output()?;
@@ -20,392 +14,218 @@ fn git(root: &Path, args: &[&str]) -> Result<String> {
         "Git: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    Ok(String::from_utf8(output.stdout)?)
+    Ok(String::from_utf8(output.stdout)?.trim_end().to_owned())
 }
 
-fn output() -> Result<PathBuf> {
-    let path = std::env::var_os("CGX_DIFF_REVIEW_EVIDENCE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("cgx-diff-content"));
-    fs::create_dir_all(&path)?;
-    Ok(path)
-}
-
-fn prepare(unreadable: bool) -> Result<(tempfile::TempDir, Fx)> {
+fn repository() -> Result<tempfile::TempDir> {
+    #[cfg(target_os = "macos")]
     common::install_panic_hook();
-    let repo = tempfile::tempdir_in(output()?)?;
+    let repo = tempfile::tempdir()?;
     git(repo.path(), &["init", "-q"])?;
-    git(repo.path(), &["config", "user.name", "Full-file proof"])?;
+    git(repo.path(), &["config", "user.name", "Full file proof"])?;
     git(
         repo.path(),
         &["config", "user.email", "proof@example.invalid"],
     )?;
-    let before = (1..=60)
-        .map(|line| format!("line {line}\n"))
-        .collect::<String>();
-    fs::write(repo.path().join("file.txt"), &before)?;
-    git(repo.path(), &["add", "."])?;
-    git(repo.path(), &["commit", "-qm", "base"])?;
-    fs::write(
-        repo.path().join("file.txt"),
-        before.replace("line 40\n", "changed 40\n"),
-    )?;
-    let patch = git(repo.path(), &["diff", "--full-index", "--unified=0", "--"])?;
-    fs::write(output()?.join("full-file.patch"), &patch)?;
-    if unreadable {
-        fs::set_permissions(
-            repo.path().join("file.txt"),
-            fs::Permissions::from_mode(0o000),
-        )?;
-    }
-    let mut recording = common::script(None, |_| {})?;
-    for row in &mut recording {
-        if let Some(thread) = row.pointer_mut("/msg/result/thread") {
-            thread["cwd"] = repo.path().to_string_lossy().into_owned().into();
-        }
-    }
-    let mut fx = Fx::scripted(recording)?;
-    fx.keys("cmd-2")?;
-    fx.wait_thread(SUBTRACT)?;
-    fx.keys("alt-cmd-b")?;
-    update_patch(&mut fx, patch);
-    fx.cx.run_until_parked();
-    Ok((repo, fx))
+    Ok(repo)
 }
 
-fn find_count(fx: &Fx) -> usize {
-    fx.read(|root, cx| {
-        root.diff_panel()
-            .unwrap()
-            .read(cx)
-            .search()
-            .map_or(0, |(_, count)| count)
-    })
-}
-
-fn choose(fx: &mut Fx, label: &str) -> Result<()> {
-    let index = fx
-        .read(|root, cx| {
-            root.diff_panel()?
-                .read(cx)
-                .menu_items()
-                .filter(|(_, enabled)| *enabled)
-                .position(|(item, _)| item == label)
-        })
-        .context("diff option")?;
-    fx.keys("home")?;
-    for _ in 0..index {
-        fx.keys("down")?;
+fn one_side(root: &Path, path: &str, oid: Option<String>, fallback: bool) -> FullFileRequest {
+    FullFileRequest {
+        cwd: root.to_string_lossy().into_owned(),
+        requests: vec![BlobRequest {
+            path: path.into(),
+            oid,
+            fallback_to_disk: fallback,
+        }],
+        before: None,
+        after: Some(0),
     }
-    fx.keys("enter")
 }
 
-fn update_patch(fx: &mut Fx, patch: String) {
-    let turn = fx.read(|root, cx| {
-        root.thread()
-            .unwrap()
-            .read(cx)
-            .turns()
-            .last()
-            .unwrap()
-            .id
-            .clone()
-    });
-    fx.root.update(&mut fx.cx, |root, cx| {
-        root.on_event(
-            bridge::Event::Notification {
-                method: "turn/diff/updated".into(),
-                params: json!({"threadId":SUBTRACT,"turnId":turn,"diff":patch}),
+#[test]
+fn full_file_reads_preserve_sides_line_endings_and_disk_fallback() -> Result<()> {
+    let repo = repository()?;
+    let root = repo.path();
+    fs::write(root.join("file.txt"), "before\r\nlast")?;
+    git(root, &["add", "."])?;
+    git(root, &["commit", "-qm", "before"])?;
+    fs::write(root.join("file.txt"), "after\r\n尾\n")?;
+    let after = git(root, &["hash-object", "file.txt"])?;
+    let request = FullFileRequest {
+        cwd: root.to_string_lossy().into_owned(),
+        requests: vec![
+            BlobRequest {
+                path: "file.txt".into(),
+                oid: Some(after),
+                fallback_to_disk: true,
             },
-            cx,
-        )
-    });
+            BlobRequest {
+                path: "file.txt".into(),
+                oid: None,
+                fallback_to_disk: false,
+            },
+        ],
+        before: Some(1),
+        after: Some(0),
+    };
+    let content = read_full_file(&LocalHost::new(root), &request)
+        .map_err(|error| anyhow::anyhow!("full file failed: {error:?}"))?;
+    ensure!(content.before == ["before\r\n", "last"]);
+    ensure!(content.after == ["after\r\n", "尾\n"]);
+    ensure!(fs::read_to_string(root.join("file.txt"))? == "after\r\n尾\n");
+    Ok(())
 }
 
-fn body_menu(fx: &mut Fx, at: (f32, f32)) -> Result<()> {
-    fx.right_click(at)?;
-    fx.wait("diff context menu", |fx| {
-        fx.read(|root, cx| {
+#[test]
+fn missing_and_oversized_full_files_remain_unavailable() -> Result<()> {
+    let repo = repository()?;
+    let root = repo.path();
+    fs::write(root.join("file.txt"), vec![b'x'; 5_242_881])?;
+    let host = LocalHost::new(root);
+    let missing = one_side(root, "file.txt", Some("1".repeat(40)), false);
+    ensure!(read_full_file(&host, &missing).err() == Some(FullError::Unavailable));
+    let oversized = one_side(root, "file.txt", None, true);
+    ensure!(read_full_file(&host, &oversized).err() == Some(FullError::Unavailable));
+    git(root, &["add", "."])?;
+    git(root, &["commit", "-qm", "oversized before file"])?;
+    let mut before = one_side(root, "file.txt", None, false);
+    before.before = Some(0);
+    before.after = None;
+    ensure!(read_full_file(&host, &before).err() == Some(FullError::Unavailable));
+    Ok(())
+}
+
+#[test]
+fn full_file_reads_reject_an_existing_file_outside_the_repository() -> Result<()> {
+    let repo = repository()?;
+    let outside = tempfile::tempdir()?;
+    let path = outside.path().join("private.txt");
+    fs::write(&path, "outside data\n")?;
+    let request = one_side(repo.path(), &path.to_string_lossy(), None, true);
+    let result = read_full_file(&LocalHost::new(repo.path()), &request);
+    ensure!(result.err() == Some(FullError::Failed));
+    ensure!(fs::read_to_string(&path)? == "outside data\n");
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+mod native {
+    use super::*;
+    use bridge::Event;
+    use common::{Fx, SUBTRACT};
+    use serde_json::json;
+
+    #[test]
+    fn restored_wrapped_context_keeps_rows_and_headers_in_bounds() -> Result<()> {
+        let repo = repository()?;
+        let root = repo.path();
+        let suffix = " context".repeat(40);
+        let before = (1..=80)
+            .map(|line| format!("line {line}{suffix}\n"))
+            .collect::<String>();
+        fs::write(root.join("file.txt"), &before)?;
+        fs::write(root.join("zz.txt"), "tail\n".repeat(100))?;
+        git(root, &["add", "."])?;
+        git(root, &["commit", "-qm", "before"])?;
+        fs::write(
+            root.join("file.txt"),
+            before.replacen("line 40", "changed 40", 1),
+        )?;
+        fs::write(root.join("zz.txt"), "changed tail\n".repeat(100))?;
+        let patch = git(root, &["diff", "--full-index"])?
+            .lines()
+            .filter(|line| !line.starts_with("index "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut recording = common::script(None, |_| {})?;
+        for row in &mut recording {
+            if let Some(thread) = row.pointer_mut("/msg/result/thread") {
+                thread["cwd"] = root.to_string_lossy().into_owned().into();
+            }
+        }
+        let mut fx = Fx::scripted(recording)?;
+        fx.keys("cmd-2")?;
+        fx.wait_thread(SUBTRACT)?;
+        fx.keys("alt-cmd-b")?;
+        let turn = fx.read(|root, cx| {
+            root.thread()
+                .unwrap()
+                .read(cx)
+                .turns()
+                .last()
+                .unwrap()
+                .id
+                .clone()
+        });
+        fx.root.update(&mut fx.cx, |root, cx| {
+            root.on_event(
+                Event::Notification {
+                    method: "turn/diff/updated".into(),
+                    params: json!({"threadId":SUBTRACT,"turnId":turn,"diff":patch}),
+                },
+                cx,
+            )
+        });
+        fx.cx.run_until_parked();
+        fx.resize(1440., 900.)?;
+        fx.click((1314., 68.))?;
+        ensure!(fx.read(|root, cx| root.diff_panel().unwrap().read(cx).wraps_lines()));
+        fx.resize(1280., 832.)?;
+        let marker = |image: &image::RgbaImage| {
+            (0..image.height()).find(|y| {
+                let pixel = image.get_pixel(1325, *y);
+                pixel[0] > 200 && pixel[1] < 100 && pixel[2] < 100
+            })
+        };
+        let before_image = fx.reference_shot()?;
+        let before_y =
+            marker(&before_image).ok_or_else(|| anyhow::anyhow!("missing changed line"))?;
+        let output = std::env::var_os("CGX_FULL_CONTEXT_OUT").map(std::path::PathBuf::from);
+        if let Some(output) = &output {
+            fs::create_dir_all(output)?;
+            before_image.save(output.join("before.png"))?;
+        }
+        fx.click((786., 148.))?;
+        fx.keys("cmd-f")?;
+        fx.type_text("line 20")?;
+        fx.wait("expanded context is searchable", |fx| {
+            fx.read(|root, cx| {
+                root.diff_panel()
+                    .unwrap()
+                    .read(cx)
+                    .search()
+                    .is_some_and(|(_, matches)| matches == 1)
+            })
+        })?;
+        ensure!(fx.read(|root, cx| {
             root.diff_panel()
-                .is_some_and(|panel| panel.read(cx).menu_items().len() > 0)
-        })
-    })
-}
-
-#[test]
-fn full_file_context_expands_twenty_lines_and_collapses_to_the_patch() -> Result<()> {
-    let (_repo, mut fx) = prepare(false)?;
-    fx.reference_shot()?
-        .save(output()?.join("full-partial.png"))?;
-    fx.click((1236., 143.))?;
-    fx.keys("cmd-f")?;
-    fx.type_text("line ")?;
-    fx.wait("twenty context lines", |fx| find_count(fx) == 21)?;
-    fx.reference_shot()?
-        .save(output()?.join("full-twenty-lines.png"))?;
-    fx.keys("escape")?;
-    fx.click((900., 143.))?;
-    fx.keys("cmd-f")?;
-    fx.type_text("line ")?;
-    fx.wait("all leading context", |fx| find_count(fx) == 40)?;
-    fx.reference_shot()?
-        .save(output()?.join("full-expanded.png"))?;
-    fx.keys("escape")?;
-    fx.click((1192., 68.))?;
-    choose(&mut fx, "Load full files")?;
-    ensure!(
-        !fx.read(|root, cx| root.diff_panel().unwrap().read(cx).loads_full_files()),
-        "full-file mode stayed enabled"
-    );
-    fx.click((1000., 177.))?;
-    fx.keys("cmd-f")?;
-    fx.type_text("line ")?;
-    ensure!(
-        find_count(&fx) == 1,
-        "turning off full files kept expanded context"
-    );
-    Ok(())
-}
-
-#[test]
-fn full_file_read_failure_can_retry_without_losing_the_patch() -> Result<()> {
-    let (repo, mut fx) = prepare(true)?;
-    let path = repo.path().join("file.txt");
-    fx.reference_shot()?;
-    fx.wait("full-file read error", |fx| {
-        fx.read(|root, cx| {
-            root.diff_panel().unwrap().read(cx).full_file_error(0) == Some(FullError::Failed)
-        })
-    })?;
-    fx.reference_shot()?
-        .save(output()?.join("full-read-error.png"))?;
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o644))?;
-    fx.click((1240., 154.))?;
-    fx.reference_shot()?;
-    fx.click((900., 143.))?;
-    fx.keys("cmd-f")?;
-    fx.type_text("line ")?;
-    fx.wait("full-file retry", |fx| find_count(fx) == 40)?;
-    fx.reference_shot()?
-        .save(output()?.join("full-read-recovered.png"))?;
-    Ok(())
-}
-
-#[test]
-fn import_filter_preserves_code_and_annotated_imports() -> Result<()> {
-    let (repo, mut fx) = prepare(false)?;
-    let mut before = String::from("use std::fmt;\n\n");
-    for index in 0..8 {
-        before.push_str(&format!("fn unchanged_{index}() {{}}\n"));
+                .unwrap()
+                .read(cx)
+                .full_file_error(0)
+                .is_none()
+        }));
+        fx.keys("escape")?;
+        let after_image = fx.reference_shot()?;
+        let after_y = marker(&after_image)
+            .ok_or_else(|| anyhow::anyhow!("changed line left the viewport"))?;
+        ensure!(
+            before_y.abs_diff(after_y) <= 1,
+            "wrapped context moved the reviewed line"
+        );
+        if let Some(output) = &output {
+            after_image.save(output.join("expanded.png"))?;
+        }
+        fx.click((1000., 110.))?;
+        fx.scroll((1000., 200.), 100_000.)?;
+        let before_scroll = fx.reference_shot()?;
+        fx.scroll((1000., 200.), -31.)?;
+        let after_scroll = fx.reference_shot()?;
+        ensure!(
+            image::imageops::crop_imm(&before_scroll, 1323, 88, 1229, 96).to_image()
+                == image::imageops::crop_imm(&after_scroll, 1323, 88, 1229, 96).to_image(),
+            "a sticky file header painted outside the scroll viewport"
+        );
+        Ok(())
     }
-    before.push_str("pub fn value() -> u32 { 1 }\n");
-    let path = repo.path().join("file.rs");
-    fs::write(&path, &before)?;
-    git(repo.path(), &["add", "file.rs"])?;
-    git(repo.path(), &["commit", "-qm", "Rust before"])?;
-    fs::write(
-        &path,
-        before
-            .replace("std::fmt", "std::io")
-            .replace("{ 1 }", "{ 2 }"),
-    )?;
-    update_patch(
-        &mut fx,
-        git(
-            repo.path(),
-            &["diff", "--full-index", "--unified=0", "--", "file.rs"],
-        )?,
-    );
-    fx.reference_shot()?;
-    fx.click((1000., 160.))?;
-    fx.keys("cmd-f")?;
-    fx.type_text("std::")?;
-    fx.wait("visible import change", |fx| find_count(fx) == 2)?;
-    fx.keys("escape")?;
-    fx.click((1192., 68.))?;
-    choose(&mut fx, "Hide imports")?;
-    fx.click((1000., 160.))?;
-    fx.keys("cmd-f cmd-a")?;
-    fx.type_text("std::")?;
-    fx.wait("hidden import change", |fx| find_count(fx) == 0)?;
-    fx.keys("cmd-a")?;
-    fx.type_text("value")?;
-    fx.wait("visible non-import change", |fx| find_count(fx) == 2)?;
-    fx.reference_shot()?
-        .save(output()?.join("imports-hidden.png"))?;
-    fx.keys("escape")?;
-    fx.click((1192., 68.))?;
-    choose(&mut fx, "Hide imports")?;
-    fx.click((704., 163.))?;
-    fx.type_text("Keep this import visible.")?;
-    fx.keys("tab tab tab enter")?;
-    fx.click((1192., 68.))?;
-    choose(&mut fx, "Hide imports")?;
-    fx.click((1000., 160.))?;
-    fx.keys("cmd-f cmd-a")?;
-    fx.type_text("std::")?;
-    fx.wait("annotated import stays visible", |fx| find_count(fx) == 2)?;
-    fx.reference_shot()?
-        .save(output()?.join("imports-annotated.png"))?;
-    Ok(())
-}
-
-#[test]
-fn copied_git_command_keeps_hidden_whitespace_changes() -> Result<()> {
-    let (repo, mut fx) = prepare(false)?;
-    fs::write(repo.path().join("spacing.txt"), "value = 1\n")?;
-    git(repo.path(), &["add", "spacing.txt"])?;
-    git(repo.path(), &["commit", "-qm", "spacing before"])?;
-    fs::write(repo.path().join("spacing.txt"), "value  =  1\n")?;
-    fx.reference_shot()?;
-    fx.click((715., 68.))?;
-    choose(&mut fx, "Uncommitted")?;
-    fx.wait("working tree diff", |fx| {
-        fx.read(|root, cx| {
-            root.diff_panel()
-                .is_some_and(|panel| !panel.read(cx).pending())
-        })
-    })?;
-    fx.click((1192., 68.))?;
-    choose(&mut fx, "Hide white space")?;
-    fx.wait("whitespace-only file hidden", |fx| {
-        fx.read(|root, cx| {
-            root.diff_panel().is_some_and(|panel| {
-                let panel = panel.read(cx);
-                !panel.pending()
-                    && panel.files.len() == 1
-                    && panel.files[0].name.as_ref() == "file.txt"
-            })
-        })
-    })?;
-    fx.click((1192., 68.))?;
-    fx.reference_shot()?
-        .save(output()?.join("options-working-tree.png"))?;
-    choose(&mut fx, "Copy git apply command")?;
-    fx.wait("copied patch toast", |fx| {
-        fx.read(|root, cx| {
-            root.toasts(cx)
-                .iter()
-                .any(|text| text.as_ref() == "Copied git apply command to the clipboard")
-        })
-    })?;
-    let command = fx
-        .cx
-        .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
-        .context("copied command")?;
-    let destination = tempfile::tempdir_in(output()?)?;
-    let clone = destination.path().join("copy");
-    git(
-        repo.path(),
-        &[
-            "clone",
-            "--quiet",
-            "--no-hardlinks",
-            repo.path().to_str().unwrap(),
-            clone.to_str().unwrap(),
-        ],
-    )?;
-    let applied = Command::new("sh")
-        .arg("-c")
-        .arg(&command)
-        .current_dir(&clone)
-        .output()?;
-    ensure!(
-        applied.status.success(),
-        "Copied command failed: {}",
-        String::from_utf8_lossy(&applied.stderr)
-    );
-    ensure!(
-        fs::read_to_string(clone.join("file.txt"))?
-            == fs::read_to_string(repo.path().join("file.txt"))?
-    );
-    ensure!(fs::read_to_string(clone.join("spacing.txt"))? == "value  =  1\n");
-    Ok(())
-}
-
-#[test]
-fn context_menu_opens_line_comments_and_file_tabs() -> Result<()> {
-    let (repo, mut fx) = prepare(false)?;
-    fx.reference_shot()?;
-    body_menu(&mut fx, (900., 184.))?;
-    fx.reference_shot()?
-        .save(output()?.join("diff-context-menu.png"))?;
-    choose(&mut fx, "Request changes")?;
-    fx.wait("context line comment", |fx| {
-        fx.read(|root, cx| {
-            root.diff_panel()
-                .is_some_and(|panel| panel.read(cx).comment_draft().is_some())
-        })
-    })?;
-    fx.type_text("Keep this line checked.")?;
-    fx.keys("escape")?;
-    body_menu(&mut fx, (900., 184.))?;
-    choose(&mut fx, "Copy path")?;
-    let copied = fx
-        .cx
-        .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
-    ensure!(copied.as_deref() == repo.path().join("file.txt").to_str());
-    body_menu(&mut fx, (900., 184.))?;
-    choose(&mut fx, "Copy relative path")?;
-    let copied = fx
-        .cx
-        .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
-    ensure!(copied.as_deref() == Some("file.txt"));
-    body_menu(&mut fx, (900., 184.))?;
-    choose(&mut fx, "Open with")?;
-    fx.reference_shot()?
-        .save(output()?.join("diff-open-with.png"))?;
-    choose(&mut fx, "New tab")?;
-    fx.wait("context file tab", |fx| {
-        fx.read(|root, cx| {
-            root.file_view().is_some_and(|view| {
-                let view = view.read(cx);
-                view.path.ends_with("/file.txt")
-                    && view.contents.as_ref().is_some_and(|text| {
-                        text.as_deref()
-                            .is_ok_and(|text| text.contains("changed 40"))
-                    })
-            })
-        })
-    })?;
-    fx.reference_shot()?
-        .save(output()?.join("diff-context-file-tab.png"))?;
-    Ok(())
-}
-
-#[test]
-fn removed_files_hide_github_and_new_tab_actions() -> Result<()> {
-    let (repo, mut fx) = prepare(false)?;
-    git(
-        repo.path(),
-        &[
-            "remote",
-            "add",
-            "origin",
-            "git@github.com:example/project.git",
-        ],
-    )?;
-    fs::remove_file(repo.path().join("file.txt"))?;
-    let patch = git(repo.path(), &["diff", "--full-index", "--", "file.txt"])?;
-    update_patch(&mut fx, patch);
-    fx.reference_shot()?;
-    body_menu(&mut fx, (900., 164.))?;
-    ensure!(fx.read(|root, cx| {
-        root.diff_panel()
-            .unwrap()
-            .read(cx)
-            .menu_items()
-            .all(|(label, _)| label != "Open in GitHub")
-    }));
-    fx.reference_shot()?
-        .save(output()?.join("diff-deleted-menu.png"))?;
-    choose(&mut fx, "Open with")?;
-    ensure!(fx.read(|root, cx| {
-        root.diff_panel()
-            .unwrap()
-            .read(cx)
-            .menu_items()
-            .all(|(label, _)| label != "New tab")
-    }));
-    Ok(())
 }

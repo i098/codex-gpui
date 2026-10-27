@@ -133,6 +133,11 @@ fn recent_commands_follow_update_order_instead_of_sidebar_order() -> Result<()> 
         let mut thread = recorded_thread(GREETING)?;
         thread["id"] = (*id).into();
         lines.extend(exchange("thread/read", json!({"thread": thread})));
+        let mut resumed = common::recorded_resume(GREETING)?;
+        resumed["thread"] = thread;
+        let mut pair = exchange("thread/resume", resumed);
+        pair[0]["msg"]["params"] = json!({"threadId": id, "excludeTurns": true});
+        lines.extend(pair);
     }
     let mut fx = Fx::scripted(lines)?;
     for (slot, id) in ids.iter().enumerate() {
@@ -178,29 +183,14 @@ fn panel_commands_keep_the_selected_chat_and_existing_tabs() -> Result<()> {
     ensure!(fx.read(|root, _| root.side_panel().is_none()));
     command(&mut fx, "New tab")?;
     ensure!(fx.read(|root, _| root.side_panel() == Some(SidePanel::Changes)));
-    for mut event in ui::screens::terminal::running_command_replay() {
-        if let bridge::Event::Notification { params, .. } = &mut event
-            && params["turn"].is_object()
-        {
-            params["turn"]["rootTurnId"] = params["turn"]["id"].clone();
-        }
-        fx.root
-            .update(&mut fx.cx, |root, cx| root.on_event(event, cx));
-        fx.cx.run_until_parked();
-    }
     command(&mut fx, "Open terminal")?;
     ensure!(fx.read(|root, cx| {
-        root.side_panel() == Some(SidePanel::Terminal)
-            && root.side_tabs() == [SidePanel::Changes, SidePanel::Terminal]
-            && root
-                .thread()
-                .unwrap()
-                .read(cx)
-                .background_terminals()
-                .first()
-                .is_some_and(|(_, output)| *output == "2\n")
+        root.side_panel() == Some(SidePanel::Changes)
+            && root.side_tabs() == [SidePanel::Changes]
+            && root.shell().read(cx).bottom.is_some()
+            && root.terminal_panel().is_some()
     }));
-    ensure!(fx.route() == Route::Thread(SUBTRACT.into()) && fx.composer_focused()?);
+    ensure!(fx.route() == Route::Thread(SUBTRACT.into()) && !fx.composer_focused()?);
     fx.shot()?
         .save(std::env::temp_dir().join("command-dispatch-after-terminal.png"))?;
     Ok(())

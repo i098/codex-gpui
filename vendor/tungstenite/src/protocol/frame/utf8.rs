@@ -189,6 +189,9 @@ mod tests {
     fn hash_consistency() {
         let bytes = Utf8Bytes::from_static("hash_consistency");
         let hasher = RandomState::new();
-        assert_eq!(hasher.hash_one::<&str>(bytes.borrow()), hasher.hash_one(bytes));
+        assert_eq!(
+            hasher.hash_one::<&str>(bytes.borrow()),
+            hasher.hash_one(bytes)
+        );
     }
 }

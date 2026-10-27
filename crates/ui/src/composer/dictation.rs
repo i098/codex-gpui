@@ -37,29 +37,23 @@ impl Drop for Session {
     }
 }
 
+type StartSession = dyn Fn(&Window, &App) -> Result<Session, String> + Send + Sync;
+
 pub struct Dispatcher {
-    start: Arc<dyn Fn() -> Result<Session, String> + Send + Sync>,
+    start: Arc<StartSession>,
     active: Option<(gpui::WindowId, gpui::WeakEntity<Composer>)>,
 }
 
 impl gpui::Global for Dispatcher {}
 
 impl Dispatcher {
-    pub fn new(start: impl Fn() -> Result<Session, String> + Send + Sync + 'static) -> Self {
+    pub fn new(
+        start: impl Fn(&Window, &App) -> Result<Session, String> + Send + Sync + 'static,
+    ) -> Self {
         Self {
             start: Arc::new(start),
             active: None,
         }
-    }
-
-    pub fn install(self, cx: &mut App) {
-        let target = cx
-            .try_global::<Self>()
-            .and_then(|dispatcher| dispatcher.active.clone());
-        if let Some((_, target)) = target {
-            let _ = target.update(cx, |composer, cx| composer.cancel_dictation(cx));
-        }
-        cx.set_global(self);
     }
 
     pub fn cancel(window: gpui::WindowId, cx: &mut App) {
@@ -117,7 +111,7 @@ impl Composer {
             return;
         }
         let start = dispatcher.start.clone();
-        let session = match start() {
+        let session = match start(window, cx) {
             Ok(session) => session,
             Err(error) => {
                 self.dictation_error = Some(error);
@@ -279,7 +273,7 @@ mod tests {
         cx.set_global(Theme::dark());
         let (commands, receiver) = mpsc::channel();
         let (_events, events) = async_channel::unbounded();
-        cx.set_global(Dispatcher::new(move || {
+        cx.set_global(Dispatcher::new(move |_, _| {
             Ok(Session {
                 commands: commands.clone(),
                 events: events.clone(),
@@ -404,5 +398,56 @@ mod tests {
             })
             .unwrap();
         assert!(matches!(receiver.try_recv(), Ok(Command::Cancel)));
+    }
+
+    #[test]
+    fn completion_observers_see_inserted_text_and_terminal_outcomes() {
+        use std::{cell::RefCell, rc::Rc};
+        let mut cx = gpui::TestAppContext::single();
+        let commands = cx.update(install);
+        let window = cx.add_window(Composer::home);
+        let editor = window.update(&mut cx, |_, _, cx| cx.entity()).unwrap();
+        let results = Rc::new(RefCell::new(Vec::new()));
+        let observed = results.clone();
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&editor, move |editor, completion: &Completion, cx| {
+                observed
+                    .borrow_mut()
+                    .push((*completion, editor.read(cx).field_text().to_owned()));
+            })
+        });
+        window
+            .update(&mut cx, |editor, window, cx| {
+                editor.set_text("before ", cx);
+                editor.dictate(window, cx);
+                editor.finish_dictation(window, cx);
+                editor.dictation_event(Event::Finished(Ok("after".into())), window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert!(matches!(commands.try_recv(), Ok(Command::Finish)));
+        window
+            .update(&mut cx, |editor, window, cx| {
+                editor.dictate(window, cx);
+                editor.insert(" edited", window, cx);
+                editor.dictation_event(Event::Finished(Ok("late".into())), window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        window
+            .update(&mut cx, |editor, window, cx| {
+                editor.dictate(window, cx);
+                editor.dictation_event(Event::Finished(Err("failure".into())), window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            *results.borrow(),
+            vec![
+                (Completion::Succeeded, "before after".to_owned()),
+                (Completion::Cancelled, "before after edited".to_owned()),
+                (Completion::Failed, "before after edited".to_owned()),
+            ]
+        );
     }
 }

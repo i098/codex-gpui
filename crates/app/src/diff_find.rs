@@ -35,7 +35,7 @@ impl Root {
     }
 
     pub(super) fn next_search_result(&mut self, previous: bool, cx: &mut Context<Self>) {
-        if self.side == Some(SidePanel::Changes)
+        if self.side_visible(SidePanel::Changes)
             && let Some(panel) = &self.diff
             && panel.update(cx, |panel, cx| panel.next_find(previous, cx))
         {

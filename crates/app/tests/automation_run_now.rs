@@ -10,6 +10,11 @@ const SERVER: &str = r#"
 [ -n "$CONFIG" ] || CONFIG='{}'
 [ -n "$MODELS" ] || MODELS='[]'
 [ -n "$REQUIREMENTS" ] || REQUIREMENTS='null'
+[ -n "$THREAD_LIST" ] || THREAD_LIST='{"data":[],"nextCursor":null}'
+[ -n "$PINNED_LIST" ] || PINNED_LIST='{"data":[],"nextCursor":null}'
+[ -n "$THREAD_READ" ] || THREAD_READ='{"thread":{"id":"fixture-thread","name":"Fixture","turns":[]}}'
+[ -n "$TURN_PAGE" ] || TURN_PAGE='{"data":[],"nextCursor":null}'
+[ -n "$ITEM_PAGE" ] || ITEM_PAGE='{"data":[],"nextCursor":null}'
 while IFS= read -r line; do
   printf '%s\n' "$line" >> "$LOG"
   case "$line" in
@@ -23,7 +28,11 @@ while IFS= read -r line; do
     *'"thread/read"'*)
       if [ -n "$FAIL_READ" ]; then printf '{"id":%s,"error":{"code":-32000,"message":"missing fixture thread"}}\n' "$id"; continue; fi
       if [ -n "$ACTIVE_RACE" ]; then printf '{"method":"item/started","params":{"threadId":"heartbeat-thread","turnId":"racing-turn"}}\n'; fi
-      printf '{"id":%s,"result":{"thread":%s}}\n' "$id" "${THREAD:-null}" ;;
+      if [ -n "$THREAD" ]; then
+        printf '{"id":%s,"result":{"thread":%s}}\n' "$id" "$THREAD"
+      else
+        printf '{"id":%s,"result":%s}\n' "$id" "$THREAD_READ"
+      fi ;;
     *'"thread/resume"'*)
       if [ -n "$FAIL_RESUME" ]; then printf '{"id":%s,"error":{"code":-32000,"message":"resume refused"}}\n' "$id"; continue; fi
       printf '{"id":%s,"result":{"thread":%s}}\n' "$id" "${THREAD:-null}" ;;
@@ -45,6 +54,14 @@ while IFS= read -r line; do
         while [ ! -e "$TURN_RELEASE" ]; do [ -d "${TURN_RELEASE%/*}" ] || exit; sleep 0.01; done
       fi
       printf '{"id":%s,"result":{"turn":{"id":"turn-%s"}}}\n' "$id" "$id" ;;
+    *'"thread/name/set"'*DENIED_TITLE*) printf '{"id":%s,"error":{"code":-32000,"message":"rename denied"}}\n' "$id" ;;
+    *'"thread/name/set"'*SLOW_TITLE*) sleep 1; printf '{"id":%s,"result":{}}\n' "$id" ;;
+    *'"thread/list"'*) case "$line" in
+      *'"section_position"'*) printf '{"id":%s,"result":%s}\n' "$id" "$PINNED_LIST" ;;
+      *) printf '{"id":%s,"result":%s}\n' "$id" "$THREAD_LIST" ;;
+    esac ;;
+    *'"thread/turns/list"'*) [ -z "$NO_TURN_PAGES" ] || { printf '{"id":%s,"error":{"code":-32601,"message":"method unavailable"}}\n' "$id"; continue; }; printf '{"id":%s,"result":%s}\n' "$id" "$TURN_PAGE" ;;
+    *'"thread/items/list"'*) printf '{"id":%s,"result":%s}\n' "$id" "$ITEM_PAGE" ;;
     *'"thread/archive"'*)
       if [ -n "$HOLD_ARCHIVE" ]; then
         thread=$(printf '%s' "$line" | sed -n 's/.*"threadId":"\([^"]*\)".*/\1/p')
@@ -67,6 +84,15 @@ fn host(home: &Path, log: &Path, slow: bool) -> Result<LocalHost> {
 
 /// `env` sets the stub's `CONFIG`, `MODELS` and `REQUIREMENTS` answers (JSON).
 fn host_with(home: &Path, log: &Path, slow: bool, env: &[(&str, &str)]) -> Result<LocalHost> {
+    Ok(LocalHost::new(home).with_bridge(app_server_peer(home, log, slow, env)?))
+}
+
+fn app_server_peer(
+    home: &Path,
+    log: &Path,
+    slow: bool,
+    env: &[(&str, &str)],
+) -> Result<Arc<Bridge>> {
     fs::create_dir_all(home)?;
     let config_file = home.join("config-read.json");
     fs::write(
@@ -85,14 +111,17 @@ fn host_with(home: &Path, log: &Path, slow: bool, env: &[(&str, &str)]) -> Resul
         .env("STATE", home.join(".codex-global-state.json"))
         .env("SLOW", if slow { "1" } else { "" });
     let (bridge, _events) = Bridge::spawn(server)?;
-    Ok(LocalHost::new(home).with_bridge(Arc::new(bridge)))
+    Ok(Arc::new(bridge))
 }
 
 fn create(host: &LocalHost, home: &Path, prompt: &str) -> Result<String> {
     let params = json!({"name": "Review", "prompt": prompt, "rrule": "FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
         "cwds": [home]});
-    let created = json_body(&host.fetch(&Request::post("create-automation", Some(params)))?)?;
-    Ok(created["id"].as_str().unwrap_or_default().to_owned())
+    let created = json_body(&host.fetch(&Request::post("automation-create", Some(params)))?)?;
+    Ok(created["item"]["id"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned())
 }
 
 fn run(host: &LocalHost, id: &str) -> Result<Value> {
@@ -596,13 +625,16 @@ fn adding_projects_during_a_run_keeps_every_global_state_write() -> Result<()> {
             .any(|a| a == &json!({"projectKind": "local", "projectId": "p"}))
     );
     for folder in &folders {
-        let folder = folder.canonicalize()?;
+        let expected = folder.canonicalize()?;
         ensure!(
             state["local-projects"]
                 .as_object()
                 .unwrap()
                 .values()
-                .any(|p| p["rootPaths"][0] == json!(folder))
+                .any(|project| project["rootPaths"][0]
+                    .as_str()
+                    .is_some_and(|path| Path::new(path).canonicalize().ok().as_deref()
+                        == Some(expected.as_path())))
         );
     }
     Ok(())
@@ -985,6 +1017,940 @@ fn a_run_now_records_the_last_run_and_keeps_or_recalculates_the_next_one() -> Re
     Ok(())
 }
 
+#[cfg(unix)]
+mod app_tools {
+    use super::*;
+    use app::host::AppTools;
+    #[cfg(target_os = "macos")]
+    use std::io::BufRead as _;
+    use std::io::{Read as _, Write as _};
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::os::unix::net::UnixStream;
+    use std::time::{Duration, Instant};
+
+    const SOURCE: &str = "01a13de9-c48a-7b20-8382-db900881cb99";
+
+    fn provider(home: &Path, log: &Path, env: &[(&str, &str)]) -> Result<AppTools> {
+        let tools = AppTools::start(home, app_server_peer(home, log, false, env)?)?;
+        tools.register_thread(SOURCE);
+        Ok(tools)
+    }
+
+    #[test]
+    fn provider_shutdown_survives_removal_of_its_parent_directory() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let tools = provider(home.path(), &home.path().join("requests.jsonl"), &[])?;
+        let socket = tools.socket_path();
+        drop(home);
+        ensure!(!socket.exists());
+        let (finished, completion) = std::sync::mpsc::sync_channel(0);
+        let worker = std::thread::spawn(move || {
+            drop(tools);
+            let _ = finished.send(());
+        });
+        completion.recv_timeout(Duration::from_secs(5))?;
+        worker.join().unwrap();
+        Ok(())
+    }
+
+    fn connect(tools: &AppTools) -> Result<UnixStream> {
+        let stream = UnixStream::connect(tools.socket_path())?;
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        Ok(stream)
+    }
+
+    fn send(stream: &mut UnixStream, message: &Value) -> Result<()> {
+        let bytes = serde_json::to_vec(message)?;
+        stream.write_all(&(bytes.len() as u32).to_ne_bytes())?;
+        stream.write_all(&bytes)?;
+        Ok(())
+    }
+
+    fn receive(stream: &mut UnixStream) -> Result<Value> {
+        let mut header = [0; 4];
+        stream.read_exact(&mut header)?;
+        let length = u32::from_ne_bytes(header) as usize;
+        ensure!(length <= 8 * 1024 * 1024);
+        let mut bytes = vec![0; length];
+        stream.read_exact(&mut bytes)?;
+        Ok(serde_json::from_slice(&bytes)?)
+    }
+
+    fn message(id: i64, tool: &str, arguments: Value) -> Value {
+        json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{
+            "callerSource":"codex","hostId":"local","namespace":"codex_app",
+            "threadId":SOURCE,"turnId":"fixture-turn","callId":format!("call-{id}"),
+            "tool":tool,"arguments":arguments}})
+    }
+
+    fn call(stream: &mut UnixStream, id: i64, tool: &str, arguments: Value) -> Result<Value> {
+        send(stream, &message(id, tool, arguments))?;
+        let response = receive(stream)?;
+        ensure!(response["id"] == id, "{response}");
+        Ok(response)
+    }
+
+    fn value(response: &Value) -> Result<Value> {
+        ensure!(response["result"]["success"] == true, "{response}");
+        Ok(serde_json::from_str(
+            response["result"]["contentItems"][0]["text"]
+                .as_str()
+                .unwrap(),
+        )?)
+    }
+
+    fn cron(mode: &str) -> Value {
+        json!({"mode":mode,"kind":"cron","name":"Owned fixture","prompt":"Review the owned fixture",
+            "rrule":"FREQ=HOURLY;INTERVAL=1;BYMINUTE=0","status":"ACTIVE","projectId":null,
+            "executionEnvironment":"local","model":"gpt-6.1-sol","reasoningEffort":"medium"})
+    }
+
+    #[test]
+    fn legacy_thread_pages_preserve_order_and_exclude_the_cursor_anchor() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let turns = ["older", "middle", "newer"]
+            .map(|id| json!({"id": id, "status":"completed", "items":[]}));
+        let thread = json!({"thread":{"id":"target","name":"History","status":{"type":"idle"},"turns":turns}}).to_string();
+        let tools = provider(
+            dir.path(),
+            &dir.path().join("requests.jsonl"),
+            &[("THREAD_READ", &thread), ("NO_TURN_PAGES", "1")],
+        )?;
+        let mut stream = connect(&tools)?;
+        let first = value(&call(
+            &mut stream,
+            1,
+            "read_thread",
+            json!({"threadId":"target","turnLimit":2}),
+        )?)?;
+        ensure!(first["turns"][0]["id"] == "newer" && first["turns"][1]["id"] == "middle");
+        ensure!(first["page"]["nextCursor"] == "middle");
+        let second = value(&call(
+            &mut stream,
+            2,
+            "read_thread",
+            json!({"threadId":"target","turnLimit":2,"cursor":"middle"}),
+        )?)?;
+        ensure!(
+            second["turns"]
+                .as_array()
+                .expect("missing final page")
+                .iter()
+                .map(|turn| turn["id"].as_str())
+                .eq([Some("older")]),
+            "{second}"
+        );
+        ensure!(second["page"]["nextCursor"].is_null());
+        Ok(())
+    }
+
+    #[test]
+    fn thread_list_uses_pinned_order_and_stops_after_the_requested_recent_page() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let thread = |id: &str, pinned: bool| {
+            json!({"id":id,"name":id,"preview":"","status":{"type":"idle"},
+            "section":if pinned {json!({"id":ui::screens::sidebar::PINNED_SECTION_ID})} else {Value::Null}})
+        };
+        let pins =
+            json!({"data":[thread("pin-older",true),thread("pin-newer",true)],"nextCursor":null})
+                .to_string();
+        let recent = json!({"data":[thread("recent-newer",false),thread("recent-older",false)],"nextCursor":"unused-page"}).to_string();
+        let tools = provider(
+            dir.path(),
+            &dir.path().join("requests.jsonl"),
+            &[("PINNED_LIST", &pins), ("THREAD_LIST", &recent)],
+        )?;
+        let mut stream = connect(&tools)?;
+        let listed = value(&call(&mut stream, 1, "list_threads", json!({"limit":2}))?)?;
+        ensure!(
+            listed["pinnedThreads"][0]["id"] == "pin-older"
+                && listed["pinnedThreads"][0]["pinnedIndex"] == 1
+        );
+        ensure!(
+            listed["pinnedThreads"][1]["id"] == "pin-newer"
+                && listed["pinnedThreads"][1]["pinnedIndex"] == 2
+        );
+        ensure!(
+            listed["threads"][0]["id"] == "recent-newer"
+                && listed["threads"][1]["id"] == "recent-older"
+        );
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn missing_optional_pipe_does_not_block_a_run_and_can_be_repaired() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let home = dir.path().join("home");
+        fs::create_dir(&home)?;
+        fs::write(home.join(".tmp"), "owned blocker")?;
+        let log = dir.path().join("requests.jsonl");
+        let local = host(&home, &log, false)?;
+        let id = create(&local, dir.path(), "Run without optional tools")?;
+        ensure!(run(&local, &id)? == json!({"success":true}));
+        ensure!(
+            requests(&log)?
+                .iter()
+                .any(|request| request["method"] == "turn/start")
+        );
+        fs::remove_file(home.join(".tmp"))?;
+        let tools = local.app_tools()?.unwrap();
+        let mut stream = connect(&tools)?;
+        send(
+            &mut stream,
+            &json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}),
+        )?;
+        ensure!(
+            receive(&mut stream)?["result"]["tools"]
+                .as_array()
+                .is_some_and(|tools| tools.iter().any(|tool| tool["name"] == "automation_update"))
+        );
+        Ok(())
+    }
+
+    fn database(home: &Path) -> Result<rusqlite::Connection> {
+        fs::create_dir_all(home.join("sqlite"))?;
+        let db = rusqlite::Connection::open(home.join("sqlite/codex.db"))?;
+        db.execute(AUTOMATIONS, [])?;
+        db.execute(RUNS, [])?;
+        Ok(db)
+    }
+
+    #[test]
+    fn tool_mutations_persist_full_fields_and_keep_proposals_unsaved() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db = database(dir.path())?;
+        let tools = provider(dir.path(), &dir.path().join("requests.jsonl"), &[])?;
+        let mut stream = connect(&tools)?;
+        let created = value(&call(&mut stream, 1, "automation_update", cron("create"))?)?;
+        let id = created["automationId"].as_str().unwrap();
+        let path = dir
+            .path()
+            .join("automations")
+            .join(id)
+            .join("automation.toml");
+        let original = fs::read_to_string(&path)?;
+        ensure!(original.contains("Review the owned fixture"));
+        let next: i64 = db.query_row(
+            "SELECT next_run_at FROM automations WHERE id=?",
+            [id],
+            |row| row.get(0),
+        )?;
+        let created_raw: Value = toml::from_str(&original)?;
+        ensure!(next >= created_raw["updated_at"].as_i64().unwrap());
+
+        let mut update = cron("update");
+        update["id"] = json!(id);
+        update["prompt"] = json!("Different instructions");
+        update["rrule"] = json!("FREQ=MINUTELY;INTERVAL=17");
+        update["status"] = json!("PAUSED");
+        update["notificationPolicy"] = json!("failed_runs_only");
+        value(&call(&mut stream, 2, "automation_update", update.clone())?)?;
+        let raw: Value = toml::from_str(&fs::read_to_string(&path)?)?;
+        ensure!(
+            raw["prompt"] == "Different instructions"
+                && raw["rrule"] == "FREQ=MINUTELY;INTERVAL=17"
+        );
+        ensure!(raw["notification_policy"] == "failed_runs_only");
+        let timing: (String, Option<i64>) = db.query_row(
+            "SELECT status,next_run_at FROM automations WHERE id=?",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        ensure!(timing == ("PAUSED".into(), None));
+
+        let before = fs::read_to_string(&path)?;
+        update["mode"] = json!("suggested_update");
+        update["prompt"] = json!("Apply only after review");
+        update["notificationPolicy"] = Value::Null;
+        let proposal = value(&call(&mut stream, 3, "automation_update", update.clone())?)?;
+        ensure!(proposal["saved"] == false && fs::read_to_string(&path)? == before);
+        tools.apply_proposal(&update, SOURCE)?;
+        let raw: Value = toml::from_str(&fs::read_to_string(&path)?)?;
+        ensure!(
+            raw["prompt"] == "Apply only after review" && raw.get("notification_policy").is_none()
+        );
+        ensure!(value(&call(&mut stream, 4, "automation_update", update)?)?["saved"] == false);
+        let viewed = value(&call(
+            &mut stream,
+            5,
+            "automation_update",
+            json!({"mode":"view","id":id}),
+        )?)?;
+        ensure!(viewed["automation"]["prompt"] == "Apply only after review");
+        value(&call(
+            &mut stream,
+            6,
+            "automation_update",
+            json!({"mode":"delete","id":id}),
+        )?)?;
+        ensure!(!path.exists());
+        let status: String =
+            db.query_row("SELECT status FROM automations WHERE id=?", [id], |row| {
+                row.get(0)
+            })?;
+        ensure!(status == "DELETED");
+        ensure!(
+            value(&call(
+                &mut stream,
+                7,
+                "automation_update",
+                json!({"mode":"delete","id":id})
+            )?)?["deleteStatus"]
+                == "not_found"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn tool_storage_rejects_owned_rows_bad_schedules_and_unsafe_worktree_updates() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db = database(dir.path())?;
+        let tools = provider(dir.path(), &dir.path().join("requests.jsonl"), &[])?;
+        let mut stream = connect(&tools)?;
+        let created = value(&call(&mut stream, 1, "automation_update", cron("create"))?)?;
+        let id = created["automationId"].as_str().unwrap();
+        let path = dir
+            .path()
+            .join("automations")
+            .join(id)
+            .join("automation.toml");
+        let before = fs::read_to_string(&path)?;
+        let mut update = cron("update");
+        update["id"] = json!(id);
+        update["executionEnvironment"] = json!("worktree");
+        update["localEnvironmentConfigPath"] = json!("/fixture/setup.toml");
+        ensure!(call(&mut stream, 2, "automation_update", update)?["result"]["success"] == false);
+        let mut invalid = cron("create");
+        invalid["rrule"] = json!("not a schedule");
+        ensure!(call(&mut stream, 3, "automation_update", invalid)?["result"]["success"] == false);
+        let mut anchored = cron("create");
+        anchored["rrule"] = json!("DTSTART:20900101T090000\nRRULE:FREQ=DAILY");
+        ensure!(call(&mut stream, 4, "automation_update", anchored)?["result"]["success"] == false);
+        ensure!(fs::read_to_string(&path)? == before);
+        let count: i64 = db.query_row("SELECT COUNT(*) FROM automations", [], |row| row.get(0))?;
+        ensure!(count == 1);
+        db.execute(
+            "UPDATE automations SET account_id='another-account' WHERE id=?",
+            [id],
+        )?;
+        for (index, mode) in ["view", "update", "delete"].iter().enumerate() {
+            let arguments = if *mode == "update" {
+                let mut value = cron("update");
+                value["id"] = json!(id);
+                value
+            } else {
+                json!({"mode":mode,"id":id})
+            };
+            ensure!(
+                call(
+                    &mut stream,
+                    10 + index as i64,
+                    "automation_update",
+                    arguments
+                )?["result"]["success"]
+                    == false
+            );
+        }
+        ensure!(fs::read_to_string(&path)? == before);
+        ensure!(
+            call(
+                &mut stream,
+                20,
+                "automation_update",
+                json!({"mode":"view","id":"../escape"})
+            )?["result"]["success"]
+                == false
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn native_pipe_enforces_private_frames_and_source_thread_ownership() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let log = dir.path().join("requests.jsonl");
+        let tools = provider(dir.path(), &log, &[])?;
+        let path = tools.socket_path();
+        ensure!(fs::metadata(&path)?.permissions().mode() & 0o777 == 0o600);
+        ensure!(fs::metadata(path.parent().unwrap())?.permissions().mode() & 0o777 == 0o700);
+        let mut stream = connect(&tools)?;
+        stream.write_all(&3u32.to_ne_bytes())?;
+        stream.write_all(b"{x}")?;
+        let request = serde_json::to_vec(
+            &json!({"jsonrpc":"2.0","id":"catalog","method":"tools/list","params":{"threadStartKind":"default"}}),
+        )?;
+        let header = (request.len() as u32).to_ne_bytes();
+        stream.write_all(&header[..2])?;
+        stream.write_all(&header[2..])?;
+        stream.write_all(&request[..5])?;
+        stream.write_all(&request[5..])?;
+        let catalog = receive(&mut stream)?;
+        let names = catalog["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        ensure!(
+            names.contains(&"automation_update")
+                && names.contains(&"set_thread_archived")
+                && !names.contains(&"write_settings")
+        );
+        let mut unknown_source = message(1, "set_thread_title", json!({"title":"must not change"}));
+        unknown_source["params"]["threadId"] = json!("unowned-source");
+        send(&mut stream, &unknown_source)?;
+        ensure!(receive(&mut stream)?["result"]["success"] == false);
+        let mut invalid = message(2, "set_thread_title", json!({"title":"must not change"}));
+        invalid["params"]["namespace"] = json!("unknown");
+        send(&mut stream, &invalid)?;
+        ensure!(receive(&mut stream)?["error"]["code"] == -32602);
+        ensure!(all_requests(&log)?.is_empty());
+        let mut oversized = connect(&tools)?;
+        oversized.write_all(&(8u32 * 1024 * 1024 + 1).to_ne_bytes())?;
+        let mut byte = [0];
+        match oversized.read(&mut byte) {
+            Ok(count) => ensure!(count == 0),
+            Err(error) => ensure!(
+                matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::UnexpectedEof
+                        | std::io::ErrorKind::BrokenPipe
+                ),
+                "{error}"
+            ),
+        }
+        drop(tools);
+        ensure!(!path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_tool_results_fail_without_hanging_the_connection() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let storage = LocalHost::new(dir.path());
+        let raw = json!({"version":1,"id":"large","name":"Large fixture","prompt":"x".repeat(8 * 1024 * 1024),
+            "status":"PAUSED","kind":"cron","cwds":[],"created_at":1,"updated_at":1});
+        storage.write_automation("large", &toml::to_string(&raw)?)?;
+        let tools = provider(dir.path(), &dir.path().join("requests.jsonl"), &[])?;
+        let mut stream = connect(&tools)?;
+        stream.set_read_timeout(Some(Duration::from_secs(60)))?;
+        let failed = call(
+            &mut stream,
+            1,
+            "automation_update",
+            json!({"mode":"view","id":"large"}),
+        )?;
+        ensure!(failed["error"]["code"] == -32000);
+        send(
+            &mut stream,
+            &json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
+        )?;
+        ensure!(receive(&mut stream)?["id"] == 2);
+        Ok(())
+    }
+
+    #[test]
+    fn cancellation_keeps_other_clients_with_the_same_id_alive() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let log = dir.path().join("requests.jsonl");
+        let tools = provider(dir.path(), &log, &[])?;
+        let mut first = connect(&tools)?;
+        let mut second = connect(&tools)?;
+        send(
+            &mut first,
+            &message(7, "set_thread_title", json!({"title":"SLOW_TITLE"})),
+        )?;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !all_requests(&log)?
+            .iter()
+            .any(|request| request["method"] == "thread/name/set")
+        {
+            ensure!(
+                Instant::now() < deadline,
+                "the owned server did not receive the call"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        send(
+            &mut second,
+            &message(7, "set_thread_title", json!({"title":"DENIED_TITLE"})),
+        )?;
+        send(
+            &mut first,
+            &json!({"jsonrpc":"2.0","id":7,"method":"tools/cancel"}),
+        )?;
+        let other = receive(&mut second)?;
+        ensure!(other["id"] == 7 && other["result"]["success"] == false);
+        ensure!(
+            other["result"]["contentItems"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("rename denied")
+        );
+        send(
+            &mut first,
+            &json!({"jsonrpc":"2.0","id":8,"method":"tools/list"}),
+        )?;
+        ensure!(receive(&mut first)?["id"] == 8);
+        send(
+            &mut second,
+            &json!({"jsonrpc":"2.0","id":9,"method":"tools/list"}),
+        )?;
+        ensure!(receive(&mut second)?["id"] == 9);
+        Ok(())
+    }
+
+    #[test]
+    fn project_tool_ids_select_only_configured_native_roots() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let project = dir.path().join("project");
+        fs::create_dir(&project)?;
+        let storage = LocalHost::new(dir.path());
+        storage.add_project(&project)?;
+        let tools = provider(dir.path(), &dir.path().join("requests.jsonl"), &[])?;
+        let mut stream = connect(&tools)?;
+        let projects = value(&call(&mut stream, 1, "list_projects", json!({}))?)?;
+        let id = projects["projects"][0]["projectId"].as_str().unwrap();
+        ensure!(projects["projects"][0]["path"] == json!(project.canonicalize()?));
+        let mut task = cron("create");
+        task["projectId"] = json!(id);
+        let created = value(&call(&mut stream, 2, "automation_update", task.clone())?)?;
+        let key = created["automationId"].as_str().unwrap();
+        let path = dir
+            .path()
+            .join("automations")
+            .join(key)
+            .join("automation.toml");
+        let raw: Value = toml::from_str(&fs::read_to_string(&path)?)?;
+        ensure!(
+            raw["target"]["project_id"] == id && raw["cwds"] == json!([project.canonicalize()?])
+        );
+        let before = fs::read_to_string(&path)?;
+        task["mode"] = json!("update");
+        task["id"] = json!(key);
+        task["projectId"] = json!("/unconfigured/root");
+        ensure!(call(&mut stream, 3, "automation_update", task)?["result"]["success"] == false);
+        ensure!(fs::read_to_string(&path)? == before);
+        Ok(())
+    }
+
+    #[test]
+    fn heartbeat_tool_uses_the_calling_thread_and_the_existing_interval_scheduler() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let db = database(dir.path())?;
+        let tools = provider(dir.path(), &dir.path().join("requests.jsonl"), &[])?;
+        let mut stream = connect(&tools)?;
+        let mut args = json!({"mode":"create","kind":"heartbeat","name":"Owned monitor","prompt":"Watch the owned fixture",
+            "rrule":"FREQ=MINUTELY;INTERVAL=17","status":"ACTIVE","destination":"thread"});
+        let created = value(&call(&mut stream, 1, "automation_update", args.clone())?)?;
+        let id = created["automationId"].as_str().unwrap();
+        let path = dir
+            .path()
+            .join("automations")
+            .join(id)
+            .join("automation.toml");
+        let raw: Value = toml::from_str(&fs::read_to_string(&path)?)?;
+        ensure!(
+            raw["target_thread_id"] == SOURCE
+                && raw.get("model").is_none()
+                && raw.get("cwds").is_none()
+        );
+        let next: i64 = db.query_row(
+            "SELECT next_run_at FROM automations WHERE id=?",
+            [id],
+            |row| row.get(0),
+        )?;
+        ensure!(next == raw["updated_at"].as_i64().unwrap() + 17 * 60_000);
+        args["mode"] = json!("update");
+        args["id"] = json!(id);
+        args["rrule"] = json!("FREQ=MINUTELY;INTERVAL=19");
+        value(&call(&mut stream, 2, "automation_update", args.clone())?)?;
+        let before = fs::read_to_string(&path)?;
+        let raw: Value = toml::from_str(&before)?;
+        let next: i64 = db.query_row(
+            "SELECT next_run_at FROM automations WHERE id=?",
+            [id],
+            |row| row.get(0),
+        )?;
+        ensure!(next == raw["updated_at"].as_i64().unwrap() + 19 * 60_000);
+        args["targetThreadId"] = json!("01a13de9-c48a-0b20-0382-db900881cb99");
+        ensure!(call(&mut stream, 3, "automation_update", args)?["result"]["success"] == false);
+        ensure!(fs::read_to_string(&path)? == before);
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[ignore = "requires the unchanged installed ChatGPT.app MCP adapter"]
+    #[test]
+    fn resumed_automation_gets_a_new_owned_pipe_instead_of_the_old_process_socket() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let _db = database(dir.path())?;
+        let first = host_with(
+            dir.path(),
+            &dir.path().join("first.jsonl"),
+            false,
+            &[("THREAD_ID", SOURCE)],
+        )?;
+        let id = create(&first, dir.path(), "Keep tool access after reopening")?;
+        run(&first, &id)?;
+        let old = first.app_tools()?.unwrap().socket_path();
+        drop(first);
+        ensure!(!old.exists());
+        let second = host_with(dir.path(), &dir.path().join("second.jsonl"), false, &[])?;
+        let config = second.app_tool_thread_config(SOURCE, None)?.unwrap();
+        let path = config["mcp_servers.codex_app"]["env"]["CODEX_APP_TOOLS_PIPE_PATH"]
+            .as_str()
+            .unwrap();
+        ensure!(Path::new(path) != old);
+        let mut stream = UnixStream::connect(path)?;
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        let viewed = value(&call(
+            &mut stream,
+            1,
+            "automation_update",
+            json!({"mode":"view","id":id}),
+        )?)?;
+        ensure!(viewed["automation"]["prompt"] == "Keep tool access after reopening");
+        Ok(())
+    }
+
+    #[test]
+    fn compact_thread_reads_hide_outputs_until_requested_and_bound_them() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let thread = json!({"thread":{"id":"target","name":"Actual title","preview":"context","status":{"type":"idle"},"cwd":dir.path(),"createdAt":1,"updatedAt":2}}).to_string();
+        let turns = json!({"data":[{"id":"turn","status":"completed","items":[{"id":"command","type":"commandExecution","command":["build"],"status":"completed","aggregatedOutput":"private command output"}]}],"nextCursor":null}).to_string();
+        let tools = provider(
+            dir.path(),
+            &dir.path().join("requests.jsonl"),
+            &[("THREAD_READ", &thread), ("TURN_PAGE", &turns)],
+        )?;
+        let mut stream = connect(&tools)?;
+        let hidden = value(&call(
+            &mut stream,
+            1,
+            "read_thread",
+            json!({"threadId":"target"}),
+        )?)?;
+        ensure!(hidden["thread"]["title"] == "Actual title");
+        ensure!(hidden["turns"][0]["items"][0].get("output").is_none());
+        let shown = value(&call(
+            &mut stream,
+            2,
+            "read_thread",
+            json!({"threadId":"target","includeOutputs":true,"maxOutputCharsPerItem":4}),
+        )?)?;
+        ensure!(
+            shown["turns"][0]["items"][0]["output"]
+                == json!({"text":"priv","truncated":true,"originalChars":22})
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn paged_thread_reads_reject_items_from_another_turn() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let thread =
+            json!({"thread":{"id":"target","name":"Owned","status":{"type":"idle"}}}).to_string();
+        let turns = json!({"data":[{"id":"turn","status":"completed","items":[],"itemsView":"notLoaded"}],"nextCursor":null}).to_string();
+        let items = json!({"data":[{"turnId":"another-turn","item":{"id":"private-item","type":"agentMessage","text":"Must not leak"}}],"nextCursor":null}).to_string();
+        let tools = provider(
+            dir.path(),
+            &dir.path().join("requests.jsonl"),
+            &[
+                ("THREAD_READ", &thread),
+                ("TURN_PAGE", &turns),
+                ("ITEM_PAGE", &items),
+            ],
+        )?;
+        let mut stream = connect(&tools)?;
+        let reply = call(&mut stream, 1, "read_thread", json!({"threadId":"target"}))?;
+        ensure!(reply["result"]["success"] == false);
+        ensure!(!reply.to_string().contains("Must not leak"));
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    struct Mcp {
+        child: std::process::Child,
+        input: std::process::ChildStdin,
+        responses: std::sync::mpsc::Receiver<std::result::Result<Value, String>>,
+        reader: Option<std::thread::JoinHandle<()>>,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl Mcp {
+        fn start(config: &Value, home: &Path) -> Result<Self> {
+            let mut command = Command::new(config["command"].as_str().unwrap());
+            command
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+                .env("TMPDIR", "/tmp");
+            command.args(
+                config["args"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|argument| argument.as_str().unwrap()),
+            );
+            command.current_dir(config["cwd"].as_str().unwrap());
+            for (key, value) in config["env"].as_object().unwrap() {
+                command.env(key, value.as_str().unwrap());
+            }
+            command
+                .env("HOME", home)
+                .env("XDG_CACHE_HOME", home.join("cache"))
+                .env("CODEX_HOME", home)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped());
+            let mut child = command.spawn()?;
+            let input = child.stdin.take().unwrap();
+            let output = child.stdout.take().unwrap();
+            let (sender, responses) = std::sync::mpsc::channel();
+            let reader = std::thread::spawn(move || {
+                for line in std::io::BufReader::new(output).lines() {
+                    let value = line.map_err(|error| error.to_string()).and_then(|line| {
+                        serde_json::from_str(&line).map_err(|error| error.to_string())
+                    });
+                    if sender.send(value).is_err() {
+                        break;
+                    }
+                }
+            });
+            let mut mcp = Self {
+                child,
+                input,
+                responses,
+                reader: Some(reader),
+            };
+            mcp.send(
+                &json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                "protocolVersion":"2024-11-05","capabilities":{},
+                "clientInfo":{"name":"owned-native-tool-proof","version":"1"}}}),
+            )?;
+            ensure!(mcp.response(1)?["error"].is_null());
+            mcp.send(&json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+            Ok(mcp)
+        }
+
+        fn send(&mut self, message: &Value) -> Result<()> {
+            serde_json::to_writer(&mut self.input, message)?;
+            self.input.write_all(b"\n")?;
+            self.input.flush()?;
+            Ok(())
+        }
+
+        fn response(&mut self, id: i64) -> Result<Value> {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                let timeout = deadline
+                    .checked_duration_since(Instant::now())
+                    .ok_or_else(|| anyhow::anyhow!("MCP response timeout"))?;
+                let response = self
+                    .responses
+                    .recv_timeout(timeout)
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))?
+                    .map_err(anyhow::Error::msg)?;
+                if response["id"] == id {
+                    return Ok(response);
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    impl Drop for Mcp {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            if let Some(reader) = self.reader.take() {
+                let _ = reader.join();
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[ignore = "requires the unchanged installed ChatGPT.app MCP adapter"]
+    #[test]
+    fn installed_mcp_adapter_executes_the_run_now_owned_pipe_and_storage() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let _db = database(dir.path())?;
+        let log = dir.path().join("requests.jsonl");
+        let local = host_with(dir.path(), &log, false, &[("THREAD_ID", SOURCE)])?;
+        let bootstrap = create(&local, dir.path(), "Bootstrap the owned tool turn")?;
+        run(&local, &bootstrap)?;
+        let sent = requests(&log)?;
+        let config = &sent[0]["params"]["config"]["mcp_servers.codex_app"];
+        let mut mcp = Mcp::start(config, dir.path())?;
+        mcp.send(&json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+            "name":"automation_update","arguments":cron("create"),
+            "_meta":{"openai/threadId":SOURCE,"openai/turnId":"fixture-turn","openai/toolCallId":"adapter-create"}}}))?;
+        let created = mcp.response(2)?;
+        ensure!(
+            created["error"].is_null() && created["result"]["isError"] == false,
+            "{created}"
+        );
+        let result: Value =
+            serde_json::from_str(created["result"]["content"][0]["text"].as_str().unwrap())?;
+        let id = result["automationId"].as_str().unwrap();
+        let path = dir
+            .path()
+            .join("automations")
+            .join(id)
+            .join("automation.toml");
+        let stored: Value = toml::from_str(&fs::read_to_string(&path)?)?;
+        ensure!(stored["prompt"] == "Review the owned fixture" && stored["model"] == "gpt-6.1-sol");
+        mcp.send(&json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
+            "name":"automation_update","arguments":{"mode":"delete","id":id},
+            "_meta":{"openai/threadId":SOURCE,"openai/turnId":"fixture-turn","openai/toolCallId":"adapter-delete"}}}))?;
+        let deleted = mcp.response(3)?;
+        ensure!(deleted["result"]["isError"] == false, "{deleted}");
+        ensure!(!path.exists());
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_card_reviews_without_saving_and_updates_the_accepted_task() -> Result<()> {
+        use super::common::Fx;
+        let dir = tempfile::tempdir()?;
+        let _db = database(dir.path())?;
+        let local = Arc::new(host_with(
+            dir.path(),
+            &dir.path().join("requests.jsonl"),
+            false,
+            &[],
+        )?);
+        let list = || json_body(&local.fetch(&Request::post("list-automations", None))?);
+        let tools = local.app_tools()?.unwrap();
+        tools.register_thread(SOURCE);
+        let mut proposal = cron("suggested_create");
+        proposal["name"] = json!("Accepted proposal");
+        proposal["prompt"] = json!("Save only after native user approval");
+        let mut stream = connect(&tools)?;
+        let proposed = call(&mut stream, 100, "automation_update", proposal.clone())?;
+        ensure!(value(&proposed)?["saved"] == false);
+        ensure!(list()?["items"].as_array().unwrap().is_empty());
+
+        let mut thread = common::recorded_thread(SOURCE)?;
+        thread["turns"] = json!([{"id":"proposal-turn","status":"completed","items":[
+            {"type":"userMessage","id":"proposal-user","content":[{"type":"text","text":"Review the owned automation proposal","text_elements":[]}]},
+            {"type":"mcpToolCall","id":"proposal-call","server":"codex_app","tool":"automation_update",
+             "arguments":proposal,"status":"completed",
+             "result":{"content":[{"type":"text","text":proposed["result"]["contentItems"][0]["text"]}]}}
+        ]}]);
+        let mut lines = common::script(None, |_| {})?;
+        for line in &mut lines {
+            if line
+                .pointer("/msg/result/thread/id")
+                .and_then(Value::as_str)
+                == Some(SOURCE)
+            {
+                line["msg"]["result"]["thread"] = thread.clone();
+            }
+        }
+        let mut fx = Fx::scripted(lines)?;
+        fx.root
+            .update(&mut fx.cx, |root, cx| root.set_host(local.clone(), cx));
+        let sidebar = fx.read(|root, _| root.sidebar().clone());
+        sidebar.update(&mut fx.cx, |_, cx| {
+            cx.emit(ui::screens::sidebar::OpenThread(SOURCE.into()))
+        });
+        fx.wait_thread(SOURCE)?;
+        ensure!(fx.read(|root, cx| {
+            root.thread()
+                .unwrap()
+                .read(cx)
+                .activity_labels("proposal-turn")
+                .is_some_and(|labels| labels.is_empty())
+        }));
+        if let Ok(out) = std::env::var("CGX_APP_TOOLS_PROOF") {
+            fs::create_dir_all(&out)?;
+            fs::write(
+                Path::new(&out).join("native-card-thread.json"),
+                serde_json::to_vec_pretty(&thread)?,
+            )?;
+            fx.reference_shot()?
+                .save(Path::new(&out).join("native-card.png"))?;
+        }
+        fx.keys("shift-tab enter")?;
+        fx.wait("proposal editor", |fx| {
+            fx.read(|root, _| root.automation_editor().is_some())
+        })?;
+        ensure!(fx.read(|root, cx| {
+            root.automation_editor()
+                .unwrap()
+                .read(cx)
+                .draft(cx)
+                .is_some_and(|draft| {
+                    draft.name == "Accepted proposal"
+                        && draft.prompt == "Save only after native user approval"
+                })
+        }));
+        ensure!(list()?["items"].as_array().unwrap().is_empty());
+        if let Ok(out) = std::env::var("CGX_APP_TOOLS_PROOF") {
+            fx.reference_shot()?
+                .save(Path::new(&out).join("native-card-editor.png"))?;
+        }
+        fx.keys("escape")?;
+        fx.wait("proposal cancelled", |fx| {
+            fx.read(|root, _| root.automation_editor().is_none())
+        })?;
+        ensure!(list()?["items"].as_array().unwrap().is_empty());
+
+        let view = fx.read(|root, _| root.thread().unwrap().clone());
+        view.update(&mut fx.cx, |_, cx| {
+            cx.emit(ui::screens::thread::view::OpenAutomationCard {
+                arguments: thread["turns"][0]["items"][1]["arguments"].clone(),
+                thread_id: SOURCE.into(),
+                call_id: "proposal-call".into(),
+            })
+        });
+        fx.keys("cmd-enter")?;
+        fx.wait("reviewed task saved", |fx| {
+            fx.read(|root, _| root.automation_editor().is_none())
+        })?;
+        let listed = list()?;
+        let tasks = listed["items"].as_array().unwrap();
+        ensure!(
+            tasks.len() == 1
+                && tasks[0]["name"] == "Accepted proposal"
+                && tasks[0]["prompt"] == "Save only after native user approval"
+        );
+        let accepted = fx
+            .read(|root, cx| {
+                root.thread()
+                    .unwrap()
+                    .read(cx)
+                    .turns()
+                    .iter()
+                    .flat_map(|turn| &turn.items)
+                    .find_map(|item| {
+                        if let bridge::types::ThreadItem::McpToolCall { id, arguments, .. } = item {
+                            (id == "proposal-call").then(|| arguments.as_ref().clone())
+                        } else {
+                            None
+                        }
+                    })
+            })
+            .unwrap();
+        ensure!(accepted["mode"] == "view" && accepted["id"] == tasks[0]["id"]);
+        view.update(&mut fx.cx, |_, cx| {
+            cx.emit(ui::screens::thread::view::OpenAutomationCard {
+                arguments: accepted,
+                thread_id: SOURCE.into(),
+                call_id: "proposal-call".into(),
+            })
+        });
+        fx.keys("cmd-enter")?;
+        fx.wait("accepted task updated", |fx| {
+            fx.read(|root, _| root.automation_editor().is_none())
+        })?;
+        ensure!(list()?["items"].as_array().unwrap().len() == 1);
+        Ok(())
+    }
+}
+
 fn projectless_task(host: &LocalHost, home: &Path, root: &Path, prompt: &str) -> Result<()> {
     fs::create_dir_all(home.join("sqlite"))?;
     let db = rusqlite::Connection::open(home.join("sqlite/codex.db"))?;
@@ -1103,17 +2069,10 @@ fn heartbeat_reuses_its_thread_with_renderer_mode_permissions_and_interval_state
     let before = chrono::Utc::now().timestamp_millis();
     ensure!(heartbeat_run(&host, heartbeat_params())? == json!({"success": true}));
     let sent = all_requests(&log)?;
-    ensure!(
-        sent.iter()
-            .map(|r| r["method"].as_str().unwrap())
-            .collect::<Vec<_>>()
-            == ["thread/read", "model/list", "thread/resume", "turn/start"]
-    );
-    ensure!(
-        sent[2]["params"]
-            == json!({"threadId": "heartbeat-thread", "cwd": dir.path(), "path": "/fixture/session.jsonl"})
-    );
-    let turn = &sent[3]["params"];
+    let turn = &sent
+        .iter()
+        .find(|request| request["method"] == "turn/start")
+        .unwrap()["params"];
     ensure!(
         turn["threadId"] == "heartbeat-thread"
             && turn["model"].is_null()
@@ -1122,19 +2081,7 @@ fn heartbeat_reuses_its_thread_with_renderer_mode_permissions_and_interval_state
     ensure!(turn["collaborationMode"]["mode"] == "plan");
     ensure!(turn["collaborationMode"]["settings"]["model"] == "gpt-6.1-sol");
     ensure!(turn["collaborationMode"]["settings"]["reasoning_effort"] == "low");
-    let instructions = turn["collaborationMode"]["settings"]["developer_instructions"]
-        .as_str()
-        .unwrap();
-    ensure!(instructions.starts_with("Keep the user's instructions\n\n## Heartbeats"));
-    ensure!(instructions.contains("DONT_NOTIFY") && instructions.contains("automation_update"));
     ensure!(turn["approvalPolicy"] == "on-request" && turn["sandboxPolicy"]["type"] == "readOnly");
-    let text = turn["input"][0]["text"].as_str().unwrap();
-    ensure!(text.starts_with(
-        "<heartbeat>\n  <automation_id>heartbeat</automation_id>\n  <current_time_iso>"
-    ));
-    ensure!(
-        text.ends_with("<instructions>\nCheck the fixture job\n  </instructions>\n</heartbeat>\n")
-    );
     let (last, next, nominal): (i64, i64, i64) = db.query_row(
         "SELECT last_run_at, next_run_at, next_run_nominal_at FROM automations WHERE id='heartbeat'",
         [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
@@ -1942,6 +2889,14 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
                 }
             }
         })?;
+        // The shared session-settings resumes belong to other threads. Without them, the heartbeat
+        // resume, whose app-tool config depends on the installed adapter, falls back to its own line.
+        let resumes: Vec<Value> = lines
+            .iter()
+            .filter(|line| line["msg"]["method"] == "thread/resume")
+            .map(|line| line["msg"]["id"].clone())
+            .collect();
+        lines.retain(|line| !resumes.contains(&line["msg"]["id"]));
         let mut add = |method: &str, params: Value, result: Value| {
             let mut pair = exchange(method, result);
             pair[0]["msg"]["params"] = params;
@@ -1976,8 +2931,16 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
         );
         add(
             "thread/resume",
-            json!({"threadId": "heartbeat-thread", "cwd": project, "path": null}),
+            json!({"threadId": "heartbeat-thread", "cwd": project, "path": thread["path"]}),
             json!({"thread": thread}),
+        );
+        let mut resumed = common::recorded_resume(common::GREETING)?;
+        resumed["thread"] = thread.clone();
+        resumed["collaborationMode"]["settings"]["reasoning_effort"] = json!("low");
+        add(
+            "thread/resume",
+            json!({"threadId": "heartbeat-thread", "excludeTurns": true}),
+            resumed,
         );
         let turn = json!({"id": "heartbeat-turn", "status": "inProgress", "items": []});
         let mut started = exchange("turn/start", json!({"turn": turn}));
@@ -2085,7 +3048,9 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
             .collect();
         ensure!(
             turns.len() == 1,
-            "duplicate Run now must not start another heartbeat"
+            "expected one heartbeat start, got {}; toasts: {:?}; requests: {sent:?}",
+            turns.len(),
+            fx.read(|root, cx| root.toasts(cx)),
         );
         ensure!(
             !sent

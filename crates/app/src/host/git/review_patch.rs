@@ -1,4 +1,5 @@
 use super::*;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 
 pub(super) fn read(root: &Path, params: &Value) -> Result<Value> {
     let source = params["reviewSource"]
@@ -52,5 +53,5 @@ pub(super) fn read(root: &Path, params: &Value) -> Result<Value> {
     for file in files {
         patch.extend(file.diff);
     }
-    Ok(json!({"diff": String::from_utf8(patch).context("Git patch must be UTF-8")?}))
+    Ok(json!({"contentsBase64": STANDARD.encode(patch)}))
 }

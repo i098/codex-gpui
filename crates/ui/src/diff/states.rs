@@ -72,9 +72,9 @@ impl DiffPanel {
     }
 
     fn select_page(&mut self, index: usize, cx: &mut Context<Self>) {
-        if let Some(file) = self.files.get_mut(index) {
+        if index < self.files.len() {
             self.active_file = index;
-            file.open = true;
+            self.set_file_open(index, true);
             self.selection = None;
             self.scroll.set_offset(gpui::point(px(0.), px(0.)));
             cx.notify();
