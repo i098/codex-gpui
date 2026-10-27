@@ -46,6 +46,12 @@ fn capture_live_terminal() -> Result<()> {
         std::env::set_var("SHELL", "/bin/sh");
     }
     let mut fx = Fx::captured("dark", (1280., 832.), common::script(None, |_| {})?)?;
+    // The originals show the Explore dot; main draws it from fetched unseen destinations, which
+    // this replay cannot supply.
+    let shell = fx.read(|root, _| root.shell().clone());
+    shell.update(&mut fx.cx, |shell, _| {
+        shell.unread_destinations = Some(["unseen".into()].into());
+    });
     let source_home = tempfile::tempdir()?;
     let directories = std::env::var_os("CGX_SOURCE_DIRECTORIES").is_some();
     if directories {
