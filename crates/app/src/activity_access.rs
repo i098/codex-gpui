@@ -53,7 +53,7 @@ async fn retry_read<T: Send + 'static>(
     }
 }
 
-fn feature(host: &dyn host::Host, identity: Option<&host::Identity>) -> Result<bool> {
+fn feature(host: &dyn host::Host, identity: Option<&host::Identity>) -> Result<(bool, Value)> {
     let response = if let Some(identity) = identity {
         policy::request(
             host,
@@ -88,7 +88,10 @@ fn feature(host: &dyn host::Host, identity: Option<&host::Identity>) -> Result<b
         payload["feature_gates"].is_object(),
         "Missing activity feature gates"
     );
-    Ok(payload["feature_gates"]["4039078146"]["value"] == true)
+    Ok((
+        payload["feature_gates"]["4039078146"]["value"] == true,
+        payload,
+    ))
 }
 
 fn access(
@@ -203,7 +206,7 @@ impl Root {
                 feature(source.as_ref(), expected.as_ref())
             })
             .await;
-            let enabled = match result {
+            let (enabled, evaluations) = match result {
                 Ok(result) => result,
                 Err(error) => {
                     eprintln!("codex-gpui: cannot read activity feature: {error:#}");
@@ -214,6 +217,19 @@ impl Root {
                     return;
                 }
             };
+            if this
+                .update(cx, |root, cx| {
+                    if !Arc::ptr_eq(&root.host, &host) {
+                        return false;
+                    }
+                    crate::security::load(root, &evaluations, cx);
+                    true
+                })
+                .ok()
+                != Some(true)
+            {
+                return;
+            }
             if !enabled {
                 this.update(cx, |root, cx| {
                     root.apply_activity_access(false, Status::Denied, cx)
@@ -326,7 +342,7 @@ mod tests {
         let gates = json!({"feature_gates":{"4039078146":{"value":true}}});
         for body in [gates.clone(), json!({"statsigPayload":gates.to_string()})] {
             let host = policy_host(body);
-            assert!(feature(&host, Some(&host.identity)).unwrap());
+            assert!(feature(&host, Some(&host.identity)).unwrap().0);
         }
         let host = policy_host(json!({}));
         assert!(feature(&host, Some(&host.identity)).is_err());

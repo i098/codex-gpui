@@ -11,10 +11,12 @@ There is no release yet.
 - A contributing guide, issue and pull request templates, a security policy, and this changelog.
 - Add Storage usage measurement and safe review before deleting old local chats.
 - Add Import settings for Claude Code and Cursor, with saved sync choices and preserved imported workspaces.
+- Add the native Security workbench for scans, repository history, finding triage, remediation, and source viewing.
 
 ### Fixed
 
 - Use each window's current account for dictation and stop stalled transcription requests after 60 seconds.
+- Reuse shared bootstrap data for Security startup without extra policy requests or navigation catalog reads.
 - Apply the shared feature and account access checks to activity entry points, and use the configured activity shortcut.
 - Keep the diff scroll position while typing a Find query that already has a match on screen, and when expanding context, instead of re-centring the first match.
 - Preserve titled-thread identity in the titlebar and derive compositor tiles from painted bounds.

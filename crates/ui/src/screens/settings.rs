@@ -1684,7 +1684,22 @@ pub(crate) fn switch(
     disabled: bool,
     t: &Theme,
 ) -> Stateful<Div> {
+    switch_sized(id, on, disabled, t, (32., 20., 16.))
+}
+
+pub(crate) fn compact_switch(id: impl Into<gpui::ElementId>, on: bool, t: &Theme) -> Stateful<Div> {
+    switch_sized(id, on, false, t, (28., 16., 12.))
+}
+
+fn switch_sized(
+    id: impl Into<gpui::ElementId>,
+    on: bool,
+    disabled: bool,
+    t: &Theme,
+    dimensions: (f32, f32, f32),
+) -> Stateful<Div> {
     let (track_off, track_on) = (t.switch_track, t.switch_track_checked);
+    let (width, height, thumb_size) = dimensions;
     let thumb = shapes::Decoration {
         radius: Corners::all(px(9999.)),
         fill: Some(t.control_thumb),
@@ -1692,7 +1707,7 @@ pub(crate) fn switch(
         shadows: vec![shadow(t.shadow_sm, 1., 2., -1., false)],
         ..Default::default()
     };
-    div().id(id).flex_none().w(px(32.)).h(px(20.)).child(
+    div().id(id).flex_none().w(px(width)).h(px(height)).child(
         canvas(
             move |_, window, cx| {
                 let state = window.use_keyed_state("switch-motion", cx, |_, cx| {
@@ -1721,7 +1736,10 @@ pub(crate) fn switch(
                 let x = 2. + 12. * progress;
                 let paint = |window: &mut Window| {
                     shapes::paint(&track, None, b, window, cx);
-                    let at = Bounds::new(b.origin + point(px(x), px(2.)), size(px(16.), px(16.)));
+                    let at = Bounds::new(
+                        b.origin + point(px(x), px(2.)),
+                        size(px(thumb_size), px(thumb_size)),
+                    );
                     shapes::paint(&thumb, None, at, window, cx);
                 };
                 if disabled {

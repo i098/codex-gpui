@@ -34,6 +34,7 @@ mod plugins;
 pub mod screenshot;
 mod search;
 mod section_actions;
+mod security;
 pub mod settings_import;
 pub(crate) mod settings_integrations;
 mod settings_subtrees;
@@ -417,6 +418,8 @@ pub struct Root {
     settings_page: Option<Entity<settings::SettingsPage>>,
     writing_dialog_preference: Option<Arc<WritingPreference>>,
     settings_integrations: Entity<settings::integrations::State>,
+    security_access: Entity<ui::screens::security::Access>,
+    security_access_task: Option<Task<()>>,
     settings_integration_task: Option<Task<()>>,
     pending_settings_leave: Option<SettingsLeave>,
     workspace: Entity<workspace::Workspace>,
@@ -754,6 +757,8 @@ impl Root {
             settings_page: None,
             writing_dialog_preference: None,
             settings_integrations: cx.new(|_| settings::integrations::State::default()),
+            security_access: cx.new(|_| ui::screens::security::Access::default()),
+            security_access_task: None,
             settings_integration_task: None,
             pending_settings_leave: None,
             workspace: cx.new(workspace::Workspace::new),
@@ -860,6 +865,7 @@ impl Root {
         cx.on_focus_lost(window, |this, window, cx| window.focus(&this.focus, cx))
             .detach();
         root.bind_context_files(cx);
+        security::bind(&root, cx);
         root.connect(window, cx);
         root.install_import(cx);
         root.load_projects(cx);

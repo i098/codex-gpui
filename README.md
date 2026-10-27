@@ -217,7 +217,7 @@ Model-driven computer use stays on the LCU relay and original native sockets.
 Do not grant SSH Automation access to test the separate Appshots Apple Event path.
 These native operations require macOS; Linux checks cover policy, capture-file boundaries, and request state only.
 
-## Security provider API
+## Native Security workbench
 
 `bridge::security::Client` uses the installed `codex-security` MCP provider through the existing app-server connection.
 It opens an ephemeral, read-only host thread and preserves its identity on tool calls.
@@ -231,7 +231,12 @@ Gate resolution requires the rollout gate and an enabled, available `codex-secur
 
 Run `cargo test -p bridge --lib security::tests` for gate, response-validation, pagination, and delivery-ownership checks.
 These tests use a local protocol peer and do not start a model turn.
-This increment does not add a native Security route or claim visual parity.
+The Explore entry opens the native Security workbench when the rollout gate and provider are available.
+The workbench supports scan setup and progress, repository history, finding filters, triage, remediation, and source viewing.
+Access changes stay within their own window; unavailable or remote hosts cannot start scans.
+
+Run `cargo test -p ui --lib screens::security::tests` for workbench access and scan-setup checks.
+The native workbench does not yet have current visual-parity proof against the original app.
 
 ## Build and run
 

@@ -53,6 +53,7 @@ actions!(
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
         OpenPlugins,
+        OpenSecurity,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
         OpenMobileSetup,
         /// `⌥⌘B`: show or hide the Changes side panel.
@@ -207,6 +208,7 @@ pub struct Shell {
     pub attention: bool,
     /// Unseen, unpinned MCP destinations; `None` while their source is unavailable.
     pub unread_destinations: Option<Arc<[SharedString]>>,
+    pub security_available: bool,
     /// The profile avatar's menu is open.
     pub profile_menu: bool,
     /// Pointer over the avatar: its own click toggles the menu, so a press there must not
@@ -300,6 +302,7 @@ impl Shell {
             main_clips_right: false,
             attention: false,
             unread_destinations: None,
+            security_available: false,
             profile_menu: false,
             avatar_hovered: false,
             sidebar,
@@ -984,7 +987,7 @@ impl Shell {
             let fg = if on { t.text } else { t.text_tertiary };
             let id = SharedString::from(format!("rail-{name}"));
             let focus = focus::handle(id.clone(), 0, window, cx);
-            let glyph = if on {
+            let glyph = if on && name != "explore" {
                 format!("{name}-filled")
             } else {
                 name.to_string()
@@ -1087,46 +1090,50 @@ impl Shell {
                     // `absolute -end-0.5 -top-0.5` around a `size-5` box centering an `icon-xs`
                     // dot at `scale-50`.
                     .child(
-                        item("explore").when(
-                            self.unread_destinations
-                                .as_ref()
-                                .is_some_and(|ids| !ids.is_empty()),
-                            |item| {
-                                item.child(
-                                    div()
-                                        .absolute()
-                                        .top(px(-2.))
-                                        .right(px(-2.))
-                                        .size(px(20.))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .child(
-                                            canvas(
-                                                |_, _, _| {},
-                                                move |bounds, (), window, cx| {
-                                                    shapes::paint_scaled(
-                                                        &shapes::Decoration {
-                                                            radius: Corners::all(
-                                                                Theme::RADIUS_FULL,
-                                                            ),
-                                                            fill: Some(info_solid),
-                                                            ..Default::default()
-                                                        },
-                                                        Some(list),
-                                                        bounds,
-                                                        size(px(16.), px(16.)),
-                                                        0.5,
-                                                        window,
-                                                        cx,
-                                                    )
-                                                },
-                                            )
-                                            .size(px(16.)),
-                                        ),
-                                )
-                            },
-                        ),
+                        item("explore")
+                            .when(self.security_available, |item| {
+                                item.on_click(dispatch::<OpenSecurity>)
+                            })
+                            .when(
+                                self.unread_destinations
+                                    .as_ref()
+                                    .is_some_and(|ids| !ids.is_empty()),
+                                |item| {
+                                    item.child(
+                                        div()
+                                            .absolute()
+                                            .top(px(-2.))
+                                            .right(px(-2.))
+                                            .size(px(20.))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .child(
+                                                canvas(
+                                                    |_, _, _| {},
+                                                    move |bounds, (), window, cx| {
+                                                        shapes::paint_scaled(
+                                                            &shapes::Decoration {
+                                                                radius: Corners::all(
+                                                                    Theme::RADIUS_FULL,
+                                                                ),
+                                                                fill: Some(info_solid),
+                                                                ..Default::default()
+                                                            },
+                                                            Some(list),
+                                                            bounds,
+                                                            size(px(16.), px(16.)),
+                                                            0.5,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    },
+                                                )
+                                                .size(px(16.)),
+                                            ),
+                                    )
+                                },
+                            ),
                     )
                     // A 1 px `border-t` on an empty box: Blink paints it rounded down to whole
                     // device px (at least 1), and the box is that tall.
