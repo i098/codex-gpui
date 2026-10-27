@@ -621,11 +621,11 @@ impl Render for Form {
             );
         let mut body = div().flex().flex_col().gap(px(6.));
         if self.key.is_none() {
-            body = body.child(card(identity, &self.layer, &t));
+            body = body.child(card(identity, Some(&self.layer), &t));
         } else {
             body = body.children(identity);
         }
-        body = body.child(card(fields, &self.layer, &t));
+        body = body.child(card(fields, Some(&self.layer), &t));
         if let Some(error) = &state.form_error {
             body = body.child(text(error.clone(), 13., 18., 430., t.text_error));
         }
