@@ -963,7 +963,6 @@ impl DiffPanel {
             }
         }
         self.active_match = self.active_match.min(self.matches.saturating_sub(1));
-        self.find_scroll.pending.set(self.matches > 0);
         self.reveal_find_match();
     }
 
@@ -1065,6 +1064,8 @@ impl DiffPanel {
             return;
         }
         self.search_changed();
+        self.find_scroll.pending.set(self.matches > 0);
+        self.find_scroll.typing.set(true);
         cx.stop_propagation();
         cx.notify();
     }
@@ -1544,6 +1545,7 @@ impl Render for DiffPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.request_visible_full_files(cx);
         *self.find_scroll.target.borrow_mut() = None;
+        self.find_scroll.lines.borrow_mut().clear();
         let t = cx.theme().clone();
         let width = self
             .container_width
