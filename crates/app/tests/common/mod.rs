@@ -749,7 +749,7 @@ pub fn parity_image(screen: &str, theme: &str, port: &RgbaImage) -> Result<Strin
 /// Runs `reach` in each theme at each ref size of `screen`, then the parity diff.
 pub fn parity_flow(screen: &str, reach: fn(&mut Fx) -> Result<()>) -> Result<String> {
     let route = match screen {
-        "home" | "composer" | "sidebar" => Route::Home,
+        "home" | "composer" | "sidebar" | "screenshot" => Route::Home,
         "thread" | "diff" | "terminal" => Route::Thread(SUBTRACT.into()),
         "settings" => Route::Settings,
         "automations" => Route::Scheduled,
