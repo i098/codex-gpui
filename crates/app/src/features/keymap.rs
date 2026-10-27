@@ -57,6 +57,7 @@ pub(super) fn install(cx: &mut App) {
             .map(|command| command.id)
             .collect(),
         dispatch: Some(Arc::new(change)),
+        home: false,
     });
     rebind(None, &preferences, cx);
 }
@@ -120,6 +121,11 @@ fn rebind(previous: Option<&Preferences>, next: &Preferences, cx: &mut App) {
     let mapper = gpui::DummyKeyboardMapper;
     let mut bindings = Vec::new();
     let mut enabled = Vec::new();
+    let close_tab_keys: Vec<String> = keyboard::commands()
+        .iter()
+        .find(|command| command.id == "closeTab")
+        .map(|command| next.keys(command).map(keyboard::canonical).collect())
+        .unwrap_or_default();
     for command in keyboard::commands() {
         let Some(action) = action(command.id) else {
             continue;
@@ -139,7 +145,15 @@ fn rebind(previous: Option<&Preferences>, next: &Preferences, cx: &mut App) {
             if key.starts_with("mouse") {
                 continue;
             }
-            let context = if command.id.starts_with("composer.") {
+            // An accelerator of `closeTab` routes to the shell tab first (`CloseWindow`); only
+            // one that `closeWindow` alone has closes the window outright.
+            if command.id == "closeWindow" && close_tab_keys.contains(&key) {
+                continue;
+            }
+            // Tab navigation keeps the chat bindings outside the focused side panel.
+            let context = if matches!(command.id, "nextTab" | "previousTab" | "closeOtherTabs") {
+                Some("SideTabs")
+            } else if command.id.starts_with("composer.") {
                 Some("Composer")
             } else if !key.contains("cmd-") && !key.contains("ctrl-") && !key.contains("alt-") {
                 Some("!Composer && !Editable")
@@ -193,8 +207,17 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "nextThreadNeedingAttention" => Box::new(shortcuts::NextAttentionChat),
         "manageTasks" => Box::new(OpenScheduled),
         "openThreadInNewWindow" => Box::new(super::OpenThreadInNewWindow),
-        "closeWindow" | "closeTab" => Box::new(CloseWindow),
+        "closeTab" => Box::new(CloseWindow),
+        "closeWindow" => Box::new(shortcuts::CloseWholeWindow),
+        "closeOtherTabs" => Box::new(shortcuts::CloseOtherSideTabs),
+        "nextTab" => Box::new(shortcuts::NextSideTab),
+        "previousTab" => Box::new(shortcuts::PreviousSideTab),
+        "toggleThreadPin" => Box::new(shortcuts::ToggleThreadPin),
+        "renameThread" => Box::new(shortcuts::RenameOpenChat),
+        "findInThread" => Box::new(FindInThread),
+        "copyDeeplink" => Box::new(shortcuts::CopyDeeplink),
         "composer.submit" => Box::new(ui::composer::Submit),
+        "composer.submitInBackground" => Box::new(ui::composer::SubmitInBackground),
         id => {
             if let Some(number) = id
                 .strip_prefix("recentThread")

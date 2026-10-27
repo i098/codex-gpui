@@ -273,7 +273,7 @@ impl FindPaint {
     }
 }
 
-fn find_ranges(text: &str, query: &str, limit: usize) -> (Vec<Range<usize>>, usize) {
+pub(crate) fn find_ranges(text: &str, query: &str, limit: usize) -> (Vec<Range<usize>>, usize) {
     if query.is_empty() {
         return (Vec::new(), 0);
     }
@@ -735,6 +735,16 @@ impl ThreadView {
             .map(|find| (find.query.as_str(), find.active, find.total))
     }
 
+    pub fn close_find(&mut self, cx: &mut Context<Self>) {
+        self.find = None;
+        cx.notify();
+    }
+
+    pub fn set_find_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_find(window, cx);
+        self.replace_find(query, cx);
+    }
+
     pub fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let find = self.find.get_or_insert_with(|| FindState {
             query: String::new(),
@@ -792,17 +802,7 @@ impl ThreadView {
         for turn in &self.turns {
             for item in &turn.items {
                 let (id, text) = match item {
-                    ThreadItem::UserMessage { id, content } => (
-                        id,
-                        content
-                            .iter()
-                            .filter_map(|part| match part {
-                                UserInput::Text { text } => Some(text.as_str()),
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                    ),
+                    ThreadItem::UserMessage { id, content } => (id, user_text(content)),
                     ThreadItem::AgentMessage { id, text, .. } => (id, markdown::plain(text)),
                     _ => continue,
                 };
@@ -1039,6 +1039,13 @@ impl ThreadView {
                                     .inset_0(),
                                 ),
                         )
+                        .when(!self.clip_right, |d| {
+                            d.child(crate::screens::diff::panel::find_scope_buttons(
+                                &find.query,
+                                false,
+                                t,
+                            ))
+                        })
                         .child(
                             button("thread-find-close", "close", "Close find", 24.).on_click(
                                 cx.listener(|this, _, window, cx| {
@@ -1500,6 +1507,36 @@ impl ThreadView {
                     self.tick(cx);
                 }
             }
+            "item/fileChange/patchUpdated" => {
+                let (Some(turn_id), Some(change_id)) =
+                    (params["turnId"].as_str(), params["itemId"].as_str())
+                else {
+                    return;
+                };
+                let Ok(changes) =
+                    serde_json::from_value::<Vec<FileUpdateChange>>(params["changes"].clone())
+                else {
+                    return;
+                };
+                let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == turn_id) else {
+                    return;
+                };
+                match turn
+                    .items
+                    .iter_mut()
+                    .find(|item| item_id(item) == Some(change_id))
+                {
+                    Some(ThreadItem::FileChange {
+                        changes: current, ..
+                    }) => *current = changes,
+                    Some(_) => return,
+                    None => turn.items.push(ThreadItem::FileChange {
+                        id: change_id.to_owned(),
+                        changes,
+                        status: "inProgress".into(),
+                    }),
+                }
+            }
             "item/started" | "item/completed" => {
                 let Ok(mut n) = serde_json::from_value::<ItemNotification>(params.clone()) else {
                     return;
@@ -1519,7 +1556,9 @@ impl ThreadView {
                 {
                     Some(item) => {
                         if let (
-                            ThreadItem::AgentMessage { id, text: before },
+                            ThreadItem::AgentMessage {
+                                id, text: before, ..
+                            },
                             ThreadItem::AgentMessage { text: after, .. },
                         ) = (&*item, &n.item)
                             && before != after
@@ -1699,17 +1738,7 @@ impl ThreadView {
             window,
         );
         let user = turn.items.iter().find_map(|i| match i {
-            ThreadItem::UserMessage { id, content } => Some((
-                id,
-                content
-                    .iter()
-                    .filter_map(|c| match c {
-                        UserInput::Text { text } => Some(text.as_str()),
-                        UserInput::Other => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            )),
+            ThreadItem::UserMessage { id, content } => Some((id, user_text(content))),
             _ => None,
         });
         if let Some((item, user)) = user {
@@ -2373,6 +2402,25 @@ impl Render for ThreadView {
             d.child(self.menu_overlay(window, cx))
         })
     }
+}
+
+pub(crate) fn render_comment_markdown(source: &str, window: &Window, theme: &Theme) -> Div {
+    markdown::markdown(source, window, theme, &[])
+}
+
+fn user_text(content: &[UserInput]) -> String {
+    let mut joined = String::new();
+    for part in content {
+        if let UserInput::Text { text } = part {
+            if !joined.is_empty() {
+                joined.push('\n');
+            }
+            joined.push_str(text);
+        }
+    }
+    let start = joined.len() - crate::screens::diff::panel::comments::prompt_body(&joined).len();
+    joined.drain(..start);
+    joined
 }
 
 fn item_id(item: &ThreadItem) -> Option<&str> {

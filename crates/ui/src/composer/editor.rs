@@ -726,8 +726,9 @@ impl Composer {
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         let compact_settings = self.request_parent.is_none() && self.request_compact;
+        let comment = self.plain_field.is_some() && self.on_cancel_edit.is_some();
         div()
-            .px(px(if self.search_field {
+            .px(px(if self.search_field || comment {
                 0.
             } else if self.compact_text() {
                 10.
@@ -745,13 +746,13 @@ impl Composer {
                     4.
                 },
             ))
-            .min_h(
-                if self.search_field || self.request_parent.is_some() || self.request_compact {
-                    px(20.)
-                } else {
-                    self.field_min_height
-                },
-            )
+            .min_h(if comment {
+                self.editor_line_height()
+            } else if self.search_field || self.request_parent.is_some() || self.request_compact {
+                px(20.)
+            } else {
+                self.field_min_height
+            })
             .cursor(CursorStyle::IBeam)
             .when(self.embedded_field.is_some(), |d| {
                 d.px_0().pb_0().min_h(self.editor_line_height())

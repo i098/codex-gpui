@@ -331,13 +331,16 @@ impl Composer {
             .flex()
             .flex_wrap()
             .gap(px(6.))
-            .when(!self.attachments.is_empty(), |d| {
-                d.pt(px(12.)).px(px(12.)).gap(px(12.)).items_end()
-            })
             .when(
-                self.attachments
-                    .iter()
-                    .any(|a| matches!(a.content, Content::ContextFile)),
+                !self.attachments.is_empty() || !self.diff_comments.is_empty(),
+                |d| d.pt(px(12.)).px(px(12.)).gap(px(12.)).items_end(),
+            )
+            .when(
+                !self.diff_comments.is_empty()
+                    || self
+                        .attachments
+                        .iter()
+                        .any(|a| matches!(a.content, Content::ContextFile)),
                 |row| row.pb(px(10.)),
             )
             .children(
@@ -421,6 +424,9 @@ impl Composer {
                             .into_any_element()
                     }),
             )
+            .when(!self.diff_comments.is_empty(), |d| {
+                d.child(self.diff_comment_attachment(t, cx))
+            })
     }
 
     fn context_file_card(
