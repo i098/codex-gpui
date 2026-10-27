@@ -1513,14 +1513,16 @@ impl Shell {
                 d.child(tooltip(
                     icon_button(
                         "titlebar-new-chat",
-                        icon::icon("new-chat", 16., t.text_tertiary).own_layer(None),
+                        // One layer with the Show sidebar icon, whose box origin is its origin.
+                        icon::icon("new-chat", 16., t.text_tertiary)
+                            .own_layer(Some(point(px(162.) - fullscreen_shift, px(14.)))),
                         t,
                     )
                     .role(gpui::Role::Button)
                     .aria_label("New chat")
                     .absolute()
                     .left(px(190.) - fullscreen_shift)
-                    .top(px(7.725))
+                    .top(px(8.))
                     .on_click(dispatch::<NewChat>),
                     "New chat",
                     Some("⌘N"),
