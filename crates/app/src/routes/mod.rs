@@ -32,6 +32,7 @@ pub enum Route {
     Plugins(String),
     Archive,
     SelectWorkspace,
+    Onboarding(ui::screens::onboarding::Page),
 }
 
 pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
@@ -142,6 +143,7 @@ impl Root {
         self.mobile_page = None;
         self.cloud = None;
         self.plugins_page = None;
+        self.onboarding_page = None;
         self.page = match self.state.route.clone() {
             Route::Remote { task_id, hotkey } => {
                 self.load_cloud_task(task_id, hotkey, window, cx);
@@ -156,6 +158,10 @@ impl Root {
             }
             Route::Mobile => Some(mobile::page(self, cx)),
             Route::Plugins(path) => Some(self.plugins_shell(path, window, cx)),
+            Route::Onboarding(page) => {
+                self.open_onboarding(page, window, cx);
+                None
+            }
             Route::Home | Route::Thread(_) | Route::SelectWorkspace => None,
         };
         if let Some(sidebar) = &self.scheduled {
@@ -261,6 +267,7 @@ impl Root {
                     self.thread_composer.focus_handle(cx)
                 }
             }
+            Route::Onboarding(_) => self.focus.clone(),
             _ if self.page.is_some() => self.focus.clone(),
             Route::Thread(_) => self.focus.clone(),
             _ => self.home.read(cx).composer.focus_handle(cx),

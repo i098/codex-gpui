@@ -409,59 +409,65 @@ impl Root {
     ) -> Entity<Login> {
         self.ready = false;
         let login = cx.new(Login::new);
-        cx.subscribe_in(&login, window, |this, source, event: &LoginEvent, _, cx| {
-            if this.login.as_ref() != Some(source) {
-                return;
-            }
-            match event {
-                LoginEvent::OpenBrowser {
-                    url,
-                    provider,
-                    email,
-                } => {
-                    let resolved = {
-                        let settings = cx.global::<host_settings::Settings>().read_all();
-                        let stable_id = settings.get("statsig-stable-id").and_then(Value::as_str);
-                        browser_url(
-                            url,
-                            *provider,
-                            email.as_deref(),
-                            source.read(cx).options(),
-                            stable_id,
-                        )
-                    };
-                    match resolved {
-                        Ok(url) => {
-                            cx.open_url(url.as_str());
-                            source.update(cx, |login, cx| login.set_browser_url(url.into(), cx));
+        cx.subscribe_in(
+            &login,
+            window,
+            |this, source, event: &LoginEvent, window, cx| {
+                if this.login.as_ref() != Some(source) {
+                    return;
+                }
+                match event {
+                    LoginEvent::OpenBrowser {
+                        url,
+                        provider,
+                        email,
+                    } => {
+                        let resolved = {
+                            let settings = cx.global::<host_settings::Settings>().read_all();
+                            let stable_id =
+                                settings.get("statsig-stable-id").and_then(Value::as_str);
+                            browser_url(
+                                url,
+                                *provider,
+                                email.as_deref(),
+                                source.read(cx).options(),
+                                stable_id,
+                            )
+                        };
+                        match resolved {
+                            Ok(url) => {
+                                cx.open_url(url.as_str());
+                                source
+                                    .update(cx, |login, cx| login.set_browser_url(url.into(), cx));
+                            }
+                            Err(error) => this.toast(
+                                ui::toast::Toast::danger(format!("Sign-in failed: {error}")),
+                                cx,
+                            ),
                         }
-                        Err(error) => this.toast(
-                            ui::toast::Toast::danger(format!("Sign-in failed: {error}")),
-                            cx,
-                        ),
                     }
+                    LoginEvent::RestartBedrock { region } => {
+                        this.restart_bedrock(source.clone(), region.clone(), cx)
+                    }
+                    LoginEvent::CheckGovCloud { region } => {
+                        let bridge = this.bridge.clone();
+                        let login = source.clone();
+                        let region = region.clone();
+                        cx.spawn(async move |_, cx| {
+                            let result =
+                                check_govcloud(&bridge, &region, cx.background_executor()).await;
+                            login.update(cx, |login, cx| login.bedrock_finished(Ok(result), cx));
+                        })
+                        .detach();
+                    }
+                    LoginEvent::MethodsLoaded => {
+                        this.ready = true;
+                        cx.notify();
+                    }
+                    LoginEvent::Authenticated => this.finish_sign_in(window, cx),
                 }
-                LoginEvent::RestartBedrock { region } => {
-                    this.restart_bedrock(source.clone(), region.clone(), cx)
-                }
-                LoginEvent::CheckGovCloud { region } => {
-                    let bridge = this.bridge.clone();
-                    let login = source.clone();
-                    let region = region.clone();
-                    cx.spawn(async move |_, cx| {
-                        let result =
-                            check_govcloud(&bridge, &region, cx.background_executor()).await;
-                        login.update(cx, |login, cx| login.bedrock_finished(Ok(result), cx));
-                    })
-                    .detach();
-                }
-                LoginEvent::MethodsLoaded => {
-                    this.ready = true;
-                    cx.notify();
-                }
-                LoginEvent::Authenticated => this.finish_sign_in(cx),
-            }
-        })
+            },
+        )
         .detach();
         let settings = cx.global_mut::<host_settings::Settings>();
         let stable_id = if let Some(id) = settings

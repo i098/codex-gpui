@@ -188,6 +188,17 @@ Bedrock sign-in discovers AWS profiles, accepts explicit credentials, restarts t
 The GovCloud warning remains open after restart until the user selects Continue.
 No test signs into a real account or changes AWS credentials.
 
+## Onboarding
+
+Onboarding supports `/welcome`, `/onboarding`, and `/select-workspace`.
+Launch `codex-gpui /select-workspace` to open the workspace route directly.
+The same startup argument supports `/welcome` and `/onboarding`.
+A new ChatGPT account opens setup when the server reports incomplete onboarding and no project is available.
+Role choices retain the original coding and non-coding groups.
+The import prompt saves the choices before opening Settings > Import.
+The workspace picker uses real project folders; Skip creates a new `Documents/ChatGPT/New project` folder.
+Failed saves keep the current page open.
+
 ## Native Computer Use service
 
 The host keeps one managed native helper at `$CODEX_HOME/computer-use/Codex Computer Use.app`.

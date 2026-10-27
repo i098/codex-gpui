@@ -24,14 +24,15 @@ fn main() {
         }
         return;
     }
+    let launch_path = std::env::args().nth(1);
     let mut state = State::load();
-    if let Some(route) = std::env::args()
-        .nth(1)
-        .and_then(|path| app::Route::remote_path(&path))
+    if let Some(route) = launch_path
+        .as_deref()
+        .and_then(|path| app::Route::remote_path(path).or_else(|| app::onboarding::route(path)))
     {
         state.route = route;
     }
-    if std::env::args().nth(1).as_deref() == Some("/diff") {
+    if launch_path.as_deref() == Some("/diff") {
         let path = std::env::args_os().nth(2).unwrap_or_else(|| {
             eprintln!("usage: codex-gpui /diff <patch-file>");
             std::process::exit(2)
