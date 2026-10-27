@@ -429,6 +429,10 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
                 ),
                 Route::Settings => "settings".to_owned(),
                 Route::SettingsSubtree(path) => path.trim_start_matches('/').to_owned(),
+                Route::CloudEnvironments(path) => path.trim_start_matches('/').to_owned(),
+                Route::CloudSetup { config_id, .. } => {
+                    format!("cloud-environments/{config_id}/setup")
+                }
                 Route::Scheduled => "scheduled".to_owned(),
                 Route::Automation(id) => format!("scheduled?automationId={id}"),
                 Route::Mobile => "mobile".to_owned(),

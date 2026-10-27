@@ -375,6 +375,7 @@ pub fn model_label(name: &str) -> String {
 enum FieldStyle {
     Settings,
     Form,
+    Compact,
     /// A settings-row value: frameless, right-aligned, secondary text.
     Inline,
     /// Like `Inline`, but left-aligned in primary text.
@@ -480,6 +481,11 @@ pub struct Submission {
     /// `composer.submitInBackground`: create the chat and start its turn without opening it.
     pub background: bool,
 }
+
+/// Enter in a single-line settings form field.
+pub struct SettingsFieldSubmit;
+
+impl gpui::EventEmitter<SettingsFieldSubmit> for Composer {}
 
 #[derive(Debug, PartialEq)]
 struct RequestIdentity {
@@ -651,6 +657,7 @@ type CancelEditHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 type ApprovalHandler = Rc<dyn Fn(Value, String, Value, &mut Window, &mut App)>;
 /// `(model id, effort)` after the user picks them.
 type ModelHandler = Rc<dyn Fn(&str, &str, &mut App)>;
+type SettingsPasteHandler = Rc<dyn Fn(&str, &mut App) -> bool>;
 
 /// What a queued row's buttons and `Queued message actions` menu ask of the app.
 #[derive(Clone)]
@@ -783,6 +790,13 @@ pub struct Composer {
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
     embedded_field: Option<EmbeddedField>,
+    on_settings_paste: Option<SettingsPasteHandler>,
+    /// Script and command fields use the original code textarea's monospace text.
+    monospace: bool,
+    /// A textarea in the original settings input style: strong border, unfaded placeholder.
+    input_style: bool,
+    /// The original's 28 px settings input (`h-7`, 8 px inline padding).
+    small_input: bool,
 }
 
 impl Composer {
@@ -880,6 +894,10 @@ impl Composer {
             dictation: None,
             dictation_error: None,
             embedded_field: None,
+            on_settings_paste: None,
+            monospace: false,
+            input_style: false,
+            small_input: false,
         }
     }
 
@@ -928,6 +946,25 @@ impl Composer {
         field
     }
 
+    pub fn settings_form_field(
+        label: &'static str,
+        placeholder: &'static str,
+        value: &str,
+        multiline: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut field = Self::settings_field(placeholder, value, multiline, cx);
+        field.field_style = FieldStyle::Compact;
+        field.request_compact = true;
+        field.request_label = Some(label.into());
+        field.line_height = px(18.571_428);
+        field
+    }
+
+    pub fn on_settings_paste(&mut self, handler: impl Fn(&str, &mut App) -> bool + 'static) {
+        self.on_settings_paste = Some(Rc::new(handler));
+    }
+
     pub fn inline_field(placeholder: &'static str, value: &str, cx: &mut Context<Self>) -> Self {
         let mut field = Self::settings_field(placeholder, value, false, cx);
         field.field_style = FieldStyle::Inline;
@@ -970,6 +1007,26 @@ impl Composer {
 
     pub fn with_field_min_height(mut self, height: Pixels) -> Self {
         self.field_min_height = height;
+        self
+    }
+
+    pub fn input_style(mut self) -> Self {
+        self.input_style = true;
+        self
+    }
+
+    pub fn small_input(mut self) -> Self {
+        self.small_input = true;
+        self
+    }
+
+    pub fn monospace_field(mut self) -> Self {
+        self.monospace = true;
+        self
+    }
+
+    pub fn field_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.request_label = Some(label.into());
         self
     }
 
@@ -1461,7 +1518,11 @@ impl Composer {
         &self.placeholder
     }
 
-    pub(crate) fn set_placeholder(&mut self, placeholder: &'static str, cx: &mut Context<Self>) {
+    pub(crate) fn set_placeholder(
+        &mut self,
+        placeholder: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
         self.placeholder = placeholder.into();
         cx.notify();
     }
@@ -1577,6 +1638,8 @@ impl Composer {
         if let Some(multiline) = self.plain_field {
             if multiline {
                 self.insert("\n", window, cx);
+            } else if self.field_style == FieldStyle::Compact {
+                cx.emit(SettingsFieldSubmit);
             } else {
                 window.blur(cx);
             }
@@ -2080,7 +2143,7 @@ pub fn label(s: impl Into<SharedString>, color: Hsla) -> Div {
 }
 
 /// The model name sits in a `tabular-nums` span (`GPT-6`'s digit takes its tabular advance).
-fn tabular(d: Div) -> Div {
+pub(crate) fn tabular(d: Div) -> Div {
     d.font_features(gpui::FontFeatures(std::sync::Arc::new(vec![(
         "tnum".into(),
         1,
@@ -2385,6 +2448,43 @@ impl Render for Composer {
                     ),
             );
         }
+        if self.field_style == FieldStyle::Compact {
+            let multiline = self.plain_field == Some(true);
+            return div().w_full().when(multiline, |d| d.pb(px(6.))).child(
+                card.key_context(KEY_CONTEXT)
+                    .role(if self.secret {
+                        gpui::Role::PasswordInput
+                    } else {
+                        gpui::Role::TextInput
+                    })
+                    .aria_label(
+                        self.request_label
+                            .as_ref()
+                            .unwrap_or(&self.placeholder)
+                            .clone(),
+                    )
+                    .aria_placeholder(self.placeholder.clone())
+                    .when(!self.secret, |d| d.aria_value(self.content.clone()))
+                    .px(px(1.))
+                    .when(multiline, |d| {
+                        d.py(px(9.))
+                            .max_h(px(120.))
+                            .overflow_y_scroll()
+                            .track_scroll(
+                                self.field_scroll.as_ref().expect("multiline field scroll"),
+                            )
+                    })
+                    .when(!multiline, |d| d.h(px(36.)).flex().items_center())
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(10.)),
+                        corner: shapes::Corner::Squircle,
+                        fill: Some(t.control_background.opacity(0.96)),
+                        border: Some((px(1.), t.border_strong)),
+                        ..Default::default()
+                    }))
+                    .child(self.editor(cx)),
+            );
+        }
         if self.plain_field.is_some() && self.field_style != FieldStyle::Settings {
             let multiline = self.plain_field == Some(true);
             let inline = matches!(self.field_style, FieldStyle::Inline | FieldStyle::Dialog);
@@ -2458,6 +2558,8 @@ impl Render for Composer {
             let card = if self.textarea() {
                 let border = if self.focus_handle.is_focused(window) {
                     gpui::rgb(0x3a83f7).into()
+                } else if self.input_style {
+                    t.border_strong
                 } else {
                     t.border
                 };
@@ -2569,7 +2671,7 @@ impl Render for Composer {
                         self.request_parent.is_none() && self.request_compact && !self.search_field,
                         |d| {
                             d.px(px(1.))
-                                .py(px(8.))
+                                .py(px(if self.small_input { 4. } else { 8. }))
                                 .child(shapes::decoration(shapes::Decoration {
                                     radius: Corners::all(Theme::RADIUS_MD),
                                     corner: shapes::Corner::Squircle,

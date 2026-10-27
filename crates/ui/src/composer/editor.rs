@@ -411,6 +411,13 @@ impl Composer {
                 }
             }
         } else if let Some(text) = item.text() {
+            if self
+                .on_settings_paste
+                .as_ref()
+                .is_some_and(|handler| handler(&text, cx))
+            {
+                return;
+            }
             if attach && text.encode_utf16().take(5000).count() == 5000 {
                 self.save_paste(attach::Content::Text(text), cx);
             } else {
@@ -730,6 +737,8 @@ impl Composer {
         div()
             .px(px(if self.search_field || comment {
                 0.
+            } else if self.small_input {
+                8.
             } else if self.compact_text() {
                 10.
             } else {
@@ -746,7 +755,14 @@ impl Composer {
                     4.
                 },
             ))
-            .min_h(if comment {
+            .min_h(if self.field_style == FieldStyle::Compact {
+                self.editor_line_height()
+                    * if self.plain_field == Some(true) {
+                        2.
+                    } else {
+                        1.
+                    }
+            } else if comment {
                 self.editor_line_height()
             } else if self.search_field || self.request_parent.is_some() || self.request_compact {
                 px(20.)
@@ -768,6 +784,7 @@ impl Composer {
             } else {
                 430.
             }))
+            .when(self.monospace, |d| d.font_family(crate::MONO))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_click))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -782,7 +799,8 @@ impl Composer {
                             self.content.is_empty()
                                 && self.embedded_field.is_none()
                                 && !self.search_field
-                                && !compact_settings,
+                                && !compact_settings
+                                && !self.input_style,
                             |d| d.opacity(0.5),
                         )
                         .when(

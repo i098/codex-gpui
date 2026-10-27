@@ -409,7 +409,7 @@ impl ArchivedChats {
         let confirmation = cx.new(|cx| {
             Confirmation::new(title, description, "Delete", window, cx)
                 .destructive()
-                .settings_dialog()
+                .settings_style()
         });
         cx.subscribe_in(&confirmation, window, move |this, _, outcome, _, cx| {
             this.confirmation = None;

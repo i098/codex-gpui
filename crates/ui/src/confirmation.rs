@@ -20,7 +20,6 @@ pub struct Confirmation {
     destructive: bool,
     settings_style: bool,
     controls: [FocusHandle; 2],
-    hovered_controls: [bool; 2],
     return_focus: Option<FocusHandle>,
     completed: bool,
     opt_out: Option<(SharedString, bool, FocusHandle)>,
@@ -54,7 +53,6 @@ impl Confirmation {
             destructive: false,
             settings_style: false,
             controls,
-            hovered_controls: [false; 2],
             return_focus,
             completed: false,
             opt_out: None,
@@ -64,11 +62,6 @@ impl Confirmation {
 
     pub fn destructive(mut self) -> Self {
         self.destructive = true;
-        self
-    }
-
-    pub fn settings_dialog(mut self) -> Self {
-        self.settings_style = true;
         self
     }
 
@@ -98,6 +91,11 @@ impl Confirmation {
         self.completed = false;
         self.controls[1].focus(window, cx);
         cx.notify();
+    }
+
+    pub fn settings_style(mut self) -> Self {
+        self.settings_style = true;
+        self
     }
 
     fn finish(&mut self, outcome: Outcome, window: &mut Window, cx: &mut Context<Self>) {
@@ -157,115 +155,20 @@ impl Confirmation {
         }
         cx.stop_propagation();
     }
-
-    fn button_colors(&self, index: usize, t: &Theme) -> (gpui::Hsla, gpui::Hsla, gpui::Hsla) {
-        let (fill, foreground) = match (self.settings_style, index == 1, self.destructive) {
-            (true, true, true) => (t.text_error.opacity(0.1), t.text_error),
-            (false, true, true) => (t.text_error, t.text_inverse),
-            (_, true, false) => (t.button_primary_solid, t.text_inverse),
-            (true, false, _) => (rgba(0).into(), t.text_tertiary),
-            (false, false, _) => (t.button_secondary, t.text),
-        };
-        let hover = if index == 1 && self.destructive {
-            t.text_error.opacity(0.2)
-        } else {
-            t.ghost_hover
-        };
-        (fill, foreground, hover)
-    }
-
-    fn button(
-        &self,
-        (index, label): (usize, SharedString),
-        window: &Window,
-        cx: &Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
-        let t = cx.theme();
-        let settings = self.settings_style;
-        let (fill, foreground, hover) = self.button_colors(index, t);
-        let (height, padding, line_height, weight, radius, corner) = if settings {
-            (
-                32.,
-                17.,
-                18.,
-                430.,
-                Theme::RADIUS_LG,
-                shapes::Corner::Squircle,
-            )
-        } else {
-            (
-                36.,
-                14.,
-                20.,
-                500.,
-                Theme::RADIUS_FULL,
-                shapes::Corner::Round,
-            )
-        };
-        div()
-            .id(("confirmation-button", index))
-            .role(gpui::Role::Button)
-            .aria_label(label.clone())
-            .track_focus(&self.controls[index])
-            .h(px(height))
-            .px(px(padding))
-            .relative()
-            .flex()
-            .items_center()
-            .justify_center()
-            .when(!settings, |d| d.rounded(radius).bg(fill))
-            .when(settings, |d| {
-                d.child(shapes::decoration(shapes::Decoration {
-                    radius: Corners::all(radius),
-                    corner,
-                    fill: Some(if self.hovered_controls[index] {
-                        hover
-                    } else {
-                        fill
-                    }),
-                    ..Default::default()
-                }))
-                .on_hover(cx.listener(move |this, hovered, _, cx| {
-                    this.hovered_controls[index] = *hovered;
-                    cx.notify();
-                }))
-            })
-            .when(
-                self.controls[index].is_focused(window) && window.last_input_was_keyboard(),
-                |d| {
-                    d.child(shapes::decoration(shapes::Decoration {
-                        radius: Corners::all(radius),
-                        corner,
-                        border: Some((px(2.), t.focus_ring)),
-                        ..Default::default()
-                    }))
-                },
-            )
-            .child(text(label, 14., line_height, weight, foreground))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                this.finish(
-                    if index == 0 {
-                        Outcome::Cancel
-                    } else {
-                        Outcome::Confirm
-                    },
-                    window,
-                    cx,
-                );
-            }))
-    }
 }
 
 impl Render for Confirmation {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let settings = self.settings_style;
-        let viewport_width = f32::from(window.viewport_size().width);
-        let width = if settings {
-            520_f32.min(viewport_width * 0.92)
+        let width = (if self.settings_style {
+            520_f32
         } else {
-            420_f32.min(viewport_width - 32.)
-        };
+            420_f32
+        })
+        .min(
+            f32::from(window.viewport_size().width) * if self.settings_style { 0.92 } else { 1. }
+                - if self.settings_style { 0. } else { 32. },
+        );
         let checkbox = self.opt_out.as_ref().map(|(label, checked, focus)| {
             div()
                 .id("confirmation-opt-out")
@@ -304,7 +207,100 @@ impl Render for Confirmation {
         let buttons = [self.cancel_label.clone(), self.confirm_label.clone()]
             .into_iter()
             .enumerate()
-            .map(|entry| self.button(entry, window, cx));
+            .map(|(index, label)| {
+                let destructive = index == 1 && self.destructive;
+                let fill = if self.settings_style {
+                    if destructive {
+                        t.text_error.opacity(0.1)
+                    } else if index == 0 {
+                        gpui::transparent_black()
+                    } else {
+                        t.button_primary_solid
+                    }
+                } else if destructive {
+                    t.text_error
+                } else if index == 1 {
+                    t.button_primary_solid
+                } else {
+                    t.button_secondary
+                };
+                let foreground = if self.settings_style {
+                    if destructive {
+                        t.text_error
+                    } else if index == 0 {
+                        t.text_tertiary
+                    } else {
+                        t.text_inverse
+                    }
+                } else if index == 1 {
+                    t.text_inverse
+                } else {
+                    t.text
+                };
+                let radius = if self.settings_style {
+                    px(12.5)
+                } else {
+                    Theme::RADIUS_FULL
+                };
+                let corner = if self.settings_style {
+                    shapes::Corner::Squircle
+                } else {
+                    shapes::Corner::Round
+                };
+                div()
+                    .id(("confirmation-button", index))
+                    .role(gpui::Role::Button)
+                    .aria_label(label.clone())
+                    .track_focus(&self.controls[index])
+                    .h(px(if self.settings_style { 32. } else { 36. }))
+                    .px(px(if self.settings_style { 16. } else { 14. }))
+                    .relative()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(self.settings_style, |button| {
+                        button
+                            .px(px(17.))
+                            .child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(radius),
+                                corner,
+                                fill: Some(fill),
+                                ..Default::default()
+                            }))
+                    })
+                    .when(!self.settings_style, |button| {
+                        button.rounded_full().bg(fill)
+                    })
+                    .when(
+                        self.controls[index].is_focused(window) && window.last_input_was_keyboard(),
+                        |d| {
+                            d.child(shapes::decoration(shapes::Decoration {
+                                radius: Corners::all(radius),
+                                corner,
+                                border: Some((px(2.), t.focus_ring)),
+                                ..Default::default()
+                            }))
+                        },
+                    )
+                    .child(text(
+                        label,
+                        14.,
+                        if self.settings_style { 18. } else { 20. },
+                        if self.settings_style { 430. } else { 500. },
+                        foreground,
+                    ))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.finish(
+                            if index == 0 {
+                                Outcome::Cancel
+                            } else {
+                                Outcome::Confirm
+                            },
+                            window,
+                            cx,
+                        );
+                    }))
+            });
         div()
             .absolute()
             .inset_0()
@@ -317,8 +313,8 @@ impl Render for Confirmation {
                 MouseButton::Left,
                 cx.listener(|this, _, window, cx| this.finish(Outcome::Cancel, window, cx)),
             )
-            .child(
-                div()
+            .child({
+                let dialog = div()
                     .id("confirmation-dialog")
                     .role(gpui::Role::Dialog)
                     .aria_label(self.title.clone())
@@ -331,8 +327,8 @@ impl Render for Confirmation {
                         shapes::Fill::Color,
                         false,
                         shapes::Decoration {
-                            radius: Corners::all(px(if settings { 25. } else { 24. })),
-                            corner: if settings {
+                            radius: Corners::all(px(if self.settings_style { 25. } else { 24. })),
+                            corner: if self.settings_style {
                                 shapes::Corner::Squircle
                             } else {
                                 shapes::Corner::Round
@@ -348,12 +344,12 @@ impl Render for Confirmation {
                             ..Default::default()
                         },
                     ))
-                    .child(
-                        div()
+                    .child({
+                        let content = div()
                             .p(px(20.))
                             .flex()
                             .flex_col()
-                            .gap(px(if settings { 12. } else { 20. }))
+                            .gap(px(if self.settings_style { 12. } else { 20. }))
                             .child(
                                 div()
                                     .flex()
@@ -362,8 +358,8 @@ impl Render for Confirmation {
                                     .child(text(
                                         self.title.clone(),
                                         20.,
-                                        if settings { 28. } else { 26. },
-                                        if settings { 600. } else { 500. },
+                                        if self.settings_style { 28. } else { 26. },
+                                        if self.settings_style { 600. } else { 500. },
                                         t.text,
                                     ))
                                     .child(
@@ -387,10 +383,29 @@ impl Render for Confirmation {
                                 div()
                                     .flex()
                                     .justify_end()
-                                    .gap(px(if settings { 12. } else { 8. }))
+                                    .gap(px(if self.settings_style { 12. } else { 8. }))
                                     .children(buttons),
-                            ),
-                    ),
-            )
+                            );
+                        if self.settings_style {
+                            crate::rounded_clip(px(25.), shapes::Corner::Squircle, content)
+                                .into_any_element()
+                        } else {
+                            content.into_any_element()
+                        }
+                    });
+                if self.settings_style {
+                    // Chromium's layer starts at the shadow ink, 10px left and 6px above the box.
+                    div()
+                        .ml(px(-10.))
+                        .mt(px(-6.))
+                        .pl(px(10.))
+                        .pt(px(6.))
+                        .layer()
+                        .child(dialog)
+                        .into_any_element()
+                } else {
+                    dialog.into_any_element()
+                }
+            })
     }
 }
