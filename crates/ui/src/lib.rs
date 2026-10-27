@@ -52,6 +52,7 @@ actions!(
         OpenMini,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
+        OpenPullRequests,
         OpenPlugins,
         OpenSecurity,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
@@ -987,7 +988,7 @@ impl Shell {
             let fg = if on { t.text } else { t.text_tertiary };
             let id = SharedString::from(format!("rail-{name}"));
             let focus = focus::handle(id.clone(), 0, window, cx);
-            let glyph = if on && name != "explore" {
+            let glyph = if on && !matches!(name, "explore" | "rail-code-review") {
                 format!("{name}-filled")
             } else {
                 name.to_string()
@@ -1143,11 +1144,15 @@ impl Shell {
                             .h(px(scale.floor().max(1.) / scale))
                             .bg(t.border),
                     )
-                    .children(
-                        RAIL_DESTINATIONS
-                            .iter()
-                            .map(|destination| rail_tip(item(destination.icon), destination.label)),
-                    )
+                    .children(RAIL_DESTINATIONS.iter().map(|destination| {
+                        rail_tip(
+                            item(destination.icon)
+                                .when(destination.id == "builtin:pull-requests", |item| {
+                                    item.on_click(dispatch::<OpenPullRequests>)
+                                }),
+                            destination.label,
+                        )
+                    }))
                     .child(shapes::top_fade(px(16.))),
             )
             .child(

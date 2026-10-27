@@ -13,7 +13,8 @@
 //! (`getAuthStatus` with `includeToken`) plus the account route from `account/read`, retries once
 //! after a 401 with a refreshed token, and answers the original wire shapes, including errors.
 //! The token never reaches logs, errors, or `Debug` output.
-//! Local fetches support automations, Git, scoped file reads, native app discovery, open-in requests, personal instructions, and first-run workspace creation.
+//! Local fetches support automations, Git, read-only pull requests, scoped file reads,
+//! native app discovery, open-in requests, personal instructions, and first-run workspace creation.
 //! Unsupported endpoints return errors.
 //! `Root` loads the automation list off the UI thread when the Scheduled route opens.
 //! `Root` owns the loading state and displays failures from these services.
@@ -60,6 +61,7 @@ mod native_apps;
 mod open_in;
 mod projectless;
 pub use projectless::Workspace;
+mod github_pull_requests;
 pub(crate) mod run_now;
 mod settings_git;
 mod skills;
@@ -1554,6 +1556,10 @@ impl Host for LocalHost {
             | "git-commit-status" | "git-commit-diff" | "git-commit" | "git-push"
             | "git-checkout" | "git-cat-file" | "git-review-patch" | "git-file-url" => {
                 git::fetch(endpoint, &params)?
+            }
+            "gh-cli-status" | "gh-current-user" | "gh-pr-search" | "gh-pr-detail"
+            | "gh-pr-patch" | "gh-pr-media" => {
+                github_pull_requests::fetch(self, endpoint, &params)?
             }
             "create-worktree" => self.create_worktree(&params)?,
             "set-worktree-owner-thread" | "worktree-set-owner-thread" => {

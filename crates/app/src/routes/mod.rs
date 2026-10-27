@@ -37,6 +37,7 @@ pub enum Route {
     Security,
     Plugins(String),
     Archive,
+    PullRequests(Option<ui::screens::pull_requests::model::Identity>),
     SelectWorkspace,
     Onboarding(ui::screens::onboarding::Page),
 }
@@ -50,6 +51,7 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = crate::security::actions(root, cx);
     root = plugins::actions(root, cx);
     root = archive::actions(root, cx);
+    root = crate::pull_requests::actions(root, cx);
     root
 }
 
@@ -188,6 +190,7 @@ impl Root {
                 Some(automations::thread(self, cx))
             }
             Route::Mobile => Some(mobile::page(self, cx)),
+            Route::PullRequests(selected) => Some(self.pull_requests_shell(selected, window, cx)),
             Route::Security => Some(crate::security::shell(self, window, cx)),
             Route::Plugins(path) => Some(self.plugins_shell(path, window, cx)),
             Route::Onboarding(page) => {

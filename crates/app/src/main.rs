@@ -26,10 +26,11 @@ fn main() {
     }
     let launch_path = std::env::args().nth(1);
     let mut state = State::load();
-    if let Some(route) = launch_path
-        .as_deref()
-        .and_then(|path| app::Route::remote_path(path).or_else(|| app::onboarding::route(path)))
-    {
+    if let Some(route) = launch_path.as_deref().and_then(|path| {
+        app::Route::remote_path(path)
+            .or_else(|| app::Route::pull_request_path(path))
+            .or_else(|| app::onboarding::route(path))
+    }) {
         state.route = route;
     }
     if launch_path.as_deref() == Some("/diff") {

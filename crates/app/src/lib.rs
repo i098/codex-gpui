@@ -30,6 +30,7 @@ pub mod native_menus;
 pub mod oauth;
 pub mod onboarding;
 mod personalization;
+mod pull_requests;
 pub mod qa;
 mod routes;
 pub mod terminal;
@@ -419,6 +420,7 @@ pub struct Root {
     /// The Mobile route's setup page.
     mobile_page: Option<Entity<mobile::MobileSetupPage>>,
     cloud: Option<cloud_task::Session>,
+    pull_requests_page: Option<Entity<ui::screens::pull_requests::Page>>,
     plugins_page: Option<Entity<ui::screens::plugins::Page>>,
     cloud_modal: Option<Entity<ui::screens::cloud::CloudModal>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
@@ -762,6 +764,7 @@ impl Root {
             archived_settings: None,
             mobile_page: None,
             cloud: None,
+            pull_requests_page: None,
             plugins_page: None,
             cloud_modal: None,
             settings_section: None,
@@ -1203,6 +1206,7 @@ impl Root {
         self.automation_card_results.clear();
         self.app_tool_events = None;
         self.bind_context_files(cx);
+        self.reset_pull_requests(cx);
         usage::invalidate(cx);
         if self.ready
             && matches!(
@@ -3257,6 +3261,7 @@ impl Root {
                         this.diff = None;
                         this.file = None;
                         this.split = None;
+                        this.pull_requests_page = None;
                         this.tabs.clear();
                         this.side = None;
                         this.loaded.clear();
