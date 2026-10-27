@@ -13,6 +13,7 @@ There is no release yet.
 - Add Import settings for Claude Code and Cursor, with saved sync choices and preserved imported workspaces.
 - Add the native Security workbench for scans, repository history, finding triage, remediation, and source viewing.
 - Add the searchable General `Language` menu, which saves `desktop.localeOverride` and clears it with `Auto detect`.
+- Show the Plugins and Skills directories in the original `Customize` sidebar, with the original header, scope pills, and two-column skill rows.
 
 ### Fixed
 
