@@ -9,6 +9,7 @@
 
 use crate::{Root, Route, State, windows};
 use gpui::{App, Context, Focusable, Window};
+use ui::screens::connections::Tab;
 
 /// A parsed `codex://` link this port can navigate.
 #[derive(Clone, Debug, PartialEq)]
@@ -24,6 +25,9 @@ pub enum Link {
     /// `settings` or `settings/<section>`: Settings, opened at the nav `label` when the
     /// section has one.
     Settings(Option<&'static str>),
+    /// `settings/connections[/computer|/devices|/ssh|/ssh/add]`: Settings > Connections at
+    /// that tab. `ssh/add` opens the SSH tab without its add dialog.
+    Connections(Tab),
     /// `automations`: the Scheduled page.
     Scheduled,
     /// `automations/<id>`: that task's thread (`automationId`, `automationSource`).
@@ -33,16 +37,10 @@ pub enum Link {
 }
 
 /// `settings/<section>` deep-link sections (the original's `DE` allow-list) mapped to
-/// this port's Settings nav labels. Sections without a page here (`chronicle`,
-/// `personal-vault`) open Settings itself, like an unknown section.
-const SETTINGS: &[(&str, &str)] = &[
-    ("browser-use", "Browser"),
-    ("connections", "Connections"),
-    ("connections/computer", "Connections"),
-    ("connections/devices", "Connections"),
-    ("connections/ssh", "Connections"),
-    ("connections/ssh/add", "Connections"),
-];
+/// this port's Settings nav labels; `connections/*` parse to [`Link::Connections`].
+/// Sections without a page here (`chronicle`, `personal-vault`) open Settings itself,
+/// like an unknown section.
+const SETTINGS: &[(&str, &str)] = &[("browser-use", "Browser")];
 
 /// Parses one `codex://` (or dev `codex-dev://`) URL. `None` for anything else, exactly
 /// like the original's `LE` returning `null`.
@@ -141,6 +139,15 @@ fn new_thread(params: &Params, gated: bool) -> Option<Link> {
 
 fn settings(sub: &[&str]) -> Option<Link> {
     let section = sub.join("/");
+    let tab = match section.as_str() {
+        "connections" | "connections/computer" => Some(Tab::Computer),
+        "connections/devices" => Some(Tab::Devices),
+        "connections/ssh" | "connections/ssh/add" => Some(Tab::Ssh),
+        _ => None,
+    };
+    if let Some(tab) = tab {
+        return Some(Link::Connections(tab));
+    }
     let label = SETTINGS
         .iter()
         .find(|(path, _)| *path == section)
@@ -267,6 +274,7 @@ impl Root {
             }
             Link::Settings(None) => self.navigate(Route::Settings, window, cx),
             Link::Settings(Some(label)) => self.open_settings_section(label, window, cx),
+            Link::Connections(tab) => self.open_connections(*tab, window, cx),
             Link::Scheduled => self.navigate(Route::Scheduled, window, cx),
             Link::Automation(id) => self.navigate(Route::Automation(id.clone()), window, cx),
             Link::Launch => {}
@@ -409,11 +417,20 @@ mod tests {
         assert_eq!(parse("codex://settings"), Some(Link::Settings(None)));
         assert_eq!(
             parse("codex://settings/connections"),
-            Some(Link::Settings(Some("Connections")))
+            Some(Link::Connections(Tab::Computer))
+        );
+        assert_eq!(
+            parse("codex://settings/connections/devices"),
+            Some(Link::Connections(Tab::Devices))
         );
         assert_eq!(
             parse("codex://settings/connections/ssh/add"),
-            Some(Link::Settings(Some("Connections")))
+            Some(Link::Connections(Tab::Ssh))
+        );
+        // `wsl` is outside the original's allow-list.
+        assert_eq!(
+            parse("codex://settings/connections/wsl"),
+            Some(Link::Settings(None))
         );
         assert_eq!(
             parse("codex://settings/browser-use"),

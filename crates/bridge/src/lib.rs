@@ -316,6 +316,11 @@ impl Bridge {
         receiver
     }
 
+    /// Whether the app-server has closed its response stream.
+    pub fn is_closed(&self) -> bool {
+        self.pending.lock().is_none()
+    }
+
     /// Whether this connection runs an ACP agent ([`Bridge::spawn_acp`]).
     pub fn is_acp(&self) -> bool {
         self.acp
@@ -559,6 +564,7 @@ mod event_tests {
         );
         drop(producer);
         assert!(second.recv_blocking().is_err());
+        assert!(bridge.is_closed());
         assert!(bridge.subscribe_async().is_closed());
     }
 

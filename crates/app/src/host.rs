@@ -37,6 +37,7 @@ use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
+use ui::screens::connections::{Connection as RemoteConnection, SshDraft};
 use ui::screens::diff::panel::ReviewRepository;
 use ui::screens::sidebar::Project;
 use url::Url;
@@ -46,6 +47,7 @@ pub use app_tools::{AppToolEvents, AppTools, ToolEvent};
 mod automation_schedule;
 pub mod computer_use;
 pub mod computer_use_native;
+pub mod connections;
 mod context_files;
 mod diff_files;
 mod diff_repositories;
@@ -167,6 +169,24 @@ pub trait Host: Send + Sync {
 
     fn voice_settings(&self) -> Result<voice::Settings> {
         bail!("Voice settings are unsupported by this host")
+    }
+    fn remote_connections(&self) -> Result<connections::SavedConnections> {
+        bail!("Remote connections are unsupported by this host")
+    }
+    fn save_remote_connection(&self, _draft: &SshDraft) -> Result<RemoteConnection> {
+        bail!("Saving remote connections is unsupported by this host")
+    }
+    fn delete_remote_connection(&self, _host_id: &str) -> Result<()> {
+        bail!("Deleting remote connections is unsupported by this host")
+    }
+    fn set_remote_auto_connect(&self, _host_id: &str, _enabled: bool) -> Result<()> {
+        bail!("Remote connections are unsupported by this host")
+    }
+    fn discover_remote_ssh(&self) -> Result<Vec<String>> {
+        bail!("SSH discovery is unsupported by this host")
+    }
+    fn record_mobile_setup(&self) -> Result<()> {
+        bail!("Mobile setup persistence is unsupported by this host")
     }
 
     /// Finish the initial automation turn and settle its automatic archive before reading the inbox.
@@ -1335,6 +1355,28 @@ impl Host for LocalHost {
             self.host_settings_path.clone(),
         ))
     }
+    fn remote_connections(&self) -> Result<connections::SavedConnections> {
+        self.saved_connections()
+    }
+    fn record_mobile_setup(&self) -> Result<()> {
+        LocalHost::record_mobile_setup(self)
+    }
+    fn save_remote_connection(&self, draft: &SshDraft) -> Result<RemoteConnection> {
+        self.save_connection(draft)
+    }
+    fn delete_remote_connection(&self, host_id: &str) -> Result<()> {
+        self.delete_connection(host_id)
+    }
+    fn set_remote_auto_connect(&self, host_id: &str, enabled: bool) -> Result<()> {
+        self.set_connection_auto_connect(host_id, enabled)
+    }
+    fn discover_remote_ssh(&self) -> Result<Vec<String>> {
+        let home = self
+            .ssh_home
+            .as_deref()
+            .context("Home directory is unavailable")?;
+        ssh_discovery::discover(home)
+    }
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.computer_use_settings
             .as_ref()
@@ -1949,6 +1991,24 @@ impl Host for CloudHost {
 
     fn record_projectless(&self, thread: &str, workspace: &Workspace) -> Result<()> {
         self.local.record_projectless(thread, workspace)
+    }
+    fn remote_connections(&self) -> Result<connections::SavedConnections> {
+        self.local.remote_connections()
+    }
+    fn record_mobile_setup(&self) -> Result<()> {
+        self.local.record_mobile_setup()
+    }
+    fn save_remote_connection(&self, draft: &SshDraft) -> Result<RemoteConnection> {
+        self.local.save_remote_connection(draft)
+    }
+    fn delete_remote_connection(&self, host_id: &str) -> Result<()> {
+        self.local.delete_remote_connection(host_id)
+    }
+    fn set_remote_auto_connect(&self, host_id: &str, enabled: bool) -> Result<()> {
+        self.local.set_remote_auto_connect(host_id, enabled)
+    }
+    fn discover_remote_ssh(&self) -> Result<Vec<String>> {
+        self.local.discover_remote_ssh()
     }
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.local.computer_use_settings()

@@ -65,7 +65,7 @@ Run `cargo test -p app --test computer_use_lifecycle` on macOS for native Stop a
 The host service supports `discover-remote-ssh-connections` and returns an `sshAliases` list.
 It reads `$HOME/.ssh/config` and its top-level `Include` files without running SSH or changing connection settings.
 Discovery follows the original literal-host, quote, and include rules.
-The Connections page and protected pairing flows remain separate work.
+Settings > Connections uses the same discovery for its SSH chooser.
 
 Run `cargo test -p app --lib --test host ssh_discovery` for the parser and host-service checks.
 
@@ -331,6 +331,16 @@ It shows detected providers and recorded import history.
 Automatic sync keeps the source selection and runs at the original 12-hour interval.
 Customize changes future imports only; disabling sync keeps saved selections.
 Cursor projectless imports keep their workspace and output-folder records without adding a named project.
+Settings > Connections saves SSH definitions under `CODEX_HOME` and keeps a separate app-server bridge for each connected host.
+WSL rows appear only when Windows discovers a distribution.
+The editor keeps the entered values when a save fails.
+The SSH chooser lists aliases that are not saved yet.
+Manual entry reports all validation errors before it writes a connection.
+Connection colors use the original per-host setting and survive a restart.
+Mobile setup uses the app-server remote-control status, pairing, and authorized-device APIs.
+It does not bypass account authorization or MFA.
+The existing native policy controls remote-device visibility.
+Capture tests require separate, owned `HOME` and `CODEX_HOME` directories.
 
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
