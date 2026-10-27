@@ -95,7 +95,9 @@ actions!(
 mod attach;
 pub mod computer_use;
 pub mod dictation;
+mod diff_comments;
 mod editor;
+pub use diff_comments::DiffCommentsChanged;
 mod footer;
 mod requests;
 pub(crate) mod menu {
@@ -564,6 +566,7 @@ enum Menu {
     Permissions,
     Effort,
     Models,
+    Comments,
 }
 
 /// Index of the `Speed` sub trigger among the effort menu's items.
@@ -637,10 +640,14 @@ pub struct Composer {
     /// Shaped lines and editor bounds of the last paint, for hit testing.
     lines: Vec<WrappedLine>,
     bounds: Option<Bounds<Pixels>>,
+    line_height: Pixels,
     attachments: Vec<attach::Attachment>,
     /// The attachments of the last submission, until the next one: [`Self::restore_submission`]
     /// puts them back when starting the chat failed.
     submitted: Vec<attach::Attachment>,
+    diff_comments: Vec<crate::screens::diff::panel::comments::Comment>,
+    submitted_diff_comments: Vec<crate::screens::diff::panel::comments::Comment>,
+    comments_close: Option<Task<()>>,
     pending_attachments: usize,
     attachment_generation: u64,
     attachment_error: Option<&'static str>,
@@ -662,6 +669,7 @@ pub struct Composer {
     speed_timer: Option<Task<()>>,
     permissions_focus: FocusHandle,
     model_focus: FocusHandle,
+    comments_focus: FocusHandle,
     /// The card's (`composer-footer` container's) width, CSS px: see `SM_WIDTH`, `XS_WIDTH`.
     footer_width: f32,
     menu_trigger_hovered: bool,
@@ -742,8 +750,12 @@ impl Composer {
             is_selecting: false,
             lines: Vec::new(),
             bounds: None,
+            line_height: LINE_HEIGHT,
             attachments: Vec::new(),
             submitted: Vec::new(),
+            diff_comments: Vec::new(),
+            submitted_diff_comments: Vec::new(),
+            comments_close: None,
             pending_attachments: 0,
             attachment_generation: 0,
             attachment_error: None,
@@ -762,6 +774,7 @@ impl Composer {
             speed_timer: None,
             permissions_focus: cx.focus_handle().tab_stop(true),
             model_focus: cx.focus_handle().tab_stop(true),
+            comments_focus: cx.focus_handle().tab_stop(true),
             footer_width: f32::INFINITY,
             menu_trigger_hovered: false,
             approval: None,
@@ -846,11 +859,16 @@ impl Composer {
         cx.notify();
     }
 
+    /// A settings textarea: a multiline plain field that is not the diff comment editor, which
+    /// draws inside its comment card instead.
+    fn textarea(&self) -> bool {
+        self.plain_field == Some(true) && self.on_cancel_edit.is_none()
+    }
+
     /// 13 px text and 10 px insets: a settings textarea, a sign-in field, or a compact request
     /// field that is not secret.
     fn compact_text(&self) -> bool {
-        self.plain_field == Some(true)
-            || (self.request_compact && (self.request_parent.is_none() || !self.secret))
+        self.textarea() || (self.request_compact && (self.request_parent.is_none() || !self.secret))
     }
 
     fn editor_font_size(&self) -> Pixels {
@@ -870,10 +888,10 @@ impl Composer {
             px(23.59375)
         } else if let Some(field) = self.embedded_field {
             field.line_height
-        } else if self.search_field || self.plain_field == Some(true) {
+        } else if self.search_field || self.textarea() {
             px(18.571_428)
         } else {
-            LINE_HEIGHT
+            self.line_height
         }
     }
 
@@ -1023,6 +1041,7 @@ impl Composer {
 
     pub fn restart_ready(&self) -> bool {
         self.content.is_empty()
+            && self.diff_comments.is_empty()
             && self.attachments.is_empty()
             && self.pending_attachments == 0
             && self.marked_range.is_none()
@@ -1325,7 +1344,9 @@ impl Composer {
     /// turn runs and the composer is empty, else the follow-up mode (`Queue` or `Steer`) while
     /// a turn runs, else `Send`. The original shows no tooltip on this button.
     pub fn send_label(&self) -> &'static str {
-        let has_input = !self.content.is_empty() || !self.attachments.is_empty();
+        let has_input = !self.content.is_empty()
+            || !self.attachments.is_empty()
+            || !self.diff_comments.is_empty();
         match (self.running, has_input, self.queue_mode) {
             (false, _, _) => "Send",
             (true, false, _) => "Stop",
@@ -1353,6 +1374,8 @@ impl Composer {
     pub fn clear_session(&mut self, cx: &mut Context<Self>) {
         self.attachment_generation = self.attachment_generation.wrapping_add(1);
         self.attachments.clear();
+        self.diff_comments.clear();
+        self.submitted_diff_comments.clear();
         self.pending_attachments = 0;
         self.attachment_error = None;
         self.context_menu = None;
@@ -1378,7 +1401,11 @@ impl Composer {
         let mut restored = std::mem::take(&mut self.submitted);
         restored.append(&mut self.attachments);
         self.attachments = restored;
-        self.restore_text(text, cx);
+        let mut comments = std::mem::take(&mut self.submitted_diff_comments);
+        comments.append(&mut self.diff_comments);
+        self.diff_comments = comments;
+        cx.emit(DiffCommentsChanged(self.diff_comments.clone()));
+        self.restore_text(crate::screens::diff::panel::comments::prompt_body(text), cx);
     }
 
     /// Open the model picker (`Select effort`), as `⌘⇧M`-style commands and the menu do.
@@ -1479,7 +1506,9 @@ impl Composer {
         if self.edit_pending
             || (!self.running && self.current_model().is_none())
             || self.pending_attachments > 0
-            || (self.content.trim().is_empty() && self.attachments.is_empty())
+            || (self.content.trim().is_empty()
+                && self.attachments.is_empty()
+                && self.diff_comments.is_empty())
         {
             return;
         }
@@ -1490,6 +1519,7 @@ impl Composer {
         } else {
             self.content.clear();
             self.mentions.clear();
+            self.take_diff_comments(cx);
             self.selected_range = 0..0;
             self.marked_range = None;
             self.menu = None;
@@ -1514,7 +1544,10 @@ impl Composer {
             }
         }
         Submission {
-            text: if self.mentions.is_empty() && self.on_cancel_edit.is_none() {
+            text: if self.mentions.is_empty()
+                && self.on_cancel_edit.is_none()
+                && self.diff_comments.is_empty()
+            {
                 std::mem::take(&mut self.content)
             } else {
                 self.prompt()
@@ -1585,10 +1618,12 @@ impl Composer {
                 Menu::Permissions => Permission::ALL.len(),
                 Menu::Models => self.models.len(),
                 Menu::Effort => 3,
+                Menu::Comments => self.diff_comments.len(),
             };
             self.menu_focus.prepare(count, cx);
             self.menu_focus.trigger = match menu {
                 Menu::Permissions => self.permissions_focus.clone(),
+                Menu::Comments => self.comments_focus.clone(),
                 _ => self.model_focus.clone(),
             };
             self.menu_focus.content.focus(window, cx);
@@ -1615,7 +1650,7 @@ impl Composer {
             // Escape returns focus to the trigger of the Radix menus (permissions, the
             // `Speed` submenu: f2c.json step 24); the model picker's close focuses the editor
             // (refs/interactions/s033.json).
-            if menu == Menu::Permissions || self.speed_open {
+            if matches!(menu, Menu::Permissions | Menu::Comments) || self.speed_open {
                 self.menu_focus.restore(window, cx);
             } else {
                 self.focus_handle.focus(window, cx);
@@ -1823,6 +1858,7 @@ impl Composer {
                 }
                 _ => {}
             },
+            Some(Menu::Comments) => self.open_comment_attachment(index, window, cx),
             None => {}
         }
         cx.notify();
@@ -2196,7 +2232,7 @@ impl Render for Composer {
                     ),
                 );
             }
-            let card = if self.plain_field == Some(true) {
+            let card = if self.textarea() {
                 let border = if self.focus_handle.is_focused(window) {
                     gpui::rgb(0x3a83f7).into()
                 } else {
@@ -2288,7 +2324,8 @@ impl Render for Composer {
                     .when(
                         self.request_parent.is_none()
                             && !self.request_compact
-                            && !self.search_field,
+                            && !self.search_field
+                            && !editing,
                         |d| {
                             d.border_1()
                                 .border_color(t.border)
@@ -2357,13 +2394,25 @@ impl Render for Composer {
                     .when(!self.secret, |d| d.aria_value(self.content.clone()))
                     .child(
                         self.editor(cx)
+                            .id("composer-field-editor")
+                            .when(editing, |d| {
+                                d.max_h(window.viewport_size().height / 4.)
+                                    .overflow_y_scroll()
+                            })
                             .when(self.request_number, |editor| editor.pr(px(30.))),
                     )
                     .when(self.request_number, |d| {
                         d.child(self.request_number_stepper(&t, cx))
                     })
+                    .when(
+                        self.request_parent.is_some() && !self.secret && !self.request_number,
+                        |d| d.child(self.dictation_button(&t, cx)),
+                    )
+                    .when_some(self.dictation_error.clone(), |d, error| {
+                        d.child(text(error, 12., 16., 400., t.text))
+                    })
             };
-            return if self.plain_field == Some(true) {
+            return if self.textarea() {
                 div().w_full().child(crate::recorded_bounds(card))
             } else {
                 div().w_full().child(card)
@@ -2518,6 +2567,9 @@ impl Render for Composer {
                 d.child(self.approval_card(&a, &t, cx))
             })
             .child(div().children(tray).child(card))
+            .when_some(self.dictation_error.clone(), |d, error| {
+                d.child(text(error, 12., 16., 400., t.text))
+            })
             .when_some(self.context_menu.as_ref(), |d, menu| {
                 d.child(menu.overlay(
                     "composer-menu",

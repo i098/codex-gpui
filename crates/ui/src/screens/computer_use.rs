@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use theme::{ActiveTheme as _, Theme};
 
-fn decode_app_image(url: &str) -> Option<Arc<gpui::Image>> {
+pub(crate) fn decode_app_image(url: &str) -> Option<Arc<gpui::Image>> {
     let (header, data) = url.strip_prefix("data:")?.split_once(',')?;
     let mime = header.strip_suffix(";base64")?;
     let format = gpui::ImageFormat::from_mime_type(mime)?;
