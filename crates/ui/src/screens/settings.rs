@@ -274,6 +274,9 @@ pub mod storage;
 #[path = "settings_integrations.rs"]
 pub mod integrations;
 
+#[path = "archived_chats.rs"]
+pub mod archived_chats;
+
 #[path = "git_settings.rs"]
 mod git_settings;
 
@@ -1370,6 +1373,9 @@ impl Render for SettingsPane {
                 window,
                 cx,
             );
+        }
+        if section == "Archived chats" {
+            return archived_chats::render(window, cx);
         }
         if section == "Worktrees" {
             return worktrees::render(self.page.clone(), window, cx);

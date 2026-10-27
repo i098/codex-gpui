@@ -4,6 +4,7 @@
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
 mod activity_access;
+mod archived_chats;
 mod cloud_task;
 pub use cloud_task::parse_task_response;
 mod cloud;
@@ -85,6 +86,7 @@ use ui::screens::diff::panel::{
 };
 use ui::screens::home::{HomeMain, OpenFolder};
 use ui::screens::recovery;
+use ui::screens::settings::archived_chats::ArchivedChats as ArchivedSettings;
 use ui::screens::settings::personalization::WritingPreference;
 use ui::screens::settings::{self, AppServer, SettingChanged, workspace};
 use ui::screens::sidebar::{
@@ -413,6 +415,7 @@ pub struct Root {
     /// The route's own shell.
     page: Option<Entity<Shell>>,
     archive_page: Option<Entity<ArchivedChats>>,
+    archived_settings: Option<Entity<ArchivedSettings>>,
     /// The Mobile route's setup page.
     mobile_page: Option<Entity<mobile::MobileSetupPage>>,
     cloud: Option<cloud_task::Session>,
@@ -756,6 +759,7 @@ impl Root {
             workspace_layout: WorkspaceLayout::Split,
             page: None,
             archive_page: None,
+            archived_settings: None,
             mobile_page: None,
             cloud: None,
             plugins_page: None,
@@ -1095,6 +1099,10 @@ impl Root {
 
     pub fn archived_chats(&self) -> Option<&Entity<ArchivedChats>> {
         self.archive_page.as_ref()
+    }
+
+    pub fn archived_settings(&self) -> Option<&Entity<ArchivedSettings>> {
+        self.archived_settings.as_ref()
     }
 
     pub fn mobile_page(&self) -> Option<&Entity<mobile::MobileSetupPage>> {
@@ -7126,8 +7134,13 @@ impl Render for Root {
             .children(self.shortcut_state.confirmation.clone())
             .children(self.shortcut_state.zoom_banner.clone())
             .children(self.automation_editor.clone())
-            .children(self.diff_confirmation.clone());
-        let root = routes::actions(root, cx);
+            .children(self.diff_confirmation.clone())
+            .children(
+                self.archived_settings
+                    .as_ref()
+                    .and_then(|page| page.read(cx).confirmation()),
+            );
+        let root = routes::actions(archived_chats::actions(root, cx), cx);
         let root = hotkey::actions(root, self.popout.is_some(), cx);
         native_menus::actions(
             section_actions::actions(features::actions(root, self, cx), cx),
