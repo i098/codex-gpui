@@ -14,8 +14,8 @@ use bridge::types::{
     PermissionsApprovalRequest, QueuedSubmission,
 };
 use gpui::{
-    AnyElement, App, AvailableSpace, Bounds, ClipboardItem, Context, Corners, CursorStyle, Div,
-    ElementId, ElementInputHandler, Entity, EntityInputHandler, ExternalPaths, FocusHandle,
+    AnyElement, AnyView, App, AvailableSpace, Bounds, ClipboardItem, Context, Corners, CursorStyle,
+    Div, ElementId, ElementInputHandler, Entity, EntityInputHandler, ExternalPaths, FocusHandle,
     Focusable, GlobalElementId, Hsla, InspectorElementId, InteractiveElement, IntoElement,
     KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
     PathPromptOptions, Pixels, Point, Render, ScrollHandle, SharedString, Size, Stateful,
@@ -26,6 +26,25 @@ use gpui::{
 use serde_json::{Value, json};
 use std::{ops::Range, path::PathBuf, rc::Rc, time::Duration};
 use theme::{ActiveTheme as _, Appearance, Theme};
+
+pub(crate) fn normalize_newlines(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains('\r') {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut normalized = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\r' {
+            normalized.push('\n');
+            if chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+        } else {
+            normalized.push(ch);
+        }
+    }
+    std::borrow::Cow::Owned(normalized)
+}
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub enum EnterBehavior {
@@ -50,7 +69,6 @@ impl EnterBehavior {
 }
 
 impl gpui::Global for EnterBehavior {}
-
 actions!(
     composer,
     [
@@ -713,7 +731,9 @@ pub struct Composer {
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
     field_style: FieldStyle,
+    hotkey_controls: Option<AnyView>,
     document_field: bool,
+    mini: bool,
     search_field: bool,
     field_min_height: Pixels,
     field_scroll: Option<ScrollHandle>,
@@ -809,7 +829,9 @@ impl Composer {
             on_model: None,
             plain_field: None,
             field_style: FieldStyle::Settings,
+            hotkey_controls: None,
             document_field: false,
+            mini: false,
             search_field: false,
             field_min_height: px(48.),
             field_scroll: None,
@@ -819,6 +841,24 @@ impl Composer {
             dictation_error: None,
             embedded_field: None,
         }
+    }
+
+    pub fn set_hotkey_home(
+        &mut self,
+        controls: AnyView,
+        placeholder: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.hotkey_controls = Some(controls);
+        self.placeholder = placeholder.into();
+        cx.notify();
+    }
+
+    pub fn set_mini(&mut self, cx: &mut Context<Self>) {
+        self.mini = true;
+        self.search_field = true;
+        self.placeholder = "Ask".into();
+        cx.notify();
     }
 
     pub fn settings_field(
@@ -882,6 +922,9 @@ impl Composer {
 
     pub fn set_document_style(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.document_field = enabled;
+        if enabled {
+            self.normalize_document();
+        }
         cx.notify();
     }
 
@@ -1384,9 +1427,13 @@ impl Composer {
     pub fn set_text(&mut self, s: &str, cx: &mut Context<Self>) {
         self.cancel_dictation(cx);
         self.dictation_error = None;
-        self.content = s.into();
+        self.content = if self.document_field {
+            normalize_newlines(s).into_owned()
+        } else {
+            s.into()
+        };
         self.mentions.clear();
-        self.selected_range = s.len()..s.len();
+        self.selected_range = self.content.len()..self.content.len();
         self.marked_range = None;
         self.history = editor::History::default();
         self.context_spelling = None;
@@ -2234,6 +2281,53 @@ impl Render for Composer {
             .on_action(cx.listener(Self::next_command))
             .on_action(cx.listener(Self::previous_command))
             .relative();
+        if self.mini {
+            let enabled = self.current_model().is_some() && !self.content.trim().is_empty();
+            return div().w_full().child(
+                card.key_context(KEY_CONTEXT)
+                    .role(gpui::Role::TextInput)
+                    .aria_label("Chat")
+                    .aria_placeholder(self.placeholder.clone())
+                    .aria_value(self.content.clone())
+                    .h(px(40.))
+                    .px(px(6.))
+                    .pl(px(14.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(20.)),
+                        fill: Some(t.control_background),
+                        ..Default::default()
+                    }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .child(self.editor(cx)),
+                    )
+                    .child(
+                        div()
+                            .id("mini-send")
+                            .role(gpui::Role::Button)
+                            .aria_label("Send chat")
+                            .aria_disabled(!enabled)
+                            .size(px(28.))
+                            .rounded_full()
+                            .bg(gpui::rgb(0x636363))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(crate::icon::icon("composer-arrow-up", 16., gpui::white()))
+                            .when(enabled, |button| {
+                                button.on_click(cx.listener(|this, _, window, cx| {
+                                    this.submit(&Submit, window, cx);
+                                }))
+                            }),
+                    ),
+            );
+        }
         if self.plain_field.is_some() && self.field_style != FieldStyle::Settings {
             let multiline = self.plain_field == Some(true);
             let inline = self.field_style == FieldStyle::Inline;
@@ -2485,36 +2579,43 @@ impl Render for Composer {
         let card = card
             .flex()
             .flex_col()
-            .child(shapes::decoration(if editing {
-                shapes::Decoration {
-                    radius: Corners::all(px(24.)),
-                    fill: Some(match t.appearance {
-                        Appearance::Dark => t.control_background.opacity(0.95),
-                        Appearance::Light => t.text_alpha_5,
-                    }),
-                    ..Default::default()
-                }
-            } else if self.drag_active(cx) {
-                // `[data-composer-drag-active]`: `surface-elevated-secondary` at 50%.
-                shapes::Decoration {
-                    fill: Some(t.surface_elevated_secondary.opacity(0.5)),
-                    ..card_decoration(&t)
-                }
-            } else {
-                card_decoration(&t)
-            }))
+            .when(self.hotkey_controls.is_none(), |card| {
+                card.child(shapes::decoration(if editing {
+                    shapes::Decoration {
+                        radius: Corners::all(px(24.)),
+                        fill: Some(match t.appearance {
+                            Appearance::Dark => t.control_background.opacity(0.95),
+                            Appearance::Light => t.text_alpha_5,
+                        }),
+                        ..Default::default()
+                    }
+                } else if self.drag_active(cx) {
+                    // `[data-composer-drag-active]`: `surface-elevated-secondary` at 50%.
+                    shapes::Decoration {
+                        fill: Some(t.surface_elevated_secondary.opacity(0.5)),
+                        ..card_decoration(&t)
+                    }
+                } else {
+                    card_decoration(&t)
+                }))
+            })
             // See `docked`: the docked body is a transparent cc layer over the card.
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .when(self.docked, |d| d.layer())
-                    .when(!editing, |d| d.child(self.attachments_row(&t, cx)))
+                    .when(
+                        !editing
+                            && (self.hotkey_controls.is_none() || !self.attachments.is_empty()),
+                        |d| d.child(self.attachments_row(&t, cx)),
+                    )
                     .when_some(self.attachment_error, |d, error| {
                         d.child(label(error, t.text))
                     })
                     .child(
                         self.editor(cx)
+                            .when(self.hotkey_controls.is_some(), |d| d.px_0().min_h(px(48.)))
                             .when(editing, |d| d.pt(px(12.)).pb_0().min_h(px(52.))),
                     )
                     .child(if editing {

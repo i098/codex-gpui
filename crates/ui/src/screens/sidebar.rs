@@ -2140,6 +2140,8 @@ pub struct CommandMenu {
     cloud_searching: bool,
     cloud_error: bool,
     file_search: Option<FileSearch>,
+    standalone: bool,
+    open_error: bool,
     recent_cycle: bool,
 }
 
@@ -2598,7 +2600,7 @@ const COMMANDS: &[Command] = &[
         "Show Mini",
         "Show Mini from anywhere",
         "⌥Space",
-        false,
+        true,
     ),
     (
         "App",
@@ -2811,7 +2813,34 @@ impl CommandMenu {
             cloud_searching: false,
             cloud_error: false,
             file_search: None,
+            standalone: false,
+            open_error: false,
             recent_cycle: false,
+        }
+    }
+
+    pub fn set_standalone(&mut self, cx: &mut Context<Self>) {
+        self.standalone = true;
+        cx.notify();
+    }
+
+    pub fn set_open_error(&mut self, failed: bool, cx: &mut Context<Self>) {
+        self.open_error = failed;
+        cx.notify();
+    }
+
+    pub fn update_catalog(
+        &mut self,
+        threads: &[Thread],
+        unread: &[String],
+        cx: &mut Context<Self>,
+    ) {
+        if self.query.is_empty() && self.file_search.is_none() && !self.recent_cycle {
+            self.groups[0].1 = threads
+                .iter()
+                .map(|thread| Item::chat(thread, None, unread.contains(&thread.id)))
+                .collect();
+            cx.notify();
         }
     }
 
@@ -3471,6 +3500,8 @@ impl CommandMenu {
         let entity = cx.entity();
         let placeholder = if self.file_search.is_some() {
             "Search files"
+        } else if self.standalone {
+            "Search chats or run a command"
         } else {
             "Search chats"
         };
@@ -3841,7 +3872,17 @@ impl Render for CommandMenu {
                             .flex()
                             .items_center()
                             .gap(px(8.))
-                            .child(text(heading, 13., 18.5, 430., t.text_tertiary))
+                            .child(text(
+                                if self.standalone && query.is_empty() && heading == "Chats" {
+                                    "Recent chats"
+                                } else {
+                                    heading
+                                },
+                                13.,
+                                18.5,
+                                430.,
+                                t.text_tertiary,
+                            ))
                             .when(searching, |d| {
                                 d.child(icon("sidebar-cmd-spinner", 12., t.text_tertiary))
                             }),
@@ -3887,7 +3928,7 @@ impl Render for CommandMenu {
         div()
             .absolute()
             .inset_0()
-            .bg(rgba(OVERLAY))
+            .when(!self.standalone, |view| view.bg(rgba(OVERLAY)))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_, _, _, cx| cx.emit(CommandMenuEvent::Dismiss)),
@@ -3994,7 +4035,22 @@ impl Render for CommandMenu {
                                                 )
                                             }),
                                     ),
-                            ),
+                            )
+                            .when(self.open_error, |surface| {
+                                surface.child(
+                                    div()
+                                        .id("spotlight-open-error")
+                                        .role(gpui::Role::Alert)
+                                        .p(px(8.))
+                                        .child(text(
+                                            "Could not open this item. Try again",
+                                            13.,
+                                            18.,
+                                            400.,
+                                            t.text_error,
+                                        )),
+                                )
+                            }),
                     ),
             )
     }

@@ -16,7 +16,6 @@ use gpui::{App, Context, Div};
 mod command_destinations;
 mod keymap;
 pub(crate) mod shortcuts;
-pub(crate) mod terminal;
 mod workspace;
 pub(crate) use command_destinations::OpenThreadInNewWindow;
 

@@ -33,8 +33,11 @@ use theme::{ActiveTheme as _, Theme};
 
 #[path = "computer_use.rs"]
 pub mod computer_use;
+
 #[path = "keyboard_shortcuts.rs"]
 pub mod keyboard_shortcuts;
+#[path = "voice.rs"]
+pub mod voice;
 fn focus_on_pointer(
     focus: Entity<focus::ControlFocus>,
 ) -> impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) {
@@ -1426,6 +1429,9 @@ impl Render for SettingsPane {
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
         }
+        if section == "Voice" {
+            return voice::render(window, cx);
+        }
         if section == "Keyboard shortcuts" {
             return keyboard_shortcuts::render(window, cx);
         }
@@ -1441,7 +1447,7 @@ impl Render for SettingsPane {
         if section == "Storage" {
             return self.storage.clone().into_any_element();
         }
-        if matches!(section, "Plugins" | "Hooks") {
+        if matches!(section, "Plugins" | "Hooks" | "MCP servers") {
             return integrations::render(
                 section,
                 self.page.read(cx).integrations.clone(),

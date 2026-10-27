@@ -183,7 +183,16 @@ fn panel_commands_keep_the_selected_chat_and_existing_tabs() -> Result<()> {
     ensure!(fx.read(|root, _| root.side_panel().is_none()));
     command(&mut fx, "New tab")?;
     ensure!(fx.read(|root, _| root.side_panel() == Some(SidePanel::Changes)));
-    ensure!(fx.route() == Route::Thread(SUBTRACT.into()));
+    command(&mut fx, "Open terminal")?;
+    ensure!(fx.read(|root, cx| {
+        root.side_panel() == Some(SidePanel::Changes)
+            && root.side_tabs() == [SidePanel::Changes]
+            && root.shell().read(cx).bottom.is_some()
+            && root.terminal_panel().is_some()
+    }));
+    ensure!(fx.route() == Route::Thread(SUBTRACT.into()) && !fx.composer_focused()?);
+    fx.shot()?
+        .save(std::env::temp_dir().join("command-dispatch-after-terminal.png"))?;
     Ok(())
 }
 

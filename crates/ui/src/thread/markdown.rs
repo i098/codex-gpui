@@ -618,7 +618,7 @@ impl<'a> Markdown<'a> {
                 div()
                     .flex()
                     .justify_end()
-                    .child(self.word(&format!("{n}. "), None, style))
+                    .child(self.word(&format!("{n}. "), None, style, None))
             } else {
                 let size = if depth == 1 { 6. } else { 5. };
                 div().child(
@@ -675,34 +675,39 @@ impl<'a> Markdown<'a> {
                     let mut glue = glued;
                     let mut at = self.events.start;
                     let line = LINE_WIDTH.with(|w| w.get());
-                    for word in s.split_inclusive(' ') {
-                        let limit = line - self.indent.take();
-                        for chunk in
+                    let chunks: Vec<&str> = s
+                        .split_inclusive(' ')
+                        .flat_map(|word| {
+                            let limit = line - self.indent.take();
                             break_long(self.window, word, style.size, style.weight, None, limit)
-                        {
-                            let here = at;
-                            at += chunk.len();
-                            let word = self.word(chunk, Some(here), style);
-                            // No break opportunity between a chip and the text that touches it.
-                            let chip = if glue && !chunk.starts_with(char::is_whitespace) {
-                                row.pop()
-                            } else {
-                                None
-                            };
-                            glue = false;
-                            if let Some(chip) = chip {
-                                row.push(
-                                    div()
-                                        .flex()
-                                        .flex_none()
-                                        .child(chip)
-                                        .child(word)
-                                        .into_any_element(),
-                                );
-                                continue;
-                            }
-                            row.push(word.into_any_element());
+                        })
+                        .collect();
+                    let mut item = ItemPen::new(self.window);
+                    let count = chunks.len();
+                    for (index, chunk) in chunks.into_iter().enumerate() {
+                        let here = at;
+                        at += chunk.len();
+                        let last = index + 1 == count;
+                        let word = self.word(chunk, Some(here), style, Some((&mut item, last)));
+                        // No break opportunity between a chip and the text that touches it.
+                        let chip = if glue && !chunk.starts_with(char::is_whitespace) {
+                            row.pop()
+                        } else {
+                            None
+                        };
+                        glue = false;
+                        if let Some(chip) = chip {
+                            row.push(
+                                div()
+                                    .flex()
+                                    .flex_none()
+                                    .child(chip)
+                                    .child(word)
+                                    .into_any_element(),
+                            );
+                            continue;
                         }
+                        row.push(word.into_any_element());
                     }
                 }
                 Event::SoftBreak if self.preserve_line_breaks => row.push(self.line_break()),
@@ -712,7 +717,7 @@ impl<'a> Markdown<'a> {
                         continue;
                     }
                     let at = self.events.start;
-                    row.push(self.word(" ", Some(at), style).into_any_element());
+                    row.push(self.word(" ", Some(at), style, None).into_any_element());
                 }
                 Event::HardBreak => row.push(self.line_break()),
                 Event::Code(code) => {
@@ -875,12 +880,23 @@ impl<'a> Markdown<'a> {
     }
 
     /// A word box with its selection highlight under its glyphs: one box, so a long answer
-    /// lays out a node per word.
-    fn word(&self, s: &str, at: Option<usize>, style: Typography) -> Div {
+    /// lays out a node per word. In a text `item`, the box takes its share of the item's
+    /// advance (`last` ends the item).
+    fn word(
+        &self,
+        s: &str,
+        at: Option<usize>,
+        style: Typography,
+        item: Option<(&mut ItemPen, bool)>,
+    ) -> Div {
         let (width, label) = self.label(s, at, style);
         self.link_width
             .set(self.link_width.get() + f32::from(width));
         self.record_table_width(width, s.encode_utf16().count());
+        let width = match item {
+            Some((item, last)) => item.share(width, last),
+            None => width,
+        };
         div()
             .relative()
             .flex_none()
@@ -1084,11 +1100,13 @@ impl<'a> Markdown<'a> {
         let (growth, shift, pill) = self.code_metrics(font_size);
         let space = width(self.window, " ", font_size, 430., Some(code_font()));
         let mut offset = at;
+        let mut item = ItemPen::new(self.window);
         let mut parts = Vec::with_capacity(count);
         for (index, word) in chunks.into_iter().enumerate() {
             let fades = self.fades(word);
             let word_width = width(self.window, word, font_size, 430., Some(code_font()));
             self.record_table_width(word_width, word.encode_utf16().count());
+            let word_width = item.share(word_width, index + 1 == count);
             let label = match self.find {
                 Some(find) => div().flex_none().w(word_width).child(
                     run_style(font_size, 15., 430., self.theme.text)
@@ -1145,6 +1163,35 @@ impl<'a> Markdown<'a> {
             offset += word.len();
         }
         parts
+    }
+}
+
+/// Blink lays a text node (or an inline code's text) out as one item: its glyphs at their
+/// float advances, its width `ceil`ed to a LayoutUnit (1/64 device px,
+/// `ShapeResult::SnappedWidth`). Its word boxes take LayoutUnit-rounded shares of the advance
+/// so far, the last one up to that width.
+/// ponytail: a line that breaks inside the item restarts with the shares' rounding (< 1/64
+/// device px), not with the item's own advance; draw words at a sub-unit offset if it shows.
+pub(super) struct ItemPen {
+    unit: f32,
+    advance: f32,
+}
+
+impl ItemPen {
+    pub(super) fn new(window: &Window) -> Self {
+        Self {
+            unit: window.scale_factor() * 64.,
+            advance: 0.,
+        }
+    }
+
+    /// The box width of the item's next word of `width`; `last` ends the item.
+    pub(super) fn share(&mut self, width: Pixels, last: bool) -> Pixels {
+        let start = (self.advance * self.unit).round();
+        self.advance += f32::from(width);
+        let end = self.advance * self.unit;
+        let end = if last { end.ceil() } else { end.round() };
+        px((end - start) / self.unit)
     }
 }
 
@@ -1600,6 +1647,28 @@ mod table_tests {
             text.split_whitespace().collect::<Vec<_>>(),
             ["Name", "Count", "alpha", "42"]
         );
+    }
+}
+
+#[cfg(test)]
+mod item_tests {
+    use super::*;
+
+    #[test]
+    fn word_shares_end_at_the_item_layout_unit_width() {
+        // ` next to ` at 14 px on a 2x display: its words' advances (css px). Blink's item is
+        // their sum ceiled to 1/128 px, 52.296875; rounding each word gave 52.2890625.
+        let mut item = ItemPen {
+            unit: 128.,
+            advance: 0.,
+        };
+        let shares = [
+            (3.752_929_7, false),
+            (31.715_332, false),
+            (16.821_533, true),
+        ]
+        .map(|(width, last)| f32::from(item.share(px(width), last)));
+        assert_eq!(shares, [3.75, 31.71875, 16.828125]);
     }
 }
 

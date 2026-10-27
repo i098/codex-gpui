@@ -49,6 +49,7 @@ actions!(
         OpenSettings,
         LogOut,
         ShowKeyboardShortcuts,
+        OpenMini,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
         OpenPlugins,
@@ -183,6 +184,7 @@ pub struct Shell {
     pub chat_chrome: bool,
     /// Titlebar `New tab` button (chat routes; Settings and Automations hide it).
     pub new_tab: bool,
+    pub header_actions: Option<AnyView>,
     /// Opaque background boxes the page paints under the main surface's clip that reach its
     /// rounded corners (Settings' `electron:bg-surface`): each blends the clip's anti-aliased
     /// edge once more. With any, the shell paints those corners itself, over what the main
@@ -213,7 +215,7 @@ pub struct Shell {
     sidebar: AnyView,
     main: AnyView,
     main_content_inline_inset: Pixels,
-    bottom: Option<AnyView>,
+    pub bottom: Option<AnyView>,
 }
 
 /// The fixture account's 24 px avatar (`rounded-full object-cover` `<img>`), rasterized the way
@@ -290,6 +292,7 @@ impl Shell {
             selected_rail: Some("home"),
             chat_chrome: true,
             new_tab: true,
+            header_actions: None,
             main_backgrounds: 0,
             main_composited: false,
             main_layer: false,
@@ -1170,8 +1173,7 @@ impl Shell {
 
     /// Profile avatar menu (`codex.profileDropdown.*`) above the avatar: `Settings`, then the
     /// `Help` submenu's `Set up mobile`, flattened under a `Help` heading.
-    /// ponytail: Profile, Usage and Show Mini open pages the port does not have; add
-    /// them with those pages.
+    /// Profile and Usage open pages that this menu does not yet expose.
     fn profile_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let hover = t.menu_item_hover;
         let item = |id: &'static str,
@@ -1196,6 +1198,7 @@ impl Shell {
             "Set up mobile",
             dispatch::<OpenMobileSetup>,
         );
+        let mini = item("profile-mini", "Show Mini", dispatch::<OpenMini>);
         div()
             .absolute()
             .left(px(8.))
@@ -1208,6 +1211,7 @@ impl Shell {
             }))
             .child(composer::popover(t, 220., |d| {
                 d.child(settings)
+                    .child(mini)
                     .child(item("profile-log-out", "Log out", dispatch::<LogOut>))
                     .child(div().px(px(8.)).pt(px(8.)).pb(px(4.)).child(text(
                         "Help",
@@ -1475,15 +1479,13 @@ impl Shell {
                     focus::ring(
                         icon_button(
                             "toggle-sidebar",
-                            icon::icon(
-                                if self.sidebar_open {
-                                    "sidebar"
-                                } else {
-                                    "sidebar-hidden"
-                                },
-                                16.,
-                                t.text_tertiary,
-                            ),
+                            if self.sidebar_open {
+                                icon::icon("sidebar", 16., t.text_tertiary)
+                            } else {
+                                // Closed, Chromium composites the titlebar's Show sidebar and
+                                // New chat icons: they blit into a layer of their own.
+                                icon::icon("sidebar-hidden", 16., t.text_tertiary).own_layer(None)
+                            },
                             t,
                         ),
                         &sidebar_focus,
@@ -1510,6 +1512,25 @@ impl Shell {
                     Side::Bottom,
                 ))
             })
+            // Closed, the titlebar also carries New chat after Show sidebar.
+            .when(self.chat_chrome && !self.sidebar_open, |d| {
+                d.child(tooltip(
+                    icon_button(
+                        "titlebar-new-chat",
+                        icon::icon("sidebar-cmd-new-chat", 16., t.text_tertiary).own_layer(None),
+                        t,
+                    )
+                    .role(gpui::Role::Button)
+                    .aria_label("New chat")
+                    .absolute()
+                    .left(px(190.) - fullscreen_shift)
+                    .top(px(8.))
+                    .on_click(dispatch::<NewChat>),
+                    "New chat",
+                    Some("⌘N"),
+                    Side::Bottom,
+                ))
+            })
             .when(self.new_tab, |d| {
                 d.child(
                     focus::ring(div().id("new-tab"), &new_tab_focus, px(8.), px(2.), cx)
@@ -1530,6 +1551,17 @@ impl Shell {
                             icon::icon("new-tab", 16., t.text_tertiary)
                                 .own_layer(Some(Point::default())),
                         ),
+                )
+            })
+            .when_some(self.header_actions.clone(), |bar, actions| {
+                bar.child(
+                    div()
+                        .absolute()
+                        .top(px(8.))
+                        .right(px(44.))
+                        .h(px(28.))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(actions),
                 )
             })
     }
@@ -1788,6 +1820,8 @@ impl Render for Shell {
                                 };
                                 shapes::paint(&fill, None, bounds, window, cx);
                                 main = frame(bounds, u8::from(!main_layer), false, window, cx);
+                                // A lone thread draws its right corners, and its top-left one
+                                // when the sidebar is closed (`ThreadView::clip_top_left`).
                                 let own = clips_right || main_layer;
                                 let own = Corners {
                                     top_right: own,

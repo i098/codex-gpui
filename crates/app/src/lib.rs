@@ -20,11 +20,13 @@ mod diff_watch;
 mod features;
 pub mod host;
 pub mod host_settings;
+pub mod hotkey;
 pub mod native_menus;
 pub mod oauth;
 mod personalization;
 pub mod qa;
 mod routes;
+pub mod terminal;
 pub use routes::Route;
 mod plugins;
 pub mod screenshot;
@@ -36,6 +38,7 @@ mod signin;
 mod storage;
 pub mod updater;
 mod usage;
+mod voice;
 mod window_shell;
 pub mod windows;
 
@@ -86,7 +89,7 @@ use ui::screens::signin::Login;
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
     Clock, EditMessage, ForkThread, GitAction, History, OpenAutomationCard, RetryHistory,
-    RevertTurn, ThreadView, UsageLimitNotice,
+    RevertTurn, ThreadPressed, ThreadView, UsageLimitNotice,
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
@@ -130,8 +133,10 @@ pub struct GoToChat(pub usize);
 #[action(namespace = app, no_json)]
 pub struct GoToRecentChat(pub usize);
 
-/// `(min-width: 768px)`: below it the original hides the sidebar panel.
-const SIDEBAR_BREAKPOINT: Pixels = px(768.);
+/// The original collapses the sidebar at widths of 720 px or less.
+const SIDEBAR_BREAKPOINT: Pixels = px(720.);
+/// At most this wide, the side panel hides like the original's compact layout.
+const SIDE_PANEL_BREAKPOINT: Pixels = px(960.);
 
 /// Fixed platform bindings and app-level commands; configurable bindings are installed by the keymap module.
 pub fn init(cx: &mut App) {
@@ -154,6 +159,7 @@ pub fn init(cx: &mut App) {
     ]);
     ui::composer::bind_keys(cx);
     features::init(cx);
+    hotkey::init(cx);
     native_menus::init(cx);
     screenshot::init(cx);
     cx.on_action(|_: &Quit, cx| cx.defer(routes::request_quit));
@@ -366,6 +372,9 @@ pub struct Root {
     loading_more: bool,
     /// The window is at least [`SIDEBAR_BREAKPOINT`] wide; narrower hides the sidebar.
     wide: bool,
+    /// The layout the side panel had when the window narrowed to [`SIDE_PANEL_BREAKPOINT`] or
+    /// less (which shows the chat alone); wider again restores it.
+    layout_before_narrow: Option<WorkspaceLayout>,
     /// Holds key focus when no composer shows (Settings, a loading thread, sign-in), so
     /// shortcuts still reach the root's actions.
     focus: FocusHandle,
@@ -388,6 +397,7 @@ pub struct Root {
     file: Option<Entity<FileView>>,
     /// The open thread in the main shell, with its side panel if any.
     split: Option<Entity<SplitScreen>>,
+    terminal: terminal::Terminals,
     /// Side panel tabs of the thread route in opening order, and the selected one (always in
     /// `tabs`); kept across threads like the original's panel.
     tabs: Vec<SidePanel>,
@@ -410,6 +420,7 @@ pub struct Root {
     workspace: Entity<workspace::Workspace>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
+    popout: Option<hotkey::Popout>,
     dialog: Option<Entity<Dialog>>,
     diff_confirmation: Option<Entity<ui::confirmation::Confirmation>>,
     automation_editor: Option<Entity<automations::editor::Editor>>,
@@ -706,6 +717,7 @@ impl Root {
             next_cursor: None,
             loading_more: false,
             wide,
+            layout_before_narrow: None,
             focus: cx.focus_handle(),
             home: cx.new(|_| HomeMain {
                 composer: home_composer,
@@ -722,6 +734,7 @@ impl Root {
             diff_watch: None,
             file: None,
             split: None,
+            terminal: terminal::Terminals::default(),
             tabs: Vec::new(),
             side: None,
             workspace_layout: WorkspaceLayout::Split,
@@ -738,6 +751,7 @@ impl Root {
             pending_settings_leave: None,
             workspace: cx.new(workspace::Workspace::new),
             command_menu: None,
+            popout: None,
             dialog: None,
             diff_confirmation: None,
             automation_editor: None,
@@ -975,6 +989,7 @@ impl Root {
                 this.models = models;
                 this.refresh_automation_editor_options(None, cx);
                 this.ready = this.login.is_none();
+                hotkey::policy::refresh(this, cx);
                 this.select_route(cx);
                 this.sync(window, cx);
                 if bridge.is_acp() {
@@ -1145,6 +1160,7 @@ impl Root {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
         self.host = host;
+        hotkey::policy::refresh(self, cx);
         self.automation_threads.clear();
         self.automation_card_results.clear();
         self.app_tool_events = None;
@@ -1327,6 +1343,7 @@ impl Root {
         projects: Vec<ui::screens::sidebar::Project>,
         cx: &mut Context<Self>,
     ) {
+        hotkey::projects(self, &projects, cx);
         let choices = projects
             .iter()
             .filter(|project| !project.missing)
@@ -2286,6 +2303,10 @@ impl Root {
 
     fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
         self.threads = threads.to_vec();
+        if let Some(menu) = &self.command_menu {
+            let unread = self.sidebar.read(cx).unread.clone();
+            menu.update(cx, |menu, cx| menu.update_catalog(threads, &unread, cx));
+        }
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
         self.refresh_automation_editor_options(None, cx);
     }
@@ -2367,7 +2388,21 @@ impl Root {
 
     /// Below [`SIDEBAR_BREAKPOINT`] the sidebar hides; wider again it shows as the user
     /// left it.
-    fn fit(&mut self, window: &Window, cx: &mut Context<Self>) {
+    fn fit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let narrow = window.viewport_size().width <= SIDE_PANEL_BREAKPOINT;
+        if narrow && self.layout_before_narrow.is_none() {
+            if self.workspace_layout != WorkspaceLayout::Chat {
+                self.layout_before_narrow = Some(self.workspace_layout);
+                self.workspace_layout = WorkspaceLayout::Chat;
+                self.sync(window, cx);
+            }
+        } else if !narrow
+            && let Some(layout) = self.layout_before_narrow.take()
+            && self.workspace_layout == WorkspaceLayout::Chat
+        {
+            self.workspace_layout = layout;
+            self.sync(window, cx);
+        }
         let wide = window.viewport_size().width * window.ui_scale() >= SIDEBAR_BREAKPOINT;
         if wide != self.wide {
             self.wide = wide;
@@ -2485,7 +2520,7 @@ impl Root {
     ) -> Option<(AnyView, Vec<Tab>, usize)> {
         let file = self.file.clone();
         let chats = &self.side_chats;
-        let console = self.shortcut_state.terminal.is_some();
+        let console = self.terminal_panel().is_some();
         self.tabs.retain(|side| {
             Self::side_tab(*side, view, file.as_ref(), chats, console, cx).is_some()
         });
@@ -2503,7 +2538,7 @@ impl Root {
         let view: AnyView = match self.tabs[active] {
             SidePanel::Changes => self.diff.as_ref()?.clone().into(),
             SidePanel::Terminal => cx.new(|cx| Xterm::new(view.clone(), cx)).into(),
-            SidePanel::Console => self.shortcut_state.terminal.as_ref()?.clone().into(),
+            SidePanel::Console => self.terminal_panel()?.clone().into(),
             SidePanel::File => self.file.as_ref()?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
         };
@@ -2569,7 +2604,7 @@ impl Root {
                 .with_navigation_panel(navigation)
         });
         cx.subscribe_in(&menu, window, |this, _, event, window, cx| {
-            this.run_command(event, window, cx)
+            this.run_command(event, window, cx);
         })
         .detach();
         window.focus(&menu.focus_handle(cx), cx);
@@ -3148,6 +3183,7 @@ impl Root {
                     Ok(_) => {
                         this.login = Some(this.new_login(window, cx));
                         this.set_account(None, cx);
+                        hotkey::policy::clear(cx);
                         this.invalidate_oauth(cx);
                         let host = this.host.clone();
                         cx.background_spawn(async move { host.invalidate_identity() })
@@ -3221,6 +3257,9 @@ impl Root {
             self.confirm_instructions_leave(SettingsLeave::Window, window, cx);
             return;
         }
+        if self.close_focused_terminal(window, cx) {
+            return;
+        }
         if let Some(side) = self
             .side
             .filter(|_| self.split.is_some() && self.workspace_layout() != WorkspaceLayout::Chat)
@@ -3250,18 +3289,24 @@ impl Root {
         event: &CommandMenuEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
+        if hotkey::command(self, event, window, cx) {
+            return true;
+        }
         match event {
             CommandMenuEvent::Search(request) => {
-                return self.search_threads(request.clone(), window, cx);
+                self.search_threads(request.clone(), window, cx);
+                return true;
             }
             CommandMenuEvent::RetryCloudSearch(request) => {
-                return self.search_cloud_threads(request.clone(), window, cx);
+                self.search_cloud_threads(request.clone(), window, cx);
+                return true;
             }
             _ => {}
         }
         if let CommandMenuEvent::SearchFiles(query) = event {
-            return self.search_command_files(query.clone(), cx);
+            self.search_command_files(query.clone(), cx);
+            return true;
         }
         self.command_menu = None;
         window.focus(&self.route_focus(cx), cx);
@@ -3286,6 +3331,7 @@ impl Root {
             }
             CommandMenuEvent::Command(label) => match label.as_ref() {
                 "New chat" => window.dispatch_action(Box::new(NewChat), cx),
+                "Show Mini" => window.dispatch_action(Box::new(ui::OpenMini), cx),
                 "New standalone chat" => {
                     window.dispatch_action(Box::new(features::shortcuts::NewStandaloneChat), cx)
                 }
@@ -3332,11 +3378,14 @@ impl Root {
                 label => {
                     if let Some(section) = settings::section(label) {
                         self.open_settings_section(section, window, cx);
+                    } else {
+                        return false;
                     }
                 }
             },
         }
         cx.notify();
+        true
     }
 
     /// The command menu's content search: `thread/search` for `term` (the original's
@@ -3650,6 +3699,7 @@ impl Root {
         .detach();
         self.thread = Some(view);
         self.show_approval(cx);
+        hotkey::thread_shown(self, window, cx);
         self.refresh_git_actions(cx);
         if self.state.route == route {
             self.sync(window, cx);
@@ -5251,6 +5301,7 @@ impl Root {
                 };
                 self.toast(Toast::danger(message), cx);
             } else {
+                self.sync_terminal(cx);
                 let message = match key {
                     "git-branch-prefix" => Some("Saved branch prefix".to_owned()),
                     "git-pull-request-merge-method" => {
@@ -5498,6 +5549,9 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        if matches!(&event, Event::Notification { method, .. } if method == "account/updated") {
+            hotkey::policy::refresh(self, cx);
+        }
         self.plugins_event(&event, cx);
         self.oauth_account_event(&event, cx);
         usage::on_event(&event, cx);
@@ -5855,6 +5909,7 @@ impl Root {
     pub fn set_theme(&mut self, theme: ThemeSetting, window: &mut Window, cx: &mut Context<Self>) {
         self.state.theme = theme;
         self.apply_theme(window, cx);
+        self.sync_terminal(cx);
         self.save(window, cx);
     }
 
@@ -6721,7 +6776,7 @@ fn generation_instructions(context: &str) -> String {
 }
 
 impl Render for Root {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.crashed {
             return native_menus::actions(
                 div()
@@ -6796,13 +6851,17 @@ impl Render for Root {
                 .child(recovery::StartupLoader)
                 .into_any_element();
         }
-        let content: AnyElement = match (&self.page, &self.split) {
-            (_, Some(split)) if self.sidebar_automation.is_some() => {
-                split.clone().into_any_element()
+        let content: AnyElement = if let Some(content) = hotkey::content(self, window, cx) {
+            content
+        } else {
+            match (&self.page, &self.split) {
+                (_, Some(split)) if self.sidebar_automation.is_some() => {
+                    split.clone().into_any_element()
+                }
+                (Some(page), _) => page.clone().into_any_element(),
+                (None, Some(split)) => split.clone().into_any_element(),
+                (None, None) => self.shell.clone().into_any_element(),
             }
-            (Some(page), _) => page.clone().into_any_element(),
-            (None, Some(split)) => split.clone().into_any_element(),
-            (None, None) => self.shell.clone().into_any_element(),
         };
         let content = self
             .oauth
@@ -6846,6 +6905,15 @@ impl Render for Root {
             .on_action(cx.listener(
                 |this, _: &settings::integrations::OpenPluginManager, window, cx| {
                     this.open_settings_section("Plugins", window, cx)
+                },
+            ))
+            .on_action(cx.listener(
+                |this, action: &settings::integrations::OpenMcpSettings, window, cx| {
+                    this.open_settings_section("MCP servers", window, cx);
+                    this.settings_integrations.update(cx, |state, cx| {
+                        state.mcp_search = Some(action.0.clone());
+                        cx.notify();
+                    });
                 },
             ))
             .on_action(cx.listener(
@@ -6983,6 +7051,7 @@ impl Render for Root {
             .children(self.automation_editor.clone())
             .children(self.diff_confirmation.clone());
         let root = routes::actions(root, cx);
+        let root = hotkey::actions(root, self.popout.is_some(), cx);
         native_menus::actions(
             section_actions::actions(features::actions(root, self, cx), cx),
             self,
