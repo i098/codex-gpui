@@ -724,13 +724,21 @@ fn patch_changes(root: &Path, endpoint: &str, params: &Value) -> Result<&'static
 fn changes(root: &Path, params: &Value) -> Result<Value> {
     let ignore_whitespace = params["hideWhitespace"].as_bool().unwrap_or(false);
     let untracked = untracked_paths(root)?;
+    let omitted = untracked.len() > MAX_REVIEW_UNTRACKED_FILES;
+    let visible = if omitted {
+        &[][..]
+    } else {
+        untracked.as_slice()
+    };
     let mut body = json!({
         "root": root,
         "hideWhitespace": ignore_whitespace,
-        "unstaged": review_diffs(root, &[], false, &untracked, ignore_whitespace)?,
+        "unstaged": review_diffs(root, &[], false, visible, ignore_whitespace)?,
         "staged": review_diffs(root, &["--cached"], false, &[], ignore_whitespace)?,
+        "untrackedFilesOmitted": omitted.then(|| json!({"count": untracked.len(), "limit": MAX_REVIEW_UNTRACKED_FILES})),
     });
     let head = commit_id(root, "HEAD")?;
+    body["head_branch"] = answer(root, &["symbolic-ref", "--quiet", "--short", "HEAD"])?.into();
     let branches = checked(run(
         root,
         &[
@@ -771,7 +779,7 @@ fn changes(root: &Path, params: &Value) -> Result<Value> {
             root,
             &[base],
             false,
-            &untracked,
+            visible,
             ignore_whitespace
         )?),
         "branch" | "commits" if head.is_none() => json!([]),

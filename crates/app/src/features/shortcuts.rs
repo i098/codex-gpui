@@ -1,5 +1,5 @@
 use crate::*;
-use gpui::{MouseButton, NavigationDirection, prelude::FluentBuilder as _};
+use gpui::{ClipboardItem, MouseButton, NavigationDirection, prelude::FluentBuilder as _};
 use ui::confirmation::{Confirmation, Outcome as ConfirmationOutcome};
 
 actions!(
@@ -16,7 +16,14 @@ actions!(
         NextAttentionChat,
         ZoomIn,
         ZoomOut,
-        ActualSize
+        ActualSize,
+        ToggleThreadPin,
+        RenameOpenChat,
+        NextSideTab,
+        PreviousSideTab,
+        CopyDeeplink,
+        CloseWholeWindow,
+        CloseOtherSideTabs
     ]
 );
 
@@ -97,6 +104,40 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
             .map(str::to_owned);
         if let Some(next) = next {
             this.navigate(Route::Thread(next), window, cx);
+        }
+    }))
+    .on_action(cx.listener(|this, _: &ToggleThreadPin, window, cx| {
+        if let Route::Thread(id) = this.state.route.clone() {
+            let pinned = this
+                .threads
+                .iter()
+                .find(|thread| thread.id == id)
+                .and_then(|thread| thread.section.as_ref())
+                .is_some_and(|section| section.id == PINNED_SECTION_ID);
+            this.set_pinned(id, !pinned, window, cx);
+        }
+    }))
+    // The original's `copy-deeplink` (local host, no thread access) copies
+    // `codex://threads/{id}` without a toast.
+    .on_action(cx.listener(|this, _: &CopyDeeplink, _, cx| {
+        if let Route::Thread(id) = &this.state.route {
+            cx.write_to_clipboard(ClipboardItem::new_string(format!("codex://threads/{id}")));
+        }
+    }))
+    .on_action(
+        cx.listener(|this, _: &CloseWholeWindow, window, cx| this.close_whole_window(window, cx)),
+    )
+    .on_action(cx.listener(|this, _: &CloseOtherSideTabs, window, cx| {
+        if let Some(side) = this.side {
+            this.tabs.retain(|tab| *tab == side);
+            this.sync(window, cx);
+        }
+    }))
+    .on_action(cx.listener(|this, _: &NextSideTab, window, cx| this.step_side(1, window, cx)))
+    .on_action(cx.listener(|this, _: &PreviousSideTab, window, cx| this.step_side(-1, window, cx)))
+    .on_action(cx.listener(|this, _: &RenameOpenChat, window, cx| {
+        if let Route::Thread(id) = this.state.route.clone() {
+            this.open_rename(id, false, window, cx);
         }
     }))
     .on_action(cx.listener(|this, _: &OpenShortcutSettings, window, cx| {
@@ -578,7 +619,10 @@ impl Root {
                     this.sidebar
                         .update(cx, |s, cx| s.assign_section(&id, section, cx));
                 }
-                this.show_thread(thread, window, cx);
+                // `composer.submitInBackground`: the chat starts and shows in Recents; Home stays.
+                if !s.background {
+                    this.show_thread(thread, window, cx);
+                }
             })?;
             let result = turn_start(&bridge, &id, &s, user_input(&s)).await;
             if result.is_err() {

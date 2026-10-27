@@ -196,49 +196,25 @@ pub(super) fn split_rows(
 impl FileDiff {
     pub(super) fn patch(path: &str, diff: &str) -> Self {
         let split = path.rfind('/').map_or(0, |i| i + 1);
-        let (mut hunks, mut problem) = match parse(diff, None) {
-            Ok(hunks) => (hunks, None),
+        let (hunks, problem) = match parse(diff, None) {
+            Ok(hunks) => {
+                let problem = hunks
+                    .iter()
+                    .all(|hunk| hunk.lines.is_empty())
+                    .then(|| patch::empty_state(diff));
+                (hunks, problem)
+            }
             Err(problem) => (Vec::new(), Some(problem)),
         };
-        if hunks.is_empty() && problem.is_none() && diff.starts_with("diff --git ") {
-            problem = Some(
-                if diff
-                    .lines()
-                    .any(|line| line.starts_with("Binary files ") || line == "GIT binary patch")
-                {
-                    "Binary file not shown"
-                } else if diff.lines().any(|line| line.starts_with("rename from ")) {
-                    "File renamed without changes"
-                } else {
-                    "No content"
-                },
-            );
-        }
-        if hunks.is_empty() && problem.is_none() && !diff.is_empty() {
-            hunks.push(Hunk {
-                layout: Default::default(),
-                old_start: 0,
-                new_start: 0,
-                separator: None,
-                lines: diff
-                    .lines()
-                    .map(|line| Line {
-                        kind: Kind::Context,
-                        number: 0,
-                        old_number: 0,
-                        text: line.to_owned().into(),
-                        matches: Vec::new(),
-                        match_start: 0,
-                        word_change: None,
-                    })
-                    .collect(),
-            });
-        }
+
         let mut added = 0;
         let mut removed = 0;
         for line in hunks.iter().flat_map(|h| &h.lines) {
             added += usize::from(line.kind == Kind::Added);
             removed += usize::from(line.kind == Kind::Removed);
+        }
+        if problem.is_some() {
+            (added, removed) = patch::counts(diff, None);
         }
         let dir: SharedString = path[..split].to_owned().into();
         let name: SharedString = path[split..].to_owned().into();
@@ -256,7 +232,7 @@ impl FileDiff {
             };
             display_dir = "".into();
         }
-        Self {
+        let mut file = Self {
             dir,
             name,
             path_key: path.to_owned(),
@@ -264,17 +240,23 @@ impl FileDiff {
             display_name,
             added,
             removed,
+            changed_bytes: diff.len(),
             hunks,
             open: true,
             problem,
-            raw: diff.to_owned(),
+            raw: diff.into(),
             raw_kind: None,
+            line_info_separators: true,
             full: None,
-            full_loading: false,
             full_error: None,
+            full_loading: false,
             original_hunks: None,
+            imports: None,
             pending_expansion: None,
-        }
+            preview: None,
+        };
+        syntax::apply(&file.name, &mut file.hunks);
+        file
     }
 }
 
@@ -296,11 +278,81 @@ pub(super) fn files(diff: &str) -> Vec<FileDiff> {
 }
 
 impl DiffPanel {
+    pub(super) fn file_placeholder(
+        &self,
+        index: usize,
+        file: &FileDiff,
+        t: &Theme,
+        cx: &Context<Self>,
+    ) -> Div {
+        let too_large = file.problem == Some("Diff too large to display");
+        let label = if too_large {
+            "This file is too large to display here."
+        } else {
+            file.problem.unwrap_or("No content")
+        };
+        let empty = matches!(
+            label,
+            "No content" | "Binary file not shown" | "File renamed without changes"
+        );
+        if empty {
+            return problem_body(label, t);
+        }
+        div()
+            .flex()
+            .items_center()
+            .px(px(12.))
+            .py(px(if too_large { 8. } else { 16. }))
+            .when(too_large, |d| d.bg(t.surface_tertiary))
+            .child(
+                text(
+                    label,
+                    if too_large { 14. } else { 13. },
+                    if too_large { 21. } else { 18.571_428 },
+                    400.,
+                    t.text_secondary,
+                )
+                .when(too_large, |d| d.flex_1().min_w_0().truncate()),
+            )
+            .when(too_large, |d| {
+                d.child(
+                    div()
+                        .id(("diff-too-large-open", index))
+                        .role(gpui::Role::Button)
+                        .aria_label("Open in editor")
+                        .focusable()
+                        .cursor_pointer()
+                        .ml(px(8.))
+                        .on_click(cx.listener(move |this, _, _, cx| this.request_open(index, cx)))
+                        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                this.request_open(index, cx);
+                                cx.stop_propagation();
+                            }
+                        }))
+                        .child(text("Open in editor", 13., 18.571_428, 400., t.text)),
+                )
+            })
+    }
+
     pub fn from_patch(workspace: &str, diff: &str) -> Self {
         let mut panel = Self::last_turn(workspace, workspace, &[]);
         panel.replace_files(files(diff));
         panel.standalone = true;
+        panel.rich_preview = false;
         panel
+    }
+
+    pub fn cloud(workspace: &str, diff: &str) -> Self {
+        let mut panel = Self::last_turn(workspace, workspace, &[]);
+        panel.source = DiffSource::Cloud;
+        panel.files = files(diff);
+        panel
+    }
+
+    pub fn set_cloud_patch(&mut self, diff: &str, cx: &mut Context<Self>) {
+        self.replace_files(files(diff));
+        cx.notify();
     }
 
     pub fn layout(&self) -> DiffLayout {
@@ -317,16 +369,12 @@ impl DiffPanel {
             .focus_visible(|s| s.border_2().border_color(rgb(0x3a83f7)))
             .cursor_pointer()
             .on_click(cx.listener(|this, _, _, cx| {
-                this.layout = this.layout.next();
-                this.selection = None;
-                cx.notify();
+                this.set_layout(this.layout.next(), cx);
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    this.layout = this.layout.next();
-                    this.selection = None;
+                    this.set_layout(this.layout.next(), cx);
                     cx.stop_propagation();
-                    cx.notify();
                 }
             }))
     }
@@ -401,16 +449,14 @@ impl DiffPanel {
                                     }))
                                 })
                                 .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.layout = layout;
-                                    cx.notify();
+                                    this.set_layout(layout, cx);
                                 }))
                                 .on_key_down(cx.listener(
                                     move |this, event: &KeyDownEvent, _, cx| {
                                         if matches!(event.keystroke.key.as_str(), "enter" | "space")
                                         {
-                                            this.layout = layout;
+                                            this.set_layout(layout, cx);
                                             cx.stop_propagation();
-                                            cx.notify();
                                         }
                                     },
                                 ))
@@ -555,14 +601,16 @@ impl DiffPanel {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.set_file_open(i, true);
                         this.active_file = i;
-                        this.scroll.scroll_to_top_of_item(i);
+                        this.scroll
+                            .scroll_to_top_of_item(if this.capped() { 0 } else { i });
                         cx.notify();
                     }))
                     .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
                         if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                             this.set_file_open(i, true);
                             this.active_file = i;
-                            this.scroll.scroll_to_top_of_item(i);
+                            this.scroll
+                                .scroll_to_top_of_item(if this.capped() { 0 } else { i });
                             cx.stop_propagation();
                             cx.notify();
                         }
@@ -672,14 +720,21 @@ impl DiffPanel {
                 "Refresh to try loading the changes again",
             )
         } else {
-            (
-                match self.source {
-                    DiffSource::Unstaged => "No unstaged changes",
-                    DiffSource::Staged => "No staged changes",
-                    _ => "No file changes yet",
-                },
-                "Changes in this project will appear here.",
-            )
+            match self.source {
+                DiffSource::Staged => ("No staged changes", "Accept edits to stage them"),
+                DiffSource::Unstaged => ("No unstaged changes", "Code changes will appear here"),
+                DiffSource::LastTurn => (
+                    "No file changes yet",
+                    self.last_turn_state.map_or(
+                        "Changes in this project will appear here.",
+                        LastTurnState::description,
+                    ),
+                ),
+                _ => (
+                    "No file changes yet",
+                    "Changes in this project will appear here.",
+                ),
+            }
         };
         Some(
             div()
@@ -696,6 +751,33 @@ impl DiffPanel {
                 .child(icon("thread-file-diff", 40., t.text_tertiary))
                 .child(text(title, 16., 24., 500., t.text))
                 .child(text(description, 13., 20., 400., t.text_tertiary))
+                .when(
+                    self.source == DiffSource::LastTurn && self.last_turn_state.is_some(),
+                    |d| {
+                        d.child(
+                            div()
+                                .id("diff-view-branch")
+                                .role(gpui::Role::Button)
+                                .aria_label("View branch diff")
+                                .focusable()
+                                .cursor_pointer()
+                                .px(px(12.))
+                                .py(px(6.))
+                                .rounded(px(14.))
+                                .bg(t.text_alpha_10)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.select_source(DiffSource::Branch, cx)
+                                }))
+                                .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                        this.select_source(DiffSource::Branch, cx);
+                                        cx.stop_propagation();
+                                    }
+                                }))
+                                .child(text("View branch diff", 13., 20., 430., t.text)),
+                        )
+                    },
+                )
                 .when(
                     self.error.is_some() && !self.pending && self.source != DiffSource::LastTurn,
                     |d| {
@@ -963,10 +1045,43 @@ mod tests {
     }
 
     #[test]
-    fn oversized_and_overflowing_patches_never_reach_the_renderer() {
-        assert!(parse(&"a".repeat(10_000), Some(Kind::Added)).is_ok());
-        assert!(parse(&"a".repeat(10_001), Some(Kind::Added)).is_err());
-        assert!(parse(&"+a\n".repeat(20_001), Some(Kind::Added)).is_err());
+    fn file_size_limits_match_changed_lines_and_utf16_units() {
+        let line = "a".repeat(1_048_576);
+        assert!(parse(&line, Some(Kind::Added)).is_ok());
+        assert!(parse(&format!("{line}a"), Some(Kind::Added)).is_err());
+        let unicode = "\u{1f600}".repeat(524_288);
+        assert!(parse(&unicode, Some(Kind::Added)).is_ok());
+        assert!(parse(&format!("{unicode}a"), Some(Kind::Added)).is_err());
+        assert!(parse(&"a\n".repeat(15_000), Some(Kind::Added)).is_ok());
+        assert!(parse(&"a\n".repeat(15_001), Some(Kind::Added)).is_err());
+        let total = format!("{}\n", "a".repeat(524_287)).repeat(6);
+        assert!(parse(&total, Some(Kind::Added)).is_ok());
+        assert!(parse(&format!("{total}a"), Some(Kind::Added)).is_err());
+        let context = format!(" {}\n", "a".repeat(1_048_577)).repeat(3);
+        assert!(parse(&format!("@@ -1,4 +1,4 @@\n{context}-old\n+new\n"), None).is_ok());
+        assert!(
+            parse(
+                &format!("@@ -0,0 +1 @@\n+{line}\n\\ No newline at end of file\n"),
+                None,
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn oversized_files_keep_change_counts_and_large_diff_navigation() {
+        let patch = format!(
+            "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -0,0 +1,15001 @@\n{}",
+            "+line\n".repeat(15_001),
+        );
+        let panel = DiffPanel::from_patch("/repo", &patch);
+        assert_eq!(panel.files[0].problem, Some("Diff too large to display"));
+        assert_eq!((panel.files[0].added, panel.files[0].removed), (15_001, 0));
+        assert!(panel.capped());
+    }
+
+    #[test]
+    fn invalid_hunk_numbers_never_reach_the_renderer() {
         assert!(parse("@@ -4294967295 +1 @@\n-old\n+new\n", None).is_err());
         assert!(parse("@@ -nope +1 @@\n+new\n", None).is_err());
     }

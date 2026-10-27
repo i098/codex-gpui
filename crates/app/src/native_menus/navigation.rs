@@ -46,7 +46,23 @@ impl Root {
         let Some(thread) = super::active_thread(self, cx) else {
             return;
         };
-        let cwd = std::path::Path::new(thread.read(cx).cwd())
+        // An absolute path inside a review repository opens with that repository as root.
+        let root = self
+            .diff
+            .as_ref()
+            .and_then(|panel| {
+                panel
+                    .read(cx)
+                    .repositories()
+                    .iter()
+                    .filter(|repository| {
+                        std::path::Path::new(&action.path).starts_with(&repository.root)
+                    })
+                    .max_by_key(|repository| repository.root.len())
+                    .map(|repository| repository.root.clone())
+            })
+            .unwrap_or_else(|| thread.read(cx).cwd().to_owned());
+        let cwd = std::path::Path::new(&root)
             .components()
             .as_path()
             .to_string_lossy()
