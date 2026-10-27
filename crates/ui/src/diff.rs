@@ -1699,6 +1699,7 @@ impl Render for DiffPanel {
         div()
             .relative()
             .track_focus(&focus)
+            .key_context("SideTabs")
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, window, cx| {
@@ -2000,13 +2001,14 @@ impl SplitScreen {
         }
     }
 
-    /// Titlebar row over a side panel (`Task tabs`): every open tab in a 240 px slot (the
+    /// Titlebar row over a side panel (`Task tabs`): tabs use slots up to 240 px wide (the
     /// selected one on its surface, the others `text-tertiary`, surface and `×` on hover),
     /// `New tab`, and the `Enter full view` / `Hide tabs` buttons. The caller places it from
     /// the panel's left edge to the window's right edge, 44 px tall.
     fn tab_strip(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        /// Label box width and its `text-fade-truncate` distance.
-        const LABEL_WIDTH: f32 = 181.;
+        let slot_width = ((f32::from(panel_width(window, cx)) - 121.).round()
+            / self.tabs.len().max(1) as f32)
+            .clamp(90., 240.);
         const FADE: f32 = 16.;
         let layout = layout_color(t);
         let fill = match t.appearance {
@@ -2040,9 +2042,9 @@ impl SplitScreen {
             // `×` (and its `pe-5`) on hover only, so its label box is 20 px wider until then.
             let closable = selected || hovered;
             let label_width = if closable {
-                LABEL_WIDTH
+                slot_width - 59.
             } else {
-                LABEL_WIDTH + 20.
+                slot_width - 39.
             };
             let fade = width > px(label_width - FADE);
             let focus = crate::focus::handle(("side-tab", ix), 0, window, cx);
@@ -2058,7 +2060,7 @@ impl SplitScreen {
                     }
                 })
                 .relative()
-                .w(px(238.))
+                .w(px(slot_width - 2.))
                 .h(px(32.))
                 .flex()
                 .items_center()
@@ -2084,7 +2086,7 @@ impl SplitScreen {
                             .absolute()
                             .left(px(-1.))
                             .top_0()
-                            .w(px(240.))
+                            .w(px(slot_width))
                             .h(px(34.))
                             .layer()
                             .child(
@@ -2092,7 +2094,7 @@ impl SplitScreen {
                                     .absolute()
                                     .left(px(1.))
                                     .top_0()
-                                    .w(px(238.))
+                                    .w(px(slot_width - 2.))
                                     .h(px(32.))
                                     .child(shapes::decoration(Decoration {
                                         radius: Corners::all(Theme::RADIUS_MD),
@@ -2187,12 +2189,12 @@ impl SplitScreen {
                     .bg(over(t.border, layout)),
             )
             .children(self.tabs.iter().enumerate().map(|(ix, t)| {
-                // The tab's box clips its shadow (`overflow` on the 240 px tab slot).
+                // Each slot clips its tab shadow.
                 div()
                     .h_full()
                     .flex()
                     .items_center()
-                    .w(px(240.))
+                    .w(px(slot_width))
                     .pr(px(2.))
                     .overflow_hidden()
                     .child(tab(ix, t, cx))
@@ -2283,7 +2285,7 @@ fn dispatch_key(action: impl Action) -> impl Fn(&KeyDownEvent, &mut Window, &mut
 
 /// Main panel of a thread with a side panel open: the thread, then the panel behind its 1 px
 /// `border-l`, ending at the main panel's right edge. The divider (`Resize workspace panes`,
-/// a 16 px hit area on the panel side of the border) drags the panel's width live, edge
+/// a 16 px hit area centered on the border) drags the panel's width live, edge
 /// `left`: width = width at press - pointer travel, clamped so both panes keep `MIN_CHAT`.
 struct SplitMain {
     thread: AnyView,
@@ -2302,8 +2304,21 @@ impl Render for SplitMain {
                 .track_focus(&self.focus)
                 .child(self.panel.clone());
         }
-        let t = cx.theme();
         let width = panel_width(window, cx);
+        // The original's resizer covers the panel's left 16 px (not centered on the border),
+        // except while the thread summary pane lies over it.
+        let summary_open = self
+            .thread
+            .clone()
+            .downcast::<ThreadView>()
+            .ok()
+            .is_some_and(|thread| thread.read(cx).summary_open);
+        let resizer_focus = crate::focus::handle("panel-resize", -1, window, cx)
+            .read(cx)
+            .handle
+            .clone()
+            .tab_stop(false);
+        let t = cx.theme();
         div()
             .size_full()
             .relative()
@@ -2324,15 +2339,17 @@ impl Render for SplitMain {
                 div()
                     .id("panel-resize")
                     .role(gpui::Role::Splitter)
+                    .track_focus(&resizer_focus)
                     .absolute()
                     .top_0()
                     .bottom_0()
-                    .right(width - px(8.))
+                    .right(width - px(if summary_open { 8. } else { 16. }))
                     .w(px(16.))
                     .cursor(CursorStyle::ResizeLeftRight)
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                        cx.listener(move |this, e: &MouseDownEvent, window, cx| {
+                            window.focus(&resizer_focus, cx);
                             this.drag_anchor = Some(width + e.position.x);
                             cx.stop_propagation();
                             cx.notify();
@@ -2474,21 +2491,22 @@ impl Render for SplitScreen {
             })
             .when_some(
                 self.hovered.filter(|ix| {
-                    *ix != self.active
+                    left.is_some()
+                        && *ix != self.active
                         && self
                             .tabs
                             .get(*ix)
                             .is_some_and(|tab| tab.icon == "thread-terminal")
                 }),
                 |d, ix| {
-                    let left = (left.unwrap_or_default() + px(8. + ix as f32 * 240.))
+                    let left = (left.unwrap_or_default() + px(9. + ix as f32 * 240.))
                         .min(window.viewport_size().width - px(328.))
                         .max(px(8.));
                     d.child(
                         deferred(
                             div()
                                 .absolute()
-                                .top(Theme::TITLEBAR_HEIGHT)
+                                .top(Theme::TITLEBAR_HEIGHT - px(3.5))
                                 .left(left)
                                 .child(crate::screens::terminal::thumbnail(
                                     self.thread.read(cx),
@@ -2946,6 +2964,7 @@ impl Render for FileView {
             .id("file-view")
             .relative()
             .track_focus(&focus)
+            .key_context("SideTabs")
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |_, _, window, cx| window.focus(&focus, cx)),
