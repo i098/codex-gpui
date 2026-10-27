@@ -37,6 +37,7 @@ fn check_event(event: &Event) {
         Event::Notification { method, params } | Event::Request { method, params, .. } => {
             (method.as_str(), params)
         }
+        Event::Closed => return,
     };
     match method {
         "thread/started" => check::<ThreadStartedNotification>(method, params),

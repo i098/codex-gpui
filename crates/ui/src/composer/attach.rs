@@ -215,6 +215,20 @@ fn persist(image: Arc<gpui::Image>) -> io::Result<Attachment> {
 }
 
 impl Composer {
+    pub fn attachment_generation(&self) -> u64 {
+        self.attachment_generation
+    }
+
+    pub fn attach_png(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        self.save_paste(
+            Content::Image(Arc::new(gpui::Image::from_bytes(
+                gpui::ImageFormat::Png,
+                bytes,
+            ))),
+            cx,
+        );
+    }
+
     pub(super) fn save_paste(&mut self, content: Content, cx: &mut Context<Self>) {
         self.pending_attachments += 1;
         self.attachment_error = None;
@@ -535,7 +549,7 @@ impl Composer {
                     .role(gpui::Role::Button)
                     .focusable()
                     .tab_index(0)
-                    .focus_visible(menu::trigger_focus)
+                    .focus_visible(crate::focus::trigger_focus)
                     .aria_label(remove_label)
                     .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
                         if matches!(event.keystroke.key.as_str(), "enter" | "space") {

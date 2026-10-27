@@ -9,10 +9,11 @@ use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, Bounds, ClickEvent, ContentMask, Context,
     Corners, CursorStyle, DispatchPhase, Div, FontWeight, Hsla, Image, ImageFormat,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, Render, Rgba, SharedString, Stateful, StatefulInteractiveElement,
-    Styled, Svg, Window, actions, canvas, div, fill, img, point, prelude::FluentBuilder as _, px,
-    size, svg,
+    ParentElement, Pixels, Point, Render, RenderImage, Rgba, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, Svg, Window, actions, canvas, div, fill, img, point,
+    prelude::FluentBuilder as _, px, size, svg,
 };
+use std::cell::RefCell;
 use std::sync::{Arc, LazyLock};
 use std::time::Instant;
 use theme::{ActiveTheme as _, Theme};
@@ -32,12 +33,15 @@ pub mod settings_kit;
 pub mod toast;
 pub mod tooltip;
 pub mod updater;
+pub mod workspace;
+pub mod zoom;
 
 actions!(
     shell,
     [
         /// Show or hide the sidebar panel.
         ToggleSidebar,
+        ToggleActivity,
         /// Go to Home with an empty composer.
         NewChat,
         GoBack,
@@ -47,6 +51,7 @@ actions!(
         ShowKeyboardShortcuts,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
+        OpenPlugins,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
         OpenMobileSetup,
         /// `⌥⌘B`: show or hide the Changes side panel.
@@ -55,6 +60,8 @@ actions!(
         OpenChangesPanel,
         /// Thread summary ▸ `Background processes` row: the command's terminal tab.
         OpenBackgroundTerminal,
+        ShowWorkspaceTabView,
+        StepWorkspaceLayout,
         /// `⌘K`, `⌘⇧P`, sidebar `Search`: the command menu.
         OpenCommandMenu,
     ]
@@ -93,6 +100,22 @@ pub const RAIL_WIDTH: Pixels = px(52.);
 const PAGE_INSET: Pixels = px(4.);
 /// `--border-width-hairline` of `_MainContentLeftBorder`.
 const MAIN_HAIRLINE: Pixels = px(0.5);
+
+/// An authored length `v` in Blink's LayoutUnits (1/64 device px, truncated) at scale `s`.
+fn layout_unit(v: Pixels, s: f32) -> Pixels {
+    px((f32::from(v) * s * 64.).trunc() / 64. / s)
+}
+
+/// `_MainContentSurface`'s box in `root` at `left`, unsnapped: Blink resolves its insets in
+/// LayoutUnits.
+fn main_box(root: Bounds<Pixels>, left: Pixels, s: f32) -> Bounds<Pixels> {
+    let inset = layout_unit(PAGE_INSET, s);
+    Bounds::from_corners(
+        root.origin + point(layout_unit(left, s), layout_unit(Theme::TITLEBAR_HEIGHT, s)),
+        root.bottom_right() - point(inset, inset),
+    )
+}
+
 /// `--button-radius` of the 36 px (`xl`) and 28 px `_Button` sizes.
 const RADIUS_BUTTON_XL: Pixels = px(12.5);
 const RADIUS_BUTTON_MD: Pixels = px(9.375);
@@ -102,6 +125,47 @@ const RADIUS_RAIL: Pixels = px(12.5);
 pub const SANS: &str = ".SystemUIFont";
 /// `ui-monospace`, which Chromium on macOS resolves to Menlo.
 pub const MONO: &str = "Menlo";
+
+static CODE_FONT: std::sync::RwLock<&'static str> = std::sync::RwLock::new(MONO);
+
+/// The code font of the appearance settings (`fonts.code`); `MONO` until one is set.
+pub fn code_font() -> &'static str {
+    *CODE_FONT.read().unwrap_or_else(|error| error.into_inner())
+}
+
+/// Follows the appearance setting. A changed name is leaked once so callers keep `&'static str`.
+pub fn set_code_font(name: &str) {
+    if name != code_font() {
+        *CODE_FONT.write().unwrap_or_else(|error| error.into_inner()) =
+            Box::leak(name.to_owned().into_boxed_str());
+    }
+}
+
+/// A native destination shown after the rail divider.
+pub struct RailDestination {
+    pub id: &'static str,
+    pub icon: &'static str,
+    pub label: &'static str,
+    pub mcp_entrypoints: &'static [(&'static str, &'static str)],
+}
+
+pub const RAIL_DESTINATIONS: &[RailDestination] = &[
+    RailDestination {
+        id: "builtin:pull-requests",
+        icon: "rail-code-review",
+        label: "Code Review",
+        mcp_entrypoints: &[
+            ("code-review", "pull_requests.open"),
+            ("connector_openai_code_review", "pull_requests.open"),
+        ],
+    },
+    RailDestination {
+        id: "builtin:sites",
+        icon: "sites",
+        label: "Sites",
+        mcp_entrypoints: &[],
+    },
+];
 
 pub struct Shell {
     pub sidebar_open: bool,
@@ -119,6 +183,7 @@ pub struct Shell {
     pub chat_chrome: bool,
     /// Titlebar `New tab` button (chat routes; Settings and Automations hide it).
     pub new_tab: bool,
+    pub header_actions: Option<AnyView>,
     /// Opaque background boxes the page paints under the main surface's clip that reach its
     /// rounded corners (Settings' `electron:bg-surface`): each blends the clip's anti-aliased
     /// edge once more. With any, the shell paints those corners itself, over what the main
@@ -132,11 +197,15 @@ pub struct Shell {
     /// composited layer (Chromium's layer tree of refs/diff), not part of the page's; the shell
     /// draws its right corners' px of partial clip coverage.
     pub main_layer: bool,
+    /// The opaque accelerated scroller that can occlude the page frame.
+    pub main_opaque_scroll: Option<gpui::ScrollHandle>,
     /// With `main_composited`: the main view draws its right corners' px of partial clip
     /// coverage itself, after the shell (a lone thread: `shapes::paint_clipped_tile`).
     pub main_clips_right: bool,
     /// A chat needs attention (unread): the rail's Home item carries the unread dot.
     pub attention: bool,
+    /// Unseen, unpinned MCP destinations; `None` while their source is unavailable.
+    pub unread_destinations: Option<Arc<[SharedString]>>,
     /// The profile avatar's menu is open.
     pub profile_menu: bool,
     /// Pointer over the avatar: its own click toggles the menu, so a press there must not
@@ -144,25 +213,69 @@ pub struct Shell {
     avatar_hovered: bool,
     sidebar: AnyView,
     main: AnyView,
+    main_content_inline_inset: Pixels,
+    pub bottom: Option<AnyView>,
 }
 
-/// The fixture account's 24 px avatar with its circular clip baked into alpha. The two
-/// straight-alpha layers are solved so GPUI's sprite blend lands on the refs' pixels over
-/// both layout colors; `avatar-fix.png` only covers edge pixels one layer cannot reach.
-fn avatar() -> impl IntoElement {
-    static LAYERS: LazyLock<[Arc<Image>; 2]> = LazyLock::new(|| {
-        [
-            &include_bytes!("../assets/avatar.png")[..],
-            include_bytes!("../assets/avatar-fix.png"),
-        ]
-        .map(|png| Arc::new(Image::from_bytes(ImageFormat::Png, png.to_vec())))
-    });
-    let layer = |image: &Arc<Image>| img(image.clone()).absolute().size(px(24.));
-    div()
-        .relative()
-        .size(px(24.))
-        .child(layer(&LAYERS[0]))
-        .child(layer(&LAYERS[1]))
+/// The fixture account's 24 px avatar (`rounded-full object-cover` `<img>`), rasterized the way
+/// Chromium draws it in the profile button's layer: the JPEG decoded to scale, drawn bilinear
+/// into the snapped box under its anti-aliased circular clip, and composited over `under`.
+///
+/// `avatar-decoded-64.png` is the capture's 256 px JPEG data URL (sha256 6e76408f…dd2375)
+/// decoded by libjpeg-turbo at scale 2/8, as Blink decodes a JPEG to the smallest supported
+/// size at least the drawn size (Pillow: `Image.draft("RGB", (64, 64))`).
+// ponytail: one decode size, valid while the avatar is at most 64 device px (scale 2.66);
+// add the 3/8 and larger decodes when a larger zoom matters.
+fn avatar(under: Hsla) -> AnyElement {
+    const PNG: &[u8] = include_bytes!("../assets/avatar-decoded-64.png");
+    if !cfg!(target_os = "macos") {
+        let image = Arc::new(Image::from_bytes(ImageFormat::Png, PNG.to_vec()));
+        return img(image).size(px(24.)).rounded_full().into_any_element();
+    }
+    static DECODED: LazyLock<image::RgbaImage> =
+        LazyLock::new(|| image::load_from_memory(PNG).expect("avatar").to_rgba8());
+    type Cached = (Bounds<Pixels>, Hsla, Arc<RenderImage>);
+    thread_local! {
+        static CACHE: RefCell<Option<Cached>> = const { RefCell::new(None) };
+    }
+    canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let s = window.scale_factor();
+            let dev = |v: Pixels| (f32::from(v) * s).round();
+            let (x, y) = (dev(bounds.left()), dev(bounds.top()));
+            let (w, h) = (dev(bounds.right()) - x, dev(bounds.bottom()) - y);
+            let at = Bounds::new(point(px(x / s), px(y / s)), size(px(w / s), px(h / s)));
+            let cached = CACHE.with_borrow(|c| {
+                c.as_ref()
+                    .filter(|(b, u, _)| *b == at && *u == under)
+                    .map(|(_, _, image)| image.clone())
+            });
+            let Some(image) = cached.or_else(|| {
+                // The replaced raster (another box or hover color) leaves the sprite atlas.
+                if let Some((_, _, old)) = CACHE.take() {
+                    window.drop_image(old).ok();
+                }
+                let image = Arc::new(shapes::raster_images(
+                    &[(&DECODED, at)],
+                    at,
+                    Corners::all(px(w.min(h) / 2. / s)),
+                    shapes::Corner::Round,
+                    shapes::ImageComposition::Composited(under),
+                    window,
+                )?);
+                CACHE.set(Some((at, under, image.clone())));
+                Some(image)
+            }) else {
+                return;
+            };
+            window
+                .paint_image(at, at, Corners::default(), image, 0, false)
+                .ok();
+        },
+    )
+    .size(px(24.))
+    .into_any_element()
 }
 
 impl Shell {
@@ -178,21 +291,50 @@ impl Shell {
             selected_rail: Some("home"),
             chat_chrome: true,
             new_tab: true,
+            header_actions: None,
             main_backgrounds: 0,
             main_composited: false,
             main_layer: false,
+            main_opaque_scroll: None,
             main_clips_right: false,
             attention: false,
+            unread_destinations: None,
             profile_menu: false,
             avatar_hovered: false,
             sidebar,
             main,
+            main_content_inline_inset: px(0.),
+            bottom: None,
         }
+    }
+
+    pub fn main_content_inline_inset(&self) -> Pixels {
+        self.main_content_inline_inset
     }
 
     pub fn set_main(&mut self, main: AnyView, cx: &mut Context<Self>) {
         self.main = main;
         cx.notify();
+    }
+
+    pub fn set_bottom(&mut self, bottom: Option<AnyView>, cx: &mut Context<Self>) {
+        if self.bottom.as_ref().map(|view| view.entity_id())
+            != bottom.as_ref().map(|view| view.entity_id())
+        {
+            self.bottom = bottom;
+            cx.notify();
+        }
+    }
+
+    pub fn main_width(&self, window: &Window, cx: &App) -> Pixels {
+        let progress = self.sidebar_progress(cx.background_executor().now());
+        let left = RAIL_WIDTH + (self.sidebar_width - RAIL_WIDTH) * progress;
+        let border = if progress > 0.1 {
+            MAIN_HAIRLINE
+        } else {
+            px(0.)
+        };
+        (window.viewport_size().width - left - PAGE_INSET - border).max(px(0.))
     }
 
     pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
@@ -284,6 +426,14 @@ pub fn text(
         .child(s.into())
 }
 
+/// A measured inline-run advance, kept on the LayoutUnit (1/64 device px) grid by rounding:
+/// Blink positions inline runs from their advances, so authored-size truncation must not
+/// apply to it.
+pub(crate) fn run_width(width: Pixels, window: &Window) -> Pixels {
+    let unit = window.scale_factor() * 64.;
+    px((f32::from(width) * unit).round() / unit)
+}
+
 pub fn dispatch<A: Action + Default>(_: &ClickEvent, window: &mut Window, cx: &mut App) {
     window.dispatch_action(Box::new(A::default()), cx);
 }
@@ -316,7 +466,7 @@ pub fn rounded_clip(
         radius,
         corner,
         child: child.into_any_element(),
-        layers: true,
+        unsnapped: None,
     }
 }
 
@@ -324,8 +474,9 @@ pub struct RoundedClip {
     radius: Pixels,
     corner: shapes::Corner,
     child: AnyElement,
-    /// See `shapes::with_rounded_clip`.
-    layers: bool,
+    /// A `clip-path: inset(.. round radius)` box at its unsnapped geometry, in place of the
+    /// child's bounds (`shapes::with_unsnapped_clip`): nested layers raster without it.
+    unsnapped: Option<Bounds<Pixels>>,
 }
 
 impl gpui::Element for RoundedClip {
@@ -373,14 +524,12 @@ impl gpui::Element for RoundedClip {
         cx: &mut App,
     ) {
         let child = &mut self.child;
-        shapes::with_rounded_clip(
-            Corners::all(self.radius),
-            self.corner,
-            bounds,
-            self.layers,
-            window,
-            |window| child.paint(window, cx),
-        );
+        let radius = Corners::all(self.radius);
+        let paint = |window: &mut Window| child.paint(window, cx);
+        match self.unsnapped {
+            Some(clip) => shapes::with_unsnapped_clip(clip, radius, window, paint),
+            None => shapes::with_rounded_clip(radius, self.corner, bounds, true, window, paint),
+        }
     }
 }
 
@@ -536,7 +685,7 @@ impl Render for EmptySidebar {
             .size_full()
             .flex()
             .flex_col()
-            .child(home_sidebar_header(false, cx))
+            .child(home_sidebar_header(false, false, cx))
             .child(
                 div()
                     .flex_1()
@@ -594,8 +743,23 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
 
 /// Top of the Home sidebar: `Codex ⌄` mode switch, activity bell and search, then the
 /// `New chat` and `Your dot` rows. With `unread` chats the bell carries the blue dot.
-pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
+pub fn home_sidebar_header(unread: bool, activity: bool, cx: &App) -> Div {
     let t = cx.theme();
+    // The Oklab round-trip leaves blue above one; retain it for Skia's float layer blend.
+    let activity_background = gpui::Rgba {
+        r: 0.007_846_47,
+        g: 0.521_568_5,
+        b: 1.000_000_1,
+        a: 0.13,
+    }
+    .into();
+    let activity_label = if activity {
+        "Turn off activity view"
+    } else if unread {
+        "View activity, needs attention"
+    } else {
+        "View activity"
+    };
     let keyboard_ring = |inset| {
         move |style: gpui::StyleRefinement| {
             style.shadow(vec![gpui::BoxShadow {
@@ -608,8 +772,10 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
         }
     };
     // Chromium squashes the search button's `_ButtonInner` and the rows below into one
-    // transparent overlap layer, from the rows' left edge and the button's top.
+    // transparent overlap layer, from the rows' left edge and the button's top; the mode
+    // switch's wordmark and chevron go into another, from the wordmark's left edge.
     let overlap = point(RAIL_WIDTH + px(8.), Theme::TITLEBAR_HEIGHT + px(12.));
+    let mode_switch = point(RAIL_WIDTH + px(16.), Theme::TITLEBAR_HEIGHT + px(10.));
     let row = |id: &'static str, leading: AnyElement, label: &'static str| {
         let hover_bg = t.list_hover;
         div()
@@ -621,6 +787,9 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
             .items_center()
             .gap(px(8.))
             .px(px(8.))
+            // `py-[5px]`: the 21 px line overflows the content box and centers with negative
+            // free space.
+            .py(px(5.))
             .rounded(RADIUS_BUTTON_XL)
             .hover(move |s| s.bg(hover_bg))
             .child(leading)
@@ -655,28 +824,70 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                         .items_center()
                         .gap(px(6.))
                         .rounded(RADIUS_BUTTON_XL)
-                        .child(icon::icon_sized(
-                            "codex-wordmark",
-                            53.22,
-                            18.,
-                            t.text_default_nav,
-                        ))
-                        .child(icon::icon("chevron-down-medium", 14., t.text_tertiary)),
+                        .child(
+                            icon::icon_sized("codex-wordmark", 53.22, 18., t.text_default_nav)
+                                // `h-[1em] w-auto` on the svg's viewBox (53.225983 x 18).
+                                .auto_width(53.225983 / 18.)
+                                .own_layer(Some(mode_switch)),
+                        )
+                        .child(
+                            icon::icon("chevron-down-medium", 14., t.text_tertiary)
+                                .own_layer(Some(mode_switch)),
+                        ),
                 )
                 .child(div().flex_1())
                 .child(tooltip(
-                    icon_button(
-                        "activity",
-                        icon::icon(
-                            if unread { "bell-unread" } else { "bell" },
-                            16.,
-                            t.text_tertiary,
-                        ),
-                        t,
-                    )
-                    .tab_index(0)
-                    .focus_visible(keyboard_ring(false)),
-                    "View activity",
+                    div()
+                        .id("activity")
+                        .relative()
+                        .flex_none()
+                        .size(px(28.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(RADIUS_BUTTON_MD)
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .when(activity, |d| {
+                            // The original button pseudo-element has will-change: transform.
+                            d.child(div().absolute().inset_0().top_layer().child(
+                                shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(RADIUS_BUTTON_MD),
+                                    corner: shapes::Corner::Squircle,
+                                    fill: Some(activity_background),
+                                    ..Default::default()
+                                }),
+                            ))
+                        })
+                        .child(motion::ButtonVisual {
+                            glyph: icon::icon(
+                                if unread { "bell-unread" } else { "bell" },
+                                16.,
+                                if activity {
+                                    t.info_solid
+                                } else {
+                                    t.text_tertiary
+                                },
+                            )
+                            .own_layer(None),
+                            radius: RADIUS_BUTTON_MD,
+                            hover: if activity {
+                                activity_background
+                            } else {
+                                t.ghost_hover
+                            },
+                            foreground: if activity {
+                                t.info_solid
+                            } else {
+                                t.text.opacity(0.85)
+                            },
+                            selected: activity,
+                        })
+                        .tab_index(0)
+                        .role(gpui::Role::Button)
+                        .aria_label(activity_label)
+                        .focus_visible(keyboard_ring(false))
+                        .on_click(dispatch::<ToggleActivity>),
+                    activity_label,
                     Some("⌥⌘U"),
                     Side::Bottom,
                 ))
@@ -709,7 +920,9 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                     shapes::Corner::Squircle,
                     row(
                         "new-chat",
-                        icon::icon("new-chat", 16., t.text_default_nav).into_any_element(),
+                        icon::icon("new-chat", 16., t.text_default_nav)
+                            .own_layer(Some(overlap))
+                            .into_any_element(),
                         "New chat",
                     )
                     .on_click(dispatch::<NewChat>),
@@ -721,6 +934,7 @@ pub fn home_sidebar_header(unread: bool, cx: &App) -> Div {
                         "your-dot",
                         // An `<img>`: its svg (with its own fill) draws into the overlap layer.
                         icon::icon("your-dot", 16., gpui::rgb(0xbac1d3).into())
+                            .image()
                             .own_layer(Some(overlap))
                             .into_any_element(),
                         "Your dot",
@@ -751,6 +965,17 @@ impl Shell {
             )
         };
         let profile_focus = focus::handle("rail-profile", 0, window, cx);
+        let info_solid = t.info_solid;
+        // The avatar composites over the rail, or over the profile button's hover fill.
+        // ponytail: the hover fill's end color, not its 150 ms fade; pass the fade's color if
+        // the avatar's corners ever show during it.
+        let under = over(t.page_surface_layout, t.background_surface_under);
+        let avatar_under = if self.avatar_hovered {
+            over(hover_bg, under)
+        } else {
+            under
+        };
+        let scale = window.scale_factor();
         let mut item = |name: &'static str| {
             let on = selected == Some(name);
             let fg = if on { t.text } else { t.text_tertiary };
@@ -812,16 +1037,21 @@ impl Shell {
             .top(Theme::TITLEBAR_HEIGHT)
             .bottom(PAGE_INSET)
             .w(RAIL_WIDTH)
+            // `#app-shell-sidebar` (`[contain:layout_paint]`) starts at the rail's origin.
+            .snap_origin()
             .flex()
             .flex_col()
             .items_center()
-            .pt(px(6.))
+            .pt(px(8.))
             .pb(px(4.))
             .child(
+                // `-m-0.5 p-0.5`: the list keeps 2 px for its items' focus rings. Blink
+                // truncates the padding and the margin to LayoutUnits on their own.
                 div()
                     .flex_1()
                     .w(px(40.))
-                    .pt(px(2.))
+                    .m(px(-2.))
+                    .p(px(2.))
                     .flex()
                     .flex_col()
                     .items_center()
@@ -846,12 +1076,68 @@ impl Shell {
                         item("scheduled").on_click(dispatch::<OpenScheduled>),
                         "Scheduled",
                     ))
-                    .child(rail_tip(item("plugins"), "Plugins"))
-                    // Explore with its unread dot; it shows no tooltip.
-                    .child(item("explore").child(dot(4.)))
-                    .child(div().w(px(24.)).h(px(1.)).bg(t.border))
-                    .child(rail_tip(item("rail-code-review"), "Code Review"))
-                    .child(rail_tip(item("sites"), "Sites"))
+                    .child(rail_tip(
+                        item("plugins").on_click(dispatch::<OpenPlugins>),
+                        "Plugins",
+                    ))
+                    // Explore has no tooltip; its marker follows the bound destination state.
+                    // `absolute -end-0.5 -top-0.5` around a `size-5` box centering an `icon-xs`
+                    // dot at `scale-50`.
+                    .child(
+                        item("explore").when(
+                            self.unread_destinations
+                                .as_ref()
+                                .is_some_and(|ids| !ids.is_empty()),
+                            |item| {
+                                item.child(
+                                    div()
+                                        .absolute()
+                                        .top(px(-2.))
+                                        .right(px(-2.))
+                                        .size(px(20.))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .child(
+                                            canvas(
+                                                |_, _, _| {},
+                                                move |bounds, (), window, cx| {
+                                                    shapes::paint_scaled(
+                                                        &shapes::Decoration {
+                                                            radius: Corners::all(
+                                                                Theme::RADIUS_FULL,
+                                                            ),
+                                                            fill: Some(info_solid),
+                                                            ..Default::default()
+                                                        },
+                                                        Some(list),
+                                                        bounds,
+                                                        size(px(16.), px(16.)),
+                                                        0.5,
+                                                        window,
+                                                        cx,
+                                                    )
+                                                },
+                                            )
+                                            .size(px(16.)),
+                                        ),
+                                )
+                            },
+                        ),
+                    )
+                    // A 1 px `border-t` on an empty box: Blink paints it rounded down to whole
+                    // device px (at least 1), and the box is that tall.
+                    .child(
+                        div()
+                            .w(px(24.))
+                            .h(px(scale.floor().max(1.) / scale))
+                            .bg(t.border),
+                    )
+                    .children(
+                        RAIL_DESTINATIONS
+                            .iter()
+                            .map(|destination| rail_tip(item(destination.icon), destination.label)),
+                    )
                     .child(shapes::top_fade(px(16.))),
             )
             .child(
@@ -863,6 +1149,8 @@ impl Shell {
                     cx,
                 )
                 .size(px(36.))
+                // The original composites the profile button: the avatar rasterizes in its layer.
+                .layer()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -873,7 +1161,7 @@ impl Shell {
                     cx.notify();
                 }))
                 .child(motion::ButtonVisual {
-                    glyph: div().size(px(24.)).child(avatar()),
+                    glyph: div().size(px(24.)).child(avatar(avatar_under)),
                     radius: RADIUS_RAIL,
                     hover: hover_bg,
                     foreground: hover_fg,
@@ -945,28 +1233,63 @@ impl Shell {
     /// While the toggle springs, the content fades with `progress` and slides from -16 px.
     fn sidebar_panel(&self, t: &Theme, progress: f32) -> Div {
         let r = Theme::RADIUS_XL_BASE;
+        // Square: the `clip-path` rounds the corners at its fractional edges.
+        let background = shapes::Decoration {
+            fill: Some(t.sidebar_background),
+            ..Default::default()
+        };
         div()
             .tab_group()
             .tab_index(1)
             .tab_stop(false)
             .absolute()
             .left(RAIL_WIDTH)
-            .top(Theme::TITLEBAR_HEIGHT)
-            .bottom(PAGE_INSET)
+            .top_0()
+            .bottom_0()
             .w(self.sidebar_width - RAIL_WIDTH)
             .flex()
             .flex_col()
             .overflow_hidden()
             .layer()
-            .child(shapes::decoration(shapes::Decoration {
-                radius: Corners {
-                    top_left: r,
-                    bottom_left: r,
-                    ..Default::default()
-                },
-                fill: Some(t.sidebar_background),
-                ..Default::default()
-            }))
+            .child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, (), window, cx| {
+                        // The `clip-path` box keeps a zoomed edge's fraction, in
+                        // `#app-shell-sidebar`'s space: its left is the content-sized rail
+                        // (`px-2` around 36 px items, each in LayoutUnits), its bottom an inset
+                        // in LayoutUnits. Blink rounds that paint-containment box's LayoutUnit
+                        // top to device px and drops the fraction, so the whole box moves with it.
+                        let s = window.scale_factor();
+                        let left = layout_unit(px(8.), s) * 2. + layout_unit(px(36.), s);
+                        let top = layout_unit(Theme::TITLEBAR_HEIGHT, s);
+                        let shift = px((f32::from(top) * s).round() / s) - top;
+                        let bottom =
+                            window.viewport_size().height - layout_unit(PAGE_INSET, s) + shift;
+                        let clip = Bounds::from_corners(
+                            point(left, top + shift),
+                            point(bounds.right() + r, bottom),
+                        );
+                        // Blink clips to `#app-shell-sidebar`'s paint-containment box (snapped,
+                        // anti-aliased) before the `clip-path`: Skia rasters the rounded clip
+                        // within that clip, which changes the arc's last rows above the box's
+                        // bottom edge. The fill rasters in that box's composited layer (layer 46
+                        // at (0, 97) at 110%), so neither the box nor a tile edge cuts the arc's
+                        // left: at 90% the panel's snapped left (94) is right of the clip's.
+                        let shell = Bounds::from_corners(
+                            point(px(0.), bounds.top()),
+                            bounds.bottom_right(),
+                        );
+                        shapes::with_unsnapped_clip(shell, Corners::default(), window, |window| {
+                            shapes::with_unsnapped_clip(clip, Corners::all(r), window, |window| {
+                                shapes::paint(&background, Some(shell.origin), bounds, window, cx);
+                            });
+                        });
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
             .child(
                 div()
                     .size_full()
@@ -983,8 +1306,33 @@ impl Shell {
     /// (`background-clip: padding-box`) paint with the page in `render`: with the sidebar open
     /// the left edge is square and the right corners are rounded by its `clip-path`; with it
     /// closed it is a plain 12 px rounded box. `left` is its edge, `open` its shape.
-    fn main_panel(&self, left: Pixels, open: bool, focus: &gpui::FocusHandle) -> Div {
+    #[allow(clippy::too_many_arguments)]
+    fn main_panel(
+        &self,
+        left: Pixels,
+        open: bool,
+        focus: &gpui::FocusHandle,
+        window: &Window,
+        theme: &Theme,
+        hairline_width: Pixels,
+        cx: &Context<Self>,
+    ) -> Div {
         let r = Theme::RADIUS_XL_BASE;
+        let shell = cx.entity().downgrade();
+        let measured = canvas(
+            move |bounds, window, cx| {
+                let outer_width = window.viewport_size().width - PAGE_INSET - left;
+                shell
+                    .update(cx, |shell, _| {
+                        shell.main_content_inline_inset =
+                            (outer_width - bounds.size.width).max(px(0.));
+                    })
+                    .ok();
+            },
+            |_, (), _, _| {},
+        )
+        .absolute()
+        .size_full();
         let panel = div()
             .tab_group()
             .tab_index(3)
@@ -995,17 +1343,43 @@ impl Shell {
             .right(PAGE_INSET)
             .bottom(PAGE_INSET)
             .overflow_hidden()
-            .child(self.main.clone());
+            .child(if let Some(bottom) = &self.bottom {
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(div().flex_1().min_h_0().child(self.main.clone()))
+                    .child(
+                        div()
+                            .h(px(280.))
+                            .min_h(px(160.))
+                            .max_h(gpui::relative(0.5))
+                            .flex_none()
+                            .border_t_1()
+                            .border_color(theme.border)
+                            .child(bottom.clone()),
+                    )
+                    .into_any_element()
+            } else {
+                self.main.clone().into_any_element()
+            })
+            .child(measured);
         if self.main_composited {
-            return panel.left(if open { left + MAIN_HAIRLINE } else { left });
+            return panel.left(if open { left + hairline_width } else { left });
         }
-        // The `clip-path` box (its left corners under the open sidebar): Skia rasters main's
-        // draws under that anti-aliased clip, but not its composited layers.
-        let (left, inset) = if open {
-            (left - r, r + MAIN_HAIRLINE)
+        // The `clip-path` box (its left corners under the open sidebar), unsnapped as for the
+        // fill in `render`: Skia rasters main's draws under that anti-aliased clip, but not its
+        // composited layers. The panel lays out at `left` as in Blink; the clip reaches r under
+        // the sidebar at paint time.
+        let (outset, inset) = if open {
+            (r, hairline_width)
         } else {
-            (left, px(0.))
+            (px(0.), px(0.))
         };
+        let root = Bounds::new(Point::default(), window.viewport_size());
+        let main = main_box(root, left, window.scale_factor());
+        let clip =
+            Bounds::from_corners(point(main.left() - outset, main.top()), main.bottom_right());
         div()
             .absolute()
             .left(left)
@@ -1015,12 +1389,12 @@ impl Shell {
             .child(RoundedClip {
                 radius: r,
                 corner: shapes::Corner::Round,
+                unsnapped: Some(clip),
                 child: div()
                     .size_full()
                     .relative()
                     .child(panel.left(inset).top_0().right_0().bottom_0())
                     .into_any_element(),
-                layers: false,
             })
     }
 
@@ -1103,7 +1477,13 @@ impl Shell {
                     focus::ring(
                         icon_button(
                             "toggle-sidebar",
-                            icon::icon("sidebar", 16., t.text_tertiary),
+                            if self.sidebar_open {
+                                icon::icon("sidebar", 16., t.text_tertiary)
+                            } else {
+                                // Closed, Chromium composites the titlebar's Show sidebar and
+                                // New chat icons: they blit into a layer of their own.
+                                icon::icon("sidebar-hidden", 16., t.text_tertiary).own_layer(None)
+                            },
                             t,
                         ),
                         &sidebar_focus,
@@ -1130,6 +1510,25 @@ impl Shell {
                     Side::Bottom,
                 ))
             })
+            // Closed, the titlebar also carries New chat after Show sidebar.
+            .when(self.chat_chrome && !self.sidebar_open, |d| {
+                d.child(tooltip(
+                    icon_button(
+                        "titlebar-new-chat",
+                        icon::icon("sidebar-cmd-new-chat", 16., t.text_tertiary).own_layer(None),
+                        t,
+                    )
+                    .role(gpui::Role::Button)
+                    .aria_label("New chat")
+                    .absolute()
+                    .left(px(190.) - fullscreen_shift)
+                    .top(px(8.))
+                    .on_click(dispatch::<NewChat>),
+                    "New chat",
+                    Some("⌘N"),
+                    Side::Bottom,
+                ))
+            })
             .when(self.new_tab, |d| {
                 d.child(
                     focus::ring(div().id("new-tab"), &new_tab_focus, px(8.), px(2.), cx)
@@ -1144,7 +1543,23 @@ impl Shell {
                             new_tab_focus.read(cx).handle.clone().focus(window, cx);
                             cx.stop_propagation();
                         })
-                        .child(icon::icon("new-tab", 16., t.text_tertiary)),
+                        // Chromium squashes it into the titlebar's overlap layer, at whole
+                        // device px (layer 44 at (380, 0) at 2x, layer 97 at (0, 0) at 110%).
+                        .child(
+                            icon::icon("new-tab", 16., t.text_tertiary)
+                                .own_layer(Some(Point::default())),
+                        ),
+                )
+            })
+            .when_some(self.header_actions.clone(), |bar, actions| {
+                bar.child(
+                    div()
+                        .absolute()
+                        .top(px(8.))
+                        .right(px(44.))
+                        .h(px(28.))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(actions),
                 )
             })
     }
@@ -1247,6 +1662,8 @@ impl Render for Shell {
         // of progress; its hairline fades out over 0.2 to 0.05 while closing.
         let open = progress > 0.1;
         let main_left = RAIL_WIDTH + (self.sidebar_width - RAIL_WIDTH) * progress;
+        let scale = window.scale_factor();
+        let hairline_width = px((f32::from(MAIN_HAIRLINE) * scale).floor().max(1.) / scale);
         let hairline_alpha = if self.sidebar_open {
             1.
         } else {
@@ -1262,6 +1679,7 @@ impl Render for Shell {
             1 + self.main_backgrounds
         };
         let r = Theme::RADIUS_XL_BASE;
+        // The corners a composited main surface's compositor clip rounds.
         let radius = if open {
             Corners {
                 top_right: r,
@@ -1271,15 +1689,11 @@ impl Render for Shell {
         } else {
             Corners::all(r)
         };
+        // Square (`border-radius: 0`): its `clip-path`, or for a composited main surface the
+        // compositor, rounds the corners.
         let main_fill = shapes::Decoration {
-            radius,
             fill: Some(t.surface),
             ..Default::default()
-        };
-        // A composited main surface's own fill, in its layer: the compositor rounds it.
-        let square_fill = shapes::Decoration {
-            radius: Corners::default(),
-            ..main_fill.clone()
         };
         let hairline = shapes::Decoration {
             fill: Some(t.sidebar_divider.opacity(hairline_alpha)),
@@ -1290,38 +1704,59 @@ impl Render for Shell {
             let c = gpui::Rgba::from(t.surface);
             [c.r, c.g, c.b, 1.].map(|v| (v * 255.).round() as u8)
         };
+        #[cfg(target_os = "macos")]
+        let opaque_scroll = self.main_opaque_scroll.clone();
         // The page frame over the root `bounds`.
         let frame = move |bounds: Bounds<Pixels>,
                           fills: u8,
                           square: bool,
                           window: &mut Window,
                           cx: &mut App| {
-            let fill = if square { &square_fill } else { &main_fill };
+            // The compositor rounds a composited (`square`) main surface; otherwise the clip does.
+            // Under an open sidebar the clip's left corners lie under it, so they stay square.
+            let clip_radius = if square { Corners::default() } else { radius };
+            // Blink resolves the insets in LayoutUnits: a zoomed clip edge keeps that fraction.
+            let s = window.scale_factor();
+            let (top, inset) = (
+                layout_unit(Theme::TITLEBAR_HEIGHT, s),
+                layout_unit(PAGE_INSET, s),
+            );
             let page_surface = Bounds::from_corners(
-                bounds.origin + point(RAIL_WIDTH, Theme::TITLEBAR_HEIGHT),
-                bounds.bottom_right() - point(PAGE_INSET, PAGE_INSET),
+                bounds.origin + point(layout_unit(RAIL_WIDTH, s), top),
+                bounds.bottom_right() - point(inset, inset),
             );
-            let mut main = Bounds::from_corners(
-                bounds.origin + point(main_left, Theme::TITLEBAR_HEIGHT),
-                page_surface.bottom_right(),
-            );
+            let mut main = main_box(bounds, main_left, s);
+            // Its `clip-path` box (`inset(0 0 0 -r)` under an open sidebar) keeps the fraction
+            // of a zoomed edge.
+            let clip_left = if open { main.left() - r } else { main.left() };
+            let clip = Bounds::from_corners(point(clip_left, main.top()), main.bottom_right());
             let line = open.then(|| {
-                let line = Bounds::new(main.origin, size(MAIN_HAIRLINE, main.size.height));
-                main.origin.x += MAIN_HAIRLINE;
-                main.size.width -= MAIN_HAIRLINE;
+                let line = Bounds::new(main.origin, size(hairline_width, main.size.height));
+                main.origin.x += hairline_width;
+                main.size.width -= hairline_width;
                 line
             });
+            // `clip-path: inset(0 -r 0 0 round r)` rounds every corner at its fractional edges.
             let main_surface = |window: &mut Window, cx: &mut App| {
-                if let Some(line) = line {
-                    shapes::paint(&hairline, None, line, window, cx);
-                }
-                for _ in 0..fills {
-                    shapes::paint(fill, None, main, window, cx);
-                }
+                shapes::with_unsnapped_clip(clip, clip_radius, window, |window| {
+                    if let Some(line) = line {
+                        shapes::paint(&hairline, None, line, window, cx);
+                    }
+                    for _ in 0..fills {
+                        shapes::paint(&main_fill, None, main, window, cx);
+                    }
+                });
             };
             window.with_skia_layer(255, |window| {
                 shapes::paint(&layout, None, bounds, window, cx);
                 shapes::paint(&surface, None, page_surface, window, cx);
+                #[cfg(target_os = "macos")]
+                if main_layer
+                    && let Some(scroll) = &opaque_scroll
+                    && scroll.max_offset().y > px(0.)
+                {
+                    shapes::paint_page_occlusion(bounds, scroll.bounds(), under, window, cx);
+                }
                 if !main_layer {
                     main_surface(window, cx);
                 }
@@ -1341,6 +1776,7 @@ impl Render for Shell {
         .absolute()
         .size_full();
         // `_MainContentSurface` clips its content with a rounded `clip-path`.
+        let docked = self.bottom.is_some();
         let corners = canvas(
             |_, _, _| {},
             move |bounds, (), window, cx| {
@@ -1363,7 +1799,8 @@ impl Render for Shell {
                         // page, then the content C (painted over the square F). In a layer of
                         // the page with the rounded F (the frame), C is drawn that way onto it.
                         // At `main_clips_right` and `main_layer` the layer's pixel stays: the
-                        // view (or the shell, below) draws the content onto it.
+                        // view (or the shell, below) draws the content onto it. A docked bottom
+                        // panel holds the bottom-right corner instead of the view: C is drawn here.
                         let x0 = if dx < 0. { x - rd } else { x };
                         let y0 = if dy > 0. { y } else { y - rd };
                         let square = Bounds::new(
@@ -1381,10 +1818,12 @@ impl Render for Shell {
                                 };
                                 shapes::paint(&fill, None, bounds, window, cx);
                                 main = frame(bounds, u8::from(!main_layer), false, window, cx);
+                                // A lone thread draws its right corners, and its top-left one
+                                // when the sidebar is closed (`ThreadView::clip_top_left`).
                                 let own = clips_right || main_layer;
                                 let own = Corners {
                                     top_right: own,
-                                    bottom_right: own,
+                                    bottom_right: main_layer || (clips_right && !docked),
                                     ..Default::default()
                                 };
                                 shapes::paint_rounded_clip(radius, own, main, window, cx);
@@ -1458,8 +1897,21 @@ impl Render for Shell {
             .font_family(SANS)
             .bg(under)
             .child(page)
-            .when(progress > 0., |d| d.child(self.sidebar_panel(&t, progress)))
-            .child(self.main_panel(main_left, open, &main_focus))
+            // `#app-shell-sidebar`, around the rail too, is `[contain:layout_paint]`: its
+            // content drops a fractional (zoomed) top.
+            .when(progress > 0., |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top(Theme::TITLEBAR_HEIGHT)
+                        .bottom(PAGE_INSET)
+                        .w(self.sidebar_width)
+                        .snap_origin()
+                        .child(self.sidebar_panel(&t, progress)),
+                )
+            })
+            .child(self.main_panel(main_left, open, &main_focus, window, &t, hairline_width, cx))
             .when(composited || self.main_backgrounds > 0, |d| {
                 d.child(corners)
             })

@@ -1,11 +1,35 @@
 name: ci
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
+    # ready_for_review starts the run that a draft skipped.
+    types: [opened, synchronize, reopened, ready_for_review]
+    # A PR that changes only these documentation files starts no run; any other file starts it.
+    # No build reads them: the gpui crate doc includes crates/textsys/gpui/README.md, not the
+    # root README.md, and the vendored CHANGELOG.md is outside this list.
+    paths-ignore:
+      - README.md
+      - CHANGELOG.md
+      - CONTRIBUTING.md
+      - .github/SECURITY.md
+      - .github/PULL_REQUEST_TEMPLATE.md
+      - .github/ISSUE_TEMPLATE/**
+      - docs/*.md
+# A new push to a PR cancels its older run; each main push keeps its own group, so none is cancelled.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
 jobs:
   rust:
+    if: ${{ github.event_name == 'workflow_dispatch' || !github.event.pull_request.draft }}
     runs-on: [self-hosted, codex-gpui]
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
     steps:
       - run: >
           sudo apt-get update && sudo apt-get install -y --no-install-recommends
@@ -24,3 +48,6 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - if: hashFiles('Cargo.toml') != ''
         run: cargo test --workspace
+      - name: Remove job-owned Cargo target
+        if: always()
+        run: rm -rf -- "$CARGO_TARGET_DIR"

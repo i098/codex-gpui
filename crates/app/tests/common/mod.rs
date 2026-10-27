@@ -117,6 +117,7 @@ pub fn recorded_host_settings() -> Result<app::host_settings::Settings> {
     ensure!(history.is_array(), "original host history is missing");
     let mut settings = app::host_settings::Settings::default();
     settings.write("seen-model-upgrade-list", history)?;
+    settings.write("primary-number-shortcut-target", json!("sidebar"))?;
     Ok(settings)
 }
 
@@ -152,6 +153,35 @@ impl Fx {
         Self::with("dark", (1280., 832.), None, |_| {})
     }
 
+    /// The app on an app-server that exits at once: the crash page (SH-145).
+    pub fn crashed() -> Result<Self> {
+        let (bridge, events) = Bridge::spawn(Command::new("false"))?;
+        Self::boot(
+            "dark",
+            (1280., 832.),
+            bridge,
+            events,
+            recorded_host_settings()?,
+            Route::Home,
+            false,
+        )
+    }
+
+    /// The app before `initialize` answers: the startup loader (SH-147) is showing.
+    pub fn loading() -> Result<Self> {
+        let lines = script(None, |_| {})?;
+        let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
+        Self::boot(
+            "dark",
+            (1280., 832.),
+            bridge,
+            events,
+            recorded_host_settings()?,
+            Route::Home,
+            false,
+        )
+    }
+
     /// `session` (under fixtures/) is appended to readback.jsonl; `edit` rewrites each
     /// recorded line first.
     pub fn with(
@@ -170,7 +200,15 @@ impl Fx {
 
     pub fn open(theme: &'static str, size: (f32, f32), lines: Vec<Value>) -> Result<Self> {
         let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
-        Self::boot(theme, size, bridge, events, recorded_host_settings()?)
+        Self::boot(
+            theme,
+            size,
+            bridge,
+            events,
+            recorded_host_settings()?,
+            Route::Home,
+            true,
+        )
     }
 
     /// Like [`Fx::open`], but the app-server is this test binary again as a proxy
@@ -200,17 +238,33 @@ impl Fx {
             .env(PROXY_SCRIPT, &script)
             .env(PROXY_LOG, &log);
         let (bridge, events) = Bridge::spawn(cmd)?;
-        let mut fx = Self::boot(theme, size, bridge, events, settings)?;
+        let mut fx = Self::boot(theme, size, bridge, events, settings, Route::Home, true)?;
         fx.log = Some(log);
         Ok(fx)
     }
 
-    fn boot(
+    pub fn on_route(route: Route) -> Result<Self> {
+        let lines = script(None, |_| {})?;
+        let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
+        Self::boot(
+            "dark",
+            (1280., 832.),
+            bridge,
+            events,
+            recorded_host_settings()?,
+            route,
+            true,
+        )
+    }
+
+    pub(super) fn boot(
         theme: &'static str,
         (w, h): (f32, f32),
         bridge: Bridge,
         events: async_channel::Receiver<Event>,
         settings: app::host_settings::Settings,
+        route: Route,
+        wait_ready: bool,
     ) -> Result<Self> {
         #[cfg(target_os = "macos")]
         install_panic_hook();
@@ -245,6 +299,7 @@ impl Fx {
                 _ => ThemeSetting::Dark,
             };
             let state = State {
+                route,
                 theme,
                 ..State::default()
             };
@@ -266,7 +321,9 @@ impl Fx {
             log: None,
             _host_home: host_home,
         };
-        fx.wait("startup", |fx| fx.read(|r, _| r.ready()))?;
+        if wait_ready {
+            fx.wait("startup", |fx| fx.read(|r, _| r.ready()))?;
+        }
         Ok(fx)
     }
 
@@ -817,6 +874,8 @@ fn serve_proxy(script: &Path, log: &Path) -> Result<()> {
                 Event::Request { id, method, params } => {
                     json!({ "id": id, "method": method, "params": params })
                 }
+                // The proxy app-server exits with the test; nothing to forward.
+                Event::Closed => continue,
             };
             send(&server_out, msg);
         }
