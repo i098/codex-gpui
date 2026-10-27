@@ -824,7 +824,7 @@ impl Root {
             state,
         };
         if !cx.has_global::<ui::composer::dictation::Dispatcher>() {
-            cx.set_global(dictation::dispatcher(root.host.clone()));
+            cx.set_global(dictation::dispatcher());
         }
         let workspace = root.workspace.clone();
         cx.subscribe_in(
@@ -1157,7 +1157,7 @@ impl Root {
 
     /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
-        cx.set_global(dictation::dispatcher(host.clone()));
+        ui::composer::dictation::Dispatcher::cancel(self.context_window.window_id(), cx);
         self.invalidate_oauth(cx);
         self.invalidate_settings_integrations(cx);
         self.cloud = None;

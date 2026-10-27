@@ -126,8 +126,12 @@ impl Backend {
         })
     }
 
-    fn install(&self, fx: &mut Fx) {
-        let dispatcher = app::dictation::audio_dispatcher(self.host.clone(), audio());
+    fn install(&self, fx: &mut Fx, timeout: Duration) {
+        fx.cx.update(|cx| {
+            fx.root
+                .update(cx, |root, cx| root.set_host(self.host.clone(), cx))
+        });
+        let dispatcher = app::dictation::audio_dispatcher(audio(), timeout);
         fx.cx.update(|cx| cx.set_global(dispatcher));
     }
 
@@ -142,7 +146,7 @@ impl Backend {
 fn controlled_audio_reaches_only_the_live_editor() -> Result<()> {
     let backend = Backend::new(3)?;
     let mut fx = Fx::new()?;
-    backend.install(&mut fx);
+    backend.install(&mut fx, Duration::from_secs(60));
     let at = fx.at("home", "Dictate")?;
     fx.focus_composer()?;
     fx.type_text("α old ω")?;
@@ -280,5 +284,119 @@ fn closed_composer_cannot_retarget_a_late_result_to_another_window() -> Result<(
         assert_eq!(editor.field_text(), "original")
     });
     other_editor.read_with(&fx.cx, |editor, _| assert_eq!(editor.field_text(), "other"));
+    Ok(())
+}
+
+#[test]
+fn each_window_uses_its_own_host_without_cancelling_another_window() -> Result<()> {
+    let first_backend = Backend::new(1)?;
+    let second_backend = Backend::new(1)?;
+    let mut fx = Fx::new()?;
+    first_backend.install(&mut fx, Duration::from_secs(60));
+    let first = fx.composer();
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        first.update(cx, |editor, cx| {
+            editor.set_text("first ", cx);
+            editor.dictate(window, cx);
+        })
+    })?;
+    fx.wait("first recording", |fx| {
+        fx.read(|_, cx| first.read(cx).dictation_label() == "Stop dictation")
+    })?;
+
+    let mut recording = tempfile::NamedTempFile::new()?;
+    for entry in common::script(None, |_| {})? {
+        writeln!(recording, "{entry}")?;
+    }
+    let (bridge, events) = bridge::Bridge::replay(recording.path())?;
+    let second_window = fx.cx.open_window(size(px(1280.), px(832.)), |window, cx| {
+        cx.new(|cx| {
+            app::Root::new(
+                app::State::default(),
+                bridge,
+                events,
+                common::CWD.into(),
+                window,
+                cx,
+            )
+        })
+    })?;
+    let second_root = fx.cx.read_window(&second_window, |root, _| root)?;
+    let second = fx.cx.update(|cx| {
+        second_root.update(cx, |root, cx| {
+            root.set_host(second_backend.host.clone(), cx);
+            root.composer(cx)
+        })
+    });
+    ensure!(fx.read(|_, cx| first.read(cx).has_active_dictation()));
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        first.update(cx, |editor, cx| editor.finish_dictation(window, cx))
+    })?;
+    first_backend.respond(200, "{\"text\":\"account one\"}")?;
+    fx.wait("first host transcript", |fx| {
+        fx.read(|_, cx| first.read(cx).field_text() == "first account one")
+    })?;
+
+    fx.cx.update_window(second_window.into(), |_, window, cx| {
+        second.update(cx, |editor, cx| {
+            editor.set_text("second ", cx);
+            editor.dictate(window, cx);
+        })
+    })?;
+    fx.wait("second recording", |fx| {
+        fx.read(|_, cx| second.read(cx).dictation_label() == "Stop dictation")
+    })?;
+    fx.cx.update_window(second_window.into(), |_, window, cx| {
+        second.update(cx, |editor, cx| editor.finish_dictation(window, cx))
+    })?;
+    second_backend.respond(200, "{\"text\":\"account two\"}")?;
+    fx.wait("second host transcript", |fx| {
+        fx.read(|_, cx| second.read(cx).field_text() == "second account two")
+    })?;
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        first.update(cx, |editor, cx| editor.dictate(window, cx))
+    })?;
+    fx.wait("recording before account replacement", |fx| {
+        fx.read(|_, cx| first.read(cx).dictation_label() == "Stop dictation")
+    })?;
+    fx.cx.update(|cx| {
+        fx.root.update(cx, |root, cx| {
+            root.set_host(second_backend.host.clone(), cx)
+        })
+    });
+    ensure!(fx.read(|_, cx| {
+        let editor = first.read(cx);
+        !editor.has_active_dictation() && editor.field_text() == "first account one"
+    }));
+    first_backend.worker.join().unwrap()?;
+    second_backend.worker.join().unwrap()?;
+    Ok(())
+}
+
+#[test]
+fn a_stalled_transcription_finishes_with_an_error() -> Result<()> {
+    let backend = Backend::new(1)?;
+    let mut fx = Fx::new()?;
+    backend.install(&mut fx, Duration::from_secs(2));
+    let editor = fx.composer();
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_text("keep", cx);
+            editor.dictate(window, cx);
+            editor.finish_dictation(window, cx);
+        })
+    })?;
+    backend.received.recv_timeout(Duration::from_secs(20))?;
+    fx.wait("stalled transcription deadline", |fx| {
+        fx.read(|_, cx| editor.read(cx).dictation_error().is_some())
+    })?;
+    ensure!(fx.read(|_, cx| {
+        let editor = editor.read(cx);
+        !editor.has_active_dictation()
+            && editor.field_text() == "keep"
+            && editor.dictation_error() == Some("Unable to transcribe audio")
+    }));
+    backend.reply.send((200, "{\"text\":\"late\"}"))?;
+    let _ = backend.worker.join().unwrap();
     Ok(())
 }
