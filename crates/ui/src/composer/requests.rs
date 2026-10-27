@@ -1733,6 +1733,10 @@ mod tests {
                 let field = cx.new(|cx| Composer::settings_field("Secret", "a😀b", false, cx));
                 field.update(cx, |field, cx| {
                     field.secret = true;
+                    assert!(
+                        !gpui::EntityInputHandler::text_input_configuration(field, window, cx)
+                            .text_substitutions
+                    );
                     let mut actual = None;
                     let text = gpui::EntityInputHandler::text_for_range(
                         field,
