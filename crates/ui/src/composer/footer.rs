@@ -79,6 +79,35 @@ fn effort_icon(effort: &str) -> &'static str {
 }
 
 impl Composer {
+    pub(super) fn dictation_button(&self, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+        let label = self.dictation_label();
+        pill("dictate", t)
+            .justify_center()
+            .child(if self.dictation.is_some() {
+                div()
+                    .size(px(8.8))
+                    .rounded(px(1.))
+                    .bg(t.text)
+                    .into_any_element()
+            } else {
+                icon("mic", 16., t.text)
+                    .when(self.docked, |i| i.own_layer(None))
+                    .into_any_element()
+            })
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .aria_disabled(label == "Transcribing")
+            .tab_index(0)
+            .focus_visible(crate::focus::trigger_focus)
+            .size(px(28.))
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.dictate(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .on_click(cx.listener(|this, _, window, cx| this.dictate(window, cx)))
+    }
     pub(super) fn footer(&self, window: &Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let open = matches!(self.menu, Some(Menu::Effort | Menu::Models));
         let hotkey_home = self.hotkey_controls.is_some();
@@ -195,7 +224,9 @@ impl Composer {
             .when(self.menu == Some(Menu::Models), |d| {
                 d.child(self.anchored_menu(self.models_menu(t, cx), Some(EFFORT_MENU_SLOT), cx))
             });
-        let has_input = !self.content.is_empty() || !self.attachments.is_empty();
+        let has_input = !self.content.is_empty()
+            || !self.attachments.is_empty()
+            || !self.diff_comments.is_empty();
         let stopping = self.running && !has_input;
         let waiting_for_model = loading && !self.running;
         let armed = stopping && self.stop_armed.is_some();
@@ -372,15 +403,7 @@ impl Composer {
                     .child(model_button),
             )
             .children(self.hotkey_controls.clone())
-            .child(
-                pill("dictate", t)
-                    .flex_none()
-                    .tab_index(0)
-                    .focus_visible(crate::focus::trigger_focus)
-                    .w(px(28.))
-                    .justify_center()
-                    .child(footer_icon("mic", t.text)),
-            )
+            .child(self.dictation_button(t, cx))
             .child(send);
         // Grid columns: controls, an empty column, then the right group, 5 px apart.
         div()

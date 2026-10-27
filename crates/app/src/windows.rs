@@ -320,6 +320,7 @@ pub(crate) fn set_kind(window: &Window, kind: Kind, cx: &mut App) {
 /// Keep the final primary window and its draft alive on macOS.
 pub fn allow_close(window: &mut Window, cx: &mut App) -> bool {
     let id = window.window_handle().window_id();
+    ui::composer::dictation::Dispatcher::cancel(id, cx);
     let Some(windows) = cx.try_global::<Windows>() else {
         return true;
     };
