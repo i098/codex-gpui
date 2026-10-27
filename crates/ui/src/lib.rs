@@ -1809,7 +1809,6 @@ impl Render for Shell {
                                 // when the sidebar is closed (`ThreadView::clip_top_left`).
                                 let own = clips_right || main_layer;
                                 let own = Corners {
-                                    top_left: clips_right && !open,
                                     top_right: own,
                                     bottom_right: main_layer || (clips_right && !docked),
                                     ..Default::default()

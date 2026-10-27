@@ -2035,6 +2035,9 @@ impl Render for SplitScreen {
             }),
         };
         let open = self.shell.read(cx).sidebar_open;
+        let chat = self.layout == WorkspaceLayout::Chat;
+        self.thread
+            .update(cx, |view, cx| view.set_clips(chat, chat && !open, cx));
         let sidebar_width = self.shell.read(cx).sidebar_width;
         // Without an open sidebar the header starts where the leading titlebar controls end.
         let header_left = if open {
@@ -2245,9 +2248,6 @@ pub fn with_side_tabs(
         // A lone thread draws its own px at the surface's right corners.
         shell.main_clips_right = layout == WorkspaceLayout::Chat;
         shell.set_main(main, cx);
-    });
-    thread.update(cx, |thread, _| {
-        thread.clip_right = layout == WorkspaceLayout::Chat
     });
     let (tabs, active) = panel
         .map(|(_, tabs, active)| (tabs, active))
