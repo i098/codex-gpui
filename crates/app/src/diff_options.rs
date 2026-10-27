@@ -1,4 +1,5 @@
 use super::*;
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use gpui::ClipboardItem;
 
 impl Root {
@@ -8,16 +9,16 @@ impl Root {
         };
         let host = self.host.clone();
         let read = cx.background_spawn(async move {
-            let mut body = host::json_body(
+            let body = host::json_body(
                 &host.fetch(&host::Request::post("git-review-patch", Some(params)))?,
             )?;
-            match body.get_mut("diff").map(serde_json::Value::take) {
-                Some(serde_json::Value::String(patch)) => Ok(patch),
-                _ => Err(anyhow::anyhow!("patch response has no diff")),
-            }
+            let encoded = body["contentsBase64"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("patch response has no bytes"))?;
+            Ok(String::from_utf8(STANDARD.decode(encoded)?)?)
         });
         cx.spawn(async move |this, cx| {
-            let result = read.await;
+            let result: anyhow::Result<String> = read.await;
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(patch) => {

@@ -1,4 +1,86 @@
 use super::*;
+use std::borrow::Cow;
+
+pub(super) fn file_icon(file_name: &str, t: &Theme) -> crate::icon::Icon {
+    let extension = std::path::Path::new(file_name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("");
+    let dark = t.appearance == Appearance::Dark;
+    let (name, color) = if extension.eq_ignore_ascii_case("py") {
+        ("diff-file-python", if dark { 0x69b1ff } else { 0x1a85d4 })
+    } else if [
+        "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "tif", "tiff",
+    ]
+    .iter()
+    .any(|suffix| extension.eq_ignore_ascii_case(suffix))
+    {
+        ("diff-file-image", if dark { 0xff678d } else { 0xd32a61 })
+    } else if extension.eq_ignore_ascii_case("txt") {
+        ("diff-file-text", if dark { 0xadadb1 } else { 0x84848a })
+    } else {
+        ("diff-file-default", if dark { 0xadadb1 } else { 0x84848a })
+    };
+    icon(name, 16., rgb(color).into())
+}
+
+fn header_text(text: &str) -> Cow<'_, str> {
+    let mut space = true;
+    let changed = text.bytes().any(|byte| {
+        let needs_change = matches!(byte, b'\t' | b'\n' | b'\r' | 12) || (byte == b' ' && space);
+        space = byte == b' ';
+        needs_change
+    }) || text.ends_with(' ');
+    if !changed {
+        return Cow::Borrowed(text);
+    }
+    let mut display = String::with_capacity(text.len());
+    for word in text
+        .split([' ', '\t', '\n', '\r', '\u{c}'])
+        .filter(|word| !word.is_empty())
+    {
+        if !display.is_empty() {
+            display.push(' ');
+        }
+        display.push_str(word);
+    }
+    Cow::Owned(display)
+}
+
+pub(super) fn display_parts(
+    path: &str,
+    dir: &SharedString,
+    name: &SharedString,
+) -> (SharedString, SharedString) {
+    match header_text(path) {
+        Cow::Borrowed(_) => (dir.clone(), name.clone()),
+        Cow::Owned(mut text) => {
+            let split = text.rfind('/').map_or(0, |index| index + 1);
+            let name = text.split_off(split);
+            (text.into(), name.into())
+        }
+    }
+}
+
+pub(super) fn problem_body(message: &'static str, t: &Theme) -> Div {
+    if !matches!(
+        message,
+        "Binary file not shown" | "File renamed without changes" | "No content"
+    ) {
+        return text(message, 13., 20., 400., t.text_tertiary).p(px(12.));
+    }
+    div()
+        .relative()
+        .p(px(16.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(shapes::decoration(Decoration {
+            fill: Some(t.surface_tertiary),
+            ..Default::default()
+        }))
+        .child(text(message, 13., 130. / 7., 430., t.text.opacity(0.65)))
+}
 
 #[derive(Default)]
 pub(super) struct TextField {
@@ -124,6 +206,7 @@ impl FileDiff {
             }
             Err(problem) => (Vec::new(), Some(problem)),
         };
+
         let mut added = 0;
         let mut removed = 0;
         for line in hunks.iter().flat_map(|h| &h.lines) {
@@ -133,9 +216,28 @@ impl FileDiff {
         if problem.is_some() {
             (added, removed) = patch::counts(diff, None);
         }
+        let dir: SharedString = path[..split].to_owned().into();
+        let name: SharedString = path[split..].to_owned().into();
+        let (mut display_dir, mut display_name) = display_parts(path, &dir, &name);
+        if let Some(old) = diff
+            .lines()
+            .take_while(|line| !line.starts_with("@@ "))
+            .find_map(|line| line.strip_prefix("rename from "))
+            .and_then(super::patch::unquote)
+        {
+            let label = format!("{old} -> {path}");
+            display_name = match header_text(&label) {
+                Cow::Borrowed(_) => label.into(),
+                Cow::Owned(label) => label.into(),
+            };
+            display_dir = "".into();
+        }
         let mut file = Self {
-            dir: path[..split].to_owned().into(),
-            name: path[split..].to_owned().into(),
+            dir,
+            name,
+            path_key: path.to_owned(),
+            display_dir,
+            display_name,
             added,
             removed,
             changed_bytes: diff.len(),
@@ -144,6 +246,7 @@ impl FileDiff {
             problem,
             raw: diff.into(),
             raw_kind: None,
+            line_info_separators: true,
             full: None,
             full_error: None,
             full_loading: false,
@@ -166,7 +269,7 @@ pub(super) fn files(diff: &str) -> Vec<FileDiff> {
         .chain(std::iter::once(diff.len()));
     for end in ends {
         let part = &diff[start..end];
-        if let Some(path) = patch::path(part) {
+        if let Some(path) = super::patch::file_path(part) {
             files.push(FileDiff::patch(&path, part));
         }
         start = end;
@@ -192,12 +295,14 @@ impl DiffPanel {
             label,
             "No content" | "Binary file not shown" | "File renamed without changes"
         );
+        if empty {
+            return problem_body(label, t);
+        }
         div()
             .flex()
             .items_center()
-            .px(px(if empty { 16. } else { 12. }))
+            .px(px(12.))
             .py(px(if too_large { 8. } else { 16. }))
-            .when(empty, |d| d.justify_center().bg(t.surface_tertiary))
             .when(too_large, |d| d.bg(t.surface_tertiary))
             .child(
                 text(
@@ -232,7 +337,7 @@ impl DiffPanel {
 
     pub fn from_patch(workspace: &str, diff: &str) -> Self {
         let mut panel = Self::last_turn(workspace, workspace, &[]);
-        panel.files = files(diff);
+        panel.replace_files(files(diff));
         panel.standalone = true;
         panel.rich_preview = false;
         panel
@@ -392,7 +497,7 @@ impl DiffPanel {
             .pr(px(16.))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    this.files[index].open = !this.files[index].open;
+                    this.set_file_open(index, !this.files[index].open);
                     cx.stop_propagation();
                     cx.notify();
                 }
@@ -436,12 +541,6 @@ impl DiffPanel {
         cx: &mut Context<Self>,
     ) -> Div {
         let t = cx.theme().clone();
-        let python = rgb(if t.appearance == Appearance::Dark {
-            0x69b1ff
-        } else {
-            0x1a85d4
-        })
-        .into();
         let focus = self
             .filter_focus
             .get_or_insert_with(|| cx.focus_handle())
@@ -500,7 +599,7 @@ impl DiffPanel {
                     .hover(|d| d.bg(t.list_hover))
                     .when(self.active_file == i, |d| d.bg(t.list_hover))
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.files[i].open = true;
+                        this.set_file_open(i, true);
                         this.active_file = i;
                         this.scroll
                             .scroll_to_top_of_item(if this.capped() { 0 } else { i });
@@ -508,7 +607,7 @@ impl DiffPanel {
                     }))
                     .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
                         if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                            this.files[i].open = true;
+                            this.set_file_open(i, true);
                             this.active_file = i;
                             this.scroll
                                 .scroll_to_top_of_item(if this.capped() { 0 } else { i });
@@ -516,19 +615,7 @@ impl DiffPanel {
                             cx.notify();
                         }
                     }))
-                    .child(icon(
-                        if file.name.ends_with(".py") {
-                            "diff-file-python"
-                        } else {
-                            "thread-file-diff"
-                        },
-                        16.,
-                        if file.name.ends_with(".py") {
-                            python
-                        } else {
-                            t.text_tertiary
-                        },
-                    ))
+                    .child(file_icon(&file.name, &t))
                     .child(
                         text(file.name.clone(), 13., 20., 400., t.text)
                             .flex_1()
@@ -822,7 +909,7 @@ impl FileView {
                         self.line = Some(line);
                         self.scroll.set_offset(gpui::point(
                             px(0.),
-                            -px(line.saturating_sub(3) as f32 * CODE_LINE),
+                            -px(line.saturating_sub(3) as f32 * FILE_LINE_HEIGHT),
                         ));
                         self.go_to_line = None;
                     }
@@ -1025,6 +1112,66 @@ mod tests {
             );
             assert_eq!(parsed[1].hunks[0].lines[0].text.as_ref(), "second");
         }
+    }
+
+    #[test]
+    fn changes_preserve_decoded_and_metadata_only_file_paths() {
+        let patch = concat!(
+            "diff --git \"a/dir space/\\303\\251.txt\" \"b/dir space/\\303\\251.txt\"\n",
+            "--- \"a/dir space/\\303\\251.txt\"\n+++ \"b/dir space/\\303\\251.txt\"\n",
+            "@@ -1 +1 @@\n-old\n+new\n",
+            "diff --git a/old.txt b/new name.txt\nsimilarity index 100%\nrename from old.txt\nrename to new name.txt\n",
+            "diff --git a/image.bin b/image.bin\nBinary files a/image.bin and b/image.bin differ\n",
+            "diff --git a/empty.txt b/empty.txt\nnew file mode 100644\nindex 0000000..e69de29\n",
+            "diff --git a/file.txt a/file.txt\n--- a/file.txt\n+++ a/file.txt\n@@ -1 +1 @@\n-before\n+after\n",
+        );
+        let panel = DiffPanel::from_patch("/repo", patch);
+        assert_eq!(
+            panel
+                .files
+                .iter()
+                .map(|file| format!("{}{}", file.dir, file.name))
+                .collect::<Vec<_>>(),
+            [
+                "dir space/é.txt",
+                "new name.txt",
+                "image.bin",
+                "empty.txt",
+                "a/file.txt"
+            ],
+        );
+        assert_eq!((panel.files[0].added, panel.files[0].removed), (1, 1));
+        assert_eq!(panel.files[0].hunks[0].lines[1].text.as_ref(), "new");
+        assert_eq!(
+            panel.files[1].display_name.as_ref(),
+            "old.txt -> new name.txt"
+        );
+        assert_eq!(panel.files[1].problem, Some("File renamed without changes"));
+        assert_eq!(panel.files[2].problem, Some("Binary file not shown"));
+        assert_eq!(panel.files[3].problem, Some("No content"));
+        assert!(panel.files[1..4].iter().all(|file| file.hunks.is_empty()));
+    }
+
+    #[test]
+    fn displayed_path_whitespace_does_not_change_the_action_path() {
+        let file = FileDiff::patch("dir space/é\tname.txt", "@@ -1 +1 @@\n-before\n+after\n");
+        assert_eq!(file.dir.as_ref(), "dir space/");
+        assert_eq!(file.name.as_ref(), "é\tname.txt");
+        assert_eq!(file.display_dir.as_ref(), "dir space/");
+        assert_eq!(file.display_name.as_ref(), "é name.txt");
+    }
+
+    #[test]
+    fn hunk_text_cannot_redirect_a_changes_file() {
+        let panel = DiffPanel::from_patch(
+            "/repo",
+            "diff --git a/right.txt b/right.txt\n@@ -0,0 +1 @@\n+++ b/wrong.txt\n",
+        );
+        assert_eq!(panel.files[0].name.as_ref(), "right.txt");
+        assert_eq!(
+            panel.files[0].hunks[0].lines[0].text.as_ref(),
+            "++ b/wrong.txt"
+        );
     }
 
     #[test]

@@ -25,7 +25,9 @@ fn stored_comments(cx: &App, key: &str, thread: &str) -> Vec<Comment> {
 
 impl Root {
     pub(super) fn has_dialog(&self) -> bool {
-        self.dialog.is_some() || self.diff_confirmation.is_some()
+        self.dialog.is_some()
+            || self.diff_confirmation.is_some()
+            || self.automation_editor.is_some()
     }
 
     pub fn diff_comment_confirmation(&self) -> Option<&Entity<Confirmation>> {

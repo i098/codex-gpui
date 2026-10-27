@@ -73,6 +73,57 @@ fn source_glyph(
     .flex_none()
 }
 
+/// A source glyph inside a `backdrop-filter` box: Chromium rasters its opacity group on the
+/// box's own layer.
+pub(super) fn backdrop_glyph(
+    data: &'static [u8],
+    id: &'static str,
+    color: Hsla,
+    opacity: u8,
+) -> impl IntoElement + Styled {
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, (), window, cx| {
+            let alpha = f32::from(opacity) / 255.;
+            if !shapes::paint_icon_in_backdrop(data, id, bounds, color, alpha, true, window) {
+                paint_glyph(data, id, color, opacity, bounds, window, cx);
+            }
+        },
+    )
+    .size(px(16.))
+    .flex_none()
+}
+
+fn paint_glyph(
+    data: &'static [u8],
+    id: &'static str,
+    color: Hsla,
+    opacity: u8,
+    bounds: gpui::Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    let paint = |window: &mut Window| {
+        if !shapes::paint_icon(data, id, bounds, false, color, None, window, cx) {
+            window
+                .paint_svg(
+                    bounds,
+                    id.into(),
+                    Some(data),
+                    gpui::TransformationMatrix::default(),
+                    color,
+                    cx,
+                )
+                .ok();
+        }
+    };
+    if opacity == 255 {
+        paint(window);
+    } else {
+        shapes::with_composited_opacity(opacity, bounds, window, cx, paint);
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Kind {
     Header,
@@ -307,7 +358,7 @@ impl DiffPanel {
                 Kind::Repositories => (self.repositories[index].name.as_str(), !self.pending),
                 Kind::Header => match index {
                     0 => ("Copy path", true),
-                    1 => ("Open in editor", true),
+                    1 => ("Open in editor", !self.workspace.is_empty()),
                     2 => (
                         if self.files[self.menu.as_ref().unwrap().file].open {
                             "Collapse file"
@@ -345,7 +396,7 @@ impl DiffPanel {
 
     pub(super) fn toggle_all_files(&mut self, cx: &mut Context<Self>) {
         let open = !self.all_expanded();
-        self.files.iter_mut().for_each(|file| file.open = open);
+        self.set_all_files_open(open);
         self.selection = None;
         cx.notify();
     }
@@ -611,9 +662,10 @@ impl DiffPanel {
             cx.emit(DiffRequest::Refresh);
             return;
         }
-        let Some((_, true)) = self.menu_items().nth(index) else {
+        let Some((label, true)) = self.menu_items().nth(index) else {
             return;
         };
+        let label = label.to_owned();
         if self
             .menu
             .as_ref()
@@ -693,22 +745,28 @@ impl DiffPanel {
             cx.notify();
             return;
         }
-        let file = &mut self.files[menu.file];
-        match index {
-            0 => cx.write_to_clipboard(ClipboardItem::new_string(format!(
-                "{}{}",
-                file.dir, file.name
-            ))),
-            1 => self.request_open(menu.file, cx),
-            2 => {
-                file.open = !file.open;
+        let file = &self.files[menu.file];
+        match label.as_str() {
+            "Stage file" => cx.emit(DiffRequest::Stage(format!("{}{}", file.dir, file.name))),
+            "Unstage file" => cx.emit(DiffRequest::Unstage(format!("{}{}", file.dir, file.name))),
+            "Revert file" => self.request_revert(menu.file, None, cx),
+            "Open in editor" => self.request_open(menu.file, cx),
+            "Copy selection" => cx.write_to_clipboard(ClipboardItem::new_string(menu.selected)),
+            "Copy path" | "Copy relative path" => {
+                let relative = format!("{}{}", file.dir, file.name);
+                let path = if menu.kind == Kind::Header || label == "Copy relative path" {
+                    relative
+                } else {
+                    absolute_path(self.file_root(), &relative)
+                };
+                cx.write_to_clipboard(ClipboardItem::new_string(path));
+            }
+            "Collapse file" | "Expand file" => {
+                let open = !file.open;
+                self.set_file_open(menu.file, open);
                 self.selection = None;
             }
-            3 if self.source == DiffSource::Staged => {
-                cx.emit(DiffRequest::Unstage(format!("{}{}", file.dir, file.name)))
-            }
-            3 => cx.emit(DiffRequest::Stage(format!("{}{}", file.dir, file.name))),
-            _ => self.request_revert(menu.file, None, cx),
+            _ => {}
         }
         cx.stop_propagation();
         cx.notify();
@@ -1131,7 +1189,7 @@ impl DiffPanel {
     }
 }
 
-fn absolute_path(workspace: &str, relative: &str) -> String {
+pub(super) fn absolute_path(workspace: &str, relative: &str) -> String {
     let mut path = PathBuf::new();
     for component in Path::new(workspace).join(relative).components() {
         match component {
