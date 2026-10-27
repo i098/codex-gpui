@@ -661,6 +661,7 @@ These styles use the same compositor boundary as other elements.
 
 Linear gradients interpolate premultiplied colors in the selected color space.
 Their ordered RGB dither leaves alpha unchanged, so transparent fades do not add opacity noise.
+Gradients inside compositor layers apply dithering after blending and retain element opacity and the unsnapped gradient origin.
 
 Home composer permission and model labels paint directly into their parent.
 Docked composers retain the composited label path. The animated effort label keeps its filter layer.

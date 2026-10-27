@@ -35,7 +35,8 @@ float blur_along_x(float x, float y, float sigma, float corner,
 float4 over(float4 below, float4 above);
 float radians(float degrees);
 float4 fill_color(Background background, float2 position, Bounds_ScaledPixels bounds,
-  float4 solid_color, float4 color0, float4 color1);
+  float4 solid_color, float4 color0, float4 color1, bool apply_dither);
+uint gradient_dither_index(uint2 pixel);
 
 struct GradientColor {
   float4 solid;
@@ -97,12 +98,10 @@ vertex QuadVertexOutput quad_vertex(uint unit_vertex_id [[vertex_id]],
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
-fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
-                              constant Quad *quads
-                              [[buffer(QuadInputIndex_Quads)]]) {
+float4 quad_color(QuadFragmentInput input, constant Quad *quads, bool apply_dither) {
   Quad quad = quads[input.quad_id];
   float4 background_color = fill_color(quad.background, input.position.xy, quad.bounds,
-    input.background_solid, input.background_color0, input.background_color1);
+    input.background_solid, input.background_color0, input.background_color1, apply_dither);
 
   bool unrounded = quad.corner_radii.top_left == 0.0 &&
     quad.corner_radii.bottom_left == 0.0 &&
@@ -396,6 +395,11 @@ fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
   return color * float4(1.0, 1.0, 1.0, saturate(antialias_threshold - outer_sdf));
 }
 
+fragment float4 quad_fragment(QuadFragmentInput input [[stage_in]],
+                              constant Quad *quads [[buffer(QuadInputIndex_Quads)]]) {
+  return quad_color(input, quads, true);
+}
+
 // Returns the dash velocity of a corner given the dash velocity of the two
 // sides, by returning the slower velocity (larger dashes).
 //
@@ -679,6 +683,13 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
 // premultiplied color mode 4 blends.
 uint4 skia_blit(uint mode, uint m, uint4 src, uint ca, uint4 d, float4 fsrc) {
   uint scale = m + 1;
+  if (mode == 11) {
+    // Skia dithers after source-over, before storing the layer's eight-bit pixel.
+    float4 result = fma(float4(d) / 255.0, 1.0 - fsrc.a, fsrc);
+    result.rgb += (float(m) / 64.0 - 63.0 / 128.0) / 255.0;
+    result.rgb = clamp(result.rgb, float3(0.0), float3(result.a));
+    return uint4(rint(saturate(result) * 255.0));
+  }
   if (mode == 10) {
     // SkFastFourByteInterp for opaque paired-edge pixels.
     uint weight = m + (m >> 7);
@@ -821,6 +832,28 @@ SpriteLayerTargets composite_sprite(
       float4(d) / 255.0, float4(pixels[0]) / 255.0, float4(pixels[1]) / 255.0,
       float4(b) / 255.0, float4(previous_ids) / 255.0, float4(pixels[2]) / 255.0,
       float4(pixels[3]) / 255.0, float4(previous_alphas) / 255.0};
+}
+
+fragment SpriteLayerTargets gradient_quad_fragment(
+    QuadFragmentInput input [[stage_in]],
+    constant Quad *quads [[buffer(QuadInputIndex_Quads)]],
+    float4 target [[color(0)]], float4 outer [[color(1)]], float4 inner [[color(2)]],
+    float4 backdrop [[color(3)]], float4 ids [[color(4)]],
+    float4 third [[color(5)]], float4 fourth [[color(6)]], float4 alphas [[color(7)]]) {
+  Quad quad = quads[input.quad_id];
+  float4 color = quad_color(input, quads, false);
+  if (color.a <= 0.0) {
+    discard_fragment();
+  }
+  float2 origin = float2(quad.bounds.origin.x + quad.dither_offset.x,
+                         quad.bounds.origin.y + quad.dither_offset.y);
+  int2 pixel = int2(floor(input.position.xy - origin));
+  uint2 tile_pixel = uint2(pixel.x == 0 ? 0 : ((pixel.x - 1) % 510 + 510) % 510 + 1,
+                           pixel.y == 0 ? 0 : ((pixel.y - 1) % 510 + 510) % 510 + 1);
+  float4 source = float4(color.rgb * color.a, color.a);
+  uint4 layers = uint4(quad.layers[0], quad.layers[1], quad.layers[2], quad.layers[3]);
+  return composite_sprite(11, gradient_dither_index(tile_pixel), uint4(0), source,
+                          layers, target, outer, inner, backdrop, ids, third, fourth, alphas);
 }
 
 fragment SpriteLayerTargets monochrome_sprite_fragment(
@@ -1045,7 +1078,8 @@ fragment float4 path_rasterization_fragment(
     path_bounds,
     gradient_color.solid,
     gradient_color.color0,
-    gradient_color.color1
+    gradient_color.color1,
+    true
   );
   return float4(color.rgb * color.a * alpha, alpha * color.a);
 }
@@ -1418,10 +1452,17 @@ float2x2 rotate2d(float angle) {
     return float2x2(c, -s, s, c);
 }
 
+uint gradient_dither_index(uint2 pixel) {
+  uint row = pixel.y ^ pixel.x;
+  return ((row & 1) << 5) | ((pixel.x & 1) << 4) |
+         ((row & 2) << 2) | ((pixel.x & 2) << 1) |
+         ((row & 4) >> 1) | ((pixel.x & 4) >> 2);
+}
+
 float4 fill_color(Background background,
                       float2 position,
                       Bounds_ScaledPixels bounds,
-                      float4 solid_color, float4 color0, float4 color1) {
+                      float4 solid_color, float4 color0, float4 color1, bool apply_dither) {
   float4 color;
 
   switch (background.tag) {
@@ -1468,13 +1509,8 @@ float4 fill_color(Background background,
       }
 
       // Skia dithers premultiplied RGB with its ordered 8x8 matrix, not alpha.
-      uint2 pixel = uint2(position);
-      uint row = pixel.y ^ pixel.x;
-      uint value = ((row & 1) << 5) | ((pixel.x & 1) << 4) |
-                   ((row & 2) << 2) | ((pixel.x & 2) << 1) |
-                   ((row & 4) >> 1) | ((pixel.x & 4) >> 2);
-      float dither = (float(value) / 64.0 - 63.0 / 128.0) / 255.0;
-      if (color.a > 0.0) {
+      if (apply_dither && color.a > 0.0) {
+        float dither = (float(gradient_dither_index(uint2(position))) / 64.0 - 63.0 / 128.0) / 255.0;
         color.rgb = clamp(color.rgb * color.a + dither, float3(0.0), float3(color.a)) / color.a;
       }
 
