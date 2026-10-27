@@ -615,6 +615,10 @@ impl WindowTextSystem {
         }
     }
 
+    pub(crate) fn set_scale_factor(&self, scale: f32) {
+        self.line_layout_cache.set_scale_factor(scale);
+    }
+
     pub(crate) fn layout_index(&self) -> LineLayoutIndex {
         self.line_layout_cache.layout_index()
     }

@@ -206,6 +206,7 @@ impl FileDiff {
             }
             Err(problem) => (Vec::new(), Some(problem)),
         };
+
         let mut added = 0;
         let mut removed = 0;
         for line in hunks.iter().flat_map(|h| &h.lines) {
@@ -540,12 +541,6 @@ impl DiffPanel {
         cx: &mut Context<Self>,
     ) -> Div {
         let t = cx.theme().clone();
-        let python = rgb(if t.appearance == Appearance::Dark {
-            0x69b1ff
-        } else {
-            0x1a85d4
-        })
-        .into();
         let focus = self
             .filter_focus
             .get_or_insert_with(|| cx.focus_handle())
@@ -620,19 +615,7 @@ impl DiffPanel {
                             cx.notify();
                         }
                     }))
-                    .child(icon(
-                        if file.name.ends_with(".py") {
-                            "diff-file-python"
-                        } else {
-                            "thread-file-diff"
-                        },
-                        16.,
-                        if file.name.ends_with(".py") {
-                            python
-                        } else {
-                            t.text_tertiary
-                        },
-                    ))
+                    .child(file_icon(&file.name, &t))
                     .child(
                         text(file.name.clone(), 13., 20., 400., t.text)
                             .flex_1()
@@ -926,7 +909,7 @@ impl FileView {
                         self.line = Some(line);
                         self.scroll.set_offset(gpui::point(
                             px(0.),
-                            -px(line.saturating_sub(3) as f32 * CODE_LINE),
+                            -px(line.saturating_sub(3) as f32 * FILE_LINE_HEIGHT),
                         ));
                         self.go_to_line = None;
                     }

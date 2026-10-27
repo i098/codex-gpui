@@ -159,6 +159,18 @@ pub(crate) fn round_stroke_to_device_pixel(logical: f32, scale_factor: f32) -> f
     }
 }
 
+/// Blink's border-width snapping (`snap as a border width`): a width of a device px or more
+/// rounds down to whole device px, a thinner nonzero one becomes 1 device px. At 90% zoom on
+/// a 2x display a 1 px border is 1 device px, not 2.
+#[inline]
+pub(crate) fn snap_border_to_device_pixel(logical: f32, scale_factor: f32) -> f32 {
+    if logical <= 0.0 {
+        0.0
+    } else {
+        floor_to_device_pixel(logical, scale_factor).max(1.0)
+    }
+}
+
 #[inline]
 pub(crate) fn floor_to_device_pixel(logical: f32, scale_factor: f32) -> f32 {
     (logical * scale_factor).floor()
