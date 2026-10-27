@@ -1374,6 +1374,7 @@ impl Render for DiffPanel {
         div()
             .relative()
             .track_focus(&focus)
+            .key_context("SideTabs")
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, window, cx| {
@@ -2563,6 +2564,7 @@ impl Render for FileView {
             .id("file-view")
             .relative()
             .track_focus(&focus)
+            .key_context("SideTabs")
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |_, _, window, cx| window.focus(&focus, cx)),

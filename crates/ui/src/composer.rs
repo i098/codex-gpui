@@ -56,6 +56,8 @@ actions!(
     [
         /// Send the prompt (Enter).
         Submit,
+        /// Home composer only (`composer.submitInBackground`): send the prompt and stay on Home.
+        SubmitInBackground,
         ModifiedSubmit,
         Stop,
         RequestFullAccess,
@@ -408,6 +410,8 @@ pub struct Submission {
     pub permission: Permission,
     /// Fast mode (bolt toggle in the model picker).
     pub fast: bool,
+    /// `composer.submitInBackground`: create the chat and start its turn without opening it.
+    pub background: bool,
 }
 
 #[derive(Debug, PartialEq)]
@@ -1451,6 +1455,23 @@ impl Composer {
     }
 
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
+        self.send_draft(false, window, cx);
+    }
+
+    /// `composer.submitInBackground`: the original enables it only for the Home composer
+    /// (`kind === "home"`), never in an open chat, and not over an approval or request form.
+    fn submit_in_background(
+        &mut self,
+        _: &SubmitInBackground,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.docked && self.approval.is_none() && self.plain_field.is_none() {
+            self.send_draft(true, window, cx);
+        }
+    }
+
+    fn send_draft(&mut self, background: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.slash.open {
             self.activate_slash(window, cx);
             return;
@@ -1463,32 +1484,7 @@ impl Composer {
             return;
         }
         self.cancel_dictation(cx);
-        self.submitted = std::mem::take(&mut self.attachments);
-        let mut attachments = Vec::new();
-        let mut context_files = Vec::new();
-        for attachment in &self.submitted {
-            if attachment.is_context_file() {
-                context_files.push(attachment.path.clone());
-            } else {
-                attachments.push(attachment.path.clone());
-            }
-        }
-        let submission = Submission {
-            text: if self.mentions.is_empty() && self.on_cancel_edit.is_none() {
-                std::mem::take(&mut self.content)
-            } else {
-                self.prompt()
-            },
-            attachments,
-            context_files,
-            model: self
-                .current_model()
-                .map(|m| m.id.clone())
-                .unwrap_or_default(),
-            effort: self.effort.clone(),
-            permission: self.permission,
-            fast: self.fast,
-        };
+        let submission = self.take_submission(background);
         if self.on_cancel_edit.is_some() {
             self.edit_pending = true;
         } else {
@@ -1503,6 +1499,36 @@ impl Composer {
         cx.notify();
         if let Some(f) = self.on_submit.clone() {
             f(&submission, window, cx);
+        }
+    }
+
+    fn take_submission(&mut self, background: bool) -> Submission {
+        self.submitted = std::mem::take(&mut self.attachments);
+        let mut attachments = Vec::new();
+        let mut context_files = Vec::new();
+        for attachment in &self.submitted {
+            if attachment.is_context_file() {
+                context_files.push(attachment.path.clone());
+            } else {
+                attachments.push(attachment.path.clone());
+            }
+        }
+        Submission {
+            text: if self.mentions.is_empty() && self.on_cancel_edit.is_none() {
+                std::mem::take(&mut self.content)
+            } else {
+                self.prompt()
+            },
+            attachments,
+            context_files,
+            model: self
+                .current_model()
+                .map(|m| m.id.clone())
+                .unwrap_or_default(),
+            effort: self.effort.clone(),
+            permission: self.permission,
+            fast: self.fast,
+            background,
         }
     }
 
@@ -2099,6 +2125,7 @@ impl Render for Composer {
             })
             .track_focus(&self.focus_handle)
             .on_action(self.request_listener(cx, Self::enter))
+            .on_action(cx.listener(Self::submit_in_background))
             .on_action(self.request_listener(cx, Self::modified_enter))
             .on_action(cx.listener(Self::newline))
             .on_action(cx.listener(Self::backspace))
