@@ -312,8 +312,10 @@ mod native {
         let size = buffer_data.bytes.min(buffer_data.capacity) as usize;
         let audio = unsafe { std::slice::from_raw_parts(buffer_data.data.cast::<u8>(), size) };
         let peak = audio
-            .chunks_exact(2)
-            .map(|sample| i16::from_le_bytes([sample[0], sample[1]]).unsigned_abs())
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|sample| i16::from_le_bytes(*sample).unsigned_abs())
             .max()
             .unwrap_or(0);
         capture

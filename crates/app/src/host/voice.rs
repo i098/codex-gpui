@@ -532,8 +532,8 @@ mod core_audio {
             "Invalid audio device list"
         );
         let mut result = Vec::new();
-        for device in devices.chunks_exact(4) {
-            let device = u32::from_ne_bytes(device.try_into()?);
+        for device in devices.as_chunks::<4>().0 {
+            let device = u32::from_ne_bytes(*device);
             if bytes(device, &address(b"stm#", true))?.is_empty() {
                 continue;
             }

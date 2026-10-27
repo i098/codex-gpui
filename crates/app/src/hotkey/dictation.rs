@@ -190,10 +190,10 @@ impl Controller {
         } else {
             false
         };
-        if interactive != self.pointer_enabled {
-            if windows::set_pointer_interactive(self.window.into(), interactive, cx).is_ok() {
-                self.pointer_enabled = interactive;
-            }
+        if interactive != self.pointer_enabled
+            && windows::set_pointer_interactive(self.window.into(), interactive, cx).is_ok()
+        {
+            self.pointer_enabled = interactive;
         }
     }
 
@@ -509,7 +509,7 @@ impl Controller {
                     cx.background_executor()
                         .timer(Duration::from_millis(200))
                         .await;
-                    let _ = cx.update(|cx| {
+                    cx.update(|cx| {
                         if desktop::clipboard_stamp() == stamp {
                             match session.clipboard {
                                 Some(item) => cx.write_to_clipboard(item),
@@ -612,14 +612,13 @@ impl Drop for Controller {
     fn drop(&mut self) {
         if let Some(recorder) = self.recorder.take() {
             let _ = recorder.stop();
-            if let Some(session) = &self.session {
-                if let Err(error) = self
+            if let Some(session) = &self.session
+                && let Err(error) = self
                     .host
                     .voice_settings()
                     .and_then(|settings| settings.finish_capture(&session.id, "interrupted"))
-                {
-                    eprintln!("codex-gpui: cannot retain interrupted dictation: {error:#}");
-                }
+            {
+                eprintln!("codex-gpui: cannot retain interrupted dictation: {error:#}");
             }
         }
     }
