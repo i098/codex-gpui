@@ -2152,7 +2152,13 @@ impl Render for ThreadView {
             (fade(0.12), 0.6),
             (clear, 1.),
         ];
-        let top_fade = skia_gradient(&fade_stops, t.surface, (width, 40.), (0., 0.), false, scale);
+        let top_fade = scroller_gradient(
+            &fade_stops,
+            (width, 40.),
+            scale,
+            self.scroll.clone(),
+            !self.clip_right,
+        );
         // The px the main surface's rounded clip covers in part at its right corners: the top
         // fade's and the composer band's surface fill, drawn onto the page after the shell's
         // corners (`Shell::main_clips_right`), in a deferred draw. cc draws a band tile that
@@ -2338,9 +2344,9 @@ impl Render for ThreadView {
                             .on_children_prepainted(measure),
                     )
                     // Room for the docked composer.
-                    .child(div().h(px(114.))),
+                    .child(div().h(px(114.)))
+                    .child(top_fade),
             )
-            .child(top_fade.absolute().top_0().left_0())
             .when(self.clip_right, |d| d.child(gpui::deferred(corners)))
             // A portal in the original: its shadow spills over the titlebar and the sidebar.
             .when(self.summary_open, |d| {
@@ -2526,6 +2532,64 @@ pub fn skia_gradient(
     .h(px(size.1))
     .top_layer()
     .object_fit(gpui::ObjectFit::Fill)
+}
+
+/// A vertical CSS `linear-gradient` over the top of the `.layer()` scroller of `scroll`, the
+/// way Chromium's Skia raster pipeline and compositor draw it in the refs, as one image at
+/// device resolution:
+///
+/// - colors interpolate premultiplied in sRGB at pixel centers;
+/// - the gradient is rasterized into its composited layer: Skia's 8x8 ordered dither on the
+///   premultiplied color (clamped to alpha), then color and alpha are stored as 8 bits;
+/// - the compositor blends that layer over what is below (`src + dst * (1 - src_alpha)` in
+///   8 bits). With `nested` (a thread beside a side panel) it blends onto the scroller's
+///   transparent tile first and the result onto the surface: over the scrolled user bubble
+///   (`rgba(50, 50, 50, 0.85)`) and its text every px of the compact-open ref fits that order.
+///   Otherwise (a lone thread, also over a docked bottom panel) it blends onto the pixels
+///   painted so far, which the timestamp under it in the interactive refs fits.
+///
+/// Put it last in the scroller: it stays at the scroller's top-left and paints into a GPUI
+/// layer nested in the scroller's, or outside the enclosing layers.
+///
+/// The dither phase comes from the pixel's position in the scroller's raster tiles (cc tiles
+/// step 510 device px; a tile owns its far edge pixel), which start at the main panel's
+/// top-left. Stops are `(color, position 0..=1)`; `size` is in css px.
+pub fn scroller_gradient(
+    stops: &[(Hsla, f32)],
+    size: (f32, f32),
+    scale: f32,
+    scroll: ScrollHandle,
+    nested: bool,
+) -> impl IntoElement {
+    let image = gradient_image(
+        stops,
+        gpui::transparent_black(),
+        size,
+        (0., 0.),
+        false,
+        true,
+        scale,
+    );
+    canvas(
+        |_, _, _| {},
+        move |_, (), window, _| {
+            let bounds = Bounds::new(scroll.bounds().origin, gpui::size(px(size.0), px(size.1)));
+            let paint = |window: &mut Window| {
+                window.with_skia_layer(255, |window| {
+                    window
+                        .paint_image(bounds, bounds, Corners::default(), image, 0, false)
+                        .ok();
+                })
+            };
+            if nested {
+                paint(window)
+            } else {
+                window.with_unlayered_paint(paint)
+            }
+        },
+    )
+    .absolute()
+    .size_0()
 }
 
 const MAX_GRADIENT_IMAGES: usize = 16;
@@ -2840,6 +2904,56 @@ mod tests {
                 "23,24,23,24,23,24,23,24"
             ]
         );
+    }
+
+    /// The translucent fade, as the GPUI layer shader takes it (straight color times alpha,
+    /// rounded, then the compositor's 8-bit srcover), equals the fade baked over any opaque
+    /// color: over the surface the old opaque image, over scrolled content that content faded.
+    #[test]
+    fn translucent_gradient_composites_like_the_baked_one() {
+        let s: Hsla = rgb(0x181818).into();
+        let fade = |a: f32| Hsla { a, ..s };
+        let stops = [
+            (s, 0.),
+            (fade(0.82), 0.1),
+            (fade(0.48), 0.3),
+            (fade(0.12), 0.6),
+            (gpui::transparent_black(), 1.),
+        ];
+        let layer = gradient_image(
+            &stops,
+            gpui::transparent_black(),
+            (1871., 80.),
+            (0., 0.),
+            false,
+            true,
+            1.,
+        );
+        let layer = layer.as_bytes(0).unwrap();
+        for under in [
+            s,
+            rgb(0x000000).into(),
+            rgb(0xffffff).into(),
+            rgb(0x3b8eea).into(),
+        ] {
+            let baked = gradient_image(&stops, under, (1871., 80.), (0., 0.), false, true, 1.);
+            let u = Rgba::from(under);
+            let u = [u.b, u.g, u.r].map(|v| (v * 255.).round() as u32);
+            let composited: Vec<u8> = layer
+                .chunks(4)
+                .flat_map(|p| {
+                    let a = u32::from(p[3]);
+                    let f = |v: u8| f32::from(v) / 255.;
+                    let rgb: [u32; 3] = std::array::from_fn(|k| {
+                        let l = (f(p[k]) * f(p[3]) * 255.).round_ties_even() as u32;
+                        let t = u[k] * (255 - a);
+                        (l + ((t + ((t + 128) >> 8) + 128) >> 8)).min(255)
+                    });
+                    [rgb[0] as u8, rgb[1] as u8, rgb[2] as u8, 255]
+                })
+                .collect();
+            assert!(composited == baked.as_bytes(0).unwrap(), "under {under:?}");
+        }
     }
 
     #[test]
