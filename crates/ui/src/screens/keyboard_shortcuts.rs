@@ -116,6 +116,8 @@ pub struct KeyboardState {
     pub capture_owner: Option<gpui::EntityId>,
     pub error: Option<String>,
     pub preference_error: Option<PreferenceKind>,
+    /// The Home route is open: its composer-only commands count as registered.
+    pub home: bool,
     pub dispatch: Option<Dispatch>,
 }
 impl Global for KeyboardState {}
@@ -403,7 +405,11 @@ pub fn key_label(accelerator: &str) -> String {
         .join(" ")
 }
 
-pub type Shortcut = (&'static str, &'static str, Vec<String>);
+/// Commands whose original handler exists only on the Home composer
+/// (`backgroundSubmit.enabled` needs `kind === "home"`).
+const HOME_ONLY: &[&str] = &["composer.submitInBackground"];
+
+pub type Shortcut = (&'static str, &'static Command, Vec<String>);
 
 pub fn active_shortcuts(cx: &App) -> Vec<Shortcut> {
     let Some(state) = cx.try_global::<KeyboardState>() else {
@@ -420,13 +426,14 @@ pub fn active_shortcuts(cx: &App) -> Vec<Shortcut> {
         "app",
         "general",
     ] {
-        for command in COMMANDS
-            .iter()
-            .filter(|c| c.section == section && state.active_commands.contains(c.id))
-        {
+        for command in COMMANDS.iter().filter(|c| {
+            c.section == section
+                && state.active_commands.contains(c.id)
+                && (state.home || !HOME_ONLY.contains(&c.id))
+        }) {
             let keys: Vec<_> = state.preferences.keys(command).map(key_label).collect();
             if !keys.is_empty() {
-                shortcuts.push((section_title(section), command.title, keys));
+                shortcuts.push((section_title(section), command, keys));
             }
         }
     }
@@ -1474,7 +1481,7 @@ impl Render for KeyboardPage {
                         d.child(on_card(12.5, Squircle, t.text.opacity(0.05), None))
                     })
                     .child(icon(
-                        "settings-keyboard-shortcuts",
+                        "shortcut-keystrokes",
                         18.,
                         if self.search_by_key {
                             t.text
@@ -1520,7 +1527,7 @@ impl Render for KeyboardPage {
                 t.control_background,
                 Some(t.border_strong),
             ))
-            .child(icon("search", 18., t.text_secondary))
+            .child(icon("shortcut-search", 18., t.text_secondary))
             .child(if self.search_by_key {
                 div()
                     .id("shortcut-keystroke-input")

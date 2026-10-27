@@ -114,10 +114,36 @@ pub(crate) fn load_requested(
 
 pub fn bind_standalone_diff(panel: &Entity<DiffPanel>, host: Arc<dyn Host>, cx: &mut App) {
     panel.update(cx, |panel, cx| configure(panel, cx));
-    cx.subscribe(panel, move |panel, event: &DiffRequest, cx| {
-        if let DiffRequest::LoadFullFile(request) = event {
-            load_requested(panel, host.clone(), request.clone(), cx);
+    cx.subscribe(panel, move |panel, event: &DiffRequest, cx| match event {
+        DiffRequest::LoadFullFile(request) => {
+            load_requested(panel, host.clone(), request.clone(), cx)
         }
+        DiffRequest::LoadPreview(request) => {
+            crate::diff_preview::load(panel, host.clone(), request.clone(), cx)
+        }
+        DiffRequest::ContextMenu(request) => {
+            crate::diff_context::load(panel, host.clone(), request.clone(), cx);
+        }
+        DiffRequest::OpenTarget(request) => {
+            let opened = crate::diff_context::open(host.clone(), request, cx);
+            cx.spawn(async move |_| {
+                if let Err(error) = opened.await {
+                    eprintln!("codex-gpui: could not open file: {error}");
+                }
+            })
+            .detach();
+        }
+        DiffRequest::Preference(path, value) => {
+            if let Some(key) = path.strip_prefix("host.")
+                && cx.has_global::<crate::host_settings::Settings>()
+                && let Err(error) = cx
+                    .global_mut::<crate::host_settings::Settings>()
+                    .write(key, value.clone())
+            {
+                eprintln!("codex-gpui: cannot save diff preference: {error:#}");
+            }
+        }
+        _ => {}
     })
     .detach();
 }

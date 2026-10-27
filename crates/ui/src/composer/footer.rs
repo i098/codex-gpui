@@ -79,6 +79,35 @@ fn effort_icon(effort: &str) -> &'static str {
 }
 
 impl Composer {
+    pub(super) fn dictation_button(&self, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+        let label = self.dictation_label();
+        pill("dictate", t)
+            .justify_center()
+            .child(if self.dictation.is_some() {
+                div()
+                    .size(px(8.8))
+                    .rounded(px(1.))
+                    .bg(t.text)
+                    .into_any_element()
+            } else {
+                icon("mic", 16., t.text)
+                    .when(self.docked, |i| i.own_layer(None))
+                    .into_any_element()
+            })
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .aria_disabled(label == "Transcribing")
+            .tab_index(0)
+            .focus_visible(crate::focus::trigger_focus)
+            .size(px(28.))
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.dictate(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .on_click(cx.listener(|this, _, window, cx| this.dictate(window, cx)))
+    }
     pub(super) fn footer(&self, window: &Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let open = matches!(self.menu, Some(Menu::Effort | Menu::Models));
         let model = self.current_model();
@@ -194,7 +223,9 @@ impl Composer {
             .when(self.menu == Some(Menu::Models), |d| {
                 d.child(self.anchored_menu(self.models_menu(t, cx), Some(EFFORT_MENU_SLOT), cx))
             });
-        let has_input = !self.content.is_empty() || !self.attachments.is_empty();
+        let has_input = !self.content.is_empty()
+            || !self.attachments.is_empty()
+            || !self.diff_comments.is_empty();
         let stopping = self.running && !has_input;
         let waiting_for_model = loading && !self.running;
         let armed = stopping && self.stop_armed.is_some();
@@ -298,6 +329,7 @@ impl Composer {
                 }])
             })
             .ml(px(8.))
+            .flex_none()
             .size(px(28.))
             .p(px(2.))
             .flex()
@@ -348,26 +380,34 @@ impl Composer {
                     this.submit(&Submit, window, cx);
                 }
             }));
+        // The original's right group: the model picker's slot is `flex-1 min-w-0` and takes what
+        // the microphone and send (`shrink-0`) leave, so it clips to nothing in a narrow
+        // footer; the fixed pair overflows to the left of the footer's end.
         let right = div()
             .flex()
+            .flex_1()
+            .min_w_0()
+            .justify_end()
             .items_center()
-            .child(model_button)
             .child(
-                pill("dictate", t)
-                    .tab_index(0)
-                    .focus_visible(crate::focus::trigger_focus)
-                    .w(px(28.))
-                    .justify_center()
-                    .child(footer_icon("mic", t.text)),
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .justify_end()
+                    .overflow_hidden()
+                    .child(model_button),
             )
+            .child(self.dictation_button(t, cx))
             .child(send);
+        // Grid columns: controls, an empty column, then the right group, 5 px apart.
         div()
             .flex()
             .items_center()
-            .justify_between()
+            .gap(px(10.))
             .px(px(8.))
             .pb(px(8.))
-            .child(left)
+            .child(left.min_w_0().flex_shrink(1.))
             .child(right)
     }
 }

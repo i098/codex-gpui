@@ -686,8 +686,9 @@ impl Composer {
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
         let compact_settings = self.request_parent.is_none() && self.request_compact;
+        let comment = self.plain_field.is_some() && self.on_cancel_edit.is_some();
         div()
-            .px(px(if self.search_field {
+            .px(px(if self.search_field || comment {
                 0.
             } else if self.compact_text() {
                 10.
@@ -705,13 +706,13 @@ impl Composer {
                     4.
                 },
             ))
-            .min_h(
-                if self.search_field || self.request_parent.is_some() || self.request_compact {
-                    px(20.)
-                } else {
-                    self.field_min_height
-                },
-            )
+            .min_h(if comment {
+                self.editor_line_height()
+            } else if self.search_field || self.request_parent.is_some() || self.request_compact {
+                px(20.)
+            } else {
+                self.field_min_height
+            })
             .cursor(CursorStyle::IBeam)
             .when(self.embedded_field.is_some(), |d| {
                 d.px_0().pb_0().min_h(self.editor_line_height())
@@ -873,6 +874,17 @@ impl EntityInputHandler for Composer {
         cx.notify();
     }
 
+    fn text_input_configuration(
+        &mut self,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> gpui::TextInputConfiguration {
+        gpui::TextInputConfiguration {
+            text_substitutions: !self.secret,
+            ..Default::default()
+        }
+    }
+
     fn bounds_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -916,6 +928,42 @@ pub(super) fn chip_color(t: &Theme) -> Hsla {
     crate::over(t.text_accent.opacity(0.8), t.text)
 }
 
+/// `text` cut to `max` with a trailing `…` (the longest prefix, without its trailing
+/// whitespace, that fits), or `text` itself when it fits.
+fn ellipsize(window: &Window, text: &str, size: Pixels, font: gpui::Font, max: Pixels) -> String {
+    let width = |s: &str| {
+        window
+            .text_system()
+            .layout_line(
+                s,
+                size,
+                &[TextRun {
+                    len: s.len(),
+                    font: font.clone(),
+                    color: gpui::black(),
+                    ..Default::default()
+                }],
+                None,
+            )
+            .width
+    };
+    if width(text) <= max {
+        return text.to_owned();
+    }
+    let cuts: Vec<usize> = text.char_indices().map(|(i, _)| i).collect();
+    let fits = |end: usize| width(&format!("{}…", text[..cuts[end]].trim_end())) <= max;
+    let (mut low, mut high) = (0, cuts.len());
+    while low < high {
+        let mid = (low + high).div_ceil(2);
+        if fits(mid.min(cuts.len() - 1)) {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    format!("{}…", text[..cuts[low.min(cuts.len() - 1)]].trim_end())
+}
+
 /// Shapes `content` (or the placeholder) for one paint: one run per stretch of plain, marked
 /// (underlined) or chip (`chip` color, weight 500) text.
 pub(super) fn shape(
@@ -927,8 +975,14 @@ pub(super) fn shape(
     window: &Window,
 ) -> Vec<WrappedLine> {
     let style = window.text_style();
+    let size = composer.editor_font_size();
     let (s, color) = if composer.content.is_empty() {
-        (composer.placeholder.to_string(), placeholder)
+        // The placeholder is one line that `text-overflow: ellipsis` cuts.
+        let fitted = match width {
+            Some(width) => ellipsize(window, &composer.placeholder, size, style.font(), width),
+            None => composer.placeholder.to_string(),
+        };
+        (fitted, placeholder)
     } else {
         (
             if composer.secret {
@@ -980,12 +1034,12 @@ pub(super) fn shape(
         .text_system()
         .shape_text(
             s.into(),
-            composer.editor_font_size(),
+            size,
             &runs,
             if composer.embedded_field.is_some() {
                 None
             } else {
-                width
+                width.filter(|_| !composer.content.is_empty())
             },
             None,
         )
