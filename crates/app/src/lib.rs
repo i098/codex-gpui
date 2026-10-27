@@ -8,7 +8,15 @@ pub use cloud_task::parse_task_response;
 pub mod computer_use_requests;
 pub mod deep_link;
 mod destinations;
+pub mod dictation;
+mod diff_comments;
 pub mod diff_content;
+mod diff_context;
+mod diff_find;
+mod diff_options;
+mod diff_preview;
+mod diff_repositories;
+mod diff_watch;
 mod features;
 pub mod host;
 pub mod host_settings;
@@ -378,6 +386,7 @@ pub struct Root {
     /// Chats archived in this session: no side chat for them.
     archived: HashSet<String>,
     diff: Option<Entity<DiffPanel>>,
+    diff_watch: Option<diff_watch::Watch>,
     /// The file viewer of [`SidePanel::File`]; cleared with the thread.
     file: Option<Entity<FileView>>,
     /// The open thread in the main shell, with its side panel if any.
@@ -406,6 +415,7 @@ pub struct Root {
     command_menu: Option<Entity<CommandMenu>>,
     popout: Option<hotkey::Popout>,
     dialog: Option<Entity<Dialog>>,
+    diff_confirmation: Option<Entity<ui::confirmation::Confirmation>>,
     automation_editor: Option<Entity<automations::editor::Editor>>,
     /// The open dialog came from the composer: its close returns focus there.
     dialog_to_composer: bool,
@@ -558,6 +568,13 @@ impl Root {
             },
         )
         .detach();
+        cx.subscribe(
+            &thread_composer,
+            |this, _, change: &ui::composer::DiffCommentsChanged, cx| {
+                this.change_diff_comments(&change.0, cx);
+            },
+        )
+        .detach();
         for composer in [&home_composer, &thread_composer] {
             cx.subscribe_in(composer, window, |this, _, command: &ui::composer::SlashCommand, window, cx| {
                 match command {
@@ -706,6 +723,7 @@ impl Root {
             next_side_chat: 1,
             archived: HashSet::new(),
             diff: None,
+            diff_watch: None,
             file: None,
             split: None,
             tabs: Vec::new(),
@@ -726,6 +744,7 @@ impl Root {
             command_menu: None,
             popout: None,
             dialog: None,
+            diff_confirmation: None,
             automation_editor: None,
             dialog_to_composer: false,
             login: None,
@@ -781,6 +800,9 @@ impl Root {
             _update_policy: None,
             state,
         };
+        if !cx.has_global::<ui::composer::dictation::Dispatcher>() {
+            cx.set_global(dictation::dispatcher(root.host.clone()));
+        }
         let workspace = root.workspace.clone();
         cx.subscribe_in(
             &workspace,
@@ -997,8 +1019,7 @@ impl Root {
                 .threads
                 .iter()
                 .all(|thread| thread.status != ThreadStatus::Active)
-            && self.dialog.is_none()
-            && self.automation_editor.is_none()
+            && !self.has_dialog()
             && self.command_menu.is_none()
             && self.approvals.is_empty()
             && self.automation_load.is_none()
@@ -1108,6 +1129,7 @@ impl Root {
 
     /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
+        cx.set_global(dictation::dispatcher(host.clone()));
         self.invalidate_oauth(cx);
         self.invalidate_settings_integrations(cx);
         self.cloud = None;
@@ -1482,8 +1504,20 @@ impl Root {
                     None => change.path.clone(),
                 }),
             ),
-            DiffRequest::Open(_) | DiffRequest::LoadFullFile(_) => return,
+            DiffRequest::Open(_)
+            | DiffRequest::OpenTab { .. }
+            | DiffRequest::SourceChanged
+            | DiffRequest::Notice(_)
+            | DiffRequest::CopyGitApply
+            | DiffRequest::ContextMenu(_)
+            | DiffRequest::OpenTarget(_)
+            | DiffRequest::LoadFullFile(_)
+            | DiffRequest::LoadPreview(_)
+            | DiffRequest::CommentsChanged(_)
+            | DiffRequest::DismissModelComment(_)
+            | DiffRequest::Preference(_, _) => return,
         };
+        let creating = endpoint == "git-init-repo";
         if let Some(review) = panel.read(cx).review_params().as_object() {
             params.as_object_mut().unwrap().extend(review.clone());
         }
@@ -1514,6 +1548,9 @@ impl Root {
         cx.spawn(async move |this, cx| {
             let result = read.await;
             this.update(cx, |this, cx| {
+                if creating {
+                    this.notify_git_init(result.as_ref().err().map(String::as_str), cx);
+                }
                 if let Some(target) = reverted {
                     let toast = match &result {
                         Ok((_, Some(true))) => Toast::info(format!("Partially reverted {target}")),
@@ -1525,6 +1562,8 @@ impl Root {
                 panel.update(cx, |panel, cx| {
                     panel.set_repository(result.map(|(changes, _)| changes), cx)
                 });
+                this.sync_diff_watch(cx);
+                this.refresh_watched_diff(cx);
                 this.refresh_git_actions(cx);
             })
             .ok();
@@ -1609,7 +1648,7 @@ impl Root {
         let Some(thread) = self.thread.clone() else {
             return;
         };
-        if self.git_busy.is_some() || self.dialog.is_some() {
+        if self.git_busy.is_some() || self.has_dialog() {
             return;
         }
         let view = thread.read(cx);
@@ -1631,7 +1670,7 @@ impl Root {
                 if this.thread.as_ref() != Some(&thread)
                     || !Arc::ptr_eq(&this.host, &request_host)
                     || this.git_busy.is_some()
-                    || this.dialog.is_some()
+                    || this.has_dialog()
                 {
                     return;
                 }
@@ -1912,7 +1951,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if panel.read(cx).pending() || self.dialog.is_some() {
+        if panel.read(cx).pending() || self.has_dialog() {
             return;
         }
         let request = request.clone();
@@ -2376,8 +2415,7 @@ impl Root {
         if !printable
             || keystroke.modifiers.platform
             || keystroke.modifiers.control
-            || self.dialog.is_some()
-            || self.automation_editor.is_some()
+            || self.has_dialog()
             || self.command_menu.is_some()
             || (self.split.is_some() && self.workspace_layout() == WorkspaceLayout::Full)
             || route_focus == self.focus
@@ -2638,7 +2676,7 @@ impl Root {
     }
 
     fn edit_automation(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        if self.automation_editor.is_some() || self.dialog.is_some() {
+        if self.has_dialog() {
             return;
         }
         let item = id.as_ref().and_then(|id| {
@@ -2662,7 +2700,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.automation_editor.is_some() || self.dialog.is_some() {
+        if self.has_dialog() {
             return;
         }
         let editor = cx.new(|cx| automations::editor::Editor::new(item.as_ref(), cx));
@@ -2874,7 +2912,7 @@ impl Root {
     }
 
     fn show_dialog(&mut self, dialog: Entity<Dialog>, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dialog.is_some() || self.automation_editor.is_some() {
+        if self.has_dialog() {
             return;
         }
         self.command_menu = None;
@@ -3096,6 +3134,7 @@ impl Root {
                             .detach();
                         this.command_menu = None;
                         this.dialog = None;
+                        this.diff_confirmation = None;
                         this.automation_editor = None;
                         this.thread = None;
                         this.diff = None;
@@ -3155,7 +3194,7 @@ impl Root {
     /// shell tab when it can (`close-active-app-shell-tab`; the main focus area counts as the
     /// right panel), else the window.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dialog.is_some() || self.automation_editor.is_some() {
+        if self.has_dialog() {
             return;
         }
         if self.instructions_changed(cx) {
@@ -3498,6 +3537,14 @@ impl Root {
         let clock = self.clock();
         let composer = self.thread_composer.clone().into();
         let diff = diff_content::new_panel(&self.cwd, &thread.cwd, &thread.turns, cx);
+        self.configure_diff_comments(&diff, &thread.id, cx);
+        diff_repositories::load(
+            diff.clone(),
+            self.host.clone(),
+            thread.id.clone(),
+            thread.cwd.clone(),
+            cx,
+        );
         let cwd = thread.cwd.clone();
         cx.subscribe_in(
             &diff,
@@ -3509,11 +3556,44 @@ impl Root {
                 DiffRequest::Changes {
                     action: "revert", ..
                 } => this.confirm_revert(panel.clone(), &cwd, request, window, cx),
-                DiffRequest::Open(path) => this.open_in_editor(&cwd, path, cx),
+                DiffRequest::Open(path) => {
+                    let directory = panel.read(cx).working_directory().to_owned();
+                    this.open_in_editor(&directory, path, cx);
+                }
+                DiffRequest::SourceChanged => this.sync_diff_watch(cx),
+                DiffRequest::Notice(text) => this.toast(Toast::info(*text), cx),
+                DiffRequest::Refresh => this.refresh_diff(panel.clone(), &cwd, cx),
+                DiffRequest::CopyGitApply => this.copy_diff_patch(panel.clone(), cx),
+                DiffRequest::ContextMenu(request) => {
+                    diff_context::load(panel.clone(), this.host.clone(), request.clone(), cx)
+                }
+                DiffRequest::OpenTarget(request) => this.launch_diff_target(request, cx),
+                DiffRequest::OpenTab { path, line } => this.open_file(
+                    &OpenFile {
+                        path: path.clone(),
+                        line: *line,
+                    },
+                    window,
+                    cx,
+                ),
                 DiffRequest::LoadFullFile(request) => diff_content::load_requested(
                     panel.clone(),
                     this.host.clone(),
                     request.clone(),
+                    cx,
+                ),
+                DiffRequest::LoadPreview(request) => {
+                    diff_preview::load(panel.clone(), this.host.clone(), request.clone(), cx)
+                }
+                DiffRequest::CommentsChanged(comments) => this.change_diff_comments(comments, cx),
+                DiffRequest::DismissModelComment(key) => {
+                    this.confirm_diff_comment(panel.clone(), key.clone(), window, cx)
+                }
+                DiffRequest::Preference(key, value) => this.write_setting(
+                    &SettingChanged {
+                        path: key,
+                        value: value.clone(),
+                    },
                     cx,
                 ),
                 _ => this.repository_request(panel.clone(), &cwd, request, cx),
@@ -4363,6 +4443,7 @@ impl Root {
             this.update_in(cx, |this, window, cx| {
                 if this.state.route == Route::Thread(read.thread.id.clone()) {
                     this.show_thread(read.thread, window, cx);
+                    this.mark_diff_reverted(cx);
                 }
             })
         });
@@ -4470,7 +4551,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.dialog.is_some() {
+        if self.has_dialog() {
             return;
         }
         let title = self.threads.iter().find(|t| t.id == id).map(thread_title);
@@ -6385,7 +6466,10 @@ async fn commit_workflow(
         });
         match run.call(cx, "git-commit", params).await {
             Ok(done) => match git_result(&done) {
-                Ok(committed) => branch = committed,
+                Ok(committed) => {
+                    branch = committed;
+                    let _ = this.update(cx, |this, cx| this.mark_diff_committed(&run.cwd, cx));
+                }
                 Err(failed) => return failed,
             },
             Err(error) => return GitOutcome::failed("Failed to commit changes", Some(error)),
@@ -6892,7 +6976,8 @@ impl Render for Root {
             .children(self.dialog.clone())
             .children(self.shortcut_state.confirmation.clone())
             .children(self.shortcut_state.zoom_banner.clone())
-            .children(self.automation_editor.clone());
+            .children(self.automation_editor.clone())
+            .children(self.diff_confirmation.clone());
         let root = routes::actions(root, cx);
         let root = hotkey::actions(root, self.popout.is_some(), cx);
         native_menus::actions(

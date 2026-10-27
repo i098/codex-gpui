@@ -253,6 +253,17 @@ Retry transcription buffers at most 128 MiB; larger saved recordings remain avai
 Account dictionaries, voice selection, language selection, and retry transcription use the existing authenticated host.
 The shared keyboard service owns global shortcut storage and registration.
 Run `cargo test -p app --test voice_settings` for recording, preference, gate, and binary HTTP checks.
+Changes > Load full files reads Git objects and working files when their rows enter the view.
+Expand a context separator to show 20 more lines in either direction or the complete gap.
+The view checks full content against the displayed patch and preserves the patch when a read fails.
+Partial updates without a previous object ID keep their recorded hunks instead of guessing a previous revision.
+Line wrapping, word differences, and full-file loading use the existing host settings store.
+Run `cargo test -p app --test diff_file_reads` for file boundaries and `cargo test -p app --test diff_context` on macOS for expansion and retry.
+Image and PDF previews read bytes from each selected Git version or working file.
+PDF previews use macOS rendering and keep separate page controls for each side.
+Use the Rich preview option to switch SVG files between rendered previews and text.
+Run `cargo test -p app --test diff_preview` on macOS for image version and PDF page checks.
+
 The desktop host exposes `git-review-patch` for complete, binary-capable patches from the selected review source.
 The response uses `contentsBase64` to preserve patch bytes, including non-UTF-8 text.
 `git-changes` accepts `hideWhitespace`; raw patch export never applies that display filter.

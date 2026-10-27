@@ -34,7 +34,46 @@ mod menu;
 
 #[path = "diff/controls.rs"]
 mod controls;
+
+#[path = "diff/syntax.rs"]
+mod syntax;
+
+#[path = "diff/navigation.rs"]
+mod navigation;
+
+#[path = "diff/find.rs"]
+mod find;
 pub use controls::DiffLayout;
+pub(crate) use find::find_scope_buttons;
+pub use find::{FindInChat, FindInDiff};
+
+#[path = "diff/states.rs"]
+mod states;
+pub use states::{LastTurnState, OmittedFiles};
+
+#[path = "diff/preview.rs"]
+mod preview;
+pub use preview::{PreviewContent, PreviewRequest, PreviewSource};
+
+#[path = "diff/pdf.rs"]
+mod pdf;
+
+#[path = "diff/comment_view.rs"]
+mod comment_view;
+#[path = "diff/comments.rs"]
+pub mod comments;
+
+#[path = "diff/repositories.rs"]
+mod repositories;
+pub use repositories::ReviewRepository;
+
+#[path = "diff/context.rs"]
+mod context;
+#[path = "diff/imports.rs"]
+mod imports;
+#[path = "diff/options.rs"]
+mod options;
+pub use context::{ContextRequest, OpenTargetRequest, OpenTargets};
 
 #[path = "diff/content.rs"]
 mod content;
@@ -63,9 +102,9 @@ const CODE_LINE: f32 = 21.6;
 const FILE_LINE_HEIGHT: f32 = 22.;
 /// Menlo advance at 12 px (0.602em); `--diffs-min-number-column-width` is 4ch.
 const CH: f32 = 7.224_609_4;
-const MAX_DIFF_BYTES: usize = 2_000_000;
-const MAX_DIFF_LINES: usize = 20_000;
-const MAX_DIFF_LINE_BYTES: usize = 10_000;
+const MAX_DIFF_LINES: usize = 15_000;
+const MAX_DIFF_UNITS: usize = 3_145_728;
+const MAX_DIFF_LINE_UNITS: usize = 1_048_576;
 
 /// The panel width the user last dragged the divider to (DT-056); `STORED_WIDTH` until then.
 struct PanelWidth(Pixels);
@@ -122,7 +161,8 @@ struct Line {
     matches: Vec<Range<usize>>,
     old_number: u32,
     match_start: usize,
-    word_change: Option<Range<usize>>,
+    word_changes: Vec<Range<usize>>,
+    syntax: Vec<syntax::Mark>,
 }
 
 #[derive(Clone)]
@@ -144,16 +184,20 @@ pub struct FileDiff {
     display_name: SharedString,
     pub added: usize,
     pub removed: usize,
+    changed_bytes: usize,
     hunks: Vec<Hunk>,
     pub open: bool,
     problem: Option<&'static str>,
-    raw: String,
+    raw: Arc<str>,
     raw_kind: Option<Kind>,
+    line_info_separators: bool,
     full: Option<FullText>,
-    full_loading: bool,
     full_error: Option<FullError>,
+    full_loading: bool,
     original_hunks: Option<Vec<Hunk>>,
+    imports: Option<imports::ImportFilter>,
     pending_expansion: Option<(usize, content::Expand)>,
+    preview: Option<preview::Preview>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -164,6 +208,7 @@ pub enum DiffSource {
     Staged,
     Branch,
     Commits,
+    Cloud,
 }
 
 impl DiffSource {
@@ -175,6 +220,7 @@ impl DiffSource {
             Self::Staged => "Staged",
             Self::Branch => "Branch",
             Self::Commits => "Committed",
+            Self::Cloud => "Cloud changes",
         }
     }
 
@@ -186,6 +232,7 @@ impl DiffSource {
             Self::Staged => "staged",
             Self::Branch => "branch",
             Self::Commits => "commits",
+            Self::Cloud => "cloud",
         }
     }
 
@@ -205,9 +252,22 @@ pub enum DiffRequest {
         files: Vec<RevertChanges>,
     },
     CreateRepository,
+    OpenTab {
+        path: String,
+        line: Option<u32>,
+    },
+    SourceChanged,
+    Notice(&'static str),
+    CopyGitApply,
+    ContextMenu(ContextRequest),
+    OpenTarget(OpenTargetRequest),
+    LoadFullFile(FullFileLoad),
+    LoadPreview(PreviewRequest),
+    Preference(&'static str, serde_json::Value),
+    CommentsChanged(Vec<comments::Comment>),
+    DismissModelComment(String),
     /// Open this absolute path in the configured editor.
     Open(String),
-    LoadFullFile(FullFileLoad),
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -216,13 +276,6 @@ pub struct RevertChanges {
     pub source: &'static str,
     pub diff: String,
     pub hunk: Option<usize>,
-}
-
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct ReviewRepository {
-    pub root: String,
-    pub cwd: String,
-    pub name: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -236,10 +289,20 @@ pub struct RepositoryChanges {
     pub branches: Vec<String>,
     #[serde(default)]
     pub commits: Vec<RepositoryCommit>,
+    #[serde(default, rename = "untrackedFilesOmitted")]
+    pub untracked_files_omitted: Option<OmittedFiles>,
     #[serde(default)]
     pub base_branch: Option<String>,
     #[serde(default)]
     pub commit: Option<String>,
+    #[serde(default)]
+    pub head_branch: Option<String>,
+    #[serde(default)]
+    pub before_ref: Option<String>,
+    #[serde(default)]
+    pub after_ref: Option<String>,
+    #[serde(default, rename = "hideWhitespace")]
+    pub hide_whitespace: bool,
     #[serde(default)]
     pub not_repository: bool,
 }
@@ -263,6 +326,8 @@ pub struct DiffPanel {
     focus: Option<FocusHandle>,
     query: Option<String>,
     matches: usize,
+    match_total: usize,
+    find_scroll: find::FindScroll,
     active_match: usize,
     selected_query: bool,
     aggregated_turn: Option<String>,
@@ -270,6 +335,7 @@ pub struct DiffPanel {
     selecting: bool,
     menu: Option<menu::Menu>,
     workspace: String,
+    cwd: String,
     files_expanded: bool,
     file_expansion: HashMap<String, bool>,
     wrap: bool,
@@ -288,9 +354,19 @@ pub struct DiffPanel {
     container_width: Option<Pixels>,
     base_branch: Option<String>,
     commit: Option<String>,
-    cwd: String,
+    repositories: Vec<ReviewRepository>,
+    selected_repository: Option<String>,
+    word_diffs: bool,
+    hide_whitespace: bool,
+    hide_imports: bool,
+    jump: Option<navigation::JumpToFile>,
+    watch_limited: bool,
+    last_turn_state: Option<LastTurnState>,
     full_files: bool,
     content_generation: u64,
+    rich_preview: bool,
+    annotations: comment_view::Annotations,
+    context: context::State,
     full_view: Option<gpui::WeakEntity<Shell>>,
 }
 
@@ -358,13 +434,18 @@ impl DiffPanel {
                     .filter(|l| l.kind == k)
                     .count()
             };
-            let (added, removed) = (count(Kind::Added), count(Kind::Removed));
+            let (added, removed) = if problem.is_some() {
+                patch::counts(&change.diff, raw)
+            } else {
+                (count(Kind::Added), count(Kind::Removed))
+            };
             match files.iter_mut().find(|f| f.dir == dir && f.name == name) {
                 Some(f) => {
                     f.added += added;
                     f.removed += removed;
+                    f.changed_bytes += change.diff.len();
                     f.hunks.extend(hunks);
-                    f.raw.push_str(&change.diff);
+                    f.raw = format!("{}\n{}", f.raw, change.diff).into();
                 }
                 None => {
                     let dir: SharedString = dir.to_owned().into();
@@ -378,25 +459,34 @@ impl DiffPanel {
                         display_name,
                         added,
                         removed,
+                        changed_bytes: change.diff.len(),
                         hunks,
                         open: true,
                         problem,
-                        raw: change.diff.clone(),
+                        raw: change.diff.as_str().into(),
                         raw_kind: raw,
+                        line_info_separators: false,
                         full: None,
-                        full_loading: false,
                         full_error: None,
+                        full_loading: false,
                         original_hunks: None,
+                        imports: None,
                         pending_expansion: None,
+                        preview: None,
                     });
                 }
             }
         }
-        Self {
+        for file in &mut files {
+            syntax::apply(&file.name, &mut file.hunks);
+        }
+        let mut panel = Self {
             files,
             focus: None,
             query: None,
             matches: 0,
+            match_total: 0,
+            find_scroll: find::FindScroll::default(),
             active_match: 0,
             selected_query: false,
             aggregated_turn: None,
@@ -404,6 +494,7 @@ impl DiffPanel {
             selecting: false,
             menu: None,
             workspace: workspace_root.to_owned(),
+            cwd: cwd.to_owned(),
             files_expanded: true,
             file_expansion: HashMap::new(),
             wrap: false,
@@ -413,6 +504,9 @@ impl DiffPanel {
             pending: false,
             error: None,
             layout: DiffLayout::Auto,
+            word_diffs: true,
+            hide_whitespace: false,
+            hide_imports: false,
             show_tree: false,
             active_file: 0,
             filter: Default::default(),
@@ -422,11 +516,22 @@ impl DiffPanel {
             container_width: None,
             base_branch: None,
             commit: None,
-            cwd: cwd.to_owned(),
-            full_files: false,
+            repositories: Vec::new(),
+            selected_repository: None,
+            jump: None,
+            watch_limited: false,
+            last_turn_state: None,
+            full_files: true,
             content_generation: 0,
+            rich_preview: false,
+            annotations: comment_view::Annotations::default(),
+            context: context::State::default(),
             full_view: None,
-        }
+        };
+        panel
+            .annotations
+            .models(turns, cwd, &[workspace_root.to_owned()]);
+        panel
     }
 
     pub fn set_container_width(&mut self, width: Pixels, cx: &mut Context<Self>) {
@@ -445,7 +550,7 @@ impl DiffPanel {
     }
 
     pub fn review_params(&self) -> serde_json::Value {
-        serde_json::json!({"reviewSource": self.source.key(), "baseBranch": self.base_branch, "commit": self.commit})
+        serde_json::json!({"cwd": self.working_directory(), "reviewSource": self.source.key(), "baseBranch": self.base_branch, "commit": self.commit, "hideWhitespace": self.hide_whitespace})
     }
 
     pub fn view_changes(&mut self, path: &str, cx: &mut Context<Self>) {
@@ -586,6 +691,9 @@ impl DiffPanel {
         cx: &mut Context<Self>,
     ) {
         self.pending = false;
+        let refresh = result.as_ref().is_ok_and(|repository| {
+            !repository.not_repository && repository.hide_whitespace != self.hide_whitespace
+        });
         match result {
             Ok(repository) => {
                 self.base_branch = repository.base_branch.clone().or(self.base_branch.take());
@@ -599,6 +707,10 @@ impl DiffPanel {
         }
         if self.source != DiffSource::LastTurn {
             self.show_repository();
+        }
+        self.refresh_picker();
+        if refresh && !matches!(self.source, DiffSource::LastTurn | DiffSource::Cloud) {
+            cx.emit(DiffRequest::Refresh);
         }
         cx.notify();
     }
@@ -646,6 +758,7 @@ impl DiffPanel {
                 cx.emit(DiffRequest::Refresh);
             }
         }
+        cx.emit(DiffRequest::SourceChanged);
         cx.notify();
     }
 
@@ -668,7 +781,7 @@ impl DiffPanel {
     }
 
     pub fn search(&self) -> Option<(&str, usize)> {
-        self.query.as_deref().map(|query| (query, self.matches))
+        self.query.as_deref().map(|query| (query, self.match_total))
     }
 
     pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -705,9 +818,23 @@ impl DiffPanel {
             return;
         };
         let Some(turn) = turns.last() else { return };
+        if method == "turn/completed" {
+            self.annotations.models(
+                std::slice::from_ref(turn),
+                cwd,
+                std::slice::from_ref(&self.workspace),
+            );
+            cx.notify();
+            return;
+        }
         if params["turnId"].as_str() != Some(&turn.id) {
             return;
         }
+        let had_changes = if self.source == DiffSource::LastTurn {
+            !self.files.is_empty()
+        } else {
+            !self.turn_files.is_empty()
+        };
         let files = match method.as_str() {
             "turn/diff/updated" => {
                 let Some(diff) = params["diff"].as_str() else {
@@ -716,14 +843,21 @@ impl DiffPanel {
                 self.aggregated_turn = Some(turn.id.clone());
                 controls::files(diff)
             }
-            "item/started" | "item/completed"
-                if params["item"]["type"] == "fileChange"
+            "item/started" | "item/completed" | "item/fileChange/patchUpdated"
+                if (method == "item/fileChange/patchUpdated"
+                    || params["item"]["type"] == "fileChange")
                     && self.aggregated_turn.as_deref() != Some(&turn.id) =>
             {
                 self.aggregated_turn = None;
                 Self::last_turn(&self.workspace, cwd, turns).files
             }
             _ => return,
+        };
+        self.last_turn_state = if files.is_empty() {
+            self.last_turn_state
+                .or(had_changes.then_some(LastTurnState::CommittedOrReverted))
+        } else {
+            None
         };
         let mut files = files;
         for file in &mut files {
@@ -741,6 +875,7 @@ impl DiffPanel {
 
     fn replace_files(&mut self, mut files: Vec<FileDiff>) {
         self.content_generation = self.content_generation.wrapping_add(1);
+        self.cancel_context_request();
         for file in &mut files {
             if !file.path_key.starts_with('/') {
                 file.path_key = menu::absolute_path(self.file_root(), &file.path_key);
@@ -753,6 +888,23 @@ impl DiffPanel {
             .unwrap_or(0);
         for file in &mut files {
             file.full_loading = false;
+            if let Some(old) = self
+                .files
+                .iter_mut()
+                .find(|old| old.path_key == file.path_key)
+                && file.raw == old.raw
+            {
+                file.full = old.full.take();
+                file.imports = old.imports.take();
+                file.full_error = old.full_error.take();
+                file.original_hunks = old.original_hunks.take();
+                if file.original_hunks.is_some() {
+                    file.hunks = std::mem::take(&mut old.hunks);
+                }
+                if old.preview.as_ref().is_some_and(preview::Preview::loaded) {
+                    file.preview = old.preview.take();
+                }
+            }
             file.open = self
                 .file_expansion
                 .get(&file.path_key)
@@ -760,41 +912,46 @@ impl DiffPanel {
                 .unwrap_or(self.files_expanded);
         }
         self.files = files;
+        self.refresh_jump();
         self.selection = None;
         self.selecting = false;
-        if self
-            .menu
-            .as_ref()
-            .is_some_and(|m| matches!(m.kind, menu::Kind::Header | menu::Kind::Body))
-        {
+        if self.menu.as_ref().is_some_and(|m| {
+            matches!(
+                m.kind,
+                menu::Kind::Header | menu::Kind::Body | menu::Kind::OpenWith
+            )
+        }) {
             self.menu = None;
         }
-        self.search_changed();
+        self.refresh_filtered_view();
     }
 
     fn search_changed(&mut self) {
-        let query = self.query.as_deref().unwrap_or("");
+        let query = self.query.as_deref().unwrap_or("").trim().to_lowercase();
         self.matches = 0;
+        self.match_total = 0;
         for file in &mut self.files {
             let before = self.matches;
-            for line in file.hunks.iter_mut().flat_map(|h| &mut h.lines) {
-                line.match_start = self.matches;
-                line.matches.clear();
-                if !query.is_empty() {
-                    let mut end = 0;
-                    for (start, _) in line.text.char_indices() {
-                        if start >= end
-                            && line
-                                .text
-                                .get(start..start + query.len())
-                                .is_some_and(|s| s.eq_ignore_ascii_case(query))
-                        {
-                            end = start + query.len();
-                            line.matches.push(start..end);
-                        }
+            for (index, hunk) in file.hunks.iter_mut().enumerate() {
+                let hidden = file
+                    .imports
+                    .as_ref()
+                    .is_some_and(|filter| filter.hidden.get(index) == Some(&true));
+                for line in &mut hunk.lines {
+                    line.match_start = self.matches;
+                    if hidden {
+                        line.matches.clear();
+                        continue;
                     }
+                    let (matches, total) = crate::screens::thread::view::find_ranges(
+                        &line.text,
+                        &query,
+                        250 - self.matches,
+                    );
+                    line.matches = matches;
+                    self.matches += line.matches.len();
+                    self.match_total += total;
                 }
-                self.matches += line.matches.len();
             }
             if self.matches > before {
                 file.open = true;
@@ -806,6 +963,8 @@ impl DiffPanel {
             }
         }
         self.active_match = self.active_match.min(self.matches.saturating_sub(1));
+        self.find_scroll.pending.set(self.matches > 0);
+        self.reveal_find_match();
     }
 
     pub fn selected_text(&self) -> String {
@@ -817,8 +976,7 @@ impl DiffPanel {
         for (i, line) in self
             .files
             .iter()
-            .flat_map(|f| &f.hunks)
-            .flat_map(|h| &h.lines)
+            .flat_map(|file| file.visible_hunks().flat_map(|(_, hunk)| &hunk.lines))
             .enumerate()
         {
             if i < start.0 || i > end.0 {
@@ -842,6 +1000,15 @@ impl DiffPanel {
     }
 
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.context.pending && event.keystroke.key == "escape" {
+            self.cancel_context_request();
+            cx.stop_propagation();
+            return;
+        }
+        if self.jump.is_some() {
+            self.jump_key(event, cx);
+            return;
+        }
         if self.menu.is_some() {
             self.menu_key(event, window, cx);
             return;
@@ -868,16 +1035,13 @@ impl DiffPanel {
             self.open_find(window, cx);
             cx.stop_propagation();
             return;
+        } else if key.key == "enter" && self.query.is_some() {
+            self.next_find(key.modifiers.shift, cx);
+            cx.stop_propagation();
+            return;
         } else if let Some(query) = &mut self.query {
             match key.key.as_str() {
                 "escape" => self.query = None,
-                "enter" if self.matches > 0 => {
-                    self.active_match = if key.modifiers.shift {
-                        (self.active_match + self.matches - 1) % self.matches
-                    } else {
-                        (self.active_match + 1) % self.matches
-                    };
-                }
                 "backspace" => {
                     if self.selected_query {
                         query.clear();
@@ -915,14 +1079,21 @@ impl DiffPanel {
             } else {
                 self.active_match + 1
             },
-            self.matches
+            self.match_total
         );
-        let button = |id, name, label| {
-            round_icon(name, 28., t)
+        let button = |id, name, label, size, color| {
+            div()
+                .size(px(size))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(10.))
+                .child(icon(name, 16., color))
                 .id(id)
                 .role(gpui::Role::Button)
                 .aria_label(label)
                 .cursor_pointer()
+                .hover(|style| style.bg(t.text_alpha_10))
         };
         deferred(
             div()
@@ -930,11 +1101,16 @@ impl DiffPanel {
                 .top(px(-36.))
                 .right(px(12.))
                 .w(px(340.))
-                .h(px(82.))
+                .h(px(81.))
                 .rounded(px(20.))
-                .border(px(0.5))
-                .border_color(t.border)
-                .bg(t.surface_secondary)
+                .p(px(0.5))
+                .child(shapes::decoration(Decoration {
+                    fill: Some(t.surface_secondary),
+                    border: Some((px(0.5), t.border)),
+                    radius: Corners::all(px(20.)),
+                    shadows: vec![shadow(black().opacity(0.12), 8., 16., -4., false)],
+                    ..Default::default()
+                }))
                 .flex()
                 .flex_col()
                 .font_family(SANS)
@@ -943,80 +1119,116 @@ impl DiffPanel {
                         .h(px(44.))
                         .flex()
                         .items_center()
-                        .pl(px(16.))
-                        .pr(px(12.))
-                        .gap(px(8.))
-                        .child(icon("search", 16., t.text))
                         .child(
                             div()
-                                .id("diff-find-input")
                                 .flex_1()
-                                .cursor_text()
-                                .role(gpui::Role::TextInput)
-                                .aria_label("Find in diff")
-                                .aria_placeholder("Search diff…")
-                                .aria_value(query.to_owned())
-                                .aria_active_descendant()
-                                .child(text(
-                                    if query.is_empty() {
-                                        "Search diff…"
-                                    } else {
-                                        query
-                                    },
-                                    14.,
-                                    24.,
-                                    400.,
-                                    if query.is_empty() {
-                                        t.text_tertiary
-                                    } else {
-                                        t.text
-                                    },
-                                )),
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .pl(px(16.))
+                                .gap(px(8.))
+                                .child(icon("diff-find-search", 16., t.text))
+                                .child(
+                                    div()
+                                        .id("diff-find-input")
+                                        .flex_1()
+                                        .cursor_text()
+                                        .role(gpui::Role::TextInput)
+                                        .aria_label("Find in diff")
+                                        .aria_placeholder("Search diff…")
+                                        .aria_value(query.to_owned())
+                                        .aria_active_descendant()
+                                        .child(text(
+                                            if query.is_empty() {
+                                                "Search diff…"
+                                            } else {
+                                                query
+                                            },
+                                            14.,
+                                            24.,
+                                            430.,
+                                            if query.is_empty() {
+                                                t.text_tertiary
+                                            } else {
+                                                t.text
+                                            },
+                                        )),
+                                ),
                         )
-                        .child(button("diff-find-close", "close", "Close find").on_click(
-                            cx.listener(|this, _, _, cx| {
-                                this.query = None;
-                                this.search_changed();
-                                cx.notify();
-                            }),
-                        )),
+                        .when(!self.standalone, |d| {
+                            d.child(find_scope_buttons(query, true, t))
+                        })
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .pr(px(16.))
+                                .child(div().mx(px(8.)).w(px(1.)).h(px(16.)).bg(t.border))
+                                .child(
+                                    button(
+                                        "diff-find-close",
+                                        "diff-find-close",
+                                        "Close find",
+                                        24.,
+                                        t.text,
+                                    )
+                                    .mx(px(-2.))
+                                    .on_click(cx.listener(|this, _, _, cx| this.close_find(cx))),
+                                ),
+                        ),
                 )
                 .child(
                     div()
                         .flex_1()
                         .flex()
                         .items_center()
-                        .px(px(8.))
+                        .px(px(16.))
+                        .gap(px(12.))
                         .border_t_1()
                         .border_color(t.border)
                         .child(
-                            button("diff-find-previous", "composer-arrow-up", "Previous result")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    if this.matches > 0 {
-                                        this.active_match =
-                                            (this.active_match + this.matches - 1) % this.matches;
-                                    }
-                                    cx.notify();
-                                })),
+                            button(
+                                "diff-find-previous",
+                                "diff-find-previous",
+                                "Previous result",
+                                16.,
+                                t.text_tertiary,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.next_find(true, cx);
+                            })),
                         )
                         .child(
-                            button("diff-find-next", "diff-chevron-down", "Next result").on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    if this.matches > 0 {
-                                        this.active_match = (this.active_match + 1) % this.matches;
-                                    }
-                                    cx.notify();
-                                }),
-                            ),
+                            button(
+                                "diff-find-next",
+                                "diff-find-next",
+                                "Next result",
+                                16.,
+                                t.text_tertiary,
+                            )
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.next_find(false, cx);
+                            })),
                         )
                         .child(div().flex_1())
-                        .child(text(count, 12., 20., 400., t.text_tertiary).mr(px(8.))),
+                        .child(
+                            text(count, 14., 24., 430., t.text_tertiary)
+                                .self_start()
+                                .mt(px(7.)),
+                        ),
                 ),
         )
         .with_priority(3)
     }
 
-    fn header(&self, t: &Theme, wide: bool, clamped: bool, cx: &Context<Self>) -> Div {
+    fn header(
+        &self,
+        t: &Theme,
+        wide: bool,
+        clamped: bool,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
         let added = self.files.iter().map(|f| f.added).sum();
         let removed = self.files.iter().map(|f| f.removed).sum();
         let tool = |name| round_icon(name, 28., t);
@@ -1057,17 +1269,34 @@ impl DiffPanel {
             .gap(px(8.))
             .child(
                 capsule(t, clamped)
+                    .children(self.repository_control(t, cx))
                     .child(
                         div()
                             .id("diff-source")
-                            .role(gpui::Role::Button)
-                            .aria_label("Changes source")
+                            .role(if self.source == DiffSource::Cloud {
+                                gpui::Role::Label
+                            } else {
+                                gpui::Role::Button
+                            })
+                            .aria_label(if self.source == DiffSource::Cloud {
+                                "Cloud changes"
+                            } else {
+                                "Review source"
+                            })
                             .aria_expanded(source_open)
-                            .focusable()
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
-                                this.open_menu(0, menu::Kind::Source, event.position(), window, cx);
-                            }))
+                            .when(self.source != DiffSource::Cloud, |d| {
+                                d.tab_index(0).cursor_pointer().on_click(cx.listener(
+                                    |this, event: &ClickEvent, window, cx| {
+                                        this.open_menu(
+                                            0,
+                                            menu::Kind::Source,
+                                            event.position(),
+                                            window,
+                                            cx,
+                                        );
+                                    },
+                                ))
+                            })
                             .relative()
                             .h(px(28.))
                             .flex()
@@ -1077,8 +1306,11 @@ impl DiffPanel {
                             .pr(px(6.))
                             .child(lens())
                             .child(text(self.source.label(), 13., 20., 430., t.text))
-                            .child(icon("diff-chevron-down", 12., t.text)),
+                            .when(self.source != DiffSource::Cloud, |d| {
+                                d.child(icon("diff-chevron-down", 12., t.text))
+                            }),
                     )
+                    .children(self.comparison_control(t, cx))
                     .child(stats(added, removed, 14., t).mr(px(4.))),
             )
             .child(
@@ -1086,9 +1318,10 @@ impl DiffPanel {
                     .child(
                         tool("diff-more")
                             .id("diff-options")
+                            .relative()
                             .role(gpui::Role::Button)
                             .aria_label("Changes options")
-                            .focusable()
+                            .tab_index(0)
                             .cursor_pointer()
                             .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
                                 this.open_menu(
@@ -1113,26 +1346,63 @@ impl DiffPanel {
                                     );
                                     cx.stop_propagation();
                                 }
+                            }))
+                            .when(
+                                self.menu
+                                    .as_ref()
+                                    .is_some_and(|menu| menu.kind == menu::Kind::Options),
+                                |button| {
+                                    button.child(
+                                        deferred(
+                                            div().absolute().top_0().right_0().child(
+                                                gpui::anchored()
+                                                    .anchor(gpui::Anchor::TopRight)
+                                                    .offset(gpui::point(
+                                                        px(menu::SHADOW_SIDE_PADDING),
+                                                        px(29.),
+                                                    ))
+                                                    .snap_to_window_with_margin(px(8.))
+                                                    .child(self.options_popup(window, cx)),
+                                            ),
+                                        )
+                                        .with_priority(5),
+                                    )
+                                },
+                            ),
+                    )
+                    .child(
+                        tool("diff-jump-to-file")
+                            .id("diff-jump")
+                            .role(gpui::Role::Button)
+                            .aria_label("Jump to file")
+                            .tab_index(0)
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, window, cx| this.open_jump(window, cx)))
+                            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                    this.open_jump(window, cx);
+                                    cx.stop_propagation();
+                                }
                             })),
                     )
-                    .child(tool("diff-jump-to-file"))
                     // `@container review-header (min-width: 625px)`
                     .when(wide, |d| {
                         d.child(
                             div()
                                 .flex()
                                 .gap(px(6.))
-                                .child(
-                                    tool("diff-refresh")
-                                        .id("diff-refresh")
-                                        .cursor_pointer()
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            if this.source != DiffSource::LastTurn && !this.pending
-                                            {
-                                                cx.emit(DiffRequest::Refresh);
-                                            }
-                                        })),
-                                )
+                                .when(self.source != DiffSource::Cloud, |d| {
+                                    d.child(
+                                        tool("diff-refresh")
+                                            .id("diff-refresh")
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                if !this.pending {
+                                                    cx.emit(DiffRequest::Refresh);
+                                                }
+                                            })),
+                                    )
+                                })
                                 .child(
                                     lensed("diff-word-wrap")
                                         .id("diff-wrap")
@@ -1143,10 +1413,10 @@ impl DiffPanel {
                                         } else {
                                             gpui::Toggled::False
                                         })
-                                        .focusable()
+                                        .tab_index(0)
                                         .cursor_pointer()
                                         .on_click(cx.listener(|this, _, _, cx| {
-                                            this.wrap = !this.wrap;
+                                            this.toggle_wrap(cx);
                                             cx.notify();
                                         }))
                                         .on_key_down(cx.listener(
@@ -1155,14 +1425,43 @@ impl DiffPanel {
                                                     event.keystroke.key.as_str(),
                                                     "enter" | "space"
                                                 ) {
-                                                    this.wrap = !this.wrap;
+                                                    this.toggle_wrap(cx);
                                                     cx.stop_propagation();
                                                     cx.notify();
                                                 }
                                             },
                                         )),
                                 )
-                                .child(tool("diff-load-full-files"))
+                                .child(
+                                    tool(if self.all_expanded() {
+                                        "diff-collapse-all"
+                                    } else {
+                                        "diff-expand-all"
+                                    })
+                                    .id("diff-expand-all")
+                                    .role(gpui::Role::Button)
+                                    .aria_label(if self.all_expanded() {
+                                        "Collapse all diffs"
+                                    } else {
+                                        "Expand all diffs"
+                                    })
+                                    .tab_index(0)
+                                    .cursor_pointer()
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.toggle_all_files(cx)),
+                                    )
+                                    .on_key_down(cx.listener(
+                                        |this, event: &KeyDownEvent, _, cx| {
+                                            if matches!(
+                                                event.keystroke.key.as_str(),
+                                                "enter" | "space"
+                                            ) {
+                                                this.toggle_all_files(cx);
+                                                cx.stop_propagation();
+                                            }
+                                        },
+                                    )),
+                                )
                                 .child(self.layout_button(t, cx)),
                         )
                     })
@@ -1199,6 +1498,7 @@ impl DiffPanel {
 impl Render for DiffPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.request_visible_full_files(cx);
+        *self.find_scroll.target.borrow_mut() = None;
         let t = cx.theme().clone();
         let width = self
             .container_width
@@ -1217,6 +1517,7 @@ impl Render for DiffPanel {
             } else {
                 px(0.)
             };
+        self.request_visible_previews(code_width, window.scale_factor(), cx);
         let not_repository = self.source != DiffSource::LastTurn
             && self.repository.as_ref().is_some_and(|r| r.not_repository);
         let boundary = if not_repository {
@@ -1226,53 +1527,74 @@ impl Render for DiffPanel {
         };
         let status = self.repository_status(&t, cx);
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
-        let line_index = Cell::new(0);
-        let scroll_top = self.scroll.logical_scroll_top();
-        let files = self.files.iter().enumerate().map(|(i, file)| {
-            div()
-                .relative()
-                .pt(px(if self.standalone { 36. } else { 39. }))
-                .flex()
-                .flex_col()
-                .flex_none()
-                .pb(px(2.))
-                .when(self.standalone, |d| {
-                    d.overflow_hidden().child(shapes::decoration(Decoration {
-                        fill: Some(t.surface),
-                        ..Default::default()
-                    }))
-                })
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
-                        this.open_menu(i, menu::Kind::Body, event.position, window, cx);
-                    }),
-                )
-                .when(file.open, |d| d.children(self.full_error_notice(i, cx)))
-                .map(|d| {
-                    if file.open && file.problem.is_some() {
-                        d.child(controls::problem_body(file.problem.unwrap_or_default(), &t))
-                    } else if file.open {
-                        // The original code scroll container owns an opaque raster layer.
-                        d.child(
-                            div()
-                                .relative()
-                                .flex()
-                                .flex_col()
-                                .layer()
-                                .child(shapes::decoration(Decoration {
-                                    fill: Some(t.surface),
-                                    ..Default::default()
-                                }))
-                                .children(file.hunks.iter().enumerate().map(|(index, h)| {
-                                    let controls =
-                                        matches!(
-                                            self.source,
-                                            DiffSource::Unstaged | DiffSource::Staged
-                                        ) && h.lines.iter().any(|l| l.kind != Kind::Context);
-                                    div()
-                                        .when(controls, |d| {
-                                            d.child(
+        let capped = self.capped();
+        let notices = self.state_notices(capped, window, cx);
+        let first_line = if capped {
+            self.files
+                .iter()
+                .take(self.active_file)
+                .flat_map(|file| &file.hunks)
+                .map(|hunk| hunk.lines.len())
+                .sum()
+        } else {
+            0
+        };
+        let line_index = Cell::new(first_line);
+        let (first, offset) = self.scroll.logical_scroll_top();
+        let scroll_top = (if capped { self.active_file } else { first }, offset);
+        let files = self
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !capped || *index == self.active_file)
+            .map(|(i, file)| {
+                div()
+                    .relative()
+                    .pt(px(if self.standalone { 36. } else { 39. }))
+                    .flex()
+                    .flex_col()
+                    .flex_none()
+                    .pb(px(2.))
+                    .when(self.standalone, |d| {
+                        d.overflow_hidden().child(shapes::decoration(Decoration {
+                            fill: Some(t.surface),
+                            ..Default::default()
+                        }))
+                    })
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                            this.request_context_menu(i, None, event.position, window, cx);
+                        }),
+                    )
+                    .when(file.open, |d| d.children(self.full_error_notice(i, cx)))
+                    .map(|d| {
+                        if file.open
+                            && let Some(preview) = self.preview(i, code_width, cx)
+                        {
+                            d.child(preview)
+                        } else if file.open && file.problem.is_some() {
+                            d.child(self.file_placeholder(i, file, &t, cx))
+                        } else if file.open {
+                            d.child(
+                                div()
+                                    .relative()
+                                    .flex()
+                                    .flex_col()
+                                    .layer()
+                                    .child(shapes::decoration(Decoration {
+                                        fill: Some(t.surface),
+                                        ..Default::default()
+                                    }))
+                                    .children(file.visible_hunks().map(|(index, h)| {
+                                        let controls =
+                                            matches!(
+                                                self.source,
+                                                DiffSource::Unstaged | DiffSource::Staged
+                                            ) && h.lines.iter().any(|l| l.kind != Kind::Context);
+                                        div()
+                                            .when(controls, |d| {
+                                                d.child(
                                         div()
                                             .flex()
                                             .justify_end()
@@ -1336,36 +1658,39 @@ impl Render for DiffPanel {
                                                     .child(text("Revert", 12., 20., 430., t.text)),
                                             ),
                                     )
-                                        })
-                                        .child(hunk(
-                                            h,
-                                            &t,
-                                            &line_index,
-                                            self,
-                                            self.layout.split(file, code_width),
-                                            (i, index),
-                                            cx,
-                                        ))
-                                })),
-                        )
-                    } else {
-                        line_index.set(
-                            line_index.get()
-                                + file.hunks.iter().map(|h| h.lines.len()).sum::<usize>(),
-                        );
-                        d
-                    }
-                })
-                .child(self.scrolling_file_header(i, file, scroll_top, &t, cx))
-                .map(|d| {
-                    if self.standalone {
-                        crate::rounded_clip(px(12.5), shapes::Corner::Squircle, d)
-                            .into_any_element()
-                    } else {
-                        d.into_any_element()
-                    }
-                })
-        });
+                                            })
+                                            .child(hunk(
+                                                h,
+                                                (i, index),
+                                                &line_index,
+                                                self,
+                                                code_width,
+                                                window,
+                                                cx,
+                                            ))
+                                    })),
+                            )
+                        } else {
+                            line_index.set(
+                                line_index.get()
+                                    + file
+                                        .visible_hunks()
+                                        .map(|(_, hunk)| hunk.lines.len())
+                                        .sum::<usize>(),
+                            );
+                            d
+                        }
+                    })
+                    .child(self.scrolling_file_header(i, file, scroll_top, &t, cx))
+                    .map(|d| {
+                        if self.standalone {
+                            crate::rounded_clip(px(12.5), shapes::Corner::Squircle, d)
+                                .into_any_element()
+                        } else {
+                            d.into_any_element()
+                        }
+                    })
+            });
         // No fill: the main panel's rounded fill (a `shapes` decoration the capsules' backdrop
         // blur reads) shows through, so its corners stay round. The body's 1 px top border
         // (translucent) sits in the layer under the capsules, whose shadows blend over it; they
@@ -1379,6 +1704,7 @@ impl Render for DiffPanel {
                 MouseButton::Left,
                 cx.listener(move |this, _, window, cx| {
                     this.selection = None;
+                    this.cancel_context_request();
                     this.selecting = false;
                     window.focus(&focus, cx);
                     cx.notify();
@@ -1386,7 +1712,11 @@ impl Render for DiffPanel {
             )
             .on_key_down(cx.listener(Self::on_key))
             .on_action(cx.listener(|this, _: &crate::Copy, window, cx| {
-                if this
+                if let Some(jump) = &this.jump {
+                    if jump.query.selected {
+                        cx.write_to_clipboard(ClipboardItem::new_string(jump.query.text.clone()));
+                    }
+                } else if this
                     .filter_focus
                     .as_ref()
                     .is_some_and(|focus| focus.is_focused(window))
@@ -1400,6 +1730,20 @@ impl Render for DiffPanel {
             }))
             .on_action(cx.listener(|this, _: &crate::Paste, window, cx| {
                 if this
+                    .menu
+                    .as_ref()
+                    .is_some_and(|menu| menu.kind == menu::Kind::Branches)
+                {
+                    if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                        this.paste_picker(&text, cx);
+                    }
+                } else if let Some(jump) = &mut this.jump {
+                    if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                        jump.query.paste(&text);
+                        this.refresh_jump();
+                        cx.notify();
+                    }
+                } else if this
                     .filter_focus
                     .as_ref()
                     .is_some_and(|focus| focus.is_focused(window))
@@ -1413,12 +1757,21 @@ impl Render for DiffPanel {
                 }
             }))
             .on_action(cx.listener(|this, _: &crate::SelectAll, window, cx| {
-                if this
+                if this.select_picker_text(cx) {
+                    return;
+                }
+                if let Some(jump) = &mut this.jump {
+                    jump.query.selected = true;
+                    cx.notify();
+                } else if this
                     .filter_focus
                     .as_ref()
                     .is_some_and(|focus| focus.is_focused(window))
                 {
                     this.filter.selected = true;
+                    cx.notify();
+                } else if this.query.is_some() {
+                    this.selected_query = true;
                     cx.notify();
                 } else {
                     cx.propagate();
@@ -1428,6 +1781,7 @@ impl Render for DiffPanel {
                 MouseButton::Left,
                 cx.listener(|this, _, _, _| {
                     this.selecting = false;
+                    this.end_gutter_selection();
                 }),
             )
             .size_full()
@@ -1458,10 +1812,11 @@ impl Render for DiffPanel {
                     .child(if self.standalone {
                         self.standalone_header(&t, cx)
                     } else {
-                        self.header(&t, wide, clamped, cx)
+                        self.header(&t, wide, clamped, window, cx)
                     }),
             )
             .children(status)
+            .children(notices)
             .when(not_repository, |d| {
                 d.child(
                     div()
@@ -1475,7 +1830,11 @@ impl Render for DiffPanel {
                             div()
                                 .id("create-git-repository")
                                 .role(gpui::Role::Button)
-                                .aria_label("Create git repository")
+                                .aria_label(if self.pending {
+                                    "Creating…"
+                                } else {
+                                    "Create git repository"
+                                })
                                 .aria_disabled(self.pending)
                                 .focusable()
                                 .tab_index(0)
@@ -1498,7 +1857,17 @@ impl Render for DiffPanel {
                                         cx.emit(DiffRequest::CreateRepository);
                                     }
                                 }))
-                                .child(text("Create git repository", 13., 20., 430., t.text)),
+                                .child(text(
+                                    if self.pending {
+                                        "Creating…"
+                                    } else {
+                                        "Create git repository"
+                                    },
+                                    13.,
+                                    20.,
+                                    430.,
+                                    t.text,
+                                )),
                         ),
                 )
             })
@@ -1555,6 +1924,15 @@ impl Render for DiffPanel {
             .when(self.query.is_some(), |d| d.child(self.find_bar(cx)))
             .when(self.menu.is_some(), |d| {
                 d.child(self.menu_overlay(window, cx))
+            })
+            .when(self.jump.is_some(), |d| {
+                d.child(self.jump_overlay(window, cx))
+            })
+            .when(self.query.is_some(), |d| {
+                d.child(
+                    self.find_scroll
+                        .probe(self.scroll.clone(), cx.entity().entity_id()),
+                )
             })
     }
 }
@@ -2306,6 +2684,7 @@ pub struct FileView {
     focus: Option<FocusHandle>,
     go_to_line: Option<controls::TextField>,
     line_count: u32,
+    syntax: Vec<Vec<syntax::Mark>>,
     tree: file_tree::WorkspaceTree,
     revision: u64,
     preview: bool,
@@ -2327,6 +2706,7 @@ impl FileView {
             focus: None,
             go_to_line: None,
             line_count: 0,
+            syntax: Vec::new(),
             tree,
             revision: 0,
             preview: true,
@@ -2372,6 +2752,9 @@ impl FileView {
     /// The host's answer; the cited line scrolls to the third row of the viewport.
     /// ponytail: a fixed top offset, not the original's centring, which was not measured.
     pub fn set_contents(&mut self, contents: Result<String, String>, cx: &mut Context<Self>) {
+        self.syntax = contents
+            .as_ref()
+            .map_or_else(|_| Vec::new(), |text| syntax::full_file(&self.path, text));
         self.line_count = contents
             .as_ref()
             .map_or(0, |text| controls::lines(text).count() as u32);
@@ -2501,8 +2884,6 @@ impl FileView {
                 .child(text("Could not open file", 13., 20., 430., t.text_tertiary))
                 .into_any_element(),
             Some(Ok(contents)) => {
-                let syntax = Syntax::of(t);
-                let python = self.path.ends_with(".py");
                 let lines: Vec<_> = controls::lines(contents).collect();
                 let gutter = px(CH * (lines.len().to_string().len().max(1) + 3) as f32 + 2.);
                 let foreground = rgb(if t.appearance == Appearance::Dark {
@@ -2537,11 +2918,13 @@ impl FileView {
                             t.surface
                         };
                         let text: SharedString = line.to_owned().into();
-                        let content = if python {
-                            StyledText::new(text.clone()).with_highlights(highlight(&text, &syntax))
-                        } else {
-                            StyledText::new(text)
-                        };
+                        let content = StyledText::new(text).with_highlights(
+                            self.syntax
+                                .get(i)
+                                .into_iter()
+                                .flatten()
+                                .map(|(range, token)| (range.clone(), token.style(t))),
+                        );
                         div()
                             .h(px(FILE_LINE_HEIGHT))
                             .flex()
@@ -2798,9 +3181,9 @@ fn file_header(
                 )
                 .child(
                     small("diff-open-in")
-                        .id(("diff-open-editor", i))
+                        .id(("diff-open-tab", i))
                         .role(gpui::Role::Button)
-                        .aria_label("Open in editor")
+                        .aria_label("Open in")
                         .focusable()
                         .tab_index(0)
                         .focus_visible(|s| s.border_2().border_color(rgb(0x3a83f7)))
@@ -2808,12 +3191,12 @@ fn file_header(
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
                             if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                this.request_open(i, cx);
+                                this.request_open_tab(i, cx);
                                 cx.stop_propagation();
                             }
                         }))
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            this.request_open(i, cx);
+                            this.request_open_tab(i, cx);
                             cx.stop_propagation();
                         })),
                 )
@@ -2833,120 +3216,6 @@ fn file_header(
                         )),
                 ),
         )
-}
-
-/// `--color-codex-syntax-*` of the codex themes.
-struct Syntax {
-    keyword: Hsla,
-    name: Hsla,
-    string: Hsla,
-    comment: Hsla,
-    literal: Hsla,
-    parameter: Hsla,
-    punctuation: Hsla,
-    operator: Hsla,
-}
-
-impl Syntax {
-    fn of(t: &Theme) -> Self {
-        let c = |dark: u32, light: u32| -> Hsla {
-            rgb(if t.appearance == Appearance::Dark {
-                dark
-            } else {
-                light
-            })
-            .into()
-        };
-        Self {
-            keyword: c(0xf67576, 0xd53538),
-            name: c(0xb06dff, 0x751ed9),
-            string: c(0x83d197, 0x3a843f),
-            comment: c(0xb9b9b9, 0x4f4f4f),
-            literal: c(0xf1a275, 0xac4f23),
-            parameter: c(0xfa994c, 0xbd5800),
-            punctuation: c(0x999999, 0x666666),
-            operator: c(0x6dcbf4, 0x0071ea),
-        }
-    }
-}
-
-const KEYWORDS: &[&str] = &[
-    "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif",
-    "else", "except", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda",
-    "nonlocal", "not", "or", "pass", "raise", "return", "try", "while", "with", "yield",
-];
-
-/// Python token colors for one line: keywords, `def`/`class` names, strings, comments, numbers.
-/// ponytail: a line tokenizer, so strings spanning lines color only their first line.
-fn highlight(line: &str, s: &Syntax) -> Vec<(Range<usize>, HighlightStyle)> {
-    let b = line.as_bytes();
-    let (mut i, mut prev, mut out) = (0, "", Vec::new());
-    let signature =
-        line.trim_start().starts_with("def ") || line.trim_start().starts_with("async def ");
-    while i < b.len() {
-        let start = i;
-        let color = match b[i] {
-            b'#' => {
-                i = b.len();
-                Some(s.comment)
-            }
-            q @ (b'"' | b'\'') => {
-                i += 1;
-                while i < b.len() && b[i] != q {
-                    i += if b[i] == b'\\' { 2 } else { 1 };
-                }
-                i = (i + 1).min(b.len());
-                Some(s.string)
-            }
-            c if c.is_ascii_digit() => {
-                while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'.') {
-                    i += 1;
-                }
-                Some(s.literal)
-            }
-            c if c.is_ascii_alphabetic() || c == b'_' => {
-                while i < b.len() && (b[i].is_ascii_alphanumeric() || b[i] == b'_') {
-                    i += 1;
-                }
-                let word = &line[start..i];
-                let color = if matches!(word, "def" | "class") {
-                    Some(s.name)
-                } else if KEYWORDS.contains(&word) {
-                    Some(s.keyword)
-                } else if matches!(word, "True" | "False" | "None") {
-                    Some(s.literal)
-                } else if matches!(prev, "def" | "class") {
-                    Some(s.name)
-                } else if signature {
-                    Some(s.parameter)
-                } else {
-                    None
-                };
-                prev = word;
-                color
-            }
-            b'(' | b')' | b'[' | b']' | b'{' | b'}' | b',' | b':' | b'.' => {
-                i += 1;
-                Some(s.punctuation)
-            }
-            b'+' | b'-' | b'*' | b'/' | b'%' | b'=' | b'<' | b'>' | b'&' | b'|' | b'^' | b'~' => {
-                i += 1;
-                Some(s.operator)
-            }
-            _ => {
-                i += 1;
-                None
-            }
-        };
-        if let Some(color) = color {
-            let style = HighlightStyle {
-                color: Some(color),
-                ..Default::default()
-            };
-            out.push((start..i, style));
-        }
-    }
-    out
 }
 
 fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
@@ -2980,65 +3249,75 @@ fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
     }
 }
 
-fn word_mark(line: &Line, layout: gpui::TextLayout, t: &Theme) -> Option<gpui::AnyElement> {
-    let range = line.word_change.clone()?;
-    let text = line.text.clone();
-    let color = if line.kind == Kind::Added {
-        t.git_added
-    } else {
-        t.git_deleted
+fn selected_line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
+    let dark = t.appearance == Appearance::Dark;
+    let (gutter, content) = match (dark, kind) {
+        (true, Kind::Context) => (0x3a506b, 0x2e3a4a),
+        (true, Kind::Added) => (0x36556a, 0x334e55),
+        (true, Kind::Removed) => (0x4c4d64, 0x50404c),
+        (false, Kind::Context) => (0xd5e6ff, 0xe1edff),
+        (false, Kind::Added) => (0xc7e0f2, 0xcde4ec),
+        (false, Kind::Removed) => (0xd5d8ef, 0xdfd9e8),
     };
-    let color = color.opacity(if t.appearance == Appearance::Dark {
-        0.2
-    } else {
-        0.15
-    });
-    Some(
-        gpui::canvas(
-            |_, _, _| {},
-            move |_, (), window, cx| {
-                let Some(mut start) = layout.position_for_index(range.start) else {
-                    return;
-                };
-                let mut end = start;
-                let decoration = Decoration {
-                    radius: Corners::all(px(3.)),
-                    fill: Some(color),
-                    ..Default::default()
-                };
-                let paint =
-                    |start: gpui::Point<Pixels>, end: gpui::Point<Pixels>, window: &mut Window| {
-                        shapes::paint(
-                            &decoration,
-                            None,
-                            gpui::Bounds::new(
-                                start + gpui::point(px(0.), px(3.5)),
-                                gpui::size(end.x - start.x, px(14.)),
-                            ),
-                            window,
-                            cx,
-                        );
-                    };
-                for (offset, ch) in text[range.clone()].char_indices() {
-                    let Some(here) = layout.position_for_index(range.start + offset) else {
-                        continue;
-                    };
-                    if here.y != start.y {
-                        paint(start, end, window);
-                        start = here;
-                    }
-                    let next = layout.position_for_index(range.start + offset + ch.len_utf8());
-                    end = next
-                        .filter(|p| p.y == here.y)
-                        .unwrap_or(here + gpui::point(px(CH), px(0.)));
-                }
-                paint(start, end, window);
-            },
-        )
-        .absolute()
-        .size_full()
-        .into_any_element(),
+    (
+        rgb(gutter).into(),
+        rgb(content).into(),
+        rgb(if dark { 0x96c4ff } else { 0x20649e }).into(),
     )
+}
+
+fn range_mark(
+    line: &Line,
+    range: Range<usize>,
+    layout: gpui::TextLayout,
+    color: Hsla,
+    radius: f32,
+) -> gpui::AnyElement {
+    let text = line.text.clone();
+    gpui::canvas(
+        |_, _, _| {},
+        move |_, (), window, cx| {
+            let Some(mut start) = layout.position_for_index(range.start) else {
+                return;
+            };
+            let mut end = start;
+            let decoration = Decoration {
+                radius: Corners::all(px(radius)),
+                fill: Some(color),
+                ..Default::default()
+            };
+            let paint =
+                |start: gpui::Point<Pixels>, end: gpui::Point<Pixels>, window: &mut Window| {
+                    shapes::paint(
+                        &decoration,
+                        None,
+                        gpui::Bounds::new(
+                            start + gpui::point(px(0.), px(3.5)),
+                            gpui::size(end.x - start.x, px(14.)),
+                        ),
+                        window,
+                        cx,
+                    );
+                };
+            for (offset, ch) in text[range.clone()].char_indices() {
+                let Some(here) = layout.position_for_index(range.start + offset) else {
+                    continue;
+                };
+                if here.y != start.y {
+                    paint(start, end, window);
+                    start = here;
+                }
+                let next = layout.position_for_index(range.start + offset + ch.len_utf8());
+                end = next
+                    .filter(|p| p.y == here.y)
+                    .unwrap_or(here + gpui::point(px(CH), px(0.)));
+            }
+            paint(start, end, window);
+        },
+    )
+    .absolute()
+    .size_full()
+    .into_any_element()
 }
 
 fn change_marker(kind: Kind, split: bool, t: &Theme) -> Div {
@@ -3078,18 +3357,16 @@ fn change_marker(kind: Kind, split: bool, t: &Theme) -> Div {
 
 fn hunk(
     h: &Hunk,
-    t: &Theme,
+    location: (usize, usize),
     line_index: &Cell<usize>,
     panel: &DiffPanel,
-    split: bool,
-    location: (usize, usize),
+    width: Pixels,
+    window: &Window,
     cx: &Context<DiffPanel>,
 ) -> Div {
-    let syntax = Syntax::of(t);
-    let plain_text = panel
-        .files
-        .get(location.0)
-        .is_some_and(|file| file.name.ends_with(".txt"));
+    let t = cx.theme();
+    let split = panel.layout.split(&panel.files[location.0], width);
+    let plain_text = panel.files[location.0].name.ends_with(".txt");
     let foreground: Hsla = rgb(match (t.appearance, plain_text) {
         (Appearance::Dark, false) => 0xfcfcfc,
         (Appearance::Dark, true) => 0xffffff,
@@ -3106,6 +3383,9 @@ fn hunk(
         .to_string()
         .len();
     let gutter = px(52.5625 + CH * digits.saturating_sub(4) as f32);
+    let column_width = if split { (width - px(2.)) / 2. } else { width };
+    let annotation_offset = px(f32::from(gutter).ceil()) - gutter;
+    let annotation_width = px(f32::from(column_width - gutter).floor().max(0.));
     let base_index = line_index.get();
     line_index.set(base_index + h.lines.len());
     let content_width = h
@@ -3120,32 +3400,37 @@ fn hunk(
                (number_bg, number_fg): (Hsla, Hsla),
                bg: Hsla,
                content: StyledText,
-               mark: Option<gpui::AnyElement>,
-               bar: Option<Kind>| {
+               mark: Vec<gpui::AnyElement>,
+               bar: Option<Kind>,
+               utility: Option<gpui::AnyElement>| {
         div()
             .h(px(CODE_LINE))
             .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_LINE)))
             .flex()
             .gap(px(2.))
             .child(
-                div()
-                    .relative()
-                    .w(gutter - px(2.))
-                    .flex_none()
-                    .h_full()
-                    .when(panel.wrap, |d| d.h_auto())
-                    .flex()
-                    .justify_end()
-                    .items_center()
-                    .when(panel.wrap, |d| d.items_start())
-                    .pr(px(CH))
-                    .child(shapes::decoration(Decoration {
-                        fill: Some(number_bg),
-                        ..Default::default()
-                    }))
-                    .when_some(bar, |d, kind| d.child(change_marker(kind, split, t)))
-                    .text_color(number_fg)
-                    .when_some(number, |d, n| d.child(n.to_string())),
+                deferred(
+                    div()
+                        .relative()
+                        .w(gutter - px(2.))
+                        .flex_none()
+                        .h_full()
+                        .when(panel.wrap, |d| d.h_auto())
+                        .flex()
+                        .justify_end()
+                        .items_center()
+                        .when(panel.wrap, |d| d.items_start())
+                        .pr(px(CH))
+                        .child(shapes::decoration(Decoration {
+                            fill: Some(number_bg),
+                            ..Default::default()
+                        }))
+                        .when_some(bar, |d, kind| d.child(change_marker(kind, split, t)))
+                        .text_color(number_fg)
+                        .when_some(number, |d, n| d.child(n.to_string()))
+                        .children(utility),
+                )
+                .with_priority(1),
             )
             .child(
                 div()
@@ -3167,22 +3452,21 @@ fn hunk(
                     .child(content),
             )
     };
-    let render_line = |l: &Line, index: usize, number: u32| {
-        let (number_bg, bg, number_fg) = line_colors(l.kind, t);
-        let found = l.matches.iter().enumerate().map(|(ordinal, range)| {
-            let index = l.match_start + ordinal;
+    let render_line = |l: &Line, index: usize, number: u32, side: comments::Side| {
+        let (mut number_bg, mut bg, mut number_fg) = line_colors(l.kind, t);
+        let bar = (l.kind != Kind::Context).then_some(l.kind);
+        let selected = panel.comment_selection_contains(location.0, side, number)
+            || !split
+                && l.kind == Kind::Context
+                && panel.comment_selection_contains(location.0, comments::Side::Left, l.old_number);
+        if selected {
+            (number_bg, bg, number_fg) = selected_line_colors(l.kind, t);
+        }
+        let found = l.matches.iter().map(|range| {
             (
                 range.clone(),
                 HighlightStyle {
                     color: Some(t.text),
-                    background_color: Some(
-                        rgb(if index == panel.active_match {
-                            0xfb6a22
-                        } else {
-                            0xffd240
-                        })
-                        .into(),
-                    ),
                     ..Default::default()
                 },
             )
@@ -3202,39 +3486,92 @@ fn hunk(
                 },
             ))
         });
-        let word = l.word_change.clone().map(|range| {
-            (
-                range,
-                HighlightStyle {
-                    color: Some(if plain_text { foreground } else { t.text }),
-                    ..Default::default()
-                },
-            )
-        });
-        let tokens = if plain_text {
-            Vec::new()
-        } else {
-            highlight(&l.text, &syntax)
-        };
+        let word = l
+            .word_changes
+            .iter()
+            .filter(|_| panel.word_diffs)
+            .map(|range| {
+                (
+                    range.clone(),
+                    HighlightStyle {
+                        color: Some(t.text),
+                        ..Default::default()
+                    },
+                )
+            });
         let content = StyledText::new(l.text.clone()).with_highlights(combine_highlights(
-            combine_highlights(combine_highlights(tokens, word), found),
+            combine_highlights(
+                combine_highlights(
+                    l.syntax
+                        .iter()
+                        .map(|(range, token)| (range.clone(), token.style(t))),
+                    word,
+                ),
+                found,
+            ),
             selection,
         ));
         let down_layout = content.layout().clone();
+        panel.find_scroll.track(l, panel.active_match, &down_layout);
         let move_layout = down_layout.clone();
-        let mark = word_mark(l, down_layout.clone(), t);
-        row(
+        let word_color = if l.kind == Kind::Added {
+            t.git_added
+        } else {
+            t.git_deleted
+        };
+        let mark = l
+            .word_changes
+            .iter()
+            .filter(|_| panel.word_diffs)
+            .map(|range| {
+                range_mark(
+                    l,
+                    range.clone(),
+                    down_layout.clone(),
+                    word_color.opacity(if t.appearance == Appearance::Dark {
+                        0.2
+                    } else {
+                        0.15
+                    }),
+                    3.,
+                )
+            })
+            .chain(l.matches.iter().enumerate().map(|(ordinal, range)| {
+                let color = rgb(if l.match_start + ordinal == panel.active_match {
+                    0xfb6a22
+                } else {
+                    0xffd240
+                });
+                range_mark(l, range.clone(), down_layout.clone(), color.into(), 2.5)
+            }))
+            .collect();
+        let line = row(
             Some(number),
             (number_bg, number_fg),
             bg,
             content,
             mark,
-            (l.kind != Kind::Context).then_some(l.kind),
+            bar,
+            panel.comment_gutter(location.0, side, number, cx),
         )
         .cursor_pointer()
+        .group("diff-comment-line")
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                this.request_context_menu(
+                    location.0,
+                    Some((side, number)),
+                    event.position,
+                    window,
+                    cx,
+                );
+            }),
+        )
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                this.cancel_context_request();
                 let offset = down_layout
                     .index_for_position(event.position)
                     .unwrap_or_else(|i| i);
@@ -3266,6 +3603,53 @@ fn hunk(
                 }
             }),
         )
+        .into_any_element();
+        let mut comments = panel.comment_rows(location.0, side, number, window, cx);
+        if !split && l.kind == Kind::Context {
+            comments.extend(panel.comment_rows(
+                location.0,
+                comments::Side::Left,
+                l.old_number,
+                window,
+                cx,
+            ));
+        }
+        let gutter_color = if selected {
+            selected_line_colors(Kind::Context, t).0
+        } else {
+            t.surface
+        };
+        div()
+            .flex()
+            .flex_col()
+            .child(line)
+            .children(comments.into_iter().map(|(comment, background)| {
+                div()
+                    .flex()
+                    .items_stretch()
+                    .bg(background)
+                    .child(
+                        deferred(
+                            div()
+                                .w(gutter)
+                                .flex_none()
+                                .border_r_2()
+                                .border_color(t.surface)
+                                .bg(gutter_color),
+                        )
+                        .with_priority(1),
+                    )
+                    .child(
+                        deferred(
+                            div()
+                                .ml(annotation_offset)
+                                .w(annotation_width)
+                                .flex_none()
+                                .child(comment),
+                        )
+                        .with_priority(0),
+                    )
+            }))
     };
     div()
         .flex()
@@ -3293,7 +3677,12 @@ fn hunk(
                                 .overflow_hidden()
                                 .min_h(px(CODE_LINE))
                                 .children(old.map(|i| {
-                                    render_line(&h.lines[i], base_index + i, h.lines[i].old_number)
+                                    render_line(
+                                        &h.lines[i],
+                                        base_index + i,
+                                        h.lines[i].old_number,
+                                        comments::Side::Left,
+                                    )
                                 })),
                         )
                         .child(
@@ -3303,30 +3692,42 @@ fn hunk(
                                 .overflow_hidden()
                                 .min_h(px(CODE_LINE))
                                 .children(new.map(|i| {
-                                    render_line(&h.lines[i], base_index + i, h.lines[i].number)
+                                    render_line(
+                                        &h.lines[i],
+                                        base_index + i,
+                                        h.lines[i].number,
+                                        comments::Side::Right,
+                                    )
                                 })),
                         )
                 }))
             } else {
-                d.children(
-                    h.lines
-                        .iter()
-                        .enumerate()
-                        .map(|(i, line)| render_line(line, base_index + i, line.number)),
-                )
+                d.children(h.lines.iter().enumerate().map(|(i, line)| {
+                    render_line(
+                        line,
+                        base_index + i,
+                        line.number,
+                        if line.kind == Kind::Removed {
+                            comments::Side::Left
+                        } else {
+                            comments::Side::Right
+                        },
+                    )
+                }))
             }
         })
         .map(|body| panel.track_hunk_layout(h, body, cx))
 }
 
 fn exceeds_diff_limits<'a>(lines: impl Iterator<Item = &'a str>) -> bool {
-    let mut bytes = 0;
+    let mut total = 0;
     for (index, line) in lines.enumerate() {
-        if index >= MAX_DIFF_LINES || line.len() > MAX_DIFF_LINE_BYTES {
+        let units = line.encode_utf16().count() + 1;
+        if index >= MAX_DIFF_LINES || units > MAX_DIFF_LINE_UNITS {
             return true;
         }
-        bytes += line.len() + 1;
-        if bytes > MAX_DIFF_BYTES {
+        total += units;
+        if total > MAX_DIFF_UNITS {
             return true;
         }
     }
@@ -3338,8 +3739,41 @@ fn exceeds_diff_limits<'a>(lines: impl Iterator<Item = &'a str>) -> bool {
 fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
     const TOO_LARGE: &str = "Diff too large to display";
     const INVALID: &str = "Diff failed to render";
-    if diff.len() > MAX_DIFF_BYTES || exceeds_diff_limits(diff.lines()) {
-        return Err(TOO_LARGE);
+    let mut changed_lines = 0;
+    let mut changed_units = 0;
+    let mut in_hunk = raw.is_some();
+    let mut lines = diff.split_inclusive('\n').peekable();
+    while let Some(line) = lines.next() {
+        let text = if raw.is_some() {
+            line
+        } else if line.starts_with("@@ ") {
+            in_hunk = true;
+            continue;
+        } else if line.starts_with("diff --git ") {
+            in_hunk = false;
+            continue;
+        } else if in_hunk {
+            let Some(text) = line.strip_prefix('+').or_else(|| line.strip_prefix('-')) else {
+                continue;
+            };
+            text
+        } else {
+            continue;
+        };
+        let missing_newline = raw.is_none()
+            && text.ends_with('\n')
+            && lines
+                .peek()
+                .is_some_and(|line| line.starts_with("\\ No newline at end of file"));
+        let units = text.encode_utf16().count() - usize::from(missing_newline);
+        changed_lines += 1;
+        changed_units += units;
+        if changed_lines > MAX_DIFF_LINES
+            || changed_units > MAX_DIFF_UNITS
+            || units > MAX_DIFF_LINE_UNITS
+        {
+            return Err(TOO_LARGE);
+        }
     }
     if let Some(kind) = raw {
         return Ok(vec![Hunk {
@@ -3357,7 +3791,8 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
                     text: text.to_owned().into(),
                     matches: Vec::new(),
                     match_start: 0,
-                    word_change: None,
+                    word_changes: Vec::new(),
+                    syntax: Vec::new(),
                 })
                 .collect(),
         }]);
@@ -3426,8 +3861,12 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
             text: line.get(1..).unwrap_or("").to_owned().into(),
             matches: Vec::new(),
             match_start: 0,
-            word_change: None,
+            word_changes: Vec::new(),
+            syntax: Vec::new(),
         });
+    }
+    if changed_lines > 2_000 {
+        return Ok(hunks);
     }
     for hunk in &mut hunks {
         let mut removed = 0..0;
@@ -3442,9 +3881,9 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
                 }
                 Kind::Added => {
                     if let Some(old) = removed.next() {
-                        let (a, b) = word_changes(&hunk.lines[old].text, &hunk.lines[index].text);
-                        hunk.lines[old].word_change = a;
-                        hunk.lines[index].word_change = b;
+                        let (a, b) = word::changes(&hunk.lines[old].text, &hunk.lines[index].text);
+                        hunk.lines[old].word_changes = a;
+                        hunk.lines[index].word_changes = b;
                     }
                 }
                 Kind::Context => removed = 0..0,
@@ -3452,29 +3891,6 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
         }
     }
     Ok(hunks)
-}
-
-// ponytail: one changed span per paired line; use token diff for separate marks within a line.
-fn word_changes(old: &str, new: &str) -> (Option<Range<usize>>, Option<Range<usize>>) {
-    let prefix: usize = old
-        .chars()
-        .zip(new.chars())
-        .take_while(|(a, b)| a == b)
-        .map(|(c, _)| c.len_utf8())
-        .sum();
-    let suffix: usize = old[prefix..]
-        .chars()
-        .rev()
-        .zip(new[prefix..].chars().rev())
-        .take_while(|(a, b)| a == b)
-        .map(|(c, _)| c.len_utf8())
-        .sum();
-    let end_old = old.len() - suffix;
-    let end_new = new.len() - suffix;
-    (
-        (prefix < end_old).then_some(prefix..end_old),
-        (prefix < end_new).then_some(prefix..end_new),
-    )
 }
 
 /// `path` relative to directory `base`, both absolute (`path.relative` of the original).
@@ -3622,10 +4038,7 @@ mod tests {
     }
 
     #[test]
-    fn word_changes_keep_unicode_boundaries_and_pair_replacements() {
-        assert_eq!(word_changes("é = old", "é = new"), (Some(5..8), Some(5..8)));
-        assert_eq!(word_changes("αβ", "αxβ"), (None, Some(2..3)));
-        assert_eq!(word_changes("same", "same"), (None, None));
+    fn replacement_lines_keep_their_word_spans() {
         let hunks = parse(
             "@@ -1,3 +1,3 @@\n-a = 1\n-b = 2\n+a = 3\n+b = 4\n same",
             None,
@@ -3635,9 +4048,9 @@ mod tests {
         assert_eq!(
             lines
                 .iter()
-                .map(|line| line.word_change.clone())
+                .map(|line| line.word_changes.clone())
                 .collect::<Vec<_>>(),
-            vec![Some(4..5), Some(4..5), Some(4..5), Some(4..5), None]
+            vec![vec![4..5], vec![4..5], vec![4..5], vec![4..5], vec![]]
         );
     }
 }

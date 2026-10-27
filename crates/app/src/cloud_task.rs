@@ -753,6 +753,7 @@ pub fn parse_task_response(detail: &Value, turns: &Value) -> Result<CloudTask> {
                 turn.items.push(ThreadItem::AgentMessage {
                     id: format!("cloud-assistant-message:{assistant_id}"),
                     text,
+                    phase: None,
                 });
             }
         }
