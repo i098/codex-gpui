@@ -553,8 +553,13 @@ impl DiffPanel {
         cx: &mut Context<Self>,
     ) -> Div {
         let t = cx.theme().clone();
-        let count =
-            |value, sign, color| text(states::signed_count(value, sign), 12., 18., 400., color);
+        // The original draws each count as SVG `<text>` centred on `dominant-baseline="middle"`,
+        // which sits 1.5 px above our centred line box.
+        let count = |value, sign, color| {
+            text(states::signed_count(value, sign), 12., 18., 400., color)
+                .relative()
+                .top(px(-1.5))
+        };
         let focus = self
             .filter_focus
             .get_or_insert_with(|| cx.focus_handle())

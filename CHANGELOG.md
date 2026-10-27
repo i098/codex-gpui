@@ -20,6 +20,7 @@ There is no release yet.
 - Add the Cloud environment UI with repository selection and saved setup flows
 
 ### Fixed
+- Place the Git review file tree's `+N`/`-N` line counts on the original's SVG text baseline.
 - Paint a short Plugins or Hooks settings page without a composited layer, as the original does, so the empty Hooks page matches its text, card corners and disabled reload button.
 - Let the Git review header's capsule shadows reach the large-diff notice area, as in the original.
 - Show `Enter full view` and the tab-count `Show tabs` in the titlebar when a narrow window hides the side panel, and match the original's code span pills and scroll limits.
