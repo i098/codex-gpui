@@ -235,6 +235,43 @@ const LINE_HEIGHT: Pixels = px(20.);
 /// border box less its 1 px borders and 8 px vertical padding.
 const MIN_TEXTAREA_CONTENT_HEIGHT: Pixels = px(78.);
 
+/// Blink's `DrawPlatformResizerImage` at 2x: two unantialiased 2 px strokes in 60% black, each
+/// repeated 2 device px lower in 60% white. Each stroke starts at its top row's 1 px tip, runs
+/// down-left 3 px wide, and ends 2 px wide on the row 7 device px above the border box's bottom.
+/// shortcut: the device pattern is measured at scale 2; derive Blink's geometry if 1x matters.
+fn paint_resizer(bounds: Bounds<Pixels>, window: &mut Window) {
+    let scale = window.scale_factor();
+    let (right, bottom) = (
+        (f32::from(bounds.right()) * scale).round(),
+        (f32::from(bounds.bottom()) * scale).round(),
+    );
+    for (top, color) in [
+        (-21, gpui::black()),
+        (-14, gpui::black()),
+        (-19, gpui::white()),
+        (-12, gpui::white()),
+    ] {
+        for row in top..=-7 {
+            let left = -7 - (row - top);
+            let (x, width) = match row {
+                _ if row == top => (left, 1),
+                -7 => (left + 1, 2),
+                _ => (left, 3),
+            };
+            window.paint_quad(fill(
+                Bounds::new(
+                    point(
+                        px((right + x as f32) / scale),
+                        px((bottom + row as f32) / scale),
+                    ),
+                    size(px(width as f32 / scale), px(1. / scale)),
+                ),
+                color.opacity(0.6),
+            ));
+        }
+    }
+}
+
 /// Composer keys (inventory §7.2): Enter sends, Shift+Enter inserts a newline. Edit menu
 /// commands (`crate::Cut`, `Copy`, `Paste`, `SelectAll`) are bound by the app.
 pub fn bind_keys(cx: &mut App) {
@@ -338,7 +375,10 @@ pub fn model_label(name: &str) -> String {
 enum FieldStyle {
     Settings,
     Form,
+    /// A settings-row value: frameless, right-aligned, secondary text.
     Inline,
+    /// Like `Inline`, but left-aligned in primary text.
+    Dialog,
 }
 
 /// One `model/list` entry as the picker shows it.
@@ -894,6 +934,19 @@ impl Composer {
         field
     }
 
+    /// A frameless single-line field for a dialog that draws its own frame, labelled `label`.
+    pub fn dialog_field(
+        label: &'static str,
+        placeholder: &'static str,
+        value: &str,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut field = Self::settings_field(placeholder, value, false, cx);
+        field.field_style = FieldStyle::Dialog;
+        field.request_label = Some(label.into());
+        field
+    }
+
     pub fn search_field(placeholder: &'static str, cx: &mut Context<Self>) -> Self {
         let mut field = Self::settings_field(placeholder, "", false, cx);
         field.search_field = true;
@@ -979,7 +1032,6 @@ impl Composer {
         editor.request_compact = true;
         editor
     }
-
     pub fn field_text(&self) -> &str {
         &self.content
     }
@@ -2335,7 +2387,7 @@ impl Render for Composer {
         }
         if self.plain_field.is_some() && self.field_style != FieldStyle::Settings {
             let multiline = self.plain_field == Some(true);
-            let inline = self.field_style == FieldStyle::Inline;
+            let inline = matches!(self.field_style, FieldStyle::Inline | FieldStyle::Dialog);
             let input = self
                 .editor(cx)
                 .w_full()
@@ -2354,6 +2406,14 @@ impl Render for Composer {
                 .font_weight(gpui::FontWeight(400.));
             let field = card
                 .w_full()
+                .role(gpui::Role::TextInput)
+                .aria_label(
+                    self.request_label
+                        .clone()
+                        .unwrap_or(self.placeholder.clone()),
+                )
+                .aria_placeholder(self.placeholder.clone())
+                .aria_value(self.content.clone())
                 .when(!inline, |d| {
                     d.p(px(1.)).child(shapes::decoration(shapes::Decoration {
                         radius: Corners::all(px(20.)),
@@ -2443,7 +2503,13 @@ impl Render for Composer {
                             .bottom_0()
                             .size(px(16.))
                             .cursor(CursorStyle::ResizeUpDown)
-                            .child(icon("textarea-resize", 16., t.text))
+                            .child(
+                                gpui::canvas(
+                                    |_, _, _| {},
+                                    |bounds, (), window, _| paint_resizer(bounds, window),
+                                )
+                                .size_full(),
+                            )
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
@@ -2498,28 +2564,32 @@ impl Render for Composer {
                                 .py(px(8.))
                         },
                     )
-                    .when(self.request_parent.is_none() && self.request_compact, |d| {
-                        d.px(px(1.))
-                            .py(px(8.))
-                            .child(shapes::decoration(shapes::Decoration {
-                                radius: Corners::all(Theme::RADIUS_MD),
-                                corner: shapes::Corner::Squircle,
-                                fill: Some(if t.appearance == Appearance::Dark {
-                                    gpui::rgba(0x2d2d2df5).into()
-                                } else {
-                                    t.background_panel
-                                }),
-                                border: Some((
-                                    px(1.),
-                                    if self.focus_handle.is_focused(window) {
-                                        gpui::rgba(0x83c3ffc2).into()
+                    // The select search row is a bare input inside the menu, as in the original.
+                    .when(
+                        self.request_parent.is_none() && self.request_compact && !self.search_field,
+                        |d| {
+                            d.px(px(1.))
+                                .py(px(8.))
+                                .child(shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(Theme::RADIUS_MD),
+                                    corner: shapes::Corner::Squircle,
+                                    fill: Some(if t.appearance == Appearance::Dark {
+                                        gpui::rgba(0x2d2d2df5).into()
                                     } else {
-                                        t.border_strong
-                                    },
-                                )),
-                                ..Default::default()
-                            }))
-                    })
+                                        t.background_panel
+                                    }),
+                                    border: Some((
+                                        px(1.),
+                                        if self.focus_handle.is_focused(window) {
+                                            gpui::rgba(0x83c3ffc2).into()
+                                        } else {
+                                            t.border_strong
+                                        },
+                                    )),
+                                    ..Default::default()
+                                }))
+                        },
+                    )
                     .when(self.request_parent.is_some(), |d| {
                         d.px(px(1.))
                             .py(px(if self.secret {

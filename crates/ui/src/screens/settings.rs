@@ -50,6 +50,7 @@ fn focus_on_pointer(
     }
 }
 
+mod languages;
 pub mod personalization;
 pub mod workspace {
     use crate::{SANS, composer::popover, focus, icon::icon, text};
@@ -803,12 +804,14 @@ impl SettingsPane {
     }
 
     /// A select for `key` with its options menu `(value, label)`; the first option is the
-    /// default. A click outside closes the menu.
+    /// default, and an empty value clears the setting. `search` adds a filter field with that
+    /// placeholder. A click outside closes the menu.
     fn select_menu(
         &mut self,
         key: &'static str,
         options: &'static [(&'static str, &'static str)],
-        width: f32,
+        search: Option<&'static str>,
+        present: fn(crate::settings_kit::Select) -> crate::settings_kit::Select,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let current = self.page.read(cx).choice(key, options[0].0).to_owned();
@@ -824,14 +827,22 @@ impl SettingsPane {
                 })
                 .collect();
             let select = cx.new(|cx| {
-                crate::settings_kit::Select::new(current.clone(), choices, None, cx)
-                    .with_width(width)
+                present(crate::settings_kit::Select::new(
+                    current.clone(),
+                    choices,
+                    search,
+                    cx,
+                ))
             });
             cx.subscribe(
                 &select,
                 move |_, _, selected: &crate::settings_kit::Selected, cx| {
                     page.update(cx, |page, cx| {
-                        page.set(key, json!(selected.0.as_ref()), cx);
+                        let value = match selected.0.as_ref() {
+                            "" => Value::Null,
+                            value => json!(value),
+                        };
+                        page.set(key, value, cx);
                     });
                 },
             )
@@ -1031,7 +1042,8 @@ impl SettingsPane {
                     self.select_menu(
                         "host.git-pull-request-merge-method",
                         &[("merge", "Merge"), ("squash", "Squash")],
-                        240.,
+                        None,
+                        |select| select,
                         cx,
                     ),
                     t,
@@ -1219,7 +1231,22 @@ impl SettingsPane {
                     row(
                         "Language",
                         Some("Language for the app UI"),
-                        select("Auto detect", None, false, false, t).into_any_element(),
+                        self.select_menu(
+                            "desktop.localeOverride",
+                            languages::LANGUAGES,
+                            Some("Search languages"),
+                            |select| {
+                                let mut select = select.keep_default_visible();
+                                select.search_aliases(|| {
+                                    languages::ENGLISH_NAMES
+                                        .iter()
+                                        .map(|&(code, name)| (code.into(), name.into()))
+                                        .collect()
+                                });
+                                select
+                            },
+                            cx,
+                        ),
                     ),
                     row(
                         "Show in menu bar",
@@ -1229,7 +1256,13 @@ impl SettingsPane {
                     row(
                         "Confirm before closing a window",
                         Some("Warn when a tab-close shortcut would close the window"),
-                        self.select_menu("host.confirm-before-close", CLOSE_OPTIONS, 240., cx),
+                        self.select_menu(
+                            "host.confirm-before-close",
+                            CLOSE_OPTIONS,
+                            None,
+                            |select| select,
+                            cx,
+                        ),
                     ),
                     row(
                         "Full view by default",
@@ -1335,7 +1368,13 @@ impl SettingsPane {
                     row(
                         "Send shortcut",
                         Some("Choose when Enter sends a prompt or inserts a new line"),
-                        self.select_menu("desktop.composerEnterBehavior", SEND_OPTIONS, 220., cx),
+                        self.select_menu(
+                            "desktop.composerEnterBehavior",
+                            SEND_OPTIONS,
+                            None,
+                            |select| select.with_width(220.),
+                            cx,
+                        ),
                     ),
                     row(
                         "Follow-up behavior",
@@ -1480,6 +1519,9 @@ impl Render for SettingsPane {
         }
         if section == "Archived chats" {
             return archived_chats::render(window, cx);
+        }
+        if section == "Connections" {
+            return super::connections::render(window, cx);
         }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
@@ -1749,7 +1791,7 @@ fn switch_sized(
                     shapes::paint(&thumb, None, at, window, cx);
                 };
                 if disabled {
-                    shapes::with_layer(153, b, window, paint)
+                    shapes::with_composited_opacity(153, b, window, cx, paint)
                 } else {
                     paint(window)
                 }
@@ -1760,7 +1802,13 @@ fn switch_sized(
 }
 
 /// A settings surface through `shapes`: CSS `radius`, corner shape, fill and 1 px border.
-fn deco(l: &Layer, radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> AnyElement {
+pub(super) fn deco(
+    l: &Layer,
+    radius: f32,
+    corner: Corner,
+    fill: Hsla,
+    border: Option<Hsla>,
+) -> AnyElement {
     let l = l.clone();
     in_layer(surface(radius, corner, fill, border), move || l.get()).into_any_element()
 }
@@ -1784,10 +1832,10 @@ fn surface(radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> sha
 
 /// The origin (window px) of the composited layer Chromium paints a scroll container's
 /// contents into (the scroller is `.layer()` for text). [`probe`] records it at prepaint.
-type Layer = Rc<Cell<Point<Pixels>>>;
+pub(super) type Layer = Rc<Cell<Point<Pixels>>>;
 
 /// An empty first child of the layer's root that records the root's origin.
-fn probe(l: &Layer) -> impl IntoElement {
+pub(super) fn probe(l: &Layer) -> impl IntoElement {
     let l = l.clone();
     canvas(move |b, _, _| l.set(b.origin), |_, _, _, _| {})
         .absolute()

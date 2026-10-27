@@ -8,6 +8,7 @@ mod archived_chats;
 mod cloud_task;
 pub use cloud_task::parse_task_response;
 pub mod computer_use_requests;
+pub mod connections;
 pub mod deep_link;
 mod destinations;
 pub mod dictation;
@@ -842,6 +843,7 @@ impl Root {
             },
         )
         .detach();
+        connections::install(cx);
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
             this.update(cx, |this, cx| {
@@ -1012,6 +1014,7 @@ impl Root {
                 this.refresh_automation_editor_options(None, cx);
                 this.ready = this.login.is_none();
                 hotkey::policy::refresh(this, cx);
+                connections::startup(this, cx);
                 this.select_route(cx);
                 this.sync(window, cx);
                 this.maybe_onboard(window, cx);
@@ -1202,6 +1205,7 @@ impl Root {
         {
             self.load_import_policy(cx);
         }
+        connections::sync(cx);
         self.automations = None;
         self.load_projects(cx);
         if self.ready && !self.signed_out() {
@@ -2302,12 +2306,12 @@ impl Root {
 
     /// Mobile `Get started` (`codex-mobile-setup-flow` `P`, `XNn`): the initial step shows its
     /// loading button while the host reads the account's MFA requirement. A non-`required`
-    /// answer opens the allow-host step (whose `Allow` is disabled); `required` also reads
+    /// answer opens the allow-host step; `required` also reads
     /// `/accounts/mfa_info` and opens the MFA step unless `mfa_enabled_v2` is already on. A
     /// failed read or a body without the expected field returns to the initial step with its
     /// error.
     fn start_mobile_setup(&mut self, cx: &mut Context<Self>) {
-        let Some(page) = self.mobile_page.clone() else {
+        let Some(page) = connections::mobile_page(self, cx) else {
             return;
         };
         page.update(cx, |page, cx| page.set_step(mobile::SetupStep::Pending, cx));
@@ -5591,6 +5595,7 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        connections::on_event(&event, cx);
         if matches!(&event, Event::Notification { method, .. } if method == "account/updated") {
             hotkey::policy::refresh(self, cx);
         }

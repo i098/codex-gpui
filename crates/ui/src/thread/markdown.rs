@@ -170,7 +170,16 @@ pub(super) fn with_find(
 }
 
 pub(super) fn document_preview(source: &str, window: &Window, t: &Theme) -> Div {
-    detail(source, window, t)
+    Markdown::new(source, window, t, None, &[])
+        .blocks(
+            Typography {
+                line_height: 19.6,
+                document: true,
+                ..Typography::default()
+            },
+            0,
+        )
+        .0
 }
 
 pub(super) fn detail(source: &str, window: &Window, t: &Theme) -> Div {
