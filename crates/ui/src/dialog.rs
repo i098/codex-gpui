@@ -3833,20 +3833,22 @@ fn draw_artwork(
     .size_full()
 }
 
-/// The editor's default `Time`: 9:00 AM in the local zone, named like the original's
-/// `Intl` short zone name (`PT`, `GMT+2`).
+/// The original's short local-zone label (`PT`, `GMT+2`).
 /// ponytail: US zones by offset, else `GMT±N`; a tz database lookup if other names matter.
-fn schedule_time() -> String {
+pub(crate) fn local_zone() -> String {
     let hours = chrono::Local::now().offset().local_minus_utc() / 3600;
-    let zone = match hours {
+    match hours {
         -8 | -7 => "PT".into(),
         -6 => "MT".into(),
         -5 => "CT".into(),
         -4 => "ET".into(),
         0 => "GMT".into(),
         h => format!("GMT{h:+}"),
-    };
-    format!("9:00 AM {zone}")
+    }
+}
+
+fn schedule_time() -> String {
+    format!("9:00 AM {}", local_zone())
 }
 
 impl Render for Dialog {

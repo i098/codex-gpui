@@ -987,6 +987,7 @@ impl Root {
                         .expect("close preference");
                 this.skills = skills;
                 this.models = models;
+                this.refresh_automation_editor_options(None, cx);
                 this.ready = this.login.is_none();
                 hotkey::policy::refresh(this, cx);
                 this.select_route(cx);
@@ -1348,6 +1349,7 @@ impl Root {
             .filter(|project| !project.missing)
             .filter_map(|project| Some((project.label.clone(), project.root.as_ref()?.to_string())))
             .collect();
+        self.refresh_automation_editor_options(Some(&projects), cx);
         let composer = self.home.read(cx).composer.clone();
         composer.update(cx, |composer, _| composer.set_slash_projects(choices));
         self.sidebar
@@ -2306,6 +2308,7 @@ impl Root {
             menu.update(cx, |menu, cx| menu.update_catalog(threads, &unread, cx));
         }
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
+        self.refresh_automation_editor_options(None, cx);
     }
 
     fn set_next_cursor(&mut self, cursor: Option<String>, cx: &mut Context<Self>) {
@@ -2727,6 +2730,16 @@ impl Root {
             return;
         }
         let editor = cx.new(|cx| automations::editor::Editor::new(item.as_ref(), cx));
+        editor.update(cx, |editor, cx| {
+            editor.set_options(
+                &self.models,
+                &self.threads,
+                None,
+                &self.config,
+                &self.cwd,
+                cx,
+            );
+        });
         cx.subscribe_in(
             &editor,
             window,
@@ -2746,7 +2759,27 @@ impl Root {
         .detach();
         window.focus(&editor.focus_handle(cx), cx);
         self.automation_editor = Some(editor);
+        self.load_projects(cx);
         cx.notify();
+    }
+
+    fn refresh_automation_editor_options(
+        &mut self,
+        projects: Option<&[ui::screens::sidebar::Project]>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(editor) = &self.automation_editor {
+            editor.update(cx, |editor, cx| {
+                editor.set_options(
+                    &self.models,
+                    &self.threads,
+                    projects,
+                    &self.config,
+                    &self.cwd,
+                    cx,
+                );
+            });
+        }
     }
 
     /// Writes the editor's draft; a failed write keeps the editor open with its draft.
@@ -3298,6 +3331,7 @@ impl Root {
             }
             CommandMenuEvent::Command(label) => match label.as_ref() {
                 "New chat" => window.dispatch_action(Box::new(NewChat), cx),
+                "Show Mini" => window.dispatch_action(Box::new(ui::OpenMini), cx),
                 "New standalone chat" => {
                     window.dispatch_action(Box::new(features::shortcuts::NewStandaloneChat), cx)
                 }
@@ -5982,7 +6016,7 @@ fn automation_save_request(
     let mut body = if proposal {
         item.cloned().unwrap()
     } else {
-        json!({})
+        draft.execution.clone()
     };
     body["name"] = json!(draft.name);
     body["prompt"] = json!(draft.prompt);
@@ -5997,7 +6031,9 @@ fn automation_save_request(
         body["status"] = item.unwrap()["status"].clone();
         ("automation-update", body)
     } else {
-        body["cwds"] = json!([cwd]);
+        if body.get("cwds").is_none() {
+            body["cwds"] = json!([cwd]);
+        }
         ("automation-create", body)
     }
 }
@@ -6740,7 +6776,7 @@ fn generation_instructions(context: &str) -> String {
 }
 
 impl Render for Root {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.crashed {
             return native_menus::actions(
                 div()
@@ -6815,7 +6851,7 @@ impl Render for Root {
                 .child(recovery::StartupLoader)
                 .into_any_element();
         }
-        let content: AnyElement = if let Some(content) = hotkey::content(self, cx) {
+        let content: AnyElement = if let Some(content) = hotkey::content(self, window, cx) {
             content
         } else {
             match (&self.page, &self.split) {
@@ -6869,6 +6905,15 @@ impl Render for Root {
             .on_action(cx.listener(
                 |this, _: &settings::integrations::OpenPluginManager, window, cx| {
                     this.open_settings_section("Plugins", window, cx)
+                },
+            ))
+            .on_action(cx.listener(
+                |this, action: &settings::integrations::OpenMcpSettings, window, cx| {
+                    this.open_settings_section("MCP servers", window, cx);
+                    this.settings_integrations.update(cx, |state, cx| {
+                        state.mcp_search = Some(action.0.clone());
+                        cx.notify();
+                    });
                 },
             ))
             .on_action(cx.listener(

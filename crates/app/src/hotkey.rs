@@ -19,12 +19,14 @@ mod audio;
 mod desktop;
 #[cfg(target_os = "macos")]
 mod dictation;
+mod mini;
 mod platform;
 pub(crate) mod policy;
 use platform::{Native, Shortcut, ShortcutEvent};
 
-const GLOBAL_COMMANDS: [(&str, Shortcut, Option<&str>); 6] = [
+const GLOBAL_COMMANDS: [(&str, Shortcut, Option<&str>); 7] = [
     ("spotlightSearch", Shortcut::Spotlight, Some("Alt+K")),
+    ("openAvatarOverlay", Shortcut::Mini, Some("Alt+Space")),
     (
         "screenshotToCurrentChat",
         Shortcut::ScreenshotCurrent,
@@ -47,6 +49,7 @@ pub enum Target {
     Thread(String),
     Remote(String),
     Spotlight,
+    Mini,
 }
 
 impl Target {
@@ -67,6 +70,7 @@ impl Target {
             "/hotkey-window" => Ok(Self::Home),
             "/hotkey-window/new-thread" => Ok(Self::NewThread),
             "/spotlight" => Ok(Self::Spotlight),
+            "/avatar-overlay" => Ok(Self::Mini),
             _ => path
                 .strip_prefix("/hotkey-window/thread/")
                 .filter(|id| !id.is_empty() && !id.contains('/'))
@@ -81,9 +85,17 @@ pub(crate) struct Popout {
     owner: WindowHandle<Root>,
     controls: Entity<Controls>,
     project_read: Option<gpui::Task<()>>,
+    mini: Option<mini::State>,
 }
 
 pub(crate) fn thread_shown(root: &Root, window: &mut Window, cx: &mut Context<Root>) {
+    if root
+        .popout
+        .as_ref()
+        .is_some_and(|popout| popout.target == Target::Mini)
+    {
+        return;
+    }
     if root
         .popout
         .as_ref()
@@ -107,6 +119,7 @@ actions!(
     [
         OpenPopout,
         OpenSpotlight,
+        OpenMiniFromHotkey,
         Collapse,
         Dismiss,
         OpenInMainWindow,
@@ -121,6 +134,7 @@ struct Runtime {
     active: Option<WindowHandle<Root>>,
     popout: Option<WindowHandle<Root>>,
     spotlight: Option<WindowHandle<Root>>,
+    mini: Option<WindowHandle<Root>>,
     native: Option<Native>,
     listener: Option<gpui::Task<()>>,
     bindings: Vec<platform::Binding>,
@@ -144,6 +158,8 @@ pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &OpenSpotlight, cx| launch(Target::Spotlight, cx));
     cx.on_action(|_: &ScreenshotCurrent, cx| screenshot(false, cx));
     cx.on_action(|_: &ScreenshotNew, cx| screenshot(true, cx));
+    cx.on_action(|_: &ui::OpenMini, cx| cx.defer(|cx| mini::toggle(false, cx)));
+    cx.on_action(|_: &OpenMiniFromHotkey, cx| cx.defer(|cx| mini::toggle(true, cx)));
 }
 
 pub(crate) fn primary(handle: WindowHandle<Root>, cx: &mut App) {
@@ -151,12 +167,17 @@ pub(crate) fn primary(handle: WindowHandle<Root>, cx: &mut App) {
     if !cx.global::<Runtime>().initialized {
         cx.global_mut::<Runtime>().initialized = true;
         sync_keyboard(cx);
+        cx.defer(mini::restore);
     }
 }
 
 pub(crate) fn activation_changed(root: &Root, window: &mut Window, cx: &mut App) {
     if !window.is_window_active() {
-        if root.popout.is_some() {
+        if root
+            .popout
+            .as_ref()
+            .is_some_and(|popout| popout.target != Target::Mini)
+        {
             windows::close(window, cx);
         }
         return;
@@ -319,6 +340,7 @@ fn install_bindings(bindings: Vec<platform::Binding>, cx: &mut App) -> Result<()
         while let Ok(event) = receiver.recv().await {
             cx.update(|cx| match event.shortcut {
                 Shortcut::Spotlight if event.pressed => launch(Target::Spotlight, cx),
+                Shortcut::Mini if event.pressed => mini::toggle(true, cx),
                 Shortcut::Popout if event.pressed => launch(Target::Home, cx),
                 Shortcut::ScreenshotCurrent if event.pressed => screenshot(false, cx),
                 Shortcut::ScreenshotNew if event.pressed => screenshot(true, cx),
@@ -434,11 +456,18 @@ pub fn open(owner: WindowHandle<Root>, target: Target, cx: &mut App) -> Result<W
     let kind = match target {
         Target::Home => windows::Kind::HotkeyHome,
         Target::Spotlight => windows::Kind::Spotlight,
+        Target::Mini => windows::Kind::AvatarOverlay,
         _ => windows::Kind::HotkeyThread,
     };
     let saved_target = target.clone();
     let mut spec = windows::Spec::new(kind, "Codex");
     spec.owner = Some(owner.into());
+    if target == Target::Mini {
+        spec.presentation = windows::Presentation::Hidden;
+        spec.bounds = Some(gpui::WindowBounds::Windowed(mini::initial_bounds(
+            owner, cx,
+        )?));
+    }
     let events = bridge.subscribe_async();
     let handle = windows::open(spec, cx, |window, cx| {
         cx.new(|cx| {
@@ -451,6 +480,10 @@ pub fn open(owner: WindowHandle<Root>, target: Target, cx: &mut App) -> Result<W
     match saved_target {
         Target::Home => cx.global_mut::<Runtime>().popout = Some(handle),
         Target::Spotlight => cx.global_mut::<Runtime>().spotlight = Some(handle),
+        Target::Mini => {
+            cx.global_mut::<Runtime>().mini = Some(handle);
+            mini::observe_pointer(handle, cx)?;
+        }
         _ => {}
     }
     Ok(handle)
@@ -464,14 +497,15 @@ fn attach(
     cx: &mut Context<Root>,
 ) {
     let composer = root.home.read(cx).composer.clone();
-    let projectless = cx
-        .try_global::<crate::host_settings::Settings>()
-        .is_some_and(|settings| {
-            settings
-                .read_all()
-                .get("hotkey-window-projectless-default-enabled")
-                == Some(&json!(true))
-        });
+    let projectless = target == Target::Mini
+        || cx
+            .try_global::<crate::host_settings::Settings>()
+            .is_some_and(|settings| {
+                settings
+                    .read_all()
+                    .get("hotkey-window-projectless-default-enabled")
+                    == Some(&json!(true))
+            });
     let options = Options {
         root: (!projectless)
             .then(|| root.state.project_root.clone())
@@ -484,15 +518,24 @@ fn attach(
         changed(root, change, window, cx)
     })
     .detach();
+    let mini = (target == Target::Mini).then(mini::State::default);
     root.popout = Some(Popout {
         target,
         owner,
         controls,
         project_read: None,
+        mini,
     });
     root.load_projects(cx);
     refresh(root, cx);
     composer.focus_handle(cx).focus(window, cx);
+    if root
+        .popout
+        .as_ref()
+        .is_some_and(|popout| popout.target == Target::Mini)
+    {
+        composer.update(cx, |composer, cx| composer.set_mini(cx));
+    }
     if root
         .popout
         .as_ref()
@@ -846,8 +889,11 @@ pub(crate) fn command(
     true
 }
 
-pub(crate) fn content(root: &Root, cx: &App) -> Option<AnyElement> {
+pub(crate) fn content(root: &Root, window: &Window, cx: &mut Context<Root>) -> Option<AnyElement> {
     let popout = root.popout.as_ref()?;
+    if popout.target == Target::Mini {
+        return Some(mini::content(root, window, cx));
+    }
     if popout.target == Target::Spotlight {
         return Some(div().size_full().into_any_element());
     }
@@ -978,7 +1024,19 @@ fn button<A: gpui::Action>(
 pub(crate) fn actions(view: Div, active: bool, cx: &mut Context<Root>) -> Div {
     view.when(active, |view| view.key_context("Popout"))
         .on_action(cx.listener(|root, _: &Dismiss, window, cx| {
-            if root.popout.is_some() {
+            if root
+                .popout
+                .as_ref()
+                .is_some_and(|popout| popout.target == Target::Mini)
+            {
+                if let Err(error) = mini::dismiss(window, cx) {
+                    root.toast(
+                        ui::toast::Toast::danger("Could not close Mini")
+                            .description(error.to_string()),
+                        cx,
+                    );
+                }
+            } else if root.popout.is_some() {
                 windows::close(window, cx);
             } else {
                 cx.propagate();
@@ -1016,7 +1074,21 @@ pub(crate) fn actions(view: Div, active: bool, cx: &mut Context<Root>) -> Div {
                 .is_ok()
             {
                 let _ = windows::show(owner.into(), windows::Presentation::Foreground, cx);
-                windows::close(window, cx);
+                if root
+                    .popout
+                    .as_ref()
+                    .is_some_and(|popout| popout.target == Target::Mini)
+                {
+                    if let Err(error) = mini::dismiss(window, cx) {
+                        root.toast(
+                            ui::toast::Toast::danger("Could not close Mini")
+                                .description(error.to_string()),
+                            cx,
+                        );
+                    }
+                } else {
+                    windows::close(window, cx);
+                }
             }
         }))
 }
@@ -1061,6 +1133,23 @@ mod tests {
             bindings
                 .iter()
                 .any(|binding| binding.0 == Shortcut::ScreenshotNew)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn mini_binding_does_not_enable_the_disabled_notch_commands() -> Result<()> {
+        let overrides = BTreeMap::from([
+            ("openAvatarOverlay".into(), vec!["Alt+P".into()]),
+            ("notchVoice".into(), vec!["Alt+V".into()]),
+            ("toggleNotch".into(), vec!["Alt+C".into()]),
+        ]);
+        let bindings = configured_bindings(&overrides)?;
+        assert!(bindings.contains(&(Shortcut::Mini, Some(35), 0x0800)));
+        assert!(
+            !bindings
+                .iter()
+                .any(|binding| matches!(binding.1, Some(8 | 9)))
         );
         Ok(())
     }

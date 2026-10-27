@@ -20,6 +20,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.toggle_automation(&action.id, cx);
         }),
     )
+    .on_action(
+        cx.listener(|this, action: &automations::ShareAutomation, _, cx| {
+            this.share_automation(&action.id, cx);
+        }),
+    )
     .on_action(cx.listener(|this, action: &automations::EditAutomation, window, cx| {
         this.edit_automation(Some(action.id.clone()), window, cx);
     }))
@@ -91,4 +96,31 @@ pub(super) fn thread(root: &mut Root, cx: &mut Context<Root>) -> Entity<Shell> {
     root.scheduled = Some(sidebar);
     root.sync_starting(cx);
     shell
+}
+
+impl Root {
+    /// Builds the original local task URL with a query-encoded automation ID.
+    pub fn automation_link(id: &str) -> String {
+        let mut link = url::Url::parse("https://chatgpt.com/scheduled").expect("constant URL");
+        link.query_pairs_mut()
+            .append_pair("automationId", id)
+            .append_pair("automationSource", "local");
+        link.into()
+    }
+
+    fn share_automation(&mut self, id: &str, cx: &mut Context<Self>) {
+        let link = Self::automation_link(id);
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(link.clone()));
+        // The original confirms only a successful clipboard write.
+        if cx
+            .read_from_clipboard()
+            .and_then(|item| item.text())
+            .as_deref()
+            == Some(&link)
+        {
+            self.toast(Toast::success("Link copied"), cx);
+        } else {
+            eprintln!("codex-gpui: share task: the clipboard did not take the link");
+        }
+    }
 }

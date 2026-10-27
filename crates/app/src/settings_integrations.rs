@@ -155,6 +155,16 @@ impl Root {
         snapshot: Option<Snapshot>,
         cx: &mut Context<Self>,
     ) {
+        let removed_name =
+            match &action {
+                Action::RemoveServer(key) => {
+                    self.settings_integrations.read(cx).configuration["config"]["mcp_servers"][key]
+                        ["name"]
+                        .as_str()
+                        .map(str::to_owned)
+                }
+                _ => None,
+            };
         if let Some(snapshot) = snapshot {
             if let Ok(configuration) = &snapshot.configuration {
                 self.config = configuration["config"].clone();
@@ -167,6 +177,7 @@ impl Root {
             let notice = match result {
                 Ok(url) => {
                     integration_succeeded(state, &action, url, cx);
+                    state.suppressed_servers.extend(removed_name);
                     None
                 }
                 Err(error) => integration_failed(state, &action, error),
