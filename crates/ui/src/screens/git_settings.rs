@@ -33,20 +33,21 @@ impl SettingsPane {
                     .read(cx)
                     .choice(key, if multiline { "" } else { "codex/" })
                     .to_owned();
+                let watch = key == "host.git-pr-watch-instructions";
                 let editor = cx.new(|cx| {
-                    Composer::settings_field(placeholder, &value, multiline, cx)
-                        .field_label(if key == "host.git-pr-watch-instructions" {
-                            "Pull request watch instructions"
-                        } else {
-                            title
-                        })
-                        .with_field_rows(if key == "host.git-pr-watch-instructions" {
-                            5
-                        } else if multiline {
-                            6
-                        } else {
-                            1
-                        })
+                    if multiline {
+                        // The original textareas show five (watch) or six rows.
+                        Composer::settings_field(placeholder, &value, true, cx)
+                            .with_field_min_height(px(18.571_428 * if watch { 5. } else { 6. }))
+                            .input_style()
+                            .field_label(if watch {
+                                "Pull request watch instructions"
+                            } else {
+                                title
+                            })
+                    } else {
+                        Composer::settings_compact_field(placeholder, &value, cx).field_label(title)
+                    }
                 });
                 let field = editor.clone();
                 if !multiline {
@@ -104,6 +105,7 @@ impl SettingsPane {
                         "merge",
                         &[("merge", "Merge"), ("squash", "Squash")],
                         t,
+                        window,
                         cx,
                     ),
                     t,
@@ -130,6 +132,7 @@ impl SettingsPane {
                         "inline",
                         &[("inline", "Inline"), ("detached", "Detached")],
                         t,
+                        window,
                         cx,
                     ),
                     t,

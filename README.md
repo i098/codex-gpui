@@ -336,8 +336,7 @@ Cursor projectless imports keep their workspace and output-folder records withou
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
 Use `Composer::settings_field` for text and `.monospace_field()` for scripts and commands.
-Textareas scroll inside a fixed initial height, resize to a 96-pixel minimum, and keep the caret visible after resizing.
-Run `cargo test -p ui --lib composer::settings_field::tests` for input clipping, resize, release, minimum-height, and caret checks.
+Textareas scroll inside a fixed initial height, resize to a 78-pixel minimum content height, and keep the caret visible after resizing.
 Use `Toast` for existing information, error, and success messages.
 Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice check.
 

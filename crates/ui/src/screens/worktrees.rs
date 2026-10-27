@@ -16,8 +16,6 @@ use theme::{ActiveTheme as _, Theme};
 
 use super::computer_use::Load;
 
-const TABS_HEIGHT: f32 = 20. + 18.571_428 + 2. * 4. + 8.;
-
 #[derive(Clone)]
 pub enum Action {
     Refresh,
@@ -77,13 +75,13 @@ impl Worktrees {
             .unwrap_or_default();
         let root = cx.new(|cx| {
             let mut editor =
-                Composer::settings_field("", &root, false, cx).field_label("Worktree root");
+                Composer::settings_compact_field("", &root, cx).field_label("Worktree root");
             editor.set_placeholder(placeholder, cx);
             editor
         });
         let limit = cx.new(|cx| {
-            Composer::settings_field("15", &limit, false, cx)
-                .compact_field()
+            Composer::settings_compact_field("15", &limit, cx)
+                .small_input()
                 .field_label("Auto-delete limit")
         });
         cx.observe(&page, |_, _, cx| cx.notify()).detach();
@@ -559,7 +557,10 @@ impl Render for Worktrees {
             });
         });
         let heading_measure = self.heading_height.clone();
-        let sticky_offset = (-self.scroll.offset().y - self.heading_height.get()).max(px(0.));
+        // A relative shift sticks the tabs without growing the scroll height; the clamp ignores
+        // overscroll past the end.
+        let offset = (-self.scroll.offset().y).min(self.scroll.max_offset().y);
+        let shift = (offset - self.heading_height.get()).max(px(0.));
         let content = if self.environments {
             div().child(super::environments::render(
                 SharedString::from(format!("environment-{:?}", self.page.entity_id())),
@@ -587,6 +588,7 @@ impl Render for Worktrees {
             });
         let tabs = div()
             .relative()
+            .top(shift)
             .bg(t.surface)
             .pt(px(20.))
             .pb(px(8.))
@@ -676,14 +678,8 @@ impl Render for Worktrees {
                     .mx_auto()
                     .px(px(20.))
                     .pb(px(20.))
-                    .child(div().h(px(TABS_HEIGHT)))
-                    .child(div().pt(px(20.)).child(content))
-                    .child(
-                        tabs.absolute()
-                            .top(sticky_offset)
-                            .left(px(20.))
-                            .right(px(20.)),
-                    ),
+                    .child(gpui::deferred(tabs))
+                    .child(div().pt(px(20.)).child(content)),
             );
         div()
             .size_full()

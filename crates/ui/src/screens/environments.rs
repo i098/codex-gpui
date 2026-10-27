@@ -128,12 +128,13 @@ fn field(
     cx: &mut Context<Environments>,
 ) -> Entity<Composer> {
     let field = cx.new(|cx| {
-        let editor =
-            Composer::settings_field(placeholder, value, rows > 1, cx).with_field_rows(rows);
         if rows > 1 {
-            editor.monospace_field()
+            Composer::settings_field(placeholder, value, true, cx)
+                .with_field_min_height(px(18.571_428 * rows as f32))
+                .monospace_field()
+                .input_style()
         } else {
-            editor
+            Composer::settings_compact_field(placeholder, value, cx)
         }
     });
     cx.observe(&field, |_, _, cx| cx.notify()).detach();
@@ -810,7 +811,7 @@ impl Environments {
                     cx.notify();
                 }))
         });
-        select(labels[current], None, false, t)
+        select(labels[current], None, false, false, t)
             .id(SharedString::from(format!(
                 "action-menu-{}",
                 match menu {
