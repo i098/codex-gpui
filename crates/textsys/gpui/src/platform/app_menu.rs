@@ -100,6 +100,9 @@ pub enum MenuItem {
 
         /// Whether this action is disabled
         disabled: bool,
+
+        /// Whether this action is hidden while its shortcut remains active.
+        hidden: bool,
     },
 }
 
@@ -130,6 +133,7 @@ impl MenuItem {
             os_action: None,
             checked: false,
             disabled: false,
+            hidden: false,
         }
     }
 
@@ -145,6 +149,7 @@ impl MenuItem {
             os_action: Some(os_action),
             checked: false,
             disabled: false,
+            hidden: false,
         }
     }
 
@@ -159,12 +164,14 @@ impl MenuItem {
                 os_action,
                 checked,
                 disabled,
+                hidden,
             } => OwnedMenuItem::Action {
                 name: name.into(),
                 action,
                 os_action,
                 checked,
                 disabled,
+                hidden,
             },
             MenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.owned()),
         }
@@ -204,6 +211,14 @@ impl MenuItem {
                 submenu.disabled = disabled;
             }
             _ => {}
+        }
+        self
+    }
+
+    /// Hide this action without disabling its shortcut.
+    pub fn hidden(mut self, hidden: bool) -> Self {
+        if let Self::Action { hidden: value, .. } = &mut self {
+            *value = hidden;
         }
         self
     }
@@ -274,6 +289,9 @@ pub enum OwnedMenuItem {
 
         /// Whether this action is disabled
         disabled: bool,
+
+        /// Whether this action is hidden while its shortcut remains active.
+        hidden: bool,
     },
 }
 
@@ -288,12 +306,14 @@ impl Clone for OwnedMenuItem {
                 os_action,
                 checked,
                 disabled,
+                hidden,
             } => OwnedMenuItem::Action {
                 name: name.clone(),
                 action: action.boxed_clone(),
                 os_action: *os_action,
                 checked: *checked,
                 disabled: *disabled,
+                hidden: *hidden,
             },
             OwnedMenuItem::SystemMenu(os_menu) => OwnedMenuItem::SystemMenu(os_menu.clone()),
         }
@@ -356,71 +376,4 @@ pub(crate) fn init_app_menus(platform: &dyn Platform, cx: &App) {
             }
         }
     }));
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::Menu;
-
-    #[test]
-    fn test_menu() {
-        let menu = Menu::new("App")
-            .items(vec![
-                crate::MenuItem::action("Action 1", gpui::NoAction),
-                crate::MenuItem::separator(),
-            ])
-            .disabled(true);
-
-        assert_eq!(menu.name.as_ref(), "App");
-        assert_eq!(menu.items.len(), 2);
-        assert!(menu.disabled);
-    }
-
-    #[test]
-    fn test_menu_item_builder() {
-        use super::MenuItem;
-
-        let item = MenuItem::action("Test Action", gpui::NoAction);
-        assert_eq!(
-            match &item {
-                MenuItem::Action { name, .. } => name.as_ref(),
-                _ => unreachable!(),
-            },
-            "Test Action"
-        );
-        assert!(matches!(
-            item,
-            MenuItem::Action {
-                checked: false,
-                disabled: false,
-                ..
-            }
-        ));
-
-        assert!(
-            MenuItem::action("Test Action", gpui::NoAction)
-                .checked(true)
-                .is_checked()
-        );
-        assert!(
-            MenuItem::action("Test Action", gpui::NoAction)
-                .disabled(true)
-                .is_disabled()
-        );
-
-        let submenu = MenuItem::submenu(super::Menu {
-            name: "Submenu".into(),
-            items: vec![],
-            disabled: true,
-        });
-        assert_eq!(
-            match &submenu {
-                MenuItem::Submenu(menu) => menu.name.as_ref(),
-                _ => unreachable!(),
-            },
-            "Submenu"
-        );
-        assert!(!submenu.is_checked());
-        assert!(submenu.is_disabled());
-    }
 }

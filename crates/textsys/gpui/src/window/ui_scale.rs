@@ -14,6 +14,7 @@ impl Window {
         }
         self.ui_scale = scale;
         self.scale_factor = self.device_scale_factor * scale;
+        self.text_system.set_scale_factor(self.scale_factor);
         self.viewport_size = self
             .platform_window
             .content_size()

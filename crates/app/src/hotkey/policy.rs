@@ -1,8 +1,82 @@
-use crate::{Root, cloud};
-use anyhow::{Context as _, ensure};
+use crate::{Root, host};
+use anyhow::{Context as _, Result, ensure};
 use gpui::{App, AppContext as _, Context};
 use serde_json::{Value, json};
 use ui::screens::settings::voice::Policy;
+use url::Url;
+
+fn request(
+    host: &dyn host::Host,
+    identity: &host::Identity,
+    method: &str,
+    path: &str,
+    body: Option<Value>,
+) -> Result<Value> {
+    let mut request = json!({
+        "url":path,"method":method,
+        "headers":{
+            "OAI-Language":"en-US","X-OpenAI-Attach-Auth":"1",
+            "X-OpenAI-Attach-Integrity-State":"1","originator":"Codex Desktop",
+            "ChatGPT-Account-ID":identity.account_id,
+        },
+        "expectedIdentity":{"accountId":identity.account_id,"userId":identity.user_id},
+        "returnErrorResponse":true,
+    });
+    if let Some(body) = body {
+        request["body"] = body.to_string().into();
+    }
+    let response = host.fetch(&host::Request::Http(request))?;
+    let current = host
+        .identity()
+        .context("Dictation authentication is unavailable")?;
+    ensure!(
+        current == *identity,
+        "Dictation authentication changed during the request"
+    );
+    let response = response.get("value").unwrap_or(&response);
+    let response = response.pointer("/response/__response").unwrap_or(response);
+    if response["status"] == 204 {
+        return Ok(Value::Null);
+    }
+    host::json_body(response)
+}
+
+fn policy_inputs(
+    host: &dyn host::Host,
+    identity: &host::Identity,
+    plan: &str,
+) -> Result<(Value, Value, bool)> {
+    let bootstrap = request(
+        host,
+        identity,
+        "POST",
+        "/wham/statsig/bootstrap",
+        Some(json!({
+            "app_session_id":identity.device_id,"app_version":env!("CARGO_PKG_VERSION"),
+            "brand_name":"chatgpt","build_flavor":"prod","locale":"en-US",
+            "stable_id":identity.device_id,"system_name":std::env::consts::OS,
+            "system_version":"","window_type":"electron",
+        })),
+    )?;
+    let gates: Value = serde_json::from_str(
+        bootstrap["statsigPayload"]
+            .as_str()
+            .context("Missing Statsig payload")?,
+    )?;
+    let consumer = matches!(plan, "free" | "go" | "plus" | "prolite" | "pro" | "promax");
+    let policy = if consumer {
+        Value::Null
+    } else {
+        let mut url = Url::parse("https://chatgpt.com/").expect("static URL");
+        url.path_segments_mut().expect("HTTP URL").extend([
+            "accounts",
+            identity.account_id.as_str(),
+            "settings",
+        ]);
+        request(host, identity, "GET", url.path(), None)?
+    };
+    Ok((gates, policy, consumer))
+}
 
 fn access(gates: &Value, workspace: &Value, consumer: bool, feature_enabled: bool) -> (bool, bool) {
     let enabled = |key: &str| gates["feature_gates"][key]["value"] == true;
@@ -71,7 +145,7 @@ pub(crate) fn refresh(root: &Root, cx: &mut Context<Root>) {
                 let identity = host
                     .identity()
                     .context("No authenticated dictation identity")?;
-                let (gates, workspace, consumer) = cloud::policy_inputs(&*host, &identity, &plan)?;
+                let (gates, workspace, consumer) = policy_inputs(&*host, &identity, &plan)?;
                 let (dictation, global_dictation) =
                     access(&gates, &workspace, consumer, feature_enabled);
                 Ok(Some((dictation, global_dictation)))

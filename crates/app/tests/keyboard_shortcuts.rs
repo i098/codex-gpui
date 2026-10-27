@@ -228,17 +228,60 @@ fn zoom_clamps_scales_input_space_and_holds_the_hovered_banner() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn zoom_reloads_from_saved_window_state() -> Result<()> {
+    panic_hook();
+    let directory = tempfile::tempdir()?;
+    let state_path = directory.path().join("state.json");
+    let recording = directory.path().join("replay.jsonl");
+    std::fs::write(
+        &recording,
+        script(None, |_| {})?
+            .iter()
+            .map(|line| format!("{line}\n"))
+            .collect::<String>(),
+    )?;
+    let open = |state: app::State| -> Result<Fx> {
+        let (bridge, events) = bridge::Bridge::replay(&recording)?;
+        let mut fx = Fx::new()?;
+        fx.root = fx.cx.update_window(fx.window, |_, window, cx| {
+            window.replace_root(cx, |window, cx| {
+                app::Root::new(state, bridge, events, common::CWD.into(), window, cx)
+            })
+        })?;
+        fx.wait("restored window", |fx| fx.read(|root, _| root.ready()))?;
+        Ok(fx)
+    };
+    let mut fx = open(app::State {
+        theme: app::ThemeSetting::Dark,
+        path: Some(state_path.clone()),
+        ..Default::default()
+    })?;
+    fx.keys("cmd-=")?;
+    let mut saved: app::State = serde_json::from_slice(&std::fs::read(&state_path)?)?;
+    ensure!(saved.zoom == 1.1);
+    drop(fx);
+    saved.path = Some(state_path);
+    let mut restored = open(saved)?;
+    let zoom = restored
+        .cx
+        .update_window(restored.window, |_, window, _| window.ui_scale())?;
+    ensure!(zoom == 1.1);
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 mod native {
     use super::*;
     use gpui::{Modifiers, ModifiersChangedEvent, PlatformInput};
-    use ui::screens::settings::keyboard_shortcuts::canonical;
+    use ui::screens::settings::keyboard_shortcuts::{LinkModifier, canonical};
 
     fn capture(fx: &mut Fx, name: &str) -> Result<()> {
         if let Some(path) = std::env::var_os("CGX_SHORTCUT_PROOF") {
             let path = std::path::Path::new(&path);
             std::fs::create_dir_all(path)?;
-            fx.shot()?.save(path.join(format!("keyboard-{name}.png")))?;
+            fx.reference_shot()?
+                .save(path.join(format!("keyboard-{name}.png")))?;
         }
         Ok(())
     }
@@ -257,6 +300,16 @@ mod native {
         fx.keys("cmd-,")?;
         fx.click(fx.at("settings", "Keyboard shortcuts")?)?;
         capture(&mut fx, "list")?;
+        fx.click((1090.7, 278.3))?;
+        capture(&mut fx, "number-menu-default")?;
+        fx.click((1090.7, 278.3))?;
+        fx.click((550., 203.))?;
+        fx.type_text("Open web link in default browser")?;
+        capture(&mut fx, "search-link")?;
+        fx.click((804.3, 286.3))?;
+        capture(&mut fx, "link-menu-default")?;
+        fx.click((804.3, 286.3))?;
+        fx.click((1117.25, 203.))?;
         fx.click((825.24, 378.57))?;
         capture(&mut fx, "capture")?;
         fx.keys("cmd-k")?;
@@ -278,13 +331,23 @@ mod native {
                     .get("newTask")
                     .is_some_and(|keys| canonical(&keys[0]) == "cmd-shift-y")
         }));
+        fx.keys("cmd-shift-y")?;
+        ensure!(fx.route() == Route::Home);
+        fx.keys("cmd-,")?;
+        fx.click(fx.at("settings", "Keyboard shortcuts")?)?;
+        change(&mut fx, Change::Reset);
         fx.click((550., 203.))?;
-        fx.type_text("zzzz-no-shortcut")?;
+        fx.type_text("chat")?;
+        capture(&mut fx, "search-chat")?;
+        fx.click((1117.25, 203.))?;
+        fx.type_text("zzzzzz")?;
         capture(&mut fx, "no-matches")?;
         fx.keys("escape")?;
         capture(&mut fx, "query-cleared")?;
-        fx.keys("cmd-shift-y")?;
-        ensure!(fx.route() == Route::Home);
+        fx.click((1147.25, 203.))?;
+        fx.keys("cmd-k")?;
+        ensure!(fx.read(|root, _| root.command_menu().is_none()));
+        capture(&mut fx, "search-keystrokes")?;
         Ok(())
     }
 
@@ -297,7 +360,7 @@ mod native {
         fx.click((550., 203.))?;
         fx.type_text("Dictation shortcut")?;
         capture(&mut fx, "dictation-search")?;
-        fx.keys("tab tab space")?;
+        fx.keys("tab tab tab space")?;
         ensure!(
             fx.cx
                 .update(|cx| cx.global::<KeyboardState>().capture_owner.is_some())
@@ -329,6 +392,62 @@ mod native {
                 .is_some_and(|key| canonical(key) == "ctrl-shift")
         }));
         capture(&mut fx, "dictation-modifiers")?;
+        Ok(())
+    }
+
+    #[test]
+    fn reset_preserves_number_target_and_clears_shortcut_overrides() -> Result<()> {
+        panic_hook();
+        let mut fx = Fx::new()?;
+        change(&mut fx, Change::NumberTarget(NumberTarget::Tabs));
+        change(
+            &mut fx,
+            Change::Bindings {
+                command: "newTask".into(),
+                keys: vec!["Command+Shift+Y".into()],
+            },
+        );
+        fx.keys("cmd-,")?;
+        fx.click(fx.at("settings", "Keyboard shortcuts")?)?;
+        fx.click((1100., 278.))?;
+        capture(&mut fx, "number-menu")?;
+        fx.click((1100., 341.))?;
+        ensure!(fx.cx.update(|cx| {
+            cx.global::<KeyboardState>()
+                .preferences
+                .primary_number_shortcut_target
+                == NumberTarget::Sidebar
+        }));
+        fx.click((550., 203.))?;
+        fx.type_text("Open web link in default browser")?;
+        fx.click((804.3, 286.3))?;
+        capture(&mut fx, "link-menu")?;
+        fx.click((790., 379.))?;
+        ensure!(fx.cx.update(|cx| {
+            cx.global::<KeyboardState>()
+                .preferences
+                .external_browser_link_shortcut
+                == LinkModifier::Alt
+        }));
+        fx.click((1117.25, 203.))?;
+        fx.click((1100., 136.))?;
+        capture(&mut fx, "reset-confirm")?;
+        fx.keys("escape")?;
+        ensure!(fx.cx.update(|cx| {
+            cx.global::<KeyboardState>()
+                .preferences
+                .bindings
+                .contains_key("newTask")
+        }));
+        fx.click((1100., 136.))?;
+        fx.keys("tab enter")?;
+        ensure!(fx.cx.update(|cx| {
+            let preferences = &cx.global::<KeyboardState>().preferences;
+            preferences.bindings.is_empty()
+                && preferences.primary_number_shortcut_target == NumberTarget::Sidebar
+                && preferences.external_browser_link_shortcut == LinkModifier::Primary
+        }));
+        capture(&mut fx, "reset-result")?;
         Ok(())
     }
 }

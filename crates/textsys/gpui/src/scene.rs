@@ -87,7 +87,7 @@ impl Scene {
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
         let mut primitive = primitive.into();
         let clipped_bounds = primitive
-            .bounds()
+            .paint_bounds()
             .intersect(&primitive.content_mask().bounds);
 
         if clipped_bounds.is_empty() {
@@ -243,6 +243,35 @@ impl Primitive {
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
         }
+    }
+
+    fn paint_bounds(&self) -> Bounds<ScaledPixels> {
+        let transformation = match self {
+            Primitive::MonochromeSprite(sprite) => sprite.transformation,
+            Primitive::SubpixelSprite(sprite) => sprite.transformation,
+            _ => return *self.bounds(),
+        };
+        if transformation == TransformationMatrix::unit() {
+            return *self.bounds();
+        }
+        let bounds = self.bounds();
+        let (left, top) = (bounds.origin.x.0, bounds.origin.y.0);
+        let (right, bottom) = (left + bounds.size.width.0, top + bounds.size.height.0);
+        let mut min = [f32::INFINITY; 2];
+        let mut max = [f32::NEG_INFINITY; 2];
+        for [x, y] in [[left, top], [right, top], [right, bottom], [left, bottom]] {
+            for axis in 0..2 {
+                let value = transformation.rotation_scale[axis][0] * x
+                    + transformation.rotation_scale[axis][1] * y
+                    + transformation.translation[axis];
+                min[axis] = min[axis].min(value);
+                max[axis] = max[axis].max(value);
+            }
+        }
+        Bounds::new(
+            Point::new(ScaledPixels(min[0]), ScaledPixels(min[1])),
+            Size::new(ScaledPixels(max[0] - min[0]), ScaledPixels(max[1] - min[1])),
+        )
     }
 
     pub fn content_mask(&self) -> &ContentMask<ScaledPixels> {
@@ -712,9 +741,9 @@ impl Default for TransformationMatrix {
 #[expect(missing_docs)]
 pub struct MonochromeSprite {
     pub order: DrawOrder,
-    /// The Chromium layers the sprite is painted into (`Window::sprite_layers`): 0 for none,
-    /// else the outermost in the low 16 bits and the next in the high 16, each `id << 8 | alpha`.
-    pub layers: u32,
+    /// Four Chromium layers, each packed as `id << 8 | alpha`, outermost first.
+    /// Zero entries mark unused layers.
+    pub layers: [u16; 4],
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
@@ -757,7 +786,7 @@ pub struct PolychromeSprite {
     pub skia: u32,
     /// The same packed compositor layers as a monochrome sprite.
     #[cfg(target_vendor = "apple")]
-    pub layers: u32,
+    pub layers: [u16; 4],
     pub grayscale: PaddedBool32,
     pub opacity: f32,
     pub bounds: Bounds<ScaledPixels>,
@@ -770,7 +799,7 @@ impl PolychromeSprite {
     fn is_layered(&self) -> bool {
         #[cfg(target_vendor = "apple")]
         {
-            self.layers != 0
+            self.layers != [0; 4]
         }
         #[cfg(not(target_vendor = "apple"))]
         {

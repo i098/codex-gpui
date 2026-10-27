@@ -153,7 +153,7 @@ learn(oracle);
 const READ_ONLY = /\/(read|list|get|search|status)[A-Za-z]*$|\/(installed|loaded\/list|capabilities\/read)$|^(getAuthStatus|gitDiffToRemote|fuzzyFileSearch|getConversationSummary|thread\/resume|account\/login\/start)$/;
 // vscode://codex/<handler> fetches that only read (handler names from main-CqEoQDOU.js). Not
 // external-agent-import-detect: it lists the owner's Claude/Cursor sessions.
-const VSCODE_READ = /^(ambient-suggestions|app-server-connection-state|browser-use-origin-state-read|claude-code-import-status|codex-agents-md|codex-command-keymap-state|codex-home|developer-instructions|external-agent-import-status|external-agent-imported-connectors|fast-mode-rollout-metrics|find-files|get-.*|git-merge-base|git-origins|global-dictation-hotkey-state|has-custom-cli-executable|home-directory|inbox-items|is-.*|list-.*|local-custom-agents|locale-info|local-environment-config|mcp-codex-config|native-desktop-apps?|native-desktop-app-(icon|by-bundle-id)|os-info|paths-exist|projectless-.*|read-.*|recommended-skills|.*directory-entries|settings-read|third-party-notices|workspace-root-options|worktree-shell-environment-config|wsl-bash-availability|statsig-.*)$/;
+const VSCODE_READ = /^(ambient-suggestions|app-server-connection-state|browser-use-origin-state-read|claude-code-import-status|codex-agents-md|codex-command-keymap-state|codex-home|developer-instructions|discover-remote-ssh-connections|external-agent-import-status|external-agent-imported-connectors|fast-mode-rollout-metrics|find-files|get-.*|git-merge-base|git-origins|global-dictation-hotkey-state|has-custom-cli-executable|home-directory|inbox-items|is-.*|list-.*|local-custom-agents|locale-info|local-environment-config|mcp-codex-config|native-desktop-apps?|native-desktop-app-(icon|by-bundle-id)|os-info|paths-exist|projectless-.*|read-.*|recommended-skills|.*directory-entries|settings-read|third-party-notices|workspace-root-options|worktree-shell-environment-config|wsl-bash-availability|statsig-.*)$/;
 let appServer;
 const rpcPending = new Map();
 let rpcId = 0;
@@ -273,14 +273,15 @@ async function fromView(s, msg) {
 
 async function mcpRequest(s, msg) {
   const { method, id } = msg.request;
-  if (!READ_ONLY.test(method)) {
+  const recordedArchive = process.env.R1_OFFLINE && msg.hostId === "local" && /^thread\/(archive|unarchive)$/.test(method);
+  if (!READ_ONLY.test(method) && !recordedArchive) {
     log("refused", msg.hostId, method);
     s.emit({ type: "mcp-response", hostId: msg.hostId, message: { id, error: { code: -32000, message: `route1: ${method} is not allowed` } } });
     return;
   }
-  // thread/resume goes to the live app too: its app-server holds the fixture threads' writer
-  // locks, so a second server answers "This is open in another app".
-  if (msg.hostId !== "local" || method === "thread/resume") {
+  // Live resumes use the original process, which owns the fixture writer locks.
+  // Offline resumes use the recorded adapter and match the thread, not transient view options.
+  if (msg.hostId !== "local" || (method === "thread/resume" && !process.env.R1_OFFLINE)) {
     const key = `mcp ${msg.hostId} ${method} ${keyOf(msg.request.params ?? null)}`;
     const res = await recall(key, () => {
       const rid = `r1-${crypto.randomUUID()}`;

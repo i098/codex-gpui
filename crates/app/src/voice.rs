@@ -482,7 +482,9 @@ pub(crate) fn transcription_request(
     let mut request = http_request(identity, "POST", "/transcribe");
     request["headers"]["Content-Type"] = format!("multipart/form-data; boundary={boundary}").into();
     request["retry"] = "never".into();
-    Ok(Request::HttpBytes { request, body })
+    request["bodyBase64"] =
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &body).into();
+    Ok(Request::Http(request))
 }
 
 #[cfg(test)]

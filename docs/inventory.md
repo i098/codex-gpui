@@ -96,7 +96,7 @@ Items are reorderable by drag (dnd-kit, activation distance 6 px; screen reader 
 | 2 | Space | `sidebarElectron.spaceRouteNavLink` | `/space` | route starts with `/space` |
 | 3 | Scheduled | `sidebarElectron.inboxRouteNavLink` | `/scheduled` (automations, `ScheduledSidebar` in sidebar-a9ef58c0cd4b.js) | route starts with `/automations` |
 | 4 | Plugins | `sidebarElectron.skillsAppsRouteNavLink` | `/plugins` | route starts with `/skills` or `/plugins` |
-| 5 | Explore (`…`, blue dot) | `sidebarCustomization.moreMenu` | menu with secondary destinations and `Customize sidebar` | — |
+| 5 | Explore (`…`, conditional blue dot) | `sidebarCustomization.moreMenu` | menu with secondary destinations and `Customize sidebar` | — |
 | 6 | Code Review | `sidebarElectron.codeReviewRouteNavLink` | `/pull-requests` (`CodeReviewSidebar` in sidebar-6f96a2b5f34d.js) | route starts with `/pull-requests` |
 | 7 | Sites | `sidebarElectron.sitesRouteNavLink` | `/sites` | route starts with `/sites` |
 | footer | Profile avatar | `codex.profileFooter.openProfileMenu` | profile menu (Profile, Settings, Usage, Log out, Show Mini, …; `codex.profileDropdown.*`, profile-dropdown-items-*.js) | — |
@@ -104,6 +104,29 @@ Items are reorderable by drag (dnd-kit, activation distance 6 px; screen reader 
 - Reselecting the current destination calls its `onReselect` (Home resets the view) instead of navigating.
 - Rail settings button (`sidebarElectron.rail.settings`) opens settings when no footer is supplied.
 - Only Home is in scope for v1 behavior; the other rail destinations need only their route switch and an empty placeholder.
+
+### Explore unread state
+
+The native marker uses the actual rail destination registry and global UI entrypoints from `mcpServerStatus/list`.
+MCP entries require a valid `ui://` resource and a global entrypoint.
+Native route identities replace their equivalent MCP entrypoints without creating a second discovery marker.
+
+The existing `get-global-state` transport reads `electron-persisted-atom-state`.
+`sidebar-customization-snapshots-v2` supplies signed-in pin overrides for the exact account and user.
+When no matching snapshot exists, `inline-sidebar-customization-state-by-account-id-v2` supplies the account-scoped fallback.
+Canonical IDs take precedence over legacy aliases; default pins fill at most eight slots.
+`sidebar-more-menu-seen-mcp-destination-ids-by-account-id-v1` supplies the account's seen MCP IDs.
+Pinned destinations do not light Explore.
+
+`mcp-global-entrypoints-v2` is a fallback for the exact user, account, and local host.
+A complete live catalog removes stale entries.
+Partial catalog reads retain unqueried cached servers; failed server reads require the same plugin identity.
+
+Reads run off the UI thread and refresh on account, host, MCP lifecycle, and window-activation events.
+No polling service is added.
+The reader checks identity again before publishing, cancels old callbacks, and keeps unavailable state distinct from an empty unread set.
+Every route shell receives the same bound unread IDs; Home chat attention remains separate.
+This prerequisite supplies notification state, not replacement navigation controls.
 
 ## 4. Screen: Sidebar (thread list and search)
 
@@ -312,9 +335,18 @@ Section registry: `gWa` (order) and `lQa` (lazy pages) in app-initial-6350d04672
 | `cloud-computer` | — | `ChatGptCloudBrowserSettings` | settings-65381b73a1a2.js |
 | `passwords` | — | `PasswordsSettings` | settings-156aaa691e7d.js |
 | `teams` | — | `TeamSettingsPage` | team-settings-page-9276d495b863.js |
+| `open-source-licenses` | General > View | `OpenSourceLicensesPage` | open-source-licenses-page-aa8c2e98f58d.js |
 
 - General settings (general-settings-65e65871cdcd.js): `Theme` `Light` / `Dark` / `System`, light and dark chrome themes (accent, background, foreground, UI/code fonts, contrast, translucent sidebar, import/copy theme), `UI font size`, `Code font size`, `Diff markers` (`Color` / `+/-`), `Use pointer cursors`, `Font smoothing`, `Reduce motion`, `Dock icon`, `Send shortcut`, `Follow-up behavior`.
 - Keyboard shortcuts (keyboard-shortcuts-settings-e5d452e7d34c.js) lists and rebinds the commands of section 11; `⌘/` opens `KeyboardShortcutsDialog` (keyboard-shortcuts-dialog-a55e88bf0464.js).
+- Native `/settings/open-source-licenses` reads `THIRD_PARTY_NOTICES.txt` from the app bundle, then the working directory's asset paths.
+  Bundle assembly generates the file from production dependency metadata and available package license files.
+  It retains loading and missing-file states.
+  Back replaces the subtree with General; selecting another settings section leaves the subtree.
+  A virtual list keeps painted rows bounded for large notices files.
+  The card uses its full wrapped height in the scroll layer; the Back arrow uses the main rounded clip.
+  The retained original/native pair passes with zero outside-text differences and 0.0690411% inside-text differences.
+  Measuring all wrapped lines remains costly during initial load and resize.
 
 ### 9.2 Login and onboarding
 

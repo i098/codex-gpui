@@ -114,22 +114,20 @@ impl ThreadView {
         .with_priority(1)
     }
 
-    /// The thread's part of the window titlebar (`Chat toolbar`): project icon and title, then
-    /// `Chat actions` and `Toggle summary`, laid over the shell's titlebar (open-sidebar
-    /// layout) from the main panel's left edge to the shell's `New tab` group.
-    pub fn titlebar_header(&self, cx: &Context<Self>) -> Div {
+    /// The thread titlebar actions and identity. A titled thread shows its identity, as in
+    /// every retained single-pane original; an untitled thread (the original `mediaExplore`
+    /// empty thread) shows it only beside a side pane.
+    pub fn titlebar_header(&self, side_pane: bool, cx: &Context<Self>) -> Div {
         div()
             .absolute()
             .top_0()
             .left(Theme::SIDEBAR_WIDTH)
             .right(px(43.))
-            // Chromium composites the `group/titlebar` (it overlaps composited layers): text
-            // blits into its transparent tile.
-            .layer()
-            .child(self.header(cx))
+            // Its composited `group/titlebar` layer is the caller's (`diff::split_screen`).
+            .child(self.header(side_pane || !self.title.is_empty(), cx))
     }
 
-    pub(super) fn header(&self, cx: &Context<Self>) -> Div {
+    pub(super) fn header(&self, show_identity: bool, cx: &Context<Self>) -> Div {
         let t = cx.theme();
         div()
             .relative()
@@ -140,16 +138,25 @@ impl ThreadView {
             .gap(px(8.))
             .pl(px(8.))
             .pr(px(6.))
-            // Divider between the sidebar's and the thread's titlebar parts.
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .top(px(12.))
-                    .w(px(1.))
-                    .h(px(20.))
-                    .bg(over(t.border, layout_color(t))),
-            )
+            .when(show_identity, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .top(px(12.))
+                        .w(px(1.))
+                        .h(px(20.))
+                        .bg(over(t.border, layout_color(t)))
+                        // The quad is part of the layer's recorded bounds.
+                        .child(
+                            canvas(
+                                |bounds, window, _| shapes::record_painted(bounds, window),
+                                |_, (), _, _| {},
+                            )
+                            .size_full(),
+                        ),
+                )
+            })
             .child(
                 div()
                     .flex_1()
@@ -157,25 +164,28 @@ impl ThreadView {
                     .flex()
                     .items_center()
                     .gap(px(4.))
-                    .child(
-                        div()
-                            .size(px(28.))
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(icon("thread-project", 16., t.text)),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .ml(px(-2.))
-                            .px(px(6.))
-                            .overflow_hidden()
-                            .child(
-                                text(self.header_title(), 14., 24., 500., t.text).text_ellipsis(),
-                            ),
-                    ),
+                    .when(show_identity, |d| {
+                        d.child(
+                            div()
+                                .size(px(28.))
+                                .flex_none()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(icon("thread-project", 16., t.text)),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .ml(px(-2.))
+                                .px(px(6.))
+                                .overflow_hidden()
+                                .child(
+                                    text(self.header_title(), 14., 24., 500., t.text)
+                                        .text_ellipsis(),
+                                ),
+                        )
+                    }),
             )
             .child(
                 div()
@@ -232,11 +242,11 @@ impl ThreadView {
                                     fill: Some(t.text_alpha_10),
                                     ..Default::default()
                                 }))
-                                .child(icon("thread-summary", 16., t.text))
+                                .child(icon("thread-summary", 16., t.text).runtime())
                         } else {
                             icon_button(
                                 "toggle-summary",
-                                icon("thread-summary", 16., t.text_tertiary),
+                                icon("thread-summary", 16., t.text_tertiary).runtime(),
                                 t,
                             )
                         }

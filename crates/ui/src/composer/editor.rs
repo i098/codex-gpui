@@ -17,7 +17,7 @@ pub(super) struct History {
     undo: Vec<EditState>,
     redo: Vec<EditState>,
     /// When the last edit happened and where it ended.
-    last: Option<(Instant, usize)>,
+    pub(super) last: Option<(Instant, usize)>,
 }
 
 const NEW_GROUP_DELAY: Duration = Duration::from_millis(500);
@@ -115,6 +115,7 @@ impl Composer {
     }
 
     fn restore(&mut self, (content, selection, mentions): EditState, cx: &mut Context<Self>) {
+        self.cancel_dictation(cx);
         self.history.last = None;
         self.content = content;
         self.mentions = mentions;
@@ -335,6 +336,22 @@ impl Composer {
         self.insert("", window, cx);
     }
 
+    pub(super) fn speak_selection(
+        &mut self,
+        _: &crate::StartSpeaking,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let text = if self.selected_range.is_empty() {
+            self.content.as_str()
+        } else {
+            &self.content[self.selected_range.clone()]
+        };
+        if let Err(error) = crate::native_text::speak(text, cx) {
+            eprintln!("codex-gpui: cannot speak selection: {error:#}");
+        }
+    }
+
     /// Command+V, or the menu's Paste: images and long text (5,000 UTF-16 units or more)
     /// become attachments, except in the message editor, which takes clipboard text only.
     pub(super) fn paste(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -354,18 +371,17 @@ impl Composer {
                 }
             }
         } else if let Some(text) = item.text() {
-            if self
-                .on_settings_paste
-                .as_ref()
-                .is_some_and(|handler| handler(&text, cx))
-            {
-                return;
-            }
             if attach && text.encode_utf16().take(5000).count() == 5000 {
                 self.save_paste(attach::Content::Text(text), cx);
             } else {
                 self.insert(&text, window, cx);
             }
+        }
+    }
+
+    pub(super) fn paste_and_match_style(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+            self.insert(&text, window, cx);
         }
     }
 
@@ -390,13 +406,48 @@ impl Composer {
         }
         window.focus(&self.focus_handle, cx);
         self.menu = None;
+        self.context_spelling = None;
+        self.context_image = None;
         let at = self.index_for_point(e.position);
         if !self.selected_range.contains(&at) {
             self.move_to(at, cx);
         }
+        let spelling = crate::native_text::misspelling(&self.content, self.offset_to_utf16(at))
+            .map(|spelling| {
+                let range = self.range_from_utf16(&spelling.range_utf16);
+                (spelling, range)
+            });
+        if let Some((_, range)) = &spelling
+            && self.selected_range.is_empty()
+        {
+            self.selected_range = range.clone();
+            self.selection_reversed = false;
+        }
         let selection = self.content[self.selected_range.clone()].to_string();
         let has = !selection.is_empty();
         let mut items = Vec::new();
+        if let Some((spelling, range)) = spelling.filter(|(_, range)| *range == self.selected_range)
+        {
+            self.context_spelling = Some((range.clone(), self.content[range].to_string()));
+            if spelling.guesses.is_empty() {
+                items.push(Item::new(
+                    "dictionarySuggestions",
+                    "No Guesses Found",
+                    false,
+                ));
+            } else {
+                for guess in spelling.guesses {
+                    let label: SharedString = guess.into();
+                    items.push(Item {
+                        payload: Some(label.clone()),
+                        ..Item::new("dictionarySuggestions", label, true)
+                    });
+                }
+            }
+            items.push(Item::separator("spelling-separator"));
+            items.push(Item::new("learnSpelling", "Learn Spelling", true));
+            items.push(Item::separator("learn-spelling-separator"));
+        }
         if has {
             let trimmed = selection.trim();
             // `p$e(t, 25)`: the label shows the first 24 characters and an ellipsis.
@@ -435,6 +486,25 @@ impl Composer {
         cx: &mut Context<Self>,
     ) {
         match id {
+            crate::image_context::COPY
+            | crate::image_context::SAVE
+            | crate::image_context::REVEAL => {
+                if let Some(image) = self.context_image.take() {
+                    image.activate(id, window, cx);
+                }
+            }
+            "dictionarySuggestions" => {
+                if let Some((range, _)) = self.take_spelling() {
+                    self.selected_range = range;
+                    self.selection_reversed = false;
+                    self.insert(&selection, window, cx);
+                }
+            }
+            "learnSpelling" => {
+                if let Some((_, word)) = self.take_spelling() {
+                    crate::native_text::learn(&word);
+                }
+            }
             // ponytail: `showDefinitionForSelection` has no GPUI call; Dictionary.app opens
             // the same entry from its URL scheme.
             "lookUpSelection" => cx.open_url(&selection_url("dict://", &selection)),
@@ -447,6 +517,12 @@ impl Composer {
             "paste" => self.paste(window, cx),
             _ => {}
         }
+    }
+
+    fn take_spelling(&mut self) -> Option<(Range<usize>, String)> {
+        self.context_spelling
+            .take()
+            .filter(|(range, word)| self.content.get(range.clone()) == Some(word.as_str()))
     }
 
     pub(super) fn on_mouse_down(
@@ -481,14 +557,61 @@ impl Composer {
         }
     }
 
+    fn scroll_field_to_caret(&mut self, scale: f32) -> bool {
+        if !self.field_autoscroll {
+            return false;
+        }
+        let (Some(scroll), Some(bounds)) = (&self.field_scroll, self.bounds) else {
+            return false;
+        };
+        let cursor = self.cursor();
+        let Some((start, line_y, line)) = self
+            .line_starts()
+            .find(|(start, _, line)| cursor <= start + line.len())
+        else {
+            return false;
+        };
+        let Some(caret) = line.position_for_index(cursor - start, self.editor_line_height()) else {
+            return false;
+        };
+        let font_height = f32::from(line.ascent() + line.descent());
+        let leading = (f32::from(self.editor_line_height()) - font_height) / 2.;
+        let origin = bounds.origin.y + line_y + caret.y;
+        let top = origin + px((leading * scale).ceil() / scale);
+        let bottom = origin + px(((leading + font_height) * scale).floor() / scale);
+        let viewport = scroll.bounds();
+        if viewport.size.height <= px(2.) {
+            return false;
+        }
+        let start = viewport.origin.y;
+        let end = viewport.origin.y + viewport.size.height;
+        let adjustment = if top < start {
+            start - top
+        } else if bottom > end {
+            end - bottom
+        } else {
+            px(0.)
+        };
+        self.field_autoscroll = false;
+        let mut offset = scroll.offset();
+        let next = px((f32::from(offset.y + adjustment) * scale).round() / scale);
+        if offset.y == next {
+            return false;
+        }
+        offset.y = next;
+        scroll.set_offset(offset);
+        true
+    }
+
     /// Byte offset where each shaped line starts (lines are split at `\n`).
     pub(super) fn line_starts(&self) -> impl Iterator<Item = (usize, Pixels, &WrappedLine)> {
         let mut start = 0;
         let mut y = px(0.);
+        let line_height = self.editor_line_height();
         self.lines.iter().map(move |line| {
             let item = (start, y, line);
             start += line.len() + 1;
-            y += line.size(LINE_HEIGHT).height;
+            y += line.size(line_height).height;
             item
         })
     }
@@ -498,19 +621,20 @@ impl Composer {
         self.line_starts()
             .find(|(start, _, line)| offset <= start + line.len())
             .and_then(|(start, y, line)| {
-                let p = line.position_for_index(offset - start, LINE_HEIGHT)?;
+                let p = line.position_for_index(offset - start, self.editor_line_height())?;
                 Some(point(p.x, p.y + y))
             })
     }
 
     pub(super) fn index_for_local(&self, local: Point<Pixels>) -> usize {
         let mut last = 0;
+        let line_height = self.editor_line_height();
         for (start, y, line) in self.line_starts() {
-            let h = line.size(LINE_HEIGHT).height;
+            let h = line.size(line_height).height;
             if local.y < y + h {
                 let p = point(local.x, (local.y - y).max(px(0.)));
                 let i = line
-                    .closest_index_for_position(p, LINE_HEIGHT)
+                    .closest_index_for_position(p, line_height)
                     .unwrap_or_else(|i| i);
                 return self.snap(start + i, None);
             }
@@ -529,8 +653,9 @@ impl Composer {
     /// Offset one row above (`-1`) or below (`1`) the caret; `None` past the first/last row.
     pub(super) fn vertical(&self, rows: f32) -> Option<usize> {
         let p = self.point_for_index(self.cursor())?;
-        let y = p.y + LINE_HEIGHT * rows + LINE_HEIGHT / 2.;
-        let total: Pixels = self.lines.iter().map(|l| l.size(LINE_HEIGHT).height).sum();
+        let line_height = self.editor_line_height();
+        let y = p.y + line_height * rows + line_height / 2.;
+        let total: Pixels = self.lines.iter().map(|l| l.size(line_height).height).sum();
         (y >= px(0.) && y < total).then(|| self.index_for_local(point(p.x, y)))
     }
 
@@ -560,28 +685,48 @@ impl Composer {
     }
 
     pub(super) fn editor(&self, cx: &mut Context<Self>) -> Div {
+        let compact_settings = self.request_parent.is_none() && self.request_compact;
         div()
             .px(px(if self.search_field {
                 0.
-            } else if self.request_parent.is_some() && self.request_compact && !self.secret {
+            } else if self.compact_text() {
                 10.
             } else {
                 12.
             }))
-            .pb(px(if self.search_field || self.request_parent.is_some() {
-                0.
-            } else {
-                4.
-            }))
-            .min_h(px(if self.search_field || self.request_parent.is_some() {
-                20.
-            } else {
-                48.
-            }))
+            .pb(px(
+                if self.search_field
+                    || self.plain_field == Some(true)
+                    || self.request_parent.is_some()
+                    || self.request_compact
+                {
+                    0.
+                } else {
+                    4.
+                },
+            ))
+            .min_h(
+                if self.search_field || self.request_parent.is_some() || self.request_compact {
+                    px(20.)
+                } else {
+                    self.field_min_height
+                },
+            )
             .cursor(CursorStyle::IBeam)
-            .text_size(FONT_SIZE)
-            .line_height(LINE_HEIGHT)
-            .font_weight(gpui::FontWeight(430.))
+            .when(self.embedded_field.is_some(), |d| {
+                d.px_0().pb_0().min_h(self.editor_line_height())
+            })
+            .text_size(if self.search_field {
+                px(13.)
+            } else {
+                self.editor_font_size()
+            })
+            .line_height(self.editor_line_height())
+            .font_weight(gpui::FontWeight(if self.field_text.is_some() {
+                500.
+            } else {
+                430.
+            }))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_right_click))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -589,11 +734,26 @@ impl Composer {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             // `--opacity-composer-placeholder: .5` on the placeholder. The text blends like
             // Chromium's: blitted into a transparent layer (`_ComposerLayoutInput`'s
-            // `overflow-y: auto` contents), then composited onto the card.
+            // `overflow-y: auto` contents), then composited onto the card. A settings textarea
+            // never scrolls here, so it has no such layer: its text blends onto the field's fill.
+            // The sign-in `input` has neither the opacity nor the layer.
             .child(
                 div()
-                    .when(self.content.is_empty(), |d| d.opacity(0.5))
-                    .layer()
+                    .when(!self.search_field && self.field_text.is_none(), |d| {
+                        d.when(
+                            self.content.is_empty()
+                                && self.embedded_field.is_none()
+                                && !self.search_field
+                                && !compact_settings,
+                            |d| d.opacity(0.5),
+                        )
+                        .when(
+                            (self.embedded_field.is_none() && self.plain_field != Some(true)
+                                || self.search_field)
+                                && !compact_settings,
+                            |d| d.layer(),
+                        )
+                    })
                     .child(Editor(cx.entity())),
             )
     }
@@ -683,6 +843,7 @@ impl EntityInputHandler for Composer {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.cancel_dictation(cx);
         let single_line;
         let new_text = if self.plain_field == Some(false) && new_text.contains(['\n', '\r']) {
             single_line = new_text.replace(['\n', '\r'], "");
@@ -724,7 +885,7 @@ impl EntityInputHandler for Composer {
         let end = self.point_for_index(range.end)?;
         Some(Bounds::from_corners(
             bounds.origin + start,
-            bounds.origin + point(end.x, end.y + LINE_HEIGHT),
+            bounds.origin + point(end.x, end.y + self.editor_line_height()),
         ))
     }
 
@@ -819,13 +980,13 @@ pub(super) fn shape(
         .text_system()
         .shape_text(
             s.into(),
-            if composer.request_compact && !composer.secret {
-                px(13.)
-            } else {
-                FONT_SIZE
-            },
+            composer.editor_font_size(),
             &runs,
-            width,
+            if composer.embedded_field.is_some() {
+                None
+            } else {
+                width
+            },
             None,
         )
         .map(|lines| lines.into_iter().collect())
@@ -860,8 +1021,12 @@ impl gpui::Element for Editor {
                 _ => None,
             });
             let black = gpui::black();
-            let lines = shape(input.read(cx), black, black, black, width, window);
-            let height = lines.iter().map(|l| l.size(LINE_HEIGHT).height).sum();
+            let composer = input.read(cx);
+            let lines = shape(composer, black, black, black, width, window);
+            let height = lines
+                .iter()
+                .map(|l| l.size(composer.editor_line_height()).height)
+                .sum();
             Size {
                 width: width.unwrap_or_default(),
                 height,
@@ -880,9 +1045,10 @@ impl gpui::Element for Editor {
         cx: &mut App,
     ) {
         let t = cx.theme().clone();
+        let composer = self.0.read(cx);
         let lines = shape(
-            self.0.read(cx),
-            t.text,
+            composer,
+            composer.field_text.unwrap_or(t.text),
             t.text_tertiary,
             chip_color(&t),
             Some(bounds.size.width),
@@ -897,8 +1063,17 @@ impl gpui::Element for Editor {
         let collapse = |w: f32| (w <= SM_WIDTH, w <= XS_WIDTH);
         let changed = self.0.update(cx, |c, _| {
             c.lines = lines;
+            let mut bounds = bounds;
+            if c.embedded_field.is_some() {
+                let cursor = c
+                    .point_for_index(c.cursor())
+                    .map_or(px(0.), |point| point.x);
+                bounds.origin.x -= (cursor - bounds.size.width + px(2.)).max(px(0.));
+            }
             c.bounds = Some(bounds);
-            collapse(std::mem::replace(&mut c.footer_width, width)) != collapse(width)
+            let width_changed =
+                collapse(std::mem::replace(&mut c.footer_width, width)) != collapse(width);
+            c.scroll_field_to_caret(window.scale_factor()) || width_changed
         });
         if changed {
             let entity = self.0.clone();
@@ -919,8 +1094,14 @@ impl gpui::Element for Editor {
         let focus = self.0.read(cx).focus_handle.clone();
         window.handle_input(&focus, ElementInputHandler::new(bounds, self.0.clone()), cx);
         let selection_color = cx.theme().text_selection;
-        let caret_color = cx.theme().text;
         let c = self.0.read(cx);
+        let caret_color = c.field_text.unwrap_or(cx.theme().text);
+        let bounds = if c.embedded_field.is_some() {
+            c.bounds.unwrap_or(bounds)
+        } else {
+            bounds
+        };
+        let line_height = c.editor_line_height();
         if !c.selected_range.is_empty()
             && let (Some(a), Some(b)) = (
                 c.point_for_index(c.selected_range.start),
@@ -934,10 +1115,10 @@ impl gpui::Element for Editor {
                 let x1 = if row == b.y { b.x } else { w };
                 let r = Bounds::from_corners(
                     bounds.origin + point(x0, row),
-                    bounds.origin + point(x1, row + LINE_HEIGHT),
+                    bounds.origin + point(x1, row + line_height),
                 );
                 window.paint_quad(fill(r, selection_color));
-                row += LINE_HEIGHT;
+                row += line_height;
             }
         }
         let caret = (c.selected_range.is_empty()
@@ -951,15 +1132,19 @@ impl gpui::Element for Editor {
             .iter()
             .filter_map(|m| Some((c.point_for_index(m.range.start)?, m.icon)))
             .collect();
+        let mut y = if c.plain_field == Some(true) {
+            window.layout_origin_residual_y(*id)
+        } else {
+            px(0.)
+        };
         let lines = self.0.update(cx, |c, _| std::mem::take(&mut c.lines));
         // Glyphs land on the unsnapped LayoutUnit x, as Blink paints text.
         let x = window.layout_origin_residual_x(*id);
-        let mut y = px(0.);
         for line in &lines {
             let origin = bounds.origin + point(x, y);
-            line.paint(origin, LINE_HEIGHT, TextAlign::Left, None, window, cx)
+            line.paint(origin, line_height, TextAlign::Left, None, window, cx)
                 .ok();
-            y += line.size(LINE_HEIGHT).height;
+            y += line.size(line_height).height;
         }
         self.0.update(cx, |c, _| c.lines = lines);
         let chip = chip_color(cx.theme());
@@ -982,9 +1167,48 @@ impl gpui::Element for Editor {
         if let Some(p) = caret {
             let r = Bounds::new(
                 bounds.origin + point(p.x, p.y + px(1.5)),
-                size(px(1.), LINE_HEIGHT - px(3.)),
+                size(px(1.), line_height - px(3.)),
             );
             window.paint_quad(fill(r, caret_color));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spelling_actions_replace_learn_and_ignore_stale_words() {
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut cx = gpui::TestAppContext::single();
+        cx.update(|cx| cx.set_global(Theme::dark()));
+        let window = cx.add_window(|_, cx| Composer::new("Do anything", false, cx));
+        window
+            .update(&mut cx, |composer, window, cx| {
+                composer.set_text("teh", cx);
+                composer.context_spelling = Some((0..3, "teh".into()));
+                composer.activate_context_item("dictionarySuggestions", "the".into(), window, cx);
+                assert_eq!(composer.content, "the");
+                composer.undo(&crate::Undo, window, cx);
+                assert_eq!(composer.content, "teh");
+
+                composer.context_spelling = Some((0..3, "teh".into()));
+                composer.activate_context_item("learnSpelling", String::new(), window, cx);
+                assert_eq!(
+                    crate::native_text::take_learned_word().as_deref(),
+                    Some("teh")
+                );
+
+                composer.context_spelling = Some((0..3, "teh".into()));
+                composer.set_text("safe", cx);
+                composer.activate_context_item("dictionarySuggestions", "the".into(), window, cx);
+                assert_eq!(composer.content, "safe");
+            })
+            .expect("dispatch spelling menu actions");
     }
 }

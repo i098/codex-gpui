@@ -104,6 +104,21 @@ fn clear_unreads_requires_confirmation_and_remembers_the_opt_out() -> Result<()>
     Ok(())
 }
 
+#[test]
+fn attention_shortcut_skips_the_open_unread_chat() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-1")?;
+    fx.wait_thread(GREETING)?;
+    let sidebar = fx.read(|root, _| root.sidebar().clone());
+    sidebar.update(&mut fx.cx, |sidebar, cx| {
+        sidebar.set_unread(GREETING, cx);
+        sidebar.set_unread(SUBTRACT, cx);
+    });
+    fx.keys("alt-cmd-a")?;
+    fx.wait_thread(SUBTRACT)?;
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn terminal_output_survives_bottom_panel_visibility_changes() -> Result<()> {

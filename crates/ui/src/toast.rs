@@ -102,6 +102,7 @@ impl Toast {
 struct Entry {
     id: u64,
     toast: Toast,
+    persistent: bool,
     /// Lifetime left when the clock last stopped.
     remaining: Duration,
     /// Time since the clock last started; `None` while it is stopped.
@@ -141,11 +142,20 @@ impl Toaster {
     }
 
     pub fn push(&mut self, toast: Toast, cx: &mut Context<Self>) {
+        self.insert(toast, false, cx);
+    }
+
+    pub fn push_persistent(&mut self, toast: Toast, cx: &mut Context<Self>) -> u64 {
+        self.insert(toast, true, cx)
+    }
+
+    fn insert(&mut self, toast: Toast, persistent: bool, cx: &mut Context<Self>) -> u64 {
         let id = self.next;
         self.next += 1;
         self.toasts.push(Entry {
             id,
             toast,
+            persistent,
             remaining: LIFETIME,
             running: None,
             _timer: None,
@@ -155,9 +165,10 @@ impl Toaster {
             self.run(id, cx);
         }
         cx.notify();
+        id
     }
 
-    fn dismiss(&mut self, id: u64, cx: &mut Context<Self>) {
+    pub fn dismiss(&mut self, id: u64, cx: &mut Context<Self>) {
         self.toasts.retain(|e| e.id != id);
         self.hovered.remove(&id);
         if self.swipe.as_ref().is_some_and(|s| s.id == id) {
@@ -171,6 +182,9 @@ impl Toaster {
         let Some(e) = self.toasts.iter_mut().find(|e| e.id == id) else {
             return;
         };
+        if e.persistent {
+            return;
+        }
         let (started, clock) = (executor.now(), executor.clone());
         e.running = Some(Rc::new(move || clock.now().duration_since(started)));
         let left = e.remaining;

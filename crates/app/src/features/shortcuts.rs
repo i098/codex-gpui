@@ -1,5 +1,5 @@
 use crate::*;
-use gpui::{MouseButton, NavigationDirection};
+use gpui::{MouseButton, NavigationDirection, prelude::FluentBuilder as _};
 use ui::confirmation::{Confirmation, Outcome as ConfirmationOutcome};
 
 actions!(
@@ -55,13 +55,16 @@ pub(crate) enum AppEdit {
         after: Option<String>,
     },
     Archive {
-        thread: Thread,
+        thread: Box<Thread>,
         index: usize,
     },
 }
 
 pub(super) fn init(cx: &mut App) {
     cx.bind_keys([
+        KeyBinding::new("ctrl-tab", NextRecentChat, None),
+        KeyBinding::new("ctrl-shift-tab", PreviousRecentChat, None),
+        KeyBinding::new("ctrl-shift-g", OpenChangesPanel, None),
         KeyBinding::new("cmd-+", ZoomIn, None),
         KeyBinding::new("cmd-=", ZoomIn, None),
         KeyBinding::new("cmd-shift-=", ZoomIn, None),
@@ -70,7 +73,7 @@ pub(super) fn init(cx: &mut App) {
     ]);
 }
 
-pub(super) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
+pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> gpui::Div {
     root.on_action(cx.listener(|this, _: &NextRecentChat, window, cx| {
         this.cycle_recent_chat(1, window, cx);
     }))
@@ -102,11 +105,11 @@ pub(super) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
     .on_action(cx.listener(|this, _: &NewStandaloneChat, window, cx| {
         this.new_special_chat(NewChatMode::Standalone, window, cx);
     }))
-    .on_action(cx.listener(|this, _: &NewTemporaryChat, window, cx| {
-        if !this.bridge.is_acp() {
+    .when(!owner.bridge.is_acp(), |root| {
+        root.on_action(cx.listener(|this, _: &NewTemporaryChat, window, cx| {
             this.new_special_chat(NewChatMode::Temporary, window, cx);
-        }
-    }))
+        }))
+    })
     .on_action(
         cx.listener(|this, _: &ToggleBottomPanel, window, cx| this.toggle_bottom_panel(window, cx)),
     )
@@ -158,7 +161,6 @@ impl Root {
             self.state.save();
         }
     }
-
     pub(crate) fn remember_recent_chat(&mut self) {
         let Route::Thread(id) = &self.state.route else {
             return;
@@ -317,7 +319,7 @@ impl Root {
                                 .and_then(|value| {
                                     serde_json::from_value::<Thread>(value["thread"].clone()).ok()
                                 })
-                                .unwrap_or_else(|| thread.clone());
+                                .unwrap_or_else(|| thread.as_ref().clone());
                             this.threads
                                 .insert((*index).min(this.threads.len()), restored);
                             if let Some(page) = &this.archive_page {
@@ -491,7 +493,6 @@ impl Root {
         let computer_use = computer_use_overrides(&self.config);
         let mode = self.shortcut_state.new_chat_mode;
         let host = self.host.clone();
-        let hotkey_options = hotkey::start_options(self, cx);
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let workspace = if mode == features::shortcuts::NewChatMode::Standalone {
                 let prepare = host.clone();
@@ -504,24 +505,10 @@ impl Root {
                     }
                 }
             } else { None };
-            let prepared = if mode != NewChatMode::Standalone {
-                if let Some(options) = hotkey_options {
-                    let host = host.clone();
-                    let prompt = s.text.clone();
-                    match cx.background_executor().spawn(async move { hotkey::prepare_start(host, options, &prompt) }).await {
-                        Ok(prepared) => Some(prepared),
-                        Err(error) => {
-                            this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
-                            return Err(error);
-                        }
-                    }
-                } else { None }
-            } else { None };
             let mut params = json!({ "cwd": workspace.as_ref().map(|workspace| workspace.cwd.as_str()).unwrap_or(&cwd), "model": model(&s) });
             if let Some(workspace) = &workspace {
                 params["developerInstructions"] = json!(workspace.instructions());
             }
-            if let Some(prepared) = &prepared { prepared.apply(&mut params); }
             if mode == features::shortcuts::NewChatMode::Temporary {
                 params["ephemeral"] = json!(true);
             }
@@ -549,13 +536,6 @@ impl Root {
                 let record = host.clone();
                 let thread_id = id.clone();
                 if let Err(error) = cx.background_executor().spawn(async move { record.record_projectless(&thread_id, &workspace) }).await {
-                    this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
-                    return Err(error);
-                }
-            }
-            if let Some(prepared) = prepared.filter(|prepared| prepared.needs_recording()) {
-                let thread_id = id.clone();
-                if let Err(error) = cx.background_executor().spawn(async move { prepared.record(&thread_id) }).await {
                     this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
                     return Err(error);
                 }
@@ -600,7 +580,11 @@ impl Root {
                 }
                 this.show_thread(thread, window, cx);
             })?;
-            turn_start(&bridge, &id, &s, user_input(&s)).await
+            let result = turn_start(&bridge, &id, &s, user_input(&s)).await;
+            if result.is_err() {
+                this.update(cx, |this, cx| this.restore_failed_send(&s, cx))?;
+            }
+            result
         });
         log_err(task, cx);
     }

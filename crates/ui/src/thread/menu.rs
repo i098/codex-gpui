@@ -15,6 +15,8 @@ pub(crate) struct Item {
     pub icon: Option<&'static [u8]>,
     /// Shown at the right, as the native menu shows `⌘X`.
     pub accelerator: Option<&'static str>,
+    /// Overrides the menu subject for this action, such as a spelling suggestion.
+    pub payload: Option<SharedString>,
     pub separator: bool,
 }
 
@@ -65,6 +67,30 @@ impl ContextMenu {
         window: &mut Window,
         cx: &mut App,
     ) -> Self {
+        Self::build(items, subject, position, 220., window, cx)
+    }
+
+    pub fn dropdown(
+        items: Vec<Item>,
+        subject: String,
+        button: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
+        let mut menu = Self::build(items, subject, button.bottom_right(), 0., window, cx);
+        menu.position.x -= px(menu.width);
+        menu.position.y += px(4.);
+        menu
+    }
+
+    fn build(
+        items: Vec<Item>,
+        subject: String,
+        position: Point<Pixels>,
+        minimum_width: f32,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self {
         let text_width = |value: &str| {
             f32::from(
                 window
@@ -95,7 +121,7 @@ impl ContextMenu {
                     + if item.icon.is_some() { 22. } else { 0. }
                     + 24.
             })
-            .fold(220., f32::max)
+            .fold(minimum_width, f32::max)
             .ceil();
         let return_focus = window.focused(cx);
         let focus = cx.focus_handle();
@@ -186,7 +212,11 @@ impl ContextMenu {
                 return;
             };
             let id = open.items[index].id;
-            let subject = std::mem::take(&mut open.subject);
+            let subject = open.items[index]
+                .payload
+                .take()
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| std::mem::take(&mut open.subject));
             open.close(window, cx);
             activate(this, id, subject, window, cx);
             cx.stop_propagation();
@@ -435,6 +465,7 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.context_image = None;
         let (subject, items) = if let Some(url) = RIGHT_CLICKED_LINK.take() {
             let items = ITEMS
                 .iter()
@@ -475,6 +506,13 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) {
         match id {
+            crate::image_context::COPY
+            | crate::image_context::SAVE
+            | crate::image_context::REVEAL => {
+                if let Some(image) = self.context_image.take() {
+                    image.activate(id, _window, cx);
+                }
+            }
             #[cfg(target_os = "macos")]
             "lookUpSelection" => {
                 if let Err(error) = textsys::show_definition(_window, &url, _origin) {
@@ -518,7 +556,9 @@ impl ThreadView {
         let origin = menu.position;
         menu.overlay(
             "thread-link-menu",
-            if menu.items.iter().any(|item| item.id == "copy") {
+            if self.context_image.is_some() {
+                "Image actions"
+            } else if menu.items.iter().any(|item| item.id == "copy") {
                 "Text actions"
             } else {
                 "Link actions"

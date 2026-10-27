@@ -204,7 +204,7 @@ fn binary_http_bodies_reach_the_server_without_utf8_conversion() -> Result<()> {
         format!("http://{address}"),
     );
     let audio = [0u8, 128, 255, 13, 10];
-    let reply=host.fetch(&Request::HttpBytes { request: json!({"url":"/upload","method":"POST","headers":{"Content-Type":"application/octet-stream"}}), body: audio.to_vec() })?;
+    let reply=host.fetch(&Request::Http(json!({"url":"/upload","method":"POST","headers":{"Content-Type":"application/octet-stream"},"bodyBase64":base64::Engine::encode(&base64::engine::general_purpose::STANDARD, audio)})))?;
     assert_eq!(app::host::json_body(&reply)?["ok"], true);
     assert_eq!(server.join().unwrap()?, audio);
     Ok(())

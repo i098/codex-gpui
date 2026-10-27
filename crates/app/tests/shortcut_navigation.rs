@@ -33,6 +33,7 @@ fn recent_chats_commit_on_control_release_and_keep_mru_order() -> Result<()> {
     fx.keys("ctrl-tab ctrl-shift-tab")?;
     ensure!(fx.route() == Route::Thread(EXPLAIN.into()));
     if let Some(out) = std::env::var_os("CGX_SHORTCUT_PROOF") {
+        std::fs::create_dir_all(&out)?;
         fx.shot()?
             .save(std::path::Path::new(&out).join("native-mru.png"))?;
     }

@@ -1528,6 +1528,18 @@ pub trait PlatformTextSystem: Send + Sync {
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>>;
     /// Get the advance width for a glyph.
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>>;
+    /// Returns the glyph advance at the requested logical size, without layout spacing.
+    fn advance_at_size(
+        &self,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+    ) -> Result<Size<Pixels>> {
+        Ok(
+            self.advance(font_id, glyph_id)? / self.font_metrics(font_id).units_per_em as f32
+                * font_size,
+        )
+    }
     /// Get the glyph ID for a character.
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
     /// Get raster bounds for a glyph.
@@ -1540,6 +1552,16 @@ pub trait PlatformTextSystem: Send + Sync {
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     /// Layout a line of text with the given font runs.
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+    /// Layout text using the window's device scale for native metric rounding.
+    fn layout_line_with_scale(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+        _scale_factor: f32,
+    ) -> LineLayout {
+        self.layout_line(text, font_size, runs)
+    }
     /// Returns the recommended text rendering mode for the given font and size.
     fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
     -> TextRenderingMode;

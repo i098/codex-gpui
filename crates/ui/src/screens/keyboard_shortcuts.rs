@@ -36,6 +36,10 @@ pub fn commands() -> &'static [Command] {
     COMMANDS
 }
 
+const LINK_TITLE: &str = "Open web link in default browser";
+const LINK_DESCRIPTION: &str =
+    "Hold the assigned keys while clicking a web link to open it in your default system browser";
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Preferences {
@@ -324,7 +328,7 @@ pub fn canonical(accelerator: &str) -> String {
         .join(" ")
 }
 
-fn capture(stroke: &Keystroke) -> Option<String> {
+pub(super) fn capture(stroke: &Keystroke) -> Option<String> {
     if matches!(
         stroke.key.as_str(),
         "shift" | "control" | "alt" | "cmd" | "fn"
@@ -339,7 +343,7 @@ fn capture(stroke: &Keystroke) -> Option<String> {
     Some(key)
 }
 
-fn modifier_accelerator(modifiers: Modifiers) -> String {
+pub(super) fn modifier_accelerator(modifiers: Modifiers) -> String {
     [
         (modifiers.function, "Fn"),
         (modifiers.control, "Control"),
@@ -453,6 +457,7 @@ pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
 #[derive(Clone)]
 enum Control {
     SearchMode,
+    ClearSearch,
     Edit(&'static str, usize),
     Remove(&'static str, usize),
     ResetCommand(&'static str),
@@ -474,6 +479,7 @@ struct Editing {
 
 struct KeyboardPage {
     search: Entity<Composer>,
+    scroll: gpui::ScrollHandle,
     strokes: String,
     search_by_key: bool,
     editing: Option<Editing>,
@@ -548,6 +554,7 @@ impl KeyboardPage {
         });
         Self {
             search,
+            scroll: gpui::ScrollHandle::default(),
             strokes: String::new(),
             search_by_key: false,
             editing: None,
@@ -619,6 +626,10 @@ impl KeyboardPage {
                 } else {
                     self.search.focus_handle(cx).focus(window, cx);
                 }
+            }
+            Control::ClearSearch => {
+                self.search.update(cx, |search, cx| search.set_text("", cx));
+                self.search.focus_handle(cx).focus(window, cx);
             }
             Control::Edit(command, index) => {
                 self.return_focus = window.focused(cx);
@@ -848,13 +859,17 @@ impl KeyboardPage {
         let focus = crate::focus::handle(SharedString::from(id.clone()), 0, window, cx);
         let handle = focus.read(cx).handle.clone();
         let keyboard_action = action.clone();
-        let hover = cx.theme().list_hover;
+        let hover = if matches!(&action, Control::ClearSearch) {
+            gpui::transparent_black()
+        } else {
+            cx.theme().list_hover
+        };
         let control = div()
             .id(SharedString::from(id))
             .role(gpui::Role::Button)
             .aria_label(SharedString::from(label))
             .relative()
-            .rounded(px(8.))
+            .rounded(Theme::RADIUS_LG)
             .hover(move |s| s.bg(hover))
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
                 if matches!(e.keystroke.key.as_str(), "enter" | "space") {
@@ -872,7 +887,7 @@ impl KeyboardPage {
                 this.activate(action.clone(), e.modifiers().shift, window, cx);
             }))
             .child(content);
-        crate::focus::ring(control, &focus, px(8.), px(0.), cx)
+        crate::focus::ring(control, &focus, Theme::RADIUS_LG, px(0.), cx)
     }
 
     fn icon_control(
@@ -913,7 +928,19 @@ impl KeyboardPage {
         let state = cx.global::<KeyboardState>();
         let keys: Vec<_> = state.preferences.keys(command).map(str::to_owned).collect();
         let customized = state.preferences.bindings.contains_key(command.id);
-        let mut bindings = div().w(px(384.)).max_w_full().flex().flex_col();
+        let mut bindings = if allows_bare(command.id) {
+            // The dictation rows size to their content (at least 160 px), end-aligned, with the
+            // 8 px a hidden trash slot leaves.
+            div()
+                .min_w(px(160.))
+                .flex_none()
+                .pr(px(8.))
+                .flex()
+                .flex_col()
+                .items_end()
+        } else {
+            div().w(px(384.)).max_w_full().flex().flex_col()
+        };
         let count = keys.len().max(1)
             + usize::from(self.editing.as_ref().is_some_and(|e| {
                 e.command == command.id && e.index == keys.len() && !keys.is_empty()
@@ -1039,16 +1066,19 @@ impl KeyboardPage {
             .flex()
             .flex_col()
             .gap(px(2.))
-            .child(text(command.title, 13., 18.571_428, 500., t.text))
-            .child(text(command.detail, 12., 16., 430., t.text_secondary));
+            .child(text(command.title, 13., 18.571_428, 500., t.text).truncate())
+            .child(text(command.detail, 12., 16., 430., t.text_secondary).whitespace_normal());
         if command.id == "toggleSidebar" && keys.iter().any(|key| canonical(key) == "cmd-b") {
-            description = description.child(text(
-                "⌘B applies bold, except at the start of the composer where it toggles the sidebar",
-                12.,
-                16.,
-                430.,
-                t.text_secondary,
-            ));
+            description = description.child(
+                text(
+                    "⌘B applies bold, except at the start of the composer where it toggles the sidebar",
+                    12.,
+                    16.,
+                    430.,
+                    t.text_secondary,
+                )
+                .whitespace_normal(),
+            );
         }
         div()
             .relative()
@@ -1117,13 +1147,14 @@ impl KeyboardPage {
             )
         } else {
             (
-                "Open web link in default browser",
-                "Hold the assigned keys while clicking a web link to open it in your default system browser",
+                LINK_TITLE,
+                LINK_DESCRIPTION,
                 preferences.external_browser_link_shortcut.label(),
                 Control::LinkMenu,
                 self.link_menu,
             )
         };
+        let current = label;
         let conflict = number && preferences.number_conflict();
         let kind = if number {
             PreferenceKind::Number
@@ -1132,6 +1163,13 @@ impl KeyboardPage {
         };
         let error = cx.global::<KeyboardState>().preference_error == Some(kind)
             && cx.global::<KeyboardState>().error.is_some();
+        // The number select is a bordered button at the row's end; the link select is a bare
+        // chip that starts the 384 px control column.
+        let (chip_text, chip_icon, pad) = if number {
+            (t.text, 14., 13.)
+        } else {
+            (t.text_secondary, 12., 9.)
+        };
         let trigger = self
             .control(
                 format!("shortcut-pref-{number}"),
@@ -1140,25 +1178,26 @@ impl KeyboardPage {
                     .flex()
                     .items_center()
                     .gap(px(4.))
-                    .child(text(label, 13., 18., 430., t.text))
-                    .child(icon("chevron-down", 14., t.text_tertiary))
+                    .child(text(label, 13., 18., 430., chip_text))
+                    .child(icon("chevron-down", chip_icon, t.text_tertiary))
                     .into_any_element(),
                 action,
                 window,
                 cx,
             )
-            .px(px(13.))
+            .px(px(pad))
             .h(px(28.))
             .flex()
             .items_center();
+        let fill = if open {
+            Some(t.text.opacity(0.08))
+        } else {
+            number.then_some(t.primary_soft_alpha)
+        };
         let trigger = div()
             .relative()
-            .child(on_card(
-                12.5,
-                Squircle,
-                t.primary_soft_alpha,
-                Some(t.border),
-            ))
+            .when(!number, |d| d.ml(px(-9.)))
+            .children(fill.map(|fill| on_card(12.5, Squircle, fill, number.then_some(t.border))))
             .child(trigger);
         let options: Vec<(&str, Control)> = if number {
             vec![
@@ -1174,33 +1213,72 @@ impl KeyboardPage {
             ]
         };
         let menu = if open {
-            let mut menu = div()
-                .id("shortcut-preference-menu")
-                .on_hover(cx.listener(|this, hovered: &bool, _, _| this.menu_hovered = *hovered))
-                .absolute()
-                .right_0()
-                .top(px(32.))
-                .w(px(210.))
-                .p(px(5.))
-                .rounded(px(12.))
-                .bg(t.menu_background)
-                .border_1()
-                .border_color(t.border);
-            for (index, (label, action)) in options.into_iter().enumerate() {
-                menu = menu.child(
+            // The original popup sizes to its widest label (Chromium's measure, "⌘1-9 for Chats"
+            // and "Unassigned"), 6 px and an 18 px check slot, in 8 px row padding inside the
+            // popover's 4 px padding.
+            let widest = if number { 93.02 } else { 72.83 };
+            let rows: Vec<_> = options
+                .into_iter()
+                .enumerate()
+                .map(|(index, (label, action))| {
                     self.control(
                         format!("shortcut-option-{number}-{index}"),
                         label.into(),
-                        text(label, 14., 20., 430., t.text).into_any_element(),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(
+                                div()
+                                    .w(px(widest))
+                                    .child(text(label, 13., 18.571_428, 500., t.text)),
+                            )
+                            .child(div().size(px(18.)).flex_none().children(
+                                (label == current).then(|| icon("menu-check", 18., t.text)),
+                            ))
+                            .into_any_element(),
                         action,
                         window,
                         cx,
                     )
-                    .px(px(8.))
-                    .py(px(6.)),
-                );
-            }
-            Some(gpui::deferred(menu).into_any_element())
+                    .rounded(px(15.))
+                    .pl(px(if number { 8.29 } else { 8.18 }))
+                    .pr(px(if number { 7.71 } else { 7.82 }))
+                    .py(px(5.))
+                })
+                .collect();
+            Some(
+                gpui::deferred(
+                    div().absolute().top_0().right_0().child(
+                        gpui::anchored()
+                            .anchor(gpui::Anchor::TopRight)
+                            .offset(gpui::point(px(-1.62), px(30.22)))
+                            .child(
+                                div()
+                                    .id("shortcut-preference-menu")
+                                    .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                                        this.menu_hovered = *hovered
+                                    }))
+                                    // The popup's device-pixel snap differs by 1 px per menu:
+                                    // shift and extend it to the original's pixels.
+                                    .child(
+                                        div()
+                                            .relative()
+                                            .left(px(if number { 0.5 } else { 1. }))
+                                            .child(crate::composer::popover(
+                                                &t,
+                                                ((widest + 48.) * 2.).round() / 2.,
+                                                |d| {
+                                                    d.pb(px(if number { 4. } else { 4.5 }))
+                                                        .children(rows)
+                                                },
+                                            )),
+                                    ),
+                            ),
+                    ),
+                )
+                .into_any_element(),
+            )
         } else {
             None
         };
@@ -1213,13 +1291,13 @@ impl KeyboardPage {
             .gap(px(24.))
             .child(
                 div()
-                    .flex_1()
-                    .min_w_0()
+                    .when(number, |d| d.flex_1().min_w_0())
+                    .when(!number, |d| d.w(px(286.)).flex_none())
                     .flex()
                     .flex_col()
                     .gap(px(2.))
                     .child(text(title, 13., 18.571_428, 500., t.text))
-                    .child(text(detail, 12., 16., 430., t.text_secondary))
+                    .child(text(detail, 12., 16., 430., t.text_secondary).whitespace_normal())
                     .when(error, |d| {
                         d.child(text(
                             "Could not save shortcut preference",
@@ -1242,6 +1320,7 @@ impl KeyboardPage {
             .child(
                 div()
                     .relative()
+                    .when(!number, |d| d.w(px(384.)).flex())
                     .when(open, |d| {
                         d.on_mouse_down_out(cx.listener(|this, _, _, cx| {
                             if !this.menu_hovered {
@@ -1251,8 +1330,7 @@ impl KeyboardPage {
                             }
                         }))
                     })
-                    .child(trigger)
-                    .children(menu),
+                    .child(trigger.children(menu)),
             )
     }
 }
@@ -1286,6 +1364,16 @@ impl Render for KeyboardPage {
                             .any(|value| pattern.score(value) > 0)
                     })
         };
+        let mut pending_link = loaded
+            && !search_by_key
+            && (query.trim().is_empty()
+                || [
+                    LINK_TITLE,
+                    LINK_DESCRIPTION,
+                    preferences.external_browser_link_shortcut.label(),
+                ]
+                .iter()
+                .any(|text| pattern.score(text) > 0));
         let mut rows = Vec::new();
         let mut dictation = Vec::new();
         for command in COMMANDS.iter().filter(matches) {
@@ -1296,10 +1384,14 @@ impl Render for KeyboardPage {
                 dictation.push(self.row(command, window, cx));
             } else {
                 rows.push(self.row(command, window, cx));
-                if command.id == "openBrowserTab" && !self.search_by_key && query.is_empty() {
+                if command.id == "openBrowserTab" && pending_link {
                     rows.push(self.preference(false, window, cx));
+                    pending_link = false;
                 }
             }
+        }
+        if pending_link {
+            rows.push(self.preference(false, window, cx));
         }
         let number = loaded
             && !self.search_by_key
@@ -1316,13 +1408,19 @@ impl Render for KeyboardPage {
             }
         } else if rows.is_empty() && dictation.is_empty() && !number {
             cards = cards.child(self.card(
-                vec![div().p(px(16.)).child(text(
-                    "No matching shortcuts",
-                    13.,
-                    20.,
-                    430.,
-                    t.text_secondary,
-                ))],
+                vec![div()
+                    .min_h(px(64.))
+                    .px(px(16.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(text(
+                        "No matching shortcuts",
+                        13.,
+                        18.571_428,
+                        430.,
+                        t.text_secondary,
+                    ))],
                 &t,
             ));
         } else if !rows.is_empty() {
@@ -1348,21 +1446,43 @@ impl Render for KeyboardPage {
                     .py(px(8.));
                 dictation.push(div().child(advanced));
             }
-            cards = cards.child(self.card(dictation, &t).child(
-                div().px(px(16.)).py(px(12.)).child(text(
-                    "Works in any app. Press Esc to cancel a recording.",
-                    12.,
-                    16.,
-                    430.,
-                    t.text_secondary,
-                )),
-            ));
+            cards = cards.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .child(self.card(dictation, &t))
+                    .child(div().px(px(16.)).pt(px(6.)).child(text(
+                        "Works in any app. Press Esc to cancel a recording.",
+                        12.,
+                        16.,
+                        430.,
+                        t.text_secondary,
+                    ))),
+            );
         }
         let toggle = self
             .control(
                 "shortcut-search-mode".into(),
                 "Search by keystrokes".into(),
-                icon("settings-keyboard-shortcuts", 16., t.text_tertiary).into_any_element(),
+                div()
+                    .relative()
+                    .size(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(self.search_by_key, |d| {
+                        d.child(on_card(12.5, Squircle, t.text.opacity(0.05), None))
+                    })
+                    .child(icon(
+                        "settings-keyboard-shortcuts",
+                        18.,
+                        if self.search_by_key {
+                            t.text
+                        } else {
+                            t.text_tertiary
+                        },
+                    ))
+                    .into_any_element(),
                 Control::SearchMode,
                 window,
                 cx,
@@ -1370,20 +1490,37 @@ impl Render for KeyboardPage {
             .size(px(28.))
             .flex()
             .items_center()
+            .justify_center();
+        let clear = (!self.search_by_key && !query.is_empty()).then(|| {
+            self.control(
+                "clear-shortcut-search".into(),
+                "Clear search".into(),
+                icon("shortcut-clear", 16., t.text_secondary).into_any_element(),
+                Control::ClearSearch,
+                window,
+                cx,
+            )
+            .size(px(16.))
+            .flex_none()
+            .flex()
+            .items_center()
             .justify_center()
-            .when(self.search_by_key, |d| d.bg(t.list_hover));
+        });
         let search = div()
             .id("shortcut-search")
             .h(px(32.))
             .flex()
             .items_center()
             .gap(px(8.))
-            .px(px(10.))
-            .rounded_full()
-            .border_1()
-            .border_color(t.border)
-            .bg(t.list_hover)
-            .child(icon("search", 16., t.text_tertiary))
+            .px(px(11.))
+            .relative()
+            .child(on_card(
+                9999.,
+                Round,
+                t.control_background,
+                Some(t.border_strong),
+            ))
+            .child(icon("search", 18., t.text_secondary))
             .child(if self.search_by_key {
                 div()
                     .id("shortcut-keystroke-input")
@@ -1404,7 +1541,11 @@ impl Render for KeyboardPage {
                         14.,
                         18.,
                         430.,
-                        t.text_secondary,
+                        if query.is_empty() {
+                            t.text_tertiary
+                        } else {
+                            t.text
+                        },
                     ))
                     .into_any_element()
             } else {
@@ -1414,7 +1555,44 @@ impl Render for KeyboardPage {
                     .child(self.search.clone())
                     .into_any_element()
             })
+            .children(clear)
             .child(toggle);
+        let search_bar = loaded.then(|| {
+            div()
+                .tab_group()
+                .tab_index(1)
+                .tab_stop(false)
+                .absolute()
+                .top(px(77_f32.max(-f32::from(self.scroll.offset().y))))
+                .left_0()
+                .w_full()
+                .flex()
+                .justify_center()
+                .child(
+                    div().w_full().max_w(px(768.)).px(px(20.)).child(
+                        div()
+                            .relative()
+                            .top_layer()
+                            .bg(t.surface)
+                            .pt(px(20.))
+                            .pb(px(8.))
+                            .child(search)
+                            .child(
+                                div()
+                                    .absolute()
+                                    .left_0()
+                                    .right_0()
+                                    .top(px(60.))
+                                    .h(px(32.))
+                                    .bg(gpui::linear_gradient(
+                                        180.,
+                                        gpui::linear_color_stop(t.surface, 0.),
+                                        gpui::linear_color_stop(t.surface.opacity(0.), 1.),
+                                    )),
+                            ),
+                    ),
+                )
+        });
         let reset = if preferences.bindings.is_empty()
             && preferences.external_browser_link_shortcut == LinkModifier::default()
         {
@@ -1433,9 +1611,13 @@ impl Render for KeyboardPage {
                 .py(px(5.)),
             )
         };
+        let scrolls =
+            self.scroll.bounds().size.height <= px(0.) || self.scroll.max_offset().y > px(0.);
         div()
             .size_full()
             .relative()
+            .tab_group()
+            .tab_stop(false)
             .flex()
             .flex_col()
             .capture_key_down(cx.listener(Self::key))
@@ -1448,9 +1630,13 @@ impl Render for KeyboardPage {
             .child(
                 div()
                     .id("keyboard-shortcuts-page")
+                    .relative()
                     .flex_1()
                     .overflow_y_scroll()
-                    .layer()
+                    .track_scroll(&self.scroll)
+                    .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
+                    // Chromium composites a scroller only while its content overflows.
+                    .when(scrolls, |d| d.layer())
                     .child(probe(&self.layer))
                     .child(
                         div().pt(px(16.)).pb(px(1.)).flex().justify_center().child(
@@ -1468,25 +1654,30 @@ impl Render for KeyboardPage {
                         ),
                     )
                     .child(
-                        div().flex().justify_center().child(
-                            div()
-                                .w_full()
-                                .max_w(px(768.))
-                                .px(px(20.))
-                                .pb(px(20.))
-                                .flex()
-                                .flex_col()
-                                .when(loaded, |d| {
-                                    d.child(div().pt(px(20.)).pb(px(8.)).child(search))
-                                })
-                                .child(div().pt(px(20.)).child(cards))
-                                .children(
-                                    error
-                                        .filter(|_| preference_error.is_none())
-                                        .map(|error| text(error, 12., 16., 430., t.text_error)),
-                                ),
-                        ),
-                    ),
+                        div()
+                            .tab_group()
+                            .tab_index(2)
+                            .tab_stop(false)
+                            .flex()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(768.))
+                                    .px(px(20.))
+                                    .pb(px(20.))
+                                    .flex()
+                                    .flex_col()
+                                    .when(loaded, |d| d.child(div().h(px(60.))))
+                                    .child(div().pt(px(20.)).child(cards))
+                                    .children(
+                                        error
+                                            .filter(|_| preference_error.is_none())
+                                            .map(|error| text(error, 12., 16., 430., t.text_error)),
+                                    ),
+                            ),
+                    )
+                    .children(search_bar),
             )
             .children(self.confirmation.clone())
     }

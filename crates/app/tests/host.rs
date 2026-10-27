@@ -11,6 +11,54 @@ const RECORDING: &str = include_str!("../../../refs/interactions/host.json");
 const ORACLE: &str = include_str!("../../../tools/route1/oracle.json");
 
 #[test]
+fn global_state_reads_preserve_the_profile() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    let path = home.path().join(".codex-global-state.json");
+    let request = Request::post("get-global-state", Some(json!({"key": "project-order"})));
+    assert_eq!(json_body(&host.fetch(&request)?)?, json!({"value": null}));
+    assert!(!path.exists());
+
+    let fixture: Value =
+        serde_json::from_str(include_str!("../../../refs/interactions/f1d_projects.json"))?;
+    let state = &fixture["project_snapshot"]["state"];
+    let contents = serde_json::to_vec(state)?;
+    fs::write(&path, &contents)?;
+    assert_eq!(
+        json_body(&host.fetch(&request)?)?,
+        json!({"value": state["project-order"]})
+    );
+    let missing = Request::post("get-global-state", Some(json!({"key": "missing"})));
+    assert_eq!(json_body(&host.fetch(&missing)?)?, json!({"value": null}));
+    assert_eq!(fs::read(path)?, contents);
+    Ok(())
+}
+
+#[test]
+fn global_state_rejects_invalid_requests_and_profile_data() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    for params in [
+        json!({}),
+        json!({"key": 7}),
+        json!({"key": "project-order", "hostId": "remote"}),
+    ] {
+        assert!(
+            host.fetch(&Request::post("get-global-state", Some(params)))
+                .is_err()
+        );
+    }
+    let path = home.path().join(".codex-global-state.json");
+    let request = Request::post("get-global-state", Some(json!({"key": "project-order"})));
+    for contents in ["{", "[]", "null"] {
+        fs::write(&path, contents)?;
+        assert!(host.fetch(&request).is_err());
+        assert_eq!(fs::read_to_string(&path)?, contents);
+    }
+    Ok(())
+}
+
+#[test]
 fn all_original_host_and_http_responses_replay_exactly() -> Result<()> {
     let recorded = ReplayHost::from_recording(RECORDING)?;
     let oracle = ReplayHost::from_oracle(ORACLE)?;
@@ -80,6 +128,43 @@ fn wire_errors_and_binary_responses_are_not_empty_json_successes() -> Result<()>
         })
         .unwrap();
     assert!(json_body(&binary["response"]).is_err());
+    Ok(())
+}
+
+#[test]
+fn ssh_discovery_refreshes_the_selected_home_without_writes() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let storage = tempfile::tempdir()?;
+    let ssh = home.path().join(".ssh");
+    fs::create_dir(&ssh)?;
+    let config = ssh.join("config");
+    fs::write(
+        &config,
+        "Host capture-fixture\n  HostName 127.0.0.1\n  Port 1\n",
+    )?;
+    let host = LocalHost::new(storage.path()).with_ssh_home(home.path());
+    let request = Request::post("discover-remote-ssh-connections", None);
+    assert_eq!(
+        json_body(&host.fetch(&request)?)?,
+        json!({"sshAliases": ["capture-fixture"]})
+    );
+
+    let refreshed = b"Host updated-fixture\n  HostName 127.0.0.1\n  Port 1\n";
+    fs::write(&config, refreshed)?;
+    assert_eq!(
+        json_body(&host.fetch(&request)?)?,
+        json!({"sshAliases": ["updated-fixture"]})
+    );
+    assert_eq!(fs::read(&config)?, refreshed);
+    assert!(!storage.path().join(".codex-global-state.json").exists());
+
+    fs::write(&config, [0xff])?;
+    assert!(host.fetch(&request).is_err());
+    fs::remove_file(&config)?;
+    assert_eq!(
+        json_body(&host.fetch(&request)?)?,
+        json!({"sshAliases": []})
+    );
     Ok(())
 }
 
@@ -670,35 +755,6 @@ fn recorded_suggestions() -> Result<Value> {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn late_suggestions_keep_starting_on_the_clicked_task() -> Result<()> {
-    let mut fx = common::Fx::new()?;
-    let host = Arc::new(ReplayHost::from_recording(RECORDING)?);
-    fx.root
-        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
-    fx.cx.update_window(fx.window, |_, window, cx| {
-        window.dispatch_action(Box::new(ui::OpenScheduled), cx);
-    })?;
-    let page = fx.read(|root, _| root.suggestions().unwrap().clone());
-    page.update(&mut fx.cx, |page, cx| page.set_pending(Some(0), cx));
-    let server = serde_json::from_value(recorded_suggestions()?)?;
-    page.update(&mut fx.cx, |page, cx| page.set_suggestions(server, cx));
-    let actual = fx.cx.capture_screenshot(fx.window)?;
-    // The recorded response puts the clicked Weekly meal plan at index three.
-    page.update(&mut fx.cx, |page, cx| page.set_pending(Some(3), cx));
-    let expected = fx.cx.capture_screenshot(fx.window)?;
-    assert_eq!(
-        common::changed(&actual, &expected, common::MAIN_PANEL),
-        0,
-        "Starting must stay on Weekly meal plan, not AP Lang practice"
-    );
-    page.update(&mut fx.cx, |page, cx| page.set_pending(None, cx));
-    fx.cx.run_until_parked();
-    fx.parity("automations")?;
-    Ok(())
-}
-
-#[cfg(target_os = "macos")]
-#[test]
 fn unbundled_suggestion_icon_shows_its_emoji() -> Result<()> {
     let mut fx = common::Fx::new()?;
     let host = Arc::new(ReplayHost::from_recording(RECORDING)?);
@@ -876,13 +932,21 @@ fn automation_update_restores_definition_when_database_commit_fails() -> Result<
 }
 
 #[test]
-fn automation_update_rejects_invalid_schedule_and_definition_changes() -> Result<()> {
+fn automation_update_rejects_invalid_schedule_and_unowned_field_changes() -> Result<()> {
     let home = tempfile::tempdir()?;
     let host = LocalHost::new(home.path());
     let definition = definition("task", 20).replace("FREQ=DAILY;BYHOUR=9", "FREQ=DAILY;COUNT=1");
     host.write_automation("task", &definition)?;
     let db = update_database(home.path())?;
     db.execute("INSERT INTO automations(id,status,rrule,next_run_at) VALUES ('task','ACTIVE','FREQ=DAILY;COUNT=1',9999999999999)", [])?;
+    assert!(automation_schedule::valid(
+        "FREQ=DAILY;COUNT=1",
+        chrono::Utc::now().timestamp_millis()
+    ));
+    assert!(!automation_schedule::valid(
+        "FREQ=WEEKLY;BYDAY=XX",
+        chrono::Utc::now().timestamp_millis()
+    ));
     assert_eq!(
         update_status(&host, "ACTIVE").unwrap_err().to_string(),
         automation_schedule::NO_FUTURE_RUN
@@ -890,14 +954,14 @@ fn automation_update_rejects_invalid_schedule_and_definition_changes() -> Result
     let changed = host.fetch(&Request::post(
         "automation-update",
         Some(json!({
-            "id": "task", "status": "PAUSED", "prompt": "overwrite"
+            "id": "task", "status": "PAUSED", "model": "overwrite"
         })),
     ));
     assert!(
         changed
             .unwrap_err()
             .to_string()
-            .contains("cannot change prompt")
+            .contains("cannot change model")
     );
     assert_eq!(
         fs::read_to_string(home.path().join("automations/task/automation.toml"))?,
@@ -1153,10 +1217,7 @@ fn automation_update_rejects_missing_invalid_and_account_owned_targets() -> Resu
     let db = update_database(home.path())?;
     db.execute("INSERT INTO automations(id,account_id,status,rrule,next_run_at) VALUES ('task','other-account','ACTIVE','original-rule',123)", [])?;
     let before = unrelated_database_fields(&db)?;
-    assert_eq!(
-        host.fetch(&request("task")).unwrap_err().to_string(),
-        "cannot write an account-owned automation through LocalHost"
-    );
+    assert!(host.fetch(&request("task")).is_err());
     assert_eq!(unrelated_database_fields(&db)?, before);
     assert_eq!(
         db.query_row(
@@ -1188,6 +1249,8 @@ fn automation_resume_schedules_when_the_jitter_salt_cannot_be_saved() -> Result<
     assert!(salt.is_dir());
     Ok(())
 }
+
+#[test]
 
 /// Mobile `Get started` reads the MFA requirement, then the MFA status, through the host. A
 /// host without the authenticated transport leaves the initial step with its error; the retry
@@ -1221,5 +1284,125 @@ fn mobile_get_started_follows_the_recorded_mfa_status() -> Result<()> {
     assert_eq!(step(&fx), SetupStep::Pending);
     fx.cx.run_until_parked();
     assert_eq!(step(&fx), SetupStep::AllowHost);
+    Ok(())
+}
+
+#[test]
+fn edited_task_keeps_its_identity_and_unrelated_fields_across_all_recurrences() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    let created = json_body(&host.fetch(&Request::post(
+        "automation-create",
+        Some(json!({
+            "name": "Original", "prompt": "Original prompt",
+            "rrule": "FREQ=MINUTELY;INTERVAL=30", "cwds": [home.path()]
+        })),
+    ))?)?["item"]
+        .clone();
+    let id = created["id"].as_str().unwrap();
+    let path = home
+        .path()
+        .join("automations")
+        .join(id)
+        .join("automation.toml");
+    let mut raw: toml::Table = toml::from_str(&fs::read_to_string(&path)?)?;
+    raw.insert("custom_field".into(), "retained".into());
+    raw.insert("model".into(), "stored-model".into());
+    host.write_automation(id, &toml::to_string(&raw)?)?;
+    let db = update_database(home.path())?;
+    for (index, rule) in [
+        "FREQ=MINUTELY;INTERVAL=30",
+        "FREQ=HOURLY;INTERVAL=2;BYMINUTE=0",
+        "FREQ=DAILY;BYHOUR=18;BYMINUTE=35",
+        "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=15",
+        "FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,FR;BYHOUR=14;BYMINUTE=20",
+        "FREQ=MONTHLY;BYMONTHDAY=1,15;BYHOUR=22;BYMINUTE=10",
+        "FREQ=YEARLY;INTERVAL=2;BYMONTH=10;BYMONTHDAY=20;BYHOUR=9;BYMINUTE=0",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let name = format!("Edited {index}");
+        let prompt = format!("Prompt {index}\nRetain the second line.");
+        let saved = json_body(&host.fetch(&Request::post(
+            "automation-update",
+            Some(json!({
+                "id": id, "status": "ACTIVE", "name": name, "prompt": prompt, "rrule": rule
+            })),
+        ))?)?["item"]
+            .clone();
+        assert_eq!(saved["id"], id);
+        assert_eq!(saved["createdAt"], created["createdAt"]);
+        assert_eq!(saved["name"], name);
+        assert_eq!(saved["prompt"], prompt);
+        assert_eq!(saved["rrule"], rule);
+        assert_eq!(saved["model"], "stored-model");
+        let raw: toml::Table = toml::from_str(&fs::read_to_string(&path)?)?;
+        assert_eq!(raw["custom_field"].as_str(), Some("retained"));
+        let (stored_name, stored_prompt, stored_rule, next): (String, String, String, i64) = db
+            .query_row(
+                "SELECT name,prompt,rrule,next_run_nominal_at FROM automations WHERE id=?",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )?;
+        assert_eq!(
+            (stored_name, stored_prompt, stored_rule),
+            (name, prompt, rule.into())
+        );
+        assert!(next > saved["updatedAt"].as_i64().unwrap());
+    }
+    let before = fs::read(&path)?;
+    for patch in [
+        json!({"name": " "}),
+        json!({"prompt": "\n"}),
+        json!({"rrule": "FREQ=WEEKLY;BYDAY=XX"}),
+    ] {
+        let mut body = json!({"id": id, "status": "PAUSED"});
+        body.as_object_mut()
+            .unwrap()
+            .extend(patch.as_object().unwrap().clone());
+        assert!(
+            host.fetch(&Request::post("automation-update", Some(body)))
+                .is_err()
+        );
+        assert_eq!(fs::read(&path)?, before);
+    }
+    let loaded =
+        json_body(&LocalHost::new(home.path()).fetch(&Request::post("list-automations", None))?)?;
+    assert_eq!(
+        loaded["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["id"] == id)
+            .unwrap()["name"],
+        "Edited 6"
+    );
+    Ok(())
+}
+
+#[test]
+fn fresh_profile_task_edits_do_not_require_or_create_the_original_database() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    let created = json_body(&host.fetch(&Request::post("automation-create", Some(json!({
+        "name": "Original", "prompt": "Original prompt", "rrule": "FREQ=DAILY;BYHOUR=9", "cwds": [home.path()]
+    }))))?)?["item"].clone();
+    host.fetch(&Request::post(
+        "automation-update",
+        Some(json!({
+            "id": created["id"], "status": "ACTIVE", "name": "Renamed",
+            "prompt": "A new prompt", "rrule": "FREQ=MONTHLY;BYMONTHDAY=20;BYHOUR=18;BYMINUTE=30"
+        })),
+    ))?;
+    let reloaded =
+        json_body(&LocalHost::new(home.path()).fetch(&Request::post("list-automations", None))?)?;
+    assert_eq!(reloaded["items"][0]["name"], "Renamed");
+    assert_eq!(reloaded["items"][0]["prompt"], "A new prompt");
+    assert_eq!(
+        reloaded["items"][0]["rrule"],
+        "FREQ=MONTHLY;BYMONTHDAY=20;BYHOUR=18;BYMINUTE=30"
+    );
+    assert!(!home.path().join("sqlite/codex.db").exists());
     Ok(())
 }

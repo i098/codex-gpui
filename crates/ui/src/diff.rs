@@ -2,6 +2,7 @@
 //! refs/terminal share, and the Changes panel with the unified diff of the last turn's file
 //! changes. All numbers are the spec's CSS px.
 
+use crate::workspace::WorkspaceLayout;
 use crate::{
     MONO, SANS, Shell, composer::shadow, drag_layer, fixture, icon::icon, layout_color, over,
     screens::thread::view::ThreadView, text,
@@ -11,15 +12,21 @@ use bridge::{
     types::{ThreadItem, ThreadReadResponse, ThreadStartResponse, Turn},
 };
 use gpui::{
-    Action, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context, Corners,
-    CursorStyle, Div, Entity, FocusHandle, Font, FontFeatures, FontWeight, Global, HighlightStyle,
-    Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Render, Rgba, ScrollHandle, SharedString, Stateful,
+    Action, AnimationExt as _, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context,
+    Corners, CursorStyle, Div, Entity, FocusHandle, Font, FontFeatures, FontWeight, Global,
+    HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Render, ScrollHandle, SharedString, Stateful,
     StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black, combine_highlights,
     deferred, div, font, prelude::FluentBuilder as _, px, rgb,
 };
 use shapes::Decoration;
-use std::{cell::Cell, ops::Range, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    ops::Range,
+    rc::Rc,
+    sync::Arc,
+};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
 #[path = "diff/menu.rs"]
@@ -29,15 +36,36 @@ mod menu;
 mod controls;
 pub use controls::DiffLayout;
 
-/// Panel width the capture had stored (`app-shell:right-panel-width:v3`) before clamping.
-const STORED_WIDTH: f32 = 664.17;
+#[path = "diff/content.rs"]
+mod content;
+pub use content::{
+    BlobError, BlobReply, BlobRequest, FullError, FullFileLoad, FullFileRequest, FullText,
+};
+
+#[path = "diff/word.rs"]
+pub mod word;
+
+#[path = "diff/file_tree.rs"]
+mod file_tree;
+#[path = "diff/patch.rs"]
+pub mod patch;
+pub use file_tree::FileTreeRequest;
+
+/// Panel width the capture had stored (`app-shell:right-panel-width:v3`, a width ratio) before
+/// clamping. The spec prints it as 664.17; the 2x refs put its edge at 85014 LayoutUnits (1/128
+/// px at 2x), so the computed width is at least that, which Blink's truncation keeps.
+const STORED_WIDTH: f32 = 85014. / 128.;
 /// Room the chat keeps beside the panel (`unified` layout), also the panel's minimum.
 const MIN_CHAT: f32 = 320.;
 /// `--diffs-font-size`, `--diffs-line-height`.
 const CODE_SIZE: f32 = 12.;
 const CODE_LINE: f32 = 21.6;
+const FILE_LINE_HEIGHT: f32 = 22.;
 /// Menlo advance at 12 px (0.602em); `--diffs-min-number-column-width` is 4ch.
 const CH: f32 = 7.224_609_4;
+const MAX_DIFF_BYTES: usize = 2_000_000;
+const MAX_DIFF_LINES: usize = 20_000;
+const MAX_DIFF_LINE_BYTES: usize = 10_000;
 
 /// The panel width the user last dragged the divider to (DT-056); `STORED_WIDTH` until then.
 struct PanelWidth(Pixels);
@@ -85,6 +113,7 @@ enum Kind {
     Removed,
 }
 
+#[derive(Clone)]
 struct Line {
     kind: Kind,
     /// New-file number; old-file number for removed lines.
@@ -96,21 +125,35 @@ struct Line {
     word_change: Option<Range<usize>>,
 }
 
+#[derive(Clone)]
 struct Hunk {
+    old_start: u32,
+    new_start: u32,
     /// `N unmodified lines` bar for the old-file lines the diff skips before this hunk.
     separator: Option<SharedString>,
     lines: Vec<Line>,
+    layout: Rc<RefCell<content::ContextLayout>>,
 }
 
 pub struct FileDiff {
     /// Workspace-relative directory part (tertiary) and file name of the header path.
     pub dir: SharedString,
     pub name: SharedString,
+    path_key: String,
+    display_dir: SharedString,
+    display_name: SharedString,
     pub added: usize,
     pub removed: usize,
     hunks: Vec<Hunk>,
     pub open: bool,
     problem: Option<&'static str>,
+    raw: String,
+    raw_kind: Option<Kind>,
+    full: Option<FullText>,
+    full_loading: bool,
+    full_error: Option<FullError>,
+    original_hunks: Option<Vec<Hunk>>,
+    pending_expansion: Option<(usize, content::Expand)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -147,7 +190,7 @@ impl DiffSource {
     }
 
     fn mutable(self) -> bool {
-        matches!(self, Self::Uncommitted | Self::Unstaged | Self::Staged)
+        matches!(self, Self::Unstaged | Self::Staged)
     }
 }
 
@@ -164,6 +207,7 @@ pub enum DiffRequest {
     CreateRepository,
     /// Open this absolute path in the configured editor.
     Open(String),
+    LoadFullFile(FullFileLoad),
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -172,6 +216,13 @@ pub struct RevertChanges {
     pub source: &'static str,
     pub diff: String,
     pub hunk: Option<usize>,
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ReviewRepository {
+    pub root: String,
+    pub cwd: String,
+    pub name: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -219,6 +270,8 @@ pub struct DiffPanel {
     selecting: bool,
     menu: Option<menu::Menu>,
     workspace: String,
+    files_expanded: bool,
+    file_expansion: HashMap<String, bool>,
     wrap: bool,
     source: DiffSource,
     turn_files: Vec<FileDiff>,
@@ -232,11 +285,25 @@ pub struct DiffPanel {
     filter_focus: Option<FocusHandle>,
     scroll: ScrollHandle,
     standalone: bool,
+    container_width: Option<Pixels>,
     base_branch: Option<String>,
     commit: Option<String>,
+    cwd: String,
+    full_files: bool,
+    content_generation: u64,
+    full_view: Option<gpui::WeakEntity<Shell>>,
 }
 
 impl DiffPanel {
+    pub fn file_tree_open(&self) -> bool {
+        self.show_tree
+    }
+
+    pub fn toggle_file_tree(&mut self, cx: &mut Context<Self>) {
+        self.show_tree = !self.show_tree;
+        cx.notify();
+    }
+
     /// The subtract session as the reference shows it.
     pub fn subtract() -> Self {
         let start: ThreadStartResponse =
@@ -260,9 +327,16 @@ impl DiffPanel {
             })
             .flatten();
         for change in changes {
-            let path = match change.path.strip_prefix(workspace_root) {
-                Some(rel) => format!("{cwd}/{}", rel.trim_start_matches('/')),
-                None => change.path.clone(),
+            let path = std::path::Path::new(&change.path);
+            let path = if path.starts_with(cwd) {
+                change.path.clone()
+            } else if let Ok(relative) = path.strip_prefix(workspace_root) {
+                std::path::Path::new(cwd)
+                    .join(relative)
+                    .to_string_lossy()
+                    .into_owned()
+            } else {
+                change.path.clone()
             };
             let shown = relative(workspace_root, &path);
             let split = shown.rfind('/').map_or(0, |i| i + 1);
@@ -290,16 +364,32 @@ impl DiffPanel {
                     f.added += added;
                     f.removed += removed;
                     f.hunks.extend(hunks);
+                    f.raw.push_str(&change.diff);
                 }
-                None => files.push(FileDiff {
-                    dir: dir.to_string().into(),
-                    name: name.to_string().into(),
-                    added,
-                    removed,
-                    hunks,
-                    open: true,
-                    problem,
-                }),
+                None => {
+                    let dir: SharedString = dir.to_owned().into();
+                    let name: SharedString = name.to_owned().into();
+                    let (display_dir, display_name) = controls::display_parts(&shown, &dir, &name);
+                    files.push(FileDiff {
+                        dir,
+                        name,
+                        path_key: path,
+                        display_dir,
+                        display_name,
+                        added,
+                        removed,
+                        hunks,
+                        open: true,
+                        problem,
+                        raw: change.diff.clone(),
+                        raw_kind: raw,
+                        full: None,
+                        full_loading: false,
+                        full_error: None,
+                        original_hunks: None,
+                        pending_expansion: None,
+                    });
+                }
             }
         }
         Self {
@@ -314,6 +404,8 @@ impl DiffPanel {
             selecting: false,
             menu: None,
             workspace: workspace_root.to_owned(),
+            files_expanded: true,
+            file_expansion: HashMap::new(),
             wrap: false,
             source: DiffSource::LastTurn,
             turn_files: Vec::new(),
@@ -327,8 +419,20 @@ impl DiffPanel {
             filter_focus: None,
             scroll: ScrollHandle::new(),
             standalone: false,
+            container_width: None,
             base_branch: None,
             commit: None,
+            cwd: cwd.to_owned(),
+            full_files: false,
+            content_generation: 0,
+            full_view: None,
+        }
+    }
+
+    pub fn set_container_width(&mut self, width: Pixels, cx: &mut Context<Self>) {
+        if self.container_width != Some(width) {
+            self.container_width = Some(width);
+            cx.notify();
         }
     }
 
@@ -342,6 +446,41 @@ impl DiffPanel {
 
     pub fn review_params(&self) -> serde_json::Value {
         serde_json::json!({"reviewSource": self.source.key(), "baseBranch": self.base_branch, "commit": self.commit})
+    }
+
+    pub fn view_changes(&mut self, path: &str, cx: &mut Context<Self>) {
+        if let Some(query) = &mut self.query {
+            query.clear();
+        }
+        self.filter = Default::default();
+        self.select_source(DiffSource::LastTurn, cx);
+        self.search_changed();
+        self.set_all_files_open(false);
+        self.file_expansion.insert(path.to_owned(), true);
+        if let Some(index) = self.files.iter().position(|file| file.path_key == path) {
+            self.files[index].open = true;
+            self.active_file = index;
+            self.scroll.scroll_to_top_of_item(index);
+        }
+        cx.notify();
+    }
+
+    fn set_all_files_open(&mut self, open: bool) {
+        self.files_expanded = open;
+        self.file_expansion.clear();
+        for file in &mut self.files {
+            file.open = open;
+        }
+    }
+
+    fn set_file_open(&mut self, index: usize, open: bool) {
+        let file = &mut self.files[index];
+        file.open = open;
+        if let Some(value) = self.file_expansion.get_mut(&file.path_key) {
+            *value = open;
+        } else {
+            self.file_expansion.insert(file.path_key.clone(), open);
+        }
     }
 
     fn actionable_files(&self) -> &[RepositoryFile] {
@@ -465,7 +604,10 @@ impl DiffPanel {
     }
 
     fn request_revert(&self, file: usize, hunk: Option<usize>, cx: &mut Context<Self>) {
-        if self.pending || self.error.is_some() || !self.source.mutable() {
+        if self.pending
+            || self.error.is_some()
+            || !matches!(self.source, DiffSource::Unstaged | DiffSource::Staged)
+        {
             return;
         }
         let files = self.actionable_files();
@@ -529,6 +671,21 @@ impl DiffPanel {
         self.query.as_deref().map(|query| (query, self.matches))
     }
 
+    pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let focus = self.focus.get_or_insert_with(|| cx.focus_handle());
+        window.focus(focus, cx);
+    }
+
+    fn available_width(&self, window: &Window, cx: &App) -> Pixels {
+        if self.standalone {
+            window.viewport_size().width
+        } else if let Some(shell) = self.full_view.as_ref().and_then(|shell| shell.upgrade()) {
+            shell.read(cx).main_width(window, cx)
+        } else {
+            panel_width(window, cx) - px(1.)
+        }
+    }
+
     pub fn open_find(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
         if !self
             .focus
@@ -543,13 +700,7 @@ impl DiffPanel {
         true
     }
 
-    pub fn apply(
-        &mut self,
-        event: &Event,
-        workspace: &str,
-        turns: &[Turn],
-        cx: &mut Context<Self>,
-    ) {
+    pub fn apply(&mut self, event: &Event, cwd: &str, turns: &[Turn], cx: &mut Context<Self>) {
         let Event::Notification { method, params } = event else {
             return;
         };
@@ -569,10 +720,17 @@ impl DiffPanel {
                 if params["item"]["type"] == "fileChange"
                     && self.aggregated_turn.as_deref() != Some(&turn.id) =>
             {
-                Self::last_turn(workspace, workspace, turns).files
+                self.aggregated_turn = None;
+                Self::last_turn(&self.workspace, cwd, turns).files
             }
             _ => return,
         };
+        let mut files = files;
+        for file in &mut files {
+            if !file.path_key.starts_with('/') {
+                file.path_key = menu::absolute_path(cwd, &file.path_key);
+            }
+        }
         if self.source == DiffSource::LastTurn {
             self.replace_files(files);
         } else {
@@ -582,23 +740,24 @@ impl DiffPanel {
     }
 
     fn replace_files(&mut self, mut files: Vec<FileDiff>) {
+        self.content_generation = self.content_generation.wrapping_add(1);
+        for file in &mut files {
+            if !file.path_key.starts_with('/') {
+                file.path_key = menu::absolute_path(self.file_root(), &file.path_key);
+            }
+        }
         self.active_file = self
             .files
             .get(self.active_file)
-            .and_then(|old| {
-                files
-                    .iter()
-                    .position(|file| file.dir == old.dir && file.name == old.name)
-            })
+            .and_then(|old| files.iter().position(|file| file.path_key == old.path_key))
             .unwrap_or(0);
         for file in &mut files {
-            if let Some(old) = self
-                .files
-                .iter()
-                .find(|old| old.dir == file.dir && old.name == file.name)
-            {
-                file.open = old.open;
-            }
+            file.full_loading = false;
+            file.open = self
+                .file_expansion
+                .get(&file.path_key)
+                .copied()
+                .unwrap_or(self.files_expanded);
         }
         self.files = files;
         self.selection = None;
@@ -639,6 +798,11 @@ impl DiffPanel {
             }
             if self.matches > before {
                 file.open = true;
+                if let Some(value) = self.file_expansion.get_mut(&file.path_key) {
+                    *value = true;
+                } else {
+                    self.file_expansion.insert(file.path_key.clone(), true);
+                }
             }
         }
         self.active_match = self.active_match.min(self.matches.saturating_sub(1));
@@ -1019,14 +1183,12 @@ impl DiffPanel {
                             .focusable()
                             .cursor_pointer()
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.show_tree = !this.show_tree;
-                                cx.notify();
+                                this.toggle_file_tree(cx);
                             }))
                             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                                 if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                    this.show_tree = !this.show_tree;
+                                    this.toggle_file_tree(cx);
                                     cx.stop_propagation();
-                                    cx.notify();
                                 }
                             })),
                     ),
@@ -1036,11 +1198,15 @@ impl DiffPanel {
 
 impl Render for DiffPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.request_visible_full_files(cx);
         let t = cx.theme().clone();
-        let width = if self.standalone {
-            window.viewport_size().width
+        let width = self
+            .container_width
+            .unwrap_or_else(|| self.available_width(window, cx));
+        let clamped = if self.full_view.is_some() {
+            width < px(STORED_WIDTH)
         } else {
-            panel_width(window, cx) - px(1.)
+            panel_clamped(window, cx)
         };
         let wide = width >= px(625.);
         let tree = self.show_tree.then(|| self.file_tree(width, window, cx));
@@ -1061,18 +1227,20 @@ impl Render for DiffPanel {
         let status = self.repository_status(&t, cx);
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let line_index = Cell::new(0);
+        let scroll_top = self.scroll.logical_scroll_top();
         let files = self.files.iter().enumerate().map(|(i, file)| {
             div()
+                .relative()
+                .pt(px(if self.standalone { 36. } else { 39. }))
                 .flex()
                 .flex_col()
                 .flex_none()
+                .pb(px(2.))
                 .when(self.standalone, |d| {
-                    d.relative()
-                        .overflow_hidden()
-                        .child(shapes::decoration(Decoration {
-                            fill: Some(t.surface),
-                            ..Default::default()
-                        }))
+                    d.overflow_hidden().child(shapes::decoration(Decoration {
+                        fill: Some(t.surface),
+                        ..Default::default()
+                    }))
                 })
                 .on_mouse_down(
                     MouseButton::Right,
@@ -1080,34 +1248,31 @@ impl Render for DiffPanel {
                         this.open_menu(i, menu::Kind::Body, event.position, window, cx);
                     }),
                 )
-                .child(file_header(i, file, self, &t, cx).on_click(cx.listener(
-                    move |this, _, _, cx| {
-                        this.files[i].open ^= true;
-                        this.active_file = i;
-                        this.selection = None;
-                        cx.notify();
-                    },
-                )))
+                .when(file.open, |d| d.children(self.full_error_notice(i, cx)))
                 .map(|d| {
                     if file.open && file.problem.is_some() {
-                        d.child(
-                            text(
-                                file.problem.unwrap_or_default(),
-                                13.,
-                                20.,
-                                400.,
-                                t.text_tertiary,
-                            )
-                            .p(px(12.)),
-                        )
+                        d.child(controls::problem_body(file.problem.unwrap_or_default(), &t))
                     } else if file.open {
-                        d.children(file.hunks.iter().enumerate().map(|(index, h)| {
-                            let controls =
-                                matches!(self.source, DiffSource::Unstaged | DiffSource::Staged)
-                                    && h.lines.iter().any(|l| l.kind != Kind::Context);
+                        // The original code scroll container owns an opaque raster layer.
+                        d.child(
                             div()
-                                .when(controls, |d| {
-                                    d.child(
+                                .relative()
+                                .flex()
+                                .flex_col()
+                                .layer()
+                                .child(shapes::decoration(Decoration {
+                                    fill: Some(t.surface),
+                                    ..Default::default()
+                                }))
+                                .children(file.hunks.iter().enumerate().map(|(index, h)| {
+                                    let controls =
+                                        matches!(
+                                            self.source,
+                                            DiffSource::Unstaged | DiffSource::Staged
+                                        ) && h.lines.iter().any(|l| l.kind != Kind::Context);
+                                    div()
+                                        .when(controls, |d| {
+                                            d.child(
                                         div()
                                             .flex()
                                             .justify_end()
@@ -1171,16 +1336,18 @@ impl Render for DiffPanel {
                                                     .child(text("Revert", 12., 20., 430., t.text)),
                                             ),
                                     )
-                                })
-                                .child(hunk(
-                                    h,
-                                    &t,
-                                    &line_index,
-                                    self,
-                                    self.layout.split(file, code_width),
-                                    cx,
-                                ))
-                        }))
+                                        })
+                                        .child(hunk(
+                                            h,
+                                            &t,
+                                            &line_index,
+                                            self,
+                                            self.layout.split(file, code_width),
+                                            (i, index),
+                                            cx,
+                                        ))
+                                })),
+                        )
                     } else {
                         line_index.set(
                             line_index.get()
@@ -1189,6 +1356,7 @@ impl Render for DiffPanel {
                         d
                     }
                 })
+                .child(self.scrolling_file_header(i, file, scroll_top, &t, cx))
                 .map(|d| {
                     if self.standalone {
                         crate::rounded_clip(px(12.5), shapes::Corner::Squircle, d)
@@ -1289,7 +1457,7 @@ impl Render for DiffPanel {
                     .child(if self.standalone {
                         self.standalone_header(&t, cx)
                     } else {
-                        self.header(&t, wide, panel_clamped(window, cx), cx)
+                        self.header(&t, wide, clamped, cx)
                     }),
             )
             .children(status)
@@ -1346,6 +1514,7 @@ impl Render for DiffPanel {
                             .overflow_y_scroll()
                             .overflow_x_scroll()
                             .track_scroll(&self.scroll)
+                            .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
                             .flex()
                             .flex_col()
                             .pb(px(12.))
@@ -1389,8 +1558,27 @@ impl Render for DiffPanel {
     }
 }
 
-/// A side panel tab: its icon and label.
-pub type Tab = (&'static str, SharedString);
+/// A side panel tab, with italic text for a preview file.
+#[derive(Clone)]
+pub struct Tab {
+    pub icon: &'static str,
+    pub label: SharedString,
+    pub preview: bool,
+}
+
+impl Tab {
+    fn label_font(&self) -> Font {
+        Font {
+            weight: FontWeight(430.),
+            style: if self.preview {
+                gpui::FontStyle::Italic
+            } else {
+                gpui::FontStyle::Normal
+            },
+            ..font(SANS)
+        }
+    }
+}
 
 /// Click on a tab of the side panel's strip (`activateOnClick`): index into the strip.
 #[derive(Clone, PartialEq, Action)]
@@ -1402,7 +1590,38 @@ pub struct ActivateSideTab(pub usize);
 #[action(namespace = ui, no_json)]
 pub struct CloseSideTab(pub usize);
 
+fn side_tab_icon(name: &'static str, index: usize, color: Hsla) -> gpui::AnyElement {
+    let icon = icon(name, 16., color);
+    if name != "sidebar-cmd-spinner" {
+        return icon.into_any_element();
+    }
+    icon.with_animation(
+        ("side-chat-running", index),
+        gpui::Animation::new(std::time::Duration::from_secs(1)).repeat_synced(),
+        |icon, progress| {
+            icon.with_transformation(gpui::Transformation::rotate(gpui::radians(
+                progress * std::f32::consts::TAU,
+            )))
+        },
+    )
+    .into_any_element()
+}
+
 impl SplitScreen {
+    pub fn set_side_chat_running(&mut self, index: usize, running: bool, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get_mut(index) {
+            let icon = if running {
+                "sidebar-cmd-spinner"
+            } else {
+                "side-chat"
+            };
+            if tab.icon != icon {
+                tab.icon = icon;
+                cx.notify();
+            }
+        }
+    }
+
     /// Titlebar row over a side panel (`Task tabs`): every open tab in a 240 px slot (the
     /// selected one on its surface, the others `text-tertiary`, surface and `×` on hover),
     /// `New tab`, and the `Enter full view` / `Hide tabs` buttons. The caller places it from
@@ -1416,17 +1635,19 @@ impl SplitScreen {
             Appearance::Dark => t.ghost_hover,
             Appearance::Light => t.surface_elevated_secondary,
         };
-        let mut tab = |ix: usize, (tab_icon, label): &Tab, cx: &mut Context<Self>| {
+        let mut tab = |ix: usize, tab: &Tab, cx: &mut Context<Self>| {
+            let Tab {
+                icon: tab_icon,
+                label,
+                preview,
+            } = tab;
             let selected = ix == self.active;
             let hovered = self.hovered == Some(ix);
             let color = if selected { t.text } else { t.text_tertiary };
             let label = label.clone();
             let run = TextRun {
                 len: label.len(),
-                font: Font {
-                    weight: FontWeight(430.),
-                    ..font(SANS)
-                },
+                font: tab.label_font(),
                 color,
                 background_color: None,
                 underline: None,
@@ -1518,7 +1739,7 @@ impl SplitScreen {
                         .items_center()
                         .gap(px(8.))
                         .when(closable, |d| d.pr(px(20.)))
-                        .child(icon(tab_icon, 16., color))
+                        .child(side_tab_icon(tab_icon, ix, color))
                         .child(
                             div()
                                 .relative()
@@ -1526,7 +1747,10 @@ impl SplitScreen {
                                 .min_w_0()
                                 .ml(px(-4.))
                                 .overflow_hidden()
-                                .child(text(label, 13., 18.5714, 430., color))
+                                .child(
+                                    text(label, 13., 18.5714, 430., color)
+                                        .when(*preview, |label| label.italic()),
+                                )
                                 .when(fade, |d| d.layer().child(shapes::x_fade(px(0.), px(FADE)))),
                         ),
                 )
@@ -1535,7 +1759,7 @@ impl SplitScreen {
                     let close = div()
                         .id("side-panel-close-tab")
                         .tab_index(0)
-                        .aria_label(format!("Close {} tab", self.tabs[ix].1))
+                        .aria_label(format!("Close {} tab", self.tabs[ix].label))
                         .on_key_down(move |event, window, cx| {
                             if matches!(event.keystroke.key.as_str(), "enter" | "space") {
                                 window.dispatch_action(Box::new(CloseSideTab(ix)), cx);
@@ -1564,26 +1788,6 @@ impl SplitScreen {
                     ))
                 });
             crate::focus::ring(control, &focus, Theme::RADIUS_MD, px(0.), cx)
-        };
-        // 28 px `_Button`: 12.5 px `--codex-corner-shape` squircle, `border border-transparent`.
-        // Blink's clip layer for its fill composites onto the titlebar layer's transparent tile
-        // unchanged, so the fill paints straight into the strip's layer.
-        let button = |name: &str, color: Hsla, fill: Option<Hsla>| {
-            div()
-                .relative()
-                .size(px(28.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .when_some(fill, |d, fill| {
-                    d.child(shapes::decoration(Decoration {
-                        radius: Corners::all(px(12.5)),
-                        corner: shapes::Corner::Squircle,
-                        fill: Some(fill),
-                        ..Default::default()
-                    }))
-                })
-                .child(icon(name, 16., color))
         };
         // `_strip` is `[contain:layout_paint]`.
         div()
@@ -1618,25 +1822,85 @@ impl SplitScreen {
             .child(
                 div()
                     .pl(px(6.))
-                    .child(button("diff-new-tab", t.text_tertiary, None)),
+                    .child(strip_button("diff-new-tab", t.text_tertiary, None)),
+            )
+            .child(self.layout_controls(t))
+    }
+
+    fn layout_controls(&self, t: &Theme) -> Div {
+        let full = self.layout == WorkspaceLayout::Full;
+        let (glyph, label, step_label) = if full {
+            (
+                "workspace-exit-full-view",
+                "Exit full view",
+                "Enter split view",
+            )
+        } else {
+            ("diff-full-view", "Enter full view", "Hide tabs")
+        };
+        div()
+            .absolute()
+            .top(px(8.))
+            .right(px(8.))
+            .flex()
+            .gap(px(6.))
+            .child(
+                strip_button(glyph, t.text_tertiary, full.then_some(t.text_alpha_5))
+                    .id("workspace-full-view")
+                    .role(gpui::Role::Button)
+                    .aria_label(label)
+                    .focusable()
+                    .tab_index(0)
+                    .on_key_down(dispatch_key(crate::ShowWorkspaceTabView))
+                    .focus_visible(|style| style.border_2().border_color(rgb(0x3a83f7)))
+                    .on_click(dispatch_action(crate::ShowWorkspaceTabView)),
             )
             .child(
-                div()
-                    .absolute()
-                    .top(px(8.))
-                    .right(px(8.))
-                    .flex()
-                    .gap(px(6.))
-                    .child(button("diff-full-view", t.text_tertiary, None))
-                    // `bg-text/5` (dark: a float color, see `Theme::text_alpha_5`).
-                    .child(button("diff-hide-tabs", t.text, Some(t.text_alpha_5))),
+                strip_button("diff-hide-tabs", t.text, Some(t.text_alpha_5))
+                    .id("workspace-step-layout")
+                    .role(gpui::Role::Button)
+                    .aria_label(step_label)
+                    .focusable()
+                    .tab_index(0)
+                    .on_key_down(dispatch_key(crate::StepWorkspaceLayout))
+                    .focus_visible(|style| style.border_2().border_color(rgb(0x3a83f7)))
+                    .on_click(dispatch_action(crate::StepWorkspaceLayout)),
             )
     }
+}
+
+// Paint the fill directly into the titlebar layer's transparent tile.
+fn strip_button(name: &str, color: Hsla, fill: Option<Hsla>) -> Div {
+    div()
+        .relative()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .size(px(28.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .when_some(fill, |d, fill| {
+            d.child(shapes::decoration(Decoration {
+                radius: Corners::all(px(12.5)),
+                corner: shapes::Corner::Squircle,
+                fill: Some(fill),
+                ..Default::default()
+            }))
+        })
+        .child(icon(name, 16., color))
 }
 
 /// Click handler dispatching `action`.
 fn dispatch_action(action: impl Action) -> impl Fn(&ClickEvent, &mut Window, &mut App) {
     move |_, window, cx| window.dispatch_action(action.boxed_clone(), cx)
+}
+
+fn dispatch_key(action: impl Action) -> impl Fn(&KeyDownEvent, &mut Window, &mut App) {
+    move |event, window, cx| {
+        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+            window.dispatch_action(action.boxed_clone(), cx);
+            cx.stop_propagation();
+        }
+    }
 }
 
 /// Main panel of a thread with a side panel open: the thread, then the panel behind its 1 px
@@ -1648,10 +1912,18 @@ struct SplitMain {
     panel: AnyView,
     /// Width at press plus the pointer x at press, while the divider is dragged.
     drag_anchor: Option<Pixels>,
+    layout: WorkspaceLayout,
+    focus: FocusHandle,
 }
 
 impl Render for SplitMain {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.layout == WorkspaceLayout::Full {
+            return div()
+                .size_full()
+                .track_focus(&self.focus)
+                .child(self.panel.clone());
+        }
         let t = cx.theme();
         let width = panel_width(window, cx);
         div()
@@ -1663,6 +1935,7 @@ impl Render for SplitMain {
                 div()
                     .w(width)
                     .flex_none()
+                    .track_focus(&self.focus)
                     .border_l_1()
                     // The panel content's `[contain:layout_paint]`.
                     .snap_origin()
@@ -1676,7 +1949,7 @@ impl Render for SplitMain {
                     .absolute()
                     .top_0()
                     .bottom_0()
-                    .right(width - px(16.))
+                    .right(width - px(8.))
                     .w(px(16.))
                     .cursor(CursorStyle::ResizeLeftRight)
                     .on_mouse_down(
@@ -1719,14 +1992,31 @@ pub struct SplitScreen {
     active: usize,
     /// The tab under the pointer.
     hovered: Option<usize>,
+    layout: WorkspaceLayout,
+    panel_focus: FocusHandle,
+}
+
+impl gpui::Focusable for SplitScreen {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.panel_focus.clone()
+    }
 }
 
 impl Render for SplitScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The panel ends at the main panel's right edge, 4 px
         // (`--app-shell-page-inline-end-inset`) from the window's.
-        let left = (!self.tabs.is_empty())
-            .then(|| window.viewport_size().width - px(4.) - panel_width(window, cx));
+        let left = match self.layout {
+            WorkspaceLayout::Chat => None,
+            WorkspaceLayout::Split => {
+                Some(window.viewport_size().width - px(4.) - panel_width(window, cx))
+            }
+            WorkspaceLayout::Full => Some(if self.shell.read(cx).sidebar_open {
+                self.shell.read(cx).sidebar_width
+            } else {
+                crate::RAIL_WIDTH
+            }),
+        };
         // ponytail: like refs/thread, the header only follows the open-sidebar titlebar layout.
         let open = self.shell.read(cx).sidebar_open;
         let sidebar_width = self.shell.read(cx).sidebar_width;
@@ -1736,13 +2026,14 @@ impl Render for SplitScreen {
             .font_family(SANS)
             .on_key_down(crate::focus::tab)
             .child(self.shell.clone())
-            .when(open, |d| {
-                d.child(
+            .when(open && self.layout != WorkspaceLayout::Full, |d| {
+                d.child(titlebar_layer(
+                    Some(sidebar_width),
                     self.thread
-                        .update(cx, |view, cx| view.titlebar_header(cx))
-                        .left(sidebar_width)
+                        .update(cx, |view, cx| view.titlebar_header(left.is_some(), cx))
                         .when_some(left, |h, left| h.w(left - sidebar_width)),
-                )
+                    sidebar_width,
+                ))
             })
             // Without a panel the shell's `New tab` group follows the header behind a divider.
             .when(open && left.is_none(), |d| {
@@ -1757,6 +2048,31 @@ impl Render for SplitScreen {
                         .bg(over(t.border, layout_color(t))),
                 )
             })
+            .when(
+                self.layout == WorkspaceLayout::Chat && !self.tabs.is_empty(),
+                |d| {
+                    d.child(
+                        div()
+                            .id("workspace-show-tabs")
+                            .role(gpui::Role::Button)
+                            .aria_label("Show tabs")
+                            .focusable()
+                            .tab_index(0)
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .absolute()
+                            .top(px(8.))
+                            .right(px(8.))
+                            .size(px(28.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .on_click(dispatch_action(crate::StepWorkspaceLayout))
+                            .on_key_down(dispatch_key(crate::StepWorkspaceLayout))
+                            .focus_visible(|style| style.border_2().border_color(rgb(0x3a83f7)))
+                            .child(icon("diff-hide-tabs", 16., cx.theme().text_tertiary)),
+                    )
+                },
+            )
             .when_some(left, |d, left| {
                 d.child(
                     // In the composited `group/titlebar`, like the thread's header: the
@@ -1780,9 +2096,11 @@ impl Render for SplitScreen {
             })
             .when_some(
                 self.hovered.filter(|ix| {
-                    self.tabs
-                        .get(*ix)
-                        .is_some_and(|tab| tab.0 == "thread-terminal")
+                    *ix != self.active
+                        && self
+                            .tabs
+                            .get(*ix)
+                            .is_some_and(|tab| tab.icon == "thread-terminal")
                 }),
                 |d, ix| {
                     let left = (left.unwrap_or_default() + px(8. + ix as f32 * 240.))
@@ -1805,6 +2123,24 @@ impl Render for SplitScreen {
                 },
             )
     }
+}
+
+/// Chromium's composited `group/titlebar` layer around the thread `header` at `header_left`:
+/// from the end of the leading titlebar controls (`TITLEBAR_LAYER_X`), or from the titlebar
+/// box where that starts further left (the rail, with no open sidebar), to the window's right
+/// edge. cc tiles only its recorded bounds, the union of what the header paints.
+fn titlebar_layer(sidebar: Option<Pixels>, header: Div, header_left: Pixels) -> Div {
+    let layer_left = TITLEBAR_LAYER_X.min(sidebar.unwrap_or(crate::RAIL_WIDTH));
+    div()
+        .absolute()
+        .top_0()
+        .left(layer_left)
+        .right_0()
+        .h(Theme::TITLEBAR_HEIGHT)
+        .layer()
+        .child(crate::recorded_bounds(
+            header.left(header_left - layer_left),
+        ))
 }
 
 /// Left edge of Chromium's composited `group/titlebar` layer.
@@ -1834,8 +2170,18 @@ pub fn with_side_panel(
     panel: Option<(AnyView, &'static str, SharedString)>,
     cx: &mut App,
 ) -> Entity<SplitScreen> {
-    let panel = panel.map(|(view, icon, label)| (view, vec![(icon, label)], 0));
-    with_side_tabs(shell, thread, panel, cx)
+    let panel = panel.map(|(view, icon, label)| {
+        (
+            view,
+            vec![Tab {
+                icon,
+                label,
+                preview: false,
+            }],
+            0,
+        )
+    });
+    with_side_tabs(shell, thread, panel, WorkspaceLayout::Split, cx)
 }
 
 /// `shell`'s thread route: `thread` in its main panel and, with `panel`, the view of tab
@@ -1844,32 +2190,42 @@ pub fn with_side_tabs(
     shell: Entity<Shell>,
     thread: Entity<ThreadView>,
     panel: Option<(AnyView, Vec<Tab>, usize)>,
+    layout: WorkspaceLayout,
     cx: &mut App,
 ) -> Entity<SplitScreen> {
-    let main = match &panel {
-        Some((panel, ..)) => cx
-            .new(|_| SplitMain {
-                thread: thread.clone().into(),
-                panel: panel.clone(),
-                drag_anchor: None,
-            })
-            .into(),
-        None => thread.clone().into(),
-    };
+    let layout = panel.as_ref().map_or(WorkspaceLayout::Chat, |_| layout);
+    if let Some((panel, ..)) = &panel
+        && let Ok(panel) = panel.clone().downcast::<DiffPanel>()
+    {
+        panel.update(cx, |panel, cx| {
+            panel.full_view = (layout == WorkspaceLayout::Full).then(|| shell.downgrade());
+            cx.notify();
+        });
+    }
+    let (main, panel_focus) =
+        workspace_content(&thread, panel.as_ref().map(|(view, ..)| view), layout, cx);
     shell.update(cx, |shell, cx| {
         // A panel's tab strip brings its own `New tab`.
         shell.new_tab = panel.is_none();
-        // The thread route's main surface is a composited layer; with the Changes panel,
-        // Chromium composites the surface itself too.
+        // File and Changes panels also composite the surface itself.
         shell.main_composited = true;
-        shell.main_layer = panel
-            .as_ref()
-            .is_some_and(|(view, ..)| view.clone().downcast::<DiffPanel>().is_ok());
+        shell.main_opaque_scroll = panel.as_ref().and_then(|(view, ..)| {
+            view.clone()
+                .downcast::<DiffPanel>()
+                .ok()
+                .map(|panel| panel.read(cx).scroll.clone())
+        });
+        shell.main_layer = shell.main_opaque_scroll.is_some()
+            || panel
+                .as_ref()
+                .is_some_and(|(view, ..)| view.clone().downcast::<FileView>().is_ok());
         // A lone thread draws its own px at the surface's right corners.
-        shell.main_clips_right = panel.is_none();
+        shell.main_clips_right = layout == WorkspaceLayout::Chat;
         shell.set_main(main, cx);
     });
-    thread.update(cx, |thread, _| thread.clip_right = panel.is_none());
+    thread.update(cx, |thread, _| {
+        thread.clip_right = layout == WorkspaceLayout::Chat
+    });
     let (tabs, active) = panel
         .map(|(_, tabs, active)| (tabs, active))
         .unwrap_or_default();
@@ -1881,8 +2237,32 @@ pub fn with_side_tabs(
             tabs,
             active,
             hovered: None,
+            layout,
+            panel_focus,
         }
     })
+}
+
+fn workspace_content(
+    thread: &Entity<ThreadView>,
+    panel: Option<&AnyView>,
+    layout: WorkspaceLayout,
+    cx: &mut App,
+) -> (AnyView, FocusHandle) {
+    let focus = cx.focus_handle();
+    let main = match panel.filter(|_| layout != WorkspaceLayout::Chat) {
+        Some(panel) => cx
+            .new(|_| SplitMain {
+                thread: thread.clone().into(),
+                panel: panel.clone(),
+                drag_anchor: None,
+                layout,
+                focus: focus.clone(),
+            })
+            .into(),
+        None => thread.clone().into(),
+    };
+    (main, focus)
 }
 
 /// A file link in an answer (`data-file-reference`): open the file viewer tab at `line`.
@@ -1908,6 +2288,9 @@ pub struct FileView {
     focus: Option<FocusHandle>,
     go_to_line: Option<controls::TextField>,
     line_count: u32,
+    tree: file_tree::WorkspaceTree,
+    revision: u64,
+    preview: bool,
 }
 
 impl FileView {
@@ -1915,14 +2298,8 @@ impl FileView {
     /// (`/private/tmp/...`) while links carry the written path, so the crumbs start at the
     /// first segment named like the workspace folder.
     pub fn new(workspace: &str, path: String, line: Option<u32>) -> Self {
-        let root = workspace.trim_end_matches('/');
-        let name = root.rsplit('/').next().unwrap_or(root);
-        let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        let start = segments.iter().position(|s| *s == name).unwrap_or(0);
-        let crumbs = segments[start..]
-            .iter()
-            .map(|s| SharedString::from((*s).to_owned()))
-            .collect();
+        let crumbs = Self::breadcrumbs(workspace, &path);
+        let tree = file_tree::WorkspaceTree::new(workspace, &path);
         Self {
             path,
             crumbs,
@@ -1932,17 +2309,43 @@ impl FileView {
             focus: None,
             go_to_line: None,
             line_count: 0,
+            tree,
+            revision: 0,
+            preview: true,
         }
+    }
+
+    fn breadcrumbs(workspace: &str, path: &str) -> Vec<SharedString> {
+        let root = workspace.trim_end_matches('/');
+        let name = root.rsplit('/').next().unwrap_or(root);
+        let segments: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
+        let start = segments.iter().position(|part| *part == name).unwrap_or(0);
+        segments[start..]
+            .iter()
+            .map(|part| (*part).to_owned().into())
+            .collect()
     }
 
     pub fn name(&self) -> SharedString {
         self.crumbs.last().cloned().unwrap_or_default()
     }
 
+    pub fn is_preview(&self) -> bool {
+        self.preview
+    }
+
+    fn pin_preview(&mut self, cx: &mut Context<Self>) {
+        if self.preview {
+            self.preview = false;
+            cx.emit(FileTreeRequest::PinPreview);
+            cx.notify();
+        }
+    }
+
     /// The tab strip icon: the Python sprite for `.py`, else the file change card's file glyph.
     pub fn tab_icon(&self) -> &'static str {
         if self.path.ends_with(".py") {
-            "diff-file-python"
+            "navigation-python"
         } else {
             "thread-file-diff"
         }
@@ -1958,22 +2361,29 @@ impl FileView {
             self.go_to_line = None;
         }
         if let (Ok(_), Some(line)) = (&contents, self.line) {
-            let top = line.saturating_sub(3) as f32 * CODE_LINE;
+            let top = line.saturating_sub(3) as f32 * FILE_LINE_HEIGHT;
             self.scroll.set_offset(gpui::point(px(0.), -px(top)));
         }
         self.contents = Some(contents);
         cx.notify();
     }
 
-    fn header(&self, t: &Theme, clamped: bool) -> Div {
+    fn header(&self, t: &Theme, clamped: bool, cx: &Context<Self>) -> Div {
         let last = self.crumbs.len().saturating_sub(1);
         let crumbs = self.crumbs.iter().enumerate().flat_map(|(i, crumb)| {
             let color = if i == last { t.text } else { t.text_secondary };
             (i > 0)
-                .then(|| icon("thread-chevron-right", 12., t.text_tertiary).into_any_element())
+                .then(|| icon("thread-chevron-right", 14., t.text_tertiary).into_any_element())
                 .into_iter()
                 .chain(std::iter::once(
-                    text(crumb.clone(), 13., 19., 430., color).into_any_element(),
+                    text(
+                        crumb.clone(),
+                        13.,
+                        130. / 7.,
+                        if i == last { 500. } else { 430. },
+                        color,
+                    )
+                    .into_any_element(),
                 ))
         });
         div()
@@ -1992,7 +2402,7 @@ impl FileView {
                         .h(px(28.))
                         .flex()
                         .items_center()
-                        .gap(px(6.))
+                        .gap(px(4.))
                         .px(px(8.))
                         .children(crumbs),
                 ),
@@ -2003,39 +2413,67 @@ impl FileView {
                     .gap(px(6.))
                     .child(
                         capsule(t, clamped)
-                            .child(
-                                round_icon("diff-jump-to-file", 28., t)
-                                    .id("file-search")
-                                    .aria_label("Search in files"),
+                            .w(px(32.))
+                            .id("file-search")
+                            .role(gpui::Role::Button)
+                            .aria_label("Search in files")
+                            .focusable()
+                            .tab_index(0)
+                            .rounded_full()
+                            .focus_visible(crate::composer::menu::trigger_focus)
+                            .justify_center()
+                            .on_click(
+                                cx.listener(|view, _, window, cx| {
+                                    view.focus_file_search(window, cx)
+                                }),
                             )
-                            .child(
-                                round_icon("diff-show-files", 28., t)
-                                    .id("file-tree")
-                                    .aria_label("Toggle file tree"),
-                            ),
+                            .on_key_down(cx.listener(|view, event: &KeyDownEvent, window, cx| {
+                                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                                    view.focus_file_search(window, cx);
+                                    cx.stop_propagation();
+                                }
+                            }))
+                            .child(icon("diff-jump-to-file", 16., t.text).runtime())
+                            // The `backdrop-filter` button is its own cc layer: its icon
+                            // rasterizes on that layer's tiles.
+                            .layer(),
                     )
+                    .child(self.file_tree_button(t, clamped, cx))
                     .child(
-                        capsule(t, clamped).child(
+                        capsule(t, clamped).p_0().child(
                             div()
-                                .h(px(28.))
+                                .h(px(32.))
+                                .pl(px(9.))
                                 .flex()
                                 .items_center()
-                                .gap(px(4.))
-                                .pl(px(12.))
-                                .pr(px(6.))
-                                .child(text("Open", 13., 20., 430., t.text))
-                                .child(icon("diff-chevron-down", 12., t.text)),
+                                .child(text("Open", 13., 18., 430., t.text))
+                                .child(
+                                    div()
+                                        .ml(px(4.))
+                                        .w(px(23.))
+                                        .h_full()
+                                        .flex()
+                                        .items_center()
+                                        .pl(px(2.))
+                                        .child(
+                                            menu::backdrop_glyph(
+                                                include_bytes!(
+                                                    "../../../assets/icons/chevron-down.svg"
+                                                ),
+                                                "navigation-open-chevron",
+                                                t.text,
+                                                128,
+                                            )
+                                            .size(px(14.)),
+                                        ),
+                                ),
                         ),
                     ),
             )
     }
-}
 
-impl Render for FileView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let t = cx.theme().clone();
-        let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
-        let body = match &self.contents {
+    fn file_content(&self, t: &Theme) -> gpui::AnyElement {
+        match &self.contents {
             None => div().flex_1().into_any_element(),
             Some(Err(_)) => div()
                 .flex_1()
@@ -2045,10 +2483,20 @@ impl Render for FileView {
                 .child(text("Could not open file", 13., 20., 430., t.text_tertiary))
                 .into_any_element(),
             Some(Ok(contents)) => {
-                let syntax = Syntax::of(&t);
+                let syntax = Syntax::of(t);
                 let python = self.path.ends_with(".py");
                 let lines: Vec<_> = controls::lines(contents).collect();
-                let gutter = px(CH * lines.len().to_string().len().max(4) as f32 + 16.);
+                let gutter = px(CH * (lines.len().to_string().len().max(1) + 3) as f32 + 2.);
+                let foreground = rgb(if t.appearance == Appearance::Dark {
+                    0xfcfcfc
+                } else {
+                    0x0d0d0d
+                });
+                let line_number = rgb(if t.appearance == Appearance::Dark {
+                    0xa1a1a1
+                } else {
+                    0x585858
+                });
                 let cited = over(t.info_solid.opacity(0.12), t.surface);
                 div()
                     .id("file-lines")
@@ -2057,11 +2505,12 @@ impl Render for FileView {
                     .track_scroll(&self.scroll)
                     .flex()
                     .flex_col()
-                    .py(px(8.))
                     .font_family(MONO)
                     .text_size(px(CODE_SIZE))
-                    .line_height(px(CODE_LINE))
-                    .text_color(t.text)
+                    .line_height(px(FILE_LINE_HEIGHT))
+                    .font_weight(FontWeight(430.))
+                    .text_color(foreground)
+                    .pr(px(16.))
                     .children(lines.into_iter().enumerate().map(|(i, line)| {
                         let number = i as u32 + 1;
                         let bg = if Some(number) == self.line {
@@ -2076,7 +2525,7 @@ impl Render for FileView {
                             StyledText::new(text)
                         };
                         div()
-                            .h(px(CODE_LINE))
+                            .h(px(FILE_LINE_HEIGHT))
                             .flex()
                             .bg(bg)
                             .child(
@@ -2086,22 +2535,39 @@ impl Render for FileView {
                                     .flex()
                                     .justify_end()
                                     .items_center()
-                                    .pr(px(8.))
-                                    .text_color(t.text_tertiary)
+                                    .pr(px(CH + 2.))
+                                    .text_color(line_number)
                                     .child(number.to_string()),
                             )
-                            .child(div().flex_1().pl(px(8.)).whitespace_nowrap().child(content))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .pl(px(CH))
+                                    .pr(px(CH))
+                                    .whitespace_nowrap()
+                                    .child(content),
+                            )
                     }))
                     .into_any_element()
             }
-        };
+        }
+    }
+}
+
+impl Render for FileView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
+        let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
+        let body = self.file_content(&t);
         div()
+            .id("file-view")
             .relative()
             .track_focus(&focus)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |_, _, window, cx| window.focus(&focus, cx)),
             )
+            .on_click(cx.listener(|view, _, _, cx| view.pin_preview(cx)))
             .on_key_down(cx.listener(Self::line_key))
             .on_action(cx.listener(|this, _: &crate::Paste, _, cx| {
                 if let Some(query) = &mut this.go_to_line {
@@ -2122,16 +2588,35 @@ impl Render for FileView {
                 }
             }))
             .size_full()
+            // The panel's `contain: paint` clips the header capsules' shadows.
+            .overflow_hidden()
             .flex()
             .flex_col()
             .child(
                 div()
-                    .flex_none()
-                    .border_b_1()
-                    .border_color(t.border)
-                    .child(self.header(&t, panel_clamped(window, cx))),
+                    .mt(px(48.))
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .min_h_0()
+                            .flex()
+                            .flex_col()
+                            .child(body),
+                    )
+                    .when(self.tree.open, |row| row.child(self.file_tree_view(cx))),
             )
-            .child(body)
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w_full()
+                    .child(self.header(&t, panel_clamped(window, cx), cx)),
+            )
             .when(self.go_to_line.is_some(), |d| d.child(self.line_bar(cx)))
     }
 }
@@ -2190,12 +2675,16 @@ fn capsule(t: &Theme, clamped: bool) -> Div {
         ))
 }
 
+pub(crate) fn stats_features(size: f32) -> FontFeatures {
+    let mut features = vec![("tnum".into(), 1), ("cv01".into(), 1), ("cv02".into(), 1)];
+    features.extend(textsys::letter_spacing(-0.025 * size).0.iter().cloned());
+    FontFeatures(Arc::new(features))
+}
+
 /// `+N -M` in git colors, `size` px with `tracking-tight` (-0.025em letter spacing),
 /// `tabular-nums` and `disambiguated-digits` (`cv01`, `cv02`).
 pub fn stats(added: usize, removed: usize, size: f32, t: &Theme) -> Div {
-    let mut features = vec![("tnum".into(), 1), ("cv01".into(), 1), ("cv02".into(), 1)];
-    features.extend(textsys::letter_spacing(-0.025 * size).0.iter().cloned());
-    let features = FontFeatures(Arc::new(features));
+    let features = stats_features(size);
     let tracked =
         |s: String, color: Hsla| text(s, size, size, 430., color).font_features(features.clone());
     div()
@@ -2217,10 +2706,6 @@ fn file_header(
         return panel.standalone_file_header(i, file, t, cx);
     }
     let small = |name| round_icon(name, 20., t);
-    let python = match t.appearance {
-        Appearance::Dark => rgb(0x69b1ff),
-        Appearance::Light => rgb(0x1a85d4),
-    };
     div()
         .id(("diff-file", i))
         .flex_none()
@@ -2241,16 +2726,19 @@ fn file_header(
                 .items_center()
                 .pl(px(4.))
                 .gap(px(8.))
-                .when(file.name.ends_with(".py"), |d| {
-                    // `#file-tree-builtin-python` sprite.
-                    d.child(icon("diff-file-python", 16., python.into()))
-                })
+                .child(controls::file_icon(&file.name, t))
                 .child(
                     div()
                         .flex()
                         .overflow_hidden()
-                        .child(text(file.dir.clone(), 14., 21., 430., t.text_tertiary))
-                        .child(text(file.name.clone(), 14., 21., 430., t.text)),
+                        .child(text(
+                            file.display_dir.clone(),
+                            14.,
+                            21.,
+                            430.,
+                            t.text_tertiary,
+                        ))
+                        .child(text(file.display_name.clone(), 14., 21., 430., t.text)),
                 ),
         )
         .child(
@@ -2442,19 +2930,6 @@ fn highlight(line: &str, s: &Syntax) -> Vec<(Range<usize>, HighlightStyle)> {
     out
 }
 
-/// `color-mix(in srgb, a (1 - w), b w)`.
-fn mix(a: Hsla, b: Hsla, w: f32) -> Hsla {
-    let (a, b) = (Rgba::from(a), Rgba::from(b));
-    let m = |x: f32, y: f32| x + (y - x) * w;
-    Rgba {
-        r: m(a.r, b.r),
-        g: m(a.g, b.g),
-        b: m(a.b, b.b),
-        a: 1.,
-    }
-    .into()
-}
-
 fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
     let color = |dark, light| {
         rgb(if t.appearance == Appearance::Dark {
@@ -2465,7 +2940,14 @@ fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
         .into()
     };
     match kind {
-        Kind::Context => (t.surface, t.surface, color(0xa1a1a1, 0x585858)),
+        Kind::Context => {
+            let [r, g, b] = if t.appearance == Appearance::Dark {
+                [0.629856, 0.629859, 0.629858]
+            } else {
+                [0.344692, 0.344700, 0.344697]
+            };
+            (t.surface, t.surface, gpui::Rgba { r, g, b, a: 1. }.into())
+        }
         Kind::Added => (
             color(0x132017, 0xedf7ed),
             color(0x1f3124, 0xe7f4e7),
@@ -2487,6 +2969,11 @@ fn word_mark(line: &Line, layout: gpui::TextLayout, t: &Theme) -> Option<gpui::A
     } else {
         t.git_deleted
     };
+    let color = color.opacity(if t.appearance == Appearance::Dark {
+        0.2
+    } else {
+        0.15
+    });
     Some(
         gpui::canvas(
             |_, _, _| {},
@@ -2497,7 +2984,7 @@ fn word_mark(line: &Line, layout: gpui::TextLayout, t: &Theme) -> Option<gpui::A
                 let mut end = start;
                 let decoration = Decoration {
                     radius: Corners::all(px(3.)),
-                    fill: Some(color.opacity(0.2)),
+                    fill: Some(color),
                     ..Default::default()
                 };
                 let paint =
@@ -2535,15 +3022,62 @@ fn word_mark(line: &Line, layout: gpui::TextLayout, t: &Theme) -> Option<gpui::A
     )
 }
 
+fn change_marker(kind: Kind, split: bool, t: &Theme) -> Div {
+    let color = if kind == Kind::Added {
+        t.git_added
+    } else {
+        t.git_deleted
+    };
+    let marker = div().absolute().left_0().top_0().w(px(4.)).h_full();
+    if kind != Kind::Removed || split {
+        return marker.child(shapes::decoration(Decoration {
+            fill: Some(color),
+            ..Default::default()
+        }));
+    }
+    // Keep the original Lab background mix unrounded for the gradient raster.
+    let [r, g, b] = if t.appearance == Appearance::Dark {
+        [0.232724, 0.120283, 0.103232]
+    } else {
+        [0.986266, 0.90291, 0.885396]
+    };
+    let colors = [gpui::Rgba { r, g, b, a: 1. }, color.into()];
+    marker.child(
+        gpui::canvas(
+            |_, _, _| (),
+            move |bounds, (), window, cx| {
+                let scale = window.scale_factor();
+                let line = (CODE_LINE * scale * 64.).floor() / (scale * 64.);
+                let period = px(line / (line / 2.).round());
+                shapes::paint_horizontal_stripes(period, colors, bounds, window, cx);
+            },
+        )
+        .absolute()
+        .size_full(),
+    )
+}
+
 fn hunk(
     h: &Hunk,
     t: &Theme,
     line_index: &Cell<usize>,
     panel: &DiffPanel,
     split: bool,
+    location: (usize, usize),
     cx: &Context<DiffPanel>,
 ) -> Div {
     let syntax = Syntax::of(t);
+    let plain_text = panel
+        .files
+        .get(location.0)
+        .is_some_and(|file| file.name.ends_with(".txt"));
+    let foreground: Hsla = rgb(match (t.appearance, plain_text) {
+        (Appearance::Dark, false) => 0xfcfcfc,
+        (Appearance::Dark, true) => 0xffffff,
+        (_, false) => 0x0d0d0d,
+        (_, true) => 0x1a1c1f,
+    })
+    .into();
     let digits = h
         .lines
         .iter()
@@ -2568,7 +3102,7 @@ fn hunk(
                bg: Hsla,
                content: StyledText,
                mark: Option<gpui::AnyElement>,
-               bar: Option<Hsla>| {
+               bar: Option<Kind>| {
         div()
             .h(px(CODE_LINE))
             .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_LINE)))
@@ -2590,14 +3124,7 @@ fn hunk(
                         fill: Some(number_bg),
                         ..Default::default()
                     }))
-                    .when_some(bar, |d, color| {
-                        d.child(div().absolute().left_0().top_0().w(px(4.)).h_full().child(
-                            shapes::decoration(Decoration {
-                                fill: Some(color),
-                                ..Default::default()
-                            }),
-                        ))
-                    })
+                    .when_some(bar, |d, kind| d.child(change_marker(kind, split, t)))
                     .text_color(number_fg)
                     .when_some(number, |d, n| d.child(n.to_string())),
             )
@@ -2621,7 +3148,6 @@ fn hunk(
                     .child(content),
             )
     };
-    let separator = mix(t.surface, t.info_solid, 0.06);
     let render_line = |l: &Line, index: usize, number: u32| {
         let (number_bg, bg, number_fg) = line_colors(l.kind, t);
         let found = l.matches.iter().enumerate().map(|(ordinal, range)| {
@@ -2661,13 +3187,18 @@ fn hunk(
             (
                 range,
                 HighlightStyle {
-                    color: Some(t.text),
+                    color: Some(if plain_text { foreground } else { t.text }),
                     ..Default::default()
                 },
             )
         });
+        let tokens = if plain_text {
+            Vec::new()
+        } else {
+            highlight(&l.text, &syntax)
+        };
         let content = StyledText::new(l.text.clone()).with_highlights(combine_highlights(
-            combine_highlights(combine_highlights(highlight(&l.text, &syntax), word), found),
+            combine_highlights(combine_highlights(tokens, word), found),
             selection,
         ));
         let down_layout = content.layout().clone();
@@ -2679,7 +3210,7 @@ fn hunk(
             bg,
             content,
             mark,
-            (l.kind != Kind::Context).then_some(number_fg),
+            (l.kind != Kind::Context).then_some(l.kind),
         )
         .cursor_pointer()
         .on_mouse_down(
@@ -2725,27 +3256,9 @@ fn hunk(
         .font_weight(FontWeight(430.))
         .text_size(px(CODE_SIZE))
         .line_height(px(CODE_LINE))
-        .text_color(rgb(if t.appearance == Appearance::Dark {
-            0xfcfcfc
-        } else {
-            0x0d0d0d
-        }))
+        .text_color(foreground)
         .when_some(h.separator.clone(), |d, label| {
-            let len = label.len();
-            d.child(row(
-                None,
-                (separator, t.text_tertiary),
-                separator,
-                StyledText::new(label).with_highlights([(
-                    0..len,
-                    HighlightStyle {
-                        color: Some(t.text_tertiary),
-                        ..Default::default()
-                    },
-                )]),
-                None,
-                None,
-            ))
+            d.child(panel.context_row(label, gutter, location, cx))
         })
         .map(|d| {
             if split {
@@ -2784,6 +3297,21 @@ fn hunk(
                 )
             }
         })
+        .map(|body| panel.track_hunk_layout(h, body, cx))
+}
+
+fn exceeds_diff_limits<'a>(lines: impl Iterator<Item = &'a str>) -> bool {
+    let mut bytes = 0;
+    for (index, line) in lines.enumerate() {
+        if index >= MAX_DIFF_LINES || line.len() > MAX_DIFF_LINE_BYTES {
+            return true;
+        }
+        bytes += line.len() + 1;
+        if bytes > MAX_DIFF_BYTES {
+            return true;
+        }
+    }
+    false
 }
 
 /// Hunks of a unified diff; file headers (`diff --git`, `---`, `+++`) before the first `@@`
@@ -2791,16 +3319,14 @@ fn hunk(
 fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
     const TOO_LARGE: &str = "Diff too large to display";
     const INVALID: &str = "Diff failed to render";
-    if diff.len() > 2_000_000
-        || diff
-            .lines()
-            .enumerate()
-            .any(|(index, line)| index >= 20_000 || line.len() > 10_000)
-    {
+    if diff.len() > MAX_DIFF_BYTES || exceeds_diff_limits(diff.lines()) {
         return Err(TOO_LARGE);
     }
     if let Some(kind) = raw {
         return Ok(vec![Hunk {
+            layout: Default::default(),
+            old_start: if kind == Kind::Added { 0 } else { 1 },
+            new_start: if kind == Kind::Removed { 0 } else { 1 },
             separator: None,
             lines: diff
                 .lines()
@@ -2822,10 +3348,13 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
     for line in diff.lines() {
         if let Some(rest) = line.strip_prefix("@@ -") {
             let start = |s: &str| {
-                s.split(',')
-                    .next()
-                    .and_then(|n| n.parse::<u32>().ok())
-                    .ok_or(INVALID)
+                let (line, count) = s.split_once(',').unwrap_or((s, "1"));
+                let line = line.parse::<u32>().map_err(|_| INVALID)?;
+                if count.parse::<u32>().map_err(|_| INVALID)? == 0 {
+                    line.checked_add(1).ok_or(INVALID)
+                } else {
+                    Ok(line)
+                }
             };
             let mut ranges = rest.split(' ');
             let old_start = start(ranges.next().ok_or(INVALID)?)?;
@@ -2841,6 +3370,9 @@ fn parse(diff: &str, raw: Option<Kind>) -> Result<Vec<Hunk>, &'static str> {
                 return Err(INVALID);
             }
             hunks.push(Hunk {
+                layout: Default::default(),
+                old_start,
+                new_start: new,
                 separator: (skipped > 0).then(|| {
                     format!(
                         "{skipped} unmodified line{}",
@@ -2942,6 +3474,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn aggregate_changes_do_not_allow_staging() {
+        assert!(!DiffSource::Uncommitted.mutable());
+        assert!(DiffSource::Unstaged.mutable());
+        assert!(DiffSource::Staged.mutable());
+    }
+    #[test]
+    fn full_view_uses_workspace_width_for_auto_diff() {
+        use gpui::{AppContext as _, HeadlessAppContext};
+        let mut context = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            || Ok(None),
+        );
+        context.update(|cx| cx.set_global(Theme::dark()));
+        let _window = context
+            .open_window(gpui::size(px(1280.), px(832.)), |window, cx| {
+                let empty: AnyView = cx.new(|_| crate::EmptyMain).into();
+                let shell = cx.new(|_| Shell::new(empty.clone(), empty));
+                let mut panel = DiffPanel::from_patch(
+                    "/repo",
+                    "diff --git a/a.rs b/a.rs\n--- a/a.rs\n+++ b/a.rs\n@@ -1 +1 @@\n-old\n+new\n",
+                );
+                panel.standalone = false;
+                panel.layout = DiffLayout::Auto;
+                panel.full_view = Some(shell.downgrade());
+                assert!(
+                    panel
+                        .layout
+                        .split(&panel.files[0], panel.available_width(window, cx))
+                );
+                panel.full_view = None;
+                assert!(
+                    !panel
+                        .layout
+                        .split(&panel.files[0], panel.available_width(window, cx))
+                );
+                shell
+            })
+            .unwrap();
+    }
+
+    #[test]
     fn subtract_fixture() {
         let panel = DiffPanel::subtract();
         let [file] = &panel.files[..] else {
@@ -2957,6 +3531,75 @@ mod tests {
         let lines = &file.hunks[0].lines;
         assert_eq!((lines[0].kind, lines[0].number), (Kind::Context, 2));
         assert_eq!((lines[4].kind, lines[4].number), (Kind::Added, 6));
+    }
+
+    #[test]
+    fn view_changes_preserves_exact_path_identity_across_refresh() {
+        use gpui::{AppContext as _, HeadlessAppContext};
+        let start: ThreadStartResponse =
+            fixture::response("sessions/subtract.jsonl", "thread/start", 0);
+        let read: ThreadReadResponse = fixture::response("readback.jsonl", "thread/read", 1);
+        let requested = read
+            .thread
+            .turns
+            .iter()
+            .flat_map(|turn| &turn.items)
+            .find_map(|item| match item {
+                ThreadItem::FileChange { changes, .. } => changes.first(),
+                _ => None,
+            })
+            .unwrap()
+            .path
+            .clone();
+        let mut app = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            let panel =
+                cx.new(|_| DiffPanel::last_turn(&start.cwd, &start.cwd, &read.thread.turns));
+            panel.update(cx, |panel, cx| {
+                panel.select_source(DiffSource::Uncommitted, cx);
+                panel.query = Some("subtract".into());
+                panel.filter.text = "unrelated".into();
+                panel.view_changes(&requested, cx);
+                assert_eq!(panel.source, DiffSource::LastTurn);
+                assert_eq!(panel.query.as_deref(), Some(""));
+                assert!(panel.filter.text.is_empty());
+                assert!(panel.files[0].open);
+                panel.apply(
+                    &Event::Notification {
+                        method: "item/completed".into(),
+                        params: serde_json::json!({
+                            "threadId": read.thread.id,
+                            "turnId": read.thread.turns.last().unwrap().id,
+                            "item": {"type": "fileChange"}
+                        }),
+                    },
+                    &read.thread.cwd,
+                    &read.thread.turns,
+                    cx,
+                );
+                assert_ne!(panel.files[0].path_key, requested);
+                assert!(!panel.files[0].open);
+                assert_eq!((panel.files[0].added, panel.files[0].removed), (4, 0));
+                assert_eq!(panel.files[0].hunks.len(), 1);
+                let canonical = panel.files[0].path_key.clone();
+                panel.view_changes(&canonical, cx);
+                assert!(panel.files[0].open);
+                panel.set_file_open(0, false);
+                panel.replace_files(
+                    DiffPanel::last_turn(&start.cwd, &read.thread.cwd, &read.thread.turns).files,
+                );
+                assert!(!panel.files[0].open);
+                panel.set_all_files_open(true);
+                panel.replace_files(
+                    DiffPanel::last_turn(&start.cwd, &read.thread.cwd, &read.thread.turns).files,
+                );
+                assert!(panel.files[0].open);
+            });
+        });
     }
 
     #[test]

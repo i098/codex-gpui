@@ -153,6 +153,35 @@ impl Fx {
         Self::with("dark", (1280., 832.), None, |_| {})
     }
 
+    /// The app on an app-server that exits at once: the crash page (SH-145).
+    pub fn crashed() -> Result<Self> {
+        let (bridge, events) = Bridge::spawn(Command::new("false"))?;
+        Self::boot(
+            "dark",
+            (1280., 832.),
+            bridge,
+            events,
+            recorded_host_settings()?,
+            Route::Home,
+            false,
+        )
+    }
+
+    /// The app before `initialize` answers: the startup loader (SH-147) is showing.
+    pub fn loading() -> Result<Self> {
+        let lines = script(None, |_| {})?;
+        let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
+        Self::boot(
+            "dark",
+            (1280., 832.),
+            bridge,
+            events,
+            recorded_host_settings()?,
+            Route::Home,
+            false,
+        )
+    }
+
     /// `session` (under fixtures/) is appended to readback.jsonl; `edit` rewrites each
     /// recorded line first.
     pub fn with(
@@ -171,7 +200,15 @@ impl Fx {
 
     pub fn open(theme: &'static str, size: (f32, f32), lines: Vec<Value>) -> Result<Self> {
         let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
-        Self::boot(theme, size, bridge, events, recorded_host_settings()?)
+        Self::boot(
+            theme,
+            size,
+            bridge,
+            events,
+            recorded_host_settings()?,
+            Route::Home,
+            true,
+        )
     }
 
     /// Like [`Fx::open`], but the app-server is this test binary again as a proxy
@@ -201,9 +238,23 @@ impl Fx {
             .env(PROXY_SCRIPT, &script)
             .env(PROXY_LOG, &log);
         let (bridge, events) = Bridge::spawn(cmd)?;
-        let mut fx = Self::boot(theme, size, bridge, events, settings)?;
+        let mut fx = Self::boot(theme, size, bridge, events, settings, Route::Home, true)?;
         fx.log = Some(log);
         Ok(fx)
+    }
+
+    pub fn on_route(route: Route) -> Result<Self> {
+        let lines = script(None, |_| {})?;
+        let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
+        Self::boot(
+            "dark",
+            (1280., 832.),
+            bridge,
+            events,
+            recorded_host_settings()?,
+            route,
+            true,
+        )
     }
 
     fn boot(
@@ -212,6 +263,8 @@ impl Fx {
         bridge: Bridge,
         events: async_channel::Receiver<Event>,
         settings: app::host_settings::Settings,
+        route: Route,
+        wait_ready: bool,
     ) -> Result<Self> {
         #[cfg(target_os = "macos")]
         install_panic_hook();
@@ -219,10 +272,15 @@ impl Fx {
             elapsed_since: Some(Instant::now()),
             ..CAPTURE_CLOCK
         };
+        // Linux checks need layout and input; macOS captures need the native renderer.
+        #[cfg(not(target_os = "linux"))]
+        let renderer = gpui_platform::current_headless_renderer;
+        #[cfg(target_os = "linux")]
+        let renderer = || Ok(None);
         let mut cx = HeadlessAppContext::with_platform(
             textsys::text_system(),
             Arc::new(theme::Assets),
-            gpui_platform::current_headless_renderer,
+            renderer,
         );
         cx.update(|cx| {
             theme::load_fonts(cx);
@@ -241,6 +299,7 @@ impl Fx {
                 _ => ThemeSetting::Dark,
             };
             let state = State {
+                route,
                 theme,
                 ..State::default()
             };
@@ -261,7 +320,9 @@ impl Fx {
             log: None,
             _host_home: host_home,
         };
-        fx.wait("startup", |fx| fx.read(|r, _| r.ready()))?;
+        if wait_ready {
+            fx.wait("startup", |fx| fx.read(|r, _| r.ready()))?;
+        }
         Ok(fx)
     }
 
@@ -534,7 +595,9 @@ impl Fx {
             Composer::set_caret_transparent(cx, true);
             window.refresh();
         })?;
-        let image = self.shot();
+        let image = self
+            .advance(Duration::ZERO)
+            .and_then(|()| parity::capture_frozen(&mut self.cx, self.window));
         self.cx.update_window(self.window, |_, window, cx| {
             Composer::set_caret_transparent(cx, false);
             window.refresh();
@@ -581,10 +644,13 @@ impl Fx {
     }
 }
 
-/// readback.jsonl, then `session` (under fixtures/), each recorded line rewritten by `edit`.
+/// Loads the baseline, optional scenario, and projected session settings; `edit` rewrites each line.
 pub fn script(session: Option<&str>, edit: fn(&mut Value)) -> Result<Vec<Value>> {
     let mut lines = Vec::new();
-    for file in std::iter::once("readback.jsonl").chain(session) {
+    for file in std::iter::once("readback.jsonl")
+        .chain(session)
+        .chain(std::iter::once("sessions/thread-settings.jsonl"))
+    {
         let path = format!("{ROOT}/fixtures/{file}");
         let text = fs::read_to_string(&path).with_context(|| path.clone())?;
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
@@ -616,6 +682,17 @@ pub fn recorded_thread(id: &str) -> Result<Value> {
             (thread["id"] == id && thread["turns"].is_array()).then_some(thread)
         })
         .with_context(|| format!("no thread/read of {id}"))
+}
+
+pub fn recorded_resume(id: &str) -> Result<Value> {
+    script(None, |_| {})?
+        .into_iter()
+        .find_map(|mut line| {
+            let result = line.pointer_mut("/msg/result")?.take();
+            (result["thread"]["id"] == id && result["collaborationMode"].is_object())
+                .then_some(result)
+        })
+        .with_context(|| format!("no thread/resume of {id}"))
 }
 
 /// Device pixels that differ inside the CSS-px `rect` (the window is 2x).
@@ -796,6 +873,8 @@ fn serve_proxy(script: &Path, log: &Path) -> Result<()> {
                 Event::Request { id, method, params } => {
                     json!({ "id": id, "method": method, "params": params })
                 }
+                // The proxy app-server exits with the test; nothing to forward.
+                Event::Closed => continue,
             };
             send(&server_out, msg);
         }
