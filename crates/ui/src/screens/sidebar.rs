@@ -2782,7 +2782,7 @@ impl CommandMenu {
         let mut groups = vec![
             ("Chats", chats),
             group("Quick actions"),
-            ("Settings", settings.into()),
+            ("Settings", settings),
         ];
         groups.extend(GROUPS.into_iter().map(group));
         Self::with_groups(groups, thread_open, query, cx)
@@ -4443,32 +4443,36 @@ mod tests {
     fn import_command_visibility_follows_the_feature_policy(cx: &mut gpui::TestAppContext) {
         use crate::screens::settings::imports::ImportState;
 
-        cx.update(|cx| cx.set_global(ImportState::default()));
-        let disabled = cx.new(|cx| CommandMenu::with_threads(&[], &[], false, "", cx));
-        assert!(
-            !disabled
-                .read(cx)
-                .groups
-                .iter()
-                .find(|(group, _)| *group == "Settings")
-                .unwrap()
-                .1
-                .iter()
-                .any(|item| item.label.as_ref() == "Import")
-        );
+        cx.update(|cx| {
+            cx.set_global(ImportState::default());
+            let disabled = cx.new(|cx| CommandMenu::with_threads(&[], &[], false, "", cx));
+            assert!(
+                !disabled
+                    .read(cx)
+                    .groups
+                    .iter()
+                    .find(|(group, _)| *group == "Settings")
+                    .unwrap()
+                    .1
+                    .iter()
+                    .any(|item| item.label.as_ref() == "Import")
+            );
 
-        cx.update(|cx| cx.update_global::<ImportState, _>(|state, _| state.policy.enabled = true));
-        let enabled = cx.new(|cx| CommandMenu::with_threads(&[], &[], false, "", cx));
-        assert!(
-            enabled
-                .read(cx)
-                .groups
-                .iter()
-                .find(|(group, _)| *group == "Settings")
-                .unwrap()
-                .1
-                .iter()
-                .any(|item| item.label.as_ref() == "Import")
-        );
+            let mut state = ImportState::default();
+            state.policy.enabled = true;
+            cx.set_global(state);
+            let enabled = cx.new(|cx| CommandMenu::with_threads(&[], &[], false, "", cx));
+            assert!(
+                enabled
+                    .read(cx)
+                    .groups
+                    .iter()
+                    .find(|(group, _)| *group == "Settings")
+                    .unwrap()
+                    .1
+                    .iter()
+                    .any(|item| item.label.as_ref() == "Import")
+            );
+        });
     }
 }

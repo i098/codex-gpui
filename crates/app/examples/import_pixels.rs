@@ -19,6 +19,8 @@ fn main() -> Result<()> {
     let history: Histories = serde_json::from_value(fixture["history"].clone())?;
     let state = ImportState {
         policy: Policy::from_evaluations(&fixture["policy"]),
+        // The fixture already has policy; prevent route entry from replacing it with the absent host response.
+        policy_request: 1,
         detected: Load::Ready(Arc::new(items)),
         histories: Load::Ready(Arc::new(history.data)),
         mcp_auth: Load::Ready(Arc::new(Vec::new())),
