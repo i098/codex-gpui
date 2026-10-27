@@ -152,6 +152,195 @@ impl Root {
         });
     }
 
+    pub(crate) fn load_cloud_environment(
+        &mut self,
+        config_id: String,
+        repositories: Vec<Value>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let connection = Arc::new(std::sync::OnceLock::<(Arc<bridge::Bridge>, Identity)>::new());
+        let send_connection = connection.clone();
+        let host = self.host.clone();
+        let root = cx.weak_entity();
+        let composer = cx.new(|cx| {
+            let mut composer = Composer::thread(window, cx);
+            composer.on_submit(move |submission, window, cx| {
+                let Some((bridge, identity)) = send_connection.get().cloned() else {
+                    root.update(cx, |root, cx| {
+                        if let Some(page) = root.remote_page().cloned() {
+                            page.update(cx, |page, cx| {
+                                page.composer.update(cx, |composer, cx| {
+                                    composer.restore_submission(&submission.text, cx);
+                                    composer.set_running(false, cx);
+                                });
+                            });
+                        }
+                        root.toast(Toast::danger("The cloud setup connection is not ready"), cx);
+                    })
+                    .ok();
+                    return;
+                };
+                let host = host.clone();
+                let submission = submission.clone();
+                root.update(cx, |root, cx| {
+                    let Some(page) = root.remote_page().cloned() else {
+                        return;
+                    };
+                    let Some(thread_id) = page.read(cx).data.as_ref().map(|data| data.id.clone())
+                    else {
+                        return;
+                    };
+                    cx.spawn_in(window, async move |root, cx| {
+                        let result = async {
+                            ensure!(
+                                host.identity().as_ref() == Some(&identity),
+                                "Your account changed during cloud setup"
+                            );
+                            let input = crate::user_input(&submission);
+                            bridge
+                                .request::<_, Value>(
+                                    "turn/start",
+                                    json!({
+                                        "threadId":thread_id,"input":input,
+                                        "model":submission.model,"effort":submission.effort,
+                                        "serviceTier":submission.fast.then_some("priority"),
+                                    }),
+                                )
+                                .await?;
+                            Ok::<_, anyhow::Error>(())
+                        }
+                        .await;
+                        if let Err(error) = result {
+                            page.update(cx, |page, cx| {
+                                page.composer.update(cx, |composer, cx| {
+                                    composer.restore_submission(&submission.text, cx);
+                                    composer.set_running(false, cx);
+                                });
+                            });
+                            root.update(cx, |root, cx| {
+                                root.toast(Toast::danger(error.to_string()), cx)
+                            })
+                            .ok();
+                        }
+                    })
+                    .detach();
+                })
+                .ok();
+            });
+            composer.set_models(&self.models, &self.config, cx);
+            composer.set_running(true, cx);
+            composer
+        });
+        let page = cx.new(|cx| CloudTaskPage::new(composer, false, cx));
+        let actions = connection.clone();
+        cx.subscribe_in(
+            &page,
+            window,
+            move |root, page, action: &CloudAction, window, cx| match action {
+                CloudAction::Retry | CloudAction::OpenMain => root.sync(window, cx),
+                CloudAction::Cancel => {
+                    let Some((bridge, identity)) = actions.get().cloned() else {
+                        return;
+                    };
+                    let Some(data) = &page.read(cx).data else {
+                        return;
+                    };
+                    let thread_id = data.id.clone();
+                    let host = root.host.clone();
+                    cx.spawn(async move |root, cx| {
+                        let result = async {
+                            ensure!(
+                                host.identity().as_ref() == Some(&identity),
+                                "Your account changed during cloud setup"
+                            );
+                            let thread = bridge.thread_read(&thread_id, true).await?.thread;
+                            let turn_id = &thread
+                                .turns
+                                .last()
+                                .context("No cloud setup turn is running")?
+                                .id;
+                            bridge.turn_interrupt(&thread_id, turn_id).await
+                        }
+                        .await;
+                        if let Err(error) = result {
+                            root.update(cx, |root, cx| {
+                                root.toast(Toast::danger(error.to_string()), cx)
+                            })
+                            .ok();
+                        }
+                    })
+                    .detach();
+                }
+                CloudAction::Apply { revert } => root.apply_cloud_changes(*revert, cx),
+                CloudAction::LoadImage(pointer) => root.load_cloud_image(pointer.clone(), cx),
+            },
+        )
+        .detach();
+        let host = self.host.clone();
+        let local = self.bridge.clone();
+        let settings = self.config.clone();
+        let entity = page.clone();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let task = cx.spawn_in(window, async move |_, cx| {
+            let result = async {
+                let source = host.clone();
+                let (bridge, config, identity) = cx.background_executor().spawn(async move {
+                    let identity = source.identity().context("Cloud setup requires a ChatGPT account")?;
+                    let config = crate::cloud::execute(&*source, &identity, &ui::screens::cloud::Operation::Config(config_id))?;
+                    let credentials = (crate::host::app_server_credentials(local))(false)?
+                        .context("Cloud setup requires a ChatGPT account")?;
+                    let (bridge, _) = bridge::Bridge::connect_cloud(
+                        bridge::CLOUD_ENDPOINT, &credentials.token, Some(&identity.account_id),
+                    )?;
+                    ensure!(source.identity().as_ref() == Some(&identity), "Your account changed during cloud setup");
+                    Ok::<_, anyhow::Error>((Arc::new(bridge), config, identity))
+                }).await?;
+                let events = bridge.subscribe_async();
+                let thread = environment_thread(&bridge, &identity, &config, repositories, &settings).await?;
+                ensure!(host.identity().as_ref() == Some(&identity), "Your account changed during cloud setup");
+                let thread_id = thread.id.clone();
+                let working = thread.turns.last().is_some_and(|turn| turn.status == TurnStatus::InProgress);
+                let title = format!("Set up {}", config["name"].as_str().unwrap_or("cloud environment"));
+                connection.set((bridge, identity.clone())).ok();
+                entity.update(cx, |page, cx| page.set_data(CloudTask {
+                    id: thread_id.clone(), title, active_turn: Some(thread_id.clone()),
+                    turns: vec![CloudTurn { id: thread_id.clone(), thread, phase: Phase::SettingUp, error: None, logs: Vec::new(), images: Vec::new() }],
+                    diff_turn: None, diff: String::new(), clone_url: None,
+                    environment_label: config["name"].as_str().map(str::to_owned), working,
+                }, cx));
+                while let Ok(event) = events.recv().await {
+                    ensure!(host.identity().as_ref() == Some(&identity), "Your account changed during cloud setup");
+                    match event {
+                        bridge::Event::Notification { method, params }
+                            if params["threadId"].as_str() == Some(&thread_id) => {
+                                entity.update(cx, |page, cx| page.apply_event(
+                                    &thread_id, json!({"item_type":"thread_event","event":{"method":method,"params":params}}), cx,
+                                ));
+                            }
+                        bridge::Event::Closed => bail!("The cloud setup connection closed"),
+                        _ => {}
+                    }
+                }
+                Ok::<_, anyhow::Error>(())
+            }.await;
+            if let Err(error) = result {
+                entity.update(cx, |page, cx| {
+                    page.error = Some(error.to_string());
+                    page.composer.update(cx, |composer, cx| composer.set_running(false, cx));
+                    cx.notify();
+                });
+            }
+        });
+        let header = cx.new(|cx| ui::screens::cloud_task::CloudTaskHeader::new(page.clone(), cx));
+        self.cloud = Some(Session {
+            page,
+            header,
+            cancelled,
+            _task: task,
+        });
+    }
+
     fn apply_cloud_changes(&mut self, revert: bool, cx: &mut Context<Self>) {
         let Some(session) = &self.cloud else {
             return;
@@ -352,6 +541,83 @@ impl Root {
         })
         .detach();
     }
+}
+
+async fn environment_thread(
+    bridge: &bridge::Bridge,
+    identity: &Identity,
+    config: &Value,
+    repositories: Vec<Value>,
+    settings: &Value,
+) -> Result<Thread> {
+    if let Some(id) = config["thread_id"].as_str() {
+        let resumed: Value = bridge
+            .request("thread/resume", json!({"threadId":id}))
+            .await?;
+        return Ok(serde_json::from_value(resumed["thread"].clone())?);
+    }
+    let config_id = config["id"]
+        .as_str()
+        .context("Missing cloud environment configuration ID")?;
+    ensure!(
+        !repositories.is_empty()
+            && repositories.iter().all(|repository| repository["name"]
+                .as_str()
+                .is_some_and(|name| !name.is_empty())
+                && repository["ref"]
+                    .as_str()
+                    .is_some_and(|reference| !reference.is_empty())),
+        "Missing cloud repository names or branches"
+    );
+    let started = bridge
+        .start_cloud_environment_onboarding(
+            &identity.account_id,
+            config_id,
+            json!({
+                "model":settings["model"],"serviceTier":settings["service_tier"],
+                "serviceName":"codex_cloud","mode":"default","cloudThreadPrototype":true,
+                "useAppServerPermissionDefault":true,
+                "collaborationMode":{"mode":"default","settings":{
+                    "model":settings["model"],"reasoning_effort":settings["model_reasoning_effort"],
+                    "developer_instructions":null,
+                }},
+            }),
+        )
+        .await?;
+    let mut thread: Thread = serde_json::from_value(started["thread"].clone())?;
+    let title = format!(
+        "Set up {}",
+        config["name"]
+            .as_str()
+            .context("Missing cloud environment name")?
+    );
+    bridge
+        .request::<_, Value>(
+            "thread/name/set",
+            json!({"threadId":thread.id,"name":title}),
+        )
+        .await?;
+    thread.name = Some(title);
+    let skill = config["onboarding_skill"]
+        .as_str()
+        .unwrap_or("cloud-environment-onboarding:setup");
+    let input = vec![
+        json!({"type":"text","text":format!("{}\n\n## My request:", json!({"repositories":repositories})),"text_elements":[]}),
+        json!({"type":"text","text":format!("Use ${skill} to set up this cloud environment"),"text_elements":[]}),
+    ];
+    let started: Value = bridge
+        .request(
+            "turn/start",
+            json!({
+                "threadId":thread.id,"input":input,"model":settings["model"],
+                "effort":settings["model_reasoning_effort"],"serviceTier":settings["service_tier"],
+            }),
+        )
+        .await?;
+    thread
+        .turns
+        .push(serde_json::from_value(started["turn"].clone())?);
+    Ok(thread)
 }
 
 fn upload_image(host: &dyn Host, identity: &Identity, path: &std::path::Path) -> Result<Value> {
@@ -901,6 +1167,40 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reopening_completed_setup_resumes_without_another_model_turn() {
+        let thread = json!({
+            "id":"setup-thread","preview":"Environment ready","model":null,
+            "modelProvider":"openai","cwd":"/workspace","path":null,
+            "createdAt":1,"updatedAt":2,"status":{"type":"idle"},
+            "turns":[{"id":"setup-turn","status":"completed","items":[
+                {"type":"agentMessage","id":"answer","text":"Environment ready"}
+            ]}]
+        });
+        let fixture = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(fixture.path(), format!("{}\n{}\n",
+            json!({"dir":"send","msg":{"id":1,"method":"thread/resume","params":{"threadId":"setup-thread"}}}),
+            json!({"dir":"recv","msg":{"id":1,"result":{"thread":thread}}}),
+        )).unwrap();
+        let (bridge, _) = bridge::Bridge::replay(fixture.path()).unwrap();
+        let resumed = pollster::block_on(environment_thread(
+            &bridge,
+            &Identity {
+                account_id: "account".into(),
+                user_id: "user".into(),
+                device_id: "device".into(),
+            },
+            &json!({"id":"config","thread_id":"setup-thread"}),
+            Vec::new(),
+            &Value::Null,
+        ))
+        .unwrap();
+        assert_eq!(resumed.turns[0].id, "setup-turn");
+        assert_eq!(resumed.turns[0].status, TurnStatus::Completed);
+        assert!(matches!(&resumed.turns[0].items[..],
+            [ThreadItem::AgentMessage { text, .. }] if text == "Environment ready"));
+    }
     #[test]
     fn a_cloud_task_never_invents_an_answer_while_setup_is_pending() {
         let detail = json!({"task":{"id":"task","title":"Build"},"current_user_turn":{"id":"user","created_at":1,"input_items":[{"type":"message","content":[{"content_type":"text","text":"Build it"}]}]},"current_assistant_turn":{"id":"assistant","previous_turn_id":"user","turn_status":"pending","output_items":[]}});

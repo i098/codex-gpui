@@ -331,14 +331,11 @@ Cursor projectless imports keep their workspace and output-folder records withou
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
 Use `Composer::settings_field` for multiline text and `Toast` for existing information, error, and success messages.
+Use `Composer::settings_form_field` for compact form inputs and `settings_form_secret` for their masked values.
+Subscribe to `SettingsFieldSubmit` to handle Enter without dropping focus.
+Run `cargo test -p ui --test settings_kit enter_respects_single_line_and_multiline_form_fields` for the real keyboard check.
 Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice check.
 
-Cloud environment routes use `Root::open_cloud_environment` and the existing authenticated host transport.
-The legacy editor preserves unchanged secret values and keeps package version choices in the environment draft.
-Cloud access follows the original account policy and feature gates; Cloud computer stays hidden on the Codex surface.
-Run `cargo test -p ui --lib screens::cloud::model::tests` for secret updates and `.env` parsing.
-Cloud v2 setup still needs the durable app-server connection; configuration creation alone does not prove that setup completed.
-Original-versus-native pixel validation for these pages remains pending.
 `app::diff_content::read_full_file` loads typed before/after data through the existing Git object host.
 It preserves line endings and the host's working-file fallback policy, with a 5 MiB object limit.
 Missing or oversized objects return `FullError::Unavailable`; invalid disk-fallback paths or reply structures return `FullError::Failed`.
@@ -383,6 +380,28 @@ Add `confirm-reset` after the output path to capture the confirmation state with
 Add `analytics` or `reset-error` to capture the recorded error states.
 Add `links` to check plan, credit, and billing destinations without opening a browser.
 Add `account-switch` to check that an account change discards the previous reset confirmation.
+
+Cloud environment routes use `Root::open_cloud_environment` and the existing authenticated host transport.
+The legacy editor preserves unchanged secret values and keeps package version choices in the environment draft.
+Cloud access follows the original account policy and feature gates; Cloud computer stays hidden on the Codex surface.
+Each Cloud page keeps the account and user identity used by its first access request.
+An identity change stops later environment operations before the host sends them.
+Container-image errors remain inside the editor row; name checks can complete independently.
+Repository selection loads GitHub connectors and visible account links before requesting repositories.
+Connection retries preserve the saved-environment list state and keep keyboard dismissal available while loading.
+The create dialog uses the original setup artwork and a full-window native overlay.
+The `375130565` feature gate also hides legacy environments when the account otherwise permits cloud access.
+Run `cargo test -p app --lib cloud::tests` for the account and feature-gate checks.
+Run `cargo test -p ui --lib screens::cloud::model::tests` for secret updates and `.env` parsing.
+Creating an environment opens an account-bound cloud connection and starts the recorded setup skill.
+Existing setup conversations resume without starting another model turn.
+The repository picker keeps selections across searches, pages, retries, and provider changes.
+Run `cargo test -p ui --lib screens::cloud::tests` for repository and modal state checks.
+Run `cargo test -p app --lib reopening_completed_setup_resumes_without_another_model_turn` for setup resumption.
+Run `cargo run -p ui --example cloud_capture -- /tmp/cloud.png current-repositories` for the native repository picker.
+Selecting another settings section clears the Cloud view.
+Run `cargo test -p ui --lib screens::settings::tests::leaving_cloud_restores_the_selected_settings_page` to check this transition.
+Original-versus-native pixel validation for these pages remains pending.
 
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
 Create saves the definition through `automation-create` to `CODEX_HOME/automations/<id>/automation.toml`.

@@ -1,6 +1,7 @@
 //! One module per native screen, with live data and recorded parity fixtures.
 
 pub mod automations;
+pub mod cloud;
 pub mod cloud_task;
 pub mod composer;
 pub mod computer_use_native;
