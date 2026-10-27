@@ -39,7 +39,7 @@ function driver(p, w, h) {
   const type = (text) => p.send("Input.insertText", { text });
   // The pointer rests on the empty titlebar centre, where nothing reacts to hover.
   const park = () => mouse("mouseMoved", Math.round(w * 0.6), 6);
-  return { waitFor, click, key, type, park, sleep };
+  return { waitFor, click, key, type, park, sleep, evaluate: p.evaluate };
 }
 
 // Each state starts on a freshly loaded Home route.
@@ -107,6 +107,18 @@ const STATES = {
     await STATES.plugins(d);
     await d.click(byText("Skills"));
     await d.waitFor(`document.body.innerText.includes("Extend Codex with task-specific skills") && document.body.innerText.includes("Recommended")`, "skill directory");
+  },
+  // `screenshotToCurrentChat` hands the selected PNG to the composer as an image data URL; an
+  // image paste takes the same attachment path. The PNG is the s017 recording's image.
+  screenshot: async (d) => {
+    const png = JSON.parse(read("../../refs/interactions/s017.json")).steps[1].clipboard.pngDataUrl;
+    await d.click(`document.querySelector(".ProseMirror")`, "composer");
+    await d.evaluate(`(async () => {
+      const t = new DataTransfer();
+      t.items.add(new File([await (await fetch(${JSON.stringify(png)})).blob()], "image.png", { type: "image/png" }));
+      document.querySelector(".ProseMirror").dispatchEvent(new ClipboardEvent("paste", { clipboardData: t, bubbles: true, cancelable: true }));
+    })()`);
+    await d.waitFor(`[...document.images].some((i) => i.complete && i.naturalWidth === 2)`, "image attachment");
   },
 };
 
