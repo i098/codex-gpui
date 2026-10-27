@@ -78,8 +78,9 @@ impl ContextMenu {
         cx: &mut App,
     ) -> Self {
         let mut menu = Self::build(items, subject, button.bottom_right(), 0., window, cx);
-        menu.position.x -= px(menu.width);
-        menu.position.y += px(4.);
+        // The recorded original box sits 2 px below the button and 1 px inside its right edge.
+        menu.position.x -= px(menu.width + 1.);
+        menu.position.y += px(2.);
         menu
     }
 

@@ -1384,7 +1384,6 @@ impl Composer {
             window,
             cx,
         ));
-
         cx.notify();
     }
 
