@@ -28,29 +28,25 @@ gpui::actions!(ui, [StopBackgroundTerminals]);
 
 /// A bottom-panel tab's content, `tab_width` px wide, with its 14 px `×` while `selected` or
 /// `hovered` (the caller's 20 px close control at `top-1.5 end-1.75` holds no glyph). The
-/// original blits the selected tab's glyphs onto the translucent fill of its composited
-/// `_SelectedSurface`, and every other glyph of the strip into a layer of its own.
-/// `snap` moves that surface to the device grid: Chromium rounds a composited layer's origin
-/// and keeps its unrounded size.
+/// original rasters the whole tab strip into one composited layer, so the caller gives the
+/// strip a `.layer()`: the glyphs rasterize at runtime on its tile grid, over the
+/// `_SelectedSurface` (a layer of its own). The caller snaps the tab's origin to the device grid.
 pub fn panel_tab(
     label: SharedString,
     selected: bool,
     hovered: bool,
     tab_width: f32,
-    snap: f32,
     window: &Window,
     cx: &App,
 ) -> Div {
     let t = cx.theme();
     let closable = selected || hovered;
     let color = if selected { t.text } else { t.text_tertiary };
-    let glyph = || crate::icon::icon("thread-terminal", 16., color);
-    let close = || {
-        crate::icon::icon("diff-tab-close", 14., t.text_tertiary)
-            .absolute()
-            .left(px(tab_width - 24.))
-            .top(px(9.))
-    };
+    let close = crate::icon::icon("diff-tab-close", 14., t.text_tertiary)
+        .runtime()
+        .absolute()
+        .left(px(tab_width - 24.))
+        .top(px(9.));
     let width = window
         .text_system()
         .shape_line(
@@ -93,9 +89,9 @@ pub fn panel_tab(
                     .child(
                         div()
                             .absolute()
-                            .left(px(1. + snap))
+                            .left(px(1.))
                             .top_0()
-                            .right(px(1. - snap))
+                            .right(px(1.))
                             .h(px(32.))
                             .child(shapes::decoration(shapes::Decoration {
                                 radius: Corners::all(theme::Theme::RADIUS_MD),
@@ -108,18 +104,12 @@ pub fn panel_tab(
                                     vec![]
                                 },
                                 ..Default::default()
-                            }))
-                            .when(selected, |d| {
-                                d.child(glyph().runtime().absolute().left(px(10.)).top(px(8.)))
-                                    .child(close().runtime())
-                            }),
+                            })),
                     ),
             )
         })
-        .when(hovered && !selected, |d| d.child(close().own_layer(None)))
-        // The selected glyph paints in the layer above; its box keeps the label's place.
-        .when(selected, |d| d.child(div().flex_none().size(px(16.))))
-        .when(!selected, |d| d.child(glyph().own_layer(None)))
+        .when(closable, |d| d.child(close))
+        .child(crate::icon::icon("thread-terminal", 16., color).runtime())
         .child(
             div()
                 .relative()
@@ -135,6 +125,16 @@ pub fn panel_tab(
         )
 }
 
+/// A `rounded-full` button's fill and 1 px border, as Blink rasters them.
+pub fn pill(fill: gpui::Hsla, border: Option<gpui::Hsla>) -> impl IntoElement {
+    shapes::decoration(shapes::Decoration {
+        radius: Corners::all(theme::Theme::RADIUS_FULL),
+        fill: Some(fill),
+        border: border.map(|color| (px(1.), color)),
+        ..Default::default()
+    })
+}
+
 pub fn workspace_warning(actions: Div, narrow: bool, cx: &App) -> Div {
     let t = cx.theme();
     let mut tint: gpui::Hsla = gpui::rgb(match t.appearance {
@@ -143,10 +143,10 @@ pub fn workspace_warning(actions: Div, narrow: bool, cx: &App) -> Div {
     })
     .into();
     tint.a = 0.3;
-    let background = shapes::decoration(shapes::Decoration {
+    let surface = shapes::decoration(shapes::Decoration {
         radius: Corners::all(theme::Theme::RADIUS_3XL),
         corner: shapes::Corner::Squircle,
-        fill: Some(crate::blit(tint, t.surface)),
+        fill: Some(t.surface),
         shadows: vec![
             crate::composer::shadow(t.border_strong, 0., 0., 0.5, false),
             crate::composer::shadow(gpui::rgba(0x0000000d).into(), 0., 2., 0., false),
@@ -154,45 +154,56 @@ pub fn workspace_warning(actions: Div, narrow: bool, cx: &App) -> Div {
         ],
         ..Default::default()
     });
-    div().p(px(8.)).flex_shrink_0().child(
-        div()
-            .relative()
-            .py(px(16.))
-            .pl(px(20.))
-            .pr(px(12.))
-            .flex()
-            .gap(px(12.))
-            .when(!narrow, |d| d.items_center())
-            .child(background)
-            .child(
-                div()
-                    .h(px(20.))
-                    .pt(px(2.))
-                    .flex_shrink_0()
-                    .child(crate::icon::icon("terminal-warning", 18., t.text_warning)),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .when(narrow, |d| d.flex_col())
-                    .when(!narrow, |d| d.items_center().gap(px(32.)))
-                    .child(
-                        text(
-                            "This terminal is outside this chat's workspaces",
-                            13.,
-                            21.125,
-                            430.,
-                            t.text,
-                        )
-                        .whitespace_normal()
-                        .min_w_0()
-                        .flex_1(),
+    // The tint fills the `-z-10` child that the banner's rounded `overflow-hidden` clips.
+    let tint = shapes::decoration(shapes::Decoration {
+        fill: Some(tint),
+        ..Default::default()
+    });
+    let content = div()
+        .relative()
+        .py(px(16.))
+        .pl(px(20.))
+        .pr(px(12.))
+        .flex()
+        .gap(px(12.))
+        .when(!narrow, |d| d.items_center())
+        .child(tint)
+        .child(
+            div()
+                .h(px(20.))
+                .pt(px(2.))
+                .flex_shrink_0()
+                .child(crate::icon::icon("terminal-warning", 18., t.text_warning)),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .when(narrow, |d| d.flex_col())
+                .when(!narrow, |d| d.items_center().gap(px(32.)))
+                .child(
+                    text(
+                        "This terminal is outside this chat's workspaces",
+                        13.,
+                        21.125,
+                        430.,
+                        t.text,
                     )
-                    .child(actions.when(narrow, |d| d.mt(px(8.)))),
-            ),
-    )
+                    .whitespace_normal()
+                    .min_w_0()
+                    .flex_1(),
+                )
+                .child(actions.when(narrow, |d| d.mt(px(8.)))),
+        );
+    div()
+        .p(px(8.))
+        .flex_shrink_0()
+        .child(div().relative().child(surface).child(crate::rounded_clip(
+            theme::Theme::RADIUS_3XL,
+            shapes::Corner::Squircle,
+            content,
+        )))
 }
 
 pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
