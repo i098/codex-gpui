@@ -9,7 +9,8 @@ use crate::{
 };
 use bridge::types::Thread;
 use gpui::{
-    Action, AnyElement, App, AppContext as _, Context, Div, Entity, InteractiveElement,
+    Action, AnyElement, App, AppContext as _, Context, Div, Entity, Focusable as _,
+    InteractiveElement,
     IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Stateful,
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
@@ -168,6 +169,7 @@ enum Control {
     DeleteAll,
     Menu(Menu),
     Retry,
+    ClearSearch,
 }
 
 pub fn render(window: &mut Window, cx: &mut App) -> AnyElement {
@@ -204,7 +206,7 @@ impl gpui::EventEmitter<Operation> for ArchivedChats {}
 
 impl ArchivedChats {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let query = cx.new(|cx| Composer::page_search("Search archived chats", cx));
+        let query = cx.new(|cx| Composer::search_field("Search archived chats", cx));
         cx.observe(&query, |this, _, cx| {
             this.rebuild(cx);
             cx.notify();
@@ -466,6 +468,10 @@ impl ArchivedChats {
                         .child(text(label.clone(), 13., 18., 430., t.text).truncate()),
                 )
                 .child(icon("chevron-down", 14., t.text_tertiary))
+        } else if command == &Control::ClearSearch {
+            div()
+                .size(px(16.))
+                .child(icon("shortcut-clear", 16., t.text_secondary))
         } else {
             let destructive = command == &Control::DeleteAll;
             let (height, color, fill) = if destructive {
@@ -533,7 +539,8 @@ impl ArchivedChats {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
-        let disabled = (!self.pending.is_empty() && !matches!(command, Control::Menu(_)))
+        let disabled = (!self.pending.is_empty()
+            && !matches!(command, Control::Menu(_) | Control::ClearSearch))
             || matches!(&command, Control::RestoreCloud(id) if self.cloud_pending.contains(id));
         let focus = focus::handle(id.clone(), 0, window, cx);
         let handle = focus.read(cx).handle.clone();
@@ -586,6 +593,10 @@ impl ArchivedChats {
             Control::DeleteRow(row) => self.confirm_delete(None, Some(row), window, cx),
             Control::DeleteAll => self.confirm_delete(None, None, window, cx),
             Control::Retry => self.retry(cx),
+            Control::ClearSearch => {
+                self.query.update(cx, |query, cx| query.set_text("", cx));
+                self.query.focus_handle(cx).focus(window, cx);
+            }
             Control::Menu(menu) => {
                 self.menu = if self.menu.as_ref() == Some(&menu) {
                     None
@@ -756,11 +767,38 @@ impl ArchivedChats {
                 cx,
             )
             .w(px(176.));
+        let t = cx.theme();
+        let search = div()
+            .flex_1()
+            .min_w_0()
+            .h(px(32.))
+            .px(px(11.))
+            .relative()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(on_card(
+                9999.,
+                shapes::Corner::Round,
+                t.surface_elevated_secondary,
+                Some(t.border_strong),
+            ))
+            .child(icon("shortcut-search", 18., t.text_secondary))
+            .child(div().flex_1().min_w_0().child(self.query.clone()));
+        let clear = (!self.query.read(cx).field_text().is_empty()).then(|| {
+            self.control(
+                "clear-archive-search".into(),
+                "Clear search".into(),
+                Control::ClearSearch,
+                window,
+                cx,
+            )
+        });
         div()
             .flex()
             .items_center()
             .gap(px(8.))
-            .child(div().flex_1().min_w_0().child(self.query.clone()))
+            .child(search.children(clear))
             .child(kind_button)
             .child(project_button)
     }

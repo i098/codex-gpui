@@ -61,9 +61,8 @@ impl Root {
                 .detach();
             }
             Operation::Restore(id) => {
-                let key = format!("unarchive-thread-{id}");
-                self.toaster.update(cx, |toaster, cx| {
-                    toaster.push_keyed(key.clone(), Toast::pending("Unarchiving chat"), cx)
+                let pending = self.toaster.update(cx, |toaster, cx| {
+                    toaster.push_persistent(pending_toast("Unarchiving chat"), cx)
                 });
                 cx.spawn_in(window, async move |this, cx| {
                     let result = bridge
@@ -75,46 +74,44 @@ impl Root {
                     page.update(cx, |page, cx| {
                         page.finished(std::slice::from_ref(&id), result.is_ok(), cx)
                     });
-                    this.update_in(cx, |this, _, cx| match result {
-                        Ok(response) => {
-                            if let Some(thread) =
-                                this.threads.iter_mut().find(|thread| thread.id == id)
-                            {
-                                *thread = response.thread;
-                            } else {
-                                this.threads.insert(0, response.thread);
-                            }
-                            this.sidebar
-                                .update(cx, |sidebar, cx| sidebar.set_threads(&this.threads, cx));
-                            let root = cx.weak_entity();
-                            let toast = Toast::info("Unarchived chat")
-                                .icon("sidebar-archive")
-                                .action("View", move |window, cx| {
-                                    root.update(cx, |this, cx| {
-                                        this.navigate(Route::Thread(id.clone()), window, cx)
-                                    })
-                                    .ok();
+                    this.update_in(cx, |this, _, cx| {
+                        let toast = match result {
+                            Ok(response) => {
+                                if let Some(thread) =
+                                    this.threads.iter_mut().find(|thread| thread.id == id)
+                                {
+                                    *thread = response.thread;
+                                } else {
+                                    this.threads.insert(0, response.thread);
+                                }
+                                this.sidebar.update(cx, |sidebar, cx| {
+                                    sidebar.set_threads(&this.threads, cx)
                                 });
-                            this.toaster
-                                .update(cx, |toaster, cx| toaster.push_keyed(key, toast, cx));
-                        }
-                        Err(error) => {
-                            eprintln!("thread/unarchive: {error:#}");
-                            this.toaster.update(cx, |toaster, cx| {
-                                toaster.push_keyed(
-                                    key,
-                                    Toast::danger("Failed to unarchive chat"),
-                                    cx,
-                                )
-                            });
-                        }
+                                let root = cx.weak_entity();
+                                Toast::info("Unarchived chat")
+                                    .icon("sidebar-archive")
+                                    .action("View", move |window, cx| {
+                                        root.update(cx, |this, cx| {
+                                            this.navigate(Route::Thread(id.clone()), window, cx)
+                                        })
+                                        .ok();
+                                    })
+                            }
+                            Err(error) => {
+                                eprintln!("thread/unarchive: {error:#}");
+                                Toast::danger("Failed to unarchive chat")
+                            }
+                        };
+                        this.toaster.update(cx, |toaster, cx| {
+                            toaster.dismiss(pending, cx);
+                            toaster.push(toast, cx);
+                        });
                     })
                     .ok();
                 })
                 .detach();
             }
             Operation::RestoreCloud(id) => {
-                let key = format!("recover-cloud-task-{id}");
                 let task_id = id.clone();
                 let work = cx.background_spawn(async move {
                     let identity = host
@@ -156,8 +153,7 @@ impl Root {
                                 Toast::danger("Failed to unarchive chat")
                             }
                         };
-                        this.toaster
-                            .update(cx, |toaster, cx| toaster.push_keyed(key, toast, cx));
+                        this.toaster.update(cx, |toaster, cx| toaster.push(toast, cx));
                     })
                     .ok();
                 })
@@ -165,11 +161,9 @@ impl Root {
             }
             Operation::Delete(scope) => {
                 let single = matches!(scope, DeleteScope::Single(_));
-                let key = "delete-archived-chats";
-                self.toaster.update(cx, |toaster, cx| {
-                    toaster.push_keyed(
-                        key,
-                        Toast::pending(if single {
+                let pending = self.toaster.update(cx, |toaster, cx| {
+                    toaster.push_persistent(
+                        pending_toast(if single {
                             "Deleting archived chat"
                         } else {
                             "Deleting archived chats"
@@ -190,8 +184,10 @@ impl Root {
                         this.sidebar
                             .update(cx, |sidebar, cx| sidebar.set_threads(&this.threads, cx));
                         let toast = deletion_toast(single, deleted.len(), first_error);
-                        this.toaster
-                            .update(cx, |toaster, cx| toaster.push_keyed(key, toast, cx));
+                        this.toaster.update(cx, |toaster, cx| {
+                            toaster.dismiss(pending, cx);
+                            toaster.push(toast, cx);
+                        });
                     })
                     .ok();
                 })
@@ -199,6 +195,11 @@ impl Root {
             }
         }
     }
+}
+
+/// An operation in flight: persistent until its result toast replaces it.
+fn pending_toast(title: &'static str) -> Toast {
+    Toast::info(title).icon("sidebar-cmd-spinner")
 }
 
 fn deletion_toast(single: bool, deleted: usize, error: Option<anyhow::Error>) -> Toast {
