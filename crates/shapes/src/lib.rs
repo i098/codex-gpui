@@ -587,6 +587,21 @@ pub fn top_fade(fade: Pixels) -> impl IntoElement {
     )
 }
 
+/// Masks its parent `.layer()` with a centered, farthest-corner ellipse.
+/// Each stop is `(radius_fraction, alpha)`, for example `[(0.35, 1.), (0.6, 0.6), (0.78, 0.)]`.
+/// Place this element last. Like [`top_fade`], it paints only on macOS.
+pub fn radial_fade(stops: [(f32, f32); 3]) -> impl IntoElement {
+    cover(
+        |_, _, _| {},
+        move |bounds, (), window, cx| {
+            #[cfg(target_os = "macos")]
+            mask::paint_radial_fade(stops, bounds, window, cx);
+            #[cfg(not(target_os = "macos"))]
+            let _ = (stops, bounds, window, cx);
+        },
+    )
+}
+
 /// CSS `mask-image: linear-gradient(to right, transparent, black <left>, black calc(100% -
 /// <right>), transparent)` over its parent (`.text-fade-truncate` has `left` 0), which must be
 /// a `.layer()` element, like [`top_fade`]: put it last. macOS only, like [`top_fade`].

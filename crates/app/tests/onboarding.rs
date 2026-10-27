@@ -230,3 +230,41 @@ fn account_completion_is_checked_after_a_previous_local_completion() -> Result<(
     })?;
     Ok(())
 }
+
+#[test]
+fn first_run_keeps_back_in_bounds_and_saves_after_the_last_page() -> Result<()> {
+    use ui::screens::onboarding::Page;
+
+    let route = app::onboarding::route("/first-run").context("First-run route")?;
+    let mut fx = Fx::on_route(route)?;
+    let shell = fx.read(|root, _| root.shell().clone());
+    shell.update(&mut fx.cx, |shell, cx| {
+        shell.sidebar_open = false;
+        cx.notify();
+    });
+    ensure!(fx.shell(|shell| !shell.chat_chrome && !shell.new_tab));
+    let (back, next) = ((500., 770.), (828., 770.));
+    fx.hover((768., 6.))?;
+    shot(&mut fx, "first-run-0")?;
+    // Back is disabled on the first page; Next then Back returns to it.
+    fx.click(back)?;
+    fx.click(next)?;
+    fx.click(back)?;
+    for step in 0..4 {
+        ensure!(fx.route() == app::Route::Onboarding(Page::FirstRun));
+        if step > 0 {
+            fx.hover((768., 6.))?;
+            shot(&mut fx, &format!("first-run-{step}"))?;
+        }
+        fx.click(next)?;
+    }
+    fx.wait("first-run completion", |fx| fx.route() == app::Route::Home)?;
+    ensure!(fx.shell(|shell| shell.chat_chrome && shell.new_tab));
+    ensure!(fx.read(|_, cx| {
+        cx.global::<app::host_settings::Settings>()
+            .read_all()
+            .get("viewed2025-09-15-nux")
+            == Some(&json!(true))
+    }));
+    Ok(())
+}

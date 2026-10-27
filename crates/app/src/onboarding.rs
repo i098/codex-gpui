@@ -10,6 +10,7 @@ pub fn route(path: &str) -> Option<Route> {
         "/welcome" => Page::Welcome,
         "/onboarding" => Page::Onboarding,
         "/select-workspace" => Page::SelectWorkspace,
+        "/first-run" => Page::FirstRun,
         _ => return None,
     };
     Some(Route::Onboarding(page))
@@ -102,7 +103,8 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let view = cx.new(|cx| Onboarding::new(page, cx));
+        let (chatgpt, clock) = (self.chatgpt_account, self.clock);
+        let view = cx.new(|cx| Onboarding::new(page, chatgpt, clock, cx));
         cx.subscribe_in(
             &view,
             window,
@@ -134,12 +136,26 @@ impl Root {
                             cx,
                         );
                     }
+                    // The original writes only this key for the shipped `none` NUX variant.
+                    OnboardingEvent::FirstRunComplete => {
+                        let result = cx
+                            .global_mut::<host_settings::Settings>()
+                            .write("viewed2025-09-15-nux", json!(true));
+                        match result {
+                            Ok(()) => this.navigate(Route::Home, window, cx),
+                            Err(error) => view.update(cx, |view, cx| {
+                                view.set_error(format!("Could not save setup: {error}"), cx)
+                            }),
+                        }
+                    }
                 }
             },
         )
         .detach();
         self.onboarding_page = Some(view.clone());
-        self.read_onboarding(view, window, cx);
+        if page != Page::FirstRun {
+            self.read_onboarding(view, window, cx);
+        }
     }
 
     fn read_onboarding(
