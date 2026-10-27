@@ -954,15 +954,10 @@ fn automation_update_rejects_invalid_schedule_and_unowned_field_changes() -> Res
     let changed = host.fetch(&Request::post(
         "automation-update",
         Some(json!({
-            "id": "task", "status": "PAUSED", "model": "overwrite"
+            "id": "task", "status": "PAUSED", "createdAt": 999
         })),
     ));
-    assert!(
-        changed
-            .unwrap_err()
-            .to_string()
-            .contains("cannot change model")
-    );
+    assert!(changed.is_err());
     assert_eq!(
         fs::read_to_string(home.path().join("automations/task/automation.toml"))?,
         definition
@@ -975,6 +970,123 @@ fn automation_update_rejects_invalid_schedule_and_unowned_field_changes() -> Res
         )?,
         9999999999999
     );
+    Ok(())
+}
+
+#[test]
+fn automation_execution_settings_survive_reload_and_kind_changes() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    host.write_automation(
+        "task",
+        &(definition("task", 20) + "custom_field = \"retained\"\n"),
+    )?;
+    let db = update_database(home.path())?;
+    let project = home.path().join("project");
+    fs::create_dir(&project)?;
+    let updated = json_body(&host.fetch(&Request::post(
+        "automation-update",
+        Some(json!({
+            "id": "task", "status": "PAUSED", "kind": "cron",
+            "model": "gpt-6-astra", "reasoningEffort": "high",
+            "notificationPolicy": "failed_runs_only", "autoArchive": true,
+            "executionEnvironment": "local", "projectId": "project-one", "cwds": [project],
+        })),
+    ))?)?;
+    let item = &updated["item"];
+    assert_eq!(item["model"], "gpt-6-astra");
+    assert_eq!(item["reasoningEffort"], "high");
+    assert_eq!(
+        item["target"],
+        json!({"type":"project","projectId":"project-one"})
+    );
+    assert_eq!(item["autoArchive"], true);
+    assert_eq!(item["notificationPolicy"], "failed_runs_only");
+    assert_eq!(
+        db.query_row("SELECT model,reasoning_effort,project_id,execution_environment,auto_archive FROM automations WHERE id='task'", [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?, row.get::<_, bool>(4)?)))?,
+        ("gpt-6-astra".into(), "high".into(), "project-one".into(), "local".into(), true)
+    );
+    let heartbeat = json_body(&host.fetch(&Request::post(
+        "automation-update",
+        Some(json!({
+            "id":"task", "status":"PAUSED", "kind":"heartbeat", "targetThreadId":"existing-thread"
+        })),
+    ))?)?;
+    assert_eq!(heartbeat["item"]["kind"], "heartbeat");
+    assert_eq!(heartbeat["item"]["targetThreadId"], "existing-thread");
+    assert!(heartbeat["item"]["model"].is_null());
+    assert_eq!(
+        db.query_row(
+            "SELECT cwds,model,target_type,target_thread_id FROM automations WHERE id='task'",
+            [],
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?
+            ))
+        )?,
+        ("[]".into(), None, None, "existing-thread".into())
+    );
+    let path = home.path().join("automations/task/automation.toml");
+    let previous = fs::read(&path)?;
+    assert!(
+        host.fetch(&Request::post(
+            "automation-update",
+            Some(json!({"id":"task", "status":"PAUSED", "kind":"cron"})),
+        ))
+        .is_err()
+    );
+    assert_eq!(fs::read(&path)?, previous);
+    host.fetch(&Request::post(
+        "automation-update",
+        Some(json!({
+            "id":"task", "status":"PAUSED", "kind":"cron", "cwds":[project],
+            "projectId":null, "executionEnvironment":"worktree", "autoArchive":false
+        })),
+    ))?;
+    let reloaded =
+        json_body(&LocalHost::new(home.path()).fetch(&Request::post("list-automations", None))?)?;
+    assert_eq!(reloaded["items"][0]["kind"], "cron");
+    assert_eq!(
+        reloaded["items"][0]["target"],
+        json!({"type":"projectless"})
+    );
+    assert!(reloaded["items"][0]["targetThreadId"].is_null());
+    let raw: toml::Table = toml::from_str(&fs::read_to_string(
+        home.path().join("automations/task/automation.toml"),
+    )?)?;
+    assert_eq!(raw["custom_field"].as_str(), Some("retained"));
+    assert_eq!(raw["created_at"].as_integer(), Some(10));
+    Ok(())
+}
+
+#[test]
+fn invalid_execution_settings_leave_the_definition_unchanged() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let host = LocalHost::new(home.path());
+    host.write_automation("task", &definition("task", 20))?;
+    let path = home.path().join("automations/task/automation.toml");
+    let original = fs::read(&path)?;
+    for (field, value) in [
+        ("reasoningEffort", json!("invalid")),
+        ("executionEnvironment", json!("cloud")),
+        ("notificationPolicy", json!("unknown")),
+        ("autoArchive", json!("yes")),
+        ("cwds", json!(["relative"])),
+        ("kind", json!("unknown")),
+        ("name", json!("x".repeat(251))),
+    ] {
+        let mut params = json!({"id":"task", "status":"PAUSED"});
+        params[field] = value;
+        assert!(
+            host.fetch(&Request::post("automation-update", Some(params)))
+                .is_err(),
+            "{field}"
+        );
+        assert_eq!(fs::read(&path)?, original, "{field}");
+    }
     Ok(())
 }
 
@@ -1249,8 +1361,6 @@ fn automation_resume_schedules_when_the_jitter_salt_cannot_be_saved() -> Result<
     assert!(salt.is_dir());
     Ok(())
 }
-
-#[test]
 
 /// Mobile `Get started` reads the MFA requirement, then the MFA status, through the host. A
 /// host without the authenticated transport leaves the initial step with its error; the retry

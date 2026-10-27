@@ -3,32 +3,52 @@
 //! plus the key bindings and menu bar. `main.rs` only opens the window;
 //! `examples/live_turn.rs` and `tests/flows.rs` drive the same view headless.
 
+mod activity_access;
+mod archived_chats;
 mod cloud_task;
 pub use cloud_task::parse_task_response;
+mod cloud;
+pub use cloud::{CloudTaskRequest, create_cloud_task};
 pub mod computer_use_requests;
+pub mod connections;
 pub mod deep_link;
 mod destinations;
+pub mod dictation;
+mod diff_comments;
 pub mod diff_content;
+mod diff_context;
+mod diff_find;
+mod diff_options;
+mod diff_preview;
+mod diff_repositories;
+mod diff_watch;
 mod features;
 pub mod host;
 pub mod host_settings;
+pub mod hotkey;
 pub mod native_menus;
 pub mod oauth;
+pub mod onboarding;
 mod personalization;
 mod pull_requests;
 pub mod qa;
 mod routes;
+pub mod terminal;
 pub use routes::Route;
 mod plugins;
 pub mod screenshot;
 mod search;
 mod section_actions;
+mod security;
+mod settings_git;
+pub mod settings_import;
 pub(crate) mod settings_integrations;
 mod settings_subtrees;
 mod signin;
 mod storage;
 pub mod updater;
 mod usage;
+mod voice;
 mod window_shell;
 pub mod windows;
 
@@ -67,6 +87,7 @@ use ui::screens::diff::panel::{
 };
 use ui::screens::home::{HomeMain, OpenFolder};
 use ui::screens::recovery;
+use ui::screens::settings::archived_chats::ArchivedChats as ArchivedSettings;
 use ui::screens::settings::personalization::WritingPreference;
 use ui::screens::settings::{self, AppServer, SettingChanged, workspace};
 use ui::screens::sidebar::{
@@ -79,7 +100,7 @@ use ui::screens::signin::Login;
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
     Clock, EditMessage, ForkThread, GitAction, History, OpenAutomationCard, RetryHistory,
-    RevertTurn, ThreadView, UsageLimitNotice,
+    RevertTurn, ThreadPressed, ThreadView, UsageLimitNotice,
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
@@ -123,8 +144,10 @@ pub struct GoToChat(pub usize);
 #[action(namespace = app, no_json)]
 pub struct GoToRecentChat(pub usize);
 
-/// `(min-width: 768px)`: below it the original hides the sidebar panel.
-const SIDEBAR_BREAKPOINT: Pixels = px(768.);
+/// The original collapses the sidebar at widths of 720 px or less.
+const SIDEBAR_BREAKPOINT: Pixels = px(720.);
+/// At most this wide, the side panel hides like the original's compact layout.
+const SIDE_PANEL_BREAKPOINT: Pixels = px(960.);
 
 /// Fixed platform bindings and app-level commands; configurable bindings are installed by the keymap module.
 pub fn init(cx: &mut App) {
@@ -142,11 +165,11 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-k", OpenCommandMenu, None),
         KeyBinding::new("cmd-shift-p", OpenCommandMenu, None),
         KeyBinding::new("alt-cmd-b", ToggleChangesPanel, None),
-        KeyBinding::new("alt-cmd-u", ToggleActivity, None),
         KeyBinding::new("cmd-shift-a", ArchiveChat, None),
     ]);
     ui::composer::bind_keys(cx);
     features::init(cx);
+    hotkey::init(cx);
     native_menus::init(cx);
     screenshot::init(cx);
     cx.on_action(|_: &Quit, cx| cx.defer(routes::request_quit));
@@ -359,6 +382,9 @@ pub struct Root {
     loading_more: bool,
     /// The window is at least [`SIDEBAR_BREAKPOINT`] wide; narrower hides the sidebar.
     wide: bool,
+    /// The layout the side panel had when the window narrowed to [`SIDE_PANEL_BREAKPOINT`] or
+    /// less (which shows the chat alone); wider again restores it.
+    layout_before_narrow: Option<WorkspaceLayout>,
     /// Holds key focus when no composer shows (Settings, a loading thread, sign-in), so
     /// shortcuts still reach the root's actions.
     focus: FocusHandle,
@@ -376,10 +402,12 @@ pub struct Root {
     /// Chats archived in this session: no side chat for them.
     archived: HashSet<String>,
     diff: Option<Entity<DiffPanel>>,
+    diff_watch: Option<diff_watch::Watch>,
     /// The file viewer of [`SidePanel::File`]; cleared with the thread.
     file: Option<Entity<FileView>>,
     /// The open thread in the main shell, with its side panel if any.
     split: Option<Entity<SplitScreen>>,
+    terminal: terminal::Terminals,
     /// Side panel tabs of the thread route in opening order, and the selected one (always in
     /// `tabs`); kept across threads like the original's panel.
     tabs: Vec<SidePanel>,
@@ -388,22 +416,31 @@ pub struct Root {
     /// The route's own shell.
     page: Option<Entity<Shell>>,
     archive_page: Option<Entity<ArchivedChats>>,
+    archived_settings: Option<Entity<ArchivedSettings>>,
     /// The Mobile route's setup page.
     mobile_page: Option<Entity<mobile::MobileSetupPage>>,
     cloud: Option<cloud_task::Session>,
     pull_requests_page: Option<Entity<ui::screens::pull_requests::Page>>,
     plugins_page: Option<Entity<ui::screens::plugins::Page>>,
+    cloud_modal: Option<Entity<ui::screens::cloud::CloudModal>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
     writing_dialog_preference: Option<Arc<WritingPreference>>,
     settings_integrations: Entity<settings::integrations::State>,
+    security_access: Entity<ui::screens::security::Access>,
+    security_access_task: Option<Task<()>>,
     settings_integration_task: Option<Task<()>>,
     pending_settings_leave: Option<SettingsLeave>,
     workspace: Entity<workspace::Workspace>,
+    onboarding_page: Option<Entity<ui::screens::onboarding::Onboarding>>,
+    onboarding_load: Option<Task<()>>,
+    onboarding_context: Option<onboarding::ContextData>,
     /// `⌘K` command menu over the window.
     command_menu: Option<Entity<CommandMenu>>,
+    popout: Option<hotkey::Popout>,
     dialog: Option<Entity<Dialog>>,
+    diff_confirmation: Option<Entity<ui::confirmation::Confirmation>>,
     automation_editor: Option<Entity<automations::editor::Editor>>,
     /// The open dialog came from the composer: its close returns focus there.
     dialog_to_composer: bool,
@@ -416,6 +453,7 @@ pub struct Root {
     usage_limit_notice: UsageLimitNotice,
     bridge: Arc<Bridge>,
     host: Arc<dyn host::Host>,
+    activity_access: activity_access::Runtime,
     oauth: oauth::Connections,
     project_load: Option<Task<()>>,
     destination_load: Option<Task<()>>,
@@ -510,6 +548,7 @@ impl Root {
         features::install_shortcuts(cx);
         let this = cx.weak_entity();
         usage::install(this.clone(), cx);
+        settings_git::init(this.clone(), cx);
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
             available: cfg!(target_os = "macos") && !bridge.is_acp(),
@@ -556,6 +595,13 @@ impl Root {
             },
         )
         .detach();
+        cx.subscribe(
+            &thread_composer,
+            |this, _, change: &ui::composer::DiffCommentsChanged, cx| {
+                this.change_diff_comments(&change.0, cx);
+            },
+        )
+        .detach();
         for composer in [&home_composer, &thread_composer] {
             cx.subscribe_in(composer, window, |this, _, command: &ui::composer::SlashCommand, window, cx| {
                 match command {
@@ -599,6 +645,7 @@ impl Root {
             let mut sidebar = HomeSidebar::new(&[], None);
             sidebar.threads_state = ListState::Loading;
             sidebar.set_activity_archive_supported(!bridge.is_acp());
+            sidebar.activity_available = false;
             sidebar
         });
         cx.subscribe_in(
@@ -691,6 +738,7 @@ impl Root {
             next_cursor: None,
             loading_more: false,
             wide,
+            layout_before_narrow: None,
             focus: cx.focus_handle(),
             home: cx.new(|_| HomeMain {
                 composer: home_composer,
@@ -704,26 +752,37 @@ impl Root {
             next_side_chat: 1,
             archived: HashSet::new(),
             diff: None,
+            diff_watch: None,
             file: None,
             split: None,
+            terminal: terminal::Terminals::default(),
             tabs: Vec::new(),
             side: None,
             workspace_layout: WorkspaceLayout::Split,
             page: None,
             archive_page: None,
+            archived_settings: None,
             mobile_page: None,
             cloud: None,
             pull_requests_page: None,
             plugins_page: None,
+            cloud_modal: None,
             settings_section: None,
             settings_page: None,
             writing_dialog_preference: None,
             settings_integrations: cx.new(|_| settings::integrations::State::default()),
+            security_access: cx.new(|_| ui::screens::security::Access::default()),
+            security_access_task: None,
             settings_integration_task: None,
             pending_settings_leave: None,
             workspace: cx.new(workspace::Workspace::new),
+            onboarding_page: None,
+            onboarding_load: None,
+            onboarding_context: None,
             command_menu: None,
+            popout: None,
             dialog: None,
+            diff_confirmation: None,
             automation_editor: None,
             dialog_to_composer: false,
             login: None,
@@ -736,6 +795,7 @@ impl Root {
                     .with_bridge(bridge.clone())
                     .with_settings(cx.try_global::<host_settings::Settings>().cloned()),
             ),
+            activity_access: activity_access::Runtime::default(),
             oauth: oauth::Connections::default(),
             bridge,
             automations: None,
@@ -779,6 +839,9 @@ impl Root {
             _update_policy: None,
             state,
         };
+        if !cx.has_global::<ui::composer::dictation::Dispatcher>() {
+            cx.set_global(dictation::dispatcher());
+        }
         let workspace = root.workspace.clone();
         cx.subscribe_in(
             &workspace,
@@ -789,6 +852,7 @@ impl Root {
             },
         )
         .detach();
+        connections::install(cx);
         let this = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
             this.update(cx, |this, cx| {
@@ -816,7 +880,9 @@ impl Root {
         cx.on_focus_lost(window, |this, window, cx| window.focus(&this.focus, cx))
             .detach();
         root.bind_context_files(cx);
+        security::bind(&root, cx);
         root.connect(window, cx);
+        root.install_import(cx);
         root.load_projects(cx);
         windows::bind_root(window, cx);
         root
@@ -954,9 +1020,13 @@ impl Root {
                         .expect("close preference");
                 this.skills = skills;
                 this.models = models;
+                this.refresh_automation_editor_options(None, cx);
                 this.ready = this.login.is_none();
+                hotkey::policy::refresh(this, cx);
+                connections::startup(this, cx);
                 this.select_route(cx);
                 this.sync(window, cx);
+                this.maybe_onboard(window, cx);
                 if bridge.is_acp() {
                     let note = format!(
                         "{} over ACP: only chats, streaming, Stop and approvals work",
@@ -994,8 +1064,7 @@ impl Root {
                 .threads
                 .iter()
                 .all(|thread| thread.status != ThreadStatus::Active)
-            && self.dialog.is_none()
-            && self.automation_editor.is_none()
+            && !self.has_dialog()
             && self.command_menu.is_none()
             && self.approvals.is_empty()
             && self.automation_load.is_none()
@@ -1033,6 +1102,10 @@ impl Root {
 
     pub fn archived_chats(&self) -> Option<&Entity<ArchivedChats>> {
         self.archive_page.as_ref()
+    }
+
+    pub fn archived_settings(&self) -> Option<&Entity<ArchivedSettings>> {
+        self.archived_settings.as_ref()
     }
 
     pub fn mobile_page(&self) -> Option<&Entity<mobile::MobileSetupPage>> {
@@ -1083,7 +1156,7 @@ impl Root {
     /// The composer of the route: Home's, or the one docked under the open thread.
     pub fn composer(&self, cx: &App) -> Entity<Composer> {
         match self.state.route {
-            Route::Remote { .. } => self
+            Route::Remote { .. } | Route::CloudSetup { .. } => self
                 .cloud
                 .as_ref()
                 .map(|session| session.page.read(cx).composer.clone())
@@ -1105,9 +1178,11 @@ impl Root {
 
     /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
+        ui::composer::dictation::Dispatcher::cancel(self.context_window.window_id(), cx);
         self.invalidate_oauth(cx);
         self.invalidate_settings_integrations(cx);
         self.cloud = None;
+        self.cloud_modal = None;
         self.automation_load = None;
         self.automation_editor = None;
         self.project_load = None;
@@ -1125,12 +1200,23 @@ impl Root {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
         self.host = host;
+        self.refresh_activity_access(cx);
+        hotkey::policy::refresh(self, cx);
         self.automation_threads.clear();
         self.automation_card_results.clear();
         self.app_tool_events = None;
         self.bind_context_files(cx);
         self.reset_pull_requests(cx);
         usage::invalidate(cx);
+        if self.ready
+            && matches!(
+                self.state.route,
+                Route::Settings | Route::SettingsSubtree(_)
+            )
+        {
+            self.load_import_policy(cx);
+        }
+        connections::sync(cx);
         self.automations = None;
         self.load_projects(cx);
         if self.ready && !self.signed_out() {
@@ -1245,6 +1331,9 @@ impl Root {
     }
 
     fn toggle_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.sidebar.read(cx).activity_available {
+            return;
+        }
         if !matches!(self.state.route, Route::Home | Route::Thread(_)) {
             self.navigate(Route::Home, window, cx);
         }
@@ -1308,11 +1397,13 @@ impl Root {
         projects: Vec<ui::screens::sidebar::Project>,
         cx: &mut Context<Self>,
     ) {
+        hotkey::projects(self, &projects, cx);
         let choices = projects
             .iter()
             .filter(|project| !project.missing)
             .filter_map(|project| Some((project.label.clone(), project.root.as_ref()?.to_string())))
             .collect();
+        self.refresh_automation_editor_options(Some(&projects), cx);
         let composer = self.home.read(cx).composer.clone();
         composer.update(cx, |composer, _| composer.set_slash_projects(choices));
         self.sidebar
@@ -1478,8 +1569,20 @@ impl Root {
                     None => change.path.clone(),
                 }),
             ),
-            DiffRequest::Open(_) | DiffRequest::LoadFullFile(_) => return,
+            DiffRequest::Open(_)
+            | DiffRequest::OpenTab { .. }
+            | DiffRequest::SourceChanged
+            | DiffRequest::Notice(_)
+            | DiffRequest::CopyGitApply
+            | DiffRequest::ContextMenu(_)
+            | DiffRequest::OpenTarget(_)
+            | DiffRequest::LoadFullFile(_)
+            | DiffRequest::LoadPreview(_)
+            | DiffRequest::CommentsChanged(_)
+            | DiffRequest::DismissModelComment(_)
+            | DiffRequest::Preference(_, _) => return,
         };
+        let creating = endpoint == "git-init-repo";
         if let Some(review) = panel.read(cx).review_params().as_object() {
             params.as_object_mut().unwrap().extend(review.clone());
         }
@@ -1510,6 +1613,9 @@ impl Root {
         cx.spawn(async move |this, cx| {
             let result = read.await;
             this.update(cx, |this, cx| {
+                if creating {
+                    this.notify_git_init(result.as_ref().err().map(String::as_str), cx);
+                }
                 if let Some(target) = reverted {
                     let toast = match &result {
                         Ok((_, Some(true))) => Toast::info(format!("Partially reverted {target}")),
@@ -1521,6 +1627,8 @@ impl Root {
                 panel.update(cx, |panel, cx| {
                     panel.set_repository(result.map(|(changes, _)| changes), cx)
                 });
+                this.sync_diff_watch(cx);
+                this.refresh_watched_diff(cx);
                 this.refresh_git_actions(cx);
             })
             .ok();
@@ -1605,7 +1713,7 @@ impl Root {
         let Some(thread) = self.thread.clone() else {
             return;
         };
-        if self.git_busy.is_some() || self.dialog.is_some() {
+        if self.git_busy.is_some() || self.has_dialog() {
             return;
         }
         let view = thread.read(cx);
@@ -1627,7 +1735,7 @@ impl Root {
                 if this.thread.as_ref() != Some(&thread)
                     || !Arc::ptr_eq(&this.host, &request_host)
                     || this.git_busy.is_some()
-                    || this.dialog.is_some()
+                    || this.has_dialog()
                 {
                     return;
                 }
@@ -1908,7 +2016,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if panel.read(cx).pending() || self.dialog.is_some() {
+        if panel.read(cx).pending() || self.has_dialog() {
             return;
         }
         let request = request.clone();
@@ -2209,12 +2317,12 @@ impl Root {
 
     /// Mobile `Get started` (`codex-mobile-setup-flow` `P`, `XNn`): the initial step shows its
     /// loading button while the host reads the account's MFA requirement. A non-`required`
-    /// answer opens the allow-host step (whose `Allow` is disabled); `required` also reads
+    /// answer opens the allow-host step; `required` also reads
     /// `/accounts/mfa_info` and opens the MFA step unless `mfa_enabled_v2` is already on. A
     /// failed read or a body without the expected field returns to the initial step with its
     /// error.
     fn start_mobile_setup(&mut self, cx: &mut Context<Self>) {
-        let Some(page) = self.mobile_page.clone() else {
+        let Some(page) = connections::mobile_page(self, cx) else {
             return;
         };
         page.update(cx, |page, cx| page.set_step(mobile::SetupStep::Pending, cx));
@@ -2249,7 +2357,12 @@ impl Root {
 
     fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
         self.threads = threads.to_vec();
+        if let Some(menu) = &self.command_menu {
+            let unread = self.sidebar.read(cx).unread.clone();
+            menu.update(cx, |menu, cx| menu.update_catalog(threads, &unread, cx));
+        }
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
+        self.refresh_automation_editor_options(None, cx);
     }
 
     fn set_next_cursor(&mut self, cursor: Option<String>, cx: &mut Context<Self>) {
@@ -2329,7 +2442,21 @@ impl Root {
 
     /// Below [`SIDEBAR_BREAKPOINT`] the sidebar hides; wider again it shows as the user
     /// left it.
-    fn fit(&mut self, window: &Window, cx: &mut Context<Self>) {
+    fn fit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let narrow = window.viewport_size().width <= SIDE_PANEL_BREAKPOINT;
+        if narrow && self.layout_before_narrow.is_none() {
+            if self.workspace_layout != WorkspaceLayout::Chat {
+                self.layout_before_narrow = Some(self.workspace_layout);
+                self.workspace_layout = WorkspaceLayout::Chat;
+                self.sync(window, cx);
+            }
+        } else if !narrow
+            && let Some(layout) = self.layout_before_narrow.take()
+            && self.workspace_layout == WorkspaceLayout::Chat
+        {
+            self.workspace_layout = layout;
+            self.sync(window, cx);
+        }
         let wide = window.viewport_size().width * window.ui_scale() >= SIDEBAR_BREAKPOINT;
         if wide != self.wide {
             self.wide = wide;
@@ -2368,8 +2495,11 @@ impl Root {
         if !printable
             || keystroke.modifiers.platform
             || keystroke.modifiers.control
-            || self.dialog.is_some()
-            || self.automation_editor.is_some()
+            || self.has_dialog()
+            || self
+                .cloud_modal
+                .as_ref()
+                .is_some_and(|modal| modal.read(cx).is_open(cx))
             || self.command_menu.is_some()
             || (self.split.is_some() && self.workspace_layout() == WorkspaceLayout::Full)
             || route_focus == self.focus
@@ -2448,7 +2578,7 @@ impl Root {
     ) -> Option<(AnyView, Vec<Tab>, usize)> {
         let file = self.file.clone();
         let chats = &self.side_chats;
-        let console = self.shortcut_state.terminal.is_some();
+        let console = self.terminal_panel().is_some();
         self.tabs.retain(|side| {
             Self::side_tab(*side, view, file.as_ref(), chats, console, cx).is_some()
         });
@@ -2466,7 +2596,7 @@ impl Root {
         let view: AnyView = match self.tabs[active] {
             SidePanel::Changes => self.diff.as_ref()?.clone().into(),
             SidePanel::Terminal => cx.new(|cx| Xterm::new(view.clone(), cx)).into(),
-            SidePanel::Console => self.shortcut_state.terminal.as_ref()?.clone().into(),
+            SidePanel::Console => self.terminal_panel()?.clone().into(),
             SidePanel::File => self.file.as_ref()?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
         };
@@ -2531,8 +2661,11 @@ impl Root {
                 .with_cloud_search(cloud)
                 .with_navigation_panel(navigation)
         });
+        menu.update(cx, |menu, cx| {
+            menu.set_activity_available(self.sidebar.read(cx).activity_available, cx)
+        });
         cx.subscribe_in(&menu, window, |this, _, event, window, cx| {
-            this.run_command(event, window, cx)
+            this.run_command(event, window, cx);
         })
         .detach();
         window.focus(&menu.focus_handle(cx), cx);
@@ -2630,7 +2763,7 @@ impl Root {
     }
 
     fn edit_automation(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        if self.automation_editor.is_some() || self.dialog.is_some() {
+        if self.has_dialog() {
             return;
         }
         let item = id.as_ref().and_then(|id| {
@@ -2654,10 +2787,20 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.automation_editor.is_some() || self.dialog.is_some() {
+        if self.has_dialog() {
             return;
         }
         let editor = cx.new(|cx| automations::editor::Editor::new(item.as_ref(), cx));
+        editor.update(cx, |editor, cx| {
+            editor.set_options(
+                &self.models,
+                &self.threads,
+                None,
+                &self.config,
+                &self.cwd,
+                cx,
+            );
+        });
         cx.subscribe_in(
             &editor,
             window,
@@ -2677,7 +2820,27 @@ impl Root {
         .detach();
         window.focus(&editor.focus_handle(cx), cx);
         self.automation_editor = Some(editor);
+        self.load_projects(cx);
         cx.notify();
+    }
+
+    fn refresh_automation_editor_options(
+        &mut self,
+        projects: Option<&[ui::screens::sidebar::Project]>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(editor) = &self.automation_editor {
+            editor.update(cx, |editor, cx| {
+                editor.set_options(
+                    &self.models,
+                    &self.threads,
+                    projects,
+                    &self.config,
+                    &self.cwd,
+                    cx,
+                );
+            });
+        }
     }
 
     /// Writes the editor's draft; a failed write keeps the editor open with its draft.
@@ -2866,7 +3029,7 @@ impl Root {
     }
 
     fn show_dialog(&mut self, dialog: Entity<Dialog>, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dialog.is_some() || self.automation_editor.is_some() {
+        if self.has_dialog() {
             return;
         }
         self.command_menu = None;
@@ -3081,13 +3244,19 @@ impl Root {
                     Ok(_) => {
                         this.login = Some(this.new_login(window, cx));
                         this.set_account(None, cx);
+                        hotkey::policy::clear(cx);
                         this.invalidate_oauth(cx);
+                        this.onboarding_load = None;
+                        this.onboarding_context = None;
+                        this.onboarding_page = None;
                         let host = this.host.clone();
                         cx.background_spawn(async move { host.invalidate_identity() })
                             .detach();
                         this.command_menu = None;
                         this.dialog = None;
+                        this.diff_confirmation = None;
                         this.automation_editor = None;
+                        this.cloud_modal = None;
                         this.thread = None;
                         this.diff = None;
                         this.file = None;
@@ -3101,9 +3270,6 @@ impl Root {
                         this.approvals.clear();
                         this.new_chat_section = None;
                         this.sidebar.update(cx, |s, cx| {
-                            if let Some(clock) = s.activity_clock {
-                                s.toggle_activity(clock, cx);
-                            }
                             s.clear_sections(cx);
                         });
                         this.show_approval(cx);
@@ -3147,11 +3313,19 @@ impl Root {
     /// shell tab when it can (`close-active-app-shell-tab`; the main focus area counts as the
     /// right panel), else the window.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.dialog.is_some() || self.automation_editor.is_some() {
+        if self.has_dialog()
+            || self
+                .cloud_modal
+                .as_ref()
+                .is_some_and(|modal| modal.read(cx).is_open(cx))
+        {
             return;
         }
         if self.instructions_changed(cx) {
             self.confirm_instructions_leave(SettingsLeave::Window, window, cx);
+            return;
+        }
+        if self.close_focused_terminal(window, cx) {
             return;
         }
         if let Some(side) = self
@@ -3183,18 +3357,24 @@ impl Root {
         event: &CommandMenuEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
+        if hotkey::command(self, event, window, cx) {
+            return true;
+        }
         match event {
             CommandMenuEvent::Search(request) => {
-                return self.search_threads(request.clone(), window, cx);
+                self.search_threads(request.clone(), window, cx);
+                return true;
             }
             CommandMenuEvent::RetryCloudSearch(request) => {
-                return self.search_cloud_threads(request.clone(), window, cx);
+                self.search_cloud_threads(request.clone(), window, cx);
+                return true;
             }
             _ => {}
         }
         if let CommandMenuEvent::SearchFiles(query) = event {
-            return self.search_command_files(query.clone(), cx);
+            self.search_command_files(query.clone(), cx);
+            return true;
         }
         self.command_menu = None;
         window.focus(&self.route_focus(cx), cx);
@@ -3219,6 +3399,7 @@ impl Root {
             }
             CommandMenuEvent::Command(label) => match label.as_ref() {
                 "New chat" => window.dispatch_action(Box::new(NewChat), cx),
+                "Show Mini" => window.dispatch_action(Box::new(ui::OpenMini), cx),
                 "New standalone chat" => {
                     window.dispatch_action(Box::new(features::shortcuts::NewStandaloneChat), cx)
                 }
@@ -3265,11 +3446,14 @@ impl Root {
                 label => {
                     if let Some(section) = settings::section(label) {
                         self.open_settings_section(section, window, cx);
+                    } else {
+                        return false;
                     }
                 }
             },
         }
         cx.notify();
+        true
     }
 
     /// The command menu's content search: `thread/search` for `term` (the original's
@@ -3480,6 +3664,14 @@ impl Root {
         let clock = self.clock();
         let composer = self.thread_composer.clone().into();
         let diff = diff_content::new_panel(&self.cwd, &thread.cwd, &thread.turns, cx);
+        self.configure_diff_comments(&diff, &thread.id, cx);
+        diff_repositories::load(
+            diff.clone(),
+            self.host.clone(),
+            thread.id.clone(),
+            thread.cwd.clone(),
+            cx,
+        );
         let cwd = thread.cwd.clone();
         cx.subscribe_in(
             &diff,
@@ -3491,11 +3683,44 @@ impl Root {
                 DiffRequest::Changes {
                     action: "revert", ..
                 } => this.confirm_revert(panel.clone(), &cwd, request, window, cx),
-                DiffRequest::Open(path) => this.open_in_editor(&cwd, path, cx),
+                DiffRequest::Open(path) => {
+                    let directory = panel.read(cx).working_directory().to_owned();
+                    this.open_in_editor(&directory, path, cx);
+                }
+                DiffRequest::SourceChanged => this.sync_diff_watch(cx),
+                DiffRequest::Notice(text) => this.toast(Toast::info(*text), cx),
+                DiffRequest::Refresh => this.refresh_diff(panel.clone(), &cwd, cx),
+                DiffRequest::CopyGitApply => this.copy_diff_patch(panel.clone(), cx),
+                DiffRequest::ContextMenu(request) => {
+                    diff_context::load(panel.clone(), this.host.clone(), request.clone(), cx)
+                }
+                DiffRequest::OpenTarget(request) => this.launch_diff_target(request, cx),
+                DiffRequest::OpenTab { path, line } => this.open_file(
+                    &OpenFile {
+                        path: path.clone(),
+                        line: *line,
+                    },
+                    window,
+                    cx,
+                ),
                 DiffRequest::LoadFullFile(request) => diff_content::load_requested(
                     panel.clone(),
                     this.host.clone(),
                     request.clone(),
+                    cx,
+                ),
+                DiffRequest::LoadPreview(request) => {
+                    diff_preview::load(panel.clone(), this.host.clone(), request.clone(), cx)
+                }
+                DiffRequest::CommentsChanged(comments) => this.change_diff_comments(comments, cx),
+                DiffRequest::DismissModelComment(key) => {
+                    this.confirm_diff_comment(panel.clone(), key.clone(), window, cx)
+                }
+                DiffRequest::Preference(key, value) => this.write_setting(
+                    &SettingChanged {
+                        path: key,
+                        value: value.clone(),
+                    },
                     cx,
                 ),
                 _ => this.repository_request(panel.clone(), &cwd, request, cx),
@@ -3542,6 +3767,7 @@ impl Root {
         .detach();
         self.thread = Some(view);
         self.show_approval(cx);
+        hotkey::thread_shown(self, window, cx);
         self.refresh_git_actions(cx);
         if self.state.route == route {
             self.sync(window, cx);
@@ -4344,6 +4570,7 @@ impl Root {
             this.update_in(cx, |this, window, cx| {
                 if this.state.route == Route::Thread(read.thread.id.clone()) {
                     this.show_thread(read.thread, window, cx);
+                    this.mark_diff_reverted(cx);
                 }
             })
         });
@@ -4451,7 +4678,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.dialog.is_some() {
+        if self.has_dialog() {
             return;
         }
         let title = self.threads.iter().find(|t| t.id == id).map(thread_title);
@@ -5142,6 +5369,8 @@ impl Root {
                 };
                 self.toast(Toast::danger(message), cx);
             } else {
+                self.sync_terminal(cx);
+                self.git_setting_saved(key, cx);
                 let message = match key {
                     "git-branch-prefix" => Some("Saved branch prefix".to_owned()),
                     "git-pull-request-merge-method" => {
@@ -5389,6 +5618,11 @@ impl Root {
     /// Every server message: streamed into the open thread and the sign-in view, plus
     /// Recents updates and approval prompts.
     pub fn on_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        connections::on_event(&event, cx);
+        if matches!(&event, Event::Notification { method, .. } if method == "account/updated") {
+            hotkey::policy::refresh(self, cx);
+        }
+        self.on_import_event(&event, cx);
         self.plugins_event(&event, cx);
         self.oauth_account_event(&event, cx);
         usage::on_event(&event, cx);
@@ -5490,7 +5724,7 @@ impl Root {
                 "account/updated" if self.ready => {
                     self.destination_load = None;
                     self.set_unread_destinations(None, cx);
-                    self.read_account(cx);
+                    self.read_account(None, cx);
                 }
                 "mcpServer/startupStatus/updated" | "mcpServer/oauthLogin/completed"
                     if self.ready && !self.signed_out() =>
@@ -5639,9 +5873,9 @@ impl Root {
         .detach();
     }
 
-    fn finish_sign_in(&mut self, cx: &mut Context<Self>) {
+    fn finish_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.login = None;
-        self.read_account(cx);
+        self.read_account(Some(window), cx);
         self.refresh_threads(cx);
         self.load_projects(cx);
         self.load_sections(cx);
@@ -5649,6 +5883,8 @@ impl Root {
     }
 
     fn set_account(&mut self, account: Option<&AccountReadResponse>, cx: &mut Context<Self>) {
+        self.activity_access.account = account.and_then(|account| account.account.clone());
+        self.refresh_activity_access(cx);
         self.account_email = account.and_then(chatgpt_email);
         self.chatgpt_account =
             account.is_some_and(|account| matches!(account.account, Some(Account::Chatgpt { .. })));
@@ -5670,7 +5906,8 @@ impl Root {
         }
     }
 
-    fn read_account(&self, cx: &mut Context<Self>) {
+    fn read_account(&self, window: Option<&Window>, cx: &mut Context<Self>) {
+        let handle = window.map(|window| window.window_handle());
         let bridge = self.bridge.clone();
         let host = self.host.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
@@ -5688,7 +5925,13 @@ impl Root {
                 if this.settings_page.is_some() {
                     this.refresh_writing(cx);
                 }
-            })
+            })?;
+            if let Some(handle) = handle {
+                cx.update_window(handle, |_, window, cx| {
+                    this.update(cx, |this, cx| this.maybe_onboard(window, cx))
+                })??;
+            }
+            Ok(())
         });
         log_err(task, cx);
     }
@@ -5746,6 +5989,7 @@ impl Root {
     pub fn set_theme(&mut self, theme: ThemeSetting, window: &mut Window, cx: &mut Context<Self>) {
         self.state.theme = theme;
         self.apply_theme(window, cx);
+        self.sync_terminal(cx);
         self.save(window, cx);
     }
 
@@ -5852,7 +6096,7 @@ fn automation_save_request(
     let mut body = if proposal {
         item.cloned().unwrap()
     } else {
-        json!({})
+        draft.execution.clone()
     };
     body["name"] = json!(draft.name);
     body["prompt"] = json!(draft.prompt);
@@ -5867,7 +6111,9 @@ fn automation_save_request(
         body["status"] = item.unwrap()["status"].clone();
         ("automation-update", body)
     } else {
-        body["cwds"] = json!([cwd]);
+        if body.get("cwds").is_none() {
+            body["cwds"] = json!([cwd]);
+        }
         ("automation-create", body)
     }
 }
@@ -6363,7 +6609,10 @@ async fn commit_workflow(
         });
         match run.call(cx, "git-commit", params).await {
             Ok(done) => match git_result(&done) {
-                Ok(committed) => branch = committed,
+                Ok(committed) => {
+                    branch = committed;
+                    let _ = this.update(cx, |this, cx| this.mark_diff_committed(&run.cwd, cx));
+                }
                 Err(failed) => return failed,
             },
             Err(error) => return GitOutcome::failed("Failed to commit changes", Some(error)),
@@ -6607,7 +6856,7 @@ fn generation_instructions(context: &str) -> String {
 }
 
 impl Render for Root {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if self.crashed {
             return native_menus::actions(
                 div()
@@ -6629,7 +6878,16 @@ impl Render for Root {
             )
             .into_any_element();
         }
-        if let Some(login) = &self.login {
+        let exclusive = self
+            .login
+            .as_ref()
+            .map(|view| view.clone().into_any_element())
+            .or_else(|| {
+                self.onboarding_page
+                    .as_ref()
+                    .map(|view| view.clone().into_any_element())
+            });
+        if let Some(exclusive) = exclusive {
             return native_menus::actions(
                 div()
                     .size_full()
@@ -6642,7 +6900,7 @@ impl Render for Root {
                     }))
                     .on_action(|_: &Minimize, window, _| window.minimize_window())
                     .on_action(|_: &Zoom, window, _| window.zoom_window())
-                    .child(login.clone())
+                    .child(exclusive)
                     .children(self.dialog.clone()),
                 self,
                 cx,
@@ -6682,13 +6940,17 @@ impl Render for Root {
                 .child(recovery::StartupLoader)
                 .into_any_element();
         }
-        let content: AnyElement = match (&self.page, &self.split) {
-            (_, Some(split)) if self.sidebar_automation.is_some() => {
-                split.clone().into_any_element()
+        let content: AnyElement = if let Some(content) = hotkey::content(self, window, cx) {
+            content
+        } else {
+            match (&self.page, &self.split) {
+                (_, Some(split)) if self.sidebar_automation.is_some() => {
+                    split.clone().into_any_element()
+                }
+                (Some(page), _) => page.clone().into_any_element(),
+                (None, Some(split)) => split.clone().into_any_element(),
+                (None, None) => self.shell.clone().into_any_element(),
             }
-            (Some(page), _) => page.clone().into_any_element(),
-            (None, Some(split)) => split.clone().into_any_element(),
-            (None, None) => self.shell.clone().into_any_element(),
         };
         let content = self
             .oauth
@@ -6732,6 +6994,15 @@ impl Render for Root {
             .on_action(cx.listener(
                 |this, _: &settings::integrations::OpenPluginManager, window, cx| {
                     this.open_settings_section("Plugins", window, cx)
+                },
+            ))
+            .on_action(cx.listener(
+                |this, action: &settings::integrations::OpenMcpSettings, window, cx| {
+                    this.open_settings_section("MCP servers", window, cx);
+                    this.settings_integrations.update(cx, |state, cx| {
+                        state.mcp_search = Some(action.0.clone());
+                        cx.notify();
+                    });
                 },
             ))
             .on_action(cx.listener(
@@ -6861,13 +7132,21 @@ impl Render for Root {
                     .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .child(session.header.clone())
             }))
+            .children(self.cloud_modal.clone())
             .children(self.command_menu.clone())
             .child(self.toaster.clone())
             .children(self.dialog.clone())
             .children(self.shortcut_state.confirmation.clone())
             .children(self.shortcut_state.zoom_banner.clone())
-            .children(self.automation_editor.clone());
-        let root = routes::actions(root, cx);
+            .children(self.automation_editor.clone())
+            .children(self.diff_confirmation.clone())
+            .children(
+                self.archived_settings
+                    .as_ref()
+                    .and_then(|page| page.read(cx).confirmation()),
+            );
+        let root = routes::actions(archived_chats::actions(root, cx), cx);
+        let root = hotkey::actions(root, self.popout.is_some(), cx);
         native_menus::actions(
             section_actions::actions(features::actions(root, self, cx), cx),
             self,

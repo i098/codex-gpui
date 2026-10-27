@@ -334,12 +334,20 @@ Chunks: thread-side-panel-tab-content-e9ce64182d53.js (`ReviewThreadSidePanelTab
 
 ### 8.1 Component outline
 
-- Header (`Changes controls`): source selector (`Uncommitted`, `Staged`, `Unstaged`, `Last turn`, `Branch`, `Commits`, `Cloud changes`, `All repos`), `Show files` / `Hide files`, `Refresh`, `Changes options` (`Copy git apply command`, `Expand all diffs`, `Collapse all diffs`, `Load full files`, `Word wrap`, `Hide white space`, `Word diffs`, `Rich preview`).
+- Header (`Changes controls`): source selector (`Uncommitted`, `Staged`, `Unstaged`, `Last Turn`, `Branch`, `Committed`, `Cloud changes`), `Show files` / `Hide files`, `Refresh`, `Changes options` (`Refresh`, `Word wrap`, diff layout, `Expand all diffs` / `Collapse all diffs`, `Load full files`, `Rich preview`, `Word diffs`, `Hide white space`, `Hide imports`, `Copy git apply command`).
 - File tree pane: filter `Filter files…`, `Filter changed files`, `Filter generated files`, context menu `Copy path`, `Open in {target}`, `Open with`.
 - Diff list: per file header (`File actions`: `Copy path`, `Open in editor`, `Collapse file` / `Expand file`), `Mark as viewed`, hunks with `Revert`, `Stage` / `Unstage`.
 - Large diff mode: `This diff is large, showing one file at a time` with `Previous file` / `Next file`.
 - Diff renderer sets `data-diff-type="split"|"single"`, `data-indicators="bars"|"classic"`, `data-overflow`, `--diffs-min-number-column-width-default` (app-initial).
 - `/diff` window: `{fileCount} files changed`, `Switch to split diff` / `Switch to unified diff`, `Auto` mode, `Toggle rich preview`.
+- Panel divider: a centered 12 px drag handle (`split-view-b3740eb7ebfa.js`). Its drag area must leave the comment control reachable.
+- Inline comments support line ranges, creation, editing, cancellation, deletion, and submission with the next message.
+- Native comment controls expose tab stops. Tab moves from a new comment editor to `Cancel`, then `Comment`; empty submission controls do not receive focus.
+- Repository choices use the current project's roots and worktrees owned by the thread. `All repos` labels Last Turn mode, not a menu item.
+- The branch picker filters names. The commit picker and repository picker load data from the selected repository.
+- Wide review headers show refresh, wrap, layout, and expand controls outside the options menu.
+- Import filtering hides only complete, unannotated import-only hunks. It preserves new files, deleted files, and public Rust imports.
+- The import filter supports JavaScript, TypeScript, TSX, Python, Rust, Go, and Java up to 1,000,000 bytes per file.
 
 ### 8.2 States
 
@@ -352,6 +360,8 @@ Chunks: thread-side-panel-tab-content-e9ce64182d53.js (`ReviewThreadSidePanelTab
 - Turn diff arrives in `turn/diff/updated` (`threadId`, `turnId`, `diff`) and `item/fileChange/patchUpdated` (`changes`).
 - Working tree data comes from the git worker over `codex_desktop:worker:git:*`: `status-summary`, `review-summary`, `review-diff`, `review-patch`, `branch-diff-stats`, `base-branch`, `current-branch`, `apply-patch`, `apply-changes`, `apply-review-section-changes`, `revert` (full list in `/tmp/cgx/e1-out/git-worker-cases.txt`, source `.vite/build/worker.js`).
 - `update-diff-if-open` is posted from local-conversation-turn-632904a8790c.js to refresh an open diff window.
+- The native `git-changes` adapter applies `hideWhitespace` through Git. The native `git-review-patch` adapter exports the unfiltered binary patch.
+- Patch records follow `--numstat -z`, not raw status entries. Apple Git can retain raw status rows for hidden whitespace-only changes.
 
 ## 9. Screen: Settings, login and onboarding
 
@@ -852,7 +862,7 @@ Scope `app` means the renderer handles the key; `OS-global` keys are registered 
 | `toggleFileTreePanel` | Toggle navigation panel | `CmdOrCtrl+Shift+E` | app | panels | yes | app-initial-6350d04672d0.js |
 | `toggleBottomPanel` | Toggle bottom panel | `CmdOrCtrl+J` | menu/default | panels | yes | app-initial-6350d04672d0.js |
 | `togglePinnedSummary` | Toggle pinned summary | — | menu/default | panels | yes | app-initial-6350d04672d0.js |
-| `toggleTerminal` | Open terminal | — | menu/default | panels | yes | app-initial-6350d04672d0.js |
+| `toggleTerminal` | Open terminal | ``Control+` `` (`electron.defaultKeybindings`) | menu/default | panels | yes | app-initial-6350d04672d0.js |
 | `openBrowserTab` | Open browser tab | `CmdOrCtrl+T` | menu/default | panels | yes | app-initial-6350d04672d0.js |
 | `closeOtherTabs` | Close other tabs | `CmdOrCtrl+Alt+W` | app | — | no | app-initial-6350d04672d0.js |
 | `showWorkspaceTabView` | Full view | `CmdOrCtrl+Shift+F` | app | panels | yes | app-initial-6350d04672d0.js |
@@ -907,7 +917,7 @@ Built in `.vite/build/main-CqEoQDOU.js` (template `Ut`, rebuilt on feature or ke
 - **Codex** (app menu): `About {appName}`, separator, `Settings…` (`⌘,`), `Check for Updates…` (when updater exists), `Log Out`, separator, `Services`, separator, `Hide {appName}`, `Hide Others`, `Show All`, separator, `Quit {appName}`.
 - **File**: `New Window` (multi-window only), `New Chat` (`⌘N`), `New Temporary Chat` (`⌘⇧N`, enabled when allowed), `New Project…`, `New standalone chat` (`⌘⌥O`), separator, `Open Folder…` (`⌘O`), separator, `Close` (`⌘W`).
 - **Edit**: `Undo`, `Redo`, `Cut`, `Copy`, `Paste`, `Paste and Match Style` (`⌘⇧V`), `Delete`, `Select All`, `Substitutions` ▸, `Speech` ▸.
-- **View**: `Toggle Sidebar` (`⌘⇧S`, also `⌘B`), `Toggle Bottom Panel` (`⌘J`), `Toggle Pinned Summary`, `Open Terminal`, `Toggle navigation panel` (`⌘⇧E`), `Full view` (`⌘⇧F`, unified tab strip only), `Toggle Changes Panel` (`⌘⌥B`; label `Switch between Chat and tabs` with unified tab strip), `Browser` ▸ (browser pane only), separator, `Find` (`⌘F`), separator, `Previous Chat` (`⌘⇧[`), `Next Chat` (`⌘⇧]`), `Back` (`⌘[`), `Forward` (`⌘]`), `Reload Window` (dev), separator, `Zoom In`, `Zoom Out`, `Actual Size`, `Developer` ▸ (dev), separator, hidden full screen item; hidden accelerators: command menu (`⌘K`, `⌘⇧P`), `Search Chats…`, `Search Files…` (`⌘P`), pin (`⌘⌥P`), rename (`⌘⌥R`), archive (`⌘⇧A`), copy working directory (`⌘⇧C`), copy deeplink (`⌘⌥L`), copy conversation path (`⌘⌥⇧C`), `Go to Chat 1…9`.
+- **View**: `Toggle Sidebar` (`⌘⇧S`, also `⌘B`), `Toggle Bottom Panel` (`⌘J`), `Toggle Pinned Summary`, `Open Terminal` (``⌃` ``), `Toggle navigation panel` (`⌘⇧E`), `Full view` (`⌘⇧F`, unified tab strip only), `Toggle Changes Panel` (`⌘⌥B`; label `Switch between Chat and tabs` with unified tab strip), `Browser` ▸ (browser pane only), separator, `Find` (`⌘F`), separator, `Previous Chat` (`⌘⇧[`), `Next Chat` (`⌘⇧]`), `Back` (`⌘[`), `Forward` (`⌘]`), `Reload Window` (dev), separator, `Zoom In`, `Zoom Out`, `Actual Size`, `Developer` ▸ (dev), separator, hidden full screen item; hidden accelerators: command menu (`⌘K`, `⌘⇧P`), `Search Chats…`, `Search Files…` (`⌘P`), pin (`⌘⌥P`), rename (`⌘⌥R`), archive (`⌘⇧A`), copy working directory (`⌘⇧C`), copy deeplink (`⌘⌥L`), copy conversation path (`⌘⌥⇧C`), `Go to Chat 1…9`.
 - **Window**: `Minimize`, `Zoom`, `Bring All to Front`.
 - **Help**: `Documentation` (opens developers.openai.com/codex/app), `Keyboard Shortcuts` (`⌘/`), `What's New`, separator, `Troubleshooting`, `System Status`, `Send Feedback`, `Task Manager`, trace items.
 

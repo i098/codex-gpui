@@ -119,7 +119,12 @@ pub async fn archived_threads(
     let first = request(None).await?;
     let mut threads = first.data;
     let mut cursor = first.next_cursor;
+    let mut seen = HashSet::new();
     while let Some(next_cursor) = cursor {
+        anyhow::ensure!(
+            seen.insert(next_cursor.clone()),
+            "App Server repeated an archived thread list cursor"
+        );
         let page = request(Some(next_cursor)).await?;
         threads.extend(page.data);
         cursor = page.next_cursor;
@@ -284,6 +289,7 @@ pub struct HomeSidebar {
     pub threads_state: ListState,
     pub projects_state: ListState,
     pub activity_clock: Option<crate::screens::thread::view::Clock>,
+    pub activity_available: bool,
     activity_started_at: i64,
     activity_recency: HashMap<String, i64>,
     activity_priority: bool,
@@ -381,6 +387,7 @@ impl HomeSidebar {
             threads_state: ListState::Ready,
             projects_state: ListState::Ready,
             activity_clock: None,
+            activity_available: true,
             activity_started_at: 0,
             activity_recency: HashMap::new(),
             activity_priority: true,
@@ -1258,6 +1265,7 @@ impl Render for HomeSidebar {
             .child(home_sidebar_header(
                 !self.unread.is_empty(),
                 self.activity_clock.is_some(),
+                self.activity_available,
                 cx,
             ))
             .child(
@@ -2131,6 +2139,7 @@ pub struct CommandMenu {
     thread_open: bool,
     git_available: bool,
     navigation_available: bool,
+    activity_available: bool,
     /// Bumped on every query change; a debounced search only fires for the latest.
     search_gen: usize,
     search_scheduled: bool,
@@ -2140,6 +2149,8 @@ pub struct CommandMenu {
     cloud_searching: bool,
     cloud_error: bool,
     file_search: Option<FileSearch>,
+    standalone: bool,
+    open_error: bool,
     recent_cycle: bool,
 }
 
@@ -2598,7 +2609,7 @@ const COMMANDS: &[Command] = &[
         "Show Mini",
         "Show Mini from anywhere",
         "⌥Space",
-        false,
+        true,
     ),
     (
         "App",
@@ -2750,6 +2761,10 @@ impl CommandMenu {
             ("settings-passwords", "Passwords", false),
             ("sidebar-cmd-account-external", "Account", true),
         ]
+        .into_iter()
+        .filter(|(_, label, _)| {
+            *label != "Import" || crate::screens::settings::imports::visible(cx)
+        })
         .map(|(icon, label, external)| Item {
             external,
             search_value: format!(
@@ -2767,11 +2782,12 @@ impl CommandMenu {
                 &[]
             },
             ..Item::command(Some(icon), label, "")
-        });
+        })
+        .collect::<Vec<_>>();
         let mut groups = vec![
             ("Chats", chats),
             group("Quick actions"),
-            ("Settings", settings.into()),
+            ("Settings", settings),
         ];
         groups.extend(GROUPS.into_iter().map(group));
         Self::with_groups(groups, thread_open, query, cx)
@@ -2804,6 +2820,7 @@ impl CommandMenu {
             thread_open,
             git_available: false,
             navigation_available: false,
+            activity_available: true,
             search_gen: 0,
             search_scheduled: false,
             searching: false,
@@ -2811,7 +2828,34 @@ impl CommandMenu {
             cloud_searching: false,
             cloud_error: false,
             file_search: None,
+            standalone: false,
+            open_error: false,
             recent_cycle: false,
+        }
+    }
+
+    pub fn set_standalone(&mut self, cx: &mut Context<Self>) {
+        self.standalone = true;
+        cx.notify();
+    }
+
+    pub fn set_open_error(&mut self, failed: bool, cx: &mut Context<Self>) {
+        self.open_error = failed;
+        cx.notify();
+    }
+
+    pub fn update_catalog(
+        &mut self,
+        threads: &[Thread],
+        unread: &[String],
+        cx: &mut Context<Self>,
+    ) {
+        if self.query.is_empty() && self.file_search.is_none() && !self.recent_cycle {
+            self.groups[0].1 = threads
+                .iter()
+                .map(|thread| Item::chat(thread, None, unread.contains(&thread.id)))
+                .collect();
+            cx.notify();
         }
     }
 
@@ -3144,6 +3188,13 @@ impl CommandMenu {
         cx.notify();
     }
 
+    pub fn set_activity_available(&mut self, available: bool, cx: &mut Context<Self>) {
+        let selected = self.selected_key();
+        self.activity_available = available;
+        self.restore_selection(selected);
+        cx.notify();
+    }
+
     /// Keep registered groups; rank matches within each group.
     fn visible(&self) -> Vec<(&'static str, Vec<&Item>)> {
         if self.recent_cycle {
@@ -3182,6 +3233,7 @@ impl CommandMenu {
                     .chain(items.iter())
                     .filter(|item| self.thread_open || !item.thread_only)
                     .filter(|item| item.label != "Commit or push" || self.git_available)
+                    .filter(|item| item.label != "Toggle activity view" || self.activity_available)
                     .filter(|item| {
                         item.label != "Toggle navigation panel" || self.navigation_available
                     })
@@ -3471,6 +3523,8 @@ impl CommandMenu {
         let entity = cx.entity();
         let placeholder = if self.file_search.is_some() {
             "Search files"
+        } else if self.standalone {
+            "Search chats or run a command"
         } else {
             "Search chats"
         };
@@ -3841,7 +3895,17 @@ impl Render for CommandMenu {
                             .flex()
                             .items_center()
                             .gap(px(8.))
-                            .child(text(heading, 13., 18.5, 430., t.text_tertiary))
+                            .child(text(
+                                if self.standalone && query.is_empty() && heading == "Chats" {
+                                    "Recent chats"
+                                } else {
+                                    heading
+                                },
+                                13.,
+                                18.5,
+                                430.,
+                                t.text_tertiary,
+                            ))
                             .when(searching, |d| {
                                 d.child(icon("sidebar-cmd-spinner", 12., t.text_tertiary))
                             }),
@@ -3887,7 +3951,7 @@ impl Render for CommandMenu {
         div()
             .absolute()
             .inset_0()
-            .bg(rgba(OVERLAY))
+            .when(!self.standalone, |view| view.bg(rgba(OVERLAY)))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_, _, _, cx| cx.emit(CommandMenuEvent::Dismiss)),
@@ -3994,7 +4058,22 @@ impl Render for CommandMenu {
                                                 )
                                             }),
                                     ),
-                            ),
+                            )
+                            .when(self.open_error, |surface| {
+                                surface.child(
+                                    div()
+                                        .id("spotlight-open-error")
+                                        .role(gpui::Role::Alert)
+                                        .p(px(8.))
+                                        .child(text(
+                                            "Could not open this item. Try again",
+                                            13.,
+                                            18.,
+                                            400.,
+                                            t.text_error,
+                                        )),
+                                )
+                            }),
                     ),
             )
     }
@@ -4364,5 +4443,41 @@ mod tests {
             .filter_map(|(c, m)| m.then_some(c))
             .collect();
         assert_eq!(lit, "Mat");
+    }
+    #[gpui::test]
+    fn import_command_visibility_follows_the_feature_policy(cx: &mut gpui::TestAppContext) {
+        use crate::screens::settings::imports::ImportState;
+
+        cx.update(|cx| {
+            cx.set_global(ImportState::default());
+            let disabled = cx.new(|cx| CommandMenu::with_threads(&[], &[], false, "", cx));
+            assert!(
+                !disabled
+                    .read(cx)
+                    .groups
+                    .iter()
+                    .find(|(group, _)| *group == "Settings")
+                    .unwrap()
+                    .1
+                    .iter()
+                    .any(|item| item.label.as_ref() == "Import")
+            );
+
+            let mut state = ImportState::default();
+            state.policy.enabled = true;
+            cx.set_global(state);
+            let enabled = cx.new(|cx| CommandMenu::with_threads(&[], &[], false, "", cx));
+            assert!(
+                enabled
+                    .read(cx)
+                    .groups
+                    .iter()
+                    .find(|(group, _)| *group == "Settings")
+                    .unwrap()
+                    .1
+                    .iter()
+                    .any(|item| item.label.as_ref() == "Import")
+            );
+        });
     }
 }

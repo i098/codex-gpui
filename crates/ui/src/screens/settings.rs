@@ -33,8 +33,13 @@ use theme::{ActiveTheme as _, Theme};
 
 #[path = "computer_use.rs"]
 pub mod computer_use;
+#[path = "settings_import.rs"]
+pub mod imports;
+
 #[path = "keyboard_shortcuts.rs"]
 pub mod keyboard_shortcuts;
+#[path = "voice.rs"]
+pub mod voice;
 fn focus_on_pointer(
     focus: Entity<focus::ControlFocus>,
 ) -> impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) {
@@ -45,6 +50,7 @@ fn focus_on_pointer(
     }
 }
 
+mod languages;
 pub mod personalization;
 pub mod workspace {
     use crate::{SANS, composer::popover, focus, icon::icon, text};
@@ -268,6 +274,18 @@ pub mod storage;
 #[path = "settings_integrations.rs"]
 pub mod integrations;
 
+#[path = "archived_chats.rs"]
+pub mod archived_chats;
+
+#[path = "git_settings.rs"]
+mod git_settings;
+
+#[path = "worktrees.rs"]
+pub mod worktrees;
+
+#[path = "environments.rs"]
+pub mod environments;
+
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
@@ -281,6 +299,16 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     let account: AccountReadResponse = fixture::response("readback.jsonl", "account/read", 0);
     if account.account.is_none() {
         return cx.new(Login::new).into();
+    }
+    if !cx.has_global::<imports::ImportState>() {
+        cx.set_global(imports::ImportState {
+            policy: bridge::imports::Policy {
+                enabled: true,
+                sync: true,
+                cursor: true,
+            },
+            ..Default::default()
+        });
     }
     let config: ConfigReadResponse = fixture::response("readback.jsonl", "config/read", 0);
     let skills: Value = fixture::response("readback.jsonl", "skills/list", 0);
@@ -401,6 +429,7 @@ pub struct SettingsPage {
     integrations: Entity<integrations::State>,
     pub personalization: Entity<personalization::Personalization>,
     toaster: Option<Entity<crate::toast::Toaster>>,
+    cloud: Option<Entity<super::cloud::CloudPage>>,
 }
 
 impl SettingsPage {
@@ -433,6 +462,7 @@ impl SettingsPage {
             integrations,
             personalization: cx.new(personalization::Personalization::new),
             toaster: None,
+            cloud: None,
         }
     }
 
@@ -461,6 +491,12 @@ impl SettingsPage {
         // `IndexMut` makes a missing store an object on its first key.
         self.values[store][key] = value.clone();
         cx.emit(SettingChanged { path, value });
+        cx.notify();
+    }
+
+    pub fn set_cloud(&mut self, cloud: Entity<super::cloud::CloudPage>, cx: &mut Context<Self>) {
+        self.cloud = Some(cloud);
+        self.open_cloud_section(cx);
         cx.notify();
     }
 
@@ -498,7 +534,18 @@ impl SettingsPage {
         self.personalization
             .update(cx, |editor, cx| editor.discard(cx));
         self.section = label;
+        self.subtree = None;
+        self.open_cloud_section(cx);
         cx.notify();
+    }
+
+    fn open_cloud_section(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.section, "Codex Cloud" | "Legacy Codex Cloud")
+            && let Some(cloud) = &self.cloud
+        {
+            cloud.update(cx, |cloud, cx| cloud.open_section(self.section, cx));
+            self.subtree = Some(cloud.clone().into());
+        }
     }
 }
 
@@ -527,6 +574,8 @@ pub struct SettingsNav {
 impl SettingsNav {
     fn new(page: Entity<SettingsPage>, cx: &mut Context<Self>) -> Self {
         cx.observe(&page, |_, _, cx| cx.notify()).detach();
+        cx.observe_global::<imports::ImportState>(|_, cx| cx.notify())
+            .detach();
         Self {
             page,
             focus: cx.focus_handle(),
@@ -666,11 +715,24 @@ impl Render for SettingsNav {
         let page = self.page.read(cx);
         let (section, query) = (page.section, page.query.clone());
         let needle = query.to_lowercase();
+        let import_visible = imports::visible(cx);
+        let cloud_access = page
+            .cloud
+            .as_ref()
+            .map(|cloud| cloud.read(cx).access())
+            .unwrap_or_default();
         let mut sections = Vec::new();
         for (heading, items) in NAV {
             let rows: Vec<_> = items
                 .iter()
                 .filter(|(label, _)| label.to_lowercase().contains(&needle))
+                .filter(|(label, _)| *label != "Import" || import_visible)
+                .filter(|(label, _)| match *label {
+                    "Cloud computer" => false,
+                    "Codex Cloud" => cloud_access.cloud,
+                    "Legacy Codex Cloud" => cloud_access.legacy,
+                    _ => true,
+                })
                 .map(|&(label, glyph)| self.item(label, glyph, label == section, &t, window, cx))
                 .collect();
             if rows.is_empty() {
@@ -743,6 +805,7 @@ pub struct SettingsPane {
     selects: std::collections::HashMap<&'static str, Entity<crate::settings_kit::Select>>,
     git_fields: Vec<(&'static str, Entity<Composer>)>,
     storage: Entity<storage::StoragePage>,
+    git_saved_until: std::collections::HashMap<&'static str, std::time::Instant>,
 }
 
 /// `Confirm before closing a window` options, default first.
@@ -777,16 +840,19 @@ impl SettingsPane {
             layer: Layer::default(),
             selects: std::collections::HashMap::new(),
             git_fields: Vec::new(),
+            git_saved_until: Default::default(),
         }
     }
 
     /// A select for `key` with its options menu `(value, label)`; the first option is the
-    /// default. A click outside closes the menu.
+    /// default, and an empty value clears the setting. `search` adds a filter field with that
+    /// placeholder. A click outside closes the menu.
     fn select_menu(
         &mut self,
         key: &'static str,
         options: &'static [(&'static str, &'static str)],
-        width: f32,
+        search: Option<&'static str>,
+        present: fn(crate::settings_kit::Select) -> crate::settings_kit::Select,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let current = self.page.read(cx).choice(key, options[0].0).to_owned();
@@ -802,14 +868,22 @@ impl SettingsPane {
                 })
                 .collect();
             let select = cx.new(|cx| {
-                crate::settings_kit::Select::new(current.clone(), choices, None, cx)
-                    .with_width(width)
+                present(crate::settings_kit::Select::new(
+                    current.clone(),
+                    choices,
+                    search,
+                    cx,
+                ))
             });
             cx.subscribe(
                 &select,
                 move |_, _, selected: &crate::settings_kit::Selected, cx| {
                     page.update(cx, |page, cx| {
-                        page.set(key, json!(selected.0.as_ref()), cx);
+                        let value = match selected.0.as_ref() {
+                            "" => Value::Null,
+                            value => json!(value),
+                        };
+                        page.set(key, value, cx);
                     });
                 },
             )
@@ -915,189 +989,6 @@ impl SettingsPane {
         vec![("Theme", vec![settings_row("Theme", None, theme, t)])]
     }
 
-    fn git(
-        &mut self,
-        t: &Theme,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Vec<(&'static str, Vec<Div>)> {
-        const FIELDS: &[(&str, &str, &str)] = &[
-            ("host.git-branch-prefix", "Branch prefix", "codex/"),
-            (
-                "host.git-pr-watch-instructions",
-                "Watch and fix pull requests",
-                "Add pull request watch guidance…",
-            ),
-            (
-                "host.git-commit-instructions",
-                "Commit instructions",
-                "Add commit message guidance…",
-            ),
-            (
-                "host.git-pr-instructions",
-                "Pull request instructions",
-                "Add pull request guidance…",
-            ),
-        ];
-        if self.git_fields.is_empty() {
-            for &(key, _, placeholder) in FIELDS {
-                let multiline = key != "host.git-branch-prefix";
-                let value = self
-                    .page
-                    .read(cx)
-                    .choice(key, if multiline { "" } else { "codex/" })
-                    .to_owned();
-                let editor =
-                    cx.new(|cx| Composer::settings_field(placeholder, &value, multiline, cx));
-                let field = editor.clone();
-                if !multiline {
-                    cx.on_blur(&editor.focus_handle(cx), window, move |this, _, cx| {
-                        this.save_git_field(key, &field, cx);
-                    })
-                    .detach();
-                }
-                if multiline {
-                    let mut pending = None;
-                    let mut previous = value.clone();
-                    cx.observe(&editor, move |this, editor, cx| {
-                        let text = editor.read(cx).field_text().to_owned();
-                        if previous == text {
-                            return;
-                        }
-                        previous = text.clone();
-                        drop(pending.take());
-                        this.page
-                            .update(cx, |page, _| page.draft_instructions(key, text.clone()));
-                        if this.page.read(cx).choice(key, "") != text {
-                            pending = Some(cx.spawn(async move |this, cx| {
-                                cx.background_executor()
-                                    .timer(std::time::Duration::from_secs(3))
-                                    .await;
-                                let _ = this.update(cx, |this, cx| {
-                                    if editor.read(cx).field_text() == text {
-                                        this.save_git_field(key, &editor, cx);
-                                    }
-                                });
-                            }));
-                        }
-                        cx.notify();
-                    })
-                    .detach();
-                }
-                self.git_fields.push((key, editor));
-            }
-        }
-        let branch = self.git_fields[0].1.clone();
-        let mut groups = vec![(
-            "Git",
-            vec![
-                settings_row(
-                    "Disable Git-based diffs",
-                    Some("Only show Last Turn in the Changes panel"),
-                    self.toggle("host.git-review-mode", false, t, window, cx),
-                    t,
-                ),
-                settings_row(
-                    "Branch prefix",
-                    Some("Prefix for new branches"),
-                    div().w(px(224.)).child(branch).into_any_element(),
-                    t,
-                ),
-                settings_row(
-                    "Pull request merge method",
-                    None,
-                    self.select_menu(
-                        "host.git-pull-request-merge-method",
-                        &[("merge", "Merge"), ("squash", "Squash")],
-                        240.,
-                        cx,
-                    ),
-                    t,
-                ),
-                settings_row(
-                    "Always force push",
-                    Some("Use --force-with-lease when pushing"),
-                    self.toggle("host.git-always-force-push", false, t, window, cx),
-                    t,
-                ),
-                settings_row(
-                    "Create draft pull requests",
-                    None,
-                    self.toggle("host.git-create-pull-request-as-draft", true, t, window, cx),
-                    t,
-                ),
-                settings_row(
-                    "Review delivery",
-                    None,
-                    self.segmented(
-                        "desktop.reviewDelivery",
-                        "inline",
-                        &[("inline", "Inline"), ("detached", "Detached")],
-                        t,
-                        window,
-                        cx,
-                    ),
-                    t,
-                ),
-            ],
-        )];
-        for (index, &(key, title, _)) in FIELDS.iter().enumerate().skip(1) {
-            let editor = self.git_fields[index].1.clone();
-            let saved = self.page.read(cx).choice(key, "") == editor.read(cx).field_text();
-            let field = editor.clone();
-            let row = div()
-                .p(px(16.))
-                .flex()
-                .flex_col()
-                .gap(px(8.))
-                .child(editor)
-                .child(
-                    div().flex().justify_end().child(
-                        button(
-                            if saved { "Saved" } else { "Save" },
-                            t.text_alpha_5,
-                            None,
-                            t,
-                        )
-                        .id(key)
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.save_git_field(key, &field, cx)),
-                        ),
-                    ),
-                );
-            let mut rows = Vec::new();
-            if key == "host.git-pr-watch-instructions" {
-                rows.push(settings_row(
-                    "Auto-merge when ready",
-                    Some("Continue watching until the pull request is merged"),
-                    self.toggle("host.git-pr-watch-auto-merge", false, t, window, cx),
-                    t,
-                ));
-            }
-            rows.push(row);
-            groups.push((title, rows));
-        }
-        groups
-    }
-
-    fn save_git_field(
-        &mut self,
-        key: &'static str,
-        editor: &Entity<Composer>,
-        cx: &mut Context<Self>,
-    ) {
-        let value = editor.read(cx).field_text().to_owned();
-        let default = if key == "host.git-branch-prefix" {
-            "codex/"
-        } else {
-            ""
-        };
-        if self.page.read(cx).choice(key, default) != value {
-            self.page
-                .update(cx, |page, cx| page.set(key, json!(value), cx));
-        }
-    }
-
     fn general(
         &mut self,
         t: &Theme,
@@ -1197,7 +1088,22 @@ impl SettingsPane {
                     row(
                         "Language",
                         Some("Language for the app UI"),
-                        select("Auto detect", None, false, false, t).into_any_element(),
+                        self.select_menu(
+                            "desktop.localeOverride",
+                            languages::LANGUAGES,
+                            Some("Search languages"),
+                            |select| {
+                                let mut select = select.keep_default_visible();
+                                select.search_aliases(|| {
+                                    languages::ENGLISH_NAMES
+                                        .iter()
+                                        .map(|&(code, name)| (code.into(), name.into()))
+                                        .collect()
+                                });
+                                select
+                            },
+                            cx,
+                        ),
                     ),
                     row(
                         "Show in menu bar",
@@ -1207,7 +1113,13 @@ impl SettingsPane {
                     row(
                         "Confirm before closing a window",
                         Some("Warn when a tab-close shortcut would close the window"),
-                        self.select_menu("host.confirm-before-close", CLOSE_OPTIONS, 240., cx),
+                        self.select_menu(
+                            "host.confirm-before-close",
+                            CLOSE_OPTIONS,
+                            None,
+                            |select| select,
+                            cx,
+                        ),
                     ),
                     row(
                         "Full view by default",
@@ -1313,7 +1225,13 @@ impl SettingsPane {
                     row(
                         "Send shortcut",
                         Some("Choose when Enter sends a prompt or inserts a new line"),
-                        self.select_menu("desktop.composerEnterBehavior", SEND_OPTIONS, 220., cx),
+                        self.select_menu(
+                            "desktop.composerEnterBehavior",
+                            SEND_OPTIONS,
+                            None,
+                            |select| select.with_width(220.),
+                            cx,
+                        ),
                     ),
                     row(
                         "Follow-up behavior",
@@ -1419,12 +1337,19 @@ impl SettingsPane {
 impl Render for SettingsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        let section = self.page.read(cx).section;
+        if section == "Import" {
+            return imports::render(window, cx);
+        }
+        imports::deactivate(cx);
         if let Some(view) = &self.page.read(cx).subtree {
             return view.clone().into_any_element();
         }
-        let section = self.page.read(cx).section;
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
+        }
+        if section == "Voice" {
+            return voice::render(window, cx);
         }
         if section == "Keyboard shortcuts" {
             return keyboard_shortcuts::render(window, cx);
@@ -1441,7 +1366,7 @@ impl Render for SettingsPane {
         if section == "Storage" {
             return self.storage.clone().into_any_element();
         }
-        if matches!(section, "Plugins" | "Hooks") {
+        if matches!(section, "Plugins" | "Hooks" | "MCP servers") {
             return integrations::render(
                 section,
                 self.page.read(cx).integrations.clone(),
@@ -1449,11 +1374,22 @@ impl Render for SettingsPane {
                 cx,
             );
         }
+        if section == "Archived chats" {
+            return archived_chats::render(window, cx);
+        }
+        if section == "Worktrees" {
+            return worktrees::render(self.page.clone(), window, cx);
+        }
+        if section == "Git" {
+            return self.render_git(&t, window, cx);
+        }
+        if section == "Connections" {
+            return super::connections::render(window, cx);
+        }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
             "General" => self.general(&t, window, cx),
             "Appearance" => self.appearance(&t, window, cx),
-            "Git" => self.git(&t, window, cx),
             _ => Vec::new(),
         };
         let card_border = over(t.border, t.background_panel);
@@ -1588,6 +1524,20 @@ pub(crate) fn settings_row(
     control: AnyElement,
     t: &Theme,
 ) -> Div {
+    settings_row_content(
+        title,
+        detail.map(|value| description(value, t).into_any_element()),
+        control,
+        t,
+    )
+}
+
+pub(crate) fn settings_row_content(
+    title: &'static str,
+    detail: Option<AnyElement>,
+    control: AnyElement,
+    t: &Theme,
+) -> Div {
     div()
         .relative()
         .flex()
@@ -1604,7 +1554,7 @@ pub(crate) fn settings_row(
                 .flex_col()
                 .gap(px(2.))
                 .child(text(title, 13., 18.571_428, 500., t.text))
-                .children(detail.map(|s| description(s, t))),
+                .children(detail),
         )
         .child(
             div()
@@ -1652,13 +1602,28 @@ fn description(s: &'static str, t: &Theme) -> Div {
 /// paints the track and thumb into one `saveLayerAlpha(153)`.
 /// Toggling moves the thumb 2 px -> 14 px and fades the track colour, both 150 ms `ease-out`
 /// (`refs/interactions/ms6a.json`); the tracks stay active under reduced motion.
-pub(super) fn switch(
+pub(crate) fn switch(
     id: impl Into<gpui::ElementId>,
     on: bool,
     disabled: bool,
     t: &Theme,
 ) -> Stateful<Div> {
+    switch_sized(id, on, disabled, t, (32., 20., 16.))
+}
+
+pub(crate) fn compact_switch(id: impl Into<gpui::ElementId>, on: bool, t: &Theme) -> Stateful<Div> {
+    switch_sized(id, on, false, t, (28., 16., 12.))
+}
+
+fn switch_sized(
+    id: impl Into<gpui::ElementId>,
+    on: bool,
+    disabled: bool,
+    t: &Theme,
+    dimensions: (f32, f32, f32),
+) -> Stateful<Div> {
     let (track_off, track_on) = (t.switch_track, t.switch_track_checked);
+    let (width, height, thumb_size) = dimensions;
     let thumb = shapes::Decoration {
         radius: Corners::all(px(9999.)),
         fill: Some(t.control_thumb),
@@ -1666,7 +1631,7 @@ pub(super) fn switch(
         shadows: vec![shadow(t.shadow_sm, 1., 2., -1., false)],
         ..Default::default()
     };
-    div().id(id).flex_none().w(px(32.)).h(px(20.)).child(
+    div().id(id).flex_none().w(px(width)).h(px(height)).child(
         canvas(
             move |_, window, cx| {
                 let state = window.use_keyed_state("switch-motion", cx, |_, cx| {
@@ -1695,11 +1660,14 @@ pub(super) fn switch(
                 let x = 2. + 12. * progress;
                 let paint = |window: &mut Window| {
                     shapes::paint(&track, None, b, window, cx);
-                    let at = Bounds::new(b.origin + point(px(x), px(2.)), size(px(16.), px(16.)));
+                    let at = Bounds::new(
+                        b.origin + point(px(x), px(2.)),
+                        size(px(thumb_size), px(thumb_size)),
+                    );
                     shapes::paint(&thumb, None, at, window, cx);
                 };
                 if disabled {
-                    shapes::with_layer(153, b, window, paint)
+                    shapes::with_composited_opacity(153, b, window, cx, paint)
                 } else {
                     paint(window)
                 }
@@ -1710,14 +1678,20 @@ pub(super) fn switch(
 }
 
 /// A settings surface through `shapes`: CSS `radius`, corner shape, fill and 1 px border.
-fn deco(l: &Layer, radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> AnyElement {
+pub(super) fn deco(
+    l: &Layer,
+    radius: f32,
+    corner: Corner,
+    fill: Hsla,
+    border: Option<Hsla>,
+) -> AnyElement {
     let l = l.clone();
     in_layer(surface(radius, corner, fill, border), move || l.get()).into_any_element()
 }
 
 /// A control's surface on a settings card: Chromium blits it onto the card's opaque pixels in
 /// the scroller's layer, as on the page (`shapes` takes the `.layer()` origin for its tiles).
-fn on_card(radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> AnyElement {
+pub(crate) fn on_card(radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> AnyElement {
     shapes::decoration(surface(radius, corner, fill, border)).into_any_element()
 }
 
@@ -1734,10 +1708,10 @@ fn surface(radius: f32, corner: Corner, fill: Hsla, border: Option<Hsla>) -> sha
 
 /// The origin (window px) of the composited layer Chromium paints a scroll container's
 /// contents into (the scroller is `.layer()` for text). [`probe`] records it at prepaint.
-type Layer = Rc<Cell<Point<Pixels>>>;
+pub(super) type Layer = Rc<Cell<Point<Pixels>>>;
 
 /// An empty first child of the layer's root that records the root's origin.
-fn probe(l: &Layer) -> impl IntoElement {
+pub(super) fn probe(l: &Layer) -> impl IntoElement {
     let l = l.clone();
     canvas(move |b, _, _| l.set(b.origin), |_, _, _, _| {})
         .absolute()
@@ -1859,6 +1833,33 @@ fn app_icon(page: Hsla) -> AnyElement {
 
 #[cfg(test)]
 mod tests {
+    use gpui::AppContext as _;
+    use serde_json::json;
+
+    #[test]
+    fn leaving_cloud_restores_the_selected_settings_page() {
+        let mut app = gpui::HeadlessAppContext::with_asset_source(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+        );
+        app.update(|cx| {
+            let integrations = cx.new(|_| super::integrations::State::default());
+            let (_, settings) = super::shell(
+                &json!({}),
+                &json!({}),
+                Some("Codex Cloud"),
+                integrations,
+                cx,
+            );
+            let cloud = cx.new(crate::screens::cloud::CloudPage::new);
+            settings.update(cx, |settings, cx| settings.set_cloud(cloud, cx));
+            assert!(settings.read(cx).subtree.is_some());
+            settings.update(cx, |settings, cx| settings.select_section("General", cx));
+            assert_eq!(settings.read(cx).section, "General");
+            assert!(settings.read(cx).subtree.is_none());
+        });
+    }
+
     #[test]
     fn middle_truncate_matches_reference() {
         // One cell per character, 26 cells wide (the reference's `w-48` at 12 px).

@@ -16,6 +16,7 @@ image.workspace = true
 parking_lot = "0.12"
 pulldown-cmark = { version = "0.13", default-features = false }
 semver = "1"
+qrcodegen = "1.8.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 shapes = { path = "../shapes" }
@@ -23,14 +24,27 @@ syntect = { version = "5.3", default-features = false, features = ["default-synt
 tempfile = "3"
 textsys = { path = "../textsys" }
 theme = { path = "../theme" }
+tree-sitter = "0.25.10"
+tree-sitter-go = "0.25.0"
+tree-sitter-java = "0.23.5"
+tree-sitter-javascript = "0.25.0"
+tree-sitter-python = "0.25.0"
+tree-sitter-rust = "0.24.0"
+tree-sitter-typescript = "0.23.2"
+two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"] }
 unicode-width = "0.2"
+url = "2"
 uuid = { version = "1", features = ["v4"] }
 vt100 = "0.18.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# libjpeg's raw YUV planes, as Chromium's ImageDecoder decodes PDF page JPEGs.
+mozjpeg = { version = "0.10.13", default-features = false }
 objc2 = "0.6.5"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSPasteboard", "NSMenu", "NSMenuItem", "NSCell", "NSImage", "NSView", "NSWindow", "NSEvent", "NSAppearance"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSPasteboard", "NSMenu", "NSMenuItem", "NSCell", "NSImage", "NSImageRep", "NSPDFImageRep", "NSBitmapImageRep", "NSGraphics", "NSGraphicsContext", "NSView", "NSWindow", "NSEvent", "NSAppearance"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSString", "NSData", "NSGeometry"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFData"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGDataProvider", "CGPDFArray", "CGPDFDictionary", "CGPDFDocument", "CGPDFObject", "CGPDFPage", "CGPDFStream"] }
 raw-window-handle = "0.6"
 
 [dev-dependencies]

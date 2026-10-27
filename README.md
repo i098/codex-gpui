@@ -65,7 +65,7 @@ Run `cargo test -p app --test computer_use_lifecycle` on macOS for native Stop a
 The host service supports `discover-remote-ssh-connections` and returns an `sshAliases` list.
 It reads `$HOME/.ssh/config` and its top-level `Include` files without running SSH or changing connection settings.
 Discovery follows the original literal-host, quote, and include rules.
-The Connections page and protected pairing flows remain separate work.
+Settings > Connections uses the same discovery for its SSH chooser.
 
 Run `cargo test -p app --lib --test host ssh_discovery` for the parser and host-service checks.
 
@@ -188,6 +188,17 @@ Bedrock sign-in discovers AWS profiles, accepts explicit credentials, restarts t
 The GovCloud warning remains open after restart until the user selects Continue.
 No test signs into a real account or changes AWS credentials.
 
+## Onboarding
+
+Onboarding supports `/welcome`, `/onboarding`, and `/select-workspace`.
+Launch `codex-gpui /select-workspace` to open the workspace route directly.
+The same startup argument supports `/welcome` and `/onboarding`.
+A new ChatGPT account opens setup when the server reports incomplete onboarding and no project is available.
+Role choices retain the original coding and non-coding groups.
+The import prompt saves the choices before opening Settings > Import.
+The workspace picker uses real project folders; Skip creates a new `Documents/ChatGPT/New project` folder.
+Failed saves keep the current page open.
+
 ## Native Computer Use service
 
 The host keeps one managed native helper at `$CODEX_HOME/computer-use/Codex Computer Use.app`.
@@ -206,7 +217,7 @@ Model-driven computer use stays on the LCU relay and original native sockets.
 Do not grant SSH Automation access to test the separate Appshots Apple Event path.
 These native operations require macOS; Linux checks cover policy, capture-file boundaries, and request state only.
 
-## Security provider API
+## Native Security workbench
 
 `bridge::security::Client` uses the installed `codex-security` MCP provider through the existing app-server connection.
 It opens an ephemeral, read-only host thread and preserves its identity on tool calls.
@@ -220,7 +231,12 @@ Gate resolution requires the rollout gate and an enabled, available `codex-secur
 
 Run `cargo test -p bridge --lib security::tests` for gate, response-validation, pagination, and delivery-ownership checks.
 These tests use a local protocol peer and do not start a model turn.
-This increment does not add a native Security route or claim visual parity.
+The Explore entry opens the native Security workbench when the rollout gate and provider are available.
+The workbench supports scan setup and progress, repository history, finding filters, triage, remediation, and source viewing.
+Access changes stay within their own window; unavailable or remote hosts cannot start scans.
+
+Run `cargo test -p ui --lib screens::security::tests` for workbench access and scan-setup checks.
+The native workbench does not yet have current visual-parity proof against the original app.
 
 ## Build and run
 
@@ -237,13 +253,49 @@ The local `get-global-state` host request reads a named value from `.codex-globa
 Missing files and keys return `{"value": null}`; malformed files and invalid requests return errors.
 Thread replies retain the optional rollout `path` for archived-chat search.
 Run `cargo test -p app --test host global_state` for the filesystem and request checks.
-This support increment does not change the Archived chats page.
 
-Settings > Git stores branch, merge, push, draft, diff, and pull request instruction preferences in `host-settings.json`.
+`Confirmation::settings_dialog` selects the settings dialog style without changing confirmation or focus behavior.
+
+Settings > Archived chats lists local archives and account-authorized cloud tasks.
+Search, project filters, and sorting keep the archive on one page.
+Unarchive offers View; local deletion asks for confirmation.
+Delete all uses the current local archived inventory, regardless of the active search or type filter.
+Run `cargo test -p app --test archived_chats -- --test-threads=1` for restore, View, Retry, and individual, project, and bulk deletion.
+
+Settings > Git stores branch, merge, push, draft, and pull request instruction preferences in `host-settings.json`.
 Review delivery uses the existing app-server config store.
 Branch prefix saves on blur or Enter; multiline instructions save after three idle seconds or when the page closes.
-The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
-This page does not implement Git operations or active pull request watchers, and it does not complete other settings pages.
+Save and Command-S also write pending instructions.
+The native `cargo test -p app --test git_settings -- --test-threads=1` replay checks autosave, write recovery, shutdown flush, and confirmed worktree preferences.
+PR watch preference changes update active PR heartbeat instructions; paused automations remain unchanged.
+Settings > Worktrees provides General and Environments tabs, root and retention preferences, live worktree rows, and row actions.
+The tabs stay accessible while the content scrolls.
+Pinned conversations prevent worktree deletion.
+The Environments tab lists project and inherited files and edits setup scripts, cleanup scripts, platform overrides, and named actions.
+
+Settings > Voice keeps microphone, sound, screen-context, and local dictionary preferences in the same host settings store.
+Its gate adapter accepts trusted original Statsig and capability values; missing inputs never enable Voice.
+Saved recording controls read `$CODEX_HOME/dictation-history` and the legacy `transcription-history.jsonl` file.
+Downloads stream audio bytes and never replace an existing file.
+Retry transcription buffers at most 128 MiB; larger saved recordings remain available for download.
+Account dictionaries, voice selection, language selection, and retry transcription use the existing authenticated host.
+The shared keyboard service owns global shortcut storage and registration.
+Run `cargo test -p app --test voice_settings` for recording, preference, gate, and binary HTTP checks.
+Changes > Load full files reads Git objects and working files when their rows enter the view.
+Expand a context separator to show 20 more lines in either direction or the complete gap.
+The view checks full content against the displayed patch and preserves the patch when a read fails.
+Partial updates without a previous object ID keep their recorded hunks instead of guessing a previous revision.
+Line wrapping, word differences, and full-file loading use the existing host settings store.
+Run `cargo test -p app --test diff_file_reads` for file boundaries and `cargo test -p app --test diff_context` on macOS for expansion and retry.
+Image and PDF previews read bytes from each selected Git version or working file.
+PDF previews use macOS rendering and keep separate page controls for each side.
+The controls appear when the pointer or keyboard focus enters the PDF preview.
+The file tree omits zero change counts and groups thousands in large totals.
+Oversized text retains its change counts and Open in editor action instead of rendering a partial file.
+Large-diff notices clip their fill and controls together while painting the outer shadow separately.
+Stage and Unstage actions apply only to the separate Unstaged and Staged sources, not the combined Uncommitted view.
+Use the Rich preview option to switch SVG files between rendered previews and text.
+Run `cargo test -p app --test diff_preview` on macOS for image version and PDF page checks.
 
 The desktop host exposes `git-review-patch` for complete, binary-capable patches from the selected review source.
 The response uses `contentsBase64` to preserve patch bytes, including non-UTF-8 text.
@@ -279,13 +331,37 @@ The local host lists managed worktrees and saves tracked and untracked files in 
 It rejects deletion of initialized nested Git repositories.
 Worktree creation uses the saved root, upstream refresh preference, and selected local environment.
 Local environment files support inherited listing, validated atomic writes, and revision conflict checks.
+All environment callers share one parser and the `sha256:<hex>` revision format.
+Identical saves succeed without replacing the file; stale saves preserve external edits, symlinks, and file permissions.
+Workspace selection preserves unrelated state and distinguishes a disabled selection from an unset selection.
+These trusted native operations accept explicit absolute config paths; they are not model-callable tools.
 The `git-pr-watch-update` host operation changes only active PR heartbeat instructions.
 Run `cargo test -p app --test settings_git_family` for these file and Git operations.
+Settings > Import uses the original feature gates and the app-server's external-agent import methods.
+It shows detected providers and recorded import history.
+Automatic sync keeps the source selection and runs at the original 12-hour interval.
+Customize changes future imports only; disabling sync keeps saved selections.
+Cursor projectless imports keep their workspace and output-folder records without adding a named project.
+Settings > Connections saves SSH definitions under `CODEX_HOME` and keeps a separate app-server bridge for each connected host.
+WSL rows appear only when Windows discovers a distribution.
+The editor keeps the entered values when a save fails.
+The SSH chooser lists aliases that are not saved yet.
+Manual entry reports all validation errors before it writes a connection.
+Connection colors use the original per-host setting and survive a restart.
+Mobile setup uses the app-server remote-control status, pairing, and authorized-device APIs.
+It does not bypass account authorization or MFA.
+The existing native policy controls remote-device visibility.
+Capture tests require separate, owned `HOME` and `CODEX_HOME` directories.
 
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
-Use `Composer::settings_field` for multiline text and `Toast` for existing information, error, and success messages.
+Use `Composer::settings_field` for text and `.monospace_field()` for scripts and commands.
+Textareas scroll inside a fixed initial height, resize to a 78-pixel minimum content height, and keep the caret visible after resizing.
+Use `Toast` for existing information, error, and success messages.
+Use `Composer::settings_form_field` for compact form inputs and `settings_form_secret` for their masked values.
+Subscribe to `SettingsFieldSubmit` to handle Enter without dropping focus.
+Run `cargo test -p ui --test settings_kit enter_respects_single_line_and_multiline_form_fields` for the real keyboard check.
 Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice check.
 
 `app::diff_content::read_full_file` loads typed before/after data through the existing Git object host.
@@ -333,6 +409,29 @@ Add `analytics` or `reset-error` to capture the recorded error states.
 Add `links` to check plan, credit, and billing destinations without opening a browser.
 Add `account-switch` to check that an account change discards the previous reset confirmation.
 
+Cloud environment routes use `Root::open_cloud_environment` and the existing authenticated host transport.
+The legacy editor preserves unchanged secret values and keeps package version choices in the environment draft.
+Cloud access follows the original account policy and feature gates; Cloud computer stays hidden on the Codex surface.
+Each Cloud page keeps the account and user identity used by its first access request.
+An identity change stops later environment operations before the host sends them.
+Container-image errors remain inside the editor row; name checks can complete independently.
+Repository selection loads GitHub connectors and visible account links before requesting repositories.
+Connection retries preserve the saved-environment list state and keep keyboard dismissal available while loading.
+The create dialog uses the original setup artwork and a full-window native overlay.
+The `375130565` feature gate also hides legacy environments when the account otherwise permits cloud access.
+Run `cargo test -p app --lib cloud::tests` for the account and feature-gate checks.
+Run `cargo test -p ui --lib screens::cloud::model::tests` for secret updates and `.env` parsing.
+Creating an environment opens an account-bound cloud connection and starts the recorded setup skill.
+Existing setup conversations resume without starting another model turn.
+The repository picker keeps selections across searches, pages, retries, and provider changes.
+Run `cargo test -p ui --lib screens::cloud::tests` for repository and modal state checks.
+Run `cargo test -p app --lib reopening_completed_setup_resumes_without_another_model_turn` for setup resumption.
+Run `cargo run -p ui --example cloud_capture -- /tmp/cloud.png current-repositories` for the native repository picker.
+Selecting another settings section clears the Cloud view.
+Run `cargo test -p ui --lib screens::settings::tests::leaving_cloud_restores_the_selected_settings_page` to check this transition.
+Use `settings-return` with `cloud_capture` to capture the return to General.
+Original-versus-native pixel validation for these pages remains pending.
+
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
 Create saves the definition through `automation-create` to `CODEX_HOME/automations/<id>/automation.toml`.
 The app reloads the task list after a successful write and retains the draft if the write fails.
@@ -360,12 +459,20 @@ The app opens that thread after a successful start, unless you navigate away whi
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
 The New task options menu also opens the full manual editor or a new chat with the original task setup prompt.
 The manual editor saves Name, multiline Prompt, Interval, Daily, Weekdays, Weekly, Monthly, and Custom schedules.
+Name and time controls use single-line inputs; Prompt accepts multiple lines.
 Custom schedules support Hourly, Daily, Weekly, Monthly, and Yearly repeats, with interval, weekday, month-day, month, minute, and local time fields.
 The time presets use 09:00, 14:00, 18:00, and 22:00.
 The row menu's Edit action updates the task through `automation-update`, without changing its identity or unrelated definition fields.
 The editor keeps an existing advanced rule unchanged when only Name or Prompt changes.
 Prefilled drafts stay in Create mode until their data includes an existing task ID.
 Escape closes an open schedule picker first; otherwise, it discards the editor without saving.
+Command-Enter saves the editor, including when Name or Prompt has keyboard focus.
+The local Trigger menu keeps Schedule active and explains why cloud-only Date and time is unavailable.
+Advanced controls update notifications, new-chat or existing-chat execution, automatic archive, project, model, and effort.
+Switching an existing-chat task back to new-chat execution supplies its current local workspace.
+Model and effort choices come from app-server `model/list` and `config/read`; existing chats come from `thread/list`.
+Inherited model and effort values follow the original automation catalog precedence, not ordinary chat defaults.
+The editor saves those choices atomically through `automation-create` or `automation-update` and retains unrelated definition fields.
 Run `cargo test -p app --test task_create editor:: -- --test-threads=1` on macOS for the native editor, schedule, and Create menu checks.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 Use `-- --include-ignored` on macOS to check the installed adapter.
@@ -392,6 +499,22 @@ They do not certify live Cloud access or original pixel parity.
 General settings shows the read-only `In-app updates` row with `Managed` when the app-server disables `in_app_updates`.
 The row uses `experimentalFeature/list`, not a local preference.
 The app hides the row when that policy is absent or enabled.
+
+### Legacy Codex Cloud threads
+
+Open an existing task with `cargo run -p app -- /remote/<task-id>`.
+The `/hotkey-window/remote/<task-id>` path selects the compact content variant.
+The page uses the app-server's ChatGPT identity for the original `/wham/tasks` API.
+It reads task turns, streams setup logs and thread events, and supports image previews and follow-up image uploads.
+A log download failure does not hide the task's setup error.
+Applying changes selects a configured local project with the same Git remote.
+Apply and Revert use a temporary Git index, so they do not change the user's staged files.
+The result dialog lists applied, conflicted, and skipped paths.
+`Root::open_remote_task` and `Root::remote_page` provide the same page to native window hosts.
+This route is separate from the durable `codex_cloud` thread service.
+Run `cargo test -p app -p ui --lib cloud` and `cargo test -p app --test host` for the protocol and native state checks.
+Live-account and strict pixel validation remain pending for this page.
+
 
 ## Release bundle
 
@@ -477,6 +600,9 @@ That command does not close QA or any normal app.
 
 | Crate | Role |
 |---|---|
+| `bridge` | Client for `codex app-server`: newline-delimited JSON-RPC over stdio, hand-written protocol types, replay of recorded sessions, and the ACP backend. |
+| `ui` | The window shell (titlebar, navigation rail, sidebar, main panel), the page modules in `screens/`, the composer, the thread view, the diff view and the icons. |
+| `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths. It links Skia. |
 | `bridge` | JSON-RPC client for `codex app-server` over stdio or durable cloud WebSocket, protocol types, recorded sessions, and the ACP backend. |
 | `ui` | The window shell (titlebar, navigation rail, sidebar, main panel), the page modules in `screens/`, the composer, the thread view, the diff view and the icons. |
 | `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths and circles. It links Skia. |
@@ -572,6 +698,12 @@ Stock GPUI cannot match Chromium's pixels. The local copies include these change
 - Skia blends: glyph and sprite blending as Skia's 8-bit raster does it, and `SkPaint::setAlphaf` alpha rounded to a byte.
 - Layer compositing: opacity layers and composited layers (`will-change`, scrollers) that blend as Chromium's `saveLayerAlpha` does.
 
+RGB-to-HSL conversion keeps saturated sRGB colors at saturation 1.0.
+This keeps their edges on Skia's legacy raster path instead of the float path.
+Comment cards clip their contents to the rounded card shape while their shadows remain outside the clip.
+Clipped deferred draws retain their ancestor's raster recording origin without creating a new opacity layer.
+Comment attachments use Skia for the rounded border and fill, including the hover state.
+
 `Window::layout_origin_residual_y` returns the fractional vertical origin removed by layout rounding.
 Use it when placing multiline field glyphs to retain Blink's baseline positions.
 
@@ -579,6 +711,8 @@ Use it when placing multiline field glyphs to retain Blink's baseline positions.
 Text layouts use each window's effective device scale and discard stale cached metrics when that scale changes.
 
 Inline-code backgrounds use both snapped label edges, so fractional text widths do not expand their right edge.
+Their height and position follow the active code font's metrics.
+The thread's top fade preserves content that scrolls below it.
 
 Monochrome glyphs and SVGs keep their paint alpha.
 Element opacity is applied once when the enclosing layer is restored.
@@ -596,6 +730,7 @@ These styles use the same compositor boundary as other elements.
 
 Linear gradients interpolate premultiplied colors in the selected color space.
 Their ordered RGB dither leaves alpha unchanged, so transparent fades do not add opacity noise.
+Gradients inside compositor layers apply dithering after blending and retain element opacity and the unsnapped gradient origin.
 
 Home composer permission and model labels paint directly into their parent.
 Docked composers retain the composited label path. The animated effort label keeps its filter layer.
@@ -617,6 +752,8 @@ Nested filters use the parent layer's content, not its already-filtered backdrop
 
 `shapes::raster_images` decodes to the smallest mip that covers the rounded target before bilinear sampling.
 Callers choose direct composition, a saved image group, or a transparent compositor tile to match the original layer.
+An image group keeps its save-layer even when it contains one image, so clipped sampling retains the original interpolation.
+Transparent image groups retain straight-alpha pixels for GPUI, so the background and shadow remain visible through rounded corners.
 Use `ImageComposition::Composited` with an opaque background for compositor tiles.
 Rasterize these images during paint, when the layer context is available.
 
@@ -764,7 +901,7 @@ View > Toggle navigation panel opens or closes the active Changes tree or worksp
 The workspace tree reads real directories and files, keeps its selection, and filters through the app-server file search.
 File navigation does not modify workspace files.
 The File viewer uses the Changes panel's main-surface layer for its divider and rounded window corners.
-Use `native_menus::ToggleNavigationPanel` to dispatch the `toggleFileTreePanel` shortcut action.
+Command+Shift+E (`toggleFileTreePanel`) dispatches `native_menus::ToggleNavigationPanel`, the same action as the menu item.
 About shows this build's version in a separate window; Escape closes it.
 The Window menu has Bring All to Front, and Control+Command+F toggles the active window's fullscreen state.
 The fullscreen replay checks command dispatch and window state without bringing a native window to the front.

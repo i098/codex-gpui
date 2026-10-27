@@ -690,7 +690,7 @@ impl From<Rgba> for Hsla {
         } else if l < 0.5 {
             delta / (2.0 * l)
         } else {
-            delta / (2.0 - 2.0 * l)
+            delta / ((1.0 - max) + (1.0 - min))
         };
 
         let h = if delta == 0.0 {
@@ -972,6 +972,12 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn saturated_rgb_keeps_unit_saturation() {
+        let color = Hsla::from(rgb(0xff7419));
+        assert_eq!(color.s, 1.0);
+    }
 
     #[test]
     fn test_deserialize_three_value_hex_to_rgba() {

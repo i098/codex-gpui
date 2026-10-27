@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use theme::{ActiveTheme as _, Theme};
 
-fn decode_app_image(url: &str) -> Option<Arc<gpui::Image>> {
+pub(crate) fn decode_app_image(url: &str) -> Option<Arc<gpui::Image>> {
     let (header, data) = url.strip_prefix("data:")?.split_once(',')?;
     let mime = header.strip_suffix(";base64")?;
     let format = gpui::ImageFormat::from_mime_type(mime)?;
@@ -749,7 +749,7 @@ fn message(message: impl Into<SharedString>, t: &Theme) -> Div {
         .child(text(message, 13., 18.571_428, 430., t.text_secondary))
 }
 
-fn group(title: &'static str, rows: Vec<Div>, layer: Option<&Layer>, t: &Theme) -> Div {
+pub(super) fn group(title: &'static str, rows: Vec<Div>, layer: Option<&Layer>, t: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
@@ -764,7 +764,7 @@ fn group(title: &'static str, rows: Vec<Div>, layer: Option<&Layer>, t: &Theme) 
         .child(card(rows, layer, t))
 }
 
-fn card(rows: Vec<Div>, layer: Option<&Layer>, t: &Theme) -> Div {
+pub(super) fn card(rows: Vec<Div>, layer: Option<&Layer>, t: &Theme) -> Div {
     let last = rows.len().saturating_sub(1);
     let surface = match layer {
         Some(layer) => deco(

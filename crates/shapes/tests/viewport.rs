@@ -86,3 +86,86 @@ fn large_composited_card_keeps_visible_pixels() -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+struct DeferredCard {
+    deferred: bool,
+}
+
+impl Render for DeferredCard {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        let shadow = |color, y, blur, spread| shapes::Shadow {
+            color,
+            offset: point(px(0.), px(y)),
+            blur: px(blur),
+            spread: px(spread),
+            inset: false,
+        };
+        let card = div()
+            .absolute()
+            .left(px(59.))
+            .top(px(124.414_06))
+            .w(px(549.))
+            .h(px(120.75))
+            .child(shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(12.5)),
+                corner: shapes::Corner::Squircle,
+                fill: Some(gpui::white().opacity(0.03)),
+                shadows: vec![
+                    shadow(gpui::white().opacity(0.157), 0., 0., 0.5),
+                    shadow(gpui::black().opacity(0.04), 3., 7.5, 0.),
+                    shadow(gpui::black().opacity(0.05), 0., 20., 0.),
+                ],
+                ..Default::default()
+            }));
+        let card = if self.deferred {
+            gpui::deferred(card).clipped().into_any_element()
+        } else {
+            card.into_any_element()
+        };
+        div().size_full().bg(gpui::rgb(0x202020)).child(
+            div()
+                .absolute()
+                .left(px(661.5))
+                .top(px(132.))
+                .w(px(700.))
+                .h(px(340.))
+                .layer()
+                .child(shapes::decoration(shapes::Decoration {
+                    fill: Some(gpui::rgb(0x202020).into()),
+                    ..Default::default()
+                }))
+                .child(card),
+        )
+    }
+}
+
+#[test]
+fn clipped_deferral_preserves_layer_raster_pixels() -> anyhow::Result<()> {
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
+    let mut cx = gpui::HeadlessAppContext::with_platform(
+        textsys::text_system(),
+        Arc::new(()),
+        gpui_platform::current_headless_renderer,
+    );
+    let mut capture = |deferred| -> anyhow::Result<image::RgbaImage> {
+        let window = cx.open_window(size(px(1440.), px(832.)), |_, cx| {
+            cx.new(|_| DeferredCard { deferred })
+        })?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        cx.update_window(window.into(), |_, window, _| window.remove_window())?;
+        Ok(image)
+    };
+    let direct = capture(false)?;
+    let deferred = capture(true)?;
+    let different = direct
+        .pixels()
+        .zip(deferred.pixels())
+        .filter(|(left, right)| left != right)
+        .count();
+    assert_eq!(different, 0, "deferral changed the layer's raster pixels");
+    Ok(())
+}

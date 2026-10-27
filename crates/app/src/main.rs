@@ -7,6 +7,11 @@ use gpui::{
 use std::path::PathBuf;
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
     if std::env::args().nth(1).as_deref() == Some("--qa-build-info") {
         println!("{}", app::qa::build_info());
         return;
@@ -19,13 +24,16 @@ fn main() {
         }
         return;
     }
+    let launch_path = std::env::args().nth(1);
     let mut state = State::load();
-    if let Some(route) = std::env::args().nth(1).and_then(|path| {
-        app::Route::remote_path(&path).or_else(|| app::Route::pull_request_path(&path))
+    if let Some(route) = launch_path.as_deref().and_then(|path| {
+        app::Route::remote_path(path)
+            .or_else(|| app::Route::pull_request_path(path))
+            .or_else(|| app::onboarding::route(path))
     }) {
         state.route = route;
     }
-    if std::env::args().nth(1).as_deref() == Some("/diff") {
+    if launch_path.as_deref() == Some("/diff") {
         let path = std::env::args_os().nth(2).unwrap_or_else(|| {
             eprintln!("usage: codex-gpui /diff <patch-file>");
             std::process::exit(2)
@@ -137,6 +145,17 @@ fn main() {
         }
         app::screenshot::register(cx);
         app::qa::monitor(handle, cx);
+        if let Some(path) = std::env::args()
+            .nth(1)
+            .filter(|path| path.starts_with("/hotkey-window") || path == "/spotlight")
+        {
+            match app::hotkey::Target::parse(&path)
+                .and_then(|target| app::hotkey::open(handle, target, cx))
+            {
+                Ok(popout) => app::qa::monitor(popout, cx),
+                Err(error) => eprintln!("codex-gpui: {error:#}"),
+            }
+        }
         if !app::qa::ENABLED {
             cx.activate(true);
         }

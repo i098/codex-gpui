@@ -541,6 +541,8 @@ fn open_in_side_chat_runs_the_queued_message_in_its_own_conversation() -> Result
     assert_eq!(fx.composer_text()?, "keep me");
     let allowed = [
         "thread/read",
+        // Opening the chat resumes it before any queue action.
+        "thread/resume",
         "thread/queue/list",
         "thread/queue/delete",
         "thread/fork",

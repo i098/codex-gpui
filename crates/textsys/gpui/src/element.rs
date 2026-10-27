@@ -337,6 +337,8 @@ enum ElementDrawPhase<RequestLayoutState, PrepaintState> {
         request_layout: RequestLayoutState,
     },
     Prepaint {
+        #[cfg(target_vendor = "apple")]
+        layout_id: LayoutId,
         node_id: DispatchNodeId,
         global_id: Option<GlobalElementId>,
         inspector_id: Option<InspectorElementId>,
@@ -504,6 +506,8 @@ impl<E: Element> Drawable<E> {
                 }
 
                 self.phase = ElementDrawPhase::Prepaint {
+                    #[cfg(target_vendor = "apple")]
+                    layout_id,
                     node_id,
                     global_id,
                     inspector_id,
@@ -523,6 +527,8 @@ impl<E: Element> Drawable<E> {
     ) -> (E::RequestLayoutState, E::PrepaintState) {
         match mem::take(&mut self.phase) {
             ElementDrawPhase::Prepaint {
+                #[cfg(target_vendor = "apple")]
+                layout_id,
                 node_id,
                 global_id,
                 inspector_id,
@@ -537,6 +543,8 @@ impl<E: Element> Drawable<E> {
                 }
 
                 window.next_frame.dispatch_tree.set_active_node(node_id);
+                #[cfg(target_vendor = "apple")]
+                let previous_layout = window.paint_layout.replace((layout_id, bounds.origin));
                 self.element.paint(
                     global_id.as_ref(),
                     inspector_id.as_ref(),
@@ -546,6 +554,10 @@ impl<E: Element> Drawable<E> {
                     window,
                     cx,
                 );
+                #[cfg(target_vendor = "apple")]
+                {
+                    window.paint_layout = previous_layout;
+                }
 
                 if global_id.is_some() {
                     window.element_id_stack.pop();

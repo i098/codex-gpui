@@ -1,0 +1,9 @@
+{
+  "detection": {"items":[{"itemType":"AGENTS_MD","description":"Migrate /tmp/cgx-mac/cgx-fam-set-import/fixture-detected/CLAUDE.md to /tmp/cgx-mac/cgx-fam-set-import/fixture-detected/AGENTS.md","cwd":"/tmp/cgx-mac/cgx-fam-set-import/fixture-detected","details":null,"providerId":"claude-code"}],"unsupportedProjects":[]},
+  "history": {"data":[{"importId":"a035f96e-ae3d-4aa3-a7c4-38f24508e6d6","providerId":"claude-code","completedAtMs":1792545753162,"successes":[{"itemType":"AGENTS_MD","cwd":"/tmp/cgx-mac/cgx-fam-set-import/fixture-smoke","source":"/tmp/cgx-mac/cgx-fam-set-import/fixture-smoke/CLAUDE.md","target":"/tmp/cgx-mac/cgx-fam-set-import/fixture-smoke/AGENTS.md","title":null}],"failures":[]},{"importId":"e95d4ec8-81fa-4db3-ae82-f0d43a23bc89","providerId":"claude-code","completedAtMs":1792538336544,"successes":[{"itemType":"AGENTS_MD","cwd":"/tmp/cgx-mac/cgx-fam-set-import/fixture","source":"/tmp/cgx-mac/cgx-fam-set-import/fixture/CLAUDE.md","target":"/tmp/cgx-mac/cgx-fam-set-import/fixture/AGENTS.md","title":null}],"failures":[]}],"connectors":[]},
+  "policy": {"feature_gates":{"3278809559":{"name":"3278809559","rule_id":"2L1fsZTriZnQ7f2eG8o0IR","secondary_exposures":[],"version":21,"id_type":"userID","value":true},"2108304519":{"name":"2108304519","rule_id":"1lS6RLZVUy4YXvqdlnBb4Y:100.00:2","secondary_exposures":[],"version":18,"id_type":"userID","value":true},"3203613120":{"name":"3203613120","rule_id":"65n7Dw0h4As0kncWBnf3aG:100.00:10","version":45,"id_type":"userID","value":true}}},
+  "syncState": {"version":1,"providerIds":["claude-code"],"selection":{"projects":true},"lastSyncStartedAtMs":1792545753162},
+  "preferences":"all",
+  "syncEnabled":false,
+  "actions":[]
+}

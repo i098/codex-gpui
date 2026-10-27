@@ -49,10 +49,12 @@ actions!(
         OpenSettings,
         LogOut,
         ShowKeyboardShortcuts,
+        OpenMini,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
         OpenPullRequests,
         OpenPlugins,
+        OpenSecurity,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
         OpenMobileSetup,
         /// `⌥⌘B`: show or hide the Changes side panel.
@@ -184,6 +186,7 @@ pub struct Shell {
     pub chat_chrome: bool,
     /// Titlebar `New tab` button (chat routes; Settings and Automations hide it).
     pub new_tab: bool,
+    pub header_actions: Option<AnyView>,
     /// Opaque background boxes the page paints under the main surface's clip that reach its
     /// rounded corners (Settings' `electron:bg-surface`): each blends the clip's anti-aliased
     /// edge once more. With any, the shell paints those corners itself, over what the main
@@ -206,6 +209,7 @@ pub struct Shell {
     pub attention: bool,
     /// Unseen, unpinned MCP destinations; `None` while their source is unavailable.
     pub unread_destinations: Option<Arc<[SharedString]>>,
+    pub security_available: bool,
     /// The profile avatar's menu is open.
     pub profile_menu: bool,
     /// Pointer over the avatar: its own click toggles the menu, so a press there must not
@@ -214,7 +218,7 @@ pub struct Shell {
     sidebar: AnyView,
     main: AnyView,
     main_content_inline_inset: Pixels,
-    bottom: Option<AnyView>,
+    pub bottom: Option<AnyView>,
 }
 
 /// The fixture account's 24 px avatar (`rounded-full object-cover` `<img>`), rasterized the way
@@ -291,6 +295,7 @@ impl Shell {
             selected_rail: Some("home"),
             chat_chrome: true,
             new_tab: true,
+            header_actions: None,
             main_backgrounds: 0,
             main_composited: false,
             main_layer: false,
@@ -298,6 +303,7 @@ impl Shell {
             main_clips_right: false,
             attention: false,
             unread_destinations: None,
+            security_available: false,
             profile_menu: false,
             avatar_hovered: false,
             sidebar,
@@ -684,7 +690,7 @@ impl Render for EmptySidebar {
             .size_full()
             .flex()
             .flex_col()
-            .child(home_sidebar_header(false, false, cx))
+            .child(home_sidebar_header(false, false, true, cx))
             .child(
                 div()
                     .flex_1()
@@ -742,7 +748,7 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
 
 /// Top of the Home sidebar: `Codex ⌄` mode switch, activity bell and search, then the
 /// `New chat` and `Your dot` rows. With `unread` chats the bell carries the blue dot.
-pub fn home_sidebar_header(unread: bool, activity: bool, cx: &App) -> Div {
+pub fn home_sidebar_header(unread: bool, activity: bool, available: bool, cx: &App) -> Div {
     let t = cx.theme();
     // The Oklab round-trip leaves blue above one; retain it for Skia's float layer blend.
     let activity_background = gpui::Rgba {
@@ -835,62 +841,64 @@ pub fn home_sidebar_header(unread: bool, activity: bool, cx: &App) -> Div {
                         ),
                 )
                 .child(div().flex_1())
-                .child(tooltip(
-                    div()
-                        .id("activity")
-                        .relative()
-                        .flex_none()
-                        .size(px(28.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(RADIUS_BUTTON_MD)
-                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .when(activity, |d| {
-                            // The original button pseudo-element has will-change: transform.
-                            d.child(div().absolute().inset_0().top_layer().child(
-                                shapes::decoration(shapes::Decoration {
-                                    radius: Corners::all(RADIUS_BUTTON_MD),
-                                    corner: shapes::Corner::Squircle,
-                                    fill: Some(activity_background),
-                                    ..Default::default()
-                                }),
-                            ))
-                        })
-                        .child(motion::ButtonVisual {
-                            glyph: icon::icon(
-                                if unread { "bell-unread" } else { "bell" },
-                                16.,
-                                if activity {
+                .when(available, |d| {
+                    d.child(tooltip(
+                        div()
+                            .id("activity")
+                            .relative()
+                            .flex_none()
+                            .size(px(28.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(RADIUS_BUTTON_MD)
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                            .when(activity, |d| {
+                                // The original button pseudo-element has will-change: transform.
+                                d.child(div().absolute().inset_0().top_layer().child(
+                                    shapes::decoration(shapes::Decoration {
+                                        radius: Corners::all(RADIUS_BUTTON_MD),
+                                        corner: shapes::Corner::Squircle,
+                                        fill: Some(activity_background),
+                                        ..Default::default()
+                                    }),
+                                ))
+                            })
+                            .child(motion::ButtonVisual {
+                                glyph: icon::icon(
+                                    if unread { "bell-unread" } else { "bell" },
+                                    16.,
+                                    if activity {
+                                        t.info_solid
+                                    } else {
+                                        t.text_tertiary
+                                    },
+                                )
+                                .own_layer(None),
+                                radius: RADIUS_BUTTON_MD,
+                                hover: if activity {
+                                    activity_background
+                                } else {
+                                    t.ghost_hover
+                                },
+                                foreground: if activity {
                                     t.info_solid
                                 } else {
-                                    t.text_tertiary
+                                    t.text.opacity(0.85)
                                 },
-                            )
-                            .own_layer(None),
-                            radius: RADIUS_BUTTON_MD,
-                            hover: if activity {
-                                activity_background
-                            } else {
-                                t.ghost_hover
-                            },
-                            foreground: if activity {
-                                t.info_solid
-                            } else {
-                                t.text.opacity(0.85)
-                            },
-                            selected: activity,
-                        })
-                        .tab_index(0)
-                        .role(gpui::Role::Button)
-                        .aria_label(activity_label)
-                        .focus_visible(keyboard_ring(false))
-                        .on_click(dispatch::<ToggleActivity>),
-                    activity_label,
-                    Some("⌥⌘U"),
-                    Side::Bottom,
-                ))
-                .child(div().w(px(4.)))
+                                selected: activity,
+                            })
+                            .tab_index(0)
+                            .role(gpui::Role::Button)
+                            .aria_label(activity_label)
+                            .focus_visible(keyboard_ring(false))
+                            .on_click(dispatch::<ToggleActivity>),
+                        activity_label,
+                        Some("⌥⌘U"),
+                        Side::Bottom,
+                    ))
+                    .child(div().w(px(4.)))
+                })
                 .child(tooltip(
                     icon_button(
                         "search",
@@ -980,7 +988,7 @@ impl Shell {
             let fg = if on { t.text } else { t.text_tertiary };
             let id = SharedString::from(format!("rail-{name}"));
             let focus = focus::handle(id.clone(), 0, window, cx);
-            let glyph = if on && matches!(name, "home" | "scheduled") {
+            let glyph = if on && !matches!(name, "explore" | "rail-code-review") {
                 format!("{name}-filled")
             } else {
                 name.to_string()
@@ -1083,46 +1091,50 @@ impl Shell {
                     // `absolute -end-0.5 -top-0.5` around a `size-5` box centering an `icon-xs`
                     // dot at `scale-50`.
                     .child(
-                        item("explore").when(
-                            self.unread_destinations
-                                .as_ref()
-                                .is_some_and(|ids| !ids.is_empty()),
-                            |item| {
-                                item.child(
-                                    div()
-                                        .absolute()
-                                        .top(px(-2.))
-                                        .right(px(-2.))
-                                        .size(px(20.))
-                                        .flex()
-                                        .items_center()
-                                        .justify_center()
-                                        .child(
-                                            canvas(
-                                                |_, _, _| {},
-                                                move |bounds, (), window, cx| {
-                                                    shapes::paint_scaled(
-                                                        &shapes::Decoration {
-                                                            radius: Corners::all(
-                                                                Theme::RADIUS_FULL,
-                                                            ),
-                                                            fill: Some(info_solid),
-                                                            ..Default::default()
-                                                        },
-                                                        Some(list),
-                                                        bounds,
-                                                        size(px(16.), px(16.)),
-                                                        0.5,
-                                                        window,
-                                                        cx,
-                                                    )
-                                                },
-                                            )
-                                            .size(px(16.)),
-                                        ),
-                                )
-                            },
-                        ),
+                        item("explore")
+                            .when(self.security_available, |item| {
+                                item.on_click(dispatch::<OpenSecurity>)
+                            })
+                            .when(
+                                self.unread_destinations
+                                    .as_ref()
+                                    .is_some_and(|ids| !ids.is_empty()),
+                                |item| {
+                                    item.child(
+                                        div()
+                                            .absolute()
+                                            .top(px(-2.))
+                                            .right(px(-2.))
+                                            .size(px(20.))
+                                            .flex()
+                                            .items_center()
+                                            .justify_center()
+                                            .child(
+                                                canvas(
+                                                    |_, _, _| {},
+                                                    move |bounds, (), window, cx| {
+                                                        shapes::paint_scaled(
+                                                            &shapes::Decoration {
+                                                                radius: Corners::all(
+                                                                    Theme::RADIUS_FULL,
+                                                                ),
+                                                                fill: Some(info_solid),
+                                                                ..Default::default()
+                                                            },
+                                                            Some(list),
+                                                            bounds,
+                                                            size(px(16.), px(16.)),
+                                                            0.5,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    },
+                                                )
+                                                .size(px(16.)),
+                                            ),
+                                    )
+                                },
+                            ),
                     )
                     // A 1 px `border-t` on an empty box: Blink paints it rounded down to whole
                     // device px (at least 1), and the box is that tall.
@@ -1175,8 +1187,7 @@ impl Shell {
 
     /// Profile avatar menu (`codex.profileDropdown.*`) above the avatar: `Settings`, then the
     /// `Help` submenu's `Set up mobile`, flattened under a `Help` heading.
-    /// ponytail: Profile, Usage and Show Mini open pages the port does not have; add
-    /// them with those pages.
+    /// Profile and Usage open pages that this menu does not yet expose.
     fn profile_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let hover = t.menu_item_hover;
         let item = |id: &'static str,
@@ -1201,6 +1212,7 @@ impl Shell {
             "Set up mobile",
             dispatch::<OpenMobileSetup>,
         );
+        let mini = item("profile-mini", "Show Mini", dispatch::<OpenMini>);
         div()
             .absolute()
             .left(px(8.))
@@ -1213,6 +1225,7 @@ impl Shell {
             }))
             .child(composer::popover(t, 220., |d| {
                 d.child(settings)
+                    .child(mini)
                     .child(item("profile-log-out", "Log out", dispatch::<LogOut>))
                     .child(div().px(px(8.)).pt(px(8.)).pb(px(4.)).child(text(
                         "Help",
@@ -1480,15 +1493,13 @@ impl Shell {
                     focus::ring(
                         icon_button(
                             "toggle-sidebar",
-                            icon::icon(
-                                if self.sidebar_open {
-                                    "sidebar"
-                                } else {
-                                    "sidebar-hidden"
-                                },
-                                16.,
-                                t.text_tertiary,
-                            ),
+                            if self.sidebar_open {
+                                icon::icon("sidebar", 16., t.text_tertiary)
+                            } else {
+                                // Closed, Chromium composites the titlebar's Show sidebar and
+                                // New chat icons: they blit into a layer of their own.
+                                icon::icon("sidebar-hidden", 16., t.text_tertiary).own_layer(None)
+                            },
                             t,
                         ),
                         &sidebar_focus,
@@ -1515,6 +1526,25 @@ impl Shell {
                     Side::Bottom,
                 ))
             })
+            // Closed, the titlebar also carries New chat after Show sidebar.
+            .when(self.chat_chrome && !self.sidebar_open, |d| {
+                d.child(tooltip(
+                    icon_button(
+                        "titlebar-new-chat",
+                        icon::icon("sidebar-cmd-new-chat", 16., t.text_tertiary).own_layer(None),
+                        t,
+                    )
+                    .role(gpui::Role::Button)
+                    .aria_label("New chat")
+                    .absolute()
+                    .left(px(190.) - fullscreen_shift)
+                    .top(px(8.))
+                    .on_click(dispatch::<NewChat>),
+                    "New chat",
+                    Some("⌘N"),
+                    Side::Bottom,
+                ))
+            })
             .when(self.new_tab, |d| {
                 d.child(
                     focus::ring(div().id("new-tab"), &new_tab_focus, px(8.), px(2.), cx)
@@ -1535,6 +1565,17 @@ impl Shell {
                             icon::icon("new-tab", 16., t.text_tertiary)
                                 .own_layer(Some(Point::default())),
                         ),
+                )
+            })
+            .when_some(self.header_actions.clone(), |bar, actions| {
+                bar.child(
+                    div()
+                        .absolute()
+                        .top(px(8.))
+                        .right(px(44.))
+                        .h(px(28.))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(actions),
                 )
             })
     }
@@ -1793,6 +1834,8 @@ impl Render for Shell {
                                 };
                                 shapes::paint(&fill, None, bounds, window, cx);
                                 main = frame(bounds, u8::from(!main_layer), false, window, cx);
+                                // A lone thread draws its right corners, and its top-left one
+                                // when the sidebar is closed (`ThreadView::clip_top_left`).
                                 let own = clips_right || main_layer;
                                 let own = Corners {
                                     top_right: own,

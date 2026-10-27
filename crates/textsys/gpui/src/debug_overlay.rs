@@ -219,6 +219,10 @@ fn solid_quad(
     Quad {
         order: 0,
         border_style: BorderStyle::Solid,
+        #[cfg(target_vendor = "apple")]
+        layers: [0; 4],
+        #[cfg(target_vendor = "apple")]
+        dither_offset: Point::default(),
         bounds,
         content_mask: *content_mask,
         background: color.into(),

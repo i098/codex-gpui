@@ -3112,17 +3112,18 @@ impl Dialog {
             )
     }
     fn shortcuts_content(&self, visible: &[&Shortcut], t: &Theme, cx: &Context<Self>) -> Div {
-        let mut list = div().flex().flex_col().pr(px(22.));
+        let mut list = div().flex().flex_col().pr(px(12.));
         let mut heading = "";
         for (index, &&(section, command, ref keys)) in visible.iter().enumerate() {
             if section != heading {
                 list = list.child(
                     div()
                         .h(px(46.))
+                        .pb(px(6.))
                         .flex_shrink_0()
                         .flex()
                         .items_center()
-                        .child(text(section, 14., 20., 500., t.text)),
+                        .child(text(section, 14., 21., 500., t.text)),
                 );
                 heading = section;
             }
@@ -3138,14 +3139,14 @@ impl Dialog {
                     .items_center()
                     .justify_between()
                     .opacity(0.75)
-                    .child(text(command.title, 14., 18., 400., t.text))
+                    .child(text(command.title, 14., 18., 430., t.text))
                     .child(div().flex().gap(px(8.)).children(keys.iter().map(|key| {
                         div()
-                            .rounded(px(6.))
+                            .rounded(px(10.))
                             .px(px(6.))
                             .py(px(2.))
-                            .bg(t.list_hover)
-                            .child(text(key.clone(), 12., 12., 400., t.text))
+                            .bg(t.text.opacity(0.1))
+                            .child(text(key.clone(), 12., 12., 430., t.text))
                     }))),
             );
         }
@@ -3172,14 +3173,14 @@ impl Dialog {
                     .flex_shrink_0()
                     .rounded(px(999.))
                     .border_1()
-                    .border_color(t.border)
-                    .bg(t.menu_background)
+                    .border_color(t.border_strong)
+                    .bg(t.control_background)
                     .px(px(10.))
                     .flex()
                     .items_center()
-                    .gap(px(10.))
+                    .gap(px(8.))
                     .overflow_hidden()
-                    .child(icon("search", 16., t.text_secondary))
+                    .child(icon("shortcut-search", 18., t.text_secondary))
                     .child(
                         text(
                             if self.query.is_empty() {
@@ -3189,7 +3190,7 @@ impl Dialog {
                             },
                             14.,
                             18.,
-                            400.,
+                            430.,
                             if self.query.is_empty() {
                                 t.text_tertiary
                             } else {
@@ -3231,7 +3232,7 @@ impl Dialog {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(text("×", 20., 24., 400., t.text_secondary))
+                    .child(icon("diff-tab-close", 16., t.text.opacity(0.8)))
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(Outcome::Dismiss))),
             )
     }
@@ -3833,20 +3834,22 @@ fn draw_artwork(
     .size_full()
 }
 
-/// The editor's default `Time`: 9:00 AM in the local zone, named like the original's
-/// `Intl` short zone name (`PT`, `GMT+2`).
+/// The original's short local-zone label (`PT`, `GMT+2`).
 /// ponytail: US zones by offset, else `GMT±N`; a tz database lookup if other names matter.
-fn schedule_time() -> String {
+pub(crate) fn local_zone() -> String {
     let hours = chrono::Local::now().offset().local_minus_utc() / 3600;
-    let zone = match hours {
+    match hours {
         -8 | -7 => "PT".into(),
         -6 => "MT".into(),
         -5 => "CT".into(),
         -4 => "ET".into(),
         0 => "GMT".into(),
         h => format!("GMT{h:+}"),
-    };
-    format!("9:00 AM {zone}")
+    }
+}
+
+fn schedule_time() -> String {
+    format!("9:00 AM {}", local_zone())
 }
 
 impl Render for Dialog {

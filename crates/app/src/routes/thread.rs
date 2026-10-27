@@ -120,16 +120,10 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     root.on_action(cx.listener(|this, _: &FindInThread, window, cx| {
         find_in_workspace(this, window, cx);
     }))
-    .on_action(cx.listener(|this, _: &FindNext, _, cx| {
-        if let Some(thread) = &this.thread {
-            thread.update(cx, |thread, cx| thread.next_find(false, cx));
-        }
-    }))
-    .on_action(cx.listener(|this, _: &FindPrevious, _, cx| {
-        if let Some(thread) = &this.thread {
-            thread.update(cx, |thread, cx| thread.next_find(true, cx));
-        }
-    }))
+    .on_action(cx.listener(Root::find_in_chat))
+    .on_action(cx.listener(Root::find_in_diff))
+    .on_action(cx.listener(|this, _: &FindNext, _, cx| this.next_search_result(false, cx)))
+    .on_action(cx.listener(|this, _: &FindPrevious, _, cx| this.next_search_result(true, cx)))
     .on_action(cx.listener(|this, _: &ui::composer::Stop, _, cx| this.stop(None, cx)))
     .on_action(
         cx.listener(|this, _: &ui::composer::RequestFullAccess, window, cx| {
@@ -144,7 +138,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
         }
     }))
     .on_action(cx.listener(|this, _: &OpenChangesPanel, window, cx| {
-        this.set_side(SidePanel::Changes, window, cx)
+        // The control that opened the panel keeps its focus, as in the original; the route
+        // refresh would move it to the composer.
+        let focused = window.focused(cx);
+        this.set_side(SidePanel::Changes, window, cx);
+        restore_focus(focused, window, cx);
     }))
     .on_action(cx.listener(|this, action: &ui::ViewChanges, window, cx| {
         let focused = window.focused(cx);
@@ -152,9 +150,7 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             panel.update(cx, |panel, cx| panel.view_changes(&action.0, cx));
         }
         this.set_side(SidePanel::Changes, window, cx);
-        if let Some(focused) = focused {
-            window.defer(cx, move |window, cx| window.focus(&focused, cx));
-        }
+        restore_focus(focused, window, cx);
     }))
     .on_action(cx.listener(Root::open_file))
     .on_action(cx.listener(|this, _: &OpenBackgroundTerminal, window, cx| {
@@ -204,7 +200,18 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
         this.edit_message(edit.clone(), window, cx)
     }))
     .on_action(cx.listener(|this, a: &RevertTurn, window, cx| this.revert(a.0.clone(), window, cx)))
+    .on_action(cx.listener(|this, a: &ThreadPressed, _, cx| {
+        this.sidebar
+            .update(cx, |sidebar, cx| sidebar.set_read(&a.0, cx));
+    }))
     .on_action(cx.listener(|this, a: &GoToChat, window, cx| this.go_to_chat(Some(a.0), window, cx)))
+}
+
+/// Gives `focused` its focus back once the route refresh, which moves it to the composer, has run.
+fn restore_focus(focused: Option<gpui::FocusHandle>, window: &mut Window, cx: &mut Context<Root>) {
+    if let Some(focused) = focused {
+        window.defer(cx, move |window, cx| window.focus(&focused, cx));
+    }
 }
 
 #[cfg(test)]

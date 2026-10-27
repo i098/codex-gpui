@@ -152,14 +152,18 @@ impl State {
         if let Some(font) = self.sized.get(&key) {
             return font.clone();
         }
+        let font = self.uncached_font(id, size);
+        self.sized.insert(key, font.clone());
+        font
+    }
+
+    fn uncached_font(&self, id: FontId, size: f32) -> CTFont {
         let css = f64::from(self.css_size(id, size));
         let base = match &self.faces[id.0] {
             Face::System { weight, italic } => system_font(*weight, *italic, css),
             Face::Fixed(font) => font.clone(),
         };
-        let font = exact_copy(&base, f64::from(size), css);
-        self.sized.insert(key, font.clone());
-        font
+        exact_copy(&base, f64::from(size), css)
     }
 
     /// The CSS font size of `size` layout px; `opsz` and AAT `trak` follow it.
@@ -427,6 +431,19 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
                 size: size(u(b.size.width), u(b.size.height)),
             },
         }
+    }
+
+    fn x_height_at_size(&self, font_id: FontId, font_size: Pixels) -> Pixels {
+        let size = f32::from(font_size);
+        if size <= 0. || !size.is_finite() {
+            return self.font_metrics(font_id).x_height(font_size);
+        }
+        let state = self.0.lock();
+        let height = match state.sized.get(&(font_id.0, size.to_bits())) {
+            Some(font) => font.x_height(),
+            None => state.uncached_font(font_id, size).x_height(),
+        };
+        px(height as f32)
     }
 
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
@@ -750,6 +767,41 @@ mod tests {
             assert_eq!(
                 definition_baseline(bounds, flipped, baseline, scale),
                 expected
+            );
+        }
+    }
+
+    #[test]
+    fn x_height_uses_the_requested_optical_size() {
+        let platform = std::sync::Arc::new(SkiaMatchedTextSystem::default());
+        let system = gpui::TextSystem::new(platform.clone());
+        for weight in [400., 430.] {
+            let font = system.resolve_font(&gpui::Font {
+                weight: gpui::FontWeight(weight),
+                ..gpui::font(".SystemUIFont")
+            });
+            for size in [12., 14., 64.] {
+                let actual = f32::from(system.x_height(font, px(size)));
+                let expected = platform.0.lock().font(font, size).x_height() as f32;
+                assert!(
+                    (actual - expected).abs() < 1e-5,
+                    "weight {weight}, size {size}: {actual} != {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn x_height_preserves_zero_and_nonphysical_sizes() {
+        let platform = std::sync::Arc::new(SkiaMatchedTextSystem::default());
+        let system = gpui::TextSystem::new(platform.clone());
+        let font = system.resolve_font(&gpui::font(".SystemUIFont"));
+        for size in [0., -12., f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+            let expected = f32::from(platform.font_metrics(font).x_height(px(size)));
+            let actual = f32::from(system.x_height(font, px(size)));
+            assert!(
+                actual == expected || (actual.is_nan() && expected.is_nan()),
+                "size {size}: {actual} != {expected}"
             );
         }
     }

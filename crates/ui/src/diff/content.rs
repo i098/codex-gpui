@@ -97,8 +97,18 @@ fn end(hunk: &Hunk) -> (u32, u32) {
     )
 }
 
+fn same_line(before: &str, after: &str, ignore_whitespace: bool) -> bool {
+    if !ignore_whitespace {
+        return before == after;
+    }
+    let visible = |byte: &u8| !matches!(*byte, b' ' | b'\t' | b'\r' | b'\n' | 0x0c | 0x0b);
+    before
+        .bytes()
+        .filter(visible)
+        .eq(after.bytes().filter(visible))
+}
 impl FullText {
-    pub(super) fn validate(&self, hunks: &[Hunk]) -> bool {
+    pub(super) fn validate(&self, hunks: &[Hunk], ignore_whitespace: bool) -> bool {
         for hunk in hunks {
             let (mut old, mut new) = (hunk.old_start, hunk.new_start);
             for line in &hunk.lines {
@@ -106,8 +116,9 @@ impl FullText {
                     if old
                         .checked_sub(1)
                         .and_then(|i| self.before.get(i as usize))
-                        .map(|s| line_text(s))
-                        != Some(line.text.as_ref())
+                        .is_none_or(|actual| {
+                            !same_line(line_text(actual), &line.text, ignore_whitespace)
+                        })
                     {
                         return false;
                     }
@@ -117,8 +128,9 @@ impl FullText {
                     if new
                         .checked_sub(1)
                         .and_then(|i| self.after.get(i as usize))
-                        .map(|s| line_text(s))
-                        != Some(line.text.as_ref())
+                        .is_none_or(|actual| {
+                            !same_line(line_text(actual), &line.text, ignore_whitespace)
+                        })
                     {
                         return false;
                     }
@@ -129,7 +141,13 @@ impl FullText {
         true
     }
 
-    fn context(&self, old: u32, new: u32, count: u32) -> Option<Vec<Line>> {
+    fn context(
+        &self,
+        old: u32,
+        new: u32,
+        count: u32,
+        ignore_whitespace: bool,
+    ) -> Option<Vec<Line>> {
         (0..count)
             .map(|offset| {
                 let before = self
@@ -138,7 +156,7 @@ impl FullText {
                 let after = self
                     .after
                     .get(new.checked_sub(1)? as usize + offset as usize)?;
-                if before != after {
+                if !same_line(before, after, ignore_whitespace) {
                     return None;
                 }
                 Some(Line {
@@ -148,14 +166,15 @@ impl FullText {
                     text: line_text(after).to_owned().into(),
                     matches: Vec::new(),
                     match_start: 0,
-                    word_change: None,
+                    word_changes: Vec::new(),
+                    syntax: Vec::new(),
                 })
             })
             .collect()
     }
 }
 
-fn label(count: u32) -> Option<SharedString> {
+pub(super) fn label(count: u32) -> Option<SharedString> {
     (count > 0).then(|| {
         format!(
             "{count} unmodified line{}",
@@ -196,6 +215,7 @@ pub(super) fn expand(
     full: &FullText,
     index: usize,
     direction: Expand,
+    ignore_whitespace: bool,
 ) -> Result<bool, FullError> {
     let Some(current) = hunks.get(index) else {
         return Ok(false);
@@ -236,7 +256,7 @@ pub(super) fn expand(
     ) {
         return Err(FullError::TooLarge);
     }
-    let Some(lines) = full.context(start_old, start_new, amount) else {
+    let Some(lines) = full.context(start_old, start_new, amount, ignore_whitespace) else {
         return Ok(false);
     };
     if append {
@@ -303,12 +323,19 @@ impl DiffPanel {
                 this.selection = None;
                 cx.notify();
             }));
-        header
+        let header = header
             .absolute()
             .top(offset)
             .left_0()
             .right_0()
-            .bg(t.surface)
+            .bg(t.surface);
+        if self.standalone {
+            return header.into_any_element();
+        }
+        // Sticky above the row gutters, which are deferred (priority 1) for their paint order.
+        deferred(header)
+            .with_priority(2)
+            .clipped()
             .into_any_element()
     }
 
@@ -346,14 +373,47 @@ impl DiffPanel {
     }
 
     pub fn set_preferences(&mut self, values: &serde_json::Map<String, serde_json::Value>) {
+        self.rich_preview = values
+            .get("diffRichPreview")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         self.full_files = values
             .get("load-full-files")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(true);
+        self.word_diffs = values
+            .get("wordDiffsEnabled.2")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true);
+        self.wrap = values
+            .get("wrapCodeDiff.2")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        self.hide_whitespace = values
+            .get("hideDiffWhitespace")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        self.hide_imports = values
+            .get("hideDiffImports")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        self.layout = match values
+            .get("editorDiffViewMode")
+            .and_then(serde_json::Value::as_str)
+        {
+            Some("split") => DiffLayout::Split,
+            Some("unified") => DiffLayout::Unified,
+            _ => DiffLayout::Auto,
+        };
     }
 
     fn request_full_file(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.pending {
+        if self.pending
+            || self
+                .files
+                .get(index)
+                .is_some_and(|file| preview::enabled(&file.name, self.rich_preview))
+        {
             return;
         }
         let Some(path) = self.file_path(index) else {
@@ -389,6 +449,10 @@ impl DiffPanel {
                 .raw
                 .lines()
                 .any(|line| line == "+++ /dev/null" || line.starts_with("deleted file mode "));
+        if before && before_oid.is_none() {
+            file.full_error = Some(FullError::Unavailable);
+            return;
+        }
         let mut requests = Vec::new();
         let before = before.then(|| {
             requests.push(BlobRequest {
@@ -423,7 +487,11 @@ impl DiffPanel {
         if !self.full_files || self.files.is_empty() {
             return;
         }
-        let (first, last) = (self.scroll.top_item(), self.scroll.bottom_item());
+        let (first, last) = if self.capped() {
+            (self.active_file, self.active_file)
+        } else {
+            (self.scroll.top_item(), self.scroll.bottom_item())
+        };
         for index in first..=last.min(self.files.len() - 1) {
             if self.files[index].open {
                 self.request_full_file(index, cx);
@@ -446,7 +514,12 @@ impl DiffPanel {
         file.full_loading = false;
         let pending = file.pending_expansion.take();
         match result {
-            Ok(full) if full.validate(file.original_hunks.as_deref().unwrap_or(&file.hunks)) => {
+            Ok(full)
+                if full.validate(
+                    file.original_hunks.as_deref().unwrap_or(&file.hunks),
+                    self.hide_whitespace,
+                ) =>
+            {
                 if self.full_files || pending.is_some() {
                     if file.original_hunks.is_none() {
                         file.original_hunks = Some(file.hunks.clone());
@@ -466,7 +539,29 @@ impl DiffPanel {
         } else {
             file.pending_expansion = pending;
         }
-        self.search_changed();
+        self.refresh_filtered_view();
+        cx.notify();
+    }
+    pub(super) fn toggle_full_files(&mut self, cx: &mut Context<Self>) {
+        self.full_files = !self.full_files;
+        for file in &mut self.files {
+            if !self.full_files {
+                if let Some(hunks) = file.original_hunks.take() {
+                    file.hunks = hunks;
+                }
+            } else if let Some(full) = &file.full {
+                if file.original_hunks.is_none() {
+                    file.original_hunks = Some(file.hunks.clone());
+                }
+                append_trailing_gap(&mut file.hunks, full);
+            }
+        }
+        self.refresh_filtered_view();
+        self.request_visible_full_files(cx);
+        cx.emit(DiffRequest::Preference(
+            "host.load-full-files",
+            self.full_files.into(),
+        ));
         cx.notify();
     }
     pub(super) fn expand_context(
@@ -484,16 +579,23 @@ impl DiffPanel {
                 return;
             };
             let original = entry.hunks[hunk].layout.borrow().first_line;
-            match expand(&mut entry.hunks, full, hunk, direction) {
+            match expand(
+                &mut entry.hunks,
+                full,
+                hunk,
+                direction,
+                self.hide_whitespace,
+            ) {
                 Ok(true) => {
                     let expanded = &entry.hunks[hunk];
                     if let Some(original) = original {
                         expanded.layout.borrow_mut().anchor =
                             Some(((start - expanded.new_start) as usize, original));
                     }
+                    syntax::apply(&entry.name, &mut entry.hunks);
                     entry.full_error = None;
                     self.selection = None;
-                    self.search_changed();
+                    self.refresh_filtered_view();
                 }
                 Ok(false) => {}
                 Err(error) => entry.full_error = Some(error),
@@ -588,7 +690,7 @@ impl DiffPanel {
             .font_weight(FontWeight(430.))
             .line_height(px(CODE_LINE))
             .text_color(foreground)
-            .child(
+            .child(if entry.line_info_separators {
                 div()
                     .relative()
                     .w_full()
@@ -686,8 +788,28 @@ impl DiffPanel {
                                     .focus(|d| d.opacity(1.))
                                     .child("Expand all"),
                             ),
-                    ),
-            )
+                    )
+            } else {
+                div()
+                    .relative()
+                    .w_full()
+                    .h_full()
+                    .overflow_hidden()
+                    .flex()
+                    .items_center()
+                    .px(px(7.6242))
+                    .child(shapes::decoration(Decoration {
+                        fill: Some(background.into()),
+                        radius: gpui::Corners {
+                            top_left: px(6.),
+                            bottom_left: px(6.),
+                            top_right: px(8.),
+                            bottom_right: px(8.),
+                        },
+                        ..Default::default()
+                    }))
+                    .child(label)
+            })
             .into_any_element()
     }
 
@@ -745,16 +867,16 @@ mod context_tests {
         after[39] = "changed 40\n".into();
         let full = FullText { before, after };
         let mut hunks = parse("@@ -40 +40 @@\n-line 40\n+changed 40\n", None).unwrap();
-        assert!(full.validate(&hunks));
-        assert!(expand(&mut hunks, &full, 0, Expand::Before).unwrap());
+        assert!(full.validate(&hunks, false));
+        assert!(expand(&mut hunks, &full, 0, Expand::Before, false).unwrap());
         assert_eq!(hunks[0].new_start, 20);
         assert_eq!(hunks[0].lines.last().unwrap().number, 40);
         assert_eq!(hunks[0].separator.as_deref(), Some("19 unmodified lines"));
-        assert!(expand(&mut hunks, &full, 0, Expand::All).unwrap());
+        assert!(expand(&mut hunks, &full, 0, Expand::All, false).unwrap());
         assert_eq!(hunks[0].new_start, 1);
         assert!(hunks[0].separator.is_none());
         append_trailing_gap(&mut hunks, &full);
-        assert!(expand(&mut hunks, &full, 1, Expand::All).unwrap());
+        assert!(expand(&mut hunks, &full, 1, Expand::All, false).unwrap());
         assert_eq!(hunks[1].lines.last().unwrap().number, 60);
     }
 
@@ -765,8 +887,8 @@ mod context_tests {
             before: vec!["line\n".into(), "other\n".into()],
             after: vec!["changed\n".into(), "after\n".into()],
         };
-        assert!(!full.validate(&hunks));
-        assert!(!expand(&mut hunks, &full, 0, Expand::All).unwrap());
+        assert!(!full.validate(&hunks, false));
+        assert!(!expand(&mut hunks, &full, 0, Expand::All, false).unwrap());
     }
 
     #[test]
@@ -783,11 +905,11 @@ mod context_tests {
             };
             let full = FullText { before, after };
             let mut hunks = parse(patch, None).unwrap();
-            assert!(full.validate(&hunks));
+            assert!(full.validate(&hunks, false));
             append_trailing_gap(&mut hunks, &full);
-            assert!(expand(&mut hunks, &full, 0, Expand::All).unwrap());
+            assert!(expand(&mut hunks, &full, 0, Expand::All, false).unwrap());
             let last = hunks.len() - 1;
-            assert!(expand(&mut hunks, &full, last, Expand::All).unwrap());
+            assert!(expand(&mut hunks, &full, last, Expand::All, false).unwrap());
             for (excluded, expected) in [(Kind::Added, &full.before), (Kind::Removed, &full.after)]
             {
                 let actual: Vec<_> = hunks
@@ -816,12 +938,12 @@ mod context_tests {
         let mut hunks = parse("@@ -40 +40 @@\n-line 40\n+changed 40\n", None).unwrap();
         append_trailing_gap(&mut hunks, &full);
         assert_eq!(
-            expand(&mut hunks, &full, 1, Expand::All),
+            expand(&mut hunks, &full, 1, Expand::All, false),
             Err(FullError::TooLarge)
         );
         assert!(hunks[1].lines.is_empty());
         assert_eq!(hunks[0].lines[1].text.as_ref(), "changed 40");
-        assert!(expand(&mut hunks, &full, 1, Expand::After).unwrap());
+        assert!(expand(&mut hunks, &full, 1, Expand::After, false).unwrap());
         assert_eq!(hunks[0].lines.last().unwrap().number, 60);
     }
 
@@ -921,5 +1043,34 @@ mod tests {
             })
             .collect();
         assert_eq!(request.decode(replies).err(), Some(FullError::Failed));
+    }
+
+    #[test]
+    fn ignored_whitespace_does_not_hide_stale_context() {
+        let mut hunks = parse("@@ -2 +2 @@\n-old\n+new\n", None).unwrap();
+        let mut full = FullText {
+            before: vec!["let n = 1;\n".into(), "old\n".into()],
+            after: vec!["let n=1;\n".into(), "new\n".into()],
+        };
+        assert!(!expand(&mut hunks, &full, 0, Expand::All, false).unwrap());
+        assert!(expand(&mut hunks, &full, 0, Expand::All, true).unwrap());
+        assert!(full.validate(&hunks, true));
+        assert!(!full.validate(&hunks, false));
+        full.before[0] = "different();\n".into();
+        assert!(!full.validate(&hunks, true));
+    }
+
+    #[gpui::test]
+    fn headerless_turn_preserves_partial_metadata(cx: &mut gpui::TestAppContext) {
+        let panel = cx.new(|_| DiffPanel::subtract());
+        panel.update(cx, |panel, cx| {
+            panel.request_full_file(0, cx);
+            assert_eq!(panel.files[0].full_error, Some(FullError::Unavailable));
+            assert!(!panel.files[0].line_info_separators);
+            assert_eq!(
+                panel.files[0].hunks[0].separator.as_deref(),
+                Some("1 unmodified line")
+            );
+        });
     }
 }

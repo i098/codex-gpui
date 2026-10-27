@@ -40,6 +40,7 @@ impl Root {
     }
 
     pub(crate) fn invalidate_settings_integrations(&mut self, cx: &mut Context<Self>) {
+        self.security_access_task = None;
         self.settings_integration_task = None;
         self.settings_integrations.update(cx, |state, cx| {
             *state = State {
@@ -155,6 +156,16 @@ impl Root {
         snapshot: Option<Snapshot>,
         cx: &mut Context<Self>,
     ) {
+        let removed_name =
+            match &action {
+                Action::RemoveServer(key) => {
+                    self.settings_integrations.read(cx).configuration["config"]["mcp_servers"][key]
+                        ["name"]
+                        .as_str()
+                        .map(str::to_owned)
+                }
+                _ => None,
+            };
         if let Some(snapshot) = snapshot {
             if let Ok(configuration) = &snapshot.configuration {
                 self.config = configuration["config"].clone();
@@ -167,6 +178,7 @@ impl Root {
             let notice = match result {
                 Ok(url) => {
                     integration_succeeded(state, &action, url, cx);
+                    state.suppressed_servers.extend(removed_name);
                     None
                 }
                 Err(error) => integration_failed(state, &action, error),
@@ -192,6 +204,7 @@ impl Root {
             return;
         };
         if method == "account/updated" {
+            self.security_access_task = None;
             let active = self.settings_integrations.read(cx).dispatch.is_some();
             self.host.invalidate_identity();
             self.settings_integrations.update(cx, |state, cx| {
@@ -914,7 +927,7 @@ async fn write(bridge: &Bridge, expected_version: Option<&str>, edits: Vec<Value
     Ok(())
 }
 
-fn authorization_url(response: &Value) -> Result<&str> {
+pub(crate) fn authorization_url(response: &Value) -> Result<&str> {
     let url = response["authorizationUrl"]
         .as_str()
         .context("MCP OAuth login returned an empty authorization URL")?;

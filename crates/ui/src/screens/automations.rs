@@ -87,6 +87,13 @@ pub struct RunAutomationNow {
     pub id: String,
 }
 
+/// Copies the selected task's link through the app's clipboard handler.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct ShareAutomation {
+    pub id: String,
+}
+
 /// One `list-automations` item, as the sidebar `Upcoming` list and the task thread show it.
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -485,7 +492,8 @@ pub struct ScheduledSidebar {
     pending: HashSet<String>,
     /// Tasks whose run is starting: their row reads `Starting run…` and `Run now` is off.
     starting: HashSet<String>,
-    /// The keyboard-active menu item (`0` Run now, `1` Pause or Resume) once an arrow key moved it.
+    /// The keyboard-active menu item (`0` Pause or Resume, `1` Run now, `2` Edit, `3` Share,
+    /// `4` Delete; the original lists the status item first) once an arrow key moved it.
     menu_item: Option<usize>,
     /// The row whose `Scheduled task actions` menu is open.
     menu: Option<String>,
@@ -586,17 +594,25 @@ impl ScheduledSidebar {
         window.dispatch_action(Box::new(ToggleAutomation { id: id.to_owned() }), cx);
     }
 
+    fn share(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_menu(window, cx);
+        window.dispatch_action(Box::new(ShareAutomation { id: id.to_owned() }), cx);
+    }
+
     fn menu_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        const MENU_ITEMS: usize = 5;
         match event.keystroke.key.as_str() {
             "escape" => self.close_menu(window, cx),
             "enter" | "space" => {
                 if let Some(id) = self.menu.clone() {
-                    if self.menu_item == Some(0) {
+                    if self.menu_item == Some(1) {
                         self.run_now(&id, window, cx);
                     } else if self.menu_item == Some(2) {
                         self.close_menu(window, cx);
                         window.dispatch_action(Box::new(EditAutomation { id }), cx);
                     } else if self.menu_item == Some(3) {
+                        self.share(&id, window, cx);
+                    } else if self.menu_item == Some(4) {
                         self.delete(&id, window, cx);
                     } else {
                         self.toggle(&id, window, cx);
@@ -604,12 +620,11 @@ impl ScheduledSidebar {
                 }
             }
             "up" | "down" | "home" | "end" => {
-                const ITEMS: usize = 4;
                 let next = match (event.keystroke.key.as_str(), self.menu_item) {
                     ("home", _) | ("down", None) => 0,
-                    ("end", _) | ("up", None) => ITEMS - 1,
-                    ("down", Some(i)) => (i + 1) % ITEMS,
-                    (_, Some(i)) => (i + ITEMS - 1) % ITEMS,
+                    ("end", _) | ("up", None) => MENU_ITEMS - 1,
+                    ("down", Some(i)) => (i + 1) % MENU_ITEMS,
+                    (_, Some(i)) => (i + MENU_ITEMS - 1) % MENU_ITEMS,
                     (_, None) => 0,
                 };
                 self.menu_item = Some(next);
@@ -639,7 +654,7 @@ impl ScheduledSidebar {
             .rounded(px(15.))
             .flex()
             .items_center()
-            .when(self.menu_item == Some(0) && !off, |d| d.bg(hover))
+            .when(self.menu_item == Some(1) && !off, |d| d.bg(hover))
             .when(off, |d| d.opacity(0.4))
             .when(!off, |d| {
                 d.hover(move |s| s.bg(hover)).on_click(
@@ -665,7 +680,7 @@ impl ScheduledSidebar {
             .flex()
             .items_center()
             .gap(px(6.))
-            .when(self.menu_item == Some(1), |d| d.bg(hover))
+            .when(self.menu_item == Some(0), |d| d.bg(hover))
             .hover(move |s| s.bg(hover))
             .on_click(cx.listener(move |this, _, window, cx| this.toggle(&id, window, cx)))
             .child(
@@ -702,6 +717,33 @@ impl ScheduledSidebar {
                     cx,
                 );
             }));
+        let share_id = task.id.clone();
+        let share = div()
+            .id("share")
+            .group("share-item")
+            .role(Role::MenuItem)
+            .aria_label("Share")
+            .h(px(28.5625))
+            .px(px(8.))
+            .rounded(px(15.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .when(self.menu_item == Some(3), |d| d.bg(hover))
+            .hover(move |s| s.bg(hover))
+            .on_click(cx.listener(move |this, _, window, cx| this.share(&share_id, window, cx)))
+            .child(
+                div()
+                    .size(px(16.))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .opacity(0.75)
+                    .group_hover("share-item", |s| s.opacity(1.))
+                    .child(icon("automation-share", 20., t.text)),
+            )
+            .child(text("Share", 13., 18.5714, 430., t.text));
         let delete_id = task.id.clone();
         let danger = t.text_error;
         let delete = div()
@@ -715,7 +757,7 @@ impl ScheduledSidebar {
             .flex()
             .items_center()
             .gap(px(6.))
-            .when(self.menu_item == Some(2), |d| d.bg(hover))
+            .when(self.menu_item == Some(4), |d| d.bg(hover))
             .hover(move |s| s.bg(hover))
             .on_click(cx.listener(move |this, _, window, cx| this.delete(&delete_id, window, cx)))
             .child(
@@ -757,7 +799,11 @@ impl ScheduledSidebar {
                 }
             }))
             .child(crate::composer::popover(t, 220., |menu| {
-                menu.child(run).child(item).child(edit).child(delete)
+                menu.child(item)
+                    .child(run)
+                    .child(edit)
+                    .child(share)
+                    .child(delete)
             }));
         deferred(
             div().absolute().top(px(30.)).right(px(1.)).child(

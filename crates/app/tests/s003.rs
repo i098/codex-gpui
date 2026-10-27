@@ -513,7 +513,9 @@ fn project_load_failure_retries_the_owned_state_file() -> Result<()> {
     let mut fx = Fx::new()?;
     fx.root.update(&mut fx.cx, |r, cx| {
         r.set_host(
-            std::sync::Arc::new(app::host::LocalHost::new(profile.path())),
+            std::sync::Arc::new(common::ActivityFixtureHost(app::host::LocalHost::new(
+                profile.path(),
+            ))),
             cx,
         );
     });
@@ -572,7 +574,19 @@ fn activity_opens_running_chats_and_shortcut_restores_the_sidebar() -> Result<()
             fx.resize(size.0, size.1)?;
             fx.hover((size.0 * 0.6, 6.))?;
             assert!(fx.read(|r, cx| r.sidebar().read(cx).activity_clock.is_some()));
-            sidebar_shot(&mut fx, "activity-empty")?;
+            for (state, name) in [
+                (ui::screens::sidebar::ListState::Loading, "activity-loading"),
+                (ui::screens::sidebar::ListState::Failed, "activity-error"),
+                (ui::screens::sidebar::ListState::Ready, "activity-empty"),
+            ] {
+                fx.root.update(&mut fx.cx, |root, cx| {
+                    root.sidebar().update(cx, |sidebar, cx| {
+                        sidebar.activity_sources_state = state;
+                        cx.notify();
+                    });
+                });
+                sidebar_shot(&mut fx, name)?;
+            }
             assert_eq!(
                 fx.shot()?.get_pixel(548, 112).0,
                 if theme == "dark" {
@@ -584,6 +598,24 @@ fn activity_opens_running_chats_and_shortcut_restores_the_sidebar() -> Result<()
             );
             fx.hover((150., 300.))?;
             sidebar_shot(&mut fx, "activity-hover")?;
+            fx.click((314., 184.))?;
+            sidebar_shot(&mut fx, "activity-options")?;
+            fx.keys("enter")?;
+            sidebar_shot(&mut fx, "activity-all")?;
+            fx.right_click((150., 214.))?;
+            sidebar_shot(&mut fx, "activity-row-menu")?;
+            fx.keys("escape")?;
+            fx.click((314., 184.))?;
+            fx.keys("down enter")?;
+            fx.click((314., 184.))?;
+            fx.keys("down down enter")?;
+            fx.click((314., 184.))?;
+            sidebar_shot(&mut fx, "activity-options-unchecked")?;
+            fx.keys("down down enter")?;
+            fx.click((314., 184.))?;
+            fx.keys("down enter")?;
+            fx.click((314., 184.))?;
+            fx.keys("enter")?;
         }
     }
     fx.action(Box::new(ui::SetTheme("dark")))?;

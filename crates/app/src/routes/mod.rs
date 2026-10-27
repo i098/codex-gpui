@@ -23,16 +23,23 @@ pub enum Route {
     },
     Settings,
     SettingsSubtree(String),
+    CloudEnvironments(String),
+    CloudSetup {
+        config_id: String,
+        repositories: Vec<Value>,
+    },
     /// Rail `Scheduled` (`/scheduled`): the Automations page.
     Scheduled,
     /// A sidebar task row (`/scheduled?automationId=<id>`): the task's thread.
     Automation(String),
     /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
     Mobile,
+    Security,
     Plugins(String),
     Archive,
     PullRequests(Option<ui::screens::pull_requests::model::Identity>),
     SelectWorkspace,
+    Onboarding(ui::screens::onboarding::Page),
 }
 
 pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
@@ -41,6 +48,7 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = settings::actions(root, cx);
     root = automations::actions(root, cx);
     root = mobile::actions(root, cx);
+    root = crate::security::actions(root, cx);
     root = plugins::actions(root, cx);
     root = archive::actions(root, cx);
     root = crate::pull_requests::actions(root, cx);
@@ -68,6 +76,7 @@ impl Root {
                 );
                 return;
             }
+            ui::composer::dictation::Dispatcher::cancel(window.window_handle().window_id(), cx);
             self.remember_thread_settings(cx);
             self.back.push((
                 std::mem::replace(&mut self.state.route, route),
@@ -103,6 +112,7 @@ impl Root {
             (&mut self.forward, &mut self.back)
         };
         if let Some((route, automation)) = from.pop() {
+            ui::composer::dictation::Dispatcher::cancel(window.window_handle().window_id(), cx);
             to.push((
                 std::mem::replace(&mut self.state.route, route),
                 std::mem::replace(&mut self.sidebar_automation, automation),
@@ -124,6 +134,7 @@ impl Root {
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     pub(crate) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::connections::sync(cx);
         let home = matches!(self.state.route, Route::Home);
         if cx.has_global::<ui::screens::settings::keyboard_shortcuts::KeyboardState>() {
             cx.update_global::<ui::screens::settings::keyboard_shortcuts::KeyboardState, _>(
@@ -133,20 +144,45 @@ impl Root {
         self.sync_native_menus(window, cx);
         self.remember_recent_chat();
         self.flush_settings(cx);
+        self.sync_diff_watch(cx);
+        ui::screens::settings::imports::deactivate(cx);
+        if self.ready
+            && matches!(
+                self.state.route,
+                Route::Settings | Route::SettingsSubtree(_)
+            )
+            && cx
+                .try_global::<ui::screens::settings::imports::ImportState>()
+                .is_some_and(|state| state.policy_request == 0)
+        {
+            self.load_import_policy(cx);
+        }
         self.settings_page = None;
         self.suggestion_load = None;
         self.oauth.leave_page();
         let (can_back, can_forward) = (!self.back.is_empty(), !self.forward.is_empty());
         self.archive_page = None;
+        self.archived_settings = None;
         self.mobile_page = None;
         self.cloud = None;
         self.plugins_page = None;
+        self.onboarding_page = None;
+        self.cloud_modal = None;
         self.page = match self.state.route.clone() {
             Route::Remote { task_id, hotkey } => {
                 self.load_cloud_task(task_id, hotkey, window, cx);
                 None
             }
-            Route::Settings | Route::SettingsSubtree(_) => Some(settings::page(self, window, cx)),
+            Route::CloudSetup {
+                config_id,
+                repositories,
+            } => {
+                self.load_cloud_environment(config_id, repositories, window, cx);
+                None
+            }
+            Route::Settings | Route::SettingsSubtree(_) | Route::CloudEnvironments(_) => {
+                Some(settings::page(self, window, cx))
+            }
             Route::Scheduled => Some(automations::scheduled(self, cx)),
             Route::Automation(id) => Some(automations::automation(self, id, window, cx)),
             Route::Archive => Some(archive::page(self, cx)),
@@ -155,7 +191,12 @@ impl Root {
             }
             Route::Mobile => Some(mobile::page(self, cx)),
             Route::PullRequests(selected) => Some(self.pull_requests_shell(selected, window, cx)),
+            Route::Security => Some(crate::security::shell(self, window, cx)),
             Route::Plugins(path) => Some(self.plugins_shell(path, window, cx)),
+            Route::Onboarding(page) => {
+                self.open_onboarding(page, window, cx);
+                None
+            }
             Route::Home | Route::Thread(_) | Route::SelectWorkspace => None,
         };
         if let Some(sidebar) = &self.scheduled {
@@ -167,10 +208,12 @@ impl Root {
             self.load_suggestions(cx);
         }
         if let Some(page) = &self.page {
-            page.update(cx, |shell, _| {
+            page.update(cx, |shell, cx| {
                 shell.can_go_back = can_back;
                 shell.can_go_forward = can_forward;
                 shell.unread_destinations = self.unread_destinations.clone();
+                let access = self.security_access.read(cx);
+                shell.security_available = access.gate_enabled && access.plugin_available;
             });
         }
         let thread_id = match &self.state.route {
@@ -201,7 +244,7 @@ impl Root {
         };
         let home = matches!(
             self.state.route,
-            Route::Home | Route::Thread(_) | Route::Remote { .. }
+            Route::Home | Route::Thread(_) | Route::Remote { .. } | Route::CloudSetup { .. }
         );
         shell.update(cx, |shell, cx| {
             shell.selected_rail = if self.sidebar_automation.is_some() {
@@ -229,7 +272,7 @@ impl Root {
         {
             self.list_queue(id, cx);
         }
-        self.sync_terminal_panel(cx);
+        self.sync_terminal(cx);
         self.save(window, cx);
         cx.notify();
     }
@@ -240,7 +283,7 @@ impl Root {
         let open = |id: &str| self.thread.as_ref().is_some_and(|v| v.read(cx).id() == id);
         match &self.state.route {
             _ if self.login.is_some() => self.focus.clone(),
-            Route::Remote { .. } => self
+            Route::Remote { .. } | Route::CloudSetup { .. } => self
                 .cloud
                 .as_ref()
                 .map(|session| {
@@ -261,6 +304,7 @@ impl Root {
                     self.thread_composer.focus_handle(cx)
                 }
             }
+            Route::Onboarding(_) => self.focus.clone(),
             _ if self.page.is_some() => self.focus.clone(),
             Route::Thread(_) => self.focus.clone(),
             _ => self.home.read(cx).composer.focus_handle(cx),

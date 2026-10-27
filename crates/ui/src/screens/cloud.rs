@@ -1,0 +1,2850 @@
+mod current;
+pub mod model;
+
+use crate::{
+    composer::{Composer, SettingsFieldSubmit, popover},
+    focus, text,
+};
+use gpui::{
+    AnyElement, App, AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
+};
+use model::{Draft, Environment, EnvironmentName, RUNTIMES, Secret, UNIVERSAL};
+use serde_json::{Value, json};
+use std::{cell::RefCell, collections::BTreeMap};
+use theme::{ActiveTheme as _, Theme};
+
+#[derive(Clone, Copy, Default)]
+pub struct Access {
+    pub cloud: bool,
+    pub legacy: bool,
+    pub workspace: bool,
+    pub manage_workspace: bool,
+    pub domain_secrets: bool,
+    pub network_allowed: bool,
+}
+
+#[derive(Clone)]
+pub enum Operation {
+    Access,
+    List {
+        query: String,
+        cursor: Option<String>,
+    },
+    Detail(String),
+    Machines,
+    Names,
+    Connections,
+    Repositories {
+        query: String,
+        page: u32,
+        connector: Option<String>,
+        link: Option<String>,
+    },
+    Save {
+        original: Option<String>,
+        body: Value,
+    },
+    Delete(String),
+    Reset(String),
+    Configs,
+    Vault,
+    Config(String),
+    ConfigSetup(String),
+    ConfigSave {
+        id: String,
+        config: Value,
+        changes: Value,
+        metadata: Value,
+    },
+    ConfigDelete(String),
+    ConfigCreate {
+        body: Value,
+        repositories: Vec<Value>,
+    },
+}
+
+#[derive(Clone)]
+pub struct Request {
+    pub serial: u64,
+    pub operation: Operation,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum View {
+    List,
+    Detail,
+    Editor,
+}
+#[derive(Clone, PartialEq)]
+enum Menu {
+    Connection,
+    Machine,
+    Sharing,
+    Network,
+    Runtime(usize),
+}
+
+struct Editor {
+    draft: Draft,
+    original: Option<Environment>,
+    fields: BTreeMap<String, Entity<Composer>>,
+    initial: Draft,
+}
+
+#[derive(Clone, Copy)]
+enum RepositoryStage {
+    Connections,
+    Repositories,
+}
+
+fn connection_ready(connection: &Value) -> bool {
+    connection["status"] != "DISABLED_BY_ADMIN"
+        && connection["loadFailed"] != true
+        && connection["link"].is_object()
+        && connection["link"]["auth_status"] != "REAUTH_REQUIRED"
+        && connection["link"]["unavailable_reason"].is_null()
+}
+
+pub struct CloudPage {
+    access: Access,
+    pub access_loaded: bool,
+    view: View,
+    serial: u64,
+    pub pending: bool,
+    error: Option<String>,
+    retry: Option<Operation>,
+    environments: Vec<Environment>,
+    cursor: Option<String>,
+    selected: Option<Environment>,
+    machines: Vec<Value>,
+    machine_error: bool,
+    names_serial: u64,
+    names: Option<Vec<EnvironmentName>>,
+    names_error: bool,
+    repositories: Vec<Value>,
+    repository_search: Entity<Composer>,
+    repository_query: String,
+    repository_page: u32,
+    repository_more: bool,
+    connections: Vec<Value>,
+    connection: Option<usize>,
+    repository_serial: u64,
+    repository_pending: bool,
+    repository_stage: RepositoryStage,
+    repository_error: bool,
+    query: Entity<Composer>,
+    editor: Option<Editor>,
+    menu: Option<Menu>,
+    packages: bool,
+    repository_picker: bool,
+    confirm: Option<&'static str>,
+    expanded_workspace: bool,
+    discard_to_list: bool,
+    button_focus: RefCell<BTreeMap<SharedString, FocusHandle>>,
+    modal_focus: RefCell<Option<Vec<FocusHandle>>>,
+    current: current::Current,
+    current_mode: Option<bool>,
+    route_pending: Option<String>,
+    edit_requested: bool,
+    unavailable: bool,
+}
+
+impl EventEmitter<Request> for CloudPage {}
+
+impl CloudPage {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        let query = cx.new(|cx| Composer::settings_search("Search environments", cx));
+        cx.observe(&query, |_, _, cx| cx.notify()).detach();
+        let repository_search = cx.new(|cx| Composer::settings_search("Search repositories", cx));
+        cx.observe(&repository_search, |page, field, cx| {
+            let query = field.read(cx).field_text().trim().to_owned();
+            if page.repository_query != query {
+                page.load_repositories(query, cx);
+            }
+        })
+        .detach();
+        Self {
+            access: Access::default(),
+            access_loaded: false,
+            view: View::List,
+            serial: 0,
+            pending: false,
+            error: None,
+            retry: None,
+            environments: Vec::new(),
+            cursor: None,
+            selected: None,
+            machines: Vec::new(),
+            machine_error: false,
+            names_serial: 0,
+            names: None,
+            names_error: false,
+            repositories: Vec::new(),
+            repository_search,
+            repository_query: String::new(),
+            repository_page: 0,
+            repository_more: false,
+            connections: Vec::new(),
+            connection: None,
+            repository_serial: 0,
+            repository_pending: false,
+            repository_stage: RepositoryStage::Connections,
+            repository_error: false,
+            query,
+            editor: None,
+            menu: None,
+            packages: false,
+            repository_picker: false,
+            confirm: None,
+            expanded_workspace: false,
+            discard_to_list: false,
+            button_focus: RefCell::new(BTreeMap::new()),
+            modal_focus: RefCell::new(None),
+            current: current::Current::default(),
+            current_mode: None,
+            route_pending: None,
+            edit_requested: false,
+            unavailable: false,
+        }
+    }
+
+    pub fn access(&self) -> Access {
+        self.access
+    }
+
+    pub fn load_access(&mut self, cx: &mut Context<Self>) {
+        if !self.access_loaded && !self.pending {
+            self.load(Operation::Access, cx);
+        }
+    }
+
+    fn has_modal(&self) -> bool {
+        self.unavailable || self.confirm.is_some() || self.packages || self.repository_picker
+    }
+
+    fn dismiss_modal(&mut self, cx: &mut Context<Self>) {
+        if self.pending && self.retry.is_none() {
+            return;
+        }
+        if self.menu.take().is_none() {
+            if self.confirm.take().is_some() {
+                self.discard_to_list = false;
+            } else {
+                self.unavailable = false;
+                self.packages = false;
+                self.repository_picker = false;
+                self.current.creating = false;
+            }
+        }
+        cx.notify();
+    }
+
+    fn open_repositories(&mut self, cx: &mut Context<Self>) {
+        self.repository_picker = true;
+        self.current.repositories.clear();
+        self.repositories.clear();
+        self.connections.clear();
+        self.connection = None;
+        self.repository_search
+            .update(cx, |field, cx| field.set_text("", cx));
+        self.load(Operation::Connections, cx);
+    }
+
+    fn load_repositories(&mut self, query: String, cx: &mut Context<Self>) {
+        self.repositories.clear();
+        self.repository_query = query;
+        self.repository_page = 0;
+        self.repository_more = false;
+        self.load_repository_page(1, cx);
+    }
+
+    fn load_repository_page(&mut self, page: u32, cx: &mut Context<Self>) {
+        let Some(connection) = self
+            .connection
+            .and_then(|index| self.connections.get(index))
+        else {
+            return;
+        };
+        if !connection_ready(connection) {
+            return;
+        }
+        let Some(connector) = connection["id"].as_str() else {
+            return;
+        };
+        self.load(
+            Operation::Repositories {
+                query: self.repository_query.clone(),
+                page,
+                connector: Some(connector.into()),
+                link: connection["linkId"].as_str().map(str::to_owned),
+            },
+            cx,
+        );
+    }
+
+    pub fn load(&mut self, operation: Operation, cx: &mut Context<Self>) {
+        if matches!(
+            operation,
+            Operation::Connections | Operation::Repositories { .. }
+        ) {
+            self.repository_serial += 1;
+            self.repository_pending = true;
+            self.repository_error = false;
+            self.repository_stage = if matches!(operation, Operation::Connections) {
+                RepositoryStage::Connections
+            } else {
+                RepositoryStage::Repositories
+            };
+            cx.emit(Request {
+                serial: self.repository_serial,
+                operation,
+            });
+            cx.notify();
+            return;
+        }
+        if matches!(operation, Operation::Names) {
+            self.names_serial += 1;
+            self.names_error = false;
+            cx.emit(Request {
+                serial: self.names_serial,
+                operation,
+            });
+            cx.notify();
+            return;
+        }
+        if matches!(operation, Operation::Machines) {
+            self.machine_error = false;
+        }
+        self.serial += 1;
+        self.pending = true;
+        self.error = None;
+        self.retry = matches!(
+            operation,
+            Operation::Access
+                | Operation::List { .. }
+                | Operation::Detail(_)
+                | Operation::Machines
+                | Operation::Configs
+                | Operation::Vault
+                | Operation::Config(_)
+        )
+        .then(|| operation.clone());
+        cx.emit(Request {
+            serial: self.serial,
+            operation,
+        });
+        cx.notify();
+    }
+
+    pub fn set_access(&mut self, access: Result<Access, String>, cx: &mut Context<Self>) {
+        self.access_loaded = true;
+        self.pending = false;
+        match access {
+            Ok(access) => self.access = access,
+            Err(error) => {
+                self.access = Access::default();
+                self.error = Some(error);
+            }
+        }
+        if let Some(path) = self.route_pending.take() {
+            self.open_path(&path, cx);
+        } else if self.current_mode.is_some() {
+            self.refresh(cx);
+        }
+        cx.notify();
+    }
+
+    pub fn apply(
+        &mut self,
+        request: &Request,
+        result: Result<Value, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(
+            request.operation,
+            Operation::Connections | Operation::Repositories { .. }
+        ) {
+            if request.serial != self.repository_serial {
+                return;
+            }
+            self.repository_pending = false;
+            if result
+                .and_then(|body| self.receive(&request.operation, body, cx))
+                .is_err()
+            {
+                self.repository_error = true;
+            }
+            cx.notify();
+            return;
+        }
+        if matches!(request.operation, Operation::Names) {
+            if request.serial != self.names_serial {
+                return;
+            }
+            self.names_error = result
+                .and_then(|body| self.receive(&request.operation, body, cx))
+                .is_err();
+            cx.notify();
+            return;
+        }
+        if request.serial != self.serial {
+            return;
+        }
+        self.pending = false;
+        match result.and_then(|body| self.receive(&request.operation, body, cx)) {
+            Ok(()) => {}
+            Err(_) if matches!(request.operation, Operation::Machines) => self.machine_error = true,
+            Err(error) => self.error = Some(error),
+        }
+        cx.notify();
+    }
+
+    fn receive(
+        &mut self,
+        operation: &Operation,
+        body: Value,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        match operation {
+            Operation::Configs
+            | Operation::Vault
+            | Operation::Config(_)
+            | Operation::ConfigSetup(_)
+            | Operation::ConfigSave { .. }
+            | Operation::ConfigDelete(_)
+            | Operation::ConfigCreate { .. } => return self.receive_current(operation, body, cx),
+            Operation::List { cursor, .. } => {
+                return self.receive_environment_list(cursor.as_deref(), body);
+            }
+            Operation::Detail(_) => {
+                self.selected = Some(
+                    serde_json::from_value(body)
+                        .map_err(|_| "Unable to load this cloud environment")?,
+                );
+                self.view = View::Detail;
+                if std::mem::take(&mut self.edit_requested) {
+                    self.edit(self.selected.clone(), cx);
+                }
+            }
+            Operation::Machines => {
+                self.machines = body
+                    .as_array()
+                    .ok_or("Unable to load container images")?
+                    .clone();
+                self.machines.retain(|m| m["id"] != UNIVERSAL);
+                self.machines
+                    .push(json!({"id":UNIVERSAL,"label":"Universal"}));
+            }
+            Operation::Names => {
+                self.names = Some(
+                    serde_json::from_value(body).map_err(|_| "Unable to load environment names")?,
+                );
+            }
+            Operation::Connections => {
+                return self.receive_connections(body, cx);
+            }
+            Operation::Repositories { page, .. } => {
+                return self.receive_repositories(page, body);
+            }
+            Operation::Save { original, .. } => {
+                let id = original
+                    .as_deref()
+                    .or_else(|| body["id"].as_str())
+                    .ok_or("Unable to save cloud environment")?
+                    .to_owned();
+                self.editor = None;
+                self.load(Operation::Detail(id), cx);
+            }
+            Operation::Delete(_) => {
+                self.selected = None;
+                self.view = View::List;
+                self.confirm = None;
+                self.refresh(cx);
+            }
+            Operation::Reset(id) => {
+                self.confirm = None;
+                self.load(Operation::Detail(id.clone()), cx);
+            }
+            Operation::Access => {}
+        }
+        Ok(())
+    }
+
+    fn receive_environment_list(
+        &mut self,
+        cursor: Option<&str>,
+        body: Value,
+    ) -> Result<(), String> {
+        let items: Vec<Environment> = serde_json::from_value(body["items"].clone())
+            .map_err(|_| "Unable to load cloud environments")?;
+        self.cursor = body["cursor"].as_str().map(str::to_owned);
+        if cursor.is_none() {
+            self.environments.clear();
+        }
+        for item in items {
+            if let Some(old) = self.environments.iter_mut().find(|old| old.id == item.id) {
+                *old = item;
+            } else {
+                self.environments.push(item);
+            }
+        }
+        self.environments.sort_by(|a, b| {
+            b.task_count
+                .unwrap_or(0)
+                .cmp(&a.task_count.unwrap_or(0))
+                .then_with(|| a.label.cmp(&b.label))
+        });
+        Ok(())
+    }
+
+    fn receive_connections(&mut self, body: Value, cx: &mut Context<Self>) -> Result<(), String> {
+        self.connections = body["connections"]
+            .as_array()
+            .ok_or("Unable to load GitHub connections")?
+            .clone();
+        self.repository_error = body["failed"] == true;
+        let preferred = self
+            .editor
+            .as_ref()
+            .and_then(|editor| editor.draft.connector.as_deref());
+        self.connection = self
+            .connections
+            .iter()
+            .position(|connection| {
+                connection_ready(connection) && connection["id"].as_str() == preferred
+            })
+            .or_else(|| self.connections.iter().position(connection_ready))
+            .or_else(|| (!self.connections.is_empty()).then_some(0));
+        if self.repository_picker && !self.repository_error {
+            self.load_repositories(String::new(), cx);
+        }
+        Ok(())
+    }
+
+    fn receive_repositories(&mut self, page: &u32, body: Value) -> Result<(), String> {
+        let items = body["repositories"]
+            .as_array()
+            .or_else(|| body["items"].as_array())
+            .ok_or("Unable to load repositories")?;
+        self.repository_more = items.len() == 20;
+        self.repository_page = *page;
+        for repository in items {
+            if !self
+                .repositories
+                .iter()
+                .any(|existing| existing["id"] == repository["id"])
+            {
+                self.repositories.push(repository.clone());
+            }
+        }
+        Ok(())
+    }
+
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        if self.current_mode == Some(true) && self.access.cloud {
+            self.load(Operation::Configs, cx);
+        } else if self.current_mode == Some(false) && self.access.legacy {
+            self.load(
+                Operation::List {
+                    query: self.query.read(cx).field_text().trim().into(),
+                    cursor: None,
+                },
+                cx,
+            );
+        }
+    }
+
+    fn edit(&mut self, original: Option<Environment>, cx: &mut Context<Self>) {
+        let mut draft = original.as_ref().map(Draft::from).unwrap_or_default();
+        if original.is_none() && self.access.workspace {
+            draft.sharing = "workspace".into();
+        }
+        let fields = [
+            ("name", "Environment name", draft.label.clone(), false),
+            (
+                "description",
+                "1-2 sentence description",
+                draft.description.clone(),
+                true,
+            ),
+            (
+                "workspace",
+                "Workspace directory",
+                draft.workspace.clone(),
+                false,
+            ),
+            ("setup", "Setup script", draft.setup.clone(), true),
+            (
+                "maintenance",
+                "Maintenance script",
+                draft.maintenance.clone(),
+                true,
+            ),
+            (
+                "domains",
+                "Allowed domains",
+                draft.network["allowlist_domains"]
+                    .as_str()
+                    .unwrap_or("")
+                    .into(),
+                true,
+            ),
+            (
+                "editors",
+                "Additional editors",
+                draft.editors.join("\n"),
+                true,
+            ),
+        ]
+        .into_iter()
+        .map(|(key, label, value, multiline)| {
+            let (label, placeholder) = if key == "description" {
+                ("Environment description", "1-2 sentence description")
+            } else {
+                (label, "")
+            };
+            (
+                key.into(),
+                self.field(label, placeholder, &value, multiline, false, cx),
+            )
+        })
+        .collect();
+        self.editor = Some(Editor {
+            initial: draft.clone(),
+            draft,
+            original,
+            fields,
+        });
+        self.view = View::Editor;
+        self.expanded_workspace = false;
+        self.menu = None;
+        self.error = None;
+        self.load(Operation::Machines, cx);
+        self.load(Operation::Names, cx);
+    }
+
+    fn field(
+        &self,
+        label: &'static str,
+        placeholder: &'static str,
+        value: &str,
+        multiline: bool,
+        secret: bool,
+        cx: &mut Context<Self>,
+    ) -> Entity<Composer> {
+        let field = cx.new(|cx| {
+            let mut field = Composer::settings_form_field(label, placeholder, value, multiline, cx);
+            field.set_secret(secret, cx);
+            field
+        });
+        cx.observe(&field, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&field, |this, _, _: &SettingsFieldSubmit, cx| {
+            if this.current_mode == Some(true) {
+                this.current_save(cx);
+            } else {
+                this.save(cx);
+            }
+        })
+        .detach();
+        field
+    }
+
+    fn draft(&self, cx: &App) -> Option<Draft> {
+        let editor = self.editor.as_ref()?;
+        let mut draft = editor.draft.clone();
+        let get = |key: &str| {
+            editor
+                .fields
+                .get(key)
+                .map(|f| f.read(cx).field_text().to_owned())
+                .unwrap_or_default()
+        };
+        draft.label = get("name");
+        draft.description = get("description");
+        draft.workspace = get("workspace");
+        draft.setup = get("setup");
+        draft.maintenance = get("maintenance");
+        draft.editors = get("editors").lines().map(str::to_owned).collect();
+        if draft.network["mode"] != "off" {
+            draft.network["allowlist_domains"] = get("domains").into();
+        }
+        for (index, (key, value)) in draft.variables.iter_mut().enumerate() {
+            if let Some(field) = editor.fields.get(&format!("variable-name-{index}")) {
+                *key = field.read(cx).field_text().into();
+            }
+            if let Some(field) = editor.fields.get(&format!("variable-value-{index}")) {
+                *value = field.read(cx).field_text().into();
+            }
+        }
+        for (index, secret) in draft.secrets.iter_mut().enumerate() {
+            if let Some(field) = editor.fields.get(&format!("secret-name-{index}")) {
+                secret.name = field.read(cx).field_text().into();
+            }
+            if let Some(field) = editor.fields.get(&format!("secret-value-{index}")) {
+                secret.value = field.read(cx).field_text().into();
+            }
+            if let Some(field) = editor.fields.get(&format!("secret-domain-{index}")) {
+                secret.domain = Some(field.read(cx).field_text().into());
+            }
+        }
+        Some(draft)
+    }
+
+    fn save(&mut self, cx: &mut Context<Self>) {
+        if self.pending {
+            return;
+        }
+        let Some(draft) = self.draft(cx) else {
+            return;
+        };
+        let original = self.editor.as_ref().and_then(|e| e.original.as_ref());
+        if self.names.is_none()
+            && original.is_none_or(|environment| environment.label != draft.label.trim())
+        {
+            return;
+        }
+        if let Some(error) = draft
+            .errors(
+                self.names.as_deref().unwrap_or_default(),
+                original.map(|e| e.id.as_str()),
+            )
+            .values()
+            .next()
+        {
+            self.error = Some((*error).into());
+            cx.notify();
+            return;
+        }
+        if !self.machines.iter().any(|m| m["id"] == draft.machine)
+            && original.is_none_or(|e| e.machine_id != draft.machine)
+        {
+            self.error = Some("Unable to load container images".into());
+            cx.notify();
+            return;
+        }
+        self.load(
+            Operation::Save {
+                original: original.map(|e| e.id.clone()),
+                body: draft.payload(original),
+            },
+            cx,
+        );
+    }
+
+    fn cancel_edit(&mut self, cx: &mut Context<Self>) {
+        if self.pending {
+            return;
+        }
+        if self
+            .draft(cx)
+            .as_ref()
+            .zip(self.editor.as_ref())
+            .is_some_and(|(draft, e)| *draft != e.initial)
+        {
+            self.confirm = Some("discard");
+        } else {
+            self.leave_editor();
+        }
+        cx.notify();
+    }
+
+    fn leave_editor(&mut self) {
+        if std::mem::take(&mut self.discard_to_list) {
+            self.selected = None;
+        }
+        self.editor = None;
+        self.packages = false;
+        self.repository_picker = false;
+        self.confirm = None;
+        self.view = if self.selected.is_some() {
+            View::Detail
+        } else {
+            View::List
+        };
+    }
+
+    fn button(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        primary: bool,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        let t = cx.theme().clone();
+        let id = id.into();
+        let label = label.into();
+        let fill = if primary {
+            t.button_primary_solid
+        } else {
+            t.text_alpha_5
+        };
+        let color = if primary {
+            t.control_background
+        } else {
+            t.text
+        };
+        let content = div()
+            .h(px(if primary { 36. } else { 28. }))
+            .px(px(if primary { 13. } else { 9. }))
+            .relative()
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .child(super::settings::on_card(
+                12.5,
+                shapes::Corner::Squircle,
+                fill,
+                None,
+            ))
+            .child(text(
+                label.clone(),
+                13.,
+                if primary { 18.571_428 } else { 18. },
+                if primary { 500. } else { 430. },
+                color,
+            ));
+        self.wire_button(id, label, content, cx, action)
+    }
+
+    fn dropdown(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        let t = cx.theme().clone();
+        let label = label.into();
+        let content = div()
+            .h(px(28.))
+            .px(px(13.))
+            .relative()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(4.))
+            .child(super::settings::on_card(
+                12.5,
+                shapes::Corner::Squircle,
+                t.primary_soft_alpha,
+                Some(t.border),
+            ))
+            .child(text(label.clone(), 13., 18., 430., t.text))
+            .child(crate::icon::icon("chevron-down", 14., t.text_tertiary));
+        self.wire_button(id.into(), label, content, cx, action)
+    }
+
+    fn toggle(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        on: bool,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        let t = cx.theme().clone();
+        let content = div()
+            .w(px(32.))
+            .h(px(20.))
+            .child(super::settings::switch(id, on, false, &t));
+        self.wire_button(
+            id.into(),
+            format!("{label}: {}", if on { "On" } else { "Off" }).into(),
+            content,
+            cx,
+            action,
+        )
+    }
+
+    fn segment(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        selected: bool,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        let t = cx.theme().clone();
+        let content = div()
+            .h(px(24.))
+            .px(px(9.))
+            .relative()
+            .flex()
+            .items_center()
+            .when(selected, |d| {
+                d.child(super::settings::on_card(
+                    9999.,
+                    shapes::Corner::Round,
+                    t.text_alpha_5,
+                    Some(gpui::rgba(0).into()),
+                ))
+            })
+            .child(text(
+                label,
+                13.,
+                18.,
+                430.,
+                if selected { t.text } else { t.text_tertiary },
+            ));
+        self.wire_button(
+            id.into(),
+            if selected {
+                format!("{label}, selected").into()
+            } else {
+                label.into()
+            },
+            content,
+            cx,
+            action,
+        )
+    }
+
+    fn wire_button(
+        &self,
+        id: SharedString,
+        label: SharedString,
+        content: Div,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        let action = std::rc::Rc::new(action);
+        let click = action.clone();
+        let disabled = self.pending;
+        let handle = self
+            .button_focus
+            .borrow_mut()
+            .entry(id.clone())
+            .or_insert_with(|| cx.focus_handle().tab_stop(true))
+            .clone();
+        if !disabled && let Some(controls) = self.modal_focus.borrow_mut().as_mut() {
+            controls.push(handle.clone());
+        }
+        content
+            .id(id)
+            .role(gpui::Role::Button)
+            .aria_label(label.clone())
+            .aria_disabled(disabled)
+            .when(!disabled, |d| d.track_focus(&handle))
+            .on_mouse_down(gpui::MouseButton::Left, move |_, window, cx| {
+                if !disabled {
+                    handle.focus(window, cx);
+                }
+            })
+            .when(disabled, |d| d.opacity(0.4))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if !disabled {
+                    click(this, window, cx);
+                }
+            }))
+            .on_key_down(
+                cx.listener(move |this, event: &gpui::KeyDownEvent, window, cx| {
+                    if !disabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        action(this, window, cx);
+                        cx.stop_propagation();
+                    } else {
+                        focus::tab(event, window, cx);
+                    }
+                }),
+            )
+            .into_any_element()
+    }
+
+    fn legacy_header(&self, title: &str, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        div()
+            .h(px(46.))
+            .flex_none()
+            .px(px(20.))
+            .flex()
+            .items_center()
+            .when(self.view != View::List, |d| {
+                let parent = div()
+                    .h(px(28.))
+                    .px(px(9.))
+                    .flex()
+                    .items_center()
+                    .child(text("Legacy Codex Cloud", 13., 18., 430., t.text_tertiary));
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(self.wire_button(
+                            "cloud-breadcrumb".into(),
+                            "Legacy Codex Cloud".into(),
+                            parent,
+                            cx,
+                            |this, _, cx| {
+                                if this.editor.is_some() {
+                                    this.discard_to_list = true;
+                                    this.cancel_edit(cx);
+                                    if this.editor.is_none() {
+                                        this.refresh(cx);
+                                    }
+                                } else {
+                                    this.selected = None;
+                                    this.view = View::List;
+                                    this.refresh(cx);
+                                }
+                            },
+                        ))
+                        .child(crate::icon::icon("cloud-breadcrumb", 16., t.text_tertiary))
+                        .child(
+                            div()
+                                .h(px(28.))
+                                .px(px(8.))
+                                .flex()
+                                .items_center()
+                                .child(text(title.to_owned(), 14., 21., 430., t.text)),
+                        ),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn group(title: &'static str, rows: Vec<AnyElement>, t: &Theme) -> AnyElement {
+        let count = rows.len();
+        div()
+            .flex()
+            .flex_col()
+            .when(!title.is_empty(), |d| {
+                d.child(
+                    div()
+                        .h(px(46.))
+                        .pb(px(6.))
+                        .flex()
+                        .items_center()
+                        .child(text(title, 14., 21., 500., t.text)),
+                )
+            })
+            .child(
+                div()
+                    .relative()
+                    .p(px(1.))
+                    .child(super::settings::on_card(
+                        20.,
+                        shapes::Corner::Squircle,
+                        t.background_panel,
+                        Some(t.border),
+                    ))
+                    .child(div().overflow_hidden().flex().flex_col().children(
+                        rows.into_iter().enumerate().map(|(index, row)| {
+                            div().relative().child(row).when(index + 1 < count, |d| {
+                                d.child(
+                                    div()
+                                        .absolute()
+                                        .bottom_0()
+                                        .left(px(16.))
+                                        .right(px(16.))
+                                        .h(px(1.))
+                                        .bg(t.border),
+                                )
+                            })
+                        }),
+                    )),
+            )
+            .into_any_element()
+    }
+
+    fn row(
+        label: &'static str,
+        detail: Option<&'static str>,
+        control: AnyElement,
+        t: &Theme,
+    ) -> AnyElement {
+        super::settings::settings_row(label, detail, control, t).into_any_element()
+    }
+
+    fn select(&self, target: Menu, value: String, cx: &mut Context<Self>) -> AnyElement {
+        let shown = self.menu.as_ref() == Some(&target);
+        self.dropdown(
+            format!("cloud-select-{value}"),
+            value,
+            cx,
+            move |this, _, cx| {
+                this.menu = (!shown).then(|| target.clone());
+                cx.notify();
+            },
+        )
+    }
+
+    fn list(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let toolbar = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(div().flex_1().child(self.query.clone()))
+            .child(
+                self.button("cloud-search", "Search", false, cx, |this, _, cx| {
+                    this.refresh(cx)
+                }),
+            )
+            .child(self.button(
+                "cloud-create",
+                "Create environment",
+                true,
+                cx,
+                |this, _, cx| {
+                    this.selected = None;
+                    this.edit(None, cx);
+                },
+            ));
+        let rows = self
+            .environments
+            .iter()
+            .map(|environment| {
+                let id = environment.id.clone();
+                self.button(
+                    format!("environment-{id}"),
+                    environment.label.clone(),
+                    false,
+                    cx,
+                    move |this, _, cx| this.load(Operation::Detail(id.clone()), cx),
+                )
+            })
+            .collect::<Vec<_>>();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(toolbar)
+            .when(
+                self.environments.is_empty() && !self.pending && self.error.is_none(),
+                |d| {
+                    d.child(text(
+                        if self.query.read(cx).field_text().is_empty() {
+                            "No cloud environments"
+                        } else {
+                            "No cloud environments found"
+                        },
+                        14.,
+                        21.,
+                        430.,
+                        t.text_secondary,
+                    ))
+                },
+            )
+            .children(rows)
+            .children(self.cursor.as_ref().map(|cursor| {
+                let cursor = cursor.clone();
+                self.button("cloud-more", "Load more", false, cx, move |this, _, cx| {
+                    this.load(
+                        Operation::List {
+                            query: this.query.read(cx).field_text().trim().into(),
+                            cursor: Some(cursor.clone()),
+                        },
+                        cx,
+                    )
+                })
+            }))
+            .into_any_element()
+    }
+
+    fn detail(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let Some(environment) = &self.selected else {
+            return div().into_any_element();
+        };
+        let rows = vec![
+            Self::row(
+                "Repository",
+                None,
+                text(environment.repository_name(), 13., 18., 430., t.text).into_any_element(),
+                &t,
+            ),
+            Self::row(
+                "Machine",
+                None,
+                text(
+                    environment.machine["label"]
+                        .as_str()
+                        .unwrap_or(&environment.machine_id)
+                        .to_owned(),
+                    13.,
+                    18.,
+                    430.,
+                    t.text,
+                )
+                .into_any_element(),
+                &t,
+            ),
+            Self::row(
+                "Created by",
+                None,
+                text(
+                    environment.creator["name"]
+                        .as_str()
+                        .or_else(|| environment.creator["email"].as_str())
+                        .unwrap_or("")
+                        .to_owned(),
+                    13.,
+                    18.,
+                    430.,
+                    t.text,
+                )
+                .into_any_element(),
+                &t,
+            ),
+            Self::row(
+                "Network access",
+                None,
+                text(
+                    environment.agent_network_access["mode"]
+                        .as_str()
+                        .unwrap_or("off")
+                        .to_owned(),
+                    13.,
+                    18.,
+                    430.,
+                    t.text,
+                )
+                .into_any_element(),
+                &t,
+            ),
+            Self::row(
+                "Sharing",
+                None,
+                text(environment.share_settings.clone(), 13., 18., 430., t.text).into_any_element(),
+                &t,
+            ),
+        ];
+        let edit = environment.permissions["can_write"] == true;
+        let delete = environment.permissions["can_delete"] == true;
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(text(
+                environment.description.clone(),
+                14.,
+                21.,
+                430.,
+                t.text_secondary,
+            ))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .child(self.button("cloud-back", "Back", false, cx, |this, _, cx| {
+                        this.view = View::List;
+                        this.selected = None;
+                        this.refresh(cx);
+                    }))
+                    .when(edit, |d| {
+                        d.child(self.button("cloud-edit", "Edit", false, cx, |this, _, cx| {
+                            this.edit(this.selected.clone(), cx)
+                        }))
+                    })
+                    .when(
+                        edit && environment.cache_settings["post_setup_cache_enabled"] != false,
+                        |d| {
+                            d.child(self.button(
+                                "cloud-reset",
+                                "Reset cache",
+                                false,
+                                cx,
+                                |this, _, cx| {
+                                    this.confirm = Some("reset");
+                                    cx.notify();
+                                },
+                            ))
+                        },
+                    )
+                    .when(delete, |d| {
+                        d.child(self.button(
+                            "cloud-delete",
+                            "Delete environment",
+                            false,
+                            cx,
+                            |this, _, cx| {
+                                this.confirm = Some("delete");
+                                cx.notify();
+                            },
+                        ))
+                    }),
+            )
+            .child(Self::group("", rows, &t))
+            .into_any_element()
+    }
+
+    fn input_row(
+        &self,
+        key: &str,
+        label: &'static str,
+        detail: Option<&'static str>,
+        t: &Theme,
+    ) -> AnyElement {
+        let field = self
+            .editor
+            .as_ref()
+            .and_then(|e| e.fields.get(key))
+            .cloned();
+        Self::row(
+            label,
+            detail,
+            div().w(px(288.)).children(field).into_any_element(),
+            t,
+        )
+    }
+
+    fn name_row(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let detail = self.names.is_none().then(|| {
+            if self.names_error {
+                self.wire_button(
+                    "cloud-names-retry".into(),
+                    "Couldn’t check existing names. Retry".into(),
+                    text(
+                        "Couldn’t check existing names. Retry",
+                        12.,
+                        16.,
+                        430.,
+                        t.text_secondary,
+                    ),
+                    cx,
+                    |this, _, cx| this.load(Operation::Names, cx),
+                )
+            } else {
+                text(
+                    "Checking existing environment names…",
+                    12.,
+                    16.,
+                    430.,
+                    t.text_secondary,
+                )
+                .into_any_element()
+            }
+        });
+        super::settings::settings_row_content(
+            "Name",
+            detail,
+            div()
+                .w(px(288.))
+                .child(self.editor.as_ref().expect("open editor").fields["name"].clone())
+                .into_any_element(),
+            &t,
+        )
+        .into_any_element()
+    }
+
+    fn workspace_description(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let editor = self.editor.as_ref().expect("open editor");
+        let workspace = editor.fields["workspace"].read(cx).field_text().trim();
+        let repository = editor
+            .draft
+            .repository_name
+            .rsplit('/')
+            .next()
+            .unwrap_or_default();
+        let summary = if repository.is_empty() {
+            format!("The repository will be cloned to {workspace}. ")
+        } else {
+            format!(
+                "The repository will be cloned to {}. ",
+                std::path::Path::new(workspace).join(repository).display()
+            )
+        };
+        let font = gpui::Font {
+            weight: gpui::FontWeight(430.),
+            ..gpui::font(crate::SANS)
+        };
+        let font_id = cx.text_system().resolve_font(&font);
+        // CSS vertical-align: middle uses the paragraph baseline and half its x-height.
+        let ascent = f32::from(cx.text_system().ascent(font_id, px(12.))).round();
+        let descent = f32::from(cx.text_system().descent(font_id, px(12.)))
+            .abs()
+            .round();
+        let middle_offset =
+            (px(ascent - descent) - cx.text_system().x_height(font_id, px(12.))) / 2.;
+        div()
+            .flex()
+            .flex_col()
+            .when(self.machine_error, |d| {
+                d.child(text(
+                    "Unable to load container images",
+                    12.,
+                    16.,
+                    430.,
+                    t.text_secondary,
+                ))
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_start()
+                    .child(text(summary, 12., 16., 430., t.text_secondary))
+                    .child(
+                        div().mt(middle_offset).child(
+                            self.wire_button(
+                                "cloud-workspace".into(),
+                                "Edit workspace directory".into(),
+                                text("Edit workspace directory", 12., 16., 430., t.text_secondary)
+                                    .underline(),
+                                cx,
+                                |this, _, cx| {
+                                    this.expanded_workspace = !this.expanded_workspace;
+                                    cx.notify();
+                                },
+                            ),
+                        ),
+                    )
+                    .child(text(".", 12., 16., 430., t.text_secondary)),
+            )
+            .into_any_element()
+    }
+
+    fn machine_row(&self, editor: &Editor, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let machine = self
+            .machines
+            .iter()
+            .find(|m| m["id"] == editor.draft.machine)
+            .and_then(|m| m["label"].as_str())
+            .unwrap_or(&editor.draft.machine)
+            .to_owned();
+        super::settings::settings_row_content(
+            "Container image",
+            Some(self.workspace_description(cx)),
+            if self.machine_error {
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .children(editor.original.as_ref().map(|environment| {
+                        text(
+                            environment.machine["label"]
+                                .as_str()
+                                .unwrap_or(&environment.machine_id)
+                                .to_owned(),
+                            13.,
+                            18.,
+                            430.,
+                            t.text_secondary,
+                        )
+                    }))
+                    .child(
+                        self.button("cloud-machine-retry", "Retry", false, cx, |this, _, cx| {
+                            this.load(Operation::Machines, cx)
+                        }),
+                    )
+                    .into_any_element()
+            } else {
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .child(self.select(Menu::Machine, machine, cx))
+                    .when(editor.draft.machine == UNIVERSAL, |d| {
+                        d.child(self.button(
+                            "cloud-packages",
+                            "Preinstalled packages",
+                            false,
+                            cx,
+                            |this, _, cx| {
+                                this.packages = true;
+                                cx.notify();
+                            },
+                        ))
+                    })
+                    .into_any_element()
+            },
+            t,
+        )
+        .into_any_element()
+    }
+
+    fn editor(&self, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let Some(editor) = &self.editor else {
+            return div().into_any_element();
+        };
+        let repository = if editor.original.is_some() {
+            text(editor.draft.repository_name.clone(), 13., 18., 430., t.text).into_any_element()
+        } else {
+            self.dropdown(
+                "cloud-repository",
+                if editor.draft.repository_name.is_empty() {
+                    "Select a repository".into()
+                } else {
+                    editor.draft.repository_name.clone()
+                },
+                cx,
+                |this, _, cx| {
+                    this.current.creating = false;
+                    this.open_repositories(cx);
+                },
+            )
+        };
+        let mut identity = vec![
+            Self::row("Repository", None, repository, &t),
+            self.name_row(cx),
+            self.input_row(
+                "description",
+                "Description",
+                Some("Explain to members of your organization what this environment is for"),
+                &t,
+            ),
+            self.machine_row(editor, &t, cx),
+        ];
+        if self.expanded_workspace {
+            identity.push(self.input_row("workspace","Workspace directory",Some("Directory where the repository is cloned; change this only when setup requires an absolute path"),&t));
+        }
+        let mut setup = vec![
+            Self::row(
+                "Container Caching",
+                Some(
+                    "Speed up container start by caching state after running the setup script. Maintenance scripts are run before every task.",
+                ),
+                self.toggle(
+                    "cloud-cache",
+                    "Container Caching",
+                    editor.draft.cache["post_setup_cache_enabled"] == true,
+                    cx,
+                    |this, _, cx| {
+                        if let Some(e) = &mut this.editor {
+                            e.draft.cache["post_setup_cache_enabled"] =
+                                json!(e.draft.cache["post_setup_cache_enabled"] != true);
+                        }
+                        cx.notify();
+                    },
+                ),
+                &t,
+            ),
+            Self::row(
+                "Setup script",
+                Some("Runs the install commands like npm install for common package managers"),
+                div()
+                    .id("cloud-setup-mode")
+                    .min_w_0()
+                    .max_w_full()
+                    .overflow_x_scroll()
+                    .overflow_y_hidden()
+                    .flex()
+                    .gap(px(2.))
+                    .children([(true, "Automatic"), (false, "Manual")].into_iter().map(
+                        |(automatic, label)| {
+                            self.segment(
+                                if automatic {
+                                    "cloud-auto-setup"
+                                } else {
+                                    "cloud-manual-setup"
+                                },
+                                label,
+                                (editor.draft.auto_setup["use_auto_setup"] == true) == automatic,
+                                cx,
+                                move |this, _, cx| {
+                                    if let Some(editor) = &mut this.editor {
+                                        editor.draft.auto_setup["use_auto_setup"] =
+                                            json!(automatic);
+                                    }
+                                    cx.notify();
+                                },
+                            )
+                        },
+                    ))
+                    .into_any_element(),
+                &t,
+            ),
+        ];
+        if editor.draft.auto_setup["use_auto_setup"] != true {
+            setup.push(self.input_row("setup","Setup script",Some("Network access is available during setup, even when agent internet access is off"),&t));
+            if editor.draft.cache["post_setup_cache_enabled"] == true {
+                setup.push(self.input_row(
+                    "maintenance",
+                    "Maintenance script",
+                    Some("Runs before every task when using a cached container"),
+                    &t,
+                ));
+            }
+        }
+        let mut network = vec![Self::row(
+            "Internet access",
+            (!self.access.network_allowed)
+                .then_some("Your workspace doesn’t allow internet access after setup"),
+            if self.access.network_allowed {
+                self.select(
+                    Menu::Network,
+                    editor.draft.network["mode"]
+                        .as_str()
+                        .unwrap_or("off")
+                        .into(),
+                    cx,
+                )
+            } else {
+                text(
+                    editor.draft.network["mode"]
+                        .as_str()
+                        .unwrap_or("off")
+                        .to_owned(),
+                    13.,
+                    18.,
+                    430.,
+                    t.text_secondary,
+                )
+                .into_any_element()
+            },
+            &t,
+        )];
+        if self.access.network_allowed && editor.draft.network["mode"] != "off" {
+            network.push(self.input_row("domains", "Allowed domains", None, &t));
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(20.))
+            .child(Self::group("", identity, &t))
+            .when(self.access.workspace, |d| {
+                d.child(Self::group(
+                    "Sharing",
+                    vec![
+                        Self::row(
+                            "Visibility",
+                            None,
+                            self.select(Menu::Sharing, editor.draft.sharing.clone(), cx),
+                            &t,
+                        ),
+                        self.input_row(
+                            "editors",
+                            "Additional editors",
+                            Some("Enter one email address per line"),
+                            &t,
+                        ),
+                    ],
+                    &t,
+                ))
+            })
+            .child(Self::group("Code execution", setup, &t))
+            .child(self.credential_fields(editor, &t, cx))
+            .child(Self::group("Agent internet access", network, &t))
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        self.button("cloud-cancel", "Cancel", false, cx, |this, _, cx| {
+                            this.cancel_edit(cx)
+                        }),
+                    )
+                    .child(self.button(
+                        "cloud-save",
+                        if editor.original.is_some() {
+                            "Save changes"
+                        } else {
+                            "Create environment"
+                        },
+                        true,
+                        cx,
+                        |this, _, cx| this.save(cx),
+                    )),
+            )
+            .into_any_element()
+    }
+
+    fn credential_fields(&self, editor: &Editor, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let mut variables = vec![Self::row(
+            "Environment variables",
+            Some("Paste .env content into a variable name to add multiple values"),
+            self.button("add-variable", "Add variable", false, cx, |this, _, cx| {
+                if let Some(e) = &mut this.editor {
+                    e.draft.variables.push((String::new(), String::new()));
+                }
+                cx.notify();
+            }),
+            t,
+        )];
+        for (index, (key, value)) in editor.draft.variables.iter().enumerate() {
+            if !value.trim().is_empty()
+                && RUNTIMES.iter().any(|r| r.variable == key.trim())
+                && editor.draft.machine == UNIVERSAL
+                && !editor
+                    .draft
+                    .variables
+                    .iter()
+                    .enumerate()
+                    .any(|(other, (name, _))| other != index && name.trim() == key.trim())
+            {
+                continue;
+            }
+            variables.push(self.variable_row(index, false, cx));
+        }
+        let mut secrets = vec![Self::row(
+            "Secrets",
+            Some("Paste .env content into a secret key to add multiple secrets"),
+            self.button("add-secret", "Add secret", false, cx, |this, _, cx| {
+                if let Some(e) = &mut this.editor {
+                    e.draft.secrets.push(Secret {
+                        name: String::new(),
+                        value: String::new(),
+                        domain: None,
+                        previous: None,
+                    });
+                }
+                cx.notify();
+            }),
+            t,
+        )];
+        if self.access.domain_secrets {
+            secrets.push(Self::row(
+                "Domain-scoped secrets",
+                Some("During tasks, secrets are sent only to their configured domain. Secrets without a domain are available only to setup scripts."),
+                self.button("cloud-scoped-secrets", if editor.draft.authtranslator {"On"} else {"Off"}, false, cx, |this,_,cx|{
+                    if let Some(editor) = &mut this.editor { editor.draft.authtranslator = !editor.draft.authtranslator; }
+                    cx.notify();
+                }),
+                t,
+            ));
+        }
+        for index in 0..editor.draft.secrets.len() {
+            secrets.push(self.variable_row(index, true, cx));
+        }
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .child(Self::group("Variables and secrets", variables, t))
+            .child(Self::group("", secrets, t))
+            .into_any_element()
+    }
+
+    fn variable_row(&self, index: usize, secret: bool, cx: &mut Context<Self>) -> AnyElement {
+        let prefix = if secret { "secret" } else { "variable" };
+        let editor = self.editor.as_ref().unwrap();
+        let fields = [
+            format!("{prefix}-name-{index}"),
+            format!("{prefix}-value-{index}"),
+        ];
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .p(px(12.))
+            .children(
+                fields
+                    .iter()
+                    .filter_map(|key| editor.fields.get(key).cloned())
+                    .map(|field| div().flex_1().child(field)),
+            )
+            .when(secret && editor.draft.authtranslator, |d| {
+                d.children(
+                    editor
+                        .fields
+                        .get(&format!("secret-domain-{index}"))
+                        .cloned()
+                        .map(|field| div().flex_1().child(field)),
+                )
+            })
+            .child(self.button(
+                format!("remove-{prefix}-{index}"),
+                "Remove",
+                false,
+                cx,
+                move |this, _, cx| {
+                    if let Some(draft) = this.draft(cx)
+                        && let Some(e) = &mut this.editor
+                    {
+                        e.draft = draft;
+                        if secret {
+                            e.draft.secrets.remove(index);
+                        } else {
+                            e.draft.variables.remove(index);
+                        }
+                        e.fields.retain(|k, _| !k.starts_with(prefix));
+                    }
+                    cx.notify();
+                },
+            ))
+            .into_any_element()
+    }
+
+    fn prepare_fields(&mut self, cx: &mut Context<Self>) {
+        let Some(editor) = &self.editor else {
+            return;
+        };
+        let mut missing = Vec::new();
+        for (index, (key, value)) in editor.draft.variables.iter().enumerate() {
+            for (part, label, value) in [
+                ("name", "Variable name", key.as_str()),
+                ("value", "Variable value", value.as_str()),
+            ] {
+                let id = format!("variable-{part}-{index}");
+                if !editor.fields.contains_key(&id) {
+                    missing.push((id, label, value.to_owned(), false));
+                }
+            }
+        }
+        for (index, secret) in editor.draft.secrets.iter().enumerate() {
+            for (part, label, value, masked) in [
+                ("name", "Secret name", secret.name.as_str(), false),
+                ("value", "Secret value", secret.value.as_str(), true),
+                (
+                    "domain",
+                    "Secret domain",
+                    secret.domain.as_deref().unwrap_or(""),
+                    false,
+                ),
+            ] {
+                let id = format!("secret-{part}-{index}");
+                if !editor.fields.contains_key(&id) {
+                    missing.push((id, label, value.to_owned(), masked));
+                }
+            }
+        }
+        for (id, label, value, secret) in missing {
+            let field = self.field(label, "", &value, false, secret, cx);
+            if label == "Variable name" || label == "Secret name" {
+                let index = id
+                    .rsplit('-')
+                    .next()
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap();
+                let secret = label == "Secret name";
+                let weak = cx.entity().downgrade();
+                field.update(cx, |field, _| {
+                    field.on_settings_paste(move |text, cx| {
+                        let Some(entries) = model::parse_assignments(text) else {
+                            return false;
+                        };
+                        let weak = weak.clone();
+                        cx.defer(move |cx| {
+                            weak.update(cx, |this, cx| {
+                                let Some(draft) = this.draft(cx) else {
+                                    return;
+                                };
+                                let Some(editor) = &mut this.editor else {
+                                    return;
+                                };
+                                editor.draft = draft;
+                                if secret {
+                                    if index >= editor.draft.secrets.len() {
+                                        return;
+                                    }
+                                    let mut replacement: Vec<_> = entries
+                                        .into_iter()
+                                        .map(|(name, value)| Secret {
+                                            name,
+                                            value,
+                                            domain: None,
+                                            previous: None,
+                                        })
+                                        .collect();
+                                    replacement[0].previous =
+                                        editor.draft.secrets[index].previous.clone();
+                                    replacement[0].domain =
+                                        editor.draft.secrets[index].domain.clone();
+                                    editor.draft.secrets.splice(index..index + 1, replacement);
+                                } else {
+                                    if index >= editor.draft.variables.len() {
+                                        return;
+                                    }
+                                    editor.draft.variables.splice(index..index + 1, entries);
+                                }
+                                editor.fields.retain(|key, _| {
+                                    !key.starts_with(if secret { "secret-" } else { "variable-" })
+                                });
+                                cx.notify();
+                            })
+                            .ok();
+                        });
+                        true
+                    })
+                });
+            }
+            self.editor.as_mut().unwrap().fields.insert(id, field);
+        }
+    }
+
+    fn repository_row(
+        &self,
+        repo: &Value,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let id = repo["id"].as_str()?.to_owned();
+        let name = repo["repository_full_name"]
+            .as_str()
+            .or_else(|| repo["full_name"].as_str())?
+            .to_owned();
+        let checked = self
+            .current
+            .repositories
+            .iter()
+            .any(|selected| selected["id"] == id);
+        let row = div()
+            .min_h(px(36.))
+            .px(px(12.))
+            .py(px(6.))
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .rounded(px(8.))
+            .hover(|style| style.bg(t.primary_soft_alpha))
+            .when(self.current.creating, |row| {
+                row.child(
+                    div()
+                        .size(px(16.))
+                        .rounded(px(4.))
+                        .border_1()
+                        .border_color(t.border)
+                        .when(checked, |checkbox| {
+                            checkbox.bg(t.text).child(crate::icon::icon(
+                                "check",
+                                14.,
+                                t.control_background,
+                            ))
+                        }),
+                )
+            })
+            .child(text(name.clone(), 14., 21., 430., t.text));
+        Some(self.wire_button(
+            format!("repo-{id}").into(),
+            if self.current.creating {
+                format!(
+                    "{name}, {}",
+                    if checked { "selected" } else { "not selected" }
+                )
+                .into()
+            } else {
+                name.into()
+            },
+            row,
+            cx,
+            move |this, _, cx| this.choose_repository(&id, cx),
+        ))
+    }
+
+    fn repository_status(&self) -> Option<&'static str> {
+        if self.repository_pending && self.repositories.is_empty() {
+            Some("Loading repositories…")
+        } else if self.repository_error && self.repositories.is_empty() {
+            Some(match self.repository_stage {
+                RepositoryStage::Connections => "GitHub connections couldn’t load",
+                RepositoryStage::Repositories => "Repositories couldn’t load",
+            })
+        } else if !self
+            .connection
+            .and_then(|i| self.connections.get(i))
+            .is_some_and(connection_ready)
+        {
+            Some("Connect GitHub to see your repositories")
+        } else if self.repositories.is_empty() {
+            Some("No repositories are available to this connection")
+        } else {
+            None
+        }
+    }
+
+    fn repository_contents(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self
+            .connection
+            .and_then(|index| self.connections.get(index))
+            .is_some_and(connection_ready)
+            && let Some(controls) = self.modal_focus.borrow_mut().as_mut()
+        {
+            controls.push(self.repository_search.focus_handle(cx));
+        }
+        let message = self.repository_status();
+        let rows = if let Some(message) = message {
+            self.repository_notice(message, cx)
+        } else {
+            let t = cx.theme().clone();
+            div()
+                .flex()
+                .flex_col()
+                .children(
+                    self.repositories
+                        .iter()
+                        .filter_map(|repo| self.repository_row(repo, &t, cx)),
+                )
+                .when(self.repository_more, |list| {
+                    let label = if self.repository_pending {
+                        "Loading more…"
+                    } else if self.repository_error {
+                        "Try again"
+                    } else {
+                        "Load more"
+                    };
+                    list.child(
+                        self.button("repositories-more", label, false, cx, |page, _, cx| {
+                            if !page.repository_pending {
+                                page.load_repository_page(page.repository_page + 1, cx);
+                            }
+                        }),
+                    )
+                })
+                .id("cloud-repository-list")
+                .max_h(px(240.))
+                .overflow_y_scroll()
+                .into_any_element()
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .when(
+                self.connection
+                    .and_then(|index| self.connections.get(index))
+                    .is_some_and(connection_ready),
+                |content| content.child(self.repository_search.clone()),
+            )
+            .child(rows)
+            .into_any_element()
+    }
+
+    fn choose_repository(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(repository) = self.repositories.iter().find(|repo| repo["id"] == id) else {
+            return;
+        };
+        if self.current.creating {
+            if self
+                .current
+                .repositories
+                .iter()
+                .any(|repo| repo["id"] == id)
+            {
+                self.current.repositories.retain(|repo| repo["id"] != id);
+            } else {
+                self.current.repositories.push(repository.clone());
+            }
+        } else if let Some(editor) = &mut self.editor {
+            let Some(name) = repository["repository_full_name"]
+                .as_str()
+                .or_else(|| repository["full_name"].as_str())
+            else {
+                return;
+            };
+            editor.draft.repository = id.into();
+            editor.draft.repository_name = name.into();
+            if let Some(connection) = self.connection.and_then(|i| self.connections.get(i)) {
+                editor.draft.connector = connection["id"].as_str().map(str::to_owned);
+            }
+            if editor.fields["name"].read(cx).field_text().is_empty() {
+                editor.fields["name"].update(cx, |field, cx| field.set_text(name, cx));
+            }
+            self.repository_picker = false;
+        }
+        cx.notify();
+    }
+
+    fn confirmation(&self, action: &'static str, cx: &mut Context<Self>) -> AnyElement {
+        let t = cx.theme().clone();
+        let (title, description, button) = match action {
+            "delete" => (
+                format!(
+                    "Delete {}?",
+                    self.selected
+                        .as_ref()
+                        .map(|e| e.label.as_str())
+                        .unwrap_or("environment")
+                ),
+                "Existing chats will remain, but you will not be able to create follow-ups with this environment",
+                "Delete environment",
+            ),
+            "reset" => (
+                "Reset cached containers?".into(),
+                "This invalidates all cached containers for this environment and all users",
+                "Reset cache",
+            ),
+            "config-delete" => (
+                "Delete environment?".into(),
+                "Existing chats will remain, but you will not be able to create follow-ups with this environment",
+                "Delete environment",
+            ),
+            _ => (
+                "Discard changes?".into(),
+                "Your unsaved changes will be lost",
+                "Discard changes",
+            ),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(text(title, 20., 28., 600., t.text))
+            .child(text(description, 14., 21., 430., t.text_secondary))
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        self.button("confirm-cancel", "Cancel", false, cx, |this, _, cx| {
+                            this.confirm = None;
+                            this.discard_to_list = false;
+                            cx.notify();
+                        }),
+                    )
+                    .child(
+                        self.button("confirm-action", button, true, cx, move |this, _, cx| {
+                            this.confirm_action(action, cx);
+                            cx.notify();
+                        }),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn confirm_action(&mut self, action: &str, cx: &mut Context<Self>) {
+        match action {
+            "discard" => {
+                self.leave_editor();
+                if self.view == View::List {
+                    self.refresh(cx);
+                }
+            }
+            "delete" => {
+                if let Some(e) = &self.selected {
+                    self.load(Operation::Delete(e.id.clone()), cx);
+                }
+            }
+            "reset" => {
+                if let Some(e) = &self.selected {
+                    self.load(Operation::Reset(e.id.clone()), cx);
+                }
+            }
+            "config-delete" => {
+                if let Some(id) = self.current.deleting.clone() {
+                    self.load(Operation::ConfigDelete(id), cx);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.repository_picker && self.current.creating {
+            return Some(self.creation_dialog(cx));
+        }
+        let t = cx.theme().clone();
+        let content = if self.unavailable {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(16.))
+                .child(text(
+                    "Cloud environments unavailable",
+                    20.,
+                    28.,
+                    600.,
+                    t.text,
+                ))
+                .child(text(
+                    "Cloud environment setup isn't available in this workspace",
+                    14.,
+                    21.,
+                    430.,
+                    t.text_secondary,
+                ))
+                .child(self.button(
+                    "cloud-unavailable-close",
+                    "Close",
+                    true,
+                    cx,
+                    |_, window, cx| {
+                        window.dispatch_action(Box::new(crate::GoBack), cx);
+                    },
+                ))
+                .into_any_element()
+        } else if let Some(action) = self.confirm {
+            self.confirmation(action, cx)
+        } else if self.packages {
+            let draft = self.draft(cx)?;
+            let rows = RUNTIMES
+                .iter()
+                .enumerate()
+                .map(|(index, runtime)| {
+                    Self::row(
+                        runtime.name,
+                        None,
+                        self.select(
+                            Menu::Runtime(index),
+                            draft
+                                .variables
+                                .iter()
+                                .find(|(k, _)| k.trim() == runtime.variable)
+                                .map(|(_, v)| v.as_str())
+                                .unwrap_or("Image default")
+                                .into(),
+                            cx,
+                        ),
+                        &t,
+                    )
+                })
+                .collect();
+            div().flex().flex_col().gap(px(16.)).child(text("Preinstalled packages",20.,28.,600.,t.text))
+                .child(text("Choose language versions for the Universal image. Install additional packages in your setup script.",14.,21.,430.,t.text_secondary)).child(Self::group("",rows,&t))
+                .child(self.button("packages-link","View all preinstalled packages",false,cx,|_,_,cx|cx.open_url("https://github.com/openai/codex-universal")))
+                .child(self.button("packages-done","Done",true,cx,|this,_,cx|{this.packages=false;cx.notify();})).into_any_element()
+        } else if self.repository_picker {
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(12.))
+                .child(text("Select repository", 20., 28., 600., t.text))
+                .child(self.repository_contents(cx))
+                .child(
+                    self.button("repository-cancel", "Cancel", false, cx, |this, _, cx| {
+                        this.repository_picker = false;
+                        this.current.creating = false;
+                        cx.notify();
+                    }),
+                )
+                .into_any_element()
+        } else {
+            return None;
+        };
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(gpui::rgba(0x00000060))
+                .child(
+                    div()
+                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .w(px(640.))
+                        .max_h(px(760.))
+                        .p(px(24.))
+                        .rounded(px(24.))
+                        .bg(t.background_panel)
+                        .child(content),
+                )
+                .into_any_element(),
+        )
+    }
+
+    fn menu_options(&self, menu: &Menu) -> Vec<(String, String)> {
+        match *menu {
+            Menu::Connection => self
+                .connections
+                .iter()
+                .enumerate()
+                .map(|(index, connection)| {
+                    (
+                        index.to_string(),
+                        connection["name"].as_str().unwrap_or("GitHub").to_owned(),
+                    )
+                })
+                .collect(),
+            Menu::Machine => self
+                .machines
+                .iter()
+                .filter_map(|m| Some((m["id"].as_str()?.into(), m["label"].as_str()?.into())))
+                .collect(),
+            Menu::Sharing => vec![
+                ("private".into(), "Only me".into()),
+                ("workspace".into(), "Shared with workspace".into()),
+            ],
+            Menu::Network => vec![
+                ("off".into(), "Off".into()),
+                ("on".into(), "On".into()),
+                ("custom".into(), "Custom".into()),
+            ],
+            Menu::Runtime(index) => std::iter::once((String::new(), "Image default".into()))
+                .chain(
+                    RUNTIMES[index]
+                        .versions
+                        .iter()
+                        .map(|v| ((*v).into(), (*v).into())),
+                )
+                .collect(),
+        }
+    }
+
+    fn menu_overlay(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let menu = self.menu.clone()?;
+        let t = cx.theme().clone();
+        let options = self.menu_options(&menu);
+        let rows = options.into_iter().map(|(value, label)| {
+            let target = menu.clone();
+            self.button(
+                format!("cloud-option-{value}"),
+                label,
+                false,
+                cx,
+                move |this, _, cx| {
+                    if target == Menu::Connection {
+                        this.connection = value
+                            .parse::<usize>()
+                            .ok()
+                            .filter(|index| *index < this.connections.len());
+                        this.menu = None;
+                        this.load_repositories(this.repository_query.clone(), cx);
+                        return;
+                    }
+                    if let Some(draft) = this.draft(cx)
+                        && let Some(e) = &mut this.editor
+                    {
+                        e.draft = draft;
+                        match target {
+                            Menu::Connection => {
+                                unreachable!("connection selection is handled before editor fields")
+                            }
+                            Menu::Machine => e.draft.machine = value.clone(),
+                            Menu::Sharing => e.draft.sharing = value.clone(),
+                            Menu::Network => {
+                                e.draft.network["mode"] = value.clone().into();
+                                e.draft.network["preset_allowlist"] =
+                                    if value == "on" { "all" } else { "none" }.into();
+                            }
+                            Menu::Runtime(index) => {
+                                e.draft.set_runtime(
+                                    &RUNTIMES[index],
+                                    (!value.is_empty()).then_some(value.as_str()),
+                                );
+                                e.fields.retain(|k, _| !k.starts_with("variable-"));
+                            }
+                        }
+                    }
+                    this.menu = None;
+                    cx.notify();
+                },
+            )
+        });
+        Some(
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(popover(&t, 288., |d| d.children(rows)))
+                .into_any_element(),
+        )
+    }
+}
+
+impl Render for CloudPage {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.prepare_fields(cx);
+        if self.current_mode == Some(true) {
+            return self.current_screen(cx);
+        }
+        let t = cx.theme().clone();
+        let title = match self.view {
+            View::List => "Legacy Codex Cloud".to_owned(),
+            View::Detail => self
+                .selected
+                .as_ref()
+                .map(|e| e.label.clone())
+                .unwrap_or_else(|| "Cloud environment".into()),
+            View::Editor => {
+                if self.editor.as_ref().is_some_and(|e| e.original.is_some()) {
+                    "Edit cloud environment".into()
+                } else {
+                    "Create cloud environment".into()
+                }
+            }
+        };
+        let body = match self.view {
+            View::List => self.list(cx),
+            View::Detail => self.detail(cx),
+            View::Editor => self.editor(cx),
+        };
+        div()
+            .size_full()
+            .relative()
+            .flex()
+            .flex_col()
+            .child(self.legacy_header(&title, cx))
+            .child(
+                div()
+                    .id("cloud-environments")
+                    .overflow_y_scroll()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .layer()
+                    .child(
+                        div()
+                            .w_full()
+                            .pt(px(16.))
+                            .pb(px(1.))
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .max_w(px(768.))
+                                    .px(px(20.))
+                                    .py(px(12.))
+                                    .min_h(px(60.))
+                                    .flex()
+                                    .flex_col()
+                                    .justify_center()
+                                    .child(text(title, 28., 33.6, 500., t.text)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .max_w(px(768.))
+                            .px(px(20.))
+                            .pt(px(20.))
+                            .pb(px(20.))
+                            .flex()
+                            .flex_col()
+                            .gap(px(20.))
+                            .when(self.access.legacy, |d| d.child(body))
+                            .when(!self.access_loaded, |d| {
+                                d.child(text(
+                                    "Loading cloud access…",
+                                    14.,
+                                    21.,
+                                    430.,
+                                    t.text_secondary,
+                                ))
+                            })
+                            .when(self.pending, |d| {
+                                d.child(text("Loading…", 14., 21., 430., t.text_secondary))
+                            })
+                            .children(self.error.as_ref().map(|error| {
+                                div()
+                                    .child(text(error.clone(), 14., 21., 430., t.text_secondary))
+                                    .children(self.retry.as_ref().map(|request| {
+                                        let request = request.clone();
+                                        self.button(
+                                            "cloud-retry",
+                                            "Retry",
+                                            false,
+                                            cx,
+                                            move |this, _, cx| this.load(request.clone(), cx),
+                                        )
+                                    }))
+                            })),
+                    ),
+            )
+            .children((!self.has_modal()).then(|| self.menu_overlay(cx)).flatten())
+            .into_any_element()
+    }
+}
+
+pub struct CloudModal {
+    page: Entity<CloudPage>,
+    focus: FocusHandle,
+    return_focus: Option<FocusHandle>,
+    controls: Vec<FocusHandle>,
+    open: bool,
+}
+
+impl CloudModal {
+    pub fn new(page: Entity<CloudPage>, cx: &mut Context<Self>) -> Self {
+        cx.observe(&page, |_, _, cx| cx.notify()).detach();
+        Self {
+            page,
+            focus: cx.focus_handle(),
+            return_focus: None,
+            controls: Vec::new(),
+            open: false,
+        }
+    }
+
+    pub fn is_open(&self, cx: &App) -> bool {
+        self.page.read(cx).has_modal()
+    }
+
+    fn key(&mut self, event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.keystroke.key == "escape" {
+            self.page.update(cx, |page, cx| page.dismiss_modal(cx));
+        } else if event.keystroke.key == "tab"
+            && !event.keystroke.modifiers.control
+            && !event.keystroke.modifiers.alt
+            && !event.keystroke.modifiers.platform
+        {
+            if !self.controls.is_empty() {
+                let current = self
+                    .controls
+                    .iter()
+                    .position(|focus| focus.is_focused(window));
+                let next = if event.keystroke.modifiers.shift {
+                    current.map_or(self.controls.len() - 1, |index| {
+                        (index + self.controls.len() - 1) % self.controls.len()
+                    })
+                } else {
+                    current.map_or(0, |index| (index + 1) % self.controls.len())
+                };
+                self.controls[next].focus(window, cx);
+            }
+        } else {
+            return;
+        }
+        cx.stop_propagation();
+    }
+}
+
+impl Render for CloudModal {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if !self.is_open(cx) {
+            if self.open
+                && let Some(focus) = self.return_focus.take()
+            {
+                focus.focus(window, cx);
+            }
+            self.open = false;
+            return div().into_any_element();
+        }
+        self.controls.clear();
+        let reusable = std::mem::take(&mut self.controls);
+        let (content, controls) = self.page.update(cx, |page, cx| {
+            *page.modal_focus.borrow_mut() = Some(reusable);
+            let content = div()
+                .size_full()
+                .children(page.overlay(cx))
+                .children(page.menu_overlay(cx));
+            let controls = page.modal_focus.borrow_mut().take().unwrap_or_default();
+            (content, controls)
+        });
+        self.controls = controls;
+        if !self.open {
+            self.return_focus = window.focused(cx);
+        }
+        if !self.open || !self.controls.iter().any(|focus| focus.is_focused(window)) {
+            self.controls
+                .first()
+                .unwrap_or(&self.focus)
+                .focus(window, cx);
+        }
+        self.open = true;
+        gpui::deferred(
+            div()
+                .id("cloud-modal-root")
+                .absolute()
+                .inset_0()
+                .occlude()
+                .font_family(crate::SANS)
+                .role(gpui::Role::Dialog)
+                .aria_label("Cloud environment dialog")
+                .track_focus(&self.focus)
+                .capture_key_down(cx.listener(Self::key))
+                .on_mouse_down(
+                    gpui::MouseButton::Left,
+                    cx.listener(|this, _, _, cx| {
+                        this.page.update(cx, |page, cx| page.dismiss_modal(cx));
+                    }),
+                )
+                .child(content),
+        )
+        .with_priority(4)
+        .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repository_pages_keep_selection_and_retry_without_duplicates() {
+        let mut app = gpui::HeadlessAppContext::with_asset_source(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+        );
+        app.update(|cx| {
+            let page = cx.new(CloudPage::new);
+            page.update(cx, |page, cx| {
+                page.current.creating = true;
+                page.connections = vec![json!({
+                    "id":"github","linkId":"link","link":{"auth_status":"VALID"}
+                })];
+                page.connection = Some(0);
+                page.load_repositories("project".into(), cx);
+                let operation = |number| Operation::Repositories {
+                    query: "project".into(),
+                    page: number,
+                    connector: Some("github".into()),
+                    link: Some("link".into()),
+                };
+                let first = Request {
+                    serial: page.repository_serial,
+                    operation: operation(1),
+                };
+                let rows: Vec<_> = (0..20).map(|id| json!({"id":id.to_string()})).collect();
+                page.apply(&first, Ok(json!({"repositories":rows})), cx);
+                page.choose_repository("0", cx);
+                page.load_repository_page(2, cx);
+                let failed = Request {
+                    serial: page.repository_serial,
+                    operation: operation(2),
+                };
+                page.apply(&failed, Err("Temporary error".into()), cx);
+                assert_eq!(page.repositories.len(), 20);
+                assert!(page.repository_error && page.repository_more);
+                page.load_repository_page(2, cx);
+                let retried = Request {
+                    serial: page.repository_serial,
+                    operation: operation(2),
+                };
+                page.apply(
+                    &retried,
+                    Ok(json!({"repositories":[{"id":"19"},{"id":"20"}]})),
+                    cx,
+                );
+                assert_eq!(page.repositories.len(), 21);
+                assert!(!page.repository_more);
+                assert_eq!(page.current.repositories[0]["id"], "0");
+                page.load_repositories("different".into(), cx);
+                page.apply(
+                    &retried,
+                    Ok(json!({"repositories":[{"id":"old-query"}]})),
+                    cx,
+                );
+                assert!(page.repositories.is_empty());
+                assert_eq!(page.repository_query, "different");
+            });
+        });
+    }
+
+    #[test]
+    fn connection_retry_keeps_catalog_errors_and_ignores_stale_results() {
+        let mut app = gpui::HeadlessAppContext::with_asset_source(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+        );
+        app.update(|cx| {
+            let page = cx.new(CloudPage::new);
+            page.update(cx, |page, cx| {
+                page.error = Some("Couldn’t load saved environments".into());
+                page.current.creating = true;
+                page.open_repositories(cx);
+                let failed = Request {
+                    serial: page.repository_serial,
+                    operation: Operation::Connections,
+                };
+                page.apply(&failed, Err("Connection lookup failed".into()), cx);
+                assert!(page.repository_error);
+                assert!(!page.pending);
+                page.load(Operation::Connections, cx);
+                let retried = Request {
+                    serial: page.repository_serial,
+                    operation: Operation::Connections,
+                };
+                page.apply(&failed, Ok(json!({"connections":[],"failed":false})), cx);
+                assert!(page.repository_pending);
+                page.apply(
+                    &retried,
+                    Ok(json!({"connections":[{
+                    "id":"github","name":"GitHub","linkId":"account-link",
+                    "link":{"auth_status":"VALID","unavailable_reason":null}
+                }],"failed":false})),
+                    cx,
+                );
+                assert!(!page.repository_error);
+                assert!(page.repository_pending);
+                assert_eq!(
+                    page.error.as_deref(),
+                    Some("Couldn’t load saved environments")
+                );
+                let repositories = Request {
+                    serial: page.repository_serial,
+                    operation: Operation::Repositories {
+                        query: String::new(),
+                        page: 1,
+                        connector: Some("github".into()),
+                        link: Some("account-link".into()),
+                    },
+                };
+                page.apply(&repositories, Ok(json!({"repositories":[{
+                    "id":"github::1","repository_full_name":"owner/project","default_branch":"main"
+                }]})), cx);
+                page.choose_repository("github::1", cx);
+                assert_eq!(
+                    page.current.repositories[0]["repository_full_name"],
+                    "owner/project"
+                );
+                page.current_create(cx);
+                let created = Request {
+                    serial: page.serial,
+                    operation: Operation::ConfigCreate {
+                        body: json!({"name":"owner/project"}),
+                        repositories: vec![json!({"name":"owner/project","ref":"main"})],
+                    },
+                };
+                page.apply(
+                    &created,
+                    Ok(json!({"id":"created","name":"owner/project"})),
+                    cx,
+                );
+                assert!(!page.has_modal());
+                page.dismiss_modal(cx);
+                assert!(!page.repository_picker);
+                assert!(!page.current.creating);
+                page.current.creating = true;
+                page.open_repositories(cx);
+                assert!(page.current.repositories.is_empty());
+            });
+        });
+    }
+
+    #[test]
+    fn machine_failure_stays_in_the_editor_and_retry_can_recover() {
+        let mut app = gpui::HeadlessAppContext::with_asset_source(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+        );
+        app.update(|cx| {
+            let page = cx.new(CloudPage::new);
+            page.update(cx, |page, cx| {
+                page.edit(None, cx);
+                let failed = Request {
+                    serial: page.serial,
+                    operation: Operation::Machines,
+                };
+                page.apply(&failed, Err("machine request failed".into()), cx);
+                assert!(page.machine_error);
+                assert!(page.error.is_none());
+                assert!(page.editor.is_some());
+                assert!(!page.pending);
+
+                page.load(Operation::Machines, cx);
+                let retried = Request {
+                    serial: page.serial,
+                    operation: Operation::Machines,
+                };
+                page.apply(&failed, Err("stale failure".into()), cx);
+                page.apply(&retried, Ok(json!([])), cx);
+                assert!(!page.machine_error);
+                assert!(page.error.is_none());
+                assert!(page.editor.is_some());
+                assert!(!page.pending);
+            });
+        });
+    }
+
+    #[test]
+    fn name_retry_does_not_drop_the_in_flight_machine_result() {
+        let mut app = gpui::HeadlessAppContext::with_asset_source(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+        );
+        app.update(|cx| {
+            let page = cx.new(CloudPage::new);
+            page.update(cx, |page, cx| {
+                page.edit(None, cx);
+                let machine = Request {
+                    serial: page.serial,
+                    operation: Operation::Machines,
+                };
+                let old_names = Request {
+                    serial: page.names_serial,
+                    operation: Operation::Names,
+                };
+                page.apply(&old_names, Err("names unavailable".into()), cx);
+                assert!(page.names_error);
+                page.load(Operation::Names, cx);
+                let names = Request {
+                    serial: page.names_serial,
+                    operation: Operation::Names,
+                };
+                page.apply(&old_names, Ok(json!([{"id":"stale","label":"Old"}])), cx);
+                assert!(page.names.is_none());
+                page.apply(&machine, Err("machine unavailable".into()), cx);
+                page.apply(&names, Ok(json!([{"id":"current","label":"Current"}])), cx);
+                assert!(page.machine_error);
+                assert!(!page.pending);
+                assert!(!page.names_error);
+                assert_eq!(page.names.as_ref().unwrap()[0].label, "Current");
+                assert!(page.error.is_none());
+            });
+        });
+    }
+
+    #[test]
+    fn modal_traps_tab_and_restores_focus_on_escape() {
+        struct Scene {
+            modal: Entity<CloudModal>,
+            background: FocusHandle,
+        }
+        impl Render for Scene {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .size_full()
+                    .relative()
+                    .child(
+                        div()
+                            .id("background")
+                            .w(px(40.))
+                            .h(px(20.))
+                            .track_focus(&self.background),
+                    )
+                    .child(self.modal.clone())
+            }
+        }
+        let mut app = gpui::HeadlessAppContext::with_asset_source(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+        );
+        app.update(|cx| {
+            cx.set_global(Theme::dark());
+            theme::load_fonts(cx);
+        });
+        let page = app.update(|cx| cx.new(CloudPage::new));
+        page.update(&mut app, |page, _| page.confirm = Some("discard"));
+        let modal = app.update(|cx| cx.new(|cx| CloudModal::new(page.clone(), cx)));
+        let background = app.update(|cx| cx.focus_handle().tab_stop(true));
+        let scene_modal = modal.clone();
+        let scene_background = background.clone();
+        let window = app
+            .open_window(gpui::size(px(800.), px(600.)), |window, cx| {
+                scene_background.focus(window, cx);
+                cx.new(|_| Scene {
+                    modal: scene_modal,
+                    background: scene_background,
+                })
+            })
+            .unwrap();
+        app.run_until_parked();
+        let press = |app: &mut gpui::HeadlessAppContext, key: &str| {
+            app.update_window(window.into(), |_, window, cx| {
+                window.dispatch_keystroke(gpui::Keystroke::parse(key).unwrap(), cx);
+            })
+            .unwrap();
+            app.run_until_parked();
+        };
+        press(&mut app, "tab");
+        app.update_window(window.into(), |_, window, cx| {
+            assert!(page.read(cx).button_focus.borrow()["confirm-action"].is_focused(window));
+        })
+        .unwrap();
+        press(&mut app, "tab");
+        app.update_window(window.into(), |_, window, cx| {
+            assert!(page.read(cx).button_focus.borrow()["confirm-cancel"].is_focused(window));
+        })
+        .unwrap();
+        press(&mut app, "escape");
+        app.update_window(window.into(), |_, window, cx| {
+            assert!(!modal.read(cx).is_open(cx));
+            assert!(background.is_focused(window));
+        })
+        .unwrap();
+        page.update(&mut app, |page, cx| {
+            page.current.creating = true;
+            page.open_repositories(cx);
+            let failed = Request {
+                serial: page.repository_serial,
+                operation: Operation::Connections,
+            };
+            page.apply(&failed, Err("Connections unavailable".into()), cx);
+        });
+        app.run_until_parked();
+        let bounds = app
+            .debug_bounds(window.into(), "cloud-create-dialog")
+            .unwrap()
+            .unwrap();
+        assert!(bounds.left() >= px(0.) && bounds.right() <= px(800.));
+        assert!(bounds.top() >= px(0.) && bounds.bottom() <= px(600.));
+        press(&mut app, "enter");
+        app.update(|cx| {
+            assert!(page.read(cx).repository_pending);
+            assert!(!page.read(cx).repository_error);
+        });
+        press(&mut app, "escape");
+        app.update(|cx| assert!(!modal.read(cx).is_open(cx)));
+    }
+}

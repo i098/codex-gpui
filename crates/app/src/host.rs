@@ -38,6 +38,7 @@ use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
+use ui::screens::connections::{Connection as RemoteConnection, SshDraft};
 use ui::screens::diff::panel::ReviewRepository;
 use ui::screens::sidebar::Project;
 use url::Url;
@@ -47,6 +48,7 @@ pub use app_tools::{AppToolEvents, AppTools, ToolEvent};
 mod automation_schedule;
 pub mod computer_use;
 pub mod computer_use_native;
+pub mod connections;
 mod context_files;
 mod diff_files;
 mod diff_repositories;
@@ -64,6 +66,7 @@ pub(crate) mod run_now;
 mod settings_git;
 mod skills;
 mod ssh_discovery;
+pub mod voice;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "transport", content = "request", rename_all = "kebab-case")]
@@ -137,6 +140,10 @@ pub trait Host: Send + Sync {
         bail!("sidebar project state is unsupported by this host")
     }
 
+    fn terminal_workspaces(&self, _thread_id: &str, cwd: &str) -> Result<Vec<String>> {
+        Ok(vec![cwd.to_owned()])
+    }
+
     fn review_repositories(&self, _thread: &str, _cwd: &str) -> Result<Vec<ReviewRepository>> {
         bail!("review repositories are unsupported by this host")
     }
@@ -160,6 +167,28 @@ pub trait Host: Send + Sync {
     /// Returns the trusted native Settings service, never a model-callable tool.
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         bail!("Computer Use settings are unsupported by this host")
+    }
+
+    fn voice_settings(&self) -> Result<voice::Settings> {
+        bail!("Voice settings are unsupported by this host")
+    }
+    fn remote_connections(&self) -> Result<connections::SavedConnections> {
+        bail!("Remote connections are unsupported by this host")
+    }
+    fn save_remote_connection(&self, _draft: &SshDraft) -> Result<RemoteConnection> {
+        bail!("Saving remote connections is unsupported by this host")
+    }
+    fn delete_remote_connection(&self, _host_id: &str) -> Result<()> {
+        bail!("Deleting remote connections is unsupported by this host")
+    }
+    fn set_remote_auto_connect(&self, _host_id: &str, _enabled: bool) -> Result<()> {
+        bail!("Remote connections are unsupported by this host")
+    }
+    fn discover_remote_ssh(&self) -> Result<Vec<String>> {
+        bail!("SSH discovery is unsupported by this host")
+    }
+    fn record_mobile_setup(&self) -> Result<()> {
+        bail!("Mobile setup persistence is unsupported by this host")
     }
 
     /// Finish the initial automation turn and settle its automatic archive before reading the inbox.
@@ -303,6 +332,16 @@ impl Host for ReplayHost {
             .as_ref()
             .context("no recorded sidebar project snapshot")?
             .rows()
+    }
+
+    fn terminal_workspaces(&self, thread_id: &str, cwd: &str) -> Result<Vec<String>> {
+        Ok(crate::terminal::source_directories(
+            self.project_snapshot
+                .as_ref()
+                .map(|snapshot| &snapshot.state),
+            thread_id,
+            cwd,
+        ))
     }
 
     /// The identity of the first recorded request that carries one.
@@ -515,6 +554,7 @@ pub struct LocalHost {
     #[cfg(target_os = "macos")]
     app_tools: Mutex<Option<Arc<AppTools>>>,
     opener: PathBuf,
+    host_settings_path: PathBuf,
     settings: Option<crate::host_settings::Settings>,
     computer_use_settings: Option<computer_use::ComputerUseSettings>,
     native_computer_use: Arc<computer_use_native::NativeComputerUse>,
@@ -534,6 +574,8 @@ impl LocalHost {
             #[cfg(target_os = "macos")]
             app_tools: Mutex::new(None),
             opener: "/usr/bin/open".into(),
+            host_settings_path: PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                .join("Library/Application Support/codex-gpui/host-settings.json"),
             settings: None,
             context_files: context_files::ContextFiles::default(),
         }
@@ -861,18 +903,28 @@ impl LocalHost {
             .is_some(),
             "invalid automation recurrence or no future runs"
         );
-        let cwds: Vec<String> = serde_json::from_value(params["cwds"].clone())?;
+        let cwds: Vec<String> = if params["kind"] == "heartbeat" {
+            Vec::new()
+        } else {
+            serde_json::from_value(params["cwds"].clone())?
+        };
         ensure!(
-            !cwds.is_empty() && cwds.iter().all(|cwd| Path::new(cwd).is_absolute()),
+            params["kind"] == "heartbeat"
+                || !cwds.is_empty() && cwds.iter().all(|cwd| Path::new(cwd).is_absolute()),
             "task requires an absolute local project path"
         );
         let id = device_id();
         let now = chrono::Utc::now().timestamp_millis();
-        let raw = json!({
+        let mut raw = json!({
             "version": 1, "id": id, "name": name, "prompt": prompt, "rrule": rrule,
             "status": "ACTIVE", "cwds": cwds, "created_at": now, "updated_at": now,
             "execution_environment": "local"
         });
+        if params.get("projectId").is_some() {
+            raw["target"] = json!({"type": "projectless"});
+        }
+        let mut raw = toml::Table::try_from(raw)?;
+        patch_automation(&mut raw, params, None)?;
         let contents = toml::to_string(&raw)?;
         self.write_automation(&id, &contents)?;
         Ok(json!({"item": definition(&id, &contents)?}))
@@ -1017,8 +1069,12 @@ impl LocalHost {
         }
         let original = fs::read_to_string(&path).map_err(read_error)?;
         let mut item = definition(id, &original)?;
+        let mut raw: toml::Table = toml::from_str(&original)?;
         ensure!(item["status"] != "DELETED", "{missing}");
-        apply_automation_edits(&mut item, params)?;
+        validate_automation_edits(&item, params)?;
+        patch_automation(&mut raw, params, Some(&item))?;
+        let previous = item;
+        item = definition(id, &toml::to_string(&raw)?)?;
         let last: Option<i64> = if let Some(transaction) = &transaction {
             transaction
                 .query_row(
@@ -1067,7 +1123,25 @@ impl LocalHost {
             (Some(next), Some(nominal))
         };
         if let Some(transaction) = &transaction {
-            transaction.execute(
+            let mut updates = vec![
+                "status=excluded.status".to_owned(),
+                "next_run_at=excluded.next_run_at".to_owned(),
+                "next_run_nominal_at=excluded.next_run_nominal_at".to_owned(),
+                "updated_at=excluded.updated_at".to_owned(),
+                "rrule=excluded.rrule".to_owned(),
+                "name=excluded.name".to_owned(),
+                "prompt=excluded.prompt".to_owned(),
+            ];
+            for (field, column) in AUTOMATION_EDIT_FIELDS.iter().copied().chain([
+                ("target", "target_type"),
+                ("target", "project_id"),
+                ("pluginTemplateId", "plugin_template_id"),
+            ]) {
+                if !matches!(field, "name" | "prompt" | "rrule") && previous[field] != item[field] {
+                    updates.push(format!("{column}=excluded.{column}"));
+                }
+            }
+            let sql = format!(
                 "INSERT INTO automations
              (id, name, prompt, status, next_run_at, next_run_nominal_at, last_run_at, cwds,
               target_type, project_id, rrule, model, reasoning_effort, created_at, updated_at,
@@ -1075,9 +1149,11 @@ impl LocalHost {
               plugin_template_id, notification_policy, auto_archive)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
                      ?16, ?17, ?18, ?19, ?20, ?21, ?22)
-             ON CONFLICT(id) DO UPDATE SET status=excluded.status, next_run_at=excluded.next_run_at,
-              next_run_nominal_at=excluded.next_run_nominal_at, updated_at=excluded.updated_at,
-              rrule=excluded.rrule, name=excluded.name, prompt=excluded.prompt",
+             ON CONFLICT(id) DO UPDATE SET {}",
+                updates.join(", ")
+            );
+            transaction.execute(
+                &sql,
                 params![
                     id,
                     item["name"].as_str(),
@@ -1105,12 +1181,8 @@ impl LocalHost {
                 ],
             )?;
         }
-        let mut raw: toml::Table = toml::from_str(&original)?;
         raw.insert("status".into(), status.into());
         raw.insert("updated_at".into(), now.into());
-        for key in ["name", "prompt", "rrule"] {
-            raw.insert(key.into(), item[key].as_str().unwrap().into());
-        }
         self.write_automation(id, &toml::to_string(&raw)?)?;
         if let Some(transaction) = transaction
             && let Err(error) = transaction.commit()
@@ -1279,6 +1351,34 @@ impl Host for LocalHost {
         self.record_projectless_thread(thread, workspace)
     }
 
+    fn voice_settings(&self) -> Result<voice::Settings> {
+        Ok(voice::Settings::new(
+            self.home.clone(),
+            self.host_settings_path.clone(),
+        ))
+    }
+    fn remote_connections(&self) -> Result<connections::SavedConnections> {
+        self.saved_connections()
+    }
+    fn record_mobile_setup(&self) -> Result<()> {
+        LocalHost::record_mobile_setup(self)
+    }
+    fn save_remote_connection(&self, draft: &SshDraft) -> Result<RemoteConnection> {
+        self.save_connection(draft)
+    }
+    fn delete_remote_connection(&self, host_id: &str) -> Result<()> {
+        self.delete_connection(host_id)
+    }
+    fn set_remote_auto_connect(&self, host_id: &str, enabled: bool) -> Result<()> {
+        self.set_connection_auto_connect(host_id, enabled)
+    }
+    fn discover_remote_ssh(&self) -> Result<Vec<String>> {
+        let home = self
+            .ssh_home
+            .as_deref()
+            .context("Home directory is unavailable")?;
+        ssh_discovery::discover(home)
+    }
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.computer_use_settings
             .as_ref()
@@ -1294,6 +1394,19 @@ impl Host for LocalHost {
         project_rows(&state, &self.home, |path, _| {
             Ok(Some(Path::new(path).exists()))
         })
+    }
+
+    fn terminal_workspaces(&self, thread_id: &str, cwd: &str) -> Result<Vec<String>> {
+        let state = match fs::read(self.home.join(".codex-global-state.json")) {
+            Ok(bytes) => Some(serde_json::from_slice::<Value>(&bytes)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        Ok(crate::terminal::source_directories(
+            state.as_ref(),
+            thread_id,
+            cwd,
+        ))
     }
 
     fn review_repositories(&self, thread: &str, cwd: &str) -> Result<Vec<ReviewRepository>> {
@@ -1430,8 +1543,8 @@ impl Host for LocalHost {
                 params["workspaceRoot"]
                     .as_str()
                     .context("missing workspace root")?,
-                params["configPath"]
-                    .as_str()
+                params
+                    .get("configPath")
                     .context("missing environment path")?,
             )?,
             "codex-worktrees" => self.worktrees()?,
@@ -1654,6 +1767,7 @@ impl CloudHost {
             .unwrap_or("GET")
             .to_ascii_uppercase();
         let body = request["body"].as_str().map(str::to_owned);
+        let timeout = request["timeoutMs"].as_u64().map(Duration::from_millis);
         let binary_body = request["bodyBase64"]
             .as_str()
             .map(|body| {
@@ -1789,13 +1903,19 @@ impl CloudHost {
             }
             let bad = |e: ureq::http::Error| (400, e.to_string());
             let response = match (&binary_body, &body) {
-                (Some(body), _) => {
-                    self.run_request(builder.body(body.clone()).map_err(bad)?, body_timeout)
+                (Some(body), _) => self.run_request(
+                    builder.body(body.clone()).map_err(bad)?,
+                    body_timeout,
+                    timeout,
+                ),
+                (None, Some(body)) => self.run_request(
+                    builder.body(body.clone()).map_err(bad)?,
+                    body_timeout,
+                    timeout,
+                ),
+                (None, None) => {
+                    self.run_request(builder.body(()).map_err(bad)?, body_timeout, timeout)
                 }
-                (None, Some(body)) => {
-                    self.run_request(builder.body(body.clone()).map_err(bad)?, body_timeout)
-                }
-                (None, None) => self.run_request(builder.body(()).map_err(bad)?, body_timeout),
             }
             .map_err(|e| (500, e.to_string()))?;
             if integrity {
@@ -1814,12 +1934,14 @@ impl CloudHost {
         &self,
         request: ureq::http::Request<B>,
         body_timeout: Option<Duration>,
+        timeout: Option<Duration>,
     ) -> std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error> {
         use ureq::RequestExt as _;
         request
             .with_agent(&self.agent)
             .configure()
             .timeout_recv_body(body_timeout)
+            .timeout_global(timeout)
             .build()
             .run()
     }
@@ -1876,6 +1998,24 @@ impl Host for CloudHost {
     fn record_projectless(&self, thread: &str, workspace: &Workspace) -> Result<()> {
         self.local.record_projectless(thread, workspace)
     }
+    fn remote_connections(&self) -> Result<connections::SavedConnections> {
+        self.local.remote_connections()
+    }
+    fn record_mobile_setup(&self) -> Result<()> {
+        self.local.record_mobile_setup()
+    }
+    fn save_remote_connection(&self, draft: &SshDraft) -> Result<RemoteConnection> {
+        self.local.save_remote_connection(draft)
+    }
+    fn delete_remote_connection(&self, host_id: &str) -> Result<()> {
+        self.local.delete_remote_connection(host_id)
+    }
+    fn set_remote_auto_connect(&self, host_id: &str, enabled: bool) -> Result<()> {
+        self.local.set_remote_auto_connect(host_id, enabled)
+    }
+    fn discover_remote_ssh(&self) -> Result<Vec<String>> {
+        self.local.discover_remote_ssh()
+    }
     fn computer_use_settings(&self) -> Result<&computer_use::ComputerUseSettings> {
         self.local.computer_use_settings()
     }
@@ -1894,6 +2034,10 @@ impl Host for CloudHost {
 
     fn projects(&self) -> Result<Vec<Project>> {
         self.local.projects()
+    }
+
+    fn terminal_workspaces(&self, thread_id: &str, cwd: &str) -> Result<Vec<String>> {
+        self.local.terminal_workspaces(thread_id, cwd)
     }
 
     fn review_repositories(&self, thread: &str, cwd: &str) -> Result<Vec<ReviewRepository>> {
@@ -2182,7 +2326,26 @@ fn check_automation_id(id: &str) -> Result<()> {
     );
     Ok(())
 }
-fn apply_automation_edits(item: &mut Value, params: &Value) -> Result<()> {
+
+const AUTOMATION_EDIT_FIELDS: &[(&str, &str)] = &[
+    ("name", "name"),
+    ("prompt", "prompt"),
+    ("rrule", "rrule"),
+    ("kind", "kind"),
+    ("targetThreadId", "target_thread_id"),
+    ("cwds", "cwds"),
+    ("model", "model"),
+    ("reasoningEffort", "reasoning_effort"),
+    ("notificationPolicy", "notification_policy"),
+    ("autoArchive", "auto_archive"),
+    ("executionEnvironment", "execution_environment"),
+    (
+        "localEnvironmentConfigPath",
+        "local_environment_config_path",
+    ),
+];
+
+fn validate_automation_edits(item: &Value, params: &Value) -> Result<()> {
     for (key, value) in params
         .as_object()
         .context("host parameters must be an object")?
@@ -2190,29 +2353,120 @@ fn apply_automation_edits(item: &mut Value, params: &Value) -> Result<()> {
         if matches!(key.as_str(), "id" | "status" | "hostId") {
             continue;
         }
-        if matches!(key.as_str(), "name" | "prompt" | "rrule") {
+        if AUTOMATION_EDIT_FIELDS.iter().any(|(name, _)| *name == key) || key == "projectId" {
+            continue;
+        }
+        ensure!(item[key] == *value, "automation update cannot change {key}");
+    }
+    Ok(())
+}
+
+fn patch_automation(raw: &mut toml::Table, params: &Value, previous: Option<&Value>) -> Result<()> {
+    for &(field, stored) in AUTOMATION_EDIT_FIELDS {
+        let Some(value) = params.get(field) else {
+            continue;
+        };
+        if previous.is_some_and(|item| item[field] == *value) {
+            continue;
+        }
+        if value.is_null() {
+            raw.remove(stored);
+            continue;
+        }
+        let value = if matches!(field, "name" | "prompt" | "rrule") {
             let text = value
                 .as_str()
                 .map(str::trim)
                 .filter(|text| !text.is_empty())
-                .with_context(|| format!("missing automation {key}"))?;
-            item[key] = json!(text);
-            continue;
-        }
-        let stored = if key == "projectId" {
-            &item["target"]["projectId"]
+                .with_context(|| format!("missing automation {field}"))?;
+            ensure!(
+                field != "name" || text.chars().count() <= 250,
+                "automation name is too long"
+            );
+            ensure!(
+                field != "prompt" || text.chars().count() <= 100_000,
+                "automation prompt is too long"
+            );
+            toml::Value::String(text.to_owned())
         } else {
-            &item[key]
+            toml::Value::try_from(value)?
         };
-        // Original `ugi` sends a legacy task's first cwd as `projectId`.
-        let legacy_cwd = key == "projectId"
-            && item["target"].is_null()
-            && item["cwds"].get(0) == Some(value)
-            && value != "~";
-        ensure!(
-            stored == value || legacy_cwd,
-            "automation update cannot change {key}"
-        );
+        if field == "cwds" && raw.get(stored) != Some(&value) {
+            let paths = value.as_array().context("invalid automation cwds")?;
+            ensure!(
+                !paths.is_empty()
+                    && paths.iter().all(|path| path
+                        .as_str()
+                        .is_some_and(|path| Path::new(path).is_absolute())),
+                "task requires an absolute local project path"
+            );
+        }
+        raw.insert(stored.to_owned(), value);
+    }
+    patch_automation_project(raw, params, previous)?;
+    reconcile_automation_kind(raw, previous)
+}
+
+fn patch_automation_project(
+    raw: &mut toml::Table,
+    params: &Value,
+    previous: Option<&Value>,
+) -> Result<()> {
+    if let Some(project) = params.get("projectId")
+        && (previous.is_none_or(|item| item["target"]["projectId"] != *project)
+            || params.get("cwds").is_some())
+    {
+        let legacy = raw.get("target").is_none()
+            && params.get("cwds").is_none()
+            && project.as_str().is_some_and(|project| {
+                raw.get("cwds")
+                    .and_then(toml::Value::as_array)
+                    .and_then(|paths| paths.first())
+                    .and_then(toml::Value::as_str)
+                    == Some(project)
+            });
+        if !legacy {
+            let target = if project.is_null() {
+                json!({"type": "projectless"})
+            } else {
+                let project = project
+                    .as_str()
+                    .filter(|id| !id.trim().is_empty())
+                    .context("invalid automation projectId")?;
+                json!({"type": "project", "project_id": project})
+            };
+            raw.insert("target".into(), toml::Value::try_from(target)?);
+        }
+    }
+    Ok(())
+}
+
+fn reconcile_automation_kind(raw: &mut toml::Table, previous: Option<&Value>) -> Result<()> {
+    let kind = raw
+        .get("kind")
+        .and_then(toml::Value::as_str)
+        .unwrap_or("cron");
+    ensure!(
+        kind == "heartbeat" || raw.contains_key("cwds"),
+        "task requires an absolute local project path"
+    );
+    if previous.is_none_or(|item| item["kind"].as_str() != Some(kind)) {
+        if kind == "heartbeat" {
+            for field in [
+                "cwds",
+                "target",
+                "auto_archive",
+                "execution_environment",
+                "local_environment_config_path",
+                "plugin_template_id",
+                "model",
+                "reasoning_effort",
+            ] {
+                raw.remove(field);
+            }
+        } else {
+            raw.remove("target_thread_id");
+        }
     }
     Ok(())
 }

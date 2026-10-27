@@ -138,6 +138,9 @@ pub struct ThreadView {
     /// The view fills the main surface (no side panel): it draws its px at the surface's
     /// rounded right corners through the clip (`Shell::main_clips_right`).
     pub clip_right: bool,
+    /// With `clip_right`, the sidebar is closed: the surface's top-left corner is rounded too,
+    /// and the view draws its top fade's px there as well (`Shell::sidebar_open`).
+    clip_top_left: bool,
     /// A bottom panel (the terminal) shares the main surface below the view, so the page's
     /// composited layer is one tile tall.
     pub docked_below: bool,
@@ -273,7 +276,7 @@ impl FindPaint {
     }
 }
 
-fn find_ranges(text: &str, query: &str, limit: usize) -> (Vec<Range<usize>>, usize) {
+pub(crate) fn find_ranges(text: &str, query: &str, limit: usize) -> (Vec<Range<usize>>, usize) {
     if query.is_empty() {
         return (Vec::new(), 0);
     }
@@ -306,6 +309,15 @@ impl ThreadView {
     ) {
         self.git_repository = repository;
         cx.notify();
+    }
+
+    /// The main surface's rounded corners the view draws (`clip_right`, `clip_top_left`).
+    pub fn set_clips(&mut self, right: bool, top_left: bool, cx: &mut Context<Self>) {
+        if (self.clip_right, self.clip_top_left) != (right, top_left) {
+            self.clip_right = right;
+            self.clip_top_left = top_left;
+            cx.notify();
+        }
     }
 
     pub fn set_git_phase(&mut self, phase: Option<&'static str>, cx: &mut Context<Self>) {
@@ -615,6 +627,7 @@ impl ThreadView {
             cwd: thread.cwd,
             summary_open: false,
             clip_right: false,
+            clip_top_left: false,
             docked_below: false,
             turns: thread.turns,
             render_errors: RefCell::default(),
@@ -735,6 +748,16 @@ impl ThreadView {
             .map(|find| (find.query.as_str(), find.active, find.total))
     }
 
+    pub fn close_find(&mut self, cx: &mut Context<Self>) {
+        self.find = None;
+        cx.notify();
+    }
+
+    pub fn set_find_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_find(window, cx);
+        self.replace_find(query, cx);
+    }
+
     pub fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let find = self.find.get_or_insert_with(|| FindState {
             query: String::new(),
@@ -792,17 +815,7 @@ impl ThreadView {
         for turn in &self.turns {
             for item in &turn.items {
                 let (id, text) = match item {
-                    ThreadItem::UserMessage { id, content } => (
-                        id,
-                        content
-                            .iter()
-                            .filter_map(|part| match part {
-                                UserInput::Text { text } => Some(text.as_str()),
-                                _ => None,
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                    ),
+                    ThreadItem::UserMessage { id, content } => (id, user_text(content)),
                     ThreadItem::AgentMessage { id, text, .. } => (id, markdown::plain(text)),
                     _ => continue,
                 };
@@ -1039,6 +1052,13 @@ impl ThreadView {
                                     .inset_0(),
                                 ),
                         )
+                        .when(!self.clip_right, |d| {
+                            d.child(crate::screens::diff::panel::find_scope_buttons(
+                                &find.query,
+                                false,
+                                t,
+                            ))
+                        })
                         .child(
                             button("thread-find-close", "close", "Close find", 24.).on_click(
                                 cx.listener(|this, _, window, cx| {
@@ -1500,6 +1520,36 @@ impl ThreadView {
                     self.tick(cx);
                 }
             }
+            "item/fileChange/patchUpdated" => {
+                let (Some(turn_id), Some(change_id)) =
+                    (params["turnId"].as_str(), params["itemId"].as_str())
+                else {
+                    return;
+                };
+                let Ok(changes) =
+                    serde_json::from_value::<Vec<FileUpdateChange>>(params["changes"].clone())
+                else {
+                    return;
+                };
+                let Some(turn) = self.turns.iter_mut().find(|turn| turn.id == turn_id) else {
+                    return;
+                };
+                match turn
+                    .items
+                    .iter_mut()
+                    .find(|item| item_id(item) == Some(change_id))
+                {
+                    Some(ThreadItem::FileChange {
+                        changes: current, ..
+                    }) => *current = changes,
+                    Some(_) => return,
+                    None => turn.items.push(ThreadItem::FileChange {
+                        id: change_id.to_owned(),
+                        changes,
+                        status: "inProgress".into(),
+                    }),
+                }
+            }
             "item/started" | "item/completed" => {
                 let Ok(mut n) = serde_json::from_value::<ItemNotification>(params.clone()) else {
                     return;
@@ -1519,7 +1569,9 @@ impl ThreadView {
                 {
                     Some(item) => {
                         if let (
-                            ThreadItem::AgentMessage { id, text: before },
+                            ThreadItem::AgentMessage {
+                                id, text: before, ..
+                            },
                             ThreadItem::AgentMessage { text: after, .. },
                         ) = (&*item, &n.item)
                             && before != after
@@ -1699,17 +1751,7 @@ impl ThreadView {
             window,
         );
         let user = turn.items.iter().find_map(|i| match i {
-            ThreadItem::UserMessage { id, content } => Some((
-                id,
-                content
-                    .iter()
-                    .filter_map(|c| match c {
-                        UserInput::Text { text } => Some(text.as_str()),
-                        UserInput::Other => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            )),
+            ThreadItem::UserMessage { id, content } => Some((id, user_text(content))),
             _ => None,
         });
         if let Some((item, user)) = user {
@@ -2139,7 +2181,13 @@ impl Render for ThreadView {
             (fade(0.12), 0.6),
             (clear, 1.),
         ];
-        let top_fade = skia_gradient(&fade_stops, t.surface, (width, 40.), (0., 0.), false, scale);
+        let top_fade = scroller_gradient(
+            &fade_stops,
+            (width, 40.),
+            scale,
+            self.scroll.clone(),
+            !self.clip_right,
+        );
         // The px the main surface's rounded clip covers in part at its right corners: the top
         // fade's and the composer band's surface fill, drawn onto the page after the shell's
         // corners (`Shell::main_clips_right`), in a deferred draw. cc draws a band tile that
@@ -2153,6 +2201,11 @@ impl Render for ThreadView {
             .fold(1., f32::max);
         let surface = Rgba::from(t.surface);
         let surface = [surface.r, surface.g, surface.b, 1.].map(|v| (v * 255.).round() as u8);
+        let top_left = if self.clip_top_left {
+            Theme::RADIUS_XL_BASE
+        } else {
+            Pixels::ZERO
+        };
         let corners = gpui::canvas(
             |_, _, _| {},
             move |bounds, (), window, cx| {
@@ -2166,6 +2219,7 @@ impl Render for ThreadView {
                     gradient_px(&stops, h, (0, 0), false, true, i, j)
                 };
                 let top = Corners {
+                    top_left,
                     top_right: Theme::RADIUS_XL_BASE,
                     ..Default::default()
                 };
@@ -2319,9 +2373,9 @@ impl Render for ThreadView {
                             .on_children_prepainted(measure),
                     )
                     // Room for the docked composer.
-                    .child(div().h(px(114.))),
+                    .child(div().h(px(114.)))
+                    .child(top_fade),
             )
-            .child(top_fade.absolute().top_0().left_0())
             .when(self.clip_right, |d| d.child(gpui::deferred(corners)))
             // A portal in the original: its shadow spills over the titlebar and the sidebar.
             .when(self.summary_open, |d| {
@@ -2373,6 +2427,25 @@ impl Render for ThreadView {
             d.child(self.menu_overlay(window, cx))
         })
     }
+}
+
+pub(crate) fn render_comment_markdown(source: &str, window: &Window, theme: &Theme) -> Div {
+    markdown::markdown(source, window, theme, &[])
+}
+
+fn user_text(content: &[UserInput]) -> String {
+    let mut joined = String::new();
+    for part in content {
+        if let UserInput::Text { text } = part {
+            if !joined.is_empty() {
+                joined.push('\n');
+            }
+            joined.push_str(text);
+        }
+    }
+    let start = joined.len() - crate::screens::diff::panel::comments::prompt_body(&joined).len();
+    joined.drain(..start);
+    joined
 }
 
 fn item_id(item: &ThreadItem) -> Option<&str> {
@@ -2460,7 +2533,7 @@ fn width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>)
     )
 }
 
-/// Text of a known run width (see [`width`]).
+/// Text of a known run width (see [`width`]) as one text item (`markdown::ItemPen`).
 fn measured(
     window: &Window,
     s: impl Into<SharedString>,
@@ -2471,7 +2544,7 @@ fn measured(
     family: Option<&'static str>,
 ) -> Div {
     let s = s.into();
-    let w = width(window, &s, size, weight, family);
+    let w = markdown::ItemPen::new(window).share(width(window, &s, size, weight, family), true);
     let label = text(s, size, line_height, weight, color);
     div().flex_none().w(w).child(match family {
         Some(f) => label.font_family(f),
@@ -2507,6 +2580,64 @@ pub fn skia_gradient(
     .h(px(size.1))
     .top_layer()
     .object_fit(gpui::ObjectFit::Fill)
+}
+
+/// A vertical CSS `linear-gradient` over the top of the `.layer()` scroller of `scroll`, the
+/// way Chromium's Skia raster pipeline and compositor draw it in the refs, as one image at
+/// device resolution:
+///
+/// - colors interpolate premultiplied in sRGB at pixel centers;
+/// - the gradient is rasterized into its composited layer: Skia's 8x8 ordered dither on the
+///   premultiplied color (clamped to alpha), then color and alpha are stored as 8 bits;
+/// - the compositor blends that layer over what is below (`src + dst * (1 - src_alpha)` in
+///   8 bits). With `nested` (a thread beside a side panel) it blends onto the scroller's
+///   transparent tile first and the result onto the surface: over the scrolled user bubble
+///   (`rgba(50, 50, 50, 0.85)`) and its text every px of the compact-open ref fits that order.
+///   Otherwise (a lone thread, also over a docked bottom panel) it blends onto the pixels
+///   painted so far, which the timestamp under it in the interactive refs fits.
+///
+/// Put it last in the scroller: it stays at the scroller's top-left and paints into a GPUI
+/// layer nested in the scroller's, or outside the enclosing layers.
+///
+/// The dither phase comes from the pixel's position in the scroller's raster tiles (cc tiles
+/// step 510 device px; a tile owns its far edge pixel), which start at the main panel's
+/// top-left. Stops are `(color, position 0..=1)`; `size` is in css px.
+pub fn scroller_gradient(
+    stops: &[(Hsla, f32)],
+    size: (f32, f32),
+    scale: f32,
+    scroll: ScrollHandle,
+    nested: bool,
+) -> impl IntoElement {
+    let image = gradient_image(
+        stops,
+        gpui::transparent_black(),
+        size,
+        (0., 0.),
+        false,
+        true,
+        scale,
+    );
+    canvas(
+        |_, _, _| {},
+        move |_, (), window, _| {
+            let bounds = Bounds::new(scroll.bounds().origin, gpui::size(px(size.0), px(size.1)));
+            let paint = |window: &mut Window| {
+                window.with_skia_layer(255, |window| {
+                    window
+                        .paint_image(bounds, bounds, Corners::default(), image, 0, false)
+                        .ok();
+                })
+            };
+            if nested {
+                paint(window)
+            } else {
+                window.with_unlayered_paint(paint)
+            }
+        },
+    )
+    .absolute()
+    .size_0()
 }
 
 const MAX_GRADIENT_IMAGES: usize = 16;
@@ -2821,6 +2952,56 @@ mod tests {
                 "23,24,23,24,23,24,23,24"
             ]
         );
+    }
+
+    /// The translucent fade, as the GPUI layer shader takes it (straight color times alpha,
+    /// rounded, then the compositor's 8-bit srcover), equals the fade baked over any opaque
+    /// color: over the surface the old opaque image, over scrolled content that content faded.
+    #[test]
+    fn translucent_gradient_composites_like_the_baked_one() {
+        let s: Hsla = rgb(0x181818).into();
+        let fade = |a: f32| Hsla { a, ..s };
+        let stops = [
+            (s, 0.),
+            (fade(0.82), 0.1),
+            (fade(0.48), 0.3),
+            (fade(0.12), 0.6),
+            (gpui::transparent_black(), 1.),
+        ];
+        let layer = gradient_image(
+            &stops,
+            gpui::transparent_black(),
+            (1871., 80.),
+            (0., 0.),
+            false,
+            true,
+            1.,
+        );
+        let layer = layer.as_bytes(0).unwrap();
+        for under in [
+            s,
+            rgb(0x000000).into(),
+            rgb(0xffffff).into(),
+            rgb(0x3b8eea).into(),
+        ] {
+            let baked = gradient_image(&stops, under, (1871., 80.), (0., 0.), false, true, 1.);
+            let u = Rgba::from(under);
+            let u = [u.b, u.g, u.r].map(|v| (v * 255.).round() as u32);
+            let composited: Vec<u8> = layer
+                .chunks(4)
+                .flat_map(|p| {
+                    let a = u32::from(p[3]);
+                    let f = |v: u8| f32::from(v) / 255.;
+                    let rgb: [u32; 3] = std::array::from_fn(|k| {
+                        let l = (f(p[k]) * f(p[3]) * 255.).round_ties_even() as u32;
+                        let t = u[k] * (255 - a);
+                        (l + ((t + ((t + 128) >> 8) + 128) >> 8)).min(255)
+                    });
+                    [rgb[0] as u8, rgb[1] as u8, rgb[2] as u8, 255]
+                })
+                .collect();
+            assert!(composited == baked.as_bytes(0).unwrap(), "under {under:?}");
+        }
     }
 
     #[test]

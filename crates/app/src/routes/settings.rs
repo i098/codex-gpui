@@ -43,6 +43,7 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
 
 pub(super) fn page(root: &mut Root, window: &mut Window, cx: &mut Context<Root>) -> Entity<Shell> {
     root.load_computer_use(cx);
+    root.load_voice(cx);
     root.load_settings_integrations(cx);
     // The Appearance page shows the theme the app keeps.
     let mut config = root.config.clone();
@@ -53,7 +54,18 @@ pub(super) fn page(root: &mut Root, window: &mut Window, cx: &mut Context<Root>)
     let (store, key) = settings::THEME.split_once('.').expect("store.key");
     config[store][key] = json!(root.state.theme);
     config["host"]["confirm-before-close"] = json!(root.state.confirm_before_close);
-    let section = root.settings_section.take();
+    let section = root
+        .settings_section
+        .take()
+        .or_else(|| match &root.state.route {
+            Route::CloudEnvironments(path)
+                if path == "/cloud-environments/new" || path == "/settings/codex-cloud" =>
+            {
+                Some("Codex Cloud")
+            }
+            Route::CloudEnvironments(_) => Some("Legacy Codex Cloud"),
+            _ => None,
+        });
     let (shell, page) = settings::shell(
         &config,
         &root.skills,
@@ -62,6 +74,10 @@ pub(super) fn page(root: &mut Root, window: &mut Window, cx: &mut Context<Root>)
         cx,
     );
     page.update(cx, |page, _| page.set_toaster(root.toaster.clone()));
+    let cloud = crate::cloud::attach(root, &page, window, cx);
+    if let Route::CloudEnvironments(path) = &root.state.route {
+        cloud.update(cx, |cloud, cx| cloud.open_path(path, cx));
+    }
     root.settings_page = Some(page.clone());
     if let Route::SettingsSubtree(path) = &root.state.route
         && let Some(view) = root.settings_subtree(path, cx)

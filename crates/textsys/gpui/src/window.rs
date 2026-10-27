@@ -1038,6 +1038,7 @@ pub(crate) struct DeferredDraw {
     element_id_stack: ElementIdStack,
     text_style_stack: Vec<TextStyleRefinement>,
     content_mask: Option<ContentMask<Pixels>>,
+    recording_layer: Option<(Bounds<Pixels>, bool)>,
     rem_size: Pixels,
     element: Option<AnyElement>,
     absolute_offset: Point<Pixels>,
@@ -1250,6 +1251,8 @@ pub struct Window {
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: ElementIdStack,
+    #[cfg(target_vendor = "apple")]
+    pub(crate) paint_layout: Option<(LayoutId, Point<Pixels>)>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -2171,6 +2174,8 @@ impl Window {
             layout_engine: Some(TaffyLayoutEngine::new()),
             root: None,
             element_id_stack: ElementIdStack::default(),
+            #[cfg(target_vendor = "apple")]
+            paint_layout: None,
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -3998,7 +4003,15 @@ impl Window {
             traversal_order.sort_by_key(|ix| self.next_frame.deferred_draws[*ix].priority);
 
             for deferred_draw_ix in traversal_order {
-                let (element, parent_node, current_view, rem_size, absolute_offset, prepaint_range) = {
+                let (
+                    element,
+                    parent_node,
+                    current_view,
+                    rem_size,
+                    recording_layer,
+                    absolute_offset,
+                    prepaint_range,
+                ) = {
                     let deferred_draw = &mut self.next_frame.deferred_draws[deferred_draw_ix];
                     self.element_id_stack
                         .clone_from(&deferred_draw.element_id_stack);
@@ -4009,6 +4022,7 @@ impl Window {
                         deferred_draw.parent_node,
                         deferred_draw.current_view,
                         deferred_draw.rem_size,
+                        deferred_draw.recording_layer,
                         deferred_draw.absolute_offset,
                         deferred_draw.prepaint_range.clone(),
                     )
@@ -4020,7 +4034,9 @@ impl Window {
                     self.with_rendered_view(current_view, |window| {
                         window.with_rem_size(Some(rem_size), |window| {
                             window.with_absolute_element_offset(absolute_offset, |window| {
-                                element.prepaint(window, cx);
+                                window.with_recording_layer(recording_layer, |window| {
+                                    element.prepaint(window, cx);
+                                });
                             });
                         });
                     });
@@ -4060,11 +4076,14 @@ impl Window {
 
             let paint_start = self.paint_index();
             let content_mask = deferred_draw.content_mask;
+            let recording_layer = deferred_draw.recording_layer;
             if let Some(element) = deferred_draw.element.as_mut() {
                 self.with_rendered_view(deferred_draw.current_view, |window| {
                     window.with_content_mask(content_mask, |window| {
                         window.with_rem_size(Some(deferred_draw.rem_size), |window| {
-                            element.paint(window, cx);
+                            window.with_recording_layer(recording_layer, |window| {
+                                element.paint(window, cx);
+                            });
                         });
                     })
                 })
@@ -4137,6 +4156,7 @@ impl Window {
                     element_id_stack: deferred_draw.element_id_stack.clone(),
                     text_style_stack: deferred_draw.text_style_stack.clone(),
                     content_mask: deferred_draw.content_mask,
+                    recording_layer: deferred_draw.recording_layer,
                     rem_size: deferred_draw.rem_size,
                     priority: deferred_draw.priority,
                     element: None,
@@ -4365,6 +4385,19 @@ impl Window {
         self.saved_layer = previous_saved;
         self.composited_layer_id = previous_layer_id;
         self.window_space_recording = previous_recording;
+        result
+    }
+
+    /// Keeps the raster recording origin without adding a compositing layer.
+    pub(crate) fn with_recording_layer<R>(
+        &mut self,
+        layer: Option<(Bounds<Pixels>, bool)>,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let previous = self.composited_layer;
+        self.composited_layer = layer.or(previous);
+        let result = f(self);
+        self.composited_layer = previous;
         result
     }
 
@@ -4730,6 +4763,7 @@ impl Window {
             element_id_stack: self.element_id_stack.clone(),
             text_style_stack: self.text_style_stack.clone(),
             content_mask,
+            recording_layer: content_mask.and(self.composited_layer),
             rem_size: self.rem_size(),
             priority,
             element: Some(element),
@@ -4901,8 +4935,36 @@ impl Window {
         let opacity = self.element_opacity();
         let snapped_bounds = self.snap_bounds(quad.bounds);
         let snapped_border_widths = self.snap_border_widths(quad.border_widths);
+        #[cfg(target_vendor = "apple")]
+        let (layers, dither_offset) = if quad.background.tag == crate::BackgroundTag::LinearGradient
+        {
+            let Some(layers) = self.sprite_layers() else {
+                return;
+            };
+            let mut origin = quad.bounds.origin;
+            if let Some((layout_id, element_origin)) = self.paint_layout
+                && origin == element_origin
+            {
+                origin += point(
+                    self.layout_origin_residual_x(layout_id),
+                    self.layout_origin_residual_y(layout_id),
+                );
+            }
+            (
+                layers,
+                origin.scale(self.scale_factor()) - snapped_bounds.origin,
+            )
+        } else {
+            ([0; 4], Point::default())
+        };
+        #[cfg(target_vendor = "apple")]
+        let opacity = if layers == [0; 4] { opacity } else { 1. };
         let quad = Quad {
             order: 0,
+            #[cfg(target_vendor = "apple")]
+            layers,
+            #[cfg(target_vendor = "apple")]
+            dither_offset,
             bounds: snapped_bounds,
             content_mask: self.snapped_content_mask(),
             background: quad.background.opacity(opacity),
