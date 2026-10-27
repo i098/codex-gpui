@@ -19,6 +19,7 @@ There is no release yet.
 - Add the Cloud environment UI with repository selection and saved setup flows
 
 ### Fixed
+- Show `Enter full view` and the tab-count `Show tabs` in the titlebar when a narrow window hides the side panel, and match the original's code span pills and scroll limits.
 - Show a screenshot or pasted image in the composer as the original's attachment card: squircle clip, hover ring, hover remove button, and Chromium's image filtering.
 - Match the original Home logo, zoom banner and titlebar buttons at 90% and 110% zoom.
 - Draw the bottom terminal panel's tab close glyph once, and snap a selected tab at a fractional position to the device grid as the original does.

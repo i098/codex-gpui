@@ -1070,6 +1070,8 @@ impl<'a> Markdown<'a> {
             f32::from(text_system.ascent(font_id, px(font_size))).round()
                 - f32::from(text_system.descent(font_id, px(font_size))).round(),
         );
+        // The code font's content area sets the pill's height; its bottom stays on the MONO line.
+        let (growth, shift, pill) = self.code_metrics(font_size);
         let decoration = shapes::Decoration {
             radius: Corners::all(px(6.)),
             fill: Some(tones(self.theme).inline_code),
@@ -1084,14 +1086,18 @@ impl<'a> Markdown<'a> {
                         if bounds.size.height == px(0.) {
                             continue;
                         }
-                        let top = bounds.top() + (bounds.size.height - glyph_height) / 2. - px(1.);
+                        let top =
+                            bounds.top() + (bounds.size.height - glyph_height) / 2. - px(1. + pill);
                         let right = bounds.right() - *trailing_space + px(6.);
                         if let Some(rect) = line.as_mut().filter(|rect| rect.top() == top) {
                             rect.size.width = right - rect.left();
                         } else {
                             let next = Bounds::new(
                                 point(bounds.left() - px(6.), top),
-                                gpui::size(right - bounds.left() + px(6.), glyph_height + px(2.)),
+                                gpui::size(
+                                    right - bounds.left() + px(6.),
+                                    glyph_height + px(2. + pill),
+                                ),
                             );
                             if let Some(rect) = line.replace(next) {
                                 shapes::paint(&decoration, None, rect, window, cx);
@@ -1106,7 +1112,6 @@ impl<'a> Markdown<'a> {
             .absolute()
             .size_full(),
         );
-        let (growth, shift, pill) = self.code_metrics(font_size);
         let space = width(self.window, " ", font_size, 430., Some(code_font()));
         let mut offset = at;
         let mut item = ItemPen::new(self.window);

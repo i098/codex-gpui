@@ -85,7 +85,9 @@ fn scroll_limits_ignore_paint_rounding_and_clamp_at_both_ends() -> Result<()> {
     }
 
     let mut fx = Fx::new()?;
-    for scale in [1., 2.] {
+    // Blink snaps the scroll container's sizes to device pixels: at device scale 2 a UI scale
+    // of 1 and 2 rounds to 1/2 and 1/4 px.
+    for (index, scale) in [1., 2.].into_iter().enumerate() {
         for origin in [0.1, 0.3] {
             for (client, content, border, padding, expected) in [
                 (
@@ -93,13 +95,32 @@ fn scroll_limits_ignore_paint_rounding_and_clamp_at_both_ends() -> Result<()> {
                     (125.6, 800.),
                     false,
                     0.,
-                    (26., 235.),
+                    [(25., 235.), (25.25, 234.75)],
                 ),
-                ((100.75, 50.75), (100.1, 50.2), false, 0., (0., 0.)),
-                ((100.25, 50.49), (101.49, 50.5), false, 0., (1., 1.)),
-                ((100.25, 50.5), (101.5, 51.5), false, 0., (2., 1.)),
-                ((100., 50.), (100., 50.), true, 2., (6., 6.)),
+                (
+                    (100.75, 50.75),
+                    (100.1, 50.2),
+                    false,
+                    0.,
+                    [(0., 0.), (0., 0.)],
+                ),
+                (
+                    (100.25, 50.49),
+                    (101.49, 50.5),
+                    false,
+                    0.,
+                    [(1., 0.), (1.25, 0.)],
+                ),
+                (
+                    (100.25, 50.5),
+                    (101.5, 51.5),
+                    false,
+                    0.,
+                    [(1., 1.), (1.25, 1.)],
+                ),
+                ((100., 50.), (100., 50.), true, 2., [(6., 6.), (6., 6.)]),
             ] {
+                let expected = expected[index];
                 let scroll = ScrollHandle::new();
                 fx.cx.update_window(fx.window, |_, window, cx| {
                     window.set_ui_scale(scale);
