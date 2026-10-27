@@ -38,41 +38,6 @@ fn matching_files(files: &[FileDiff], query: &str) -> Vec<usize> {
 }
 
 impl DiffPanel {
-    pub(super) fn scrolling_file_header(
-        &self,
-        index: usize,
-        file: &FileDiff,
-        top: (usize, Pixels),
-        t: &Theme,
-        cx: &Context<Self>,
-    ) -> AnyElement {
-        let offset = if top.0 == index {
-            let height = if self.standalone { px(36.) } else { px(39.) };
-            let maximum = self
-                .scroll
-                .bounds_for_item(index)
-                .or_else(|| self.scroll.bounds_for_item(0))
-                .map_or(px(0.), |bounds| (bounds.size.height - height).max(px(0.)));
-            (-top.1).max(px(0.)).min(maximum)
-        } else {
-            px(0.)
-        };
-        let header =
-            file_header(index, file, self, t, cx).on_click(cx.listener(move |this, _, _, cx| {
-                this.files[index].open ^= true;
-                this.active_file = index;
-                this.selection = None;
-                cx.notify();
-            }));
-        if offset > px(0.) {
-            deferred(header.relative().top(offset).bg(t.surface))
-                .with_priority(2)
-                .into_any_element()
-        } else {
-            header.into_any_element()
-        }
-    }
-
     pub(super) fn open_jump(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu = None;
         self.jump = Some(JumpToFile {
@@ -94,8 +59,8 @@ impl DiffPanel {
     }
 
     fn select_jump(&mut self, index: usize, cx: &mut Context<Self>) {
-        if let Some(file) = self.files.get_mut(index) {
-            file.open = true;
+        if index < self.files.len() {
+            self.set_file_open(index, true);
             self.active_file = index;
             self.scroll
                 .scroll_to_top_of_item(if self.capped() { 0 } else { index });

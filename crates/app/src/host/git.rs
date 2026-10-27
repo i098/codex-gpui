@@ -300,6 +300,22 @@ pub(super) use contents::read_file_version;
 mod file_url;
 #[path = "git/review_patch.rs"]
 mod review_patch;
+#[path = "worktrees.rs"]
+mod worktrees;
+pub(super) use worktrees::{managed_worktrees, remove_managed_worktree};
+
+pub(super) fn refresh_upstream(root: &Path) -> Result<()> {
+    checked(run(root, &["fetch", "--all", "--prune"])?)?;
+    Ok(())
+}
+
+pub(super) fn select_worktree_environment(root: &Path, path: &str) -> Result<bool> {
+    if !linked_root(root)? {
+        return Ok(false);
+    }
+    store_environment(root, path)?;
+    Ok(true)
+}
 
 /// Git in `root` without pathspec options: `check-ignore` rejects `--literal-pathspecs`, and
 /// the original's `ls-files` calls use pathspec magic.
@@ -392,7 +408,7 @@ fn untracked_paths(root: &Path) -> Result<Vec<String>> {
         .collect())
 }
 
-fn diffs(root: &Path, staged: bool) -> Result<Vec<CapturedDiff>> {
+fn diffs(root: &Path, staged: bool, ignore_whitespace: bool) -> Result<Vec<CapturedDiff>> {
     let untracked = if staged {
         Vec::new()
     } else {
@@ -403,7 +419,7 @@ fn diffs(root: &Path, staged: bool) -> Result<Vec<CapturedDiff>> {
         if staged { &["--cached"] } else { &[] },
         true,
         &untracked,
-        false,
+        ignore_whitespace,
     )
 }
 
@@ -519,8 +535,17 @@ fn head(diff: &str) -> &str {
 
 /// Applies the reviewed patch to the index (`cached`) or the working tree.
 /// Git applies a patch atomically, and refuses it when the target no longer matches.
-fn apply(root: &Path, patch: &[u8], cached: bool, reverse: bool) -> Result<()> {
+fn apply(
+    root: &Path,
+    patch: &[u8],
+    cached: bool,
+    reverse: bool,
+    ignore_whitespace: bool,
+) -> Result<()> {
     let mut args = vec!["apply"];
+    if ignore_whitespace {
+        args.push("--ignore-whitespace");
+    }
     if reverse {
         args.push("--reverse");
     }
@@ -573,7 +598,8 @@ fn revert(root: &Path, path: &str, params: &Value) -> Result<&'static str> {
         _ => bail!("Git revert source must be staged or unstaged"),
     };
     let displayed = params["diff"].as_str().context("missing Git diff")?;
-    let current = diffs(root, staged)?
+    let ignore_whitespace = params["hideWhitespace"].as_bool().unwrap_or(false);
+    let current = diffs(root, staged, ignore_whitespace)?
         .into_iter()
         .find(|file| file.path == path)
         .map(|file| file.diff)
@@ -596,12 +622,12 @@ fn revert(root: &Path, path: &str, params: &Value) -> Result<&'static str> {
             "Git: {}",
             String::from_utf8_lossy(&differs.stderr).trim()
         );
-        apply(root, &patch, true, true)?;
+        apply(root, &patch, true, true, ignore_whitespace)?;
         if !differs.status.success() {
             return Ok("partial-success");
         }
     }
-    match apply(root, &patch, false, true) {
+    match apply(root, &patch, false, true, ignore_whitespace) {
         Ok(()) => Ok("success"),
         Err(_) if staged => Ok("partial-success"),
         Err(error) => Err(error),
@@ -614,7 +640,11 @@ fn selected_patch(root: &Path, params: &Value) -> Result<(Vec<u8>, bool, Vec<Str
         Some("unstaged") => false,
         _ => bail!("Git patch source must be staged or unstaged"),
     };
-    let current = diffs(root, staged)?;
+    let current = diffs(
+        root,
+        staged,
+        params["hideWhitespace"].as_bool().unwrap_or(false),
+    )?;
     let files = params["files"]
         .as_array()
         .context("missing reviewed Git files")?;
@@ -656,14 +686,15 @@ fn selected_patch(root: &Path, params: &Value) -> Result<(Vec<u8>, bool, Vec<Str
 
 fn patch_changes(root: &Path, endpoint: &str, params: &Value) -> Result<&'static str> {
     let (patch, staged, paths) = selected_patch(root, params)?;
+    let ignore_whitespace = params["hideWhitespace"].as_bool().unwrap_or(false);
     match endpoint {
         "git-stage" => {
             ensure!(!staged, "stage requires unstaged changes");
-            apply(root, &patch, true, false)?;
+            apply(root, &patch, true, false, ignore_whitespace)?;
         }
         "git-unstage" => {
             ensure!(staged, "unstage requires staged changes");
-            apply(root, &patch, true, true)?;
+            apply(root, &patch, true, true, ignore_whitespace)?;
         }
         "git-revert" => {
             if staged {
@@ -674,12 +705,12 @@ fn patch_changes(root: &Path, endpoint: &str, params: &Value) -> Result<&'static
                     differs.status.success() || differs.status.code() == Some(1),
                     "Git diff failed"
                 );
-                apply(root, &patch, true, true)?;
+                apply(root, &patch, true, true, ignore_whitespace)?;
                 if !differs.status.success() {
                     return Ok("partial-success");
                 }
             }
-            match apply(root, &patch, false, true) {
+            match apply(root, &patch, false, true, ignore_whitespace) {
                 Ok(()) => {}
                 Err(_) if staged => return Ok("partial-success"),
                 Err(error) => return Err(error),
@@ -1281,7 +1312,7 @@ const MARKER: &str = ".codex-worktree-name";
 const OWNER: &str = "codex-thread.json";
 const SHELL_ENVIRONMENT: &str = "codex-shell-environment.json";
 const OVERRIDE: &str = "AGENTS.override.md";
-const NO_ENVIRONMENT: &str = "__none__";
+pub(super) const NO_ENVIRONMENT: &str = "__none__";
 /// Variables a setup script never hands on (`Ewe`).
 const UNSHARED: [&str; 9] = [
     "CODEX_SOURCE_TREE_PATH",

@@ -3,8 +3,11 @@
 //! HTTP(S) links open the system browser on left or middle click. File links keep their existing action.
 
 use super::*;
+use crate::code_font;
 use crate::tooltip::{Side, tooltip};
-use gpui::{AnyElement, FocusHandle, MouseButton, PathBuilder, StyledText, canvas, point};
+use gpui::{
+    AnyElement, FocusHandle, MouseButton, PathBuilder, Stateful, StyledText, canvas, point,
+};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Color, FontStyle, StyleModifier, ThemeItem, ThemeSettings};
 use syntect::parsing::SyntaxSet;
@@ -57,7 +60,12 @@ use pulldown_cmark::{
 };
 use std::{iter::Peekable, ops::Range};
 
-const OPTIONS: Options = Options::ENABLE_TASKLISTS.union(Options::ENABLE_STRIKETHROUGH);
+const OPTIONS: Options = Options::ENABLE_TASKLISTS
+    .union(Options::ENABLE_STRIKETHROUGH)
+    .union(Options::ENABLE_TABLES);
+
+static TABLE_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
+    std::sync::LazyLock::new(|| gpui::FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)])));
 
 /// The text of `event` in [`plain`]: block ends and rules become line breaks so that a find
 /// query never matches across blocks.
@@ -119,6 +127,7 @@ struct Typography {
     italic: bool,
     strike: bool,
     color: Option<Hsla>,
+    document: bool,
 }
 
 impl Default for Typography {
@@ -130,6 +139,7 @@ impl Default for Typography {
             italic: false,
             strike: false,
             color: None,
+            document: false,
         }
     }
 }
@@ -154,24 +164,40 @@ pub(super) fn with_find(
     find: Option<&FindPaint>,
     segments: &[StreamSegment],
 ) -> Div {
-    Markdown {
-        events: Events {
-            inner: Parser::new_ext(source, OPTIONS)
-                .into_offset_iter()
-                .peekable(),
-            offset: 0,
-            start: 0,
-            range: 0..0,
-        },
-        window,
-        theme: t,
-        find,
-        source,
-        segments,
-        block_index: 0,
+    Markdown::new(source, window, t, find, segments)
+        .blocks(Typography::default(), 0)
+        .0
+}
+
+pub(super) fn document_preview(source: &str, window: &Window, t: &Theme) -> Div {
+    detail(source, window, t)
+}
+
+pub(super) fn detail(source: &str, window: &Window, t: &Theme) -> Div {
+    let mut markdown = Markdown::new(source, window, t, None, &[]);
+    markdown.paragraph_gap = 14.;
+    markdown.preserve_line_breaks = true;
+    markdown.blocks(Typography::default(), 0).0
+}
+
+#[derive(Clone, Copy, Default)]
+struct TableMeasure {
+    line: Pixels,
+    preferred: Pixels,
+    minimum: Pixels,
+    characters: usize,
+}
+
+impl TableMeasure {
+    fn preferred_width(&self) -> Pixels {
+        let columns = match self.characters {
+            0..=40 => 6.,
+            41..=100 => 8.,
+            101..=160 => 12.,
+            _ => 18.,
+        };
+        self.preferred.min(CONTENT_MAX_WIDTH * (columns / 24.))
     }
-    .blocks(Typography::default(), 0)
-    .0
 }
 
 struct Markdown<'a> {
@@ -182,16 +208,55 @@ struct Markdown<'a> {
     source: &'a str,
     segments: &'a [StreamSegment],
     block_index: usize,
+    /// Width of the words of the link being built (see `Tag::Link`).
+    link_width: std::cell::Cell<f32>,
+    /// Indent of the first word of a link: its leading icon.
+    indent: std::cell::Cell<f32>,
+    table_measure: std::cell::Cell<Option<TableMeasure>>,
+    paragraph_gap: f32,
+    preserve_line_breaks: bool,
 }
 
-impl Markdown<'_> {
+impl<'a> Markdown<'a> {
+    fn new(
+        source: &'a str,
+        window: &'a Window,
+        t: &'a Theme,
+        find: Option<&'a FindPaint>,
+        segments: &'a [StreamSegment],
+    ) -> Self {
+        Self {
+            events: Events {
+                inner: Parser::new_ext(source, OPTIONS)
+                    .into_offset_iter()
+                    .peekable(),
+                offset: 0,
+                start: 0,
+                range: 0..0,
+            },
+            window,
+            theme: t,
+            find,
+            source,
+            segments,
+            block_index: 0,
+            table_measure: std::cell::Cell::new(None),
+            link_width: std::cell::Cell::new(0.),
+            indent: std::cell::Cell::new(0.),
+            paragraph_gap: 12.,
+            preserve_line_breaks: false,
+        }
+    }
+
     fn blocks(&mut self, style: Typography, depth: usize) -> (Div, bool) {
         let mut column = div().flex().flex_col();
         let mut first = true;
         let mut bottom: f32 = 0.;
         let mut previous_paragraph = false;
         let mut task = false;
-        while let Some(event) = self.events.peek() {
+        let mut previous_end = 0;
+        while let Some((event, range)) = self.events.inner.peek() {
+            let block_start = range.start;
             if matches!(event, Event::End(_)) {
                 break;
             }
@@ -202,7 +267,11 @@ impl Markdown<'_> {
                     let (row, checked) = self.inline(style);
                     task |= checked;
                     self.events.next();
-                    (block(row, 2), 7., 3.5)
+                    (
+                        block(row, 2).when(style.document, |d| d.py(px(2.))),
+                        7.,
+                        3.5,
+                    )
                 }
                 Event::Start(Tag::Heading { level, .. }) => {
                     let (size, line_height, top, bottom) = match level {
@@ -212,17 +281,39 @@ impl Markdown<'_> {
                         HeadingLevel::H4 => (14., 21., 14., 0.),
                         HeadingLevel::H5 | HeadingLevel::H6 => (14., 22.75, 0., 0.),
                     };
+                    let (size, line_height, top, bottom) = if style.document {
+                        let size = match level {
+                            HeadingLevel::H1 => 24.,
+                            HeadingLevel::H2 => 20.,
+                            HeadingLevel::H3 => 18.,
+                            HeadingLevel::H4 => 16.,
+                            HeadingLevel::H5 | HeadingLevel::H6 => 14.,
+                        };
+                        (size, size * 1.4, 0., 0.)
+                    } else {
+                        (size, line_height, top, bottom)
+                    };
                     self.events.next();
                     let row = self
                         .inline(Typography {
                             size,
                             line_height,
-                            weight: 600.,
+                            weight: if style.document { 500. } else { 600. },
                             ..style
                         })
                         .0;
                     self.events.next();
-                    (block(row, 2), top, bottom)
+                    (
+                        block(row, 2).when(style.document, |d| d.py(px(2.))),
+                        top,
+                        bottom,
+                    )
+                }
+                Event::Start(Tag::Table(alignments)) => {
+                    let alignments = alignments.clone();
+                    self.events.next();
+                    let start = self.events.range.start;
+                    (self.table(&alignments, style, start), 14., 14.)
                 }
                 Event::Start(Tag::List(start)) => {
                     let start = *start;
@@ -320,9 +411,15 @@ impl Markdown<'_> {
             };
             let gap = if first || style.weight == 400. {
                 0.
+            } else if style.document {
+                self.source[previous_end.min(block_start)..block_start]
+                    .bytes()
+                    .filter(|&byte| byte == b'\n')
+                    .count() as f32
+                    * 23.59375
             } else if paragraph && previous_paragraph {
                 // Keep the established spacing of plain answer paragraphs.
-                12.
+                self.paragraph_gap
             } else {
                 bottom.max(top)
             };
@@ -330,8 +427,184 @@ impl Markdown<'_> {
             first = false;
             bottom = next_bottom;
             previous_paragraph = paragraph;
+            previous_end = self.events.range.end;
         }
         (column, task)
+    }
+
+    fn record_table_width(&self, width: Pixels, characters: usize) {
+        if let Some(mut measure) = self.table_measure.get() {
+            measure.line += width;
+            measure.preferred = measure.preferred.max(measure.line);
+            measure.minimum = measure.minimum.max(width);
+            measure.characters += characters;
+            self.table_measure.set(Some(measure));
+        }
+    }
+
+    fn table(
+        &mut self,
+        alignments: &[pulldown_cmark::Alignment],
+        style: Typography,
+        start: usize,
+    ) -> Div {
+        let mut rows = Vec::new();
+        let mut widths = vec![TableMeasure::default(); alignments.len()];
+        while let Some(event) = self.events.next() {
+            let header = match event {
+                Event::Start(Tag::TableHead) => true,
+                Event::Start(Tag::TableRow) => false,
+                Event::End(TagEnd::Table) => break,
+                _ => continue,
+            };
+            let cells = self.table_cells(header, style, &mut widths);
+            self.events.next();
+            rows.push((header, cells));
+        }
+        self.block_index += 1;
+        let source = Rc::new(self.source[start..self.events.range.end].to_owned());
+        let keyboard_source = source.clone();
+        let mut table = div()
+            .id(("markdown-table-grid", self.block_index))
+            .role(gpui::Role::Table)
+            .w_full()
+            .flex()
+            .flex_col();
+        for (row_index, (header, cells)) in rows.into_iter().enumerate() {
+            table = table.child(
+                self.table_row(header, cells, &widths, alignments)
+                    .id(("markdown-table-row", row_index))
+                    .role(gpui::Role::Row),
+            );
+        }
+        div()
+            .relative()
+            .group("markdown-table")
+            .child(
+                div()
+                    .id(("markdown-table", self.block_index))
+                    .overflow_x_scroll()
+                    .child(table),
+            )
+            .child(
+                div()
+                    .id(("copy-markdown-table", self.block_index))
+                    .role(gpui::Role::Button)
+                    .aria_label("Copy table")
+                    .tab_index(0)
+                    .absolute()
+                    .right_0()
+                    .top_0()
+                    .size(px(28.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .opacity(0.)
+                    .group_hover("markdown-table", |s| s.opacity(1.))
+                    .focus_visible(|s| s.opacity(1.))
+                    .child(icon("thread-copy", 14., self.theme.text_tertiary))
+                    .on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(source.as_ref().clone()))
+                    })
+                    .on_key_down(move |event: &gpui::KeyDownEvent, _, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                keyboard_source.as_ref().clone(),
+                            ));
+                            cx.stop_propagation();
+                        }
+                    }),
+            )
+    }
+
+    fn table_cells(
+        &mut self,
+        header: bool,
+        style: Typography,
+        widths: &mut [TableMeasure],
+    ) -> Vec<(Vec<AnyElement>, f32)> {
+        let mut cells = Vec::new();
+        while matches!(self.events.peek(), Some(Event::Start(Tag::TableCell))) {
+            self.events.next();
+            self.table_measure.set(Some(TableMeasure::default()));
+            let content = self
+                .inline(Typography {
+                    size: style.size * 0.875,
+                    line_height: if header {
+                        style.size
+                    } else {
+                        style.line_height
+                    },
+                    weight: if header { 600. } else { style.weight },
+                    ..style
+                })
+                .0;
+            let measure = self.table_measure.take().unwrap_or_default();
+            let index = cells.len();
+            let padding = if index + 1 < widths.len() {
+                21.
+            } else if header {
+                35.
+            } else {
+                0.
+            };
+            if let Some(column) = widths.get_mut(index) {
+                column.preferred = column.preferred.max(measure.preferred + px(padding));
+                column.minimum = column.minimum.max(measure.minimum + px(padding));
+                column.characters = column.characters.max(measure.characters);
+            }
+            cells.push((content, padding));
+            self.events.next();
+        }
+        cells
+    }
+
+    fn table_row(
+        &self,
+        header: bool,
+        cells: Vec<(Vec<AnyElement>, f32)>,
+        widths: &[TableMeasure],
+        alignments: &[pulldown_cmark::Alignment],
+    ) -> Div {
+        let mut row = div()
+            .flex()
+            .items_stretch()
+            .border_b_1()
+            .border_color(if header {
+                self.theme.border_strong
+            } else {
+                self.theme.border_subtle
+            });
+        for (index, (content, padding)) in cells.into_iter().enumerate() {
+            let Some(width) = widths.get(index) else {
+                continue;
+            };
+            let mut content = wrap_row().children(content).child(block_end(1));
+            content = match alignments[index] {
+                pulldown_cmark::Alignment::Center => content.justify_center(),
+                pulldown_cmark::Alignment::Right => content.justify_end(),
+                _ => content,
+            };
+            row = row.child(
+                div()
+                    .id(("markdown-table-cell", index))
+                    .role(if header {
+                        gpui::Role::ColumnHeader
+                    } else {
+                        gpui::Role::Cell
+                    })
+                    .flex_basis(px(0.))
+                    .flex_grow(f32::from(width.preferred_width()).max(1.))
+                    .min_w(width.minimum)
+                    .child(
+                        div()
+                            .pr(px(padding))
+                            .py(px(if header { 7. } else { 8.75 }))
+                            .child(content),
+                    ),
+            );
+        }
+        row
     }
 
     fn list(&mut self, mut number: Option<u64>, style: Typography, depth: usize) -> Div {
@@ -345,7 +618,7 @@ impl Markdown<'_> {
                 div()
                     .flex()
                     .justify_end()
-                    .child(self.word(&format!("{n}. "), None, style))
+                    .child(self.word(&format!("{n}. "), None, style, None))
             } else {
                 let size = if depth == 1 { 6. } else { 5. };
                 div().child(
@@ -371,9 +644,18 @@ impl Markdown<'_> {
         list
     }
 
+    fn line_break(&self) -> AnyElement {
+        if let Some(mut measure) = self.table_measure.get() {
+            measure.line = px(0.);
+            self.table_measure.set(Some(measure));
+        }
+        block_end(1).w_full().h_0().into_any_element()
+    }
+
     fn inline(&mut self, style: Typography) -> (Vec<AnyElement>, bool) {
         let mut row = Vec::new();
         let mut task = false;
+        let mut glue = false;
         while let Some(event) = self.events.peek() {
             match event {
                 Event::End(_)
@@ -387,27 +669,65 @@ impl Markdown<'_> {
                 | Event::Rule => break,
                 _ => {}
             }
+            let glued = std::mem::take(&mut glue);
             match self.events.next().expect("peeked event") {
                 Event::Text(s) | Event::Html(s) | Event::InlineHtml(s) => {
+                    let mut glue = glued;
                     let mut at = self.events.start;
-                    row.extend(s.split_inclusive(' ').map(|s| {
+                    let line = LINE_WIDTH.with(|w| w.get());
+                    let chunks: Vec<&str> = s
+                        .split_inclusive(' ')
+                        .flat_map(|word| {
+                            let limit = line - self.indent.take();
+                            break_long(self.window, word, style.size, style.weight, None, limit)
+                        })
+                        .collect();
+                    let mut item = ItemPen::new(self.window);
+                    let count = chunks.len();
+                    for (index, chunk) in chunks.into_iter().enumerate() {
                         let here = at;
-                        at += s.len();
-                        self.word(s, Some(here), style).into_any_element()
-                    }));
+                        at += chunk.len();
+                        let last = index + 1 == count;
+                        let word = self.word(chunk, Some(here), style, Some((&mut item, last)));
+                        // No break opportunity between a chip and the text that touches it.
+                        let chip = if glue && !chunk.starts_with(char::is_whitespace) {
+                            row.pop()
+                        } else {
+                            None
+                        };
+                        glue = false;
+                        if let Some(chip) = chip {
+                            row.push(
+                                div()
+                                    .flex()
+                                    .flex_none()
+                                    .child(chip)
+                                    .child(word)
+                                    .into_any_element(),
+                            );
+                            continue;
+                        }
+                        row.push(word.into_any_element());
+                    }
                 }
+                Event::SoftBreak if self.preserve_line_breaks => row.push(self.line_break()),
                 Event::SoftBreak => {
+                    if style.document {
+                        row.push(block_end(1).w_full().h(px(4.)).into_any_element());
+                        continue;
+                    }
                     let at = self.events.start;
-                    row.push(self.word(" ", Some(at), style).into_any_element());
+                    row.push(self.word(" ", Some(at), style, None).into_any_element());
                 }
-                Event::HardBreak => row.push(block_end(1).w_full().h_0().into_any_element()),
+                Event::HardBreak => row.push(self.line_break()),
                 Event::Code(code) => {
                     let at = self.events.start;
                     row.extend(
-                        self.code(&code, at)
+                        self.code(&code, at, 12.88 * (style.size / 14.))
                             .into_iter()
                             .map(|part| part.into_any_element()),
                     );
+                    glue = true;
                 }
                 Event::Start(tag) => {
                     let next = match tag {
@@ -430,6 +750,10 @@ impl Markdown<'_> {
                             scheme.eq_ignore_ascii_case("http")
                                 || scheme.eq_ignore_ascii_case("https")
                         });
+                        let python = !external && dest_url.ends_with(".py");
+                        let icon_width = if python { 19. } else { 0. };
+                        self.link_width.set(0.);
+                        self.indent.set(icon_width);
                         let label = self
                             .inline(Typography {
                                 weight: 500.,
@@ -437,13 +761,20 @@ impl Markdown<'_> {
                                 ..style
                             })
                             .0;
-                        row.push(
+                        self.indent.set(0.);
+                        let line = LINE_WIDTH.with(|w| w.get());
+                        // A link wider than a line flows word by word like inline text; each
+                        // word keeps the link's behavior.
+                        let flow = line > 0. && self.link_width.get() + icon_width > line;
+                        let dest = dest_url.to_string();
+                        let link_box = |id: String| {
+                            let dest = dest.clone();
                             div()
-                                .id(SharedString::from(format!("file-link-{dest_url}")))
+                                .id(SharedString::from(id))
                                 .relative()
                                 .flex()
                                 .when(external, |d| {
-                                    let url = dest_url.to_string();
+                                    let url = dest.clone();
                                     let middle_url = url.clone();
                                     let menu_url = url.clone();
                                     d.tab_index(0)
@@ -464,12 +795,10 @@ impl Markdown<'_> {
                                 .when(!external, |d| {
                                     // `path:12` cites a line; the thread's cwd resolves a
                                     // relative path.
-                                    let (path, line) = dest_url
+                                    let (path, line) = dest
                                         .rsplit_once(':')
                                         .and_then(|(p, n)| Some((p.to_owned(), n.parse().ok()?)))
-                                        .map_or((dest_url.to_string(), None), |(p, n)| {
-                                            (p, Some(n))
-                                        });
+                                        .map_or((dest.clone(), None), |(p, n)| (p, Some(n)));
                                     d.on_click(move |_, window, cx| {
                                         window.dispatch_action(
                                             Box::new(crate::screens::diff::panel::OpenFile {
@@ -480,18 +809,32 @@ impl Markdown<'_> {
                                         )
                                     })
                                 })
-                                .when(!external && dest_url.ends_with(".py"), |d| {
-                                    d.child(div().w(px(19.))).child(
-                                        div().absolute().left_0().bottom(px(3.37)).child(icon(
-                                            "thread-lang-python",
-                                            16.,
-                                            tones(self.theme).mention,
-                                        )),
-                                    )
-                                })
-                                .children(label)
-                                .into_any_element(),
-                        );
+                        };
+                        let python_icon = |d: Stateful<Div>| {
+                            d.child(div().w(px(19.))).child(
+                                div().absolute().left_0().bottom(px(3.37)).child(icon(
+                                    "thread-lang-python",
+                                    16.,
+                                    tones(self.theme).mention,
+                                )),
+                            )
+                        };
+                        if flow {
+                            for (index, word) in label.into_iter().enumerate() {
+                                let mut piece =
+                                    link_box(format!("file-link-{dest}-{index}")).flex_none();
+                                if index == 0 && python {
+                                    piece = python_icon(piece);
+                                }
+                                row.push(piece.child(word).into_any_element());
+                            }
+                        } else {
+                            let mut piece = link_box(format!("file-link-{dest}"));
+                            if python {
+                                piece = python_icon(piece);
+                            }
+                            row.push(piece.children(label).into_any_element());
+                        }
                     } else {
                         let (children, checked) = self.inline(next);
                         row.extend(children);
@@ -537,9 +880,23 @@ impl Markdown<'_> {
     }
 
     /// A word box with its selection highlight under its glyphs: one box, so a long answer
-    /// lays out a node per word.
-    fn word(&self, s: &str, at: Option<usize>, style: Typography) -> Div {
+    /// lays out a node per word. In a text `item`, the box takes its share of the item's
+    /// advance (`last` ends the item).
+    fn word(
+        &self,
+        s: &str,
+        at: Option<usize>,
+        style: Typography,
+        item: Option<(&mut ItemPen, bool)>,
+    ) -> Div {
         let (width, label) = self.label(s, at, style);
+        self.link_width
+            .set(self.link_width.get() + f32::from(width));
+        self.record_table_width(width, s.encode_utf16().count());
+        let width = match item {
+            Some((item, last)) => item.share(width, last),
+            None => width,
+        };
         div()
             .relative()
             .flex_none()
@@ -557,25 +914,18 @@ impl Markdown<'_> {
         let color = style.color.unwrap_or(self.theme.text);
         let find = self.find.zip(at);
         let fades = self.fades(s);
-        if !style.italic && !style.strike && find.is_none() && fades.is_empty() {
-            return (
-                width(self.window, s, style.size, style.weight, None),
-                text(
-                    s.to_owned(),
-                    style.size,
-                    style.line_height,
-                    style.weight,
-                    color,
-                )
-                .into_any_element(),
-            );
-        }
+        let tabular = self.table_measure.get().is_some();
         let font = gpui::Font {
             weight: FontWeight(style.weight),
             style: if style.italic {
                 gpui::FontStyle::Italic
             } else {
                 gpui::FontStyle::Normal
+            },
+            features: if tabular {
+                TABLE_FEATURES.clone()
+            } else {
+                Default::default()
             },
             ..font(SANS)
         };
@@ -587,14 +937,31 @@ impl Markdown<'_> {
             underline: None,
             strikethrough: None,
         };
-        let width = self
-            .window
-            .text_system()
-            .layout_line(s, px(style.size), &[run], None)
-            .width;
+        let width = crate::run_width(
+            self.window
+                .text_system()
+                .layout_line(s, px(style.size), &[run], None)
+                .width,
+            self.window,
+        );
+        if !style.italic && !style.strike && find.is_none() && fades.is_empty() {
+            return (
+                width,
+                text(
+                    s.to_owned(),
+                    style.size,
+                    style.line_height,
+                    style.weight,
+                    color,
+                )
+                .when(tabular, |d| d.font_features(TABLE_FEATURES.clone()))
+                .into_any_element(),
+            );
+        }
         let label = run_style(style.size, style.line_height, style.weight, color)
             .when(style.italic, |d| d.italic())
             .when(style.strike, |d| d.line_through());
+        let label = label.when(tabular, |d| d.font_features(TABLE_FEATURES.clone()));
         // ponytail: a find highlight replaces the fade of its word; both at once is rare.
         let label = match find {
             Some((find, at)) => label.child(find.text(s, at)),
@@ -642,13 +1009,58 @@ impl Markdown<'_> {
             .unwrap_or_default()
     }
 
-    fn code(&self, code: &str, at: usize) -> Vec<Div> {
-        let count = code.split_inclusive(' ').count();
+    /// How the code font's inline box differs from the default code font's (CSS aligns it by
+    /// baseline): `(line growth, text baseline shift, pill height change)` in px. A font whose
+    /// descent plus half-leading is larger grows the line (Courier New by about 1 px); a
+    /// different ascent moves the glyphs inside the 15 px text box; the pill is the font's
+    /// content area plus 1 px each side.
+    fn code_metrics(&self, font_size: f32) -> (f32, f32, f32) {
+        const LINE: f32 = 22.75;
+        let system = self.window.text_system();
+        let metrics = |family: &'static str, size: f32| {
+            let id = system.resolve_font(&font(family));
+            let size = px(size);
+            let ascent = f32::from(system.ascent(id, size));
+            let descent = f32::from(system.descent(id, size)).abs();
+            (ascent, descent)
+        };
+        let (sa, sd) = metrics(SANS, 14.);
+        let strut = sd + (LINE - (sa + sd)) / 2.;
+        let below = |(a, d): (f32, f32)| (d + (LINE - (a + d)) / 2. - strut).max(0.);
+        let baseline = |(a, d): (f32, f32)| (15. - (a + d)) / 2. + a;
+        let (code, mono) = (metrics(code_font(), font_size), metrics(MONO, font_size));
+        (
+            below(code) - below(mono),
+            baseline(mono) - baseline(code),
+            (code.0 + code.1) - (mono.0 + mono.1),
+        )
+    }
+
+    fn code(&self, code: &str, at: usize, font_size: f32) -> Vec<Div> {
+        // The 6 px padding of the first piece comes off the line.
+        let limit = LINE_WIDTH.with(|w| w.get()) - 6.;
+        let chunks: Vec<&str> = code
+            .split_inclusive(' ')
+            .flat_map(|word| {
+                break_long(self.window, word, font_size, 430., Some(code_font()), limit)
+            })
+            .collect();
+        let count = chunks.len();
+        self.record_table_width(px(12.), 0);
         let positions = Rc::new(RefCell::new(vec![
             (Bounds::<Pixels>::default(), px(0.));
             count
         ]));
         let painted = positions.clone();
+        let text_system = self.window.text_system();
+        let font_id = text_system.resolve_font(&gpui::Font {
+            weight: FontWeight(430.),
+            ..font(MONO)
+        });
+        let glyph_height = px(
+            f32::from(text_system.ascent(font_id, px(font_size))).round()
+                - f32::from(text_system.descent(font_id, px(font_size))).round(),
+        );
         let decoration = shapes::Decoration {
             radius: Corners::all(px(6.)),
             fill: Some(tones(self.theme).inline_code),
@@ -663,14 +1075,14 @@ impl Markdown<'_> {
                         if bounds.size.height == px(0.) {
                             continue;
                         }
-                        let top = bounds.top() - px(1.);
+                        let top = bounds.top() + (bounds.size.height - glyph_height) / 2. - px(1.);
                         let right = bounds.right() - *trailing_space + px(6.);
                         if let Some(rect) = line.as_mut().filter(|rect| rect.top() == top) {
                             rect.size.width = right - rect.left();
                         } else {
                             let next = Bounds::new(
                                 point(bounds.left() - px(6.), top),
-                                gpui::size(right - bounds.left() + px(6.), px(17.)),
+                                gpui::size(right - bounds.left() + px(6.), glyph_height + px(2.)),
                             );
                             if let Some(rect) = line.replace(next) {
                                 shapes::paint(&decoration, None, rect, window, cx);
@@ -685,49 +1097,60 @@ impl Markdown<'_> {
             .absolute()
             .size_full(),
         );
-        let space = width(self.window, " ", 12.88, 430., Some(MONO));
+        let (growth, shift, pill) = self.code_metrics(font_size);
+        let space = width(self.window, " ", font_size, 430., Some(code_font()));
         let mut offset = at;
+        let mut item = ItemPen::new(self.window);
         let mut parts = Vec::with_capacity(count);
-        for (index, word) in code.split_inclusive(' ').enumerate() {
+        for (index, word) in chunks.into_iter().enumerate() {
             let fades = self.fades(word);
-            let word_width = width(self.window, word, 12.88, 430., Some(MONO));
+            let word_width = width(self.window, word, font_size, 430., Some(code_font()));
+            self.record_table_width(word_width, word.encode_utf16().count());
+            let word_width = item.share(word_width, index + 1 == count);
             let label = match self.find {
                 Some(find) => div().flex_none().w(word_width).child(
-                    run_style(12.88, 15., 430., self.theme.text)
-                        .font_family(MONO)
+                    run_style(font_size, 15., 430., self.theme.text)
+                        .font_family(code_font())
                         .child(find.text(word, offset)),
                 ),
                 None if !fades.is_empty() => div().flex_none().w(word_width).child(
-                    run_style(12.88, 15., 430., self.theme.text)
-                        .font_family(MONO)
+                    run_style(font_size, 15., 430., self.theme.text)
+                        .font_family(code_font())
                         .child(StyledText::new(word.to_owned()).with_highlights(fades)),
                 ),
                 None => div().flex_none().w(word_width).child(
-                    text(word.to_owned(), 12.88, 15., 430., self.theme.text).font_family(MONO),
+                    text(word.to_owned(), font_size, 15., 430., self.theme.text)
+                        .font_family(code_font()),
                 ),
             };
             let measured = positions.clone();
             let trailing_space = space * (word.len() - word.trim_end_matches(' ').len()) as f32;
             parts.push(
                 div()
-                    .pt(px(3.5))
-                    .pb(px(3.25))
+                    .pt(px(3.5 + shift))
+                    .pb(px(3.25 + growth - shift - pill))
                     // ponytail: shared padding can overhang a line by 12 px; use inline layout for exact edge fits.
                     .mr(px(if index + 1 == count { 0. } else { -12. }))
                     .child(
                         div()
                             .relative()
-                            .h(px(17.))
+                            .h(px(17. + pill))
                             .py(px(1.))
                             .px(px(6.))
                             .children(background.take())
                             .child(
-                                highlight(word.to_owned().into(), 12.88, 430., Some(MONO), 6.)
-                                    .absolute()
-                                    .left_0()
-                                    .right_0()
-                                    .top(px(-3.5))
-                                    .bottom(px(-3.25)),
+                                highlight(
+                                    word.to_owned().into(),
+                                    font_size,
+                                    430.,
+                                    Some(code_font()),
+                                    6.,
+                                )
+                                .absolute()
+                                .left_0()
+                                .right_0()
+                                .top(px(-3.5))
+                                .bottom(px(-3.25)),
                             )
                             .child(label)
                             .on_children_prepainted(move |bounds, _, _| {
@@ -743,9 +1166,111 @@ impl Markdown<'_> {
     }
 }
 
+/// Blink lays a text node (or an inline code's text) out as one item: its glyphs at their
+/// float advances, its width `ceil`ed to a LayoutUnit (1/64 device px,
+/// `ShapeResult::SnappedWidth`). Its word boxes take LayoutUnit-rounded shares of the advance
+/// so far, the last one up to that width.
+/// ponytail: a line that breaks inside the item restarts with the shares' rounding (< 1/64
+/// device px), not with the item's own advance; draw words at a sub-unit offset if it shows.
+pub(super) struct ItemPen {
+    unit: f32,
+    advance: f32,
+}
+
+impl ItemPen {
+    pub(super) fn new(window: &Window) -> Self {
+        Self {
+            unit: window.scale_factor() * 64.,
+            advance: 0.,
+        }
+    }
+
+    /// The box width of the item's next word of `width`; `last` ends the item.
+    pub(super) fn share(&mut self, width: Pixels, last: bool) -> Pixels {
+        let start = (self.advance * self.unit).round();
+        self.advance += f32::from(width);
+        let end = self.advance * self.unit;
+        let end = if last { end.ceil() } else { end.round() };
+        px((end - start) / self.unit)
+    }
+}
+
+thread_local! {
+    /// Width of the turn column the markdown flows in; `0` until the first layout.
+    static LINE_WIDTH: std::cell::Cell<f32> = const { std::cell::Cell::new(0.) };
+}
+
+/// Tells the markdown below how wide its lines are (set by the thread before it builds turns).
+pub(super) fn set_line_width(width: Pixels) {
+    LINE_WIDTH.with(|w| w.set(f32::from(width)));
+}
+
+/// The turn column's width as last laid out; `0` before the first layout.
+pub(super) fn line_width() -> f32 {
+    LINE_WIDTH.with(|w| w.get())
+}
+
+/// `overflow-wrap: break-word`: a word wider than a whole line breaks into chunks that each fill
+/// a line; the last chunk flows on with the following words.
+fn break_long<'s>(
+    window: &Window,
+    word: &'s str,
+    size: f32,
+    weight: f32,
+    family: Option<&'static str>,
+    limit: f32,
+) -> Vec<&'s str> {
+    let trimmed = word.trim_end_matches(' ');
+    if limit <= 0.
+        || trimmed.chars().count() < 2
+        || f32::from(width(window, trimmed, size, weight, family)) <= limit
+    {
+        return vec![word];
+    }
+    let mut chunks = Vec::new();
+    let mut rest = word;
+    while f32::from(width(
+        window,
+        rest.trim_end_matches(' '),
+        size,
+        weight,
+        family,
+    )) > limit
+    {
+        let ends: Vec<usize> = rest.char_indices().map(|(i, c)| i + c.len_utf8()).collect();
+        let fit = ends
+            .iter()
+            .take_while(|&&end| {
+                f32::from(width(window, &rest[..end], size, weight, family)) <= limit
+            })
+            .count()
+            .max(1);
+        let end = ends[fit - 1];
+        if end >= rest.len() {
+            break;
+        }
+        chunks.push(&rest[..end]);
+        rest = &rest[end..];
+    }
+    chunks.push(rest);
+    chunks
+}
+
 /// A wrapped inline row that ends a block: `newlines` is what Chrome's `Selection.toString`
 /// emits after it (two for paragraphs and headings).
-fn block(row: Vec<AnyElement>, newlines: usize) -> Div {
+fn block(mut row: Vec<AnyElement>, newlines: usize) -> Div {
+    // `wrap_row` gives every line 4 px for a hanging space; the block's last word has none, so
+    // it carries those 4 px as padding to wrap as it would without the allowance.
+    if let Some(last) = row.pop() {
+        row.push(
+            div()
+                .flex()
+                .flex_none()
+                .pr(px(4.))
+                .child(last)
+                .into_any_element(),
+        );
+    }
     wrap_row().children(row).child(block_end(newlines))
 }
 
@@ -900,7 +1425,7 @@ impl RenderOnce for CodeBlock {
                                             } else {
                                                 gpui::FontStyle::Normal
                                             },
-                                            ..font(MONO)
+                                            ..font(code_font())
                                         },
                                         color: rgb((u32::from(style.foreground.r) << 16)
                                             | (u32::from(style.foreground.g) << 8)
@@ -919,7 +1444,7 @@ impl RenderOnce for CodeBlock {
                                 len: line.len(),
                                 font: gpui::Font {
                                     weight: FontWeight(430.),
-                                    ..font(MONO)
+                                    ..font(code_font())
                                 },
                                 color: foreground,
                                 background_color: None,
@@ -928,12 +1453,13 @@ impl RenderOnce for CodeBlock {
                             }]
                         }
                     };
-                    width = width.max(
+                    width = width.max(crate::run_width(
                         window
                             .text_system()
                             .layout_line(line, px(12.), &runs, None)
                             .width,
-                    );
+                        window,
+                    ));
                     (SharedString::from(line.to_owned()), runs)
                 })
                 .collect();
@@ -1011,7 +1537,7 @@ impl RenderOnce for CodeBlock {
                     .min_h(px(20.))
                     .text_size(px(12.))
                     .line_height(px(20.))
-                    .font_family(MONO)
+                    .font_family(code_font())
                     .font_weight(FontWeight(430.))
                     .when(!wrap, |d| d.whitespace_nowrap())
                     .child(StyledText::new(line.clone()).with_runs(runs.clone()))
@@ -1094,6 +1620,56 @@ fn code_symbol(color: Hsla, checked: bool) -> impl IntoElement {
         },
     )
     .size(px(if checked { 16. } else { 20. }))
+}
+
+#[cfg(test)]
+mod table_tests {
+    #[test]
+    fn table_width_hints_follow_the_original_content_categories() {
+        for (characters, columns) in [(40, 6.), (41, 8.), (100, 8.), (101, 12.), (161, 18.)] {
+            let measure = super::TableMeasure {
+                preferred: gpui::px(1000.),
+                characters,
+                ..Default::default()
+            };
+            assert_eq!(
+                measure.preferred_width(),
+                super::CONTENT_MAX_WIDTH * (columns / 24.)
+            );
+        }
+    }
+
+    #[test]
+    fn searchable_table_text_keeps_cells_and_omits_markdown_delimiters() {
+        let source = "| Name | Count |\n| --- | ---: |\n| **alpha** | `42` |\n";
+        let text = super::plain(source);
+        assert_eq!(
+            text.split_whitespace().collect::<Vec<_>>(),
+            ["Name", "Count", "alpha", "42"]
+        );
+    }
+}
+
+#[cfg(test)]
+mod item_tests {
+    use super::*;
+
+    #[test]
+    fn word_shares_end_at_the_item_layout_unit_width() {
+        // ` next to ` at 14 px on a 2x display: its words' advances (css px). Blink's item is
+        // their sum ceiled to 1/128 px, 52.296875; rounding each word gave 52.2890625.
+        let mut item = ItemPen {
+            unit: 128.,
+            advance: 0.,
+        };
+        let shares = [
+            (3.752_929_7, false),
+            (31.715_332, false),
+            (16.821_533, true),
+        ]
+        .map(|(width, last)| f32::from(item.share(px(width), last)));
+        assert_eq!(shares, [3.75, 31.71875, 16.828125]);
+    }
 }
 
 #[cfg(all(test, target_os = "macos"))]

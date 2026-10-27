@@ -13,6 +13,7 @@ use gpui::{
 };
 use image::{ExtendedColorType, ImageEncoder as _, codecs::png::PngEncoder};
 use parking_lot::Mutex;
+use skia_hairline_sys::{Kind as HairlineKind, Operation as HairlineOperation};
 use skia_safe::{
     AlphaType, BlendMode, BlurStyle, Canvas, ClipOp, Color4f, ColorSpace, ColorType,
     ContourMeasureIter, Data, FilterMode, IRect, ImageInfo, MaskFilter, Matrix, MipmapMode, Paint,
@@ -35,6 +36,8 @@ const CHUNK: i32 = 128;
 pub(crate) const MASK: u8 = 0;
 pub(crate) const ARGB32: u8 = 1;
 const PIPELINE: u8 = 2;
+/// Opaque paired edges use `SkFastFourByteInterp`, with coverage scaled at the halfway point.
+const FAST_INTERP: u8 = 10;
 /// Blit into the transparent tile of a composited layer, then the compositor's srcover.
 const LAYER: u8 = 3;
 /// A mask layer's alpha applied to the layer pixel (`DstIn` at the sprite's coverage).
@@ -44,6 +47,8 @@ pub(crate) const DST_IN: u8 = 5;
 pub(crate) const CLIP: u8 = 7;
 /// A compositor opacity mask; coverage stores the inverse byte opacity.
 pub(crate) const OPACITY: u8 = 8;
+/// AAA's `SkBlendARGB32` blit at run alpha 0 (scale 1); the coverage only marks the px.
+const ARGB32_ZERO: u8 = 9;
 
 /// gfx::SizeF's clamp: dimensions at or below 8 epsilon are 0.
 fn clamp(v: f32) -> f32 {
@@ -842,12 +847,17 @@ fn blend(mode: u8, c: u8, a: u8, d: u8, m: u8) -> u8 {
             ((src * scale + d * ((inv + (inv >> 8)) >> 8)) >> 8) & 0xFF
         }
         PIPELINE => div255(src * m) + div255(d * (255 - div255(a * m))),
+        FAST_INTERP => {
+            let scale = m + (m >> 7);
+            (src * scale + d * (256 - scale)) >> 8
+        }
         _ => ((src * scale) >> 8) + ((d * (256 - ((a * scale) >> 8))) >> 8),
     }) as u8
 }
 
 /// Coverage and blend mode of up to two blits per pixel: `[m1, mode1, m2, mode2]`.
 pub(crate) type Blits = [u8; 4];
+type InverseBlitKey = (u8, bool, [[u8; 3]; 5]);
 
 /// A probe paint: unpremultiplied rgb and alpha over an opaque rgb background.
 #[derive(Clone, Copy)]
@@ -875,6 +885,8 @@ pub(crate) struct Layer {
     pub(crate) device: Option<[i32; 4]>,
     /// Sparse recording's tiling rect, in these coordinates.
     recorded: Option<[i32; 4]>,
+    /// Canvas backing bounds, independent of decoration and atlas tile boundaries.
+    canvas: Option<[i32; 4]>,
 }
 
 impl Layer {
@@ -957,6 +969,7 @@ impl Layer {
             composited: composited.is_some(),
             device,
             recorded,
+            canvas: None,
         }
     }
 
@@ -997,6 +1010,19 @@ impl Layer {
         self
     }
 
+    fn for_canvas(mut self, bounds: Bounds<Pixels>, scale: f32) -> Self {
+        let dev = |value: Pixels| (f32::from(value) * scale).round() as i32;
+        let left = dev(bounds.left()) - self.origin[0];
+        let top = dev(bounds.top()) - self.origin[1];
+        self.canvas = Some([
+            left,
+            top,
+            left + dev(bounds.size.width),
+            top + dev(bounds.size.height),
+        ]);
+        self
+    }
+
     /// The layer's size: the window past its origin.
     pub(crate) fn size(&self) -> [i32; 2] {
         [
@@ -1026,6 +1052,10 @@ impl Layer {
             min = [min[0].max(l), min[1].max(t)];
             max = [max[0].min(r), max[1].min(b)];
         }
+        if let Some([l, t, r, b]) = self.canvas {
+            min = [min[0].max(l), min[1].max(t)];
+            max = [max[0].min(r), max[1].min(b)];
+        }
         let [right, bottom] = self.size();
         [
             x0.max(min[0]).max(-self.origin[0]),
@@ -1040,9 +1070,17 @@ impl Layer {
         [x0, y0, x1, y1]: [i32; 4],
         extent: [i32; 2],
     ) -> impl Iterator<Item = ([i32; 2], (i32, i32), [i32; 4])> {
-        let offset = self.recorded.map_or(self.tile_origin, |r| [r[0], r[1]]);
-        let max = self.recorded.map_or(extent, |r| [r[2], r[3]]);
-        let raster_size = self.recorded.map(|_| (self.tile[0], self.tile[1]));
+        let backing = self.canvas.or(self.recorded);
+        let offset = backing.map_or(self.tile_origin, |r| [r[0], r[1]]);
+        let max = backing.map_or(extent, |r| [r[2], r[3]]);
+        let canvas_size = self.canvas.map(|r| [r[2] - r[0], r[3] - r[1]]);
+        // The overlap affects the stride, not the canvas surface or its edge clip.
+        let tile = canvas_size.map_or(self.tile, |size| {
+            size.map(|value| value.max(1).saturating_add(2))
+        });
+        let raster_size = canvas_size
+            .map(|[width, height]| (width, height))
+            .or_else(|| self.recorded.map(|_| (self.tile[0], self.tile[1])));
         tiles(
             [
                 x0 - offset[0],
@@ -1051,7 +1089,7 @@ impl Layer {
                 y1 - offset[1],
             ],
             [max[0] - offset[0], max[1] - offset[1]],
-            self.tile,
+            tile,
         )
         .map(move |(o, size, r)| {
             (
@@ -1077,13 +1115,14 @@ impl Layer {
             self.composited,
             self.device,
             self.recorded,
+            self.canvas,
             self.clip_bounds(bounds),
         )
     }
 }
 
 /// Existing explicit compositor rectangles keep their tile sizing.
-fn cc_tile([w, h]: [i32; 2]) -> [i32; 2] {
+pub(crate) fn cc_tile([w, h]: [i32; 2]) -> [i32; 2] {
     const UNTILED: i32 = 2 * TILE;
     let mut d = [TILE; 2];
     if w < d[0] {
@@ -1198,7 +1237,7 @@ fn raster(
                 bg,
             }));
             if alpha == 255 {
-                &[MASK, ARGB32]
+                &[MASK, ARGB32, FAST_INTERP]
             } else {
                 probes.push(Probe {
                     fg: [255; 3],
@@ -1263,25 +1302,47 @@ fn raster(
                 // inverse black on white.
                 let m = if black { 255 - px[0][1] } else { px[0][1] };
                 if m == 0 {
+                    // AAA's run blitter also blits alpha 0: `SkBlendARGB32` at scale 1 still
+                    // drops each channel's `>> 8` remainder, which the probes show.
+                    let zero = |(p, v): (&Probe, &[u8; 3])| {
+                        (0..3).all(|k| blend(ARGB32, p.fg[k], p.a, p.bg[k], 0) == v[k])
+                    };
+                    if fixed.is_none()
+                        && probes.iter().zip(px).all(zero)
+                        && probes.iter().zip(px).any(|(p, v)| p.bg != *v)
+                    {
+                        out[((y - y0) * w + x - x0) as usize] = [255, ARGB32_ZERO, 0, MASK];
+                    }
                     continue;
                 }
                 let blits = match (fixed, last) {
                     (Some(mode), _) => [m, mode, 0, MASK],
                     (None, Some((prev, b))) if prev == buf => b,
-                    (None, _) => solve(&probes, px, m, modes).unwrap_or_else(|| {
-                        // AAA may split a translucent paint's edge px into other blits than the
-                        // opaque probe's: one `blitAntiH` (as under an AA clip, which forces
-                        // AAA's run blitter) of the coverage the translucent white probe shows,
-                        // the nearest to the opaque one.
-                        let v = px[px.len() - 1][0];
-                        let fit = |c: &u8| blend(MASK, 255, alpha, 0, *c) == v;
-                        let rle = (0..=255).filter(fit).min_by_key(|c| c.abs_diff(m));
-                        [
-                            if alpha == 255 { m } else { rle.unwrap_or(m) },
-                            MASK,
-                            0,
-                            MASK,
-                        ]
+                    (None, _) => INVERSE_BLITS.with_borrow_mut(|cache| {
+                        let key = (alpha, black, buf);
+                        if let Some(&blits) = cache.get(&key) {
+                            return blits;
+                        }
+                        let blits = solve(&probes, px, m, modes).unwrap_or_else(|| {
+                            // AAA may split a translucent paint's edge px into other blits than the
+                            // opaque probe's: one `blitAntiH` (as under an AA clip, which forces
+                            // AAA's run blitter) of the coverage the translucent white probe shows,
+                            // the nearest to the opaque one.
+                            let v = px[px.len() - 1][0];
+                            let fit = |c: &u8| blend(MASK, 255, alpha, 0, *c) == v;
+                            let rle = (0..=255).filter(fit).min_by_key(|c| c.abs_diff(m));
+                            [
+                                if alpha == 255 { m } else { rle.unwrap_or(m) },
+                                MASK,
+                                0,
+                                MASK,
+                            ]
+                        });
+                        if cache.len() >= CACHE_MAX {
+                            cache.clear();
+                        }
+                        cache.insert(key, blits);
+                        blits
                     }),
                 };
                 last = Some((buf, blits));
@@ -1372,10 +1433,12 @@ pub(crate) fn tile_pixels(
 }
 
 thread_local! {
-    /// Tile surfaces by size for [`rect_pixels`]: a tile is up to 4 MB, too much to allocate
-    /// and clear for every draw.
-    /// ponytail: kept for the thread's life, a few per tile size; cap them if sizes multiply.
+    /// Reuse raster surfaces by size; canvas surfaces can exceed the 4 MB decoration tiles.
+    /// ponytail: no pooled-byte ceiling; retain sizes for the thread's life. Add byte-bounded
+    /// eviction if large or varying canvas sizes increase retained memory.
     static SURFACES: RefCell<HashMap<(i32, i32), Vec<Surface>>> = Default::default();
+    // These probes depend on alpha and black; equal responses have position-independent blits.
+    static INVERSE_BLITS: RefCell<HashMap<InverseBlitKey, Blits>> = Default::default();
 }
 
 /// [`tile_pixels`] for the layer px `[x0, y0, x1, y1]` of the tile only, rows packed, drawn on
@@ -1430,7 +1493,13 @@ pub(crate) fn surface_pixels(
     draw: impl FnOnce(&Canvas),
 ) -> (Vec<u8>, usize) {
     let info = ImageInfo::new_n32_premul(size, cs);
-    let mut surface = surfaces::raster(&info, None, None).expect("shapes: tile surface");
+    if size.0 <= 0 || size.1 <= 0 {
+        return (Vec::new(), 0);
+    }
+    let mut surface = match surfaces::raster(&info, None, None) {
+        Some(surface) => surface,
+        None => panic!("shapes: tile surface"),
+    };
     let canvas = surface.canvas();
     canvas.clear(clear);
     canvas.translate((-o[0] as f32, -o[1] as f32));
@@ -1576,6 +1645,11 @@ fn solve(probes: &[Probe], px: &[[u8; 3]], m: u8, modes: &[u8]) -> Option<Blits>
         [MASK, ARGB32],
         [ARGB32, MASK],
         [ARGB32, ARGB32],
+        [MASK, FAST_INTERP],
+        [ARGB32, FAST_INTERP],
+        [FAST_INTERP, MASK],
+        [FAST_INTERP, ARGB32],
+        [FAST_INTERP, FAST_INTERP],
     ];
     let opaque = probes[1].a == 255;
     let rest = |b: Blits| {
@@ -1597,6 +1671,10 @@ fn solve(probes: &[Probe], px: &[[u8; 3]], m: u8, modes: &[u8]) -> Option<Blits>
     let single = |c: u8| modes.iter().map(move |&mode| [c, mode, 0, MASK]);
     single(m)
         .find(|&b| fits(b))
+        .or_else(|| {
+            m.checked_add(1)
+                .and_then(|coverage| single(coverage).find(|&b| fits(b)))
+        })
         // A translucent paint's AAA may blit an edge px once at another coverage than the
         // opaque probe shows (nearest first): one blit is tried before two.
         .or_else(|| {
@@ -1658,22 +1736,100 @@ pub(crate) fn sprites(
 ) -> Arc<Vec<Sprite>> {
     cached(key, || {
         let (rect, blits) = make();
-        let mut out = Vec::new();
-        for (blit, mode) in [0, 2]
-            .into_iter()
-            .flat_map(|b| [MASK, ARGB32, PIPELINE, LAYER, DST_IN, OPACITY].map(|m| (b, m)))
-        {
-            if !blits.iter().any(|b| b[blit + 1] == mode && b[blit] != 0) {
-                continue;
-            }
-            let value = |i: usize| {
-                let b = blits[i];
-                if b[blit + 1] == mode { b[blit] } else { 0 }
-            };
-            chunks(&mut out, rect, &value, mode, None, false);
-        }
-        out
+        sprites_from_blits(rect, &blits)
     })
+}
+
+fn sprites_from_blits(rect: [i32; 4], blits: &[Blits]) -> Vec<Sprite> {
+    let mut out = Vec::new();
+    for (blit, mode) in [0, 2].into_iter().flat_map(|b| {
+        [
+            MASK,
+            ARGB32,
+            PIPELINE,
+            LAYER,
+            DST_IN,
+            OPACITY,
+            ARGB32_ZERO,
+            FAST_INTERP,
+        ]
+        .map(|m| (b, m))
+    }) {
+        if !blits.iter().any(|b| b[blit + 1] == mode && b[blit] != 0) {
+            continue;
+        }
+        let value = |i: usize| {
+            let b = blits[i];
+            if b[blit + 1] == mode { b[blit] } else { 0 }
+        };
+        chunks(&mut out, rect, &value, mode, None, false);
+    }
+    out
+}
+
+fn hairline_sprites(operations: &[HairlineOperation]) -> Vec<Sprite> {
+    let mut out = Vec::new();
+    for operation in operations {
+        assert!(operation.width > 0 && operation.height > 0);
+        hairline_sprite(&mut out, operation);
+    }
+    out
+}
+
+fn hairline_sprite(out: &mut Vec<Sprite>, operation: &HairlineOperation) {
+    let alpha_pair = matches!(
+        operation.kind,
+        HairlineKind::AntiHorizontalPairAlpha | HairlineKind::AntiVerticalPairAlpha
+    );
+    if alpha_pair && (operation.first == 0 || operation.second == 0) {
+        let vertical = operation.kind == HairlineKind::AntiVerticalPairAlpha;
+        for (index, coverage) in [operation.first, operation.second].into_iter().enumerate() {
+            let mode = if coverage == 0 { ARGB32_ZERO } else { ARGB32 };
+            let value = if coverage == 0 { 255 } else { coverage };
+            let (x, y) = if vertical {
+                (operation.x, operation.y + index as i32)
+            } else {
+                (operation.x + index as i32, operation.y)
+            };
+            chunks(out, [x, y, 1, 1], &|_| value, mode, None, false);
+        }
+        return;
+    }
+    let value = |index: usize| hairline_coverage(operation, index);
+    let rect = [operation.x, operation.y, operation.width, operation.height];
+    chunks(
+        out,
+        rect,
+        &value,
+        hairline_mode(operation.kind),
+        None,
+        false,
+    );
+}
+
+fn hairline_mode(kind: HairlineKind) -> u8 {
+    match kind {
+        HairlineKind::Horizontal
+        | HairlineKind::Rectangle
+        | HairlineKind::AntiHorizontalPairAlpha
+        | HairlineKind::AntiVerticalPairAlpha => ARGB32,
+        HairlineKind::Vertical | HairlineKind::AntiHorizontal | HairlineKind::Mask => MASK,
+        HairlineKind::AntiHorizontalPairOpaque | HairlineKind::AntiVerticalPairOpaque => {
+            FAST_INTERP
+        }
+    }
+}
+
+/// Coverage of pixel `index` (row-major); pair operations are always two pixels.
+fn hairline_coverage(operation: &HairlineOperation, index: usize) -> u8 {
+    match operation.kind {
+        HairlineKind::Horizontal | HairlineKind::Rectangle => 255,
+        HairlineKind::Vertical | HairlineKind::AntiHorizontal | HairlineKind::Mask => {
+            operation.first
+        }
+        _ if index == 0 => operation.first,
+        _ => operation.second,
+    }
 }
 
 /// Cuts the coverage `value` of each px of `[x0, y0, w, h]` (row-major) into sprites.
@@ -1931,6 +2087,56 @@ pub(crate) fn with_rounded_clip<R>(
     out
 }
 
+/// The clip [`with_unsnapped_clip`] pushes: `bounds` and `radius` at their unsnapped device
+/// geometry. Blink holds the edges in LayoutUnits; an edge that is one up to the f32 noise of
+/// the logical-px round trip (114.37499 for 114.375) becomes it exactly, as that noise moves
+/// Skia's supersampled arc coverage. A float edge (an outset by a radius) stays.
+fn unsnapped_clip(bounds: Bounds<Pixels>, radius: gpui::Corners<Pixels>, s: f32) -> Contour {
+    let layout_unit = |v: f32| {
+        let units = v * 64.;
+        let grid = units.round();
+        if (units - grid).abs() <= units.abs() * f32::EPSILON * 4. {
+            grid / 64.
+        } else {
+            v
+        }
+    };
+    let [l, t, r, b] = [bounds.left(), bounds.top(), bounds.right(), bounds.bottom()]
+        .map(|v| layout_unit(f32::from(v) * s));
+    let radii = [
+        radius.top_left,
+        radius.top_right,
+        radius.bottom_right,
+        radius.bottom_left,
+    ]
+    .map(|v| [f32::from(v) * s; 2]);
+    let mut rr = Rounded {
+        r: [l, t, r - l, b - t],
+        radii,
+    };
+    rr.constrain();
+    Contour {
+        rr,
+        k: [2.; 4],
+        origin: rr,
+    }
+}
+
+/// `crate::with_unsnapped_clip` on macOS.
+pub(crate) fn with_unsnapped_clip<R>(
+    bounds: Bounds<Pixels>,
+    radius: gpui::Corners<Pixels>,
+    window: &mut Window,
+    paint: impl FnOnce(&mut Window) -> R,
+) -> R {
+    let clip = unsnapped_clip(bounds, radius, window.scale_factor());
+    let only = Layer::new(window, None).anchor();
+    CLIPS.with_borrow_mut(|c| c.push((clip, Some(only))));
+    let out = paint(window);
+    CLIPS.with_borrow_mut(|c| c.pop());
+    out
+}
+
 /// `crate::with_layer` on macOS: the [`CLIPS`] that cover the layer's device px leave it, and
 /// Skia draws the content on a device that starts at the layer's top-left px.
 pub(crate) fn with_layer<R>(
@@ -2046,10 +2252,12 @@ fn shown([x0, y0, x1, y1]: [i32; 4], layer: Layer, window: &Window) -> bool {
         && ((y1 + ly) as f32) > dev(m.top())
 }
 
-/// `crate::paint` on macOS: Blink's box decoration painting, op by op.
+/// `crate::paint` on macOS: Blink's box decoration painting, op by op, moved by `offset`
+/// (CSS px) after snapping.
 pub(crate) fn paint(
     d: &Decoration,
     composited: Option<gpui::Point<Pixels>>,
+    offset: gpui::Point<Pixels>,
     bounds: Bounds<Pixels>,
     window: &mut Window,
     cx: &App,
@@ -2059,9 +2267,241 @@ pub(crate) fn paint(
     }
     let s = window.scale_factor();
     let layer = Layer::new(window, composited).for_bounds(bounds, s);
+    let offset = [f32::from(offset.x) * s, f32::from(offset.y) * s];
     for (op, color) in ops(d, layer.local(bounds, s), s).1 {
-        paint_op(op, color, layer, window, cx);
+        paint_op(op.moved(offset), color, layer, window, cx);
     }
+}
+
+/// `crate::paint_scaled` on macOS.
+pub(crate) fn paint_scaled(
+    d: &Decoration,
+    composited: Option<gpui::Point<Pixels>>,
+    bounds: Bounds<Pixels>,
+    size: gpui::Size<Pixels>,
+    factor: f32,
+    window: &mut Window,
+    cx: &App,
+) {
+    if window.element_opacity() <= 0. {
+        return;
+    }
+    let s = window.scale_factor();
+    let layer = Layer::new(window, composited).for_bounds(bounds, s);
+    let layout = |v: Pixels| (f32::from(v) * s * 64.).trunc() / 64.;
+    let (half_w, half_h) = (layout(size.width) / 2., layout(size.height) / 2.);
+    for (op, color) in ops(d, layer.local(bounds, s), s).1 {
+        let Op::Fill(mut contour) = op else {
+            debug_assert!(false, "paint_scaled: a fill-only decoration");
+            continue;
+        };
+        let origin = [contour.rr.r[0] + half_w, contour.rr.r[1] + half_h];
+        for rr in [&mut contour.rr, &mut contour.origin] {
+            rr.r = crate::scaled_rect(rr.r, origin, factor);
+            for r in rr.radii.as_flattened_mut() {
+                *r *= factor;
+            }
+        }
+        paint_op(Op::Fill(contour), color, layer, window, cx);
+    }
+}
+
+fn canvas_round_rect(bounds: Bounds<Pixels>, radius: Pixels, scale: f32) -> Op {
+    let rr = Rounded {
+        r: [
+            f32::from(bounds.left()) * scale,
+            f32::from(bounds.top()) * scale,
+            f32::from(bounds.size.width) * scale,
+            f32::from(bounds.size.height) * scale,
+        ],
+        radii: [[f32::from(radius) * scale; 2]; 4],
+    };
+    Op::Fill(Contour {
+        rr,
+        k: [2.; 4],
+        origin: rr,
+    })
+}
+
+pub(crate) fn paint_canvas_round_rect(
+    radius: Pixels,
+    color: Hsla,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    if window.element_opacity() <= 0. {
+        return;
+    }
+    let scale = window.scale_factor();
+    let backing = window.composited_layer().map_or_else(
+        || Bounds::new(point(px(0.), px(0.)), window.viewport_size()),
+        |(bounds, _)| bounds,
+    );
+    let layer = Layer::new(window, None)
+        .for_bounds(bounds, scale)
+        .for_canvas(backing, scale);
+    let op = canvas_round_rect(layer.local(bounds, scale), radius, scale);
+    paint_op(op, color, layer, window, cx);
+}
+
+// Match Blink's padded stops and the fixed-scale tile used by generated images.
+fn stripe_paint(period: f32, colors: [Rgba; 2]) -> Paint {
+    use skia_safe::{PictureRecorder, TileMode, gradient, images};
+    let colors = colors.map(|color| Color4f::new(color.r, color.g, color.b, color.a));
+    let stops = [colors[0], colors[0], colors[1], colors[1]];
+    let gradient = gradient::Gradient::new(
+        gradient::Colors::new(
+            &stops,
+            Some(&[0., 0.5, 0.5, 1.]),
+            TileMode::Clamp,
+            ColorSpace::new_srgb(),
+        ),
+        gradient::Interpolation {
+            in_premul: gradient::interpolation::InPremul::Yes,
+            color_space: gradient::interpolation::ColorSpace::Lab,
+            ..Default::default()
+        },
+    );
+    let shader = gradient::shaders::linear_gradient(((0., period), (0., 0.)), &gradient, None)
+        .expect("positive stripe period");
+    let tile = Rect::from_wh(period, period);
+    let mut recorder = PictureRecorder::new();
+    let mut paint = Paint::default();
+    paint
+        .set_anti_alias(true)
+        .set_dither(true)
+        .set_shader(shader);
+    recorder
+        .begin_recording(tile, false)
+        .draw_rect(tile, &paint);
+    let picture = recorder
+        .finish_recording_as_picture(None)
+        .expect("stripe recording");
+    let side = period.ceil() as i32;
+    let image = images::deferred_from_picture(
+        picture,
+        (side, side),
+        Some(&Matrix::scale((side as f32 / period, side as f32 / period))),
+        None,
+        images::BitDepth::U8,
+        ColorSpace::new_srgb(),
+        None,
+    )
+    .expect("stripe tile");
+    let shader = image
+        .to_shader(
+            (TileMode::Repeat, TileMode::Repeat),
+            SamplingOptions::new(FilterMode::Linear, MipmapMode::Linear),
+            &Matrix::scale((period / side as f32, period / side as f32)),
+        )
+        .expect("stripe shader");
+    let mut paint = Paint::default();
+    paint.set_anti_alias(true).set_shader(shader);
+    paint
+}
+
+pub(crate) fn paint_horizontal_stripes(
+    period: Pixels,
+    colors: [Rgba; 2],
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    let scale = window.scale_factor();
+    // Blink stores the used background tile in device-space LayoutUnits.
+    let period = (f32::from(period) * scale * 64.).floor() / 64.;
+    let layer = Layer::new(window, None).for_bounds(bounds, scale);
+    let (contour, _) = ops(&Decoration::default(), layer.local(bounds, scale), scale);
+    let bbox = Op::Fill(contour).bbox();
+    if !shown(bbox, layer, window) {
+        return;
+    }
+    let clips = clips(window, layer);
+    let sprites = cached(
+        format!(
+            "stripes{period:?}{colors:?}{bbox:?}{clips:?}{:?}",
+            layer.key(bbox)
+        ),
+        || {
+            let paint = stripe_paint(period, colors);
+            composited_sprites(bbox, layer, &|canvas| {
+                for clip in &clips {
+                    clip.clip(canvas, ClipOp::Intersect);
+                }
+                canvas.save();
+                canvas.translate((contour.rr.r[0], contour.rr.r[1]));
+                canvas.draw_rect(Rect::from_wh(contour.rr.r[2], contour.rr.r[3]), &paint);
+                canvas.restore();
+            })
+        },
+    );
+    paint_sprites(
+        &sprites,
+        gpui::rgb(0xffffff).into(),
+        layer.origin,
+        window,
+        cx,
+    );
+}
+
+pub(crate) fn paint_vertical_fade(
+    color: Rgba,
+    layer_offset_y: Pixels,
+    bounds: Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    use skia_safe::{TileMode, gradient};
+    let scale = window.scale_factor();
+    let floor = |value: Pixels| px((f32::from(value) * scale).floor() / scale);
+    let origin = point(floor(bounds.left()), floor(bounds.top() - layer_offset_y));
+    let layer = Layer::new(window, Some(origin)).for_bounds(bounds, scale);
+    let (contour, _) = ops(&Decoration::default(), layer.local(bounds, scale), scale);
+    let bbox = Op::Fill(contour).bbox();
+    if !shown(bbox, layer, window) {
+        return;
+    }
+    let clips = clips(window, layer);
+    let sprites = cached(
+        format!("fade{color:?}{contour:?}{clips:?}{:?}", layer.key(bbox)),
+        || {
+            let colors = [
+                Color4f::new(color.r, color.g, color.b, color.a),
+                Color4f::new(color.r, color.g, color.b, 0.),
+            ];
+            let gradient = gradient::Gradient::new(
+                gradient::Colors::new_evenly_spaced(&colors, TileMode::Clamp, None),
+                gradient::Interpolation {
+                    in_premul: gradient::interpolation::InPremul::Yes,
+                    color_space: gradient::interpolation::ColorSpace::OKLab,
+                    ..Default::default()
+                },
+            );
+            let [x, y, width, height] = contour.rr.r;
+            let shader =
+                gradient::shaders::linear_gradient(((x, y), (x, y + height)), &gradient, None)
+                    .expect("vertical fade shader");
+            let mut paint = Paint::default();
+            paint
+                .set_anti_alias(true)
+                .set_dither(true)
+                .set_shader(shader);
+            composited_sprites(bbox, layer, &|canvas| {
+                for clip in &clips {
+                    clip.clip(canvas, ClipOp::Intersect);
+                }
+                canvas.draw_rect(Rect::from_xywh(x, y, width, height), &paint);
+            })
+        },
+    );
+    paint_sprites(
+        &sprites,
+        gpui::rgb(0xffffff).into(),
+        layer.origin,
+        window,
+        cx,
+    );
 }
 
 // Chromium decodes to the smallest mip that still covers the rounded destination.
@@ -2079,12 +2519,11 @@ fn image_decode_size(mut source: [i32; 2], target: [f32; 2]) -> Option<[i32; 2]>
     }
 }
 
-/// `crate::raster_images` on macOS.
+/// `crate::raster_decorated_images` on macOS.
 pub(crate) fn raster_images(
     images: &[(&image::RgbaImage, Bounds<Pixels>)],
     clip: Bounds<Pixels>,
-    radius: gpui::Corners<Pixels>,
-    corner: Corner,
+    d: &Decoration,
     composition: ImageComposition,
     window: &Window,
 ) -> gpui::RenderImage {
@@ -2104,14 +2543,19 @@ pub(crate) fn raster_images(
         page
     };
     let (layer, s) = (Layer::new(window, None), window.scale_factor());
-    let d = Decoration {
-        radius,
-        corner,
-        ..Default::default()
-    };
-    let (contour, _) = ops(&d, layer.local(clip, s), s);
+    // Blink paints the box's own shadows and fill, then clips its content to the contour.
+    let (contour, box_ops) = ops(d, layer.local(clip, s), s);
     let [x0, y0, w, h] = contour.rr.r.map(|v| v as i32);
-    let dev = |v: Pixels| f32::from(v) * s;
+    // A logical px value times the scale carries f32 error; a box snapped to device px must
+    // map to whole device px, or Skia's sample positions tie-break differently.
+    let dev = |v: Pixels| {
+        let d = f32::from(v) * s;
+        if (d - d.round()).abs() < 1e-3 {
+            d.round()
+        } else {
+            d
+        }
+    };
     let mut group = Rect::new_empty();
     let draws: Vec<_> = images
         .iter()
@@ -2125,13 +2569,7 @@ pub(crate) fn raster_images(
                 dev(dst.bottom()),
             );
             let target = image_decode_size([iw, ih], [rect.width(), rect.height()])?;
-            let info = ImageInfo::new((iw, ih), ColorType::N32, AlphaType::Premul, None);
-            let image = skia_safe::images::raster_from_data(
-                &info,
-                Data::new_copy(img.as_raw()),
-                iw as usize * 4,
-            )
-            .expect("shapes: image");
+            let image = skia_image(img);
             let image = if target == [iw, ih] {
                 image
             } else {
@@ -2165,6 +2603,9 @@ pub(crate) fn raster_images(
     let mut out = vec![0; (w * h * 4) as usize];
     for (o, ts, [ox0, oy0, ox1, oy1]) in layer.tiles([x0, y0, x0 + w, y0 + h], layer.size()) {
         let (px, row) = tile_pixels(o, ts, clear, |c| {
+            for (op, color) in &box_ops {
+                op.draw(c, color4f(*color));
+            }
             contour.clip(c, ClipOp::Intersect);
             if grouped {
                 c.save_layer(&skia_safe::canvas::SaveLayerRec::default().bounds(&group));
@@ -2194,21 +2635,49 @@ pub(crate) fn raster_images(
                         *channel = (u32::from(*channel) + div255(background * inv)) as u8;
                     }
                     out[j + 3] = 255;
-                } else if group_images {
-                    let alpha = u32::from(out[j + 3]);
-                    if (1..255).contains(&alpha) {
-                        // GPUI's image shader consumes straight-alpha RGB.
-                        for channel in &mut out[j..j + 3] {
-                            *channel =
-                                ((u32::from(*channel) * 255 + alpha / 2) / alpha).min(255) as u8;
-                        }
-                    }
                 }
             }
         }
     }
     let out = image::RgbaImage::from_raw(w as u32, h as u32, out).expect("shapes: raster");
     gpui::RenderImage::new([image::Frame::new(out)])
+}
+
+/// A premultiplied N32 image of `img`'s pixels.
+fn skia_image(img: &image::RgbaImage) -> skia_safe::Image {
+    let (w, h) = (img.width() as i32, img.height() as i32);
+    let info = ImageInfo::new((w, h), ColorType::N32, AlphaType::Premul, None);
+    skia_safe::images::raster_from_data(&info, Data::new_copy(img.as_raw()), w as usize * 4)
+        .expect("shapes: image")
+}
+
+/// `crate::canvas_images` on macOS.
+pub(crate) fn canvas_images(
+    width: u32,
+    height: u32,
+    draws: &[crate::CanvasDraw],
+) -> image::RgbaImage {
+    let white = Color4f::new(1., 1., 1., 1.);
+    let size = (width as i32, height as i32);
+    // A raster surface packs its rows, so its bytes are the image as is.
+    let (px, _) = tile_pixels([0, 0], size, white, |c| {
+        for draw in draws {
+            let filter = if draw.smooth {
+                FilterMode::Linear
+            } else {
+                FilterMode::Nearest
+            };
+            let [x, y, w, h] = draw.rect.map(|v| v as f32);
+            c.draw_image_rect_with_sampling_options(
+                skia_image(&draw.image),
+                None,
+                Rect::from_xywh(x, y, w, h),
+                SamplingOptions::new(filter, MipmapMode::None),
+                &Paint::default(),
+            );
+        }
+    });
+    image::RgbaImage::from_raw(width, height, px).expect("shapes: canvas")
 }
 
 /// Blink's paint ops for the decoration `d` of the border box `bounds` (window px at scale
@@ -2347,6 +2816,9 @@ struct IconPath {
     color: Option<Rgba>,
     opacity: f32,
     layer: f32,
+    /// A white `<mask>`'s paths (`mask="url(#…)"`): Chromium draws the element into a layer
+    /// and the mask's paths into a `DstIn` layer over it.
+    mask: Vec<(Path, Matrix)>,
 }
 
 impl IconPath {
@@ -2361,6 +2833,140 @@ impl IconPath {
         }
         paint
     }
+
+    // SkDraw lowers AA strokes up to one device pixel to a hairline.
+    // Its legacy alpha scale truncates coverage * 256 before multiplying the byte alpha.
+    fn hairline_scale(&self, view: &Matrix) -> Option<u16> {
+        let (width, _, _) = self.stroke?;
+        if width <= 0. {
+            return None;
+        }
+        let matrix = Matrix::concat(view, &self.transform);
+        if matrix.has_perspective() {
+            return None;
+        }
+        let length = |vector: Vector| {
+            let (x, y) = (vector.x.abs(), vector.y.abs());
+            x.max(y) + x.min(y) * 0.5
+        };
+        let x = length(matrix.map_vector((width, 0.)));
+        let y = length(matrix.map_vector((0., width)));
+        (x <= 1. && y <= 1.).then_some(((x + y) * 0.5 * 256.) as u16)
+    }
+}
+
+/// Whether Skia's legacy hairline scanner draws this stroke exactly like the sprite renderer.
+fn hairline_eligible(
+    path: &IconPath,
+    layer: Layer,
+    transformed: bool,
+    wide: bool,
+    clips: &[Contour],
+) -> bool {
+    !transformed
+        && !layer.composited
+        && layer.tile == [TILE; 2]
+        && !wide
+        && clips.is_empty()
+        && matches!(path.stroke, Some((_, PaintCap::Butt, _)))
+}
+
+/// The device origin of a layer tile, if the tile covers any device pixel.
+fn tile_extent(layer: Layer, tile_origin: [i32; 2], tile_size: (i32, i32)) -> Option<[i32; 2]> {
+    let lo = layer.device.map_or(tile_origin, |device| {
+        [tile_origin[0].max(device[0]), tile_origin[1].max(device[1])]
+    });
+    let hi = layer.device.map_or(
+        [tile_origin[0] + tile_size.0, tile_origin[1] + tile_size.1],
+        |device| {
+            [
+                (tile_origin[0] + tile_size.0).min(device[2]),
+                (tile_origin[1] + tile_size.1).min(device[3]),
+            ]
+        },
+    );
+    (hi[0] > lo[0] && hi[1] > lo[1]).then_some(lo)
+}
+
+/// Path space to tile space; `flip` is the icon width of a mirrored (rtl) icon.
+fn hairline_matrix(
+    path: &IconPath,
+    view: &Matrix,
+    origin: [f32; 2],
+    lo: [i32; 2],
+    flip: Option<f64>,
+) -> Matrix {
+    let mut matrix = Matrix::concat(
+        &Matrix::translate((-lo[0] as f32, -lo[1] as f32)),
+        &Matrix::translate((origin[0], origin[1])),
+    );
+    if let Some(width) = flip {
+        matrix = Matrix::concat(&matrix, &Matrix::translate(((width / 2.) as f32, 0.)));
+        matrix = Matrix::concat(
+            &matrix,
+            &Matrix::new_all(-1., 0., 0., 0., 1., 0., 0., 0., 1.),
+        );
+        matrix = Matrix::concat(&matrix, &Matrix::translate((-(width / 2.) as f32, 0.)));
+    }
+    matrix = Matrix::concat(&matrix, view);
+    Matrix::concat(&matrix, &path.transform)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_hairline_operations(
+    path: &IconPath,
+    view: &Matrix,
+    origin: [f32; 2],
+    clip: Rect,
+    bbox: [i32; 4],
+    flip: Option<f64>,
+    alpha: u8,
+    layer: Layer,
+) -> Option<Vec<HairlineOperation>> {
+    let [x0, y0, x1, y1] = layer.clip_bounds(bbox);
+    let mut operations = Vec::new();
+    if x0 >= x1 || y0 >= y1 {
+        return Some(operations);
+    }
+    for (tile_origin, tile_size, [ox0, oy0, ox1, oy1]) in
+        layer.tiles([x0, y0, x1, y1], layer.clamp())
+    {
+        let Some(lo) = tile_extent(layer, tile_origin, tile_size) else {
+            continue;
+        };
+        let scan_clip = [
+            ox0.max(lo[0]).max(clip.left() as i32),
+            oy0.max(lo[1]).max(clip.top() as i32),
+            ox1.min(clip.right() as i32),
+            oy1.min(clip.bottom() as i32),
+        ];
+        if scan_clip[0] >= scan_clip[2] || scan_clip[1] >= scan_clip[3] {
+            continue;
+        }
+        let matrix = hairline_matrix(path, view, origin, lo, flip);
+        let values = std::array::from_fn(|index| matrix[index]);
+        let local_clip = [
+            scan_clip[0] - lo[0],
+            scan_clip[1] - lo[1],
+            scan_clip[2] - lo[0],
+            scan_clip[3] - lo[1],
+        ];
+        let mut tile_operations = unsafe {
+            skia_hairline_sys::scan(
+                // skia-safe's `Path` is `#[repr(transparent)]` over `SkPath` and exposes no raw access.
+                (&path.path as *const Path).cast(),
+                &values,
+                local_clip,
+                alpha,
+            )
+        }?;
+        for operation in &mut tile_operations {
+            operation.x += lo[0];
+            operation.y += lo[1];
+        }
+        operations.extend(tile_operations);
+    }
+    Some(operations)
 }
 
 /// A parsed icon: viewBox and drawables, in document order.
@@ -2391,6 +2997,32 @@ fn cached_icon(src: &[u8], key: &str) -> Option<std::rc::Rc<IconSvg>> {
 }
 
 impl IconSvg {
+    /// The viewBox fitted into `w` x `h` device px (`xMidYMid meet`): scale and translation.
+    fn fit(&self, w: f64, h: f64) -> (f64, f64, f64) {
+        let [vx, vy, vw, vh] = self.view_box.map(f64::from);
+        let scale = (w / vw).min(h / vh);
+        (
+            scale,
+            (w - vw * scale) / 2. - vx * scale,
+            (h - vh * scale) / 2. - vy * scale,
+        )
+    }
+
+    fn view(&self, w: f64, h: f64) -> Matrix {
+        let (scale, tx, ty) = self.fit(w, h);
+        Matrix::new_all(
+            scale as f32,
+            0.,
+            tx as f32,
+            0.,
+            scale as f32,
+            ty as f32,
+            0.,
+            0.,
+            1.,
+        )
+    }
+
     fn paint_bounds(&self) -> Option<Rect> {
         *self.paint_bounds.get_or_init(|| {
             let mut bounds = Rect::new_empty();
@@ -2470,11 +3102,33 @@ fn paint_color(v: &str) -> Option<Option<Rgba>> {
     }
 }
 
-/// The subset of SVG the icon assets use: nested `<g transform>`, `<path>` with fill/stroke
-/// attributes inherited from `<svg>`/`<g>`. `None` for anything else (masks).
+fn circle_path(tag: &str) -> Option<Path> {
+    let scalar = |name| {
+        attr(tag, name)
+            .unwrap_or("0")
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite())
+    };
+    let (x, y, radius) = (scalar("cx")?, scalar("cy")?, scalar("r")?);
+    if radius < 0. {
+        return None;
+    }
+    Some(if radius == 0. {
+        Path::default()
+    } else {
+        Path::circle((x, y), radius, None)
+    })
+}
+
+/// The subset of SVG the icon assets use: nested `<g transform>`, `<path>` and `<circle>`
+/// with fill/stroke attributes inherited from `<svg>`/`<g>`, and a `mask` of white paths.
+/// `None` for anything else.
 fn parse_icon(src: &str) -> Option<IconSvg> {
     let mut view_box = None;
     let mut paths = Vec::new();
+    let mut masks: std::collections::HashMap<&str, Vec<(Path, Matrix)>> = Default::default();
+    let mut in_mask = None;
     // Inherited (transform, fill, stroke, stroke-width, linecap, linejoin) per open element.
     type Style<'a> = (
         Matrix,
@@ -2495,8 +3149,11 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
     for tag in src.split('<').skip(1) {
         let tag = &tag[..tag.find('>')?];
         if let Some(end) = tag.strip_prefix('/') {
-            if end.starts_with('g') || end.starts_with("svg") {
+            if end.starts_with('g') || end.starts_with("svg") || end.starts_with("mask") {
                 stack.pop();
+            }
+            if end.starts_with("mask") {
+                in_mask = None;
             }
             continue;
         }
@@ -2515,14 +3172,33 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
         match name {
             "svg" => view_box = Some(numbers(attr(tag, "viewBox")?)),
             "g" => {}
-            "path" => {
+            "mask" => in_mask = Some(attr(tag, "id")?),
+            "path" | "circle" => {
                 if attr(tag, "mask").is_some() || attr(tag, "clip-path").is_some() {
                     return None;
                 }
-                let mut path = Path::from_svg(attr(tag, "d")?)?;
+                let mut path = if name == "circle" {
+                    circle_path(tag)?
+                } else {
+                    Path::from_svg(attr(tag, "d")?)?
+                };
                 if attr(tag, "fill-rule") == Some("evenodd") {
                     path.set_fill_type(PathFillType::EvenOdd);
                 }
+                if let Some(id) = in_mask {
+                    // A white mask path's coverage is the mask's alpha.
+                    if style.1 != Some("white") || style.2.is_some_and(|s| s != "none") {
+                        return None;
+                    }
+                    masks.entry(id).or_default().push((path, style.0));
+                    continue;
+                }
+                let mask = match attr(tag, "mask") {
+                    Some(url) => masks
+                        .get(url.strip_prefix("url(#")?.strip_suffix(')')?)?
+                        .clone(),
+                    None => Vec::new(),
+                };
                 let opacity = |a: &str| attr(tag, a).map_or(Ok(1.), str::parse::<f32>).ok();
                 let element = opacity("opacity")?;
                 if let Some(color) = style.1.and_then(paint_color) {
@@ -2534,6 +3210,7 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
                         color,
                         opacity: fill,
                         layer: element,
+                        mask: mask.clone(),
                     });
                 }
                 if let Some(color) = style.2.and_then(paint_color) {
@@ -2556,12 +3233,14 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
                         color,
                         opacity: stroke_opacity,
                         layer: element,
+                        mask,
                     });
                 }
                 continue;
             }
-            "mask" | "clipPath" | "circle" | "rect" | "ellipse" | "line" | "polyline"
-            | "polygon" | "use" => return None,
+            "clipPath" | "rect" | "ellipse" | "line" | "polyline" | "polygon" | "use" => {
+                return None;
+            }
             _ => continue,
         }
         if !tag.ends_with('/') {
@@ -2586,32 +3265,27 @@ pub(crate) fn icon_paint_bounds(
     let icon = cached_icon(src, key)?;
     let ink = icon.paint_bounds()?;
     let s = window.scale_factor();
-    let snap = |value: Pixels| f64::from((f32::from(value) * s + 0.5).floor());
     let (w, h) = (
         f64::from(f32::from(bounds.size.width) * s),
         f64::from(f32::from(bounds.size.height) * s),
     );
-    let [vx, vy, vw, vh] = icon.view_box.map(f64::from);
-    if w <= 0. || h <= 0. || vw <= 0. || vh <= 0. {
+    if w <= 0. || h <= 0. || icon.view_box[2] <= 0. || icon.view_box[3] <= 0. {
         return None;
     }
-    let scale = (w / vw).min(h / vh);
-    let (tx, ty) = (
-        (w - vw * scale) / 2. - vx * scale,
-        (h - vh * scale) / 2. - vy * scale,
-    );
+    let (scale, tx, ty) = icon.fit(w, h);
     let mut left = f64::from(ink.left) * scale + tx;
     let mut right = f64::from(ink.right) * scale + tx;
     if flip_x {
         (left, right) = (w - right, w - left);
     }
-    let (x, y) = (snap(bounds.left()), snap(bounds.top()));
-    let left = (x + left).floor().max(x);
-    let top = (y + f64::from(ink.top) * scale + ty).floor().max(y);
-    let right = (x + right).ceil().min(snap(bounds.right()));
+    let x = f64::from(f32::from(bounds.left()) * s);
+    let y = f64::from(f32::from(bounds.top()) * s);
+    let left = (x + left).floor().max(x.floor());
+    let top = (y + f64::from(ink.top) * scale + ty).floor().max(y.floor());
+    let right = (x + right).ceil().min((x + w).ceil());
     let bottom = (y + f64::from(ink.bottom) * scale + ty)
         .ceil()
-        .min(snap(bounds.bottom()));
+        .min((y + h).ceil());
     if left >= right || top >= bottom {
         return None;
     }
@@ -2646,9 +3320,16 @@ pub(crate) fn paint_icon(
     let transformed = transformation.is_some();
     let transformation = transformation.unwrap_or_default();
     let snap = |v: Pixels| (f32::from(v) * s + 0.5).floor();
+    // Blink lays the svg box out in LayoutUnits (1/64 device px, truncated), and the viewBox
+    // scale and centering come from that box: the 53.226 x 18 wordmark at 110% fits into
+    // 117.078125 x 39.59375, scale 2.19964 as in the original paint log.
+    let layout_unit = |v: f32| {
+        let units = f64::from(v) * 64.;
+        (units + units.abs() * f64::from(f32::EPSILON) * 4.).trunc() / 64.
+    };
     let (w, h) = (
-        f64::from(f32::from(bounds.size.width) * s),
-        f64::from(f32::from(bounds.size.height) * s),
+        layout_unit(f32::from(bounds.size.width) * s),
+        layout_unit(f32::from(bounds.size.height) * s),
     );
     let layer = if transformed {
         Layer {
@@ -2659,6 +3340,7 @@ pub(crate) fn paint_icon(
             composited: true,
             device: None,
             recorded: None,
+            canvas: None,
         }
     } else {
         Layer::new(window, composited)
@@ -2675,23 +3357,7 @@ pub(crate) fn paint_icon(
         layer.local(bounds, s)
     };
     let origin = [snap(b.origin.x), snap(b.origin.y)];
-    let [vx, vy, vw, vh] = icon.view_box.map(f64::from);
-    let scale = (w / vw).min(h / vh);
-    let (tx, ty) = (
-        (w - vw * scale) / 2. - vx * scale,
-        (h - vh * scale) / 2. - vy * scale,
-    );
-    let view = Matrix::new_all(
-        scale as f32,
-        0.,
-        tx as f32,
-        0.,
-        scale as f32,
-        ty as f32,
-        0.,
-        0.,
-        1.,
-    );
+    let view = icon.view(w, h);
     // Blink clips the svg (or `<img>`) to its pixel-snapped box; at a path extreme on the
     // box edge that clip changes AAA's edge px.
     let clip = Rect::new(
@@ -2725,10 +3391,34 @@ pub(crate) fn paint_icon(
         c.concat(&view);
     };
     let draw_path = |c: &Canvas, p: &IconPath, col: Color4f| {
+        if p.mask.is_empty() {
+            c.concat(&p.transform);
+            c.draw_path(&p.path, &p.paint(col));
+            return;
+        }
+        c.save_layer(&skia_safe::canvas::SaveLayerRec::default());
+        c.save();
         c.concat(&p.transform);
         c.draw_path(&p.path, &p.paint(col));
+        c.restore();
+        let mut dst_in = Paint::default();
+        dst_in.set_blend_mode(BlendMode::DstIn);
+        c.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&dst_in));
+        for (path, transform) in &p.mask {
+            c.save();
+            c.concat(transform);
+            c.draw_path(path, &fill_paint(Color4f::new(1., 1., 1., 1.)));
+            c.restore();
+        }
+        c.restore();
+        c.restore();
     };
-    if layer.composited && !wide(color) {
+    // A masked path draws into a transparent layer of its own, which Skia restores with
+    // srcover. Inside a `with_layer` that restore keeps the pixel, so the real color's raster
+    // holds it exactly; the coverage probes, drawn in white, round the mask's `DstIn`
+    // differently for other colors.
+    let masked = DEVICE.get().is_some() && icon.paths.iter().any(|p| !p.mask.is_empty());
+    if (layer.composited || masked) && !wide(color) {
         let rgba = Rgba::from(color);
         let sprites = cached(
             format!(
@@ -2755,39 +3445,326 @@ pub(crate) fn paint_icon(
         return true;
     }
     for (n, p) in icon.paths.iter().enumerate() {
+        let hairline = p.hairline_scale(&view);
         let draw = |c: &Canvas, col: Color4f| {
             prepare(c);
-            draw_path(c, p, col);
+            c.concat(&p.transform);
+            let mut paint = p.paint(col);
+            if hairline.is_some() {
+                paint.set_stroke_width(0.);
+            }
+            c.draw_path(&p.path, &paint);
         };
         // Keep the CSS color outside the sRGB gamut; conversion to Rgba clamps its channels.
         let c = p.color.map(Hsla::from).unwrap_or(color);
         // Noncomposited paths fold the SVG opacity into their paint.
-        let a = if p.color.is_some() { 1. } else { color.a } * p.opacity * p.layer;
+        let mut a = if p.color.is_some() { 1. } else { color.a } * p.opacity * p.layer;
+        if let Some(scale) = hairline
+            && scale < 256
+        {
+            a = f32::from(((u16::from(alpha_byte(a)) * scale) >> 8) as u8) / 255.;
+        }
+        if a == 0. {
+            continue;
+        }
         let color = c.alpha(a);
         let a = alpha_byte(a);
         let black = is_black(color, a);
         let wide = p.color.is_none() && wide(color);
-        let sprites = sprites(
-            format!(
-                "{key}#{n}{flip_x}{clip:?}{w}x{h}{:?}{a}{black}{wide}{clips:?}",
-                layer.key(bbox)
-            ),
-            || raster(bbox, layer, a, black, wide, &clips, &draw),
+        let key = format!(
+            "{key}#{n}{flip_x}{clip:?}{w}x{h}{:?}{a}{black}{wide}{clips:?}",
+            layer.key(bbox)
         );
+        let make = || raster(bbox, layer, a, black, wide, &clips, &draw);
+        let scan = || {
+            let eligible =
+                hairline.is_some() && hairline_eligible(p, layer, transformed, wide, &clips);
+            let flip = flip_x.then_some(w);
+            eligible
+                .then(|| scan_hairline_operations(p, &view, origin, clip, bbox, flip, a, layer))
+                .flatten()
+        };
+        let sprites = cached(key, || match scan() {
+            Some(operations) => hairline_sprites(&operations),
+            None => {
+                let (rect, blits) = make();
+                sprites_from_blits(rect, &blits)
+            }
+        });
         paint_transformed_sprites(&sprites, color, paint_origin, transformation, window, cx);
     }
+    true
+}
+
+/// Draws the svg icon `src` on `c` (window device px) with [`paint_icon`]'s geometry: the box
+/// `bounds` snaps like Blink's svg root and clips the paths. False if the svg is unsupported.
+pub(crate) fn draw_icon(
+    c: &Canvas,
+    src: &[u8],
+    key: &str,
+    bounds: Bounds<Pixels>,
+    color: Hsla,
+    s: f32,
+) -> bool {
+    let Some(icon) = cached_icon(src, key) else {
+        return false;
+    };
+    let snap = |v: Pixels| (f32::from(v) * s + 0.5).floor();
+    let (w, h) = (
+        f64::from(f32::from(bounds.size.width) * s),
+        f64::from(f32::from(bounds.size.height) * s),
+    );
+    let (x, y) = (snap(bounds.left()), snap(bounds.top()));
+    c.save();
+    c.clip_rect(
+        Rect::new(x, y, snap(bounds.right()), snap(bounds.bottom())),
+        ClipOp::Intersect,
+        true,
+    );
+    c.translate((x, y));
+    c.concat(&icon.view(w, h));
+    let rgba = Rgba::from(color);
+    for p in &icon.paths {
+        let color = p.color.unwrap_or(rgba);
+        let a = if p.color.is_some() { 1. } else { rgba.a } * p.opacity * p.layer;
+        c.save();
+        c.concat(&p.transform);
+        c.draw_path(
+            &p.path,
+            &p.paint(Color4f::new(color.r, color.g, color.b, a)),
+        );
+        c.restore();
+    }
+    c.restore();
     true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsnapped_clip_keeps_fractional_edges_and_scaled_radii() {
+        // The original's main surface `clip-path` at 110% on a 2x display (paint log
+        // `clipRRect`): [721.6, 96.796875, 2551.203125, 1655.203125], radii 26.4.
+        let s = 2.2;
+        let [l, t, r, b] = [721.6, 96. + 51. / 64., 2551. + 13. / 64., 1655. + 13. / 64.];
+        let bounds = Bounds::from_corners(point(px(l / s), px(t / s)), point(px(r / s), px(b / s)));
+        let clip = unsnapped_clip(bounds, gpui::Corners::all(px(12.)), s);
+        let expected = [l, t, r - l, b - t];
+        for (got, want) in clip.rr.r.into_iter().zip(expected) {
+            assert!((got - want).abs() < 1e-3, "edge {got} != {want}");
+        }
+        // A LayoutUnit edge comes out exact: 2551.203125 / 2.2 * 2.2 is 2551.2034 in f32.
+        assert_eq!(clip.rr.r[0] + clip.rr.r[2], r);
+        for [x, y] in clip.rr.radii {
+            assert!(
+                (x - 26.4).abs() < 1e-4 && (y - 26.4).abs() < 1e-4,
+                "radius {x}, {y}"
+            );
+        }
+    }
     use crate as shapes;
     use gpui::{
         AppContext, Corners, IntoElement, ParentElement, Render, Styled, Window, canvas, div,
         prelude::FluentBuilder, px, size,
     };
     use std::sync::Arc;
+
+    #[test]
+    fn canvas_round_rect_preserves_fractional_geometry() {
+        let bounds = Bounds::new(point(px(10.25), px(20.125)), size(px(3.), px(13.375)));
+        let fill = canvas_round_rect(bounds, px(1.5), 2.);
+        let clear = Color4f::new(0., 0., 0., 0.);
+        let white = Color4f::new(1., 1., 1., 1.);
+        let actual = tile_pixels([0, 0], (80, 80), clear, |c| fill.draw(c, white));
+        let expected = tile_pixels([0, 0], (80, 80), clear, |c| {
+            let rect = Rect::from_xywh(20.5, 40.25, 6., 26.75);
+            c.draw_rrect(
+                RRect::new_rect_radii(rect, &[Vector::new(3., 3.); 4]),
+                &fill_paint(white),
+            );
+        });
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn canvas_round_rect_keeps_coverage_across_tile_and_backing_edges() {
+        let width = TILE * 2 + 200;
+        let height = 56;
+        let layer = Layer {
+            origin: [40, 60],
+            tile_origin: [0, 0],
+            window: [1500, 500],
+            tile: [TILE; 2],
+            composited: false,
+            device: None,
+            recorded: None,
+            canvas: None,
+        }
+        .for_canvas(
+            Bounds::new(
+                point(px(20.), px(30.)),
+                size(px(width as f32 / 2.), px(height as f32 / 2.)),
+            ),
+            2.,
+        );
+        let background = Color4f::new(54. / 255., 54. / 255., 54. / 255., 1.);
+        let color = Color4f::new(1., 1., 1., 0.2);
+        for x in [TILE as f32 - 2.72, width as f32 - 2.72] {
+            let op = canvas_round_rect(
+                Bounds::new(point(px(x / 2.), px(12.5)), size(px(3.), px(3.))),
+                px(1.5),
+                2.,
+            );
+            let ([left, top, raster_width, _], blits) =
+                raster(op.bbox(), layer, 51, false, false, &[], &|canvas, color| {
+                    op.draw(canvas, color);
+                });
+            let (expected, row) = tile_pixels([0, 0], (width, height), background, |canvas| {
+                op.draw(canvas, color);
+            });
+            for (index, [coverage, mode, second_coverage, second_mode]) in
+                blits.into_iter().enumerate()
+            {
+                let actual = blend(mode, 255, 51, 54, coverage);
+                let actual = blend(second_mode, 255, 51, actual, second_coverage);
+                let x = left as usize + index % raster_width as usize;
+                let y = top as usize + index / raster_width as usize;
+                assert_eq!(
+                    actual,
+                    expected[y * row + x * 4],
+                    "canvas coverage differs at ({x}, {y})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn canvas_round_rect_keeps_content_and_rounded_clips() -> anyhow::Result<()> {
+        struct Clipped;
+        impl Render for Clipped {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                div().size_full().bg(gpui::rgb(0)).child(
+                    canvas(
+                        |_, _, _| (),
+                        |_, (), window, cx| {
+                            window.with_content_mask(
+                                Some(gpui::ContentMask {
+                                    bounds: Bounds::new(
+                                        point(px(12.), px(0.)),
+                                        size(px(32.), px(64.)),
+                                    ),
+                                }),
+                                |window| {
+                                    shapes::with_rounded_clip(
+                                        Corners::all(px(8.)),
+                                        Corner::Round,
+                                        Bounds::new(point(px(8.), px(8.)), size(px(32.), px(32.))),
+                                        true,
+                                        window,
+                                        |window| {
+                                            shapes::paint_canvas_round_rect(
+                                                px(1.5),
+                                                gpui::rgb(0xffffff).into(),
+                                                Bounds::new(
+                                                    point(px(0.25), px(0.125)),
+                                                    size(px(60.), px(60.)),
+                                                ),
+                                                window,
+                                                cx,
+                                            )
+                                        },
+                                    );
+                                },
+                            );
+                        },
+                    )
+                    .size_full(),
+                )
+            }
+        }
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx.open_window(size(px(64.), px(64.)), |_, cx| cx.new(|_| Clipped))?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        let scale = image.width() / 64;
+        for (x, y, color) in [(10, 20, 0), (12, 8, 0), (20, 20, 255), (44, 20, 0)] {
+            assert_eq!(
+                image.get_pixel(x * scale, y * scale).0,
+                [color, color, color, 255]
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn opaque_pair_interpolation_uses_halfway_coverage_scaling() {
+        assert_eq!(blend(FAST_INTERP, 255, 255, 60, 127), 156);
+        assert_eq!(blend(FAST_INTERP, 255, 255, 60, 128), 158);
+        assert_eq!(blend(FAST_INTERP, 26, 255, 200, 100), 132);
+        assert_eq!(blend(FAST_INTERP, 26, 255, 200, 0), 200);
+        assert_eq!(blend(FAST_INTERP, 26, 255, 200, 255), 26);
+    }
+
+    #[test]
+    fn normalized_thin_stroke_matches_skia_hairline_paint() {
+        let source = br#"<svg viewBox="0 0 16 16"><path d="M2 4C4 1 8 1 10 4L2 4Z" fill="none" stroke="black" stroke-width="0.6"/></svg>"#;
+        let icon = cached_icon(source, "thin-stroke-regression").unwrap();
+        let drawable = &icon.paths[0];
+        let view = Matrix::scale((4. / 3., 4. / 3.));
+        let scale = drawable.hairline_scale(&view).unwrap();
+        assert_eq!(scale, 204);
+        let alpha = ((127u16 * scale) >> 8) as u8;
+        assert_eq!(alpha, 101);
+        assert!(drawable.hairline_scale(&Matrix::scale((2., 2.))).is_none());
+        let original = drawable.paint(Color4f::new(1., 1., 1., 127. / 255.));
+        let mut normalized = drawable.paint(Color4f::new(1., 1., 1., f32::from(alpha) / 255.));
+        normalized.set_stroke_width(0.);
+        let render = |paint: &Paint| {
+            tile_pixels([0, 0], (32, 32), Color4f::new(0., 0., 0., 0.), |canvas| {
+                canvas.concat(&view);
+                canvas.draw_path(&drawable.path, paint);
+            })
+            .0
+        };
+        assert_eq!(render(&normalized), render(&original));
+    }
+
+    #[test]
+
+    fn horizontal_stripes_keep_fractional_period_and_hard_stop() {
+        let colors = [
+            Rgba {
+                r: 0.232724,
+                g: 0.120283,
+                b: 0.103232,
+                a: 1.,
+            },
+            gpui::rgba(0xfa423eff),
+        ];
+        let paint = stripe_paint(251. / 64., colors);
+        let (pixels, row) = tile_pixels([0, 0], (8, 43), Color4f::new(0., 0., 0., 0.), |canvas| {
+            canvas.draw_rect(Rect::from_wh(8., 43.), &paint);
+        });
+        for (y, expected) in [
+            (0, [250, 66, 62, 255]),
+            (1, [244, 65, 61, 255]),
+            (3, [72, 33, 29, 255]),
+            (37, [108, 40, 36, 255]),
+            (38, [59, 31, 26, 255]),
+        ] {
+            assert_eq!(
+                &pixels[y * row + 4..y * row + 8],
+                &expected,
+                "stripe row {y}"
+            );
+        }
+    }
 
     struct ImageLayers {
         scope_backdrop: bool,
@@ -3059,8 +4036,10 @@ mod tests {
                             let raster = raster_images(
                                 &[(&pixels, bounds)],
                                 bounds,
-                                gpui::Corners::all(px(7.5)),
-                                Corner::Round,
+                                &Decoration {
+                                    radius: gpui::Corners::all(px(7.5)),
+                                    ..Default::default()
+                                },
                                 ImageComposition::Group(gpui::rgb(0x181818).into()),
                                 window,
                             );
@@ -3097,7 +4076,6 @@ mod tests {
     #[test]
     fn decoded_image_group_preserves_mips_and_alpha() -> anyhow::Result<()> {
         use gpui::{AppContext, IntoElement, ParentElement, Render, Styled};
-
         std::panic::set_hook(Box::new(|info| {
             eprintln!("{info}");
             std::process::exit(101);
@@ -3113,8 +4091,7 @@ mod tests {
                             let raster = raster_images(
                                 &[(&images[0], bounds), (&images[1], bounds)],
                                 bounds,
-                                gpui::Corners::default(),
-                                Corner::Round,
+                                &Decoration::default(),
                                 ImageComposition::Group(gpui::rgb(0x232323).into()),
                                 window,
                             );
@@ -3190,8 +4167,10 @@ mod tests {
                                     let image = raster_images(
                                         &[(&pixels, bounds)],
                                         bounds,
-                                        Corners::all(px(3.)),
-                                        Corner::Round,
+                                        &Decoration {
+                                            radius: Corners::all(px(3.)),
+                                            ..Default::default()
+                                        },
                                         ImageComposition::Composited(gpui::rgb(0x2d2d2d).into()),
                                         window,
                                     );
@@ -3247,6 +4226,7 @@ mod tests {
             composited: false,
             device: None,
             recorded: Some(recorded),
+            canvas: None,
         }
         .for_bounds(
             Bounds::new(
@@ -3303,7 +4283,7 @@ mod tests {
                             },
                             |bounds, (decoration, recorded), window, cx| {
                                 with_recorded_bounds(recorded, || {
-                                    paint(&decoration, None, bounds, window, cx);
+                                    shapes::paint(&decoration, None, bounds, window, cx);
                                 });
                             },
                         )
@@ -3369,7 +4349,7 @@ mod tests {
                             },
                             |bounds, (decoration, recorded), window, cx| {
                                 with_composited_bounds(recorded, || {
-                                    paint(&decoration, None, bounds, window, cx);
+                                    shapes::paint(&decoration, None, bounds, window, cx);
                                 });
                             },
                         )
@@ -3504,6 +4484,91 @@ mod tests {
             assert_eq!(image.get_pixel(x, y).0, expected, "corner ({x}, {y})");
         }
         Ok(())
+    }
+
+    #[test]
+    fn inverse_blits_preserve_pixels_across_paint_history() {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let layer = Layer {
+            origin: [0, 0],
+            tile_origin: [0, 0],
+            window: [4, 4],
+            tile: [TILE, TILE],
+            composited: false,
+            device: None,
+            recorded: None,
+            canvas: None,
+        };
+        let draw = |canvas: &Canvas, color: Color4f| {
+            let paint = fill_paint(color);
+            canvas.draw_rect(Rect::new(0.3, 0.6, 2.8, 2.7), &paint);
+            canvas.draw_rect(Rect::new(1.2, 1.1, 3.7, 3.5), &paint);
+        };
+        let cases = [
+            (63, false),
+            (127, false),
+            (255, false),
+            (63, true),
+            (127, true),
+            (255, true),
+        ];
+        let expected = cases.map(|(alpha, black)| {
+            INVERSE_BLITS.with_borrow_mut(HashMap::clear);
+            raster([0, 0, 4, 4], layer, alpha, black, false, &[], &draw)
+        });
+        for (index, (alpha, black)) in cases.into_iter().enumerate().rev() {
+            assert_eq!(
+                raster([0, 0, 4, 4], layer, alpha, black, false, &[], &draw),
+                expected[index],
+                "alpha={alpha}, black={black}"
+            );
+        }
+    }
+
+    #[test]
+    fn svg_circle_preserves_native_geometry_and_inherited_paint() {
+        let svg = br##"<svg viewBox="0 0 20 20"><g transform="translate(1.25 2.5)" fill="none" stroke="currentColor" stroke-width="1.33"><circle cx="6.25" cy="7.5" r="2.75"/></g><circle cx="16" cy="5" r="4" fill="#0285ff"/><circle cx="4" cy="4" fill="none" stroke="currentColor" stroke-width="10"/></svg>"##;
+        let background = Color4f::new(24. / 255., 24. / 255., 24. / 255., 1.);
+        let actual = tile_pixels([0, 0], (24, 24), background, |canvas| {
+            assert!(draw_icon(
+                canvas,
+                svg,
+                "circle-geometry-regression",
+                Bounds::new(point(px(0.), px(0.)), size(px(20.), px(20.))),
+                gpui::white(),
+                1.,
+            ));
+        });
+        let expected = tile_pixels([0, 0], (24, 24), background, |canvas| {
+            canvas.clip_rect(Rect::new(0., 0., 20., 20.), ClipOp::Intersect, true);
+            let mut stroke = fill_paint(Color4f::new(1., 1., 1., 1.));
+            stroke.set_style(PaintStyle::Stroke).set_stroke_width(1.33);
+            // Preserve the group's CTM: baking translation into the center changes Skia's raster.
+            canvas.save();
+            canvas.translate((1.25, 2.5));
+            canvas.draw_circle((6.25, 7.5), 2.75, &stroke);
+            canvas.restore();
+            canvas.draw_circle(
+                (16., 5.),
+                4.,
+                &fill_paint(Color4f::new(2. / 255., 133. / 255., 1., 1.)),
+            );
+        });
+        assert!(
+            actual.0 == expected.0,
+            "SVG circle pixels must match native Skia circles"
+        );
+        for radius in ["-1", "NaN"] {
+            assert!(
+                parse_icon(&format!(
+                    r#"<svg viewBox="0 0 20 20"><circle r="{radius}"/></svg>"#
+                ))
+                .is_none()
+            );
+        }
     }
 
     #[test]

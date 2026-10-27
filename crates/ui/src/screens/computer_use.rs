@@ -389,7 +389,7 @@ impl ComputerUse {
         let open = self.sound_open;
         let handle = focus::handle("computer-use-sound", 0, window, cx);
         let trigger = focus::ring(
-            select(mode.label(), None, pending, &t).id("computer-use-sound"),
+            select(mode.label(), None, pending, false, &t).id("computer-use-sound"),
             &handle,
             px(12.5),
             px(2.),
@@ -749,7 +749,7 @@ fn message(message: impl Into<SharedString>, t: &Theme) -> Div {
         .child(text(message, 13., 18.571_428, 430., t.text_secondary))
 }
 
-fn group(title: &'static str, rows: Vec<Div>, layer: Option<&Layer>, t: &Theme) -> Div {
+pub(super) fn group(title: &'static str, rows: Vec<Div>, layer: Option<&Layer>, t: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
@@ -764,7 +764,7 @@ fn group(title: &'static str, rows: Vec<Div>, layer: Option<&Layer>, t: &Theme) 
         .child(card(rows, layer, t))
 }
 
-fn card(rows: Vec<Div>, layer: Option<&Layer>, t: &Theme) -> Div {
+pub(super) fn card(rows: Vec<Div>, layer: Option<&Layer>, t: &Theme) -> Div {
     let last = rows.len().saturating_sub(1);
     let surface = match layer {
         Some(layer) => deco(

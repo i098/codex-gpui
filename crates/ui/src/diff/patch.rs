@@ -43,53 +43,49 @@ pub(super) fn unquote(path: &str) -> Option<Cow<'_, str>> {
     String::from_utf8(result).ok().map(Cow::Owned)
 }
 
-pub(super) fn path(patch: &str) -> Option<Cow<'_, str>> {
-    for prefix in ["+++ ", "rename to ", "--- ", "rename from "] {
-        if let Some(path) = patch.lines().find_map(|line| line.strip_prefix(prefix)) {
-            let path = unquote(path)?;
-            if path == "/dev/null" {
-                continue;
-            }
-            let strip_side = matches!(prefix, "+++ " | "--- ");
-            return Some(match path {
-                Cow::Borrowed(path) => Cow::Borrowed(if strip_side {
-                    path.strip_prefix("a/")
-                        .or_else(|| path.strip_prefix("b/"))
-                        .unwrap_or(path)
-                } else {
-                    path
-                }),
-                Cow::Owned(path) => Cow::Owned(if strip_side {
-                    path.strip_prefix("a/")
-                        .or_else(|| path.strip_prefix("b/"))
-                        .unwrap_or(&path)
-                        .to_owned()
-                } else {
-                    path
-                }),
-            });
+fn without_prefix(path: Cow<'_, str>, bytes: usize) -> Cow<'_, str> {
+    match path {
+        Cow::Borrowed(path) => Cow::Borrowed(&path[bytes..]),
+        Cow::Owned(mut path) => {
+            path.replace_range(..bytes, "");
+            Cow::Owned(path)
         }
     }
-    let header = patch
-        .lines()
-        .find_map(|line| line.strip_prefix("diff --git "))?;
+}
+
+fn prefix_length(before: &str, after: &str) -> Option<usize> {
+    if before == after {
+        return Some(0);
+    }
+    let (old_prefix, old_path) = before.split_once('/')?;
+    let (new_prefix, new_path) = after.split_once('/')?;
+    (old_prefix != new_prefix && old_path == new_path).then_some(new_prefix.len() + 1)
+}
+
+fn header_path(header: &str) -> Option<Cow<'_, str>> {
     if header.starts_with('"') {
         let mut escaped = false;
         for (at, ch) in header.char_indices().skip(1) {
             if ch == '"' && !escaped {
-                let target = unquote(header.get(at + 2..)?)?;
-                return Some(Cow::Owned(
-                    target.strip_prefix("b/").unwrap_or(&target).to_owned(),
-                ));
+                let before = unquote(&header[..=at])?;
+                let after = unquote(header.get(at + 1..)?.strip_prefix(' ')?)?;
+                let bytes = prefix_length(&before, &after)?;
+                return Some(without_prefix(after, bytes));
             }
             escaped = ch == '\\' && !escaped;
         }
+        return None;
     }
-    for (at, _) in header.match_indices(" b/") {
-        let left = header[..at].strip_prefix("a/")?;
-        let right = &header[at + 3..];
-        if left == right {
-            return Some(Cow::Borrowed(right));
+    if let Some((before, after)) = header.split_at_checked(header.len() / 2)
+        && after.strip_prefix(' ') == Some(before)
+    {
+        return Some(Cow::Borrowed(before));
+    }
+    for (at, _) in header.match_indices(' ') {
+        let before = &header[..at];
+        let after = &header[at + 1..];
+        if let Some(bytes) = prefix_length(before, after) {
+            return Some(Cow::Borrowed(&after[bytes..]));
         }
     }
     None
@@ -127,51 +123,125 @@ pub(super) fn empty_state(patch: &str) -> &'static str {
     }
 }
 
+/// Returns the target path from one Git file patch, or the old path for a deletion.
+/// Quoted names are decoded as UTF-8; malformed escapes or missing headers return `None`.
+/// Complete diff headers preserve no-prefix and mnemonic-prefix filenames.
+/// Unquoted names are borrowed. This function does not resolve or authorize filesystem paths.
+///
+/// ```
+/// use ui::screens::diff::panel::patch::file_path;
+/// assert_eq!(file_path("+++ b/src/lib.rs\n").as_deref(), Some("src/lib.rs"));
+/// ```
+pub fn file_path(patch: &str) -> Option<Cow<'_, str>> {
+    let headers = patch.lines().take_while(|line| {
+        !line.starts_with("@@ ")
+            && !line.starts_with("Binary files ")
+            && *line != "GIT binary patch"
+    });
+    for prefix in ["rename to ", "copy to "] {
+        if let Some(path) = headers.clone().find_map(|line| line.strip_prefix(prefix)) {
+            return unquote(path);
+        }
+    }
+    if let Some(path) = headers
+        .clone()
+        .find_map(|line| line.strip_prefix("diff --git ").and_then(header_path))
+    {
+        return Some(path);
+    }
+    for prefix in ["+++ ", "--- ", "rename from ", "copy from "] {
+        if let Some(path) = headers.clone().find_map(|line| line.strip_prefix(prefix)) {
+            let file_header = matches!(prefix, "+++ " | "--- ");
+            let path = if file_header {
+                path.split_once('\t').map_or(path, |(path, _)| path)
+            } else {
+                path
+            };
+            let path = unquote(path)?;
+            if path == "/dev/null" {
+                continue;
+            }
+            let bytes =
+                usize::from(file_header && (path.starts_with("a/") || path.starts_with("b/"))) * 2;
+            return Some(without_prefix(path, bytes));
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::screens::diff::panel::controls::files;
 
     #[test]
-    fn metadata_only_changes_keep_their_file_and_original_placeholder() {
-        for (patch, name, label) in [
-            (
-                "diff --git a/picture.png b/picture.png\nBinary files a/picture.png and b/picture.png differ\n",
-                "picture.png",
-                "Binary file not shown",
-            ),
-            (
-                "diff --git a/old.txt b/new.txt\nsimilarity index 100%\nrename from old.txt\nrename to new.txt\n",
-                "new.txt",
-                "File renamed without changes",
-            ),
-            (
-                "diff --git a/empty.txt b/empty.txt\nnew file mode 100644\nindex 0000000..e69de29\n",
-                "empty.txt",
-                "No content",
-            ),
+    fn quoted_names_decode_git_escapes_without_trimming_real_spaces() {
+        assert_eq!(
+            file_path("+++ \"b/quote\\\"slash\\\\line\\n\\303\\251.txt\"\n").as_deref(),
+            Some("quote\"slash\\line\né.txt"),
+        );
+        assert!(matches!(
+            file_path("+++ b/ space name.txt \t\n"),
+            Some(Cow::Borrowed(" space name.txt ")),
+        ));
+        for invalid in [
+            "+++ \"b/bad\\q\"\n",
+            "+++ \"b/\\777\"\n",
+            "+++ \"b/\\377\"\n",
         ] {
-            let parsed = files(patch);
-            assert_eq!(parsed.len(), 1);
-            assert_eq!(parsed[0].name.as_ref(), name);
-            assert_eq!(parsed[0].problem, Some(label));
-            assert!(parsed[0].hunks.is_empty());
+            assert!(file_path(invalid).is_none());
         }
     }
 
     #[test]
-    fn git_quoted_paths_preserve_spaces_newlines_and_unicode() {
+    fn metadata_only_changes_keep_their_target_path() {
+        for (patch, expected) in [
+            (
+                "diff --git a/binary.bin b/binary.bin\nBinary files a/binary.bin and b/binary.bin differ\n",
+                "binary.bin",
+            ),
+            (
+                "diff --git a/old name b/new name\nsimilarity index 100%\nrename from old name\nrename to new name\n",
+                "new name",
+            ),
+            (
+                "diff --git a/empty.txt b/empty.txt\nnew file mode 100644\nindex 0000000..e69de29\n",
+                "empty.txt",
+            ),
+            (
+                "--- a/deleted name.txt\t\n+++ /dev/null\n",
+                "deleted name.txt",
+            ),
+            (
+                "diff --git \"a/caf\\303\\251.txt\" \"b/caf\\303\\251.txt\"\nGIT binary patch\n",
+                "café.txt",
+            ),
+            (
+                "diff --git a/copy-source.txt b/copy-target.txt\nsimilarity index 100%\ncopy from copy-source.txt\ncopy to copy-target.txt\n",
+                "copy-target.txt",
+            ),
+        ] {
+            assert_eq!(file_path(patch).as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn git_prefix_settings_do_not_change_the_real_filename() {
+        for patch in [
+            "diff --git a/file.txt a/file.txt\n--- a/file.txt\n+++ a/file.txt\n@@ -1 +1 @@\n-old\n+new\n",
+            "diff --git i/a/file.txt w/a/file.txt\n--- i/a/file.txt\n+++ w/a/file.txt\n@@ -1 +1 @@\n-old\n+new\n",
+            "diff --git a/a/file.txt b/a/file.txt\nBinary files a/a/file.txt and b/a/file.txt differ\n",
+        ] {
+            assert_eq!(file_path(patch).as_deref(), Some("a/file.txt"));
+        }
+    }
+
+    #[test]
+    fn added_code_cannot_replace_file_metadata() {
         assert_eq!(
-            path("diff --git a/a b/file b/a b/file\n").as_deref(),
-            Some("a b/file")
+            file_path("diff --git a/safe.txt b/safe.txt\n@@ -1 +1 @@\n+++ b/wrong.txt\n")
+                .as_deref(),
+            Some("safe.txt"),
         );
-        assert_eq!(
-            path("+++ \"b/space\\n\\303\\251.txt\"\n").as_deref(),
-            Some("space\né.txt")
-        );
-        assert_eq!(
-            path("--- a/deleted.txt\n+++ /dev/null\n").as_deref(),
-            Some("deleted.txt")
-        );
+        assert!(file_path("@@ -1 +1 @@\n+++ b/wrong.txt\n").is_none());
     }
 }
