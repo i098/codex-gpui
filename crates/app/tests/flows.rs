@@ -110,6 +110,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("parity_terminal", || parity_flow("terminal", open_terminal)),
     ("appearance_theme_control", appearance_theme_control),
     ("settings_select_menu", settings_select_menu),
+    ("settings_language_menu", settings_language_menu),
     ("parity_sidebar", || {
         parity_flow("sidebar", |fx| {
             open_recorded_sidebar_search(fx)?;
@@ -1086,6 +1087,34 @@ fn settings_select_menu() -> Result<String> {
         "Escape changed the close preference"
     );
     Ok("Never persists; Escape cancels selection".into())
+}
+
+/// The searchable Language menu saves a filtered choice, Escape keeps it, and `Auto detect`
+/// clears the override.
+fn settings_language_menu() -> Result<String> {
+    let mut lines = script(None, |_| {})?;
+    for _ in 0..2 {
+        lines.extend(exchange("config/value/write", json!({ "status": "ok" })));
+    }
+    let mut fx = Fx::scripted(lines)?;
+    let locale = |fx: &Fx| fx.read(|root, _| root.config()["desktop"]["localeOverride"].clone());
+    fx.keys("cmd-,")?;
+    let at = fx.at("settings", "Auto detect")?;
+    fx.capture_evidence("CGX_GENERAL_CONTROLS_EVIDENCE", "general-default")?;
+    fx.click(at)?;
+    fx.capture_evidence("CGX_GENERAL_CONTROLS_EVIDENCE", "language-menu")?;
+    fx.type_text("French")?;
+    fx.capture_evidence("CGX_GENERAL_CONTROLS_EVIDENCE", "language-filter")?;
+    fx.keys("enter")?;
+    fx.wait("saved language", |fx| locale(fx) == "fr-CA")?;
+    fx.click(at)?;
+    fx.type_text("Deutsch")?;
+    fx.keys("escape")?;
+    ensure!(locale(&fx) == "fr-CA", "Escape changed the language");
+    fx.click(at)?;
+    fx.keys("up enter")?;
+    fx.wait("cleared language", |fx| locale(fx).is_null())?;
+    Ok("French (Canada) persists by alias; Auto detect clears it".into())
 }
 
 // --- Thread actions ---
