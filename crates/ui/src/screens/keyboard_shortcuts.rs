@@ -1041,8 +1041,11 @@ impl KeyboardPage {
                     .items_center()
                     .gap(px(4.))
                     .child(keycap)
-                    .child(edit)
-                    .child(div().flex_1());
+                    .child(edit);
+                // A spacer with nothing after it adds a trailing gap the original lacks.
+                if key.is_some() || (customized && index == 0) {
+                    row = row.child(div().flex_1());
+                }
                 if key.is_some() {
                     row = row.child(self.icon_control(
                         command,
@@ -1240,9 +1243,17 @@ impl KeyboardPage {
                                     .w(px(widest))
                                     .child(text(label, 13., 18.571_428, 500., t.text)),
                             )
-                            .child(div().size(px(18.)).flex_none().children(
-                                (label == current).then(|| icon("menu-check", 18., t.text)),
-                            ))
+                            // The recorded check sits 5.57 px below the row top, not centered.
+                            .child(
+                                div()
+                                    .size(px(18.))
+                                    .flex_none()
+                                    .relative()
+                                    .top(px(0.28))
+                                    .children(
+                                        (label == current).then(|| icon("menu-check", 18., t.text)),
+                                    ),
+                            )
                             .into_any_element(),
                         action,
                         window,
@@ -1556,9 +1567,12 @@ impl Render for KeyboardPage {
                     ))
                     .into_any_element()
             } else {
+                // The original input text sits one device pixel lower than the centered editor.
                 div()
                     .flex_1()
                     .min_w_0()
+                    .relative()
+                    .top(px(0.5))
                     .child(self.search.clone())
                     .into_any_element()
             })
