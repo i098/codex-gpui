@@ -68,6 +68,14 @@ impl Composer {
         let count = self.diff_comments.len();
         let label = format!("{count} comment{}", if count == 1 { "" } else { "s" });
         let open = self.menu == Some(Menu::Comments);
+        let surface = |fill| {
+            shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(10.)),
+                fill: Some(fill),
+                border: Some((px(1.), t.border)),
+                ..Default::default()
+            })
+        };
         div()
             .id("diff-comments-attachment")
             .relative()
@@ -78,6 +86,8 @@ impl Composer {
             .child(
                 div()
                     .id("diff-comments-preview-trigger")
+                    .group("diff-comments-preview-trigger")
+                    .relative()
                     .role(gpui::Role::Button)
                     .aria_label(label.clone())
                     .aria_expanded(open)
@@ -86,14 +96,25 @@ impl Composer {
                     .flex()
                     .items_center()
                     .gap(px(4.))
-                    .px(px(8.))
-                    .py(px(6.))
+                    .px(px(9.))
+                    .py(px(7.))
                     .max_w(px(320.))
                     .rounded(px(10.))
-                    .border_1()
-                    .border_color(t.border)
-                    .bg(t.surface_elevated_secondary)
-                    .hover(|style| style.bg(t.surface_elevated))
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .group_hover("diff-comments-preview-trigger", |s| s.opacity(0.))
+                            .child(surface(t.surface_elevated_secondary)),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .opacity(0.)
+                            .group_hover("diff-comments-preview-trigger", |s| s.opacity(1.))
+                            .child(surface(t.surface_elevated)),
+                    )
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.comments_close = None;
                         if this.menu != Some(Menu::Comments) {
