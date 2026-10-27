@@ -1658,7 +1658,7 @@ fn description(s: &'static str, t: &Theme) -> Div {
 /// paints the track and thumb into one `saveLayerAlpha(153)`.
 /// Toggling moves the thumb 2 px -> 14 px and fades the track colour, both 150 ms `ease-out`
 /// (`refs/interactions/ms6a.json`); the tracks stay active under reduced motion.
-pub(super) fn switch(
+pub(crate) fn switch(
     id: impl Into<gpui::ElementId>,
     on: bool,
     disabled: bool,

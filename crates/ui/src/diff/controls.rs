@@ -309,8 +309,12 @@ impl DiffPanel {
                     label,
                     if too_large { 14. } else { 13. },
                     if too_large { 21. } else { 18.571_428 },
-                    400.,
-                    t.text_secondary,
+                    if too_large { 430. } else { 400. },
+                    if too_large {
+                        t.text_tertiary
+                    } else {
+                        t.text_secondary
+                    },
                 )
                 .when(too_large, |d| d.flex_1().min_w_0().truncate()),
             )
@@ -323,6 +327,14 @@ impl DiffPanel {
                         .focusable()
                         .cursor_pointer()
                         .ml(px(8.))
+                        .h(px(28.))
+                        .px(px(6.))
+                        .border_1()
+                        .border_color(gpui::black().opacity(0.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(12.5))
+                        .hover(|d| d.bg(t.text_alpha_10))
                         .on_click(cx.listener(move |this, _, _, cx| this.request_open(index, cx)))
                         .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
                             if matches!(event.keystroke.key.as_str(), "enter" | "space") {
@@ -330,7 +342,7 @@ impl DiffPanel {
                                 cx.stop_propagation();
                             }
                         }))
-                        .child(text("Open in editor", 13., 18.571_428, 400., t.text)),
+                        .child(text("Open in editor", 13., 18., 430., t.text_tertiary)),
                 )
             })
     }
@@ -541,6 +553,8 @@ impl DiffPanel {
         cx: &mut Context<Self>,
     ) -> Div {
         let t = cx.theme().clone();
+        let count =
+            |value, sign, color| text(states::signed_count(value, sign), 12., 18., 400., color);
         let focus = self
             .filter_focus
             .get_or_insert_with(|| cx.focus_handle())
@@ -585,19 +599,19 @@ impl DiffPanel {
                     .role(gpui::Role::Button)
                     .aria_label(format!("{}{}", file.dir, file.name))
                     .aria_selected(self.active_file == i)
-                    .h(px(30.))
+                    .h(px(29.))
                     .flex_none()
                     .flex()
                     .items_center()
-                    .gap(px(6.))
-                    .pl(px(16.))
+                    .gap(px(5.))
+                    .pl(px(3.))
                     .pr(px(4.))
                     .rounded(px(6.))
                     .focusable()
                     .tab_index(0)
                     .cursor_pointer()
                     .hover(|d| d.bg(t.list_hover))
-                    .when(self.active_file == i, |d| d.bg(t.list_hover))
+                    .when(self.active_file == i, |d| d.bg(t.text_alpha_5))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.set_file_open(i, true);
                         this.active_file = i;
@@ -617,12 +631,35 @@ impl DiffPanel {
                     }))
                     .child(file_icon(&file.name, &t))
                     .child(
-                        text(file.name.clone(), 13., 20., 400., t.text)
-                            .flex_1()
-                            .min_w_0()
-                            .overflow_hidden(),
+                        text(
+                            file.name.clone(),
+                            13.,
+                            20.,
+                            400.,
+                            if self.active_file == i {
+                                t.text
+                            } else {
+                                t.text_tertiary
+                            },
+                        )
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden(),
                     )
-                    .child(stats(file.added, file.removed, 12., &t))
+                    .when(file.added > 0 || file.removed > 0, |d| {
+                        d.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(4.))
+                                .when(file.added > 0, |d| {
+                                    d.child(count(file.added, '+', t.git_added))
+                                })
+                                .when(file.removed > 0, |d| {
+                                    d.child(count(file.removed, '-', t.git_deleted))
+                                }),
+                        )
+                    })
                     .into_any_element(),
             );
         }
@@ -651,14 +688,14 @@ impl DiffPanel {
                     .items_center()
                     .gap(px(6.))
                     .px(px(8.))
-                    .rounded(px(10.))
+                    .rounded(px(12.5))
                     .border_1()
                     .border_color(if focus.is_focused(window) {
                         t.info_solid
                     } else {
                         t.border
                     })
-                    .bg(t.surface_secondary)
+                    .bg(t.text.opacity(0.03))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |_, _, window, cx| {
@@ -666,7 +703,7 @@ impl DiffPanel {
                             cx.stop_propagation();
                         }),
                     )
-                    .child(icon("search", 12., t.text_tertiary))
+                    .child(icon("search", 14., t.text_tertiary))
                     .child(text(
                         if self.filter.text.is_empty() {
                             "Filter files…"
@@ -675,8 +712,8 @@ impl DiffPanel {
                         }
                         .to_owned(),
                         14.,
-                        20.,
-                        400.,
+                        18.,
+                        430.,
                         if self.filter.text.is_empty() {
                             t.text_tertiary
                         } else {
@@ -690,6 +727,7 @@ impl DiffPanel {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
+                    .mt(px(1.))
                     .children(rows)
                     .when(empty, |d| {
                         d.child(

@@ -1284,7 +1284,26 @@ impl DiffPanel {
                 .justify_center()
                 .layer()
                 .child(lens())
-                .child(icon(name, 16., t.text_tertiary))
+                .when(self.show_tree, |d| {
+                    d.child(shapes::decoration(Decoration {
+                        radius: Corners::all(px(14.)),
+                        fill: Some(over(t.accent.opacity(0.1), t.surface)),
+                        ..Default::default()
+                    }))
+                })
+                .child(icon(
+                    name,
+                    16.,
+                    if self.show_tree {
+                        if t.appearance == Appearance::Dark {
+                            over(t.accent.opacity(0.61), gpui::white())
+                        } else {
+                            t.text_accent
+                        }
+                    } else {
+                        t.text_tertiary
+                    },
+                ))
         };
         div()
             .h(px(48.))
@@ -1596,7 +1615,7 @@ impl Render for DiffPanel {
                     .when(file.open, |d| d.children(self.full_error_notice(i, cx)))
                     .map(|d| {
                         if file.open
-                            && let Some(preview) = self.preview(i, code_width, cx)
+                            && let Some(preview) = self.preview(i, code_width, window, cx)
                         {
                             d.child(preview)
                         } else if file.open && file.problem.is_some() {
@@ -1819,9 +1838,9 @@ impl Render for DiffPanel {
                     .relative()
                     .flex_none()
                     .overflow_hidden()
-                    .when(!self.standalone, |d| d.pb(px(1.)))
+                    .when(!self.standalone && notices.is_none(), |d| d.pb(px(1.)))
                     // Skia blends it like Chromium (a GPUI quad rounds apart).
-                    .when(!self.standalone, |d| {
+                    .when(!self.standalone && notices.is_none(), |d| {
                         d.child(
                             div()
                                 .absolute()
@@ -3118,14 +3137,16 @@ pub(crate) fn stats_features(size: f32) -> FontFeatures {
 /// `tabular-nums` and `disambiguated-digits` (`cv01`, `cv02`).
 pub fn stats(added: usize, removed: usize, size: f32, t: &Theme) -> Div {
     let features = stats_features(size);
-    let tracked =
-        |s: String, color: Hsla| text(s, size, size, 430., color).font_features(features.clone());
+    let tracked = |count, sign, color: Hsla| {
+        text(states::signed_count(count, sign), size, size, 430., color)
+            .font_features(features.clone())
+    };
     div()
         .flex()
         .items_center()
         .gap(px(4.))
-        .child(tracked(format!("+{added}"), t.git_added))
-        .child(tracked(format!("-{removed}"), t.git_deleted))
+        .child(tracked(added, '+', t.git_added))
+        .child(tracked(removed, '-', t.git_deleted))
 }
 
 fn file_header(
@@ -3461,7 +3482,9 @@ fn hunk(
                         .when_some(number, |d, n| d.child(n.to_string()))
                         .children(utility),
                 )
-                .with_priority(1),
+                .with_priority(1)
+                // Deferred only for paint order: scrolled-out rows stay inside the scroller.
+                .clipped(),
             )
             .child(
                 div()

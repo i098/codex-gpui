@@ -152,6 +152,275 @@ mod editor {
     use ui::screens::automations::{CreateAutomation, CreationMode, EditAutomation};
 
     #[test]
+    fn local_trigger_keeps_the_rule_when_cloud_only_date_is_disabled() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let mut fx = Fx::new()?;
+        fx.root.update(&mut fx.cx, |root, cx| {
+            root.set_host(Arc::new(LocalHost::new(home.path())), cx)
+        });
+        fx.click(RAIL_SCHEDULED)?;
+        fx.wait("local task list", |fx| {
+            fx.read(|root, _| root.automations().is_some())
+        })?;
+        fx.cx.update_window(fx.window, |_, window, cx| {
+            window.dispatch_action(
+                Box::new(CreateAutomation {
+                    mode: CreationMode::Manual,
+                }),
+                cx,
+            );
+        })?;
+        fx.advance(Duration::from_millis(20))?;
+        fx.type_text("Local trigger")?;
+        fx.keys("tab")?;
+        fx.type_text("Keep the recurring schedule.")?;
+        fx.keys("tab tab enter down enter")?;
+        let before = fx.read(|root, cx| {
+            root.automation_editor()
+                .unwrap()
+                .read(cx)
+                .draft(cx)
+                .unwrap()
+                .rrule
+        });
+        fx.keys("shift-tab enter down enter escape")?;
+        let after = fx.read(|root, cx| {
+            root.automation_editor()
+                .unwrap()
+                .read(cx)
+                .draft(cx)
+                .unwrap()
+                .rrule
+        });
+        ensure!(
+            before == after,
+            "cloud-only date selection changed the local rule"
+        );
+        fx.keys("escape")?;
+        fx.wait("discard trigger draft", |fx| {
+            fx.read(|root, _| root.automation_editor().is_none())
+        })?;
+        ensure!(!home.path().join("automations").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn advanced_execution_choices_persist_and_switch_to_an_existing_chat() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let project = home.path().join("project");
+        fs::create_dir(&project)?;
+        let project = project.canonicalize()?;
+        let host = Arc::new(LocalHost::new(home.path()));
+        host.add_project(&project)?;
+        let project_id = host.projects()?[0].id.to_string();
+        let mut fx = Fx::new()?;
+        fx.root
+            .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+        fx.click(RAIL_SCHEDULED)?;
+        fx.wait("local task list", |fx| {
+            fx.read(|root, _| root.automations().is_some())
+        })?;
+        fx.cx.update_window(fx.window, |_, window, cx| {
+            window.dispatch_action(
+                Box::new(CreateAutomation {
+                    mode: CreationMode::Manual,
+                }),
+                cx,
+            );
+        })?;
+        fx.advance(Duration::from_millis(20))?;
+        fx.type_text("Advanced execution")?;
+        fx.keys("tab")?;
+        fx.type_text("Review the selected project.")?;
+        fx.keys("tab tab enter down enter")?;
+        fx.keys("tab tab tab enter")?;
+        fx.keys("tab enter down enter")?;
+        fx.keys("tab tab space")?;
+        fx.keys("tab enter down enter")?;
+        fx.keys("tab enter down enter")?;
+        fx.keys("tab enter down enter")?;
+        let draft = fx.read(|root, cx| {
+            root.automation_editor()
+                .unwrap()
+                .read(cx)
+                .draft(cx)
+                .unwrap()
+        });
+        ensure!(draft.execution["projectId"] == project_id);
+        ensure!(draft.execution["autoArchive"] == true);
+        ensure!(draft.execution["notificationPolicy"] == "failed_runs_only");
+        ensure!(
+            draft.execution["model"].is_string(),
+            "model/list did not supply a selectable model"
+        );
+        ensure!(
+            draft.execution["reasoningEffort"].is_string(),
+            "selected model did not supply an effort"
+        );
+        fx.keys("enter enter")?;
+        let reopened_effort = fx.read(|root, cx| {
+            root.automation_editor()
+                .unwrap()
+                .read(cx)
+                .draft(cx)
+                .unwrap()
+                .execution["reasoningEffort"]
+                .clone()
+        });
+        ensure!(
+            reopened_effort == draft.execution["reasoningEffort"],
+            "reopening the effort picker changed its selected value"
+        );
+        if let Ok(dir) = std::env::var("CGX_AUTOMATION_EDITOR_SHOTS") {
+            fs::create_dir_all(&dir)?;
+            fx.advance(Duration::from_millis(200))?;
+            fx.shot()?.save(format!("{dir}/advanced-execution.png"))?;
+        }
+        fx.keys("cmd-enter")?;
+        fx.wait("advanced create", |fx| {
+            fx.read(|root, _| root.automation_editor().is_none())
+        })?;
+        let saved =
+            json_body(&host.fetch(&Request::post("list-automations", None))?)?["items"][0].clone();
+        ensure!(saved["target"]["projectId"] == project_id);
+        ensure!(saved["cwds"] == serde_json::json!([project]));
+        ensure!(saved["model"] == draft.execution["model"]);
+        ensure!(saved["reasoningEffort"] == draft.execution["reasoningEffort"]);
+        ensure!(saved["autoArchive"] == true && saved["notificationPolicy"] == "failed_runs_only");
+        let id = saved["id"].as_str().unwrap().to_owned();
+        fx.wait("created task refresh", |fx| {
+            fx.read(|root, _| {
+                root.automations().is_some_and(|items| {
+                    items.as_ref().is_ok_and(|items| {
+                        items["items"]
+                            .as_array()
+                            .is_some_and(|items| items.iter().any(|item| item["id"] == id))
+                    })
+                })
+            })
+        })?;
+        fx.cx.update_window(fx.window, |_, window, cx| {
+            window.dispatch_action(Box::new(EditAutomation { id: id.clone() }), cx);
+        })?;
+        fx.advance(Duration::from_millis(20))?;
+        fx.keys("tab tab tab tab tab tab enter")?;
+        fx.keys("tab tab space")?;
+        fx.keys("cmd-enter")?;
+        ensure!(
+            fx.read(|root, cx| root
+                .automation_editor()
+                .unwrap()
+                .read(cx)
+                .draft(cx)
+                .is_none()),
+            "missing chat target was accepted"
+        );
+        fx.keys("tab enter down enter")?;
+        let changed = fx.read(|root, cx| {
+            root.automation_editor()
+                .unwrap()
+                .read(cx)
+                .draft(cx)
+                .unwrap()
+        });
+        let thread_id = changed.execution["targetThreadId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        ensure!(
+            [
+                super::common::GREETING,
+                super::common::SUBTRACT,
+                super::common::EXPLAIN
+            ]
+            .contains(&thread_id.as_str())
+        );
+        fx.keys("cmd-enter")?;
+        fx.wait("existing-chat update", |fx| {
+            fx.read(|root, _| root.automation_editor().is_none())
+        })?;
+        let changed = json_body(
+            &LocalHost::new(home.path()).fetch(&Request::post("list-automations", None))?,
+        )?;
+        ensure!(changed["items"][0]["kind"] == "heartbeat");
+        ensure!(changed["items"][0]["targetThreadId"] == thread_id);
+        ensure!(changed["items"][0]["model"].is_null());
+        fx.cx.update_window(fx.window, |_, window, cx| {
+            window.dispatch_action(Box::new(EditAutomation { id: id.clone() }), cx);
+        })?;
+        fx.advance(Duration::from_millis(20))?;
+        fx.keys("tab tab tab tab tab tab enter")?;
+        fx.keys("tab tab space")?;
+        let workspace = fx.read(|root, cx| {
+            root.automation_editor()
+                .unwrap()
+                .read(cx)
+                .draft(cx)
+                .unwrap()
+                .execution["cwds"]
+                .clone()
+        });
+        ensure!(workspace.as_array().is_some_and(|paths| !paths.is_empty()));
+        fx.keys("cmd-enter")?;
+        fx.wait("new-chat update", |fx| {
+            fx.read(|root, _| root.automation_editor().is_none())
+        })?;
+        let changed = json_body(
+            &LocalHost::new(home.path()).fetch(&Request::post("list-automations", None))?,
+        )?;
+        ensure!(changed["items"][0]["kind"] == "cron");
+        ensure!(changed["items"][0]["cwds"] == workspace);
+        ensure!(changed["items"][0]["targetThreadId"].is_null());
+        Ok(())
+    }
+
+    #[test]
+    fn name_edit_persists_original_resolved_defaults() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let host = Arc::new(LocalHost::new(home.path()));
+        let created = json_body(&host.fetch(&Request::post(
+            "automation-create",
+            Some(serde_json::json!({
+                "name":"Inherited task", "prompt":"Review local changes",
+                "rrule":"FREQ=DAILY;BYHOUR=9;BYMINUTE=0", "cwds":[home.path()]
+            })),
+        ))?)?;
+        ensure!(created["item"]["model"].is_null());
+        ensure!(created["item"]["reasoningEffort"].is_null());
+        let id = created["item"]["id"].as_str().unwrap().to_owned();
+        let mut fx = Fx::with("dark", (1280., 832.), None, |record| {
+            if record["msg"]["result"]["config"].is_object() {
+                record["msg"]["result"]["config"]["codex_automation_model_slug"] =
+                    serde_json::json!("gpt-5.6-terra");
+            }
+        })?;
+        fx.root
+            .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+        fx.click(RAIL_SCHEDULED)?;
+        fx.wait("inherited task loaded", |fx| {
+            fx.read(|root, _| root.automations().is_some())
+        })?;
+        fx.cx.update_window(fx.window, |_, window, cx| {
+            window.dispatch_action(Box::new(EditAutomation { id: id.clone() }), cx);
+        })?;
+        fx.advance(Duration::from_millis(20))?;
+        fx.keys("cmd-a")?;
+        fx.type_text("Renamed inherited task")?;
+        fx.keys("cmd-enter")?;
+        fx.wait("inherited defaults saved", |fx| {
+            fx.read(|root, _| root.automation_editor().is_none())
+        })?;
+        let saved = json_body(
+            &LocalHost::new(home.path()).fetch(&Request::post("list-automations", None))?,
+        )?;
+        ensure!(saved["items"][0]["name"] == "Renamed inherited task");
+        ensure!(saved["items"][0]["model"] == "gpt-5.6-terra");
+        ensure!(saved["items"][0]["reasoningEffort"] == "medium");
+        ensure!(saved["items"][0]["rrule"] == "FREQ=DAILY;BYHOUR=9;BYMINUTE=0");
+        Ok(())
+    }
+
+    #[test]
     fn escape_closes_the_picker_before_discarding_the_editor() -> Result<()> {
         let home = tempfile::tempdir()?;
         let mut fx = Fx::new()?;
@@ -178,7 +447,7 @@ mod editor {
                 fx.type_text("Do not save this prompt.")?;
             }
             if focus == 2 {
-                fx.keys("tab enter down enter enter escape")?;
+                fx.keys("tab tab enter down enter enter escape")?;
                 ensure!(fx.read(|root, _| root.automation_editor().is_some()));
             }
             fx.keys("escape")?;
@@ -224,8 +493,8 @@ mod editor {
         fx.type_text("Review local changes.")?;
         fx.keys("enter")?;
         fx.type_text("Include risks.")?;
-        fx.keys("tab enter down down down enter")?;
-        fx.keys("tab cmd-a")?;
+        fx.keys("tab tab enter down down down enter")?;
+        fx.keys("tab tab cmd-a")?;
         fx.type_text("18:35")?;
         let draft = fx.read(|root, cx| {
             root.automation_editor()
@@ -349,7 +618,7 @@ mod editor {
             fx.type_text(&name)?;
             fx.keys("tab")?;
             fx.type_text("Review local changes.")?;
-            fx.keys("tab enter")?;
+            fx.keys("tab tab enter")?;
             for _ in 0..index.min(5) {
                 fx.keys("down")?;
             }
@@ -380,7 +649,7 @@ mod editor {
                     fx.keys("tab tab enter down down enter")?;
                 }
                 3 => {
-                    fx.keys("tab tab space")?;
+                    fx.keys("tab enter space")?;
                     ensure!(fx.read(|root, cx| {
                         root.automation_editor()
                             .unwrap()
@@ -388,7 +657,7 @@ mod editor {
                             .draft(cx)
                             .is_none()
                     }));
-                    fx.keys("tab space")?;
+                    fx.keys("down space escape")?;
                 }
                 4 => {
                     fx.keys("tab cmd-a")?;
@@ -444,7 +713,7 @@ mod editor {
                     window.dispatch_action(Box::new(EditAutomation { id: id.clone() }), cx);
                 })?;
                 fx.advance(Duration::from_millis(20))?;
-                fx.keys("tab tab tab tab cmd-a")?;
+                fx.keys("tab tab tab tab tab cmd-a")?;
                 fx.type_text("3")?;
                 fx.keys("cmd-enter")?;
                 fx.wait("hourly edit saves", |fx| {
