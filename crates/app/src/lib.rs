@@ -32,6 +32,7 @@ mod plugins;
 pub mod screenshot;
 mod search;
 mod section_actions;
+pub mod settings_import;
 pub(crate) mod settings_integrations;
 mod settings_subtrees;
 mod signin;
@@ -850,6 +851,7 @@ impl Root {
             .detach();
         root.bind_context_files(cx);
         root.connect(window, cx);
+        root.install_import(cx);
         root.load_projects(cx);
         windows::bind_root(window, cx);
         root
@@ -990,6 +992,9 @@ impl Root {
                 this.refresh_automation_editor_options(None, cx);
                 this.ready = this.login.is_none();
                 hotkey::policy::refresh(this, cx);
+                if this.ready {
+                    this.load_import_policy(cx);
+                }
                 this.select_route(cx);
                 this.sync(window, cx);
                 if bridge.is_acp() {
@@ -1166,6 +1171,9 @@ impl Root {
         self.app_tool_events = None;
         self.bind_context_files(cx);
         usage::invalidate(cx);
+        if self.ready {
+            self.load_import_policy(cx);
+        }
         self.automations = None;
         self.load_projects(cx);
         if self.ready && !self.signed_out() {
@@ -5552,6 +5560,7 @@ impl Root {
         if matches!(&event, Event::Notification { method, .. } if method == "account/updated") {
             hotkey::policy::refresh(self, cx);
         }
+        self.on_import_event(&event, cx);
         self.plugins_event(&event, cx);
         self.oauth_account_event(&event, cx);
         usage::on_event(&event, cx);

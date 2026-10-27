@@ -134,6 +134,7 @@ impl Root {
         self.remember_recent_chat();
         self.flush_settings(cx);
         self.sync_diff_watch(cx);
+        ui::screens::settings::imports::deactivate(cx);
         self.settings_page = None;
         self.suggestion_load = None;
         self.oauth.leave_page();

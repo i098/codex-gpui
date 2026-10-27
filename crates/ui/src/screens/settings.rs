@@ -33,6 +33,8 @@ use theme::{ActiveTheme as _, Theme};
 
 #[path = "computer_use.rs"]
 pub mod computer_use;
+#[path = "settings_import.rs"]
+pub mod imports;
 
 #[path = "keyboard_shortcuts.rs"]
 pub mod keyboard_shortcuts;
@@ -285,6 +287,16 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
     if account.account.is_none() {
         return cx.new(Login::new).into();
     }
+    if !cx.has_global::<imports::ImportState>() {
+        cx.set_global(imports::ImportState {
+            policy: bridge::imports::Policy {
+                enabled: true,
+                sync: true,
+                cursor: true,
+            },
+            ..Default::default()
+        });
+    }
     let config: ConfigReadResponse = fixture::response("readback.jsonl", "config/read", 0);
     let skills: Value = fixture::response("readback.jsonl", "skills/list", 0);
     let integrations = cx.new(|_| integrations::State::default());
@@ -530,6 +542,8 @@ pub struct SettingsNav {
 impl SettingsNav {
     fn new(page: Entity<SettingsPage>, cx: &mut Context<Self>) -> Self {
         cx.observe(&page, |_, _, cx| cx.notify()).detach();
+        cx.observe_global::<imports::ImportState>(|_, cx| cx.notify())
+            .detach();
         Self {
             page,
             focus: cx.focus_handle(),
@@ -669,11 +683,13 @@ impl Render for SettingsNav {
         let page = self.page.read(cx);
         let (section, query) = (page.section, page.query.clone());
         let needle = query.to_lowercase();
+        let import_visible = imports::visible(cx);
         let mut sections = Vec::new();
         for (heading, items) in NAV {
             let rows: Vec<_> = items
                 .iter()
                 .filter(|(label, _)| label.to_lowercase().contains(&needle))
+                .filter(|(label, _)| *label != "Import" || import_visible)
                 .map(|&(label, glyph)| self.item(label, glyph, label == section, &t, window, cx))
                 .collect();
             if rows.is_empty() {
@@ -1422,10 +1438,14 @@ impl SettingsPane {
 impl Render for SettingsPane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        let section = self.page.read(cx).section;
+        if section == "Import" {
+            return imports::render(window, cx);
+        }
+        imports::deactivate(cx);
         if let Some(view) = &self.page.read(cx).subtree {
             return view.clone().into_any_element();
         }
-        let section = self.page.read(cx).section;
         if section == "Computer use" {
             return super::computer_use::render(window, cx);
         }

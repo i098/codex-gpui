@@ -1,0 +1,9 @@
+{
+  "detection": {"items":[],"unsupportedProjects":[]},
+  "history": {"data":[],"connectors":[]},
+  "policy": {"feature_gates":{"3278809559":{"name":"3278809559","rule_id":"2L1fsZTriZnQ7f2eG8o0IR","secondary_exposures":[],"version":21,"id_type":"userID","value":true},"2108304519":{"name":"2108304519","rule_id":"1lS6RLZVUy4YXvqdlnBb4Y:100.00:2","secondary_exposures":[],"version":18,"id_type":"userID","value":true},"3203613120":{"name":"3203613120","rule_id":"65n7Dw0h4As0kncWBnf3aG:100.00:10","version":45,"id_type":"userID","value":true}}},
+  "syncState": {"version":1,"providerIds":[],"selection":{},"lastSyncStartedAtMs":null},
+  "preferences": null,
+  "syncEnabled": false,
+  "actions":[]
+}

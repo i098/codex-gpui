@@ -305,6 +305,11 @@ Worktree creation uses the saved root, upstream refresh preference, and selected
 Local environment files support inherited listing, validated atomic writes, and revision conflict checks.
 The `git-pr-watch-update` host operation changes only active PR heartbeat instructions.
 Run `cargo test -p app --test settings_git_family` for these file and Git operations.
+Settings > Import uses the original feature gates and the app-server's external-agent import methods.
+It shows detected providers and recorded import history.
+Automatic sync keeps the source selection and runs at the original 12-hour interval.
+Customize changes future imports only; disabling sync keeps saved selections.
+Cursor projectless imports keep their workspace and output-folder records without adding a named project.
 
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
