@@ -401,6 +401,7 @@ Run `cargo test -p app --lib reopening_completed_setup_resumes_without_another_m
 Run `cargo run -p ui --example cloud_capture -- /tmp/cloud.png current-repositories` for the native repository picker.
 Selecting another settings section clears the Cloud view.
 Run `cargo test -p ui --lib screens::settings::tests::leaving_cloud_restores_the_selected_settings_page` to check this transition.
+Use `settings-return` with `cloud_capture` to capture the return to General.
 Original-versus-native pixel validation for these pages remains pending.
 
 Scheduled > New task accepts instructions, a daily or weekly repeat, and a local time in `HH:MM` format.
