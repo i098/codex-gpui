@@ -1575,10 +1575,10 @@ impl Render for DiffPanel {
         } else {
             self.boundary(&t, cx)
         };
-        let status = self.repository_status(&t, cx);
+        let mut status = self.repository_status(&t, cx);
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let capped = self.capped();
-        let notices = self.state_notices(capped, window, cx);
+        let mut notices = self.state_notices(capped, window, cx);
         let first_line = if capped {
             self.files
                 .iter()
@@ -1863,6 +1863,10 @@ impl Render for DiffPanel {
                         self.standalone_header(&t, cx)
                     } else {
                         self.header(&t, wide, clamped, window, cx)
+                    })
+                    // The original clips header shadows with the notices, not at the header edge.
+                    .when(notices.is_some(), |d| {
+                        d.children(status.take()).children(notices.take())
                     }),
             )
             .children(status)

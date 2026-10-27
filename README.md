@@ -293,6 +293,7 @@ The controls appear when the pointer or keyboard focus enters the PDF preview.
 The file tree omits zero change counts and groups thousands in large totals.
 Oversized text retains its change counts and Open in editor action instead of rendering a partial file.
 Large-diff notices clip their fill and controls together while painting the outer shadow separately.
+The header capsule shadows continue into the notice area, as in the original.
 Stage and Unstage actions apply only to the separate Unstaged and Staged sources, not the combined Uncommitted view.
 Use the Rich preview option to switch SVG files between rendered previews and text.
 Run `cargo test -p app --test diff_preview` on macOS for image version and PDF page checks.
