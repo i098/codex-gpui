@@ -186,6 +186,7 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "keyboardShortcuts" => Box::new(shortcuts::OpenShortcutSettings),
         "showKeyboardShortcuts" => Box::new(ShowKeyboardShortcuts),
         "toggleSidebar" => Box::new(ToggleSidebar),
+        "togglePriorityFilter" => Box::new(ToggleActivity),
         "navigateBack" => Box::new(GoBack),
         "navigateForward" => Box::new(GoForward),
         "previousThread" => Box::new(PreviousChat),

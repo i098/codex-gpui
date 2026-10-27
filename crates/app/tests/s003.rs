@@ -584,6 +584,24 @@ fn activity_opens_running_chats_and_shortcut_restores_the_sidebar() -> Result<()
             );
             fx.hover((150., 300.))?;
             sidebar_shot(&mut fx, "activity-hover")?;
+            fx.click((314., 184.))?;
+            sidebar_shot(&mut fx, "activity-options")?;
+            fx.keys("enter")?;
+            sidebar_shot(&mut fx, "activity-all")?;
+            fx.right_click((150., 214.))?;
+            sidebar_shot(&mut fx, "activity-row-menu")?;
+            fx.keys("escape")?;
+            fx.click((314., 184.))?;
+            fx.keys("down enter")?;
+            fx.click((314., 184.))?;
+            fx.keys("down down enter")?;
+            fx.click((314., 184.))?;
+            sidebar_shot(&mut fx, "activity-options-unchecked")?;
+            fx.keys("down down enter")?;
+            fx.click((314., 184.))?;
+            fx.keys("down enter")?;
+            fx.click((314., 184.))?;
+            fx.keys("enter")?;
         }
     }
     fx.action(Box::new(ui::SetTheme("dark")))?;

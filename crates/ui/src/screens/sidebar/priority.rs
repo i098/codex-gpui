@@ -21,7 +21,18 @@ pub(super) struct OptionsMenu {
 }
 
 impl HomeSidebar {
+    pub fn set_activity_available(&mut self, available: bool, cx: &mut Context<Self>) {
+        if !available && let Some(clock) = self.activity_clock {
+            self.toggle_activity(clock, cx);
+        }
+        self.activity_available = available;
+        cx.notify();
+    }
+
     pub fn toggle_activity(&mut self, clock: Clock, cx: &mut Context<Self>) {
+        if !self.activity_available {
+            return;
+        }
         self.activity_clock = if self.activity_clock.is_some() {
             None
         } else {

@@ -267,8 +267,8 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 | 1 | Sidebar visible | entry | Rail 52 px plus panel 288 px at 1280 px. | Open at launch; parity: see `parity_home`. | PASS (`launch_home`, `parity_home`) |
 | 2 | `Codex ⌄` mode switch | click | Menu: ChatGPT, Codex, Work. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `mode-switch`) |
 | 3 | `⌃1` `⌃2` `⌃3` | shortcut | Switch mode. | — | NOT WIRED (`crates/ui/src/lib.rs`: no modes; then bind in `crates/app/src/lib.rs` `init`) |
-| 4 | Bell `View activity` | click | Toggles the activity view. | `ToggleActivity` selects the existing Home sidebar's priority view. | Behavior passes S003; pixel and availability gates remain open. |
-| 5 | `⌘⌥U` | shortcut | Toggles the activity view. | Keeps a Thread route, returns other routes to Home, and opens a hidden sidebar. | Behavior passes `priority_activity`; availability gate remains open. |
+| 4 | Bell `View activity` | click | Toggles the activity view. | `ToggleActivity` selects the existing Home sidebar's priority view when shared access permits it. | Availability implemented; native pixel gate remains open. |
+| 5 | `⌘⌥U` | shortcut | Toggles the activity view. | Uses the configured activity shortcut and shared access state; keeps a Thread route and opens a hidden sidebar. | Availability implemented; native pixel gate remains open. |
 | 6 | Search | click | Opens the command menu in chat-search mode. | `OpenCommandMenu`: the command menu over live Recents. | PASS (`command_menu_search_click`, `parity_sidebar`) |
 | 7 | `⌘K` | shortcut | Opens the command menu. | Same as shell row 14. | PASS (`command_menu_keys`) |
 | 8 | `Your dot` row | click | Opens the dot (orbit) thread. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `your-dot`) |
@@ -289,8 +289,13 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 | 23 | Resize | resize | Below 768 px the panel is hidden; it opens as an overlay. | Hidden at 767 and 600 px, shown at 1280 px; the user's choice is kept. `⌘B` opens it docked, not as an overlay. | FAIL (overlay: `crates/ui/src/lib.rs` `Shell`; hide/show checked by `resize_three_widths`) |
 
 The original `isPriorityFilterEnabled` requires feature `4039078146` and access status `allowed` or `loading`.
-The retained Statsig response enables the feature, but the native shared access provider remains unavailable.
-The activity action is not complete until it uses that provider.
+The native provider reads that feature from Statsig and checks the current account's plan and workspace settings.
+The bell, command menu, shortcut settings, and action handler share the resulting availability.
+Denied access, failed access reads, account changes, and logout close an active activity session.
+Same-account refreshes keep an active session.
+Transient host failures use the original three-retry policy.
+ACP keeps its existing local activity view without account-backed requests.
+The native full-state pixel comparison remains open.
 
 
 S001 replays `refs/interactions/s001.json` with `cargo test -p app --test s001` on macOS.
