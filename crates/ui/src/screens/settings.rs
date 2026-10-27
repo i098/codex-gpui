@@ -274,6 +274,15 @@ pub mod storage;
 #[path = "settings_integrations.rs"]
 pub mod integrations;
 
+#[path = "git_settings.rs"]
+mod git_settings;
+
+#[path = "worktrees.rs"]
+pub mod worktrees;
+
+#[path = "environments.rs"]
+pub mod environments;
+
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
@@ -763,6 +772,7 @@ pub struct SettingsPane {
     selects: std::collections::HashMap<&'static str, Entity<crate::settings_kit::Select>>,
     git_fields: Vec<(&'static str, Entity<Composer>)>,
     storage: Entity<storage::StoragePage>,
+    git_saved_until: std::collections::HashMap<&'static str, std::time::Instant>,
 }
 
 /// `Confirm before closing a window` options, default first.
@@ -797,6 +807,7 @@ impl SettingsPane {
             layer: Layer::default(),
             selects: std::collections::HashMap::new(),
             git_fields: Vec::new(),
+            git_saved_until: Default::default(),
         }
     }
 
@@ -943,190 +954,6 @@ impl SettingsPane {
         let options = &[("light", "Light"), ("dark", "Dark"), ("system", "System")];
         let theme = self.segmented(THEME, "system", options, t, window, cx);
         vec![("Theme", vec![settings_row("Theme", None, theme, t)])]
-    }
-
-    fn git(
-        &mut self,
-        t: &Theme,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Vec<(&'static str, Vec<Div>)> {
-        const FIELDS: &[(&str, &str, &str)] = &[
-            ("host.git-branch-prefix", "Branch prefix", "codex/"),
-            (
-                "host.git-pr-watch-instructions",
-                "Watch and fix pull requests",
-                "Add pull request watch guidance…",
-            ),
-            (
-                "host.git-commit-instructions",
-                "Commit instructions",
-                "Add commit message guidance…",
-            ),
-            (
-                "host.git-pr-instructions",
-                "Pull request instructions",
-                "Add pull request guidance…",
-            ),
-        ];
-        if self.git_fields.is_empty() {
-            for &(key, _, placeholder) in FIELDS {
-                let multiline = key != "host.git-branch-prefix";
-                let value = self
-                    .page
-                    .read(cx)
-                    .choice(key, if multiline { "" } else { "codex/" })
-                    .to_owned();
-                let editor =
-                    cx.new(|cx| Composer::settings_field(placeholder, &value, multiline, cx));
-                let field = editor.clone();
-                if !multiline {
-                    cx.on_blur(&editor.focus_handle(cx), window, move |this, _, cx| {
-                        this.save_git_field(key, &field, cx);
-                    })
-                    .detach();
-                }
-                if multiline {
-                    let mut pending = None;
-                    let mut previous = value.clone();
-                    cx.observe(&editor, move |this, editor, cx| {
-                        let text = editor.read(cx).field_text().to_owned();
-                        if previous == text {
-                            return;
-                        }
-                        previous = text.clone();
-                        drop(pending.take());
-                        this.page
-                            .update(cx, |page, _| page.draft_instructions(key, text.clone()));
-                        if this.page.read(cx).choice(key, "") != text {
-                            pending = Some(cx.spawn(async move |this, cx| {
-                                cx.background_executor()
-                                    .timer(std::time::Duration::from_secs(3))
-                                    .await;
-                                let _ = this.update(cx, |this, cx| {
-                                    if editor.read(cx).field_text() == text {
-                                        this.save_git_field(key, &editor, cx);
-                                    }
-                                });
-                            }));
-                        }
-                        cx.notify();
-                    })
-                    .detach();
-                }
-                self.git_fields.push((key, editor));
-            }
-        }
-        let branch = self.git_fields[0].1.clone();
-        let mut groups = vec![(
-            "Git",
-            vec![
-                settings_row(
-                    "Disable Git-based diffs",
-                    Some("Only show Last Turn in the Changes panel"),
-                    self.toggle("host.git-review-mode", false, t, window, cx),
-                    t,
-                ),
-                settings_row(
-                    "Branch prefix",
-                    Some("Prefix for new branches"),
-                    div().w(px(224.)).child(branch).into_any_element(),
-                    t,
-                ),
-                settings_row(
-                    "Pull request merge method",
-                    None,
-                    self.select_menu(
-                        "host.git-pull-request-merge-method",
-                        &[("merge", "Merge"), ("squash", "Squash")],
-                        None,
-                        |select| select,
-                        cx,
-                    ),
-                    t,
-                ),
-                settings_row(
-                    "Always force push",
-                    Some("Use --force-with-lease when pushing"),
-                    self.toggle("host.git-always-force-push", false, t, window, cx),
-                    t,
-                ),
-                settings_row(
-                    "Create draft pull requests",
-                    None,
-                    self.toggle("host.git-create-pull-request-as-draft", true, t, window, cx),
-                    t,
-                ),
-                settings_row(
-                    "Review delivery",
-                    None,
-                    self.segmented(
-                        "desktop.reviewDelivery",
-                        "inline",
-                        &[("inline", "Inline"), ("detached", "Detached")],
-                        t,
-                        window,
-                        cx,
-                    ),
-                    t,
-                ),
-            ],
-        )];
-        for (index, &(key, title, _)) in FIELDS.iter().enumerate().skip(1) {
-            let editor = self.git_fields[index].1.clone();
-            let saved = self.page.read(cx).choice(key, "") == editor.read(cx).field_text();
-            let field = editor.clone();
-            let row = div()
-                .p(px(16.))
-                .flex()
-                .flex_col()
-                .gap(px(8.))
-                .child(editor)
-                .child(
-                    div().flex().justify_end().child(
-                        button(
-                            if saved { "Saved" } else { "Save" },
-                            t.text_alpha_5,
-                            None,
-                            t,
-                        )
-                        .id(key)
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.save_git_field(key, &field, cx)),
-                        ),
-                    ),
-                );
-            let mut rows = Vec::new();
-            if key == "host.git-pr-watch-instructions" {
-                rows.push(settings_row(
-                    "Auto-merge when ready",
-                    Some("Continue watching until the pull request is merged"),
-                    self.toggle("host.git-pr-watch-auto-merge", false, t, window, cx),
-                    t,
-                ));
-            }
-            rows.push(row);
-            groups.push((title, rows));
-        }
-        groups
-    }
-
-    fn save_git_field(
-        &mut self,
-        key: &'static str,
-        editor: &Entity<Composer>,
-        cx: &mut Context<Self>,
-    ) {
-        let value = editor.read(cx).field_text().to_owned();
-        let default = if key == "host.git-branch-prefix" {
-            "codex/"
-        } else {
-            ""
-        };
-        if self.page.read(cx).choice(key, default) != value {
-            self.page
-                .update(cx, |page, cx| page.set(key, json!(value), cx));
-        }
     }
 
     fn general(
@@ -1514,6 +1341,12 @@ impl Render for SettingsPane {
                 cx,
             );
         }
+        if section == "Worktrees" {
+            return worktrees::render(self.page.clone(), window, cx);
+        }
+        if section == "Git" {
+            return self.render_git(&t, window, cx);
+        }
         if section == "Connections" {
             return super::connections::render(window, cx);
         }
@@ -1521,7 +1354,6 @@ impl Render for SettingsPane {
         let groups = match section {
             "General" => self.general(&t, window, cx),
             "Appearance" => self.appearance(&t, window, cx),
-            "Git" => self.git(&t, window, cx),
             _ => Vec::new(),
         };
         let card_border = over(t.border, t.background_panel);

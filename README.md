@@ -255,11 +255,16 @@ Thread replies retain the optional rollout `path` for archived-chat search.
 Run `cargo test -p app --test host global_state` for the filesystem and request checks.
 This support increment does not change the Archived chats page.
 
-Settings > Git stores branch, merge, push, draft, diff, and pull request instruction preferences in `host-settings.json`.
+Settings > Git stores branch, merge, push, draft, and pull request instruction preferences in `host-settings.json`.
 Review delivery uses the existing app-server config store.
 Branch prefix saves on blur or Enter; multiline instructions save after three idle seconds or when the page closes.
-The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
-This page does not implement Git operations or active pull request watchers, and it does not complete other settings pages.
+Save and Command-S also write pending instructions.
+The native `cargo test -p app --test git_settings -- --test-threads=1` replay checks autosave, write recovery, shutdown flush, and confirmed worktree preferences.
+PR watch preference changes update active PR heartbeat instructions; paused automations remain unchanged.
+Settings > Worktrees provides General and Environments tabs, root and retention preferences, live worktree rows, and row actions.
+The tabs stay accessible while the content scrolls.
+Pinned conversations prevent worktree deletion.
+The Environments tab lists project and inherited files and edits setup scripts, cleanup scripts, platform overrides, and named actions.
 
 Settings > Voice keeps microphone, sound, screen-context, and local dictionary preferences in the same host settings store.
 Its gate adapter accepts trusted original Statsig and capability values; missing inputs never enable Voice.
@@ -340,7 +345,9 @@ Capture tests require separate, owned `HOME` and `CODEX_HOME` directories.
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
-Use `Composer::settings_field` for multiline text and `Toast` for existing information, error, and success messages.
+Use `Composer::settings_field` for text and `.monospace_field()` for scripts and commands.
+Textareas scroll inside a fixed initial height, resize to a 78-pixel minimum content height, and keep the caret visible after resizing.
+Use `Toast` for existing information, error, and success messages.
 Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice check.
 
 Cloud environment routes use `Root::open_cloud_environment` and the existing authenticated host transport.
