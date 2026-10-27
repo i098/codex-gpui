@@ -153,7 +153,8 @@ impl Root {
                                 Toast::danger("Failed to unarchive chat")
                             }
                         };
-                        this.toaster.update(cx, |toaster, cx| toaster.push(toast, cx));
+                        this.toaster
+                            .update(cx, |toaster, cx| toaster.push(toast, cx));
                     })
                     .ok();
                 })

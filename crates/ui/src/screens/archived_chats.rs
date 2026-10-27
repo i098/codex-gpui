@@ -10,8 +10,7 @@ use crate::{
 use bridge::types::Thread;
 use gpui::{
     Action, AnyElement, App, AppContext as _, Context, Div, Entity, Focusable as _,
-    InteractiveElement,
-    IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Stateful,
+    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Stateful,
     StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
 };
 use serde::Deserialize;
