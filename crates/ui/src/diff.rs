@@ -2923,7 +2923,7 @@ impl FileView {
                                 .get(i)
                                 .into_iter()
                                 .flatten()
-                                .map(|(range, token)| (range.clone(), token.style(&t))),
+                                .map(|(range, token)| (range.clone(), token.style(t))),
                         );
                         div()
                             .h(px(FILE_LINE_HEIGHT))
