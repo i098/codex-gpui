@@ -4438,10 +4438,13 @@ mod tests {
         }));
         let layer = Layer {
             origin: [0, 0],
+            tile_origin: [0, 0],
             window: [4, 4],
             tile: [TILE, TILE],
             composited: false,
             device: None,
+            recorded: None,
+            canvas: None,
         };
         let draw = |canvas: &Canvas, color: Color4f| {
             let paint = fill_paint(color);
