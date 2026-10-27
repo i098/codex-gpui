@@ -214,6 +214,8 @@ impl DiffPanel {
             return None;
         }
         let t = cx.theme();
+        let fill = t.text;
+        let hover_fill = t.surface_secondary.blend(t.text.opacity(0.88));
         let drafting = self.annotations.draft.as_ref().is_some_and(|draft| {
             let shown = &self.files[file];
             draft.position.side == side
@@ -273,8 +275,32 @@ impl DiffPanel {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded(px(4.))
-                        .bg(t.text)
+                        .child(
+                            gpui::canvas(
+                                |bounds, window, _| {
+                                    window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal)
+                                },
+                                move |bounds, hitbox, window, cx| {
+                                    shapes::paint(
+                                        &Decoration {
+                                            radius: Corners::all(px(4.)),
+                                            fill: Some(if hitbox.is_hovered(window) {
+                                                hover_fill
+                                            } else {
+                                                fill
+                                            }),
+                                            ..Default::default()
+                                        },
+                                        None,
+                                        bounds,
+                                        window,
+                                        cx,
+                                    );
+                                },
+                            )
+                            .absolute()
+                            .inset_0(),
+                        )
                         .child(icon("diff-comment-add", 16., t.surface_secondary))
                         .id(SharedString::from(format!(
                             "comment-gutter-{file}-{side:?}-{line}"
@@ -290,7 +316,7 @@ impl DiffPanel {
                         .aria_label("Add a comment")
                         .tab_index(0)
                         .cursor_pointer()
-                        .hover(|style| style.bg(over(t.text.opacity(0.88), t.surface_secondary)))
+                        .on_hover(|_, window, _| window.refresh())
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.open_comment(file, side, line, None, window, cx)
@@ -751,38 +777,38 @@ impl DiffPanel {
                     .p(px(6.))
                     .font_family(SANS)
                     .child(
-                        local_comment_frame(&draft.position, t)
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|this, _, window, cx| this.focus_comment(window, cx)),
-                            )
-                            .child(div().p(px(12.)).child(draft.editor.clone()))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_between()
-                                    .gap(px(8.))
-                                    .px(px(12.))
-                                    .py(px(8.))
-                                    .child(div().when_some(draft.editing.clone(), |d, key| {
-                                        d.child(comment_button(
-                                            "Delete",
-                                            false,
-                                            t,
-                                            cx,
-                                            move |this, window, cx| {
-                                                this.delete_comment(&key, window, cx)
-                                            },
-                                        ))
-                                    }))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap(px(8.))
-                                            .child(
-                                                crate::composer::pill("diff-comment-dictate", t)
+                        local_comment_frame(&draft.position, t, |frame| {
+                            frame
+                                .child(div().p(px(12.)).child(draft.editor.clone()))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .gap(px(8.))
+                                        .px(px(12.))
+                                        .py(px(8.))
+                                        .child(div().when_some(draft.editing.clone(), |d, key| {
+                                            d.child(comment_button(
+                                                "Delete",
+                                                false,
+                                                t,
+                                                cx,
+                                                move |this, window, cx| {
+                                                    this.delete_comment(&key, window, cx)
+                                                },
+                                            ))
+                                        }))
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap(px(8.))
+                                                .child(
+                                                    crate::composer::pill(
+                                                        "diff-comment-dictate",
+                                                        t,
+                                                    )
                                                     .size(px(24.))
                                                     .justify_center()
                                                     .role(gpui::Role::Button)
@@ -809,7 +835,9 @@ impl DiffPanel {
                                                         },
                                                     ))
                                                     .child(if dictation_label == "Dictate" {
-                                                        icon("mic", 16., t.text).into_any_element()
+                                                        icon("mic", 16., t.text)
+                                                            .runtime()
+                                                            .into_any_element()
                                                     } else {
                                                         div()
                                                             .size(px(8.8))
@@ -817,28 +845,33 @@ impl DiffPanel {
                                                             .bg(t.text)
                                                             .into_any_element()
                                                     }),
-                                            )
-                                            .child(comment_button(
-                                                "Cancel",
-                                                false,
-                                                t,
-                                                cx,
-                                                Self::abort_comment,
-                                            ))
-                                            .child(
-                                                comment_button(
-                                                    if editing { "Save" } else { "Comment" },
-                                                    true,
+                                                )
+                                                .child(comment_button(
+                                                    "Cancel",
+                                                    false,
                                                     t,
                                                     cx,
-                                                    Self::save_comment,
-                                                )
-                                                .aria_disabled(!enabled)
-                                                .tab_stop(enabled)
-                                                .when(!enabled, |d| d.opacity(0.5)),
-                                            ),
-                                    ),
-                            ),
+                                                    Self::abort_comment,
+                                                ))
+                                                .child(
+                                                    comment_button(
+                                                        if editing { "Save" } else { "Comment" },
+                                                        true,
+                                                        t,
+                                                        cx,
+                                                        Self::save_comment,
+                                                    )
+                                                    .aria_disabled(!enabled)
+                                                    .tab_stop(enabled)
+                                                    .when(!enabled, |d| d.opacity(0.5)),
+                                                ),
+                                        ),
+                                )
+                        })
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, window, cx| this.focus_comment(window, cx)),
+                        ),
                     )
                     .into_any_element(),
                 if editing {
@@ -852,7 +885,7 @@ impl DiffPanel {
     }
 }
 
-fn local_comment_frame(position: &Position, t: &Theme) -> Div {
+fn local_comment_frame(position: &Position, t: &Theme, content: impl FnOnce(Div) -> Div) -> Div {
     let title = format!(
         "Local comment on {} {}",
         if position.start_line.is_some() {
@@ -862,7 +895,7 @@ fn local_comment_frame(position: &Position, t: &Theme) -> Div {
         },
         position.display_range(),
     );
-    div()
+    let frame = div()
         .relative()
         .rounded(px(12.5))
         .flex()
@@ -883,43 +916,48 @@ fn local_comment_frame(position: &Position, t: &Theme) -> Div {
                 shadow(black().opacity(0.05), 0., 20., 0., false),
             ],
             ..Default::default()
-        }))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(px(8.))
-                .px(px(12.))
-                .pt(px(8.))
-                .pb(px(2.))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(10.))
-                        .child(
-                            div()
-                                .id("comment-author")
-                                .size(px(24.))
-                                .flex_none()
-                                // Skia's anti-aliased circle, as Chromium paints `rounded-full`.
-                                .child(shapes::decoration(Decoration {
-                                    radius: Corners::all(px(12.)),
-                                    fill: Some(rgb(0xff7419).into()),
-                                    ..Default::default()
-                                }))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .role(gpui::Role::Image)
-                                .aria_label("Your avatar")
-                                .child(text("U", 12., 16., 400., t.text)),
-                        )
-                        .child(text("You", 12., 16., 430., t.text_tertiary)),
-                )
-                .child(text(title, 12., 16., 430., t.text_tertiary)),
-        )
+        }));
+    let body = div().flex().flex_col().child(
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(8.))
+            .px(px(12.))
+            .pt(px(8.))
+            .pb(px(2.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .child(
+                        div()
+                            .id("comment-author")
+                            .size(px(24.))
+                            .flex_none()
+                            // Skia's anti-aliased circle, as Chromium paints `rounded-full`.
+                            .child(shapes::decoration(Decoration {
+                                radius: Corners::all(px(12.)),
+                                fill: Some(rgb(0xff7419).into()),
+                                ..Default::default()
+                            }))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .role(gpui::Role::Image)
+                            .aria_label("Your avatar")
+                            .child(text("U", 12., 16., 400., t.text)),
+                    )
+                    .child(text("You", 12., 16., 430., t.text_tertiary)),
+            )
+            .child(text(title, 12., 16., 430., t.text_tertiary)),
+    );
+    frame.child(crate::rounded_clip(
+        px(12.5),
+        shapes::Corner::Squircle,
+        content(body),
+    ))
 }
 
 fn local_comment(entry: &Entry, file: usize, cx: &Context<DiffPanel>) -> Div {
@@ -929,40 +967,42 @@ fn local_comment(entry: &Entry, file: usize, cx: &Context<DiffPanel>) -> Div {
     let keyboard_key = key.clone();
     let side = entry.comment.position.side;
     let line = entry.comment.position.line.get();
-    let card = local_comment_frame(&entry.comment.position, t)
-        .id(SharedString::from(format!("diff-comment-{key}")))
-        .cursor_pointer()
-        .role(gpui::Role::Button)
-        .aria_label("Edit comment")
-        .tab_index(0)
-        .on_click(cx.listener(move |this, _, window, cx| {
-            this.open_comment(file, side, line, Some(key.clone()), window, cx);
-        }))
-        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                this.open_comment(file, side, line, Some(keyboard_key.clone()), window, cx);
-                cx.stop_propagation();
-            }
-        }))
-        .child(
-            div()
-                .p(px(12.))
-                .child(text(entry.comment.text(), 14., 22.75, 430., t.text)),
-        )
-        .child(
-            div()
-                .flex()
-                .justify_end()
-                .px(px(12.))
-                .py(px(8.))
-                .child(comment_button(
-                    "Delete",
-                    false,
-                    t,
-                    cx,
-                    move |this, window, cx| this.delete_comment(&delete_key, window, cx),
-                )),
-        );
+    let card = local_comment_frame(&entry.comment.position, t, |frame| {
+        frame
+            .child(
+                div()
+                    .p(px(12.))
+                    .child(text(entry.comment.text(), 14., 22.75, 430., t.text)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .px(px(12.))
+                    .py(px(8.))
+                    .child(comment_button(
+                        "Delete",
+                        false,
+                        t,
+                        cx,
+                        move |this, window, cx| this.delete_comment(&delete_key, window, cx),
+                    )),
+            )
+    })
+    .id(SharedString::from(format!("diff-comment-{key}")))
+    .cursor_pointer()
+    .role(gpui::Role::Button)
+    .aria_label("Edit comment")
+    .tab_index(0)
+    .on_click(cx.listener(move |this, _, window, cx| {
+        this.open_comment(file, side, line, Some(key.clone()), window, cx);
+    }))
+    .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+            this.open_comment(file, side, line, Some(keyboard_key.clone()), window, cx);
+            cx.stop_propagation();
+        }
+    }));
     div().w_full().max_w(px(768.)).p(px(6.)).child(card)
 }
 

@@ -157,6 +157,24 @@ fn comment_text(fx: &Fx) -> Option<String> {
 }
 
 #[test]
+fn gutter_button_restores_its_fill_after_hover() -> Result<()> {
+    let (_repo, mut fx) = prepare(false)?;
+    fx.click((704., 215.4))?;
+    fx.wait("comment draft", |fx| draft(fx))?;
+    fx.hover((800., 215.4))?;
+    let normal = fx.shot()?.get_pixel(1390, 425).0;
+    fx.hover((704., 215.4))?;
+    let hovered = fx.shot()?.get_pixel(1390, 425).0;
+    fx.hover((800., 215.4))?;
+    let restored = fx.shot()?.get_pixel(1390, 425).0;
+
+    assert_eq!(normal, [255, 255, 255, 255]);
+    assert_eq!(hovered, [227, 227, 227, 255]);
+    assert_eq!(restored, normal);
+    Ok(())
+}
+
+#[test]
 fn gutter_comments_keep_ranges_and_support_edit_cancel_delete_and_send() -> Result<()> {
     let (_repo, mut fx) = prepare(false)?;
     fx.drag((686., 194.4), (686., 302.4), 6)?;

@@ -629,6 +629,11 @@ Stock GPUI cannot match Chromium's pixels. The local copies include these change
 - Skia blends: glyph and sprite blending as Skia's 8-bit raster does it, and `SkPaint::setAlphaf` alpha rounded to a byte.
 - Layer compositing: opacity layers and composited layers (`will-change`, scrollers) that blend as Chromium's `saveLayerAlpha` does.
 
+RGB-to-HSL conversion keeps saturated sRGB colors at saturation 1.0.
+This keeps their edges on Skia's legacy raster path instead of the float path.
+Comment cards clip their contents to the rounded card shape while their shadows remain outside the clip.
+Clipped deferred draws retain their ancestor's raster recording origin without creating a new opacity layer.
+
 `Window::layout_origin_residual_y` returns the fractional vertical origin removed by layout rounding.
 Use it when placing multiline field glyphs to retain Blink's baseline positions.
 

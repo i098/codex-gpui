@@ -574,7 +574,7 @@ The body menu reads available targets from `open-in-targets`.
 The shared `open-in` launcher handles app paths, project preferences, and launch failures.
 A failed `Open in editor` action shows `Unable to open in editor` and preserves the displayed changes.
 `s027::failed_editor_launch_keeps_the_diff_and_reports_the_error` runs the real host with a controlled opener on an owned repository.
-The gutter opens a comment editor for one line or a selected range.
+The gutter's round button opens a comment editor for one line or a selected range.
 Comments support edit, cancel, delete, and send actions.
 The draft keeps its selected lines visible and uses the original author header and line reference.
 Its text layout and input hit testing share the comment editor's line height.
@@ -584,6 +584,7 @@ The composer groups comments in one count attachment.
 Its preview opens the selected source file; `Remove comments attachment` clears the stored comments.
 Closing the keyboard preview restores focus to its trigger.
 The comment's Dictate control targets its own Composer through the shared dispatcher.
+The microphone keeps its original shape against the comment card background.
 Comment and Save wait for a successful completion before persisting the edited text.
 A failed or cancelled transcription keeps the comment editable and preserves its stored value.
 Clicking the comment card returns focus to its editor, including after an error.
