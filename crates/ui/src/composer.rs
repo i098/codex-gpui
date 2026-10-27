@@ -375,7 +375,10 @@ pub fn model_label(name: &str) -> String {
 enum FieldStyle {
     Settings,
     Form,
+    /// A settings-row value: frameless, right-aligned, secondary text.
     Inline,
+    /// Like `Inline`, but left-aligned in primary text.
+    Dialog,
 }
 
 /// One `model/list` entry as the picker shows it.
@@ -931,6 +934,19 @@ impl Composer {
         field
     }
 
+    /// A frameless single-line field for a dialog that draws its own frame, labelled `label`.
+    pub fn dialog_field(
+        label: &'static str,
+        placeholder: &'static str,
+        value: &str,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut field = Self::settings_field(placeholder, value, false, cx);
+        field.field_style = FieldStyle::Dialog;
+        field.request_label = Some(label.into());
+        field
+    }
+
     pub fn search_field(placeholder: &'static str, cx: &mut Context<Self>) -> Self {
         let mut field = Self::settings_field(placeholder, "", false, cx);
         field.search_field = true;
@@ -1016,7 +1032,6 @@ impl Composer {
         editor.request_compact = true;
         editor
     }
-
     pub fn field_text(&self) -> &str {
         &self.content
     }
@@ -2372,7 +2387,7 @@ impl Render for Composer {
         }
         if self.plain_field.is_some() && self.field_style != FieldStyle::Settings {
             let multiline = self.plain_field == Some(true);
-            let inline = self.field_style == FieldStyle::Inline;
+            let inline = matches!(self.field_style, FieldStyle::Inline | FieldStyle::Dialog);
             let input = self
                 .editor(cx)
                 .w_full()
@@ -2391,6 +2406,14 @@ impl Render for Composer {
                 .font_weight(gpui::FontWeight(400.));
             let field = card
                 .w_full()
+                .role(gpui::Role::TextInput)
+                .aria_label(
+                    self.request_label
+                        .clone()
+                        .unwrap_or(self.placeholder.clone()),
+                )
+                .aria_placeholder(self.placeholder.clone())
+                .aria_value(self.content.clone())
                 .when(!inline, |d| {
                     d.p(px(1.)).child(shapes::decoration(shapes::Decoration {
                         radius: Corners::all(px(20.)),
