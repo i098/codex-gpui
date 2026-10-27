@@ -395,7 +395,7 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
         let mut shaping = (0., Vec::new());
         for (tag, value) in font.features.tag_value_list() {
             if tag == crate::LETTER_SPACING_TAG {
-                shaping.0 = *value as i32 as f32 / 100.;
+                shaping.0 = f32::from_bits(*value);
             } else if tag == crate::OUTSIDE_ZOOM_TAG {
                 state.css_scale.insert(id.0, f32::from_bits(*value));
             } else if let Ok(tag) = <[u8; 4]>::try_from(tag.as_bytes()) {

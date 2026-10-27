@@ -3,8 +3,11 @@
 //! HTTP(S) links open the system browser on left or middle click. File links keep their existing action.
 
 use super::*;
+use crate::code_font;
 use crate::tooltip::{Side, tooltip};
-use gpui::{AnyElement, FocusHandle, MouseButton, PathBuilder, StyledText, canvas, point};
+use gpui::{
+    AnyElement, FocusHandle, MouseButton, PathBuilder, Stateful, StyledText, canvas, point,
+};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Color, FontStyle, StyleModifier, ThemeItem, ThemeSettings};
 use syntect::parsing::SyntaxSet;
@@ -205,6 +208,10 @@ struct Markdown<'a> {
     source: &'a str,
     segments: &'a [StreamSegment],
     block_index: usize,
+    /// Width of the words of the link being built (see `Tag::Link`).
+    link_width: std::cell::Cell<f32>,
+    /// Indent of the first word of a link: its leading icon.
+    indent: std::cell::Cell<f32>,
     table_measure: std::cell::Cell<Option<TableMeasure>>,
     paragraph_gap: f32,
     preserve_line_breaks: bool,
@@ -234,6 +241,8 @@ impl<'a> Markdown<'a> {
             segments,
             block_index: 0,
             table_measure: std::cell::Cell::new(None),
+            link_width: std::cell::Cell::new(0.),
+            indent: std::cell::Cell::new(0.),
             paragraph_gap: 12.,
             preserve_line_breaks: false,
         }
@@ -646,6 +655,7 @@ impl<'a> Markdown<'a> {
     fn inline(&mut self, style: Typography) -> (Vec<AnyElement>, bool) {
         let mut row = Vec::new();
         let mut task = false;
+        let mut glue = false;
         while let Some(event) = self.events.peek() {
             match event {
                 Event::End(_)
@@ -659,14 +669,41 @@ impl<'a> Markdown<'a> {
                 | Event::Rule => break,
                 _ => {}
             }
+            let glued = std::mem::take(&mut glue);
             match self.events.next().expect("peeked event") {
                 Event::Text(s) | Event::Html(s) | Event::InlineHtml(s) => {
+                    let mut glue = glued;
                     let mut at = self.events.start;
-                    row.extend(s.split_inclusive(' ').map(|s| {
-                        let here = at;
-                        at += s.len();
-                        self.word(s, Some(here), style).into_any_element()
-                    }));
+                    let line = LINE_WIDTH.with(|w| w.get());
+                    for word in s.split_inclusive(' ') {
+                        let limit = line - self.indent.take();
+                        for chunk in
+                            break_long(self.window, word, style.size, style.weight, None, limit)
+                        {
+                            let here = at;
+                            at += chunk.len();
+                            let word = self.word(chunk, Some(here), style);
+                            // No break opportunity between a chip and the text that touches it.
+                            let chip = if glue && !chunk.starts_with(char::is_whitespace) {
+                                row.pop()
+                            } else {
+                                None
+                            };
+                            glue = false;
+                            if let Some(chip) = chip {
+                                row.push(
+                                    div()
+                                        .flex()
+                                        .flex_none()
+                                        .child(chip)
+                                        .child(word)
+                                        .into_any_element(),
+                                );
+                                continue;
+                            }
+                            row.push(word.into_any_element());
+                        }
+                    }
                 }
                 Event::SoftBreak if self.preserve_line_breaks => row.push(self.line_break()),
                 Event::SoftBreak => {
@@ -685,6 +722,7 @@ impl<'a> Markdown<'a> {
                             .into_iter()
                             .map(|part| part.into_any_element()),
                     );
+                    glue = true;
                 }
                 Event::Start(tag) => {
                     let next = match tag {
@@ -707,6 +745,10 @@ impl<'a> Markdown<'a> {
                             scheme.eq_ignore_ascii_case("http")
                                 || scheme.eq_ignore_ascii_case("https")
                         });
+                        let python = !external && dest_url.ends_with(".py");
+                        let icon_width = if python { 19. } else { 0. };
+                        self.link_width.set(0.);
+                        self.indent.set(icon_width);
                         let label = self
                             .inline(Typography {
                                 weight: 500.,
@@ -714,13 +756,20 @@ impl<'a> Markdown<'a> {
                                 ..style
                             })
                             .0;
-                        row.push(
+                        self.indent.set(0.);
+                        let line = LINE_WIDTH.with(|w| w.get());
+                        // A link wider than a line flows word by word like inline text; each
+                        // word keeps the link's behavior.
+                        let flow = line > 0. && self.link_width.get() + icon_width > line;
+                        let dest = dest_url.to_string();
+                        let link_box = |id: String| {
+                            let dest = dest.clone();
                             div()
-                                .id(SharedString::from(format!("file-link-{dest_url}")))
+                                .id(SharedString::from(id))
                                 .relative()
                                 .flex()
                                 .when(external, |d| {
-                                    let url = dest_url.to_string();
+                                    let url = dest.clone();
                                     let middle_url = url.clone();
                                     let menu_url = url.clone();
                                     d.tab_index(0)
@@ -741,12 +790,10 @@ impl<'a> Markdown<'a> {
                                 .when(!external, |d| {
                                     // `path:12` cites a line; the thread's cwd resolves a
                                     // relative path.
-                                    let (path, line) = dest_url
+                                    let (path, line) = dest
                                         .rsplit_once(':')
                                         .and_then(|(p, n)| Some((p.to_owned(), n.parse().ok()?)))
-                                        .map_or((dest_url.to_string(), None), |(p, n)| {
-                                            (p, Some(n))
-                                        });
+                                        .map_or((dest.clone(), None), |(p, n)| (p, Some(n)));
                                     d.on_click(move |_, window, cx| {
                                         window.dispatch_action(
                                             Box::new(crate::screens::diff::panel::OpenFile {
@@ -757,18 +804,32 @@ impl<'a> Markdown<'a> {
                                         )
                                     })
                                 })
-                                .when(!external && dest_url.ends_with(".py"), |d| {
-                                    d.child(div().w(px(19.))).child(
-                                        div().absolute().left_0().bottom(px(3.37)).child(icon(
-                                            "thread-lang-python",
-                                            16.,
-                                            tones(self.theme).mention,
-                                        )),
-                                    )
-                                })
-                                .children(label)
-                                .into_any_element(),
-                        );
+                        };
+                        let python_icon = |d: Stateful<Div>| {
+                            d.child(div().w(px(19.))).child(
+                                div().absolute().left_0().bottom(px(3.37)).child(icon(
+                                    "thread-lang-python",
+                                    16.,
+                                    tones(self.theme).mention,
+                                )),
+                            )
+                        };
+                        if flow {
+                            for (index, word) in label.into_iter().enumerate() {
+                                let mut piece =
+                                    link_box(format!("file-link-{dest}-{index}")).flex_none();
+                                if index == 0 && python {
+                                    piece = python_icon(piece);
+                                }
+                                row.push(piece.child(word).into_any_element());
+                            }
+                        } else {
+                            let mut piece = link_box(format!("file-link-{dest}"));
+                            if python {
+                                piece = python_icon(piece);
+                            }
+                            row.push(piece.children(label).into_any_element());
+                        }
                     } else {
                         let (children, checked) = self.inline(next);
                         row.extend(children);
@@ -817,6 +878,8 @@ impl<'a> Markdown<'a> {
     /// lays out a node per word.
     fn word(&self, s: &str, at: Option<usize>, style: Typography) -> Div {
         let (width, label) = self.label(s, at, style);
+        self.link_width
+            .set(self.link_width.get() + f32::from(width));
         self.record_table_width(width, s.encode_utf16().count());
         div()
             .relative()
@@ -930,8 +993,43 @@ impl<'a> Markdown<'a> {
             .unwrap_or_default()
     }
 
+    /// How the code font's inline box differs from the default code font's (CSS aligns it by
+    /// baseline): `(line growth, text baseline shift, pill height change)` in px. A font whose
+    /// descent plus half-leading is larger grows the line (Courier New by about 1 px); a
+    /// different ascent moves the glyphs inside the 15 px text box; the pill is the font's
+    /// content area plus 1 px each side.
+    fn code_metrics(&self, font_size: f32) -> (f32, f32, f32) {
+        const LINE: f32 = 22.75;
+        let system = self.window.text_system();
+        let metrics = |family: &'static str, size: f32| {
+            let id = system.resolve_font(&font(family));
+            let size = px(size);
+            let ascent = f32::from(system.ascent(id, size));
+            let descent = f32::from(system.descent(id, size)).abs();
+            (ascent, descent)
+        };
+        let (sa, sd) = metrics(SANS, 14.);
+        let strut = sd + (LINE - (sa + sd)) / 2.;
+        let below = |(a, d): (f32, f32)| (d + (LINE - (a + d)) / 2. - strut).max(0.);
+        let baseline = |(a, d): (f32, f32)| (15. - (a + d)) / 2. + a;
+        let (code, mono) = (metrics(code_font(), font_size), metrics(MONO, font_size));
+        (
+            below(code) - below(mono),
+            baseline(mono) - baseline(code),
+            (code.0 + code.1) - (mono.0 + mono.1),
+        )
+    }
+
     fn code(&self, code: &str, at: usize, font_size: f32) -> Vec<Div> {
-        let count = code.split_inclusive(' ').count();
+        // The 6 px padding of the first piece comes off the line.
+        let limit = LINE_WIDTH.with(|w| w.get()) - 6.;
+        let chunks: Vec<&str> = code
+            .split_inclusive(' ')
+            .flat_map(|word| {
+                break_long(self.window, word, font_size, 430., Some(code_font()), limit)
+            })
+            .collect();
+        let count = chunks.len();
         self.record_table_width(px(12.), 0);
         let positions = Rc::new(RefCell::new(vec![
             (Bounds::<Pixels>::default(), px(0.));
@@ -983,50 +1081,58 @@ impl<'a> Markdown<'a> {
             .absolute()
             .size_full(),
         );
-        let space = width(self.window, " ", font_size, 430., Some(MONO));
+        let (growth, shift, pill) = self.code_metrics(font_size);
+        let space = width(self.window, " ", font_size, 430., Some(code_font()));
         let mut offset = at;
         let mut parts = Vec::with_capacity(count);
-        for (index, word) in code.split_inclusive(' ').enumerate() {
+        for (index, word) in chunks.into_iter().enumerate() {
             let fades = self.fades(word);
-            let word_width = width(self.window, word, font_size, 430., Some(MONO));
+            let word_width = width(self.window, word, font_size, 430., Some(code_font()));
             self.record_table_width(word_width, word.encode_utf16().count());
             let label = match self.find {
                 Some(find) => div().flex_none().w(word_width).child(
                     run_style(font_size, 15., 430., self.theme.text)
-                        .font_family(MONO)
+                        .font_family(code_font())
                         .child(find.text(word, offset)),
                 ),
                 None if !fades.is_empty() => div().flex_none().w(word_width).child(
                     run_style(font_size, 15., 430., self.theme.text)
-                        .font_family(MONO)
+                        .font_family(code_font())
                         .child(StyledText::new(word.to_owned()).with_highlights(fades)),
                 ),
                 None => div().flex_none().w(word_width).child(
-                    text(word.to_owned(), font_size, 15., 430., self.theme.text).font_family(MONO),
+                    text(word.to_owned(), font_size, 15., 430., self.theme.text)
+                        .font_family(code_font()),
                 ),
             };
             let measured = positions.clone();
             let trailing_space = space * (word.len() - word.trim_end_matches(' ').len()) as f32;
             parts.push(
                 div()
-                    .pt(px(3.5))
-                    .pb(px(3.25))
+                    .pt(px(3.5 + shift))
+                    .pb(px(3.25 + growth - shift - pill))
                     // ponytail: shared padding can overhang a line by 12 px; use inline layout for exact edge fits.
                     .mr(px(if index + 1 == count { 0. } else { -12. }))
                     .child(
                         div()
                             .relative()
-                            .h(px(17.))
+                            .h(px(17. + pill))
                             .py(px(1.))
                             .px(px(6.))
                             .children(background.take())
                             .child(
-                                highlight(word.to_owned().into(), font_size, 430., Some(MONO), 6.)
-                                    .absolute()
-                                    .left_0()
-                                    .right_0()
-                                    .top(px(-3.5))
-                                    .bottom(px(-3.25)),
+                                highlight(
+                                    word.to_owned().into(),
+                                    font_size,
+                                    430.,
+                                    Some(code_font()),
+                                    6.,
+                                )
+                                .absolute()
+                                .left_0()
+                                .right_0()
+                                .top(px(-3.5))
+                                .bottom(px(-3.25)),
                             )
                             .child(label)
                             .on_children_prepainted(move |bounds, _, _| {
@@ -1042,9 +1148,82 @@ impl<'a> Markdown<'a> {
     }
 }
 
+thread_local! {
+    /// Width of the turn column the markdown flows in; `0` until the first layout.
+    static LINE_WIDTH: std::cell::Cell<f32> = const { std::cell::Cell::new(0.) };
+}
+
+/// Tells the markdown below how wide its lines are (set by the thread before it builds turns).
+pub(super) fn set_line_width(width: Pixels) {
+    LINE_WIDTH.with(|w| w.set(f32::from(width)));
+}
+
+/// The turn column's width as last laid out; `0` before the first layout.
+pub(super) fn line_width() -> f32 {
+    LINE_WIDTH.with(|w| w.get())
+}
+
+/// `overflow-wrap: break-word`: a word wider than a whole line breaks into chunks that each fill
+/// a line; the last chunk flows on with the following words.
+fn break_long<'s>(
+    window: &Window,
+    word: &'s str,
+    size: f32,
+    weight: f32,
+    family: Option<&'static str>,
+    limit: f32,
+) -> Vec<&'s str> {
+    let trimmed = word.trim_end_matches(' ');
+    if limit <= 0.
+        || trimmed.chars().count() < 2
+        || f32::from(width(window, trimmed, size, weight, family)) <= limit
+    {
+        return vec![word];
+    }
+    let mut chunks = Vec::new();
+    let mut rest = word;
+    while f32::from(width(
+        window,
+        rest.trim_end_matches(' '),
+        size,
+        weight,
+        family,
+    )) > limit
+    {
+        let ends: Vec<usize> = rest.char_indices().map(|(i, c)| i + c.len_utf8()).collect();
+        let fit = ends
+            .iter()
+            .take_while(|&&end| {
+                f32::from(width(window, &rest[..end], size, weight, family)) <= limit
+            })
+            .count()
+            .max(1);
+        let end = ends[fit - 1];
+        if end >= rest.len() {
+            break;
+        }
+        chunks.push(&rest[..end]);
+        rest = &rest[end..];
+    }
+    chunks.push(rest);
+    chunks
+}
+
 /// A wrapped inline row that ends a block: `newlines` is what Chrome's `Selection.toString`
 /// emits after it (two for paragraphs and headings).
-fn block(row: Vec<AnyElement>, newlines: usize) -> Div {
+fn block(mut row: Vec<AnyElement>, newlines: usize) -> Div {
+    // `wrap_row` gives every line 4 px for a hanging space; the block's last word has none, so
+    // it carries those 4 px as padding to wrap as it would without the allowance.
+    if let Some(last) = row.pop() {
+        row.push(
+            div()
+                .flex()
+                .flex_none()
+                .pr(px(4.))
+                .child(last)
+                .into_any_element(),
+        );
+    }
     wrap_row().children(row).child(block_end(newlines))
 }
 
@@ -1199,7 +1378,7 @@ impl RenderOnce for CodeBlock {
                                             } else {
                                                 gpui::FontStyle::Normal
                                             },
-                                            ..font(MONO)
+                                            ..font(code_font())
                                         },
                                         color: rgb((u32::from(style.foreground.r) << 16)
                                             | (u32::from(style.foreground.g) << 8)
@@ -1218,7 +1397,7 @@ impl RenderOnce for CodeBlock {
                                 len: line.len(),
                                 font: gpui::Font {
                                     weight: FontWeight(430.),
-                                    ..font(MONO)
+                                    ..font(code_font())
                                 },
                                 color: foreground,
                                 background_color: None,
@@ -1311,7 +1490,7 @@ impl RenderOnce for CodeBlock {
                     .min_h(px(20.))
                     .text_size(px(12.))
                     .line_height(px(20.))
-                    .font_family(MONO)
+                    .font_family(code_font())
                     .font_weight(FontWeight(430.))
                     .when(!wrap, |d| d.whitespace_nowrap())
                     .child(StyledText::new(line.clone()).with_runs(runs.clone()))
