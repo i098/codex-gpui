@@ -23,8 +23,8 @@ pub mod host_settings;
 pub mod hotkey;
 pub mod native_menus;
 pub mod oauth;
-mod personalization;
 pub mod onboarding;
+mod personalization;
 pub mod qa;
 mod routes;
 pub mod terminal;
@@ -6820,7 +6820,11 @@ impl Render for Root {
             .login
             .as_ref()
             .map(|view| view.clone().into_any_element())
-            .or_else(|| self.onboarding_page.as_ref().map(|view| view.clone().into_any_element()));
+            .or_else(|| {
+                self.onboarding_page
+                    .as_ref()
+                    .map(|view| view.clone().into_any_element())
+            });
         if let Some(exclusive) = exclusive {
             return native_menus::actions(
                 div()
