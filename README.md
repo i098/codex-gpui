@@ -261,6 +261,9 @@ Line wrapping, word differences, and full-file loading use the existing host set
 Run `cargo test -p app --test diff_file_reads` for file boundaries and `cargo test -p app --test diff_context` on macOS for expansion and retry.
 Image and PDF previews read bytes from each selected Git version or working file.
 PDF previews use macOS rendering and keep separate page controls for each side.
+The controls appear when the pointer or keyboard focus enters the PDF preview.
+The file tree omits zero change counts and groups thousands in large totals.
+Stage and Unstage actions apply only to the separate Unstaged and Staged sources, not the combined Uncommitted view.
 Use the Rich preview option to switch SVG files between rendered previews and text.
 Run `cargo test -p app --test diff_preview` on macOS for image version and PDF page checks.
 
@@ -385,12 +388,20 @@ The app opens that thread after a successful start, unless you navigate away whi
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
 The New task options menu also opens the full manual editor or a new chat with the original task setup prompt.
 The manual editor saves Name, multiline Prompt, Interval, Daily, Weekdays, Weekly, Monthly, and Custom schedules.
+Name and time controls use single-line inputs; Prompt accepts multiple lines.
 Custom schedules support Hourly, Daily, Weekly, Monthly, and Yearly repeats, with interval, weekday, month-day, month, minute, and local time fields.
 The time presets use 09:00, 14:00, 18:00, and 22:00.
 The row menu's Edit action updates the task through `automation-update`, without changing its identity or unrelated definition fields.
 The editor keeps an existing advanced rule unchanged when only Name or Prompt changes.
 Prefilled drafts stay in Create mode until their data includes an existing task ID.
 Escape closes an open schedule picker first; otherwise, it discards the editor without saving.
+Command-Enter saves the editor, including when Name or Prompt has keyboard focus.
+The local Trigger menu keeps Schedule active and explains why cloud-only Date and time is unavailable.
+Advanced controls update notifications, new-chat or existing-chat execution, automatic archive, project, model, and effort.
+Switching an existing-chat task back to new-chat execution supplies its current local workspace.
+Model and effort choices come from app-server `model/list` and `config/read`; existing chats come from `thread/list`.
+Inherited model and effort values follow the original automation catalog precedence, not ordinary chat defaults.
+The editor saves those choices atomically through `automation-create` or `automation-update` and retains unrelated definition fields.
 Run `cargo test -p app --test task_create editor:: -- --test-threads=1` on macOS for the native editor, schedule, and Create menu checks.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 Use `-- --include-ignored` on macOS to check the installed adapter.

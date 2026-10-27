@@ -23,6 +23,8 @@ pub struct PreviewRequest {
     pub source: PreviewSource,
     pub page: usize,
     pub width: u32,
+    /// Device px per CSS px at request time.
+    pub scale: f32,
     pub pdf: bool,
     pub data: Option<Arc<Vec<u8>>>,
 }
@@ -42,7 +44,8 @@ impl PreviewContent {
         svg: SvgRenderer,
     ) -> anyhow::Result<Self> {
         if request.pdf {
-            let (pixels, pages) = super::pdf::render(&bytes, request.page, request.width)?;
+            let (pixels, pages) =
+                super::pdf::render(&bytes, request.page, request.width, request.scale)?;
             let mut bgra = pixels.clone();
             for pixel in bgra.pixels_mut() {
                 pixel.0.swap(0, 2);
@@ -143,11 +146,23 @@ pub(super) struct Preview {
     after_only: bool,
     pdf: bool,
     svg: bool,
+    pager_focus: Option<[FocusHandle; 2]>,
 }
 
 impl Preview {
     pub(super) fn loaded(&self) -> bool {
         self.sides.iter().all(|side| !side.loading)
+    }
+
+    fn content_width(&self, available: Pixels) -> Pixels {
+        let columns = if self.after_only { 1. } else { 2. };
+        ((available - px(columns - 1.)) / columns - px(24.)).max(px(1.))
+    }
+
+    fn raster_width(&self, available: Pixels, scale: f32) -> u32 {
+        let width = self.content_width(available);
+        let width = if self.pdf { width.floor() } else { width };
+        (f32::from(width) * scale).round() as u32
     }
 }
 
@@ -259,8 +274,7 @@ impl DiffPanel {
             }
             if file.preview.is_some() {
                 let preview = self.files[index].preview.as_mut().unwrap();
-                let columns = if preview.after_only { 1. } else { 2. };
-                let desired = ((f32::from(width) / columns - 24.).max(1.) * scale).round() as u32;
+                let desired = preview.raster_width(width, scale);
                 let pdf = preview.pdf;
                 let reload = preview.sides.each_mut().map(|side| {
                     let reload = pdf
@@ -286,11 +300,13 @@ impl DiffPanel {
                 continue;
             }
             let after_only = sources[0].is_none() && sources[1].is_some();
+            let pdf = is_pdf(&file.name);
             let preview = Preview {
-                pdf: is_pdf(&file.name),
+                pdf,
                 svg: image_format(&file.name) == Some(ImageFormat::Svg),
                 sides: sources.map(Side::new),
                 after_only,
+                pager_focus: pdf.then(|| [cx.focus_handle(), cx.focus_handle()]),
             };
             self.files[index].preview = Some(preview);
             for side in 0..2 {
@@ -314,14 +330,14 @@ impl DiffPanel {
         let Some(source) = value.source.clone() else {
             return;
         };
-        let columns = if preview.after_only { 1. } else { 2. };
         cx.emit(DiffRequest::LoadPreview(PreviewRequest {
             index,
             side,
             generation: self.content_generation,
             source,
             page: value.page,
-            width: ((f32::from(width) / columns - 24.).max(1.) * scale).round() as u32,
+            width: preview.raster_width(width, scale),
+            scale,
             pdf: preview.pdf,
             data: value.content.as_ref().and_then(|value| value.data.clone()),
         }));
@@ -354,15 +370,20 @@ impl DiffPanel {
         cx.notify();
     }
 
-    pub(super) fn preview(&self, index: usize, width: Pixels, cx: &Context<Self>) -> Option<Div> {
+    pub(super) fn preview(
+        &self,
+        index: usize,
+        width: Pixels,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Option<Div> {
         let file = self.files.get(index)?;
         if !enabled(&file.name, self.rich_preview) {
             return None;
         }
         let preview = file.preview.as_ref()?;
         let t = cx.theme();
-        let columns = if preview.after_only { 1. } else { 2. };
-        let available = (width / columns - px(24.)).max(px(1.));
+        let available = preview.content_width(width);
         let render_side = |side: usize| {
             let value = &preview.sides[side];
             let label = if value.loading {
@@ -385,18 +406,28 @@ impl DiffPanel {
                 } else {
                     available.min(px(original.0 as f32))
                 };
+                let canvas_width = if preview.pdf {
+                    image_width.floor()
+                } else {
+                    image_width
+                };
                 let padding = if preview.svg { 24. } else { 0. };
-                let image_height = px((f32::from(image_width) - padding).max(1.)
+                let image_height = px((f32::from(canvas_width) - padding).max(1.)
                     * original.1 as f32
                     / original.0.max(1) as f32
                     + padding);
+                let image_height = if preview.pdf {
+                    image_height.floor()
+                } else {
+                    image_height
+                };
                 let picture = if content.image.frame_count() > 1 {
                     gpui::img(content.image.clone())
                         .w(image_width)
                         .h(image_height)
                         .into_any_element()
                 } else {
-                    picture(content, value.raster.clone(), t.surface, preview.svg)
+                    picture(content, value.raster.clone(), t.surface, preview)
                         .w(image_width)
                         .h(image_height)
                         .into_any_element()
@@ -410,17 +441,7 @@ impl DiffPanel {
                         "Image preview"
                     })
                     .relative()
-                    .child(shapes::decoration(Decoration {
-                        radius: Corners::all(px(7.5)),
-                        shadows: vec![shapes::Shadow {
-                            color: gpui::black().opacity(20. / 255.),
-                            offset: point(px(0.), px(1.)),
-                            blur: px(2.),
-                            spread: px(-1.),
-                            inset: false,
-                        }],
-                        ..Default::default()
-                    }))
+                    .child(shapes::decoration(frame(None)))
                     .child(picture)
                     .into_any_element()
             } else {
@@ -435,6 +456,7 @@ impl DiffPanel {
             };
             let pages = value.content.as_ref().map_or(0, |content| content.pages);
             div()
+                .group("diff-pdf-preview")
                 .flex_1()
                 .min_w_0()
                 .min_h(px(160.))
@@ -471,6 +493,16 @@ impl DiffPanel {
                     };
                     d.child(
                         div()
+                            .id(("diff-pdf-pager", index * 2 + side))
+                            .tab_index(-1)
+                            .opacity(0.)
+                            .group_hover("diff-pdf-preview", |s| s.opacity(1.))
+                            .when_some(preview.pager_focus.as_ref(), |d, focus| {
+                                d.track_focus(&focus[side])
+                                    .when(focus[side].contains_focused(window, cx), |d| {
+                                        d.opacity(1.)
+                                    })
+                            })
                             .absolute()
                             .right(px(2.))
                             .top(px(2.))
@@ -537,13 +569,24 @@ impl DiffPanel {
     }
 }
 
-fn picture(content: &PreviewContent, cache: Raster, page: Hsla, svg: bool) -> gpui::Canvas<()> {
+fn picture(
+    content: &PreviewContent,
+    cache: Raster,
+    page: Hsla,
+    preview: &Preview,
+) -> gpui::Canvas<()> {
+    let (svg, pdf) = (preview.svg, preview.pdf);
     let pixels = content.pixels.clone();
     let fallback = content.image.clone();
     canvas(
         |_, _, _| {},
         move |bounds, (), window, _cx| {
             let scale = window.scale_factor();
+            let snap = |value: Pixels| px((f32::from(value) * scale).round() / scale);
+            let at = Bounds::from_corners(
+                point(snap(bounds.left()), snap(bounds.top())),
+                point(snap(bounds.right()), snap(bounds.bottom())),
+            );
             let cached = cache
                 .borrow()
                 .as_ref()
@@ -551,27 +594,27 @@ fn picture(content: &PreviewContent, cache: Raster, page: Hsla, svg: bool) -> gp
                 .map(|(_, _, _, image)| image.clone());
             let image = cached.or_else(|| {
                 let padding = if svg { px(12.) } else { px(0.) };
-                let destination = Bounds::new(
+                let mut destination = Bounds::new(
                     bounds.origin + point(padding, padding),
                     bounds.size - size(padding * 2., padding * 2.),
                 );
-                let image = Arc::new(shapes::raster_images(
+                if pdf {
+                    // The canvas's own device px, painted 1:1 from the box's snapped origin.
+                    let (w, h) = pixels.dimensions();
+                    let canvas = size(px(w as f32 / scale), px(h as f32 / scale));
+                    destination = Bounds::new(at.origin, canvas);
+                }
+                let image = Arc::new(shapes::raster_decorated_images(
                     &[(&pixels, destination)],
                     bounds,
-                    Corners::all(px(7.5)),
-                    shapes::Corner::Round,
-                    shapes::ImageComposition::Direct(if svg { gpui::white() } else { page }),
+                    &frame((svg || pdf).then(gpui::white)),
+                    shapes::ImageComposition::Direct(page),
                     window,
                 )?);
                 *cache.borrow_mut() = Some((bounds, scale, page, image.clone()));
                 Some(image)
             });
             if let Some(image) = image {
-                let snap = |value: Pixels| px((f32::from(value) * scale).round() / scale);
-                let at = Bounds::from_corners(
-                    point(snap(bounds.left()), snap(bounds.top())),
-                    point(snap(bounds.right()), snap(bounds.bottom())),
-                );
                 window
                     .paint_image(at, at, Corners::default(), image, 0, false)
                     .ok();
@@ -591,9 +634,25 @@ fn picture(content: &PreviewContent, cache: Raster, page: Hsla, svg: bool) -> gp
     )
 }
 
+/// The preview box (`overflow-hidden rounded-sm shadow-sm`; PDF and svg pages on white).
+fn frame(fill: Option<Hsla>) -> Decoration {
+    Decoration {
+        radius: Corners::all(px(7.5)),
+        fill,
+        shadows: vec![shapes::Shadow {
+            color: gpui::black().opacity(20. / 255.),
+            offset: point(px(0.), px(1.)),
+            blur: px(2.),
+            spread: px(-1.),
+            inset: false,
+        }],
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::enabled;
+    use super::{Preview, Side, enabled, px};
 
     #[test]
     fn raster_images_and_pdf_ignore_the_svg_preview_toggle() {
@@ -604,5 +663,23 @@ mod tests {
         assert!(!enabled("drawing.svg", false));
         assert!(enabled("drawing.SVG", true));
         assert!(!enabled("source.rs", true));
+    }
+
+    #[test]
+    fn previews_exclude_the_column_gap_before_rounding_pdf_width() {
+        let mut preview = Preview {
+            sides: [Side::new(None), Side::new(None)],
+            after_only: false,
+            pdf: false,
+            svg: false,
+            pager_focus: None,
+        };
+        assert_eq!(preview.content_width(px(364.5)), px(157.75));
+        preview.pdf = true;
+        assert_eq!(preview.content_width(px(364.5)), px(157.75));
+        assert_eq!(preview.raster_width(px(364.5), 2.), 314);
+        preview.after_only = true;
+        assert_eq!(preview.content_width(px(364.5)), px(340.5));
+        assert_eq!(preview.raster_width(px(364.5), 2.), 680);
     }
 }

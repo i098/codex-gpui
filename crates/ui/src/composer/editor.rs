@@ -773,11 +773,8 @@ impl Composer {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
-            // `--opacity-composer-placeholder: .5` on the placeholder. The text blends like
-            // Chromium's: blitted into a transparent layer (`_ComposerLayoutInput`'s
-            // `overflow-y: auto` contents), then composited onto the card. A settings textarea
-            // never scrolls here, so it has no such layer: its text blends onto the field's fill.
-            // The sign-in `input` has neither the opacity nor the layer.
+            // Rich text uses Chromium's transparent scroll layer; its placeholder has opacity .5.
+            // Settings textareas and single-line form inputs paint directly.
             .child(
                 div()
                     .when(!self.search_field && self.field_text.is_none(), |d| {
@@ -789,7 +786,13 @@ impl Composer {
                             |d| d.opacity(0.5),
                         )
                         .when(
-                            (self.embedded_field.is_none() && self.plain_field != Some(true)
+                            (self.embedded_field.is_none()
+                                && matches!(
+                                    (self.plain_field, self.field_style),
+                                    (None, _)
+                                        | (Some(false), FieldStyle::Settings)
+                                        | (Some(true), FieldStyle::Form | FieldStyle::Inline)
+                                )
                                 || self.search_field)
                                 && !compact_settings,
                             |d| d.layer(),
@@ -1151,12 +1154,25 @@ impl gpui::Element for Editor {
         let composer = self.0.read(cx);
         let lines = shape(
             composer,
-            composer.field_text.unwrap_or(t.text),
+            if composer.field_style == FieldStyle::Inline {
+                t.text_secondary
+            } else {
+                composer.field_text.unwrap_or(t.text)
+            },
             t.text_tertiary,
             chip_color(&t),
             Some(bounds.size.width),
             window,
         );
+        let mut text_bounds = bounds;
+        if self.0.read(cx).field_style == FieldStyle::Inline
+            && let Some(line) = lines.first()
+        {
+            let offset = (bounds.size.width - line.unwrapped_layout.width).max(px(0.));
+            text_bounds.origin.x += offset;
+            text_bounds.size.width -= offset;
+        }
+        // The editor spans the card minus its 12 px side padding.
         let width = f32::from(bounds.size.width)
             + if self.0.read(cx).hotkey_controls.is_some() {
                 0.
@@ -1166,7 +1182,7 @@ impl gpui::Element for Editor {
         let collapse = |w: f32| (w <= SM_WIDTH, w <= XS_WIDTH);
         let changed = self.0.update(cx, |c, _| {
             c.lines = lines;
-            let mut bounds = bounds;
+            let mut bounds = text_bounds;
             if c.embedded_field.is_some() {
                 let cursor = c
                     .point_for_index(c.cursor())
@@ -1194,6 +1210,7 @@ impl gpui::Element for Editor {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let bounds = self.0.read(cx).bounds.unwrap_or(bounds);
         let focus = self.0.read(cx).focus_handle.clone();
         window.handle_input(&focus, ElementInputHandler::new(bounds, self.0.clone()), cx);
         let selection_color = cx.theme().text_selection;
