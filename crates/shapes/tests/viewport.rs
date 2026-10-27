@@ -103,7 +103,7 @@ impl Render for DeferredCard {
         let card = div()
             .absolute()
             .left(px(59.))
-            .top(px(124.4140625))
+            .top(px(124.414_06))
             .w(px(549.))
             .h(px(120.75))
             .child(shapes::decoration(shapes::Decoration {

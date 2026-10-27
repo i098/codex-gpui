@@ -1251,6 +1251,8 @@ pub struct Window {
     layout_engine: Option<TaffyLayoutEngine>,
     pub(crate) root: Option<AnyView>,
     pub(crate) element_id_stack: ElementIdStack,
+    #[cfg(target_vendor = "apple")]
+    pub(crate) paint_layout: Option<(LayoutId, Point<Pixels>)>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -2172,6 +2174,8 @@ impl Window {
             layout_engine: Some(TaffyLayoutEngine::new()),
             root: None,
             element_id_stack: ElementIdStack::default(),
+            #[cfg(target_vendor = "apple")]
+            paint_layout: None,
             text_style_stack: Vec::new(),
             rendered_entity_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -4931,8 +4935,36 @@ impl Window {
         let opacity = self.element_opacity();
         let snapped_bounds = self.snap_bounds(quad.bounds);
         let snapped_border_widths = self.snap_border_widths(quad.border_widths);
+        #[cfg(target_vendor = "apple")]
+        let (layers, dither_offset) = if quad.background.tag == crate::BackgroundTag::LinearGradient
+        {
+            let Some(layers) = self.sprite_layers() else {
+                return;
+            };
+            let mut origin = quad.bounds.origin;
+            if let Some((layout_id, element_origin)) = self.paint_layout
+                && origin == element_origin
+            {
+                origin += point(
+                    self.layout_origin_residual_x(layout_id),
+                    self.layout_origin_residual_y(layout_id),
+                );
+            }
+            (
+                layers,
+                origin.scale(self.scale_factor()) - snapped_bounds.origin,
+            )
+        } else {
+            ([0; 4], Point::default())
+        };
+        #[cfg(target_vendor = "apple")]
+        let opacity = if layers == [0; 4] { opacity } else { 1. };
         let quad = Quad {
             order: 0,
+            #[cfg(target_vendor = "apple")]
+            layers,
+            #[cfg(target_vendor = "apple")]
+            dither_offset,
             bounds: snapped_bounds,
             content_mask: self.snapped_content_mask(),
             background: quad.background.opacity(opacity),
