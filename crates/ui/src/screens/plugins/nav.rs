@@ -1,8 +1,8 @@
-//! The Customize sidebar of the Plugins and Skills pages: title, the two directories and the
-//! connected apps.
+//! The Customize sidebar of the Plugins and Skills pages: the title, search and the two
+//! directories. The original's `Installed` apps section is not ported yet.
 
 use super::*;
-use crate::{focus, sidebar_section};
+use crate::focus;
 use gpui::{Div, Stateful};
 use theme::Theme;
 
@@ -11,8 +11,7 @@ pub struct Nav {
 }
 
 impl Nav {
-    pub fn new(page: Entity<Page>, cx: &mut Context<Self>) -> Self {
-        cx.observe(&page, |_, _, cx| cx.notify()).detach();
+    pub fn new(page: Entity<Page>) -> Self {
         Self { page }
     }
 
@@ -91,35 +90,6 @@ impl Nav {
 impl Render for Nav {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
-        let apps: Vec<(SharedString, SharedString)> = self
-            .page
-            .read(cx)
-            .data
-            .apps
-            .value()
-            .into_iter()
-            .flatten()
-            .filter(|app| app["isAccessible"] == true && app["isEnabled"] != false)
-            .map(|app| {
-                (
-                    string(app, "id").to_owned().into(),
-                    string(app, "name").to_owned().into(),
-                )
-            })
-            .collect();
-        let rows: Vec<_> = apps
-            .into_iter()
-            .map(|(id, name)| {
-                self.row(
-                    format!("customize-app-{id}").into(),
-                    name,
-                    "plugins",
-                    false,
-                    window,
-                    cx,
-                )
-            })
-            .collect();
         let search = focus::handle("customize-search", 0, window, cx);
         let page = self.page.clone();
         div()
@@ -169,24 +139,11 @@ impl Render for Nav {
                     .overflow_y_scroll()
                     .flex()
                     .flex_col()
-                    .gap(px(16.))
                     .pb(px(8.))
-                    .child(
-                        div()
-                            .px(px(8.))
-                            .flex()
-                            .flex_col()
-                            .gap(px(1.))
-                            .child(self.directory(Tab::Plugins, "sidebar-cmd-plugins", window, cx))
-                            .child(self.directory(Tab::Skills, "customize-skills", window, cx)),
-                    )
-                    .when(!rows.is_empty(), |d| {
-                        d.child(sidebar_section(
-                            "Installed",
-                            div().flex().flex_col().gap(px(1.)).children(rows),
-                            cx,
-                        ))
-                    }),
+                    .px(px(8.))
+                    .gap(px(1.))
+                    .child(self.directory(Tab::Plugins, "sidebar-cmd-plugins", window, cx))
+                    .child(self.directory(Tab::Skills, "customize-skills", window, cx)),
             )
     }
 }

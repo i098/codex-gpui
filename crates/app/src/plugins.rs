@@ -55,7 +55,7 @@ impl Root {
         .detach();
         self.load_plugins(page.clone(), route, cx);
         self.plugins_page = Some(page.clone());
-        let nav = cx.new(|cx| plugins::Nav::new(page.clone(), cx)).into();
+        let nav = cx.new(|_| plugins::Nav::new(page.clone())).into();
         cx.new(|_| {
             let mut shell = Shell::new(nav, page.into());
             shell.selected_rail = Some("plugins");
