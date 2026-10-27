@@ -613,7 +613,6 @@ impl DiffPanel {
     pub(super) fn file_path(&self, index: usize) -> Option<String> {
         let file = self.files.get(index)?;
         Some(absolute_path(
-
             self.file_root(),
             &format!("{}{}", file.dir, file.name),
         ))

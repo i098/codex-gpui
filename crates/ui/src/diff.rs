@@ -2866,7 +2866,6 @@ impl FileView {
                 .child(text("Could not open file", 13., 20., 430., t.text_tertiary))
                 .into_any_element(),
             Some(Ok(contents)) => {
-
                 let lines: Vec<_> = controls::lines(contents).collect();
                 let gutter = px(CH * (lines.len().to_string().len().max(1) + 3) as f32 + 2.);
                 let foreground = rgb(if t.appearance == Appearance::Dark {
@@ -3199,7 +3198,6 @@ fn file_header(
                 ),
         )
 }
-
 
 fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
     let color = |dark, light| {

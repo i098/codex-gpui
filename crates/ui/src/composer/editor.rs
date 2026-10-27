@@ -708,10 +708,7 @@ impl Composer {
             ))
             .min_h(if comment {
                 self.editor_line_height()
-            } else if self.search_field
-                || self.request_parent.is_some()
-                || self.request_compact
-            {
+            } else if self.search_field || self.request_parent.is_some() || self.request_compact {
                 px(20.)
             } else {
                 self.field_min_height

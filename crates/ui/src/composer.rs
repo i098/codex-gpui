@@ -864,8 +864,7 @@ impl Composer {
     /// 13 px text and 10 px insets: a settings textarea, a sign-in field, or a compact request
     /// field that is not secret.
     fn compact_text(&self) -> bool {
-        self.textarea()
-            || (self.request_compact && (self.request_parent.is_none() || !self.secret))
+        self.textarea() || (self.request_compact && (self.request_parent.is_none() || !self.secret))
     }
 
     fn editor_font_size(&self) -> Pixels {

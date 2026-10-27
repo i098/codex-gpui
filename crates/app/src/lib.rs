@@ -8,14 +8,14 @@ pub use cloud_task::parse_task_response;
 pub mod computer_use_requests;
 pub mod deep_link;
 mod destinations;
+pub mod dictation;
 mod diff_comments;
 pub mod diff_content;
 mod diff_context;
+mod diff_find;
 mod diff_options;
 mod diff_preview;
 mod diff_repositories;
-pub mod dictation;
-mod diff_find;
 mod diff_watch;
 mod features;
 pub mod host;
@@ -2542,7 +2542,6 @@ impl Root {
         }
         self.sync(window, cx);
     }
-
 
     /// `⌘K`, `⌘⇧P` and the sidebar `Search`: the command menu over live Recents, focused.
     fn open_command_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
