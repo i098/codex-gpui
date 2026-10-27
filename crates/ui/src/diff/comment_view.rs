@@ -734,7 +734,7 @@ impl DiffPanel {
                 );
             if !entry.collapsed {
                 card = card
-                    .child(crate::screens::thread::view::render_markdown(
+                    .child(crate::screens::thread::view::render_comment_markdown(
                         &comment_text,
                         window,
                         t,

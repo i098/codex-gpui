@@ -73,6 +73,57 @@ fn source_glyph(
     .flex_none()
 }
 
+/// A source glyph inside a `backdrop-filter` box: Chromium rasters its opacity group on the
+/// box's own layer.
+pub(super) fn backdrop_glyph(
+    data: &'static [u8],
+    id: &'static str,
+    color: Hsla,
+    opacity: u8,
+) -> impl IntoElement + Styled {
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, (), window, cx| {
+            let alpha = f32::from(opacity) / 255.;
+            if !shapes::paint_icon_in_backdrop(data, id, bounds, color, alpha, true, window) {
+                paint_glyph(data, id, color, opacity, bounds, window, cx);
+            }
+        },
+    )
+    .size(px(16.))
+    .flex_none()
+}
+
+fn paint_glyph(
+    data: &'static [u8],
+    id: &'static str,
+    color: Hsla,
+    opacity: u8,
+    bounds: gpui::Bounds<Pixels>,
+    window: &mut Window,
+    cx: &App,
+) {
+    let paint = |window: &mut Window| {
+        if !shapes::paint_icon(data, id, bounds, false, color, None, window, cx) {
+            window
+                .paint_svg(
+                    bounds,
+                    id.into(),
+                    Some(data),
+                    gpui::TransformationMatrix::default(),
+                    color,
+                    cx,
+                )
+                .ok();
+        }
+    };
+    if opacity == 255 {
+        paint(window);
+    } else {
+        shapes::with_composited_opacity(opacity, bounds, window, cx, paint);
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum Kind {
     Header,
@@ -307,7 +358,7 @@ impl DiffPanel {
                 Kind::Repositories => (self.repositories[index].name.as_str(), !self.pending),
                 Kind::Header => match index {
                     0 => ("Copy path", true),
-                    1 => ("Open in editor", true),
+                    1 => ("Open in editor", !self.workspace.is_empty()),
                     2 => (
                         if self.files[self.menu.as_ref().unwrap().file].open {
                             "Collapse file"
@@ -886,6 +937,7 @@ impl DiffPanel {
                             data,
                             name,
                             t.text,
+                            // Refresh opacity belongs to its compositor, unlike the other SVG roots.
                             if index == 0 {
                                 GlyphOpacity::Compositor(opacity)
                             } else {

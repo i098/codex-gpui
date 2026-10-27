@@ -167,7 +167,7 @@ mod native {
 }
 
 pub fn dispatcher(host: Arc<dyn Host>) -> Dispatcher {
-    Dispatcher::new(move || start(host.clone()))
+    Dispatcher::new(move |_, _| start(host.clone()))
 }
 
 fn start(host: Arc<dyn Host>) -> Result<Session, String> {
@@ -255,7 +255,7 @@ fn transcribe(host: &dyn Host, audio: Vec<u8>) -> Result<String> {
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn audio_dispatcher(host: Arc<dyn Host>, audio: Vec<u8>) -> Dispatcher {
-    Dispatcher::new(move || {
+    Dispatcher::new(move |_, _| {
         let audio = audio.clone();
         session(host.clone(), move |commands, events| {
             let _ = events.try_send(Event::Recording);

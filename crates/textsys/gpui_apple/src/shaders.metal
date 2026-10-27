@@ -659,9 +659,10 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
   // the sprite's (viz drawing a clipped layer's content over the layer). For a color outside
   // [0, 1] the fragment picks the float pipeline's blends: 4 = raster pipeline highp srcover
   // (for modes 0 and 2), 6 = highp blit into a composited layer (for mode 3).
-  // 8 scales compositor opacity with integer truncation.
+  // 8 scales compositor opacity with integer truncation. 9 = mode 1 at coverage 0 (AAA's
+  // alpha-0 run px); its sprite coverage only marks the px.
   Hsla hsla = sprite.color;
-  uint skia_mode = uint(clamp(floor(hsla.h / 2.0), 0.0, 8.0));
+  uint skia_mode = uint(clamp(floor(hsla.h / 2.0), 0.0, 10.0));
   hsla.h -= 2.0 * skia_mode;
   float4 color = hsla_to_rgba(hsla);
   return MonochromeSpriteVertexOutput{
@@ -678,6 +679,11 @@ vertex MonochromeSpriteVertexOutput monochrome_sprite_vertex(
 // premultiplied color mode 4 blends.
 uint4 skia_blit(uint mode, uint m, uint4 src, uint ca, uint4 d, float4 fsrc) {
   uint scale = m + 1;
+  if (mode == 10) {
+    // SkFastFourByteInterp for opaque paired-edge pixels.
+    uint weight = m + (m >> 7);
+    return (src * weight + d * (256 - weight)) >> 8;
+  }
   if (mode == 8) {
     // Compositor opacity uses SkAlphaMulQ; zero coverage is the identity.
     return (d * (256 - m)) >> 8;
@@ -842,6 +848,10 @@ fragment SpriteLayerTargets monochrome_sprite_fragment(
     // Every ordinary blit at coverage 0 leaves the pixel unchanged; mask modes need a layer.
     discard_fragment();
   }
+  if (mode == 9) {
+    mode = 1;
+    m = 0;
+  }
   uint4 c = uint4(round(saturate(input.color) * 255.0));
   uint3 prod = c.rgb * c.a + 128;
   uint4 src = uint4((prod + (prod >> 8)) >> 8, c.a);
@@ -892,6 +902,14 @@ vertex PolychromeSpriteVertexOutput polychrome_sprite_vertex(
       {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
 }
 
+float2 clamp_tile_position(float2 position, AtlasTile tile, texture2d<float> texture) {
+  float2 atlas_size(texture.get_width(), texture.get_height());
+  float2 origin(tile.bounds.origin.x, tile.bounds.origin.y);
+  float2 size(tile.bounds.size.width, tile.bounds.size.height);
+  return clamp(position, (origin + 0.5) / atlas_size,
+               (origin + size - 0.5) / atlas_size);
+}
+
 fragment float4 polychrome_sprite_fragment(
     PolychromeSpriteFragmentInput input [[stage_in]],
     constant PolychromeSprite *sprites [[buffer(SpriteInputIndex_Sprites)]],
@@ -901,7 +919,8 @@ fragment float4 polychrome_sprite_fragment(
   constexpr sampler atlas_texture_sampler(mag_filter::linear,
                                           min_filter::linear);
   float4 sample =
-      atlas_texture.sample(atlas_texture_sampler, input.tile_position);
+      atlas_texture.sample(atlas_texture_sampler,
+                           clamp_tile_position(input.tile_position, sprite.tile, atlas_texture));
   float distance =
       quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii);
 
@@ -935,7 +954,8 @@ fragment SpriteLayerTargets polychrome_sprite_layer_fragment(
     float4 third [[color(5)]], float4 fourth [[color(6)]], float4 alphas [[color(7)]]) {
   PolychromeSprite sprite = sprites[input.sprite_id];
   constexpr sampler image_sampler(mag_filter::linear, min_filter::linear);
-  float4 sample = atlas_texture.sample(image_sampler, input.tile_position);
+  float4 sample = atlas_texture.sample(
+      image_sampler, clamp_tile_position(input.tile_position, sprite.tile, atlas_texture));
   float coverage = saturate(0.5 - quad_sdf(input.position.xy, sprite.bounds, sprite.corner_radii));
   if (coverage == 0.0 || sample.a == 0.0) {
     discard_fragment();

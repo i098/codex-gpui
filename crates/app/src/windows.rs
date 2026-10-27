@@ -302,6 +302,21 @@ pub fn handles(kind: Kind, cx: &App) -> Vec<AnyWindowHandle> {
         .collect()
 }
 
+pub(crate) fn set_kind(window: &Window, kind: Kind, cx: &mut App) {
+    if let Some(entry) = cx
+        .try_global::<Windows>()
+        .and_then(|windows| windows.entries.get(&window.window_handle().window_id()))
+    {
+        let id = entry.handle.window_id();
+        cx.global_mut::<Windows>()
+            .entries
+            .get_mut(&id)
+            .unwrap()
+            .kind = kind;
+        platform::configure(window, kind);
+    }
+}
+
 /// Keep the final primary window and its draft alive on macOS.
 pub fn allow_close(window: &mut Window, cx: &mut App) -> bool {
     let id = window.window_handle().window_id();
@@ -356,6 +371,18 @@ pub fn show(handle: AnyWindowHandle, presentation: Presentation, cx: &mut App) -
     })?
 }
 
+pub fn is_visible(handle: AnyWindowHandle, cx: &mut App) -> Result<bool> {
+    handle.update(cx, |_, window, _| platform::is_visible(window))?
+}
+
+pub(crate) fn set_keyboard_interactive(window: &Window, interactive: bool) -> Result<()> {
+    platform::set_keyboard_interactive(window, interactive)
+}
+
+pub(crate) fn set_pointer_interactive_window(window: &Window, interactive: bool) -> Result<()> {
+    platform::set_pointer_interactive(window, interactive)
+}
+
 pub fn set_bounds(
     handle: AnyWindowHandle,
     bounds: Bounds<gpui::Pixels>,
@@ -392,7 +419,18 @@ pub fn set_pointer_interactive(
 }
 
 pub fn reopen(cx: &mut App) -> Result<()> {
-    let handle = cx.try_global::<Windows>().and_then(|windows| {
+    if let Some(handle) = primary(cx) {
+        return show(handle, Presentation::Foreground, cx);
+    }
+    let cwd = std::env::current_dir().context("read launch directory")?;
+    open_primary(State::load(), cwd.to_string_lossy().into_owned(), cx)?;
+    Ok(())
+}
+
+/// The last active primary window, else any primary: the window a deep link or Dock
+/// reopen addresses.
+pub fn primary(cx: &App) -> Option<AnyWindowHandle> {
+    cx.try_global::<Windows>().and_then(|windows| {
         windows
             .last_primary
             .and_then(|id| windows.entries.get(&id))
@@ -403,16 +441,25 @@ pub fn reopen(cx: &mut App) -> Result<()> {
                     .find(|entry| entry.kind == Kind::Primary)
             })
             .map(|entry| entry.handle)
-    });
-    if let Some(handle) = handle {
-        return show(handle, Presentation::Foreground, cx);
-    }
-    let cwd = std::env::current_dir().context("read launch directory")?;
-    open_primary(State::load(), cwd.to_string_lossy().into_owned(), cx)?;
-    Ok(())
+    })
 }
 
-fn connect(cwd: &Path) -> Result<(Bridge, Receiver<Event>)> {
+/// `primary` as a typed root, opening a hidden primary when none exists: the
+/// window screenshot capture addresses.
+pub(crate) fn primary_or_open(cx: &mut App) -> Result<WindowHandle<Root>> {
+    if let Some(handle) = primary(cx).and_then(|handle| handle.downcast::<Root>()) {
+        return Ok(handle);
+    }
+    let cwd = std::env::current_dir().context("read launch directory")?;
+    open_primary_with_presentation(
+        State::load(),
+        cwd.to_string_lossy().into_owned(),
+        Presentation::Hidden,
+        cx,
+    )
+}
+
+pub(crate) fn connect(cwd: &Path) -> Result<(Bridge, Receiver<Event>)> {
     if let Some(mut command) = bridge::acp_command() {
         command.current_dir(cwd);
         Bridge::spawn_acp(command)
@@ -425,6 +472,15 @@ fn connect(cwd: &Path) -> Result<(Bridge, Receiver<Event>)> {
 }
 
 pub fn open_primary(state: State, cwd: String, cx: &mut App) -> Result<WindowHandle<Root>> {
+    open_primary_with_presentation(state, cwd, Presentation::Foreground, cx)
+}
+
+fn open_primary_with_presentation(
+    state: State,
+    cwd: String,
+    presentation: Presentation,
+    cx: &mut App,
+) -> Result<WindowHandle<Root>> {
     if !cx.has_global::<host_settings::Settings>() {
         let settings = match &state.path {
             Some(path) => host_settings::Settings::load(path.with_file_name("host-settings.json"))?,
@@ -442,9 +498,12 @@ pub fn open_primary(state: State, cwd: String, cx: &mut App) -> Result<WindowHan
         },
     );
     spec.bounds = Some(primary_bounds(&state, cx));
-    open(spec, cx, |window, cx| {
+    spec.presentation = presentation;
+    let handle = open(spec, cx, |window, cx| {
         cx.new(|cx| Root::new(state, bridge, events, cwd, window, cx))
-    })
+    })?;
+    crate::hotkey::primary(handle, cx);
+    Ok(handle)
 }
 
 fn primary_bounds(state: &State, cx: &App) -> WindowBounds {
@@ -519,6 +578,7 @@ pub(crate) fn bind_root(window: &mut Window, cx: &mut Context<Root>) {
         if window.is_window_active() {
             cx.set_global(ui::screens::settings::AppServer(root.bridge.clone()));
         }
+        crate::hotkey::activation_changed(root, window, cx);
     })
     .detach();
 }
@@ -537,6 +597,7 @@ pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             theme: this.state.theme,
             confirm_before_close: this.state.confirm_before_close,
             project_root: this.state.project_root.clone(),
+            zoom: this.state.zoom,
             path: this.state.path.clone(),
         };
         if let Err(error) = open_primary(state, this.cwd.clone(), cx) {

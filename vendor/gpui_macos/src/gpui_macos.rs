@@ -12,6 +12,7 @@ mod events;
 mod keyboard;
 mod pasteboard;
 mod system_notifications;
+mod text_substitutions;
 
 #[cfg(feature = "screen-capture")]
 mod screen_capture;
@@ -118,7 +119,7 @@ impl From<Range<usize>> for NSRange {
 unsafe impl objc::Encode for NSRange {
     fn encode() -> objc::Encoding {
         let encoding = format!(
-            "{{NSRange={}{}}}",
+            "{{_NSRange={}{}}}",
             NSUInteger::encode().as_str(),
             NSUInteger::encode().as_str()
         );
