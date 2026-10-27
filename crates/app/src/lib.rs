@@ -83,9 +83,9 @@ use ui::screens::diff::panel::{
 };
 use ui::screens::home::{HomeMain, OpenFolder};
 use ui::screens::recovery;
+use ui::screens::settings::archived_chats::ArchivedChats as ArchivedSettings;
 use ui::screens::settings::personalization::WritingPreference;
 use ui::screens::settings::{self, AppServer, SettingChanged, workspace};
-use ui::screens::settings::archived_chats::ArchivedChats as ArchivedSettings;
 use ui::screens::sidebar::{
     ActivityOpened, ArchiveActivity, ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent,
     HomeSidebar, ListState, LoadMore, OpenThread, PINNED_SECTION_ID, PinThread, RenameThread,
