@@ -197,6 +197,7 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "toggleTerminal" => Box::new(shortcuts::OpenInteractiveTerminal),
         "openReviewTab" => Box::new(OpenChangesPanel),
         "toggleSidePanel" => Box::new(ToggleChangesPanel),
+        "toggleFileTreePanel" => Box::new(crate::native_menus::ToggleNavigationPanel),
         "undoAppAction" => Box::new(Undo),
         "redoAppAction" => Box::new(Redo),
         "openFolder" | "composer.openProjectPicker" => Box::new(OpenFolder),

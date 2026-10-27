@@ -19,6 +19,7 @@ There is no release yet.
 
 ### Fixed
 - Show the original Steer, Delete, and menu icons on queued messages, and place the queued-message menu where the original opens it.
+- Use one local environment parser for Settings and worktree setup, reject stale saves without losing external edits, and keep a disabled environment selection.
 - Use each window's current account for dictation and stop stalled transcription requests after 60 seconds.
 - Reuse shared bootstrap data for Security startup without extra policy requests or navigation catalog reads.
 - Apply the shared feature and account access checks to activity entry points, and use the configured activity shortcut.

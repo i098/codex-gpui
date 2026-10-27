@@ -45,42 +45,30 @@ impl LocalHost {
         environment: Option<&Path>,
     ) -> Result<Option<git::Worktree>> {
         self.refresh_worktree_upstream(cwd);
-        let key = format!("local:{}", cwd.to_string_lossy().trim_end_matches('/'));
-        let state_path = self.home.join(".codex-global-state.json");
-        let state: Value = match fs::read(state_path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => json!({}),
-            Err(error) => return Err(error.into()),
+        let selected = match environments::selection(self, cwd)? {
+            environments::Selection::Config(path) => Some(path),
+            environments::Selection::Unset | environments::Selection::Disabled => None,
         };
-        let selected = state["electron-persisted-atom-state"]["local-env-selections-by-workspace"]
-            [&key]
-            .as_str()
-            .filter(|path| *path != git::NO_ENVIRONMENT)
-            .map(Path::new);
         git::create_worktree(
             &self.worktree_roots()?[0],
             cwd,
             start,
-            environment.or(selected),
+            environment.or(selected.as_deref()),
         )
     }
 
-    pub(super) fn select_environment(&self, root: &str, path: &str) -> Result<Value> {
-        if git::select_worktree_environment(Path::new(root), path)? {
+    pub(super) fn select_environment(&self, root: &str, path: &Value) -> Result<Value> {
+        let root = Path::new(root);
+        ensure!(root.is_absolute(), "Workspace path must be absolute");
+        let path = match path {
+            Value::Null => None,
+            Value::String(path) => Some(path.as_str()),
+            _ => bail!("Environment selection must be a path or null"),
+        };
+        if git::select_worktree_environment(root, path.unwrap_or(git::NO_ENVIRONMENT))? {
             return Ok(json!({"selected": true}));
         }
-        let key = format!("local:{}", root.trim_end_matches('/'));
-        self.update_global_state(|state| {
-            if state["electron-persisted-atom-state"].is_null() {
-                state["electron-persisted-atom-state"] = json!({});
-            }
-            let atoms = &mut state["electron-persisted-atom-state"];
-            if atoms["local-env-selections-by-workspace"].is_null() {
-                atoms["local-env-selections-by-workspace"] = json!({});
-            }
-            atoms["local-env-selections-by-workspace"][&key] = json!(path);
-            Ok(true)
-        })?;
+        environments::select(self, root, path.map(Path::new))?;
         Ok(json!({"selected": true}))
     }
 
