@@ -1352,18 +1352,30 @@ impl Composer {
         use crate::screens::thread::view::menu::{ContextMenu, Item};
         self.menu = None;
         self.slash.reset();
-        let mut items = vec![Item::new(QUEUE_EDIT, "Edit message", true)];
+        let item = |id, label, icon: &'static [u8]| Item {
+            icon: Some(icon),
+            ..Item::new(id, label, true)
+        };
+        let mut items = vec![item(
+            QUEUE_EDIT,
+            "Edit message",
+            include_bytes!("../../../assets/icons/pencil.svg"),
+        )];
         if self.side_chat {
-            items.push(Item::new(QUEUE_SIDE_CHAT, "Open in side chat", true));
+            items.push(item(
+                QUEUE_SIDE_CHAT,
+                "Open in side chat",
+                include_bytes!("../../../assets/icons/side-chat.svg"),
+            ));
         }
-        items.push(Item::new(
+        items.push(item(
             QUEUE_SWITCH,
             if self.queue_mode {
                 "Turn off queueing"
             } else {
                 "Turn on queueing"
             },
-            true,
+            include_bytes!("../../../assets/icons/queue-handle.svg"),
         ));
         self.context_menu = Some(ContextMenu::dropdown(
             items,
@@ -1415,7 +1427,13 @@ impl Composer {
                 .id(kind)
                 .h(px(24.))
                 .min_w(px(24.))
-                .px(px(4.))
+                .px(px(if matches!(action, QueueAction::Steer(_)) {
+                    8.
+                } else {
+                    0.
+                }))
+                .border_1()
+                .border_color(gpui::transparent_black())
                 .flex_shrink_0()
                 .flex()
                 .items_center()
@@ -1430,10 +1448,14 @@ impl Composer {
                 .opacity(if self.queue_pending { 0.4 } else { 1. })
                 .when(!self.queue_pending, |d| d.hover(|s| s.bg(t.ghost_hover)))
                 .child(match action {
-                    QueueAction::Steer(_) => {
-                        text("Steer", 12., 20., 400., t.text).into_any_element()
-                    }
-                    _ => icon("close", 14., t.text_tertiary).into_any_element(),
+                    QueueAction::Steer(_) => div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(icon("queue-steer", 14., t.text_tertiary))
+                        .child(text("Steer", 13., 18., 430., t.text_tertiary))
+                        .into_any_element(),
+                    _ => icon("queue-delete", 14., t.text_tertiary).into_any_element(),
                 })
                 .on_key_down(
                     cx.listener(move |this, event: &gpui::KeyDownEvent, window, cx| {
@@ -2883,21 +2905,32 @@ impl Render for Composer {
                             430.,
                             t.text,
                         )))
-                        .child(self.queue_button(
-                            QueueAction::Steer(row.submission.id.clone()),
-                            "Steer",
-                            "Submit without interrupting the model",
-                            &t,
-                            cx,
-                        ))
-                        .child(self.queue_button(
-                            QueueAction::Delete(row.submission.id.clone()),
-                            "Delete queued message",
-                            "Delete queued message",
-                            &t,
-                            cx,
-                        ))
-                        .child(self.queue_menu_button(row.submission.id.clone(), &t, window, cx))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(4.))
+                                .child(self.queue_button(
+                                    QueueAction::Steer(row.submission.id.clone()),
+                                    "Steer",
+                                    "Submit without interrupting the model",
+                                    &t,
+                                    cx,
+                                ))
+                                .child(self.queue_button(
+                                    QueueAction::Delete(row.submission.id.clone()),
+                                    "Delete queued message",
+                                    "Delete queued message",
+                                    &t,
+                                    cx,
+                                ))
+                                .child(self.queue_menu_button(
+                                    row.submission.id.clone(),
+                                    &t,
+                                    window,
+                                    cx,
+                                )),
+                        )
                 }))
         });
         div()
