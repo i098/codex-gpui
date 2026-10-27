@@ -115,20 +115,23 @@ impl Composer {
             });
         let trigger = if loading {
             let value = "Loading model…";
-            let width = window
-                .text_system()
-                .layout_line(
-                    value,
-                    px(13.),
-                    &[TextRun {
-                        len: value.len(),
-                        font: gpui::font(crate::SANS),
-                        color: t.text_tertiary,
-                        ..Default::default()
-                    }],
-                    None,
-                )
-                .width;
+            let width = crate::run_width(
+                window
+                    .text_system()
+                    .layout_line(
+                        value,
+                        px(13.),
+                        &[TextRun {
+                            len: value.len(),
+                            font: gpui::font(crate::SANS),
+                            color: t.text_tertiary,
+                            ..Default::default()
+                        }],
+                        None,
+                    )
+                    .width,
+                window,
+            );
             pill("model-picker", t)
                 .aria_label(value)
                 .aria_disabled(true)
@@ -172,7 +175,7 @@ impl Composer {
             .child(
                 trigger
                     .track_focus(&self.model_focus)
-                    .focus_visible(menu::trigger_focus)
+                    .focus_visible(crate::focus::trigger_focus)
                     .when(!loading, |d| {
                         d.on_hover(cx.listener(|this, hovered: &bool, _, _| {
                             this.menu_trigger_hovered = *hovered
@@ -212,7 +215,7 @@ impl Composer {
                         .aria_label("Add files and more")
                         .aria_expanded(self.slash.open && self.slash.mention)
                         .tab_index(0)
-                        .focus_visible(menu::trigger_focus)
+                        .focus_visible(crate::focus::trigger_focus)
                         .w(px(28.))
                         .justify_center()
                         .child(footer_icon("plus", t.text))
@@ -241,7 +244,7 @@ impl Composer {
                     .child(
                         pill("permissions", t)
                             .track_focus(&self.permissions_focus)
-                            .focus_visible(menu::trigger_focus)
+                            .focus_visible(crate::focus::trigger_focus)
                             .on_hover(cx.listener(|this, hovered: &bool, _, _| {
                                 this.menu_trigger_hovered = *hovered
                             }))
@@ -368,7 +371,7 @@ impl Composer {
                 pill("dictate", t)
                     .flex_none()
                     .tab_index(0)
-                    .focus_visible(menu::trigger_focus)
+                    .focus_visible(crate::focus::trigger_focus)
                     .w(px(28.))
                     .justify_center()
                     .child(footer_icon("mic", t.text)),

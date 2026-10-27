@@ -30,3 +30,17 @@ const LETTER_SPACING_TAG: &str = "ltsp";
 pub fn letter_spacing(px: f32) -> FontFeatures {
     FontFeatures(Arc::new(vec![(LETTER_SPACING_TAG.into(), px.to_bits())]))
 }
+
+/// Private `FontFeatures` tag carrying the CSS px per layout px of a font size (f32 bits);
+/// textsys reads it per face and never passes it to HarfBuzz.
+const OUTSIDE_ZOOM_TAG: &str = "otzm";
+
+/// Text outside the window zoom (the original's fixed zoom banner) at `ui_scale`: its layout
+/// font size is its CSS size / `ui_scale`, and `opsz` and AAT `trak` follow the CSS size.
+/// Combine it with other features as `features.extend(outside_zoom(s).0.iter().cloned())`.
+pub fn outside_zoom(ui_scale: f32) -> FontFeatures {
+    FontFeatures(Arc::new(vec![(
+        OUTSIDE_ZOOM_TAG.into(),
+        ui_scale.to_bits(),
+    )]))
+}

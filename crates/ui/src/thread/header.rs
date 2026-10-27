@@ -23,6 +23,13 @@ impl ThreadView {
         }
     }
 
+    pub fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
+        if self.title != title {
+            self.title = title;
+            cx.notify();
+        }
+    }
+
     pub fn chat_action_labels(&self) -> Option<impl Iterator<Item = &'static str>> {
         self.chat_actions
             .as_ref()
@@ -107,19 +114,17 @@ impl ThreadView {
         .with_priority(1)
     }
 
-    /// The thread titlebar actions and optional identity.
-    /// The default pinned summary owns the identity unless a side pane is open.
-    /// The caller can replace its default left edge for a collapsed sidebar.
-    pub fn titlebar_header(&self, show_identity: bool, cx: &Context<Self>) -> Div {
+    /// The thread titlebar actions and identity. A titled thread shows its identity, as in
+    /// every retained single-pane original; an untitled thread (the original `mediaExplore`
+    /// empty thread) shows it only beside a side pane.
+    pub fn titlebar_header(&self, side_pane: bool, cx: &Context<Self>) -> Div {
         div()
             .absolute()
             .top_0()
             .left(Theme::SIDEBAR_WIDTH)
             .right(px(43.))
-            // Chromium composites the `group/titlebar` (it overlaps composited layers): text
-            // blits into its transparent tile.
-            .layer()
-            .child(self.header(show_identity, cx))
+            // Its composited `group/titlebar` layer is the caller's (`diff::split_screen`).
+            .child(self.header(side_pane || !self.title.is_empty(), cx))
     }
 
     pub(super) fn header(&self, show_identity: bool, cx: &Context<Self>) -> Div {
@@ -141,7 +146,15 @@ impl ThreadView {
                         .top(px(12.))
                         .w(px(1.))
                         .h(px(20.))
-                        .bg(over(t.border, layout_color(t))),
+                        .bg(over(t.border, layout_color(t)))
+                        // The quad is part of the layer's recorded bounds.
+                        .child(
+                            canvas(
+                                |bounds, window, _| shapes::record_painted(bounds, window),
+                                |_, (), _, _| {},
+                            )
+                            .size_full(),
+                        ),
                 )
             })
             .child(
