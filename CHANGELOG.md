@@ -18,6 +18,7 @@ There is no release yet.
 - Add the Cloud environment UI with repository selection and saved setup flows
 
 ### Fixed
+- Show `Enter full view` and the tab-count `Show tabs` in the titlebar when a narrow window hides the side panel, and match the original's code span pills and scroll limits.
 - Draw the bottom terminal panel's tab close glyph once, and snap a selected tab at a fractional position to the device grid as the original does.
 - Show the original Steer, Delete, and menu icons on queued messages, and place the queued-message menu where the original opens it.
 - Match the original Keyboard shortcuts dialog list, search field, keycaps and close icon, and the original Keyboard settings row, menu check and search text offsets.
