@@ -231,7 +231,12 @@ impl Root {
             .thread
             .clone()
             .filter(|v| Some(v.read(cx).id()) == thread_id.as_deref());
+        let first_run = self
+            .onboarding_page
+            .clone()
+            .filter(|page| page.read(cx).page() == ui::screens::onboarding::Page::FirstRun);
         let main: AnyView = match (&thread_id, &view) {
+            _ if first_run.is_some() => first_run.clone().unwrap().into(),
             _ if self.cloud.is_some() => self.cloud.as_ref().unwrap().page.clone().into(),
             (Some(_), Some(view)) => view.clone().into(),
             (Some(id), None) => self.load_thread(id.clone(), window, cx).into(),
@@ -255,7 +260,8 @@ impl Root {
             shell.can_go_back = can_back;
             shell.can_go_forward = can_forward;
             // Thread routes: `with_side_panel` below sets its own.
-            shell.new_tab = true;
+            shell.new_tab = first_run.is_none();
+            shell.chat_chrome = first_run.is_none();
             shell.main_composited = false;
             shell.set_main(main, cx);
         });

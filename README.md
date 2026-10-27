@@ -190,14 +190,17 @@ No test signs into a real account or changes AWS credentials.
 
 ## Onboarding
 
-Onboarding supports `/welcome`, `/onboarding`, and `/select-workspace`.
+Onboarding supports `/welcome`, `/onboarding`, `/select-workspace`, and `/first-run`.
 Launch `codex-gpui /select-workspace` to open the workspace route directly.
-The same startup argument supports `/welcome` and `/onboarding`.
+The same startup argument supports `/welcome`, `/onboarding`, and `/first-run`.
 A new ChatGPT account opens setup when the server reports incomplete onboarding and no project is available.
 Role choices retain the original coding and non-coding groups.
 The import prompt saves the choices before opening Settings > Import.
 The workspace picker uses real project folders; Skip creates a new `Documents/ChatGPT/New project` folder.
 Failed saves keep the current page open.
+The first-run tour keeps the app shell and shows the IDE, cloud, code, and autonomy pages.
+Its background uses the original noise algorithm; a pinned fixture clock holds the first frame.
+Finishing the tour saves `viewed2025-09-15-nux` and opens Home.
 
 ## Native Computer Use service
 

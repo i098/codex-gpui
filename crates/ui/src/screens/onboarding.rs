@@ -1,3 +1,5 @@
+mod first_run;
+
 use crate::{
     SANS,
     composer::popover,
@@ -20,6 +22,7 @@ pub enum Page {
     Welcome,
     Onboarding,
     SelectWorkspace,
+    FirstRun,
 }
 
 impl Page {
@@ -28,6 +31,7 @@ impl Page {
             Self::Welcome => "/welcome",
             Self::Onboarding => "/onboarding",
             Self::SelectWorkspace => "/select-workspace",
+            Self::FirstRun => "/first-run",
         }
     }
 }
@@ -85,12 +89,14 @@ pub enum OnboardingEvent {
     PickFolder,
     CreateProject,
     OpenImport(Completion),
+    FirstRunComplete,
 }
 impl EventEmitter<OnboardingEvent> for Onboarding {}
 
 #[derive(Clone, Copy)]
 enum Action {
     Continue,
+    Back,
     Skip,
     Role(usize),
     Suggestions,
@@ -125,10 +131,12 @@ enum State {
     Import,
     Workspace,
     Error,
+    FirstRun(usize),
 }
 
 pub struct Onboarding {
     page: Page,
+    chatgpt: bool,
     state: State,
     roles: Vec<String>,
     suggestions: bool,
@@ -140,16 +148,27 @@ pub struct Onboarding {
     menu_hovered: bool,
     menu_focus: [FocusHandle; 2],
     project_trigger: Option<FocusHandle>,
+    backdrop: Option<first_run::Backdrop>,
     busy: bool,
     error: Option<String>,
     confirmation: Option<Entity<Confirmation>>,
 }
 
 impl Onboarding {
-    pub fn new(page: Page, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        page: Page,
+        chatgpt: bool,
+        clock: Option<crate::screens::thread::view::Clock>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             page,
-            state: State::Loading,
+            chatgpt,
+            state: if page == Page::FirstRun {
+                State::FirstRun(if chatgpt { 0 } else { 3 })
+            } else {
+                State::Loading
+            },
             roles: Vec::new(),
             suggestions: true,
             import_available: false,
@@ -160,6 +179,7 @@ impl Onboarding {
             menu_hovered: false,
             menu_focus: std::array::from_fn(|_| cx.focus_handle().tab_stop(true)),
             project_trigger: None,
+            backdrop: (page == Page::FirstRun).then(|| first_run::Backdrop::new(clock)),
             busy: false,
             error: None,
             confirmation: None,
@@ -285,8 +305,18 @@ impl Onboarding {
                 }
                 State::Import => self.complete(false, cx),
                 State::Workspace if !self.roots.is_empty() => self.complete(false, cx),
+                State::FirstRun(index) if index < 3 => self.state = State::FirstRun(index + 1),
+                State::FirstRun(_) => {
+                    self.busy = true;
+                    cx.emit(OnboardingEvent::FirstRunComplete);
+                }
                 _ => {}
             },
+            Action::Back => {
+                if let State::FirstRun(index) = self.state {
+                    self.state = State::FirstRun(index.saturating_sub(1));
+                }
+            }
             Action::Role(index) => {
                 let role = ROLES[index].0;
                 if let Some(index) = self.roles.iter().position(|value| value == role) {
@@ -377,6 +407,8 @@ impl Onboarding {
     ) -> Stateful<Div> {
         let t = cx.theme();
         let workspace = self.page == Page::SelectWorkspace;
+        let first_run = self.page == Page::FirstRun;
+        let pill = workspace || first_run;
         let link = workspace && matches!(action, Action::Skip | Action::CreateProject);
         let add_empty =
             workspace && self.projects.is_empty() && matches!(action, Action::AddProject);
@@ -384,12 +416,13 @@ impl Onboarding {
         let hovered = self.hovered_button.as_ref() == Some(&id)
             || (workspace && self.add_project && matches!(action, Action::AddProject));
         let disabled = self.busy
+            || (matches!(action, Action::Back) && matches!(self.state, State::FirstRun(0)))
             || (matches!(action, Action::Continue)
                 && match self.state {
                     State::Roles => self.roles.is_empty(),
                     State::Workspace => self.roots.is_empty(),
                     State::Loading | State::Error => true,
-                    State::Import => false,
+                    State::Import | State::FirstRun(_) => false,
                 });
         let border = t.border;
         let (background, foreground) = if primary {
@@ -409,6 +442,15 @@ impl Onboarding {
                     gpui::transparent_black()
                 },
                 t.text.opacity(0.498),
+            )
+        } else if first_run {
+            (
+                if hovered {
+                    t.ghost_hover
+                } else {
+                    t.text.opacity(0.03)
+                },
+                t.text,
             )
         } else {
             (
@@ -431,19 +473,19 @@ impl Onboarding {
             .aria_disabled(disabled)
             .h(px(if add_empty {
                 40.
-            } else if workspace {
+            } else if pill {
                 36.
             } else {
                 44.
             }))
-            .px(px(16.))
+            .px(px(if first_run { 21. } else { 16. }))
             .flex()
             .items_center()
             .justify_center()
             .rounded_full()
             .text_color(foreground)
             .cursor_pointer()
-            .when(workspace, |button| {
+            .when(pill, |button| {
                 button
                     .child(shapes::decoration(shapes::Decoration {
                         radius: gpui::Corners::all(Theme::RADIUS_FULL),
@@ -457,13 +499,13 @@ impl Onboarding {
                         cx.notify();
                     }))
             })
-            .when(!workspace, |button| {
+            .when(!pill, |button| {
                 button
                     .bg(background)
                     .when(!primary, |button| button.border_1().border_color(border))
             })
             .when(disabled, |button| {
-                button.opacity(if workspace { 0.4 } else { 0.5 })
+                button.opacity(if pill { 0.4 } else { 0.5 })
             })
             .on_click(cx.listener(move |this, _, window, cx| this.action(action, window, cx)))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
@@ -475,8 +517,8 @@ impl Onboarding {
             .child(text(
                 label,
                 if add_empty { 13. } else { 14. },
-                if workspace { 18. } else { 20. },
-                if add_empty {
+                if pill { 18. } else { 20. },
+                if add_empty || first_run {
                     430.
                 } else if matches!(action, Action::Role(_)) {
                     400.
@@ -923,6 +965,7 @@ impl Render for Onboarding {
                 .child(self.button("onboarding-reload","Reload app",Action::Reload,false,window,cx)),
             State::Roles=>self.role_view(window,cx),
             State::Workspace=>self.workspace_view(window,cx),
+            State::FirstRun(index)=>self.first_run_view(index,window,cx),
             State::Import=>div().w(px(640.)).max_w_full().p(px(40.)).flex().flex_col().gap(px(24.))
                 .child(text("Import work from other AI apps",28.,34.,400.,t.text))
                 .child(text("Before we get started, would you like to bring over your work from other AI apps? You can review your setup, projects, and chats before importing.",18.,28.,400.,t.text).whitespace_normal())
@@ -932,11 +975,14 @@ impl Render for Onboarding {
         div()
             .size_full()
             .relative()
-            .bg(if self.page == Page::SelectWorkspace {
-                t.surface_secondary
-            } else {
-                t.surface
+            .when(self.page != Page::FirstRun, |page| {
+                page.bg(if self.page == Page::SelectWorkspace {
+                    t.surface_secondary
+                } else {
+                    t.surface
+                })
             })
+            .when(self.page == Page::FirstRun, |page| page.pt(px(46.)))
             .font_family(SANS)
             .flex()
             .flex_col()
@@ -977,7 +1023,7 @@ mod tests {
     #[test]
     fn a_created_project_replaces_the_previous_selection() {
         let mut app = gpui::HeadlessAppContext::new(textsys::text_system());
-        let view = app.new(|cx| Onboarding::new(Page::SelectWorkspace, cx));
+        let view = app.new(|cx| Onboarding::new(Page::SelectWorkspace, false, None, cx));
         view.update(&mut app, |view, cx| {
             view.set_context(
                 Vec::new(),
