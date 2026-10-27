@@ -851,6 +851,10 @@ Success shows `Instructions updated`; failure shows `Unable to save instructions
 ST-095 reads the original `2826489636` feature gate from the authenticated Statsig bootstrap.
 The gate keeps the legacy editor unchanged when it is off or unavailable.
 When the gate is on, the AGENTS.md editor switches between Markdown preview and source without replacing its draft.
+The document editor uses LF internally and restores the first loaded line separator on save.
+It preserves CRLF, CR, and LF, including trailing newlines.
+This does not change the legacy instructions field.
+The editor preserves selection and Undo/Redo history when the feature flag arrives during an edit.
 ST-096 reads the sibling `AGENTS.override.md` file and shows the original override notice when that file contains non-whitespace text.
 Missing or empty override files do not show the notice.
 Other override read failures use the existing instruction load error instead of reporting a false absence.
