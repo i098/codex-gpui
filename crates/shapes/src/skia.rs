@@ -3174,7 +3174,7 @@ fn parse_icon(src: &str) -> Option<IconSvg> {
             "g" => {}
             "mask" => in_mask = Some(attr(tag, "id")?),
             "path" | "circle" => {
-                if attr(tag, "mask").is_some() || attr(tag, "clip-path").is_some() {
+                if attr(tag, "clip-path").is_some() {
                     return None;
                 }
                 let mut path = if name == "circle" {
@@ -4583,6 +4583,10 @@ mod tests {
         assert_eq!(icon.paths.len(), 2);
         assert_eq!(icon.paths[0].transform, Matrix::scale((0.5, 0.5)));
         assert!(icon.paths[1].stroke.is_some());
+        // `codex-logo`'s inside stroke: a path masked by white paths raster at runtime.
+        let masked = parse_icon(r#"<svg viewBox="0 0 20 20"><mask id="m" fill="white"><path d="M0 0H9V9Z"></path></mask><path d="M0 0L2 2Z" fill="black" mask="url(#m)"></path></svg>"#).unwrap();
+        assert_eq!(masked.paths.len(), 1);
+        assert_eq!(masked.paths[0].mask.len(), 1);
     }
 
     #[test]
