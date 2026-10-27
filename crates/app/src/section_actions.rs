@@ -56,7 +56,9 @@ impl Root {
                     if !this.threads.iter().any(|t| t.id == thread.id) { this.threads.push(thread); }
                 }
                 this.sidebar.update(cx, |sidebar, cx| {
+                    let state = sidebar.threads_state;
                     sidebar.set_threads(&this.threads, cx);
+                    sidebar.threads_state = state;
                     sidebar.set_sections(&json!({"sections": sections, "collapsedSectionIds": []}), cx)
                 })?;
                 Ok(())

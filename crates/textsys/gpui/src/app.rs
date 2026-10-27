@@ -291,9 +291,14 @@ impl Application {
     /// to open one or more URLs.
     pub fn on_open_urls<F>(&self, mut callback: F) -> &Self
     where
-        F: 'static + FnMut(Vec<String>),
+        F: 'static + FnMut(Vec<String>, &mut App),
     {
-        self.0.borrow().platform.on_open_urls(Box::new(callback));
+        let this = Rc::downgrade(&self.0);
+        self.0.borrow().platform.on_open_urls(Box::new(move |urls| {
+            if let Some(app) = this.upgrade() {
+                callback(urls, &mut app.borrow_mut());
+            }
+        }));
         self
     }
 
