@@ -58,12 +58,19 @@ A dock reopen displays the retained primary before creating another one.
 The manager stores primary geometry through the existing host settings store.
 Page and auxiliary windows do not overwrite that geometry.
 Shared `Bridge` clients serialize initialization and reuse the first successful handshake.
+The Quit command checks active local chats and scheduled tasks before it exits.
+The native warning offers Quit and Cancel when either check finds work.
+Cancel keeps the windows open.
+The check starts after the current window action returns so it can read every primary window.
+The warning uses a remaining primary window if another window closes during the check.
+If the task store cannot be read, the warning includes the error and still offers Quit and Cancel.
 `Host::prepare_projectless` and `Host::record_projectless` expose the existing standalone workspace allocation and metadata writes.
 
 ## Verification
 
 Run the geometry regression with `cargo test -p app --lib windows::tests`.
 Run `cargo test -p bridge concurrent_windows_initialize_the_shared_server_once` for concurrent initialization.
+Run `cargo test -p app --test quit_guard` for a Quit action from a primary window with an active scheduled task.
 Run `cargo test -p app --test fullscreen` on macOS for fullscreen control placement and history navigation.
 Run `native_windows` on macOS with `CODEX_GPUI_QA=1` and an owned recorded `CODEX_BIN` executable.
 Pass `--qa-smoke-profile /tmp/cgx-qa-smoke-<owned-name>` to isolate all profile state.

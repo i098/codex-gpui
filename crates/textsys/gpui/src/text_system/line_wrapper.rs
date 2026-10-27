@@ -235,6 +235,11 @@ impl LineWrapper {
                     return None;
                 }
                 let available = truncate_width - layout(truncation_affix).width;
+                // Blink leaves the line as it is (clipped by the box) when the ellipsis alone
+                // does not fit.
+                if available < px(0.) {
+                    return None;
+                }
                 let glyphs = line_layout.runs.iter().flat_map(|r| &r.glyphs);
                 let ends = glyphs.clone().skip(1).map(|g| g.position.x);
                 return glyphs
@@ -997,6 +1002,21 @@ mod tests {
     }
 
     #[test]
+    fn test_truncate_line_end_keeps_the_line_when_the_ellipsis_cannot_fit() {
+        let mut wrapper = build_wrapper();
+        let text = "Add a subtract function";
+        let runs = generate_test_runs(&[text.len()]);
+        // Narrower than the ellipsis: Blink leaves the line to be clipped by its box.
+        let (result, kept) =
+            wrapper.truncate_line(text.into(), px(1.), "…", &runs, TruncateFrom::End);
+        assert_eq!(result, text);
+        assert_eq!(kept.first().unwrap().len, text.len());
+        // Wide enough for the ellipsis and a glyph: truncated as before.
+        let (result, _) = wrapper.truncate_line(text.into(), px(30.), "…", &runs, TruncateFrom::End);
+        assert!(result.ends_with('…') && result.len() < text.len() + '…'.len_utf8());
+    }
+
+    #[test]
     fn test_truncate_line_start() {
         let mut wrapper = build_wrapper();
 
@@ -1251,7 +1271,10 @@ mod tests {
 
         // URL case
         assert_word("github.com");
-        assert_not_word("zed-industries/zed");
+        // `/` joins words: Blink keeps `src/math.py` whole (the original only breaks it
+        // inside the word, `src/mat` + `h.py`, when it is wider than a line).
+        assert_word("zed-industries/zed");
+        assert_word("src/math.py");
         assert_not_word("zed-industries\\zed");
         assert_not_word("a=1&b=2");
         assert_not_word("foo?b=2");

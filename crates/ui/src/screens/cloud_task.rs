@@ -920,6 +920,7 @@ mod tests {
             reasoning_effort: None,
             model_provider: String::new(),
             cwd: String::new(),
+            path: None,
             created_at: 0,
             updated_at: 0,
             section: None,

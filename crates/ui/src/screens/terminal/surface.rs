@@ -14,6 +14,7 @@ use theme::{ActiveTheme as _, Appearance};
 pub struct TerminalStyle {
     pub font: SharedString,
     pub size: f32,
+    pub letter_spacing: f32,
 }
 
 impl Default for TerminalStyle {
@@ -21,6 +22,7 @@ impl Default for TerminalStyle {
         Self {
             font: crate::MONO.into(),
             size: 12.,
+            letter_spacing: 0.,
         }
     }
 }
@@ -35,17 +37,23 @@ pub enum TerminalEvent {
     Directory(usize),
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct RowDecorations {
     pub selection: Option<((usize, usize), (usize, usize))>,
-    pub cursor: Option<(usize, usize)>,
+    /// Row, column and whether the terminal has focus: blurred, xterm shows an outline cursor.
+    pub cursor: Option<(usize, usize, bool)>,
     pub link: Option<(usize, Range<usize>)>,
+    /// A selection that ends above the viewport: xterm draws it over the first visible row,
+    /// from column 0 to its end column, and the text under it is hidden.
+    pub above: Option<(usize, usize)>,
 }
 
 pub struct TerminalSurface {
     pub buffer: Buffer,
     pub writable: bool,
     pub interacted: bool,
+    /// The terminal had focus once; xterm then keeps drawing its cursor after a blur.
+    had_focus: bool,
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
     bounds: Bounds<Pixels>,
@@ -70,6 +78,7 @@ impl TerminalSurface {
             buffer: Buffer::default(),
             writable,
             interacted: false,
+            had_focus: false,
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
             bounds: Bounds::default(),
@@ -224,7 +233,7 @@ impl TerminalSurface {
 
 impl Render for TerminalSurface {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let style = cx
+        let mut style = cx
             .try_global::<TerminalStyle>()
             .cloned()
             .unwrap_or_default();
@@ -234,7 +243,7 @@ impl Render for TerminalSurface {
             .max(1.);
         let screen_height = px((rows * nominal_height).ceil());
         self.row_height = screen_height / rows;
-        self.cell_width = window
+        let measured_width = window
             .text_system()
             .shape_line(
                 "M".into(),
@@ -251,6 +260,17 @@ impl Render for TerminalSurface {
             )
             .width
             .max(px(1.));
+        // Xterm rounds the canvas width and measures character widths across 32 repeats.
+        let columns = if self.bounds.size.width > px(17.) {
+            ((f32::from(self.bounds.size.width) - 17.) / f32::from(measured_width))
+                .floor()
+                .max(1.)
+        } else {
+            f32::from(self.buffer.size.1)
+        };
+        self.cell_width = px((f32::from(measured_width) * columns).round() / columns);
+        style.letter_spacing =
+            f32::from(self.cell_width) - (f32::from(measured_width) * 32.).round() / 32.;
         let entity = cx.entity();
         let layout = entity.clone();
         let measure = canvas(
@@ -292,11 +312,17 @@ impl Render for TerminalSurface {
         .top_0()
         .left_0()
         .size_full();
+        let focused = self.focus.is_focused(window);
+        self.had_focus |= focused;
         let rows_entity = cx.entity();
         let decorations = RowDecorations {
+            above: None,
             selection: self.selection,
-            cursor: (!self.buffer.cursor_hidden && self.focus.is_focused(window))
-                .then_some(self.buffer.cursor),
+            cursor: (!self.buffer.cursor_hidden && (focused || self.had_focus)).then_some((
+                self.buffer.cursor.0,
+                self.buffer.cursor.1,
+                focused,
+            )),
             link: self
                 .hovered_link
                 .as_ref()
@@ -314,6 +340,16 @@ impl Render for TerminalSurface {
             self.buffer.rows.len(),
             move |range, _, cx| {
                 let surface = rows_entity.read(cx);
+                // The list's current scroll position (not the previous frame's) decides the
+                // overlay of a selection that ends above the viewport.
+                let first_visible = range.start;
+                let decorations = RowDecorations {
+                    above: surface.selection.and_then(|(a, b)| {
+                        let end = a.max(b);
+                        (end.0 < first_visible).then_some((first_visible, end.1))
+                    }),
+                    ..decorations.clone()
+                };
                 range
                     .map(|index| {
                         row_element(
@@ -467,6 +503,7 @@ pub(super) fn row_element(
     let dark = t.appearance == Appearance::Dark;
     let mut content = String::new();
     let mut runs = Vec::new();
+    let features = textsys::letter_spacing(style.letter_spacing);
     for (column, cell) in row.cells.iter().enumerate() {
         if cell.is_wide_continuation() {
             continue;
@@ -496,6 +533,7 @@ pub(super) fn row_element(
             color.a *= 0.5;
         }
         let mut face = font(style.font.clone());
+        face.features = features.clone();
         face.weight = gpui::FontWeight(if cell.bold() { 700. } else { 400. });
         if cell.italic() {
             face.style = gpui::FontStyle::Italic;
@@ -552,18 +590,46 @@ pub(super) fn row_element(
         }
     }
     line = line.child(StyledText::new(content).with_runs(runs));
-    if let Some((cursor_row, col)) = decorations.cursor
-        && cursor_row == index
+    if let Some((row, columns)) = decorations.above
+        && row == index
     {
+        let fill = if dark {
+            gpui::rgba(0xffffff1b)
+        } else {
+            gpui::rgba(0x00000019)
+        };
+        let under = gpui::Rgba::from(t.surface);
+        let over = |s: f32, u: f32| s * fill.a + u * (1. - fill.a);
+        let opaque: Hsla = gpui::Rgba {
+            r: over(fill.r, under.r),
+            g: over(fill.g, under.g),
+            b: over(fill.b, under.b),
+            a: 1.,
+        }
+        .into();
         line = line.child(
             div()
                 .absolute()
-                .left(cell_width * col as f32)
+                .left_0()
                 .top_0()
-                .w(px(1.))
+                .w(cell_width * columns as f32)
                 .h(row_height)
-                .bg(foreground),
+                .bg(opaque),
         );
+    }
+    if let Some((cursor_row, col, focused)) = decorations.cursor
+        && cursor_row == index
+    {
+        let cursor = div()
+            .absolute()
+            .left(cell_width * col as f32)
+            .top_0()
+            .h(row_height);
+        line = line.child(if focused {
+            cursor.w(px(1.)).bg(foreground)
+        } else {
+            cursor.w(cell_width).border_1().border_color(foreground)
+        });
     }
     line
 }
