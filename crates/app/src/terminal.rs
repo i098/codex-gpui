@@ -796,7 +796,9 @@ impl Render for TerminalPanel {
             .pl(px(8.))
             .pr(px(6.))
             .border_b_1()
-            .border_color(theme.border);
+            .border_color(theme.border)
+            // The original rasters the strip into one composited layer (tab glyphs, `+`).
+            .layer();
         let mut items = div()
             .id("terminal-tabs")
             .h_full()
@@ -818,6 +820,8 @@ impl Render for TerminalPanel {
             } else {
                 format!("{name} {}", index + 1)
             };
+            // Chromium snaps each tab slot's origin to the device grid and lays the tab out from
+            // there.
             let slot_origin = self.strip_left + 8. + slot_width * index as f32;
             let slot_snap = (slot_origin * 2. + 0.5).floor() / 2. - slot_origin;
             let content = ui::screens::terminal::panel_tab(
@@ -825,7 +829,6 @@ impl Render for TerminalPanel {
                 selected,
                 hovered,
                 tab_width,
-                slot_snap,
                 window,
                 cx,
             );
@@ -839,6 +842,7 @@ impl Render for TerminalPanel {
             .role(gpui::Role::Tab)
             .aria_label(label.clone())
             .relative()
+            .left(px(slot_snap))
             .w(px(tab_width))
             .h(px(32.))
             .px_0()
@@ -874,9 +878,7 @@ impl Render for TerminalPanel {
                 tab = tab.child(
                     div()
                         .absolute()
-                        // Chromium snaps the slot's origin to the device grid, then adds the
-                        // divider's offset inside it.
-                        .right(px(-2. - slot_snap))
+                        .right(px(-2.))
                         .top(px(10.))
                         .w(px(1.))
                         .h(px(12.))
@@ -903,7 +905,9 @@ impl Render for TerminalPanel {
                             .px_0()
                             .flex_shrink_0()
                             .justify_center()
-                            .child(ui::icon::icon("diff-new-tab", 16., theme.text_tertiary)),
+                            .child(
+                                ui::icon::icon("diff-new-tab", 16., theme.text_tertiary).runtime(),
+                            ),
                     ),
             )
             .child(
@@ -927,11 +931,11 @@ impl Render for TerminalPanel {
                     .px_0()
                     .flex_shrink_0()
                     .justify_center()
-                    .child(ui::icon::icon(
-                        "chevron-down-medium",
-                        16.,
-                        theme.text_tertiary,
-                    )),
+                    // The original composites this glyph on its own.
+                    .child(
+                        ui::icon::icon("chevron-down-medium", 16., theme.text_tertiary)
+                            .own_layer(None),
+                    ),
             );
         let mut panel = div()
             .id("interactive-terminal-panel")
@@ -976,11 +980,12 @@ impl Render for TerminalPanel {
                 .child(
                     control("new-workspace-terminal", "", PanelAction::New, window, cx)
                         .aria_label("Open new terminal")
-                        .px(px(6.))
-                        .rounded_full()
-                        .border_1()
-                        .border_color(theme.border)
-                        .bg(theme.button_primary_solid)
+                        .relative()
+                        .px(px(7.))
+                        .child(ui::screens::terminal::pill(
+                            theme.button_primary_solid,
+                            Some(theme.border),
+                        ))
                         .child(text("Open new terminal", 13., 18., 430., foreground)),
                 );
             panel = panel.child(ui::screens::terminal::workspace_warning(
@@ -1023,11 +1028,10 @@ impl Render for TerminalPanel {
                         control("reload-terminal", "", PanelAction::Reload, window, cx)
                             .aria_label("Reload")
                             .debug_selector(|| "terminal-reload".into())
+                            .relative()
                             .h(px(24.))
-                            .rounded_full()
-                            .border_1()
-                            .border_color(gpui::transparent_black())
-                            .bg(theme.text_alpha_5)
+                            .px(px(9.))
+                            .child(ui::screens::terminal::pill(theme.text_alpha_5, None))
                             .child(text("Reload", 13., 18., 430., theme.text)),
                     ),
             );
