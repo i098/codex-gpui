@@ -33,6 +33,10 @@ fn capture_storage() -> Result<()> {
     }
     let mut fx = common::Fx::open("dark", (1280., 832.), recording)?;
     fx.keys("cmd-,")?;
+    // The recorded sidebar includes Import, which appears once its feature policy loads.
+    fx.wait("Import policy", |fx| {
+        fx.read(|_, cx| ui::screens::settings::imports::visible(cx))
+    })?;
     let storage = fx.at("settings", "Storage")?;
     fx.click(storage)?;
     for _ in 0..100 {
