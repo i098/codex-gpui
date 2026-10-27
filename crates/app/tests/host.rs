@@ -1362,8 +1362,6 @@ fn automation_resume_schedules_when_the_jitter_salt_cannot_be_saved() -> Result<
     Ok(())
 }
 
-#[test]
-
 /// Mobile `Get started` reads the MFA requirement, then the MFA status, through the host. A
 /// host without the authenticated transport leaves the initial step with its error; the retry
 /// shows the loading step, then the recorded `required` requirement and `mfa_enabled_v2: true`

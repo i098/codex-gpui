@@ -24,7 +24,7 @@ fn install_controlled_dictation(
     fx: &mut Fx,
 ) -> Result<std::sync::mpsc::Receiver<DictationControls>> {
     let (control, sessions) = std::sync::mpsc::channel();
-    let dispatcher = Dispatcher::new(move || {
+    let dispatcher = Dispatcher::new(move |_, _| {
         let (commands, received) = std::sync::mpsc::channel();
         let (events, delivered) = async_channel::unbounded();
         control
@@ -35,8 +35,7 @@ fn install_controlled_dictation(
             events: delivered,
         })
     });
-    fx.cx
-        .update_window(fx.window, |_, _, cx| dispatcher.install(cx))?;
+    fx.cx.update(|cx| cx.set_global(dispatcher));
     Ok(sessions)
 }
 
