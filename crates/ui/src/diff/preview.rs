@@ -608,7 +608,11 @@ fn picture(
                     &[(&pixels, destination)],
                     bounds,
                     &frame((svg || pdf).then(gpui::white)),
-                    shapes::ImageComposition::Direct(page),
+                    if svg || pdf {
+                        shapes::ImageComposition::Direct(page)
+                    } else {
+                        shapes::ImageComposition::Group(page)
+                    },
                     window,
                 )?);
                 *cache.borrow_mut() = Some((bounds, scale, page, image.clone()));
