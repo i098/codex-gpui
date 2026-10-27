@@ -66,6 +66,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
 <key>CodexGPUIRevision</key><string>$revision</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSPrincipalClass</key><string>NSApplication</string>
+<key>NSMicrophoneUsageDescription</key><string>Codex uses the microphone to turn your speech into text.</string>
 $url_types
 </dict></plist>
 PLIST

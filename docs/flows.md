@@ -364,7 +364,7 @@ New chat adds a Back entry even when Home is already open.
 | 10 | `+` Add files and more | click | Context menu (files, photos, @-mentions). | Opens the system file picker at once. | FAIL (`crates/ui/src/composer.rs` `add_files`: no context menu) |
 | 11 | `Custom` permissions | click | Permissions dropdown. | Opens; Escape closes. | PASS (`permissions_popover`) |
 | 12 | Model picker | click | Model and effort menu. | Opens; Escape closes. | PASS (`model_picker_popover`) |
-| 13 | `Dictate` | click | Starts dictation. | No handler. | NOT WIRED (`crates/ui/src/composer.rs`, `dictate`) |
+| 13 | `Dictate` | click | Starts dictation. | Uses native macOS capture and authenticated `/transcribe`; inserts at the initiating Composer selection. | WIRED; controlled-input proof passes. Live microphone acceptance remains open. |
 | 14 | `Start new voice chat` | click | Starts realtime voice. | With an empty draft the button calls `submit`, which does nothing. | NOT WIRED (`crates/ui/src/composer.rs`, `send`) |
 | 15 | Submit with Enter | shortcut | `thread/start`, `turn/start`, navigates to the thread. | Same; the turn streams in; the draft clears; also by clicking Send. | PASS (`submit_enter_starts_thread`, `submit_click_send`) |
 | 16 | Hover on every button | hover | Ghost background fades in. | Hover fill on composer buttons (checked on `Dictate`). | PASS (`composer_button_hover`) |
@@ -374,10 +374,20 @@ New chat adds a Back entry even when Home is already open.
 | 20 | Account load failure | error | `We couldn’t load your account`, `Reload`, `Sign out`. | An `account/read` error stops `Root::connect`; the window stays empty. | FAIL (`crates/app/src/lib.rs` `connect`; no error page in `crates/ui`) |
 | 21 | Resize | resize | Below 768 px the sidebar is an overlay; below 40rem the composer stacks. | Sidebar hides (row 14.2/23); composer does not stack. | FAIL (`crates/ui/src/composer.rs`: only the 475 px compact footer) |
 
-The shared Composer session API includes `finish_dictation(window, cx)` and `Completion` events.
-Success follows transcript processing; failure and cancellation remain distinct.
-Consumers can wait before submitting a draft. A closed event stream fails instead of leaving the session active.
-`cargo test -p ui --lib composer::dictation` checks completion order, cancellation, and closed streams without microphone access.
+The shared entry point is `Composer::dictate(window, cx)`.
+`cancel_dictation(cx)` cancels capture and pending insertion; `dictation_label()` and `dictation_error()` expose the state.
+`finish_dictation(window, cx)` requests transcription without cancelling the session.
+`Completion` reports success after transcript processing, failure, or cancellation.
+Request text fields use the same dispatcher; secret and numeric fields do not expose Dictate.
+The comment editor owner calls this API on its own Composer entity.
+
+Run `cargo test -p app --features test-support --test dictation` and `cargo test -p ui --lib composer::dictation`.
+The controlled test sends generated WAV bytes through the production worker, `CloudHost`, and a loopback HTTP fixture into the rendered Composer.
+The fixture returns a known transcript; this checks transport and editing, not speech recognition.
+The macOS run uses the native renderer without opening a microphone, requesting permission, or activating the app.
+Live microphone capture, permission approval, and production transcription require separate acceptance.
+
+A closed event stream reports failure instead of leaving the session active.
 
 `Dispatcher::new` receives the initiating `Window` and `App`, so a capture service can select that window's host.
 Typing, IME edits, mentions, and slash commands cancel dictation and emit `Completion::Cancelled`.
@@ -537,22 +547,47 @@ The replay checks that diff find never opens thread find.
 It resolves `View changes` from the static reference because Linux text layout places that button below the Mac reference.
 Run `tools/mac.sh -l s028-repair 'cargo test -p app --test s028 -- --nocapture --test-threads=1'`.
 The open panel keeps its state across streamed updates and uses `turn/diff/updated` as the authoritative diff.
-Search scope switching and repository-watch sources remain separate inventory slices.
+Search chat and Search diffs keep the query while switching the active find surface.
+Enter, Shift+Enter, and the Find Next commands move the active diff highlight and scroll it into view.
+The diff matcher reuses the chat's Unicode matcher and retains the total count beyond the 250 highlighted matches.
+Local repository sources keep a recursive filesystem watch while the Changes tab is active.
+The app drops the watch when the repository or active route changes.
+Changes that arrive during a read cause one more refresh after that read.
+Watch failures show the original Refresh notice.
+`item/fileChange/patchUpdated` replaces the streamed file changes until an aggregate turn diff takes precedence.
 
 `refs/interactions/s027.json` records the original diff menus, text selection, clipboard writes, and line hover.
-`s027::diff_selection_and_hover_replay` checks forward and reverse text selection and `Cmd+C` without line numbers.
+`s027::diff_selection_and_context_actions_replay` checks forward and reverse text selection and `Cmd+C` without line numbers.
 The original does not change a line's background on hover in this state, despite the DT-014 inventory claim.
 The test compares the port's pixels before and after the same hover.
 The header menu copies the displayed path and collapses or expands the file.
 The body menu copies selected text, absolute paths, or displayed relative paths.
 The body menu also wraps long code lines without changing the copied text.
-The header icon and the `Open in editor` menu item send the file's absolute path to the desktop host's `open-file` endpoint with the thread `cwd`.
-The app adds `target` from the host setting `open-in-target-preferences`: `perPath[cwd]`, else `global`.
-Without a target the host opens the file with the system default app.
-The host runs macOS `open [-a App] file` after it resolves the path, symlinks included, to a regular file under the Git root of `cwd`.
-A missing file, a path outside the project, an unknown target, or an opener failure shows the `Unable to open in editor` toast and changes nothing else.
-`s027::open_in_editor_native_input_reaches_the_host_opener` runs the real host with a controlled opener executable on an owned repository.
-Comment actions (S075/S082), file tabs (S186), and external targets remain outside this slice, as firstmate approved.
+The `Open in editor` menu item sends the file's absolute path to the desktop host's `open-in` endpoint with the thread `cwd`.
+The header's `Open in` button opens the existing native file tab.
+Streamed diff paths resolve against the thread's working directory, not the selected workspace.
+The body menu reads available targets from `open-in-targets`.
+`Open with` includes a native file tab and each available host target.
+The shared `open-in` launcher handles app paths, project preferences, and launch failures.
+A failed `Open in editor` action shows `Unable to open in editor` and preserves the displayed changes.
+`s027::failed_editor_launch_keeps_the_diff_and_reports_the_error` runs the real host with a controlled opener on an owned repository.
+The gutter opens a comment editor for one line or a selected range.
+Comments support edit, cancel, delete, and send actions.
+The draft keeps its selected lines visible and uses the original author header and line reference.
+Its text layout and input hit testing share the comment editor's line height.
+Saved local comments keep the draft card's author header and text metrics.
+Editing preserves the stored comment until Save.
+The composer groups comments in one count attachment.
+Its preview opens the selected source file; `Remove comments attachment` clears the stored comments.
+Closing the keyboard preview restores focus to its trigger.
+The comment's Dictate control targets its own Composer through the shared dispatcher.
+Comment and Save wait for a successful completion before persisting the edited text.
+A failed or cancelled transcription keeps the comment editable and preserves its stored value.
+Clicking the comment card returns focus to its editor, including after an error.
+Controlled native input checks transcript placement, finish/cancel commands, and rejection of late results after closing.
+The test does not open a microphone or request permission.
+Dismissed model comments persist after confirmation.
+`diff_comments` checks those actions through native pointer and keyboard input.
 
 Local Changes uses the existing desktop host for `git-changes`, `git-stage`, and `git-unstage`.
 Each request uses the open thread's absolute `cwd`; file actions also send one repository-relative `path`.
@@ -603,22 +638,48 @@ Diff controls reuse `DiffPanel` for the thread panel and the standalone `/diff <
 The standalone entry reads a Git-style unified patch from disk without starting an app-server.
 Auto uses split layout only when both sides change and the file pane is at least 800 px wide.
 The file tree filter changes the tree, not the displayed code.
-Paired replacement lines mark the changed text range.
+The Word diffs option toggles separate changed-word spans without changing the patch or line counts.
+Find highlights use rounded inline boxes and keep the current match visible.
+The tokenizer follows the original word-alt joining rule and keeps UTF-8 boundaries.
+It skips word spans above 1,000 UTF-16 units per line or 2,000 changed lines per file.
+Diffs and file tabs cache syntax tokens from the installed Syntect grammars.
+The old and new sides keep separate multiline parser state.
+Python function declarations use the original declaration color.
+Binary, empty, and unchanged rename entries stay in the file list with their original placeholder labels.
+Git-quoted paths retain spaces, newlines, and UTF-8 bytes.
 The header and context menu share the same word-wrap state.
+Unmodified-line controls use the original 32-pixel context row.
+Jump to file filters with the existing path matcher and keeps files with the same name as separate results.
+Selecting a result opens that file and scrolls its header into view.
+File headers stay at the top of the viewport while their diff scrolls.
+`DiffPanel::cloud` accepts the original cloud patch without adding a second transport.
+Its Cloud changes source has no local source selector or repository mutation controls.
 The file viewer handles `⌘L`, clamps line numbers, and counts negative numbers from the end.
 The line input stays closed until file contents are available.
 The `git-file-url` host read uses the current branch for a GitHub origin, as in the original.
 It encodes path segments and can include a line anchor.
 Other origins return no link.
 A detached HEAD returns no link.
-The parser stops above 2,000,000 input bytes, 20,000 input lines, or 10,000 bytes per input line.
+A file stops rendering above 15,000 changed lines, 3,145,728 changed UTF-16 units, or 1,048,576 units in one changed line.
+The count includes retained newlines and excludes unchanged context.
+Oversized files keep their change counts and large-diff navigation.
 Invalid hunk numbers show `Diff failed to render` instead of overflowing a line counter.
 File boundaries must start a line; a `diff --git` string inside changed code does not split the file.
+The view shows one file at a time above 128 files, 9,000 changed lines, or 12 MiB of diff input.
+Previous file, Next file, the tree, and Jump to file share that active file.
+Above 256 untracked files, repository reads omit all untracked patches and report the actual omitted count.
+The warning offers the original interactive cleanup command without running it.
+Known commit and revert results clear the last-turn diff and offer View branch diff.
 Refresh retains the displayed changes.
 A failed read or mutation adds a status row with Retry.
 `cargo test -p app --test diff_controls -- --nocapture --test-threads=1` runs the native input proof on macOS.
 `CGX_DIFF_EVIDENCE` selects its screenshot folder; the default is the system temporary folder under `cgx-diff-controls`.
 The proof covers header wrap, file filtering, layout changes, empty and loading states, real read failure, Retry, and line navigation.
+The `diff_review` native proof also checks visible find navigation, scope changes, and Escape against the recorded subtract patch.
+`cargo test -p app --test diff_review -- --nocapture --test-threads=1` checks the Word diffs toggle and four real Git file states.
+`CGX_DIFF_REVIEW_EVIDENCE` retains that proof's screenshots and source patch.
+`cargo test -p app --test diff_states --test git_review -- --nocapture` checks the omission limit and preserves real Git data.
+On macOS, `diff_states` also drives nested file updates, streamed patches, and large-diff page selection through the native view.
 Original captures for the file tree and file filter remain open capture items.
 The release comparison omits both pairs and identifies its exact matching component crops.
 Whole-window pixel parity is not claimed by those component comparisons.
@@ -630,20 +691,20 @@ Whole-window pixel parity is not claimed by those component comparisons.
 | 3 | Source selector | click | Uncommitted / Staged / … | Last Turn, Uncommitted, Unstaged, Staged, Committed, and Branch select the corresponding local comparison. | PASS (`git_review`, `git_revert_ui`) |
 | 4 | Show / Hide files | click | Toggles the file tree. | The header toggles the file tree without losing its filter. | PASS (`diff_controls` native frames) |
 | 5 | File tree filter | focus | `Filter files…`. | Filters paths and shows `No matching files`; typing and paste retain keyboard ownership. | PASS (`diff_controls` native frames) |
-| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. Open in editor works from the header icon and the menu. Local sources add Stage file, Unstage file, and confirmed Revert file. | PARTIAL (`s027::diff_selection_and_hover_replay`, `s027::open_in_editor_native_input_reaches_the_host_opener`, `git_stage`, `git_revert_ui`) |
+| 6 | File header actions | click | Copy path, Open, Collapse/Expand. | Copy path and Collapse/Expand work. The header opens a native file tab; Open in editor uses the context menu. Local sources add Stage file, Unstage file, and confirmed Revert file. | PARTIAL (`s027::diff_selection_and_context_actions_replay`, `s027::failed_editor_launch_keeps_the_diff_and_reports_the_error`, `git_stage`, `git_revert_ui`) |
 | 7 | Hunk revert / stage | click | Revert, Stage / Unstage hunk. | Local staged and unstaged hunks have confirmed Revert and Stage/Unstage controls. | PASS (`git_review`, `git_revert_ui`) |
 | 8 | Revert all | click | `Revert changes?` dialog. | Unstaged provides section-wide Revert all with confirmation and the saved skip preference. Uncommitted does not expose this action. | PASS (`git_revert_ui`) |
 | 9 | Split / unified toggle | click | Switch diff layout. | Unified, Split, and Auto share the existing line renderer. The narrow header exposes layout through Changes options. | PASS (`diff_controls`; split pairing regression check) |
-| 10 | Word wrap | click | Toggles wrap. | The header, Changes options, and body menu toggle the same wrap state. | PASS (`diff_controls`; `s027::diff_selection_and_hover_replay`) |
+| 10 | Word wrap | click | Toggles wrap. | The header, Changes options, and body menu toggle the same wrap state. | PASS (`diff_controls`; `s027::diff_selection_and_context_actions_replay`) |
 | 11 | Mark as viewed | click | Branch diffs collapse and retain the reviewed revision. | Deferred until the Branch source and stable revision contract are available. | Follow-up: [issue 300](https://github.com/i098/codex-gpui/issues/300), dependent on the operations source-menu work |
 | 12 | `⌘F` in diff | shortcut | `Search diff…`. | Focus the panel, open find, and type a query; matches highlight and update with the diff. | PASS (`s028::streamed_diff_and_find_replay`) |
 | 13 | `⌘L` | shortcut | Go to line in the file viewer. | Available files expose the line input; Enter navigates, Escape closes, and negative numbers count from the end. Unavailable files keep the input closed. | PASS (`diff_controls`; whole-line validation regression check) |
-| 14 | Line hover | hover | No background change in the recorded Last Turn state; no `data-hovered` attribute. | No background change. | PASS (`s027::diff_selection_and_hover_replay`; corrects DT-014) |
+| 14 | Line hover | hover | No background change in the recorded Last Turn state; no `data-hovered` attribute. | No background change. | PASS (`s027::diff_selection_and_context_actions_replay`; corrects DT-014) |
 | 15 | No changes | empty | `No file changes yet`. | Last Turn shows `No file changes yet`; local sources show `No staged changes` or `No unstaged changes`. | PASS (`diff_controls` native frames) |
 | 16 | Not a git repo | empty | `Create a Git repository`. | The action initializes the thread's folder and preserves existing files. | PASS (`git_review`, `git_revert_ui`) |
 | 17 | Loading | loading | `Loading diff`. | Initial local reads show `Loading diff`. Refresh retains the file list and disables mutations until completion. | PASS (`diff_controls` native frame) |
 | 18 | Load failure | error | `Couldn't load changes`. | Shows the host error and Retry without hiding existing changes. Invalid hunk data shows `Diff failed to render`. | PASS (`diff_controls` real read failure and recovery; parser regression checks) |
-| 19 | Too large | error | `Diff too large to display`. | Oversized input shows the boundary and retains the file header. | PASS (`diff_controls` native frame; parser limit checks) |
+| 19 | Too large | error | `This file is too large to display here.` | Oversized input keeps its header and offers Open in editor. | PASS (`diff_controls` native frame; parser limit checks) |
 | 20 | Resize | resize | Split → inline for narrow panes. | Auto uses inline at 767 and 600 px and split for a wide, two-sided diff. | PASS (`diff_controls`; original 1280, 767, and 600 px captures) |
 
 ### DT-139: Commit or push

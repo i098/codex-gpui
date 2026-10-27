@@ -148,7 +148,7 @@ fn replay_sessions() {
                 }
                 "item/completed" => {
                     let n: ItemNotification = serde_json::from_value(params).unwrap();
-                    if let ThreadItem::AgentMessage { id, text } = n.item {
+                    if let ThreadItem::AgentMessage { id, text, .. } = n.item {
                         assert_eq!(
                             streamed.get(&id).map_or(text.as_str(), |s| s),
                             text,
