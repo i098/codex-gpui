@@ -1,5 +1,6 @@
 use crate::host::Host;
 use anyhow::Result;
+use gpui::{App, Window};
 use std::sync::Arc;
 use ui::composer::dictation::{Dispatcher, Session};
 
@@ -9,6 +10,7 @@ use {
     anyhow::ensure,
     base64::{Engine as _, engine::general_purpose::STANDARD},
     serde_json::json,
+    std::time::Duration,
     std::{io::Write as _, sync::mpsc},
     ui::composer::dictation::{Command, Event},
 };
@@ -166,13 +168,21 @@ mod native {
     }
 }
 
-pub fn dispatcher(host: Arc<dyn Host>) -> Dispatcher {
-    Dispatcher::new(move |_, _| start(host.clone()))
+pub fn dispatcher() -> Dispatcher {
+    Dispatcher::new(|window, cx| start(window_host(window, cx)?))
+}
+
+fn window_host(window: &Window, cx: &App) -> Result<Arc<dyn Host>, String> {
+    window
+        .root::<crate::Root>()
+        .flatten()
+        .map(|root| root.read(cx).host.clone())
+        .ok_or_else(|| "Dictation is not available in this window".into())
 }
 
 fn start(host: Arc<dyn Host>) -> Result<Session, String> {
     #[cfg(target_os = "macos")]
-    return session(host, native::record);
+    return session(host, native::record, Duration::from_secs(60));
     #[cfg(not(target_os = "macos"))]
     {
         let _ = host;
@@ -186,6 +196,7 @@ fn session(
     capture: impl FnOnce(&mpsc::Receiver<Command>, &async_channel::Sender<Event>) -> Result<Vec<u8>>
     + Send
     + 'static,
+    timeout: Duration,
 ) -> Result<Session, String> {
     let (commands, receiver) = mpsc::channel();
     let (events, replies) = async_channel::unbounded();
@@ -195,7 +206,7 @@ fn session(
             let result = capture(&receiver, &events).and_then(|audio| {
                 ensure!(!cancelled(&receiver), "Dictation cancelled");
                 let _ = events.try_send(Event::Transcribing);
-                transcribe(&*host, audio)
+                transcribe(&*host, audio, timeout)
             });
             if !cancelled(&receiver) {
                 let _ = events.try_send(Event::Finished(result.map_err(|error| error.to_string())));
@@ -214,7 +225,7 @@ fn cancelled(commands: &mpsc::Receiver<Command>) -> bool {
 }
 
 #[cfg(any(target_os = "macos", test, feature = "test-support"))]
-fn transcribe(host: &dyn Host, audio: Vec<u8>) -> Result<String> {
+fn transcribe(host: &dyn Host, audio: Vec<u8>, timeout: Duration) -> Result<String> {
     ensure!(
         audio.len() > 44 && audio.len() <= 16 * 1024 * 1024,
         "Unable to transcribe audio: invalid recording size"
@@ -234,6 +245,7 @@ fn transcribe(host: &dyn Host, audio: Vec<u8>) -> Result<String> {
     write!(body, "\r\n--{boundary}--\r\n")?;
     let request = Request::Http(json!({
         "url": "/transcribe", "method": "POST",
+        "timeoutMs": timeout.as_millis(),
         "headers": {
             "Content-Type": format!("multipart/form-data; boundary={boundary}"),
             "X-OpenAI-Attach-Auth": "1",
@@ -254,15 +266,19 @@ fn transcribe(host: &dyn Host, audio: Vec<u8>) -> Result<String> {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-pub fn audio_dispatcher(host: Arc<dyn Host>, audio: Vec<u8>) -> Dispatcher {
-    Dispatcher::new(move |_, _| {
+pub fn audio_dispatcher(audio: Vec<u8>, timeout: Duration) -> Dispatcher {
+    Dispatcher::new(move |window, cx| {
         let audio = audio.clone();
-        session(host.clone(), move |commands, events| {
-            let _ = events.try_send(Event::Recording);
-            match commands.recv()? {
-                Command::Finish => Ok(audio),
-                Command::Cancel => anyhow::bail!("Dictation cancelled"),
-            }
-        })
+        session(
+            window_host(window, cx)?,
+            move |commands, events| {
+                let _ = events.try_send(Event::Recording);
+                match commands.recv()? {
+                    Command::Finish => Ok(audio),
+                    Command::Cancel => anyhow::bail!("Dictation cancelled"),
+                }
+            },
+            timeout,
+        )
     })
 }
