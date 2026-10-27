@@ -390,6 +390,18 @@ impl MacPlatform {
                         Some(gpui::OsAction::Copy) => selector("copy:"),
                         Some(gpui::OsAction::Paste) => selector("paste:"),
                         Some(gpui::OsAction::SelectAll) => selector("selectAll:"),
+                        Some(gpui::OsAction::ShowSubstitutions) => {
+                            selector("orderFrontSubstitutionsPanel:")
+                        }
+                        Some(gpui::OsAction::SmartQuotes) => {
+                            selector("toggleAutomaticQuoteSubstitution:")
+                        }
+                        Some(gpui::OsAction::SmartDashes) => {
+                            selector("toggleAutomaticDashSubstitution:")
+                        }
+                        Some(gpui::OsAction::TextReplacement) => {
+                            selector("toggleAutomaticTextReplacement:")
+                        }
                         // "undo:" and "redo:" are always disabled in our case, as
                         // we don't have a NSTextView/NSTextField to enable them on.
                         Some(gpui::OsAction::Undo) => selector("handleGPUIMenuItem:"),
