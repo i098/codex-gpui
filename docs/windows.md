@@ -110,3 +110,24 @@ The checks exercise real temporary worktree creation, environment parsing, route
 Set `CGX_HOTKEY_EVIDENCE` to save native home, settings and Spotlight frames from the recorded backend.
 These checks do not activate a microphone or screen capture.
 Strict original-versus-native appearance checks remain separate from these behavior checks.
+
+## Mini
+
+`Show Mini` and `openAvatarOverlay` use one retained `/avatar-overlay` window.
+The profile menu and command menu use the same action.
+The macOS global shortcut defaults to `Alt+Space` and follows the saved command map.
+The menu toggles visibility; the global shortcut opens the compact chat input.
+Mini keeps its draft separate from the primary window and uses the existing standalone chat pipeline.
+The native pointer monitor leaves transparent areas inactive.
+Opening Mini does not request microphone access or start audio capture.
+
+The nine built-in pet sprites come from the pinned renderer.
+Unknown pet IDs report an error instead of selecting a different pet.
+`notchVoice` and `toggleNotch` stay inactive because the pinned host has no active Notch controller.
+
+Run `native_mini` on macOS with `CODEX_GPUI_QA=1` and an owned recorded `CODEX_BIN`.
+Pass an isolated `--qa-smoke-profile`, as for `native_windows`.
+Set `CGX_MINI_EVIDENCE` to retain the pet and compact-input frames.
+The smoke checks native visibility, background presentation, draft separation, dismissal, and window reuse.
+It does not start a model turn or record audio.
+Original-versus-native appearance approval still requires a matching original capture.

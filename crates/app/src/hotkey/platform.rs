@@ -6,6 +6,7 @@ use std::ffi::c_void;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shortcut {
     Spotlight,
+    Mini,
     ScreenshotCurrent,
     ScreenshotNew,
     Popout,

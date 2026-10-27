@@ -33,6 +33,36 @@ pub(super) fn configure(window: &Window, kind: Kind) {
     let _ = (window, kind);
 }
 
+pub(super) fn is_visible(window: &Window) -> anyhow::Result<bool> {
+    #[cfg(target_os = "macos")]
+    return native::with_window(window, |window| unsafe {
+        objc2::msg_send![window, isVisible]
+    })
+    .ok_or_else(|| anyhow::anyhow!("the native window is unavailable"));
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window;
+        anyhow::bail!("native visibility requires AppKit")
+    }
+}
+
+pub(super) fn set_keyboard_interactive(window: &Window, interactive: bool) -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    return native::with_window(window, |window| unsafe {
+        let supported: bool =
+            objc2::msg_send![window, respondsToSelector: objc2::sel!(_setPreventsActivation:)];
+        anyhow::ensure!(supported, "native keyboard interaction is unavailable");
+        let _: () = objc2::msg_send![window, _setPreventsActivation: !interactive];
+        Ok(())
+    })
+    .ok_or_else(|| anyhow::anyhow!("the native window is unavailable"))?;
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (window, interactive);
+        anyhow::bail!("native keyboard interaction requires AppKit")
+    }
+}
+
 pub(super) fn hide(window: &Window) -> bool {
     #[cfg(target_os = "macos")]
     return native::with_window(window, |window| unsafe {
