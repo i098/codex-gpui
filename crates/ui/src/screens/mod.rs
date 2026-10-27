@@ -9,6 +9,7 @@ pub mod dictation;
 pub mod diff;
 pub mod home;
 pub mod hotkey;
+pub mod mini;
 pub mod mobile;
 pub mod oauth;
 pub mod plugins;

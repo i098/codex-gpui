@@ -707,6 +707,7 @@ pub struct Composer {
     plain_field: Option<bool>,
     hotkey_controls: Option<AnyView>,
     document_field: bool,
+    mini: bool,
     search_field: bool,
     field_min_height: Pixels,
     field_scroll: Option<ScrollHandle>,
@@ -803,6 +804,7 @@ impl Composer {
             plain_field: None,
             hotkey_controls: None,
             document_field: false,
+            mini: false,
             search_field: false,
             field_min_height: px(48.),
             field_scroll: None,
@@ -822,6 +824,13 @@ impl Composer {
     ) {
         self.hotkey_controls = Some(controls);
         self.placeholder = placeholder.into();
+        cx.notify();
+    }
+
+    pub fn set_mini(&mut self, cx: &mut Context<Self>) {
+        self.mini = true;
+        self.search_field = true;
+        self.placeholder = "Ask".into();
         cx.notify();
     }
 
@@ -2221,6 +2230,53 @@ impl Render for Composer {
             .on_action(cx.listener(Self::next_command))
             .on_action(cx.listener(Self::previous_command))
             .relative();
+        if self.mini {
+            let enabled = self.current_model().is_some() && !self.content.trim().is_empty();
+            return div().w_full().child(
+                card.key_context(KEY_CONTEXT)
+                    .role(gpui::Role::TextInput)
+                    .aria_label("Chat")
+                    .aria_placeholder(self.placeholder.clone())
+                    .aria_value(self.content.clone())
+                    .h(px(40.))
+                    .px(px(6.))
+                    .pl(px(14.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(20.)),
+                        fill: Some(t.control_background),
+                        ..Default::default()
+                    }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .child(self.editor(cx)),
+                    )
+                    .child(
+                        div()
+                            .id("mini-send")
+                            .role(gpui::Role::Button)
+                            .aria_label("Send chat")
+                            .aria_disabled(!enabled)
+                            .size(px(28.))
+                            .rounded_full()
+                            .bg(gpui::rgb(0x636363))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(crate::icon::icon("composer-arrow-up", 16., gpui::white()))
+                            .when(enabled, |button| {
+                                button.on_click(cx.listener(|this, _, window, cx| {
+                                    this.submit(&Submit, window, cx);
+                                }))
+                            }),
+                    ),
+            );
+        }
         if self.embedded_field.is_some() {
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)
