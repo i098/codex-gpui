@@ -995,9 +995,6 @@ impl Root {
                 this.refresh_automation_editor_options(None, cx);
                 this.ready = this.login.is_none();
                 hotkey::policy::refresh(this, cx);
-                if this.ready {
-                    this.load_import_policy(cx);
-                }
                 this.select_route(cx);
                 this.sync(window, cx);
                 if bridge.is_acp() {
@@ -1175,7 +1172,12 @@ impl Root {
         self.app_tool_events = None;
         self.bind_context_files(cx);
         usage::invalidate(cx);
-        if self.ready {
+        if self.ready
+            && matches!(
+                self.state.route,
+                Route::Settings | Route::SettingsSubtree(_)
+            )
+        {
             self.load_import_policy(cx);
         }
         self.automations = None;
