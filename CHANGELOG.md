@@ -11,6 +11,7 @@ There is no release yet.
 - Add Storage usage measurement and safe review before deleting old local chats.
 - Add Import settings for Claude Code and Cursor, with saved sync choices and preserved imported workspaces.
 - Add the native Security workbench for scans, repository history, finding triage, remediation, and source viewing.
+- Add Settings > Connections with saved SSH hosts, SSH discovery, remote-control setup, and `codex://settings/connections/<tab>` deep links.
 - Add the searchable General `Language` menu, which saves `desktop.localeOverride` and clears it with `Auto detect`.
 - Show the Plugins and Skills directories in the original `Customize` sidebar, with the original header, scope pills, and two-column skill rows.
 - Add the Cloud environment UI with repository selection and saved setup flows

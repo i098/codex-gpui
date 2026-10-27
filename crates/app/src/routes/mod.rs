@@ -132,6 +132,7 @@ impl Root {
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     pub(crate) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::connections::sync(cx);
         let home = matches!(self.state.route, Route::Home);
         if cx.has_global::<ui::screens::settings::keyboard_shortcuts::KeyboardState>() {
             cx.update_global::<ui::screens::settings::keyboard_shortcuts::KeyboardState, _>(

@@ -5,6 +5,7 @@ pub mod cloud;
 pub mod cloud_task;
 pub mod composer;
 pub mod computer_use_native;
+pub mod connections;
 pub use settings::computer_use;
 pub mod dictation;
 pub mod diff;
