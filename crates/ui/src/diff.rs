@@ -1104,7 +1104,9 @@ impl DiffPanel {
                 .h(px(81.))
                 .rounded(px(20.))
                 .p(px(0.5))
-                .child(shapes::decoration(Decoration {
+                // The fixed bar overlaps composited content: Chromium paints it into a layer
+                // of its own and blends that onto the page.
+                .child(shapes::composited_decoration(Decoration {
                     fill: Some(t.surface_secondary),
                     border: Some((px(0.5), t.border)),
                     radius: Corners::all(px(20.)),
@@ -3637,7 +3639,8 @@ fn hunk(
                                 .border_color(t.surface)
                                 .bg(gutter_color),
                         )
-                        .with_priority(1),
+                        .with_priority(1)
+                        .clipped(),
                     )
                     .child(
                         deferred(
@@ -3647,7 +3650,10 @@ fn hunk(
                                 .flex_none()
                                 .child(comment),
                         )
-                        .with_priority(0),
+                        .with_priority(0)
+                        // Deferred only for paint order: the card stays inside the surface's
+                        // `overflow: hidden` and the scroller, as in Chromium.
+                        .clipped(),
                     )
             }))
     };
