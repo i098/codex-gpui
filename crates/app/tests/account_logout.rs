@@ -355,6 +355,23 @@ mod signin_checks {
             let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
             fx.wait("managed sign-in policy", |fx| policy(fx) == Some(expected))?;
             shot(&mut fx, name)?;
+            if name == "login-main" {
+                // The original capture's pointer and caret: over Sign up, then left on Sign in
+                // another way after its click; carets transparent.
+                fx.hover((640., 523.))?;
+                shot(&mut fx, "signup-hover")?;
+                fx.hover((768., 6.))?;
+                fx.click((640., 470.))?;
+                fx.cx.update_window(fx.window, |_, window, cx| {
+                    ui::composer::Composer::set_caret_transparent(cx, true);
+                    window.refresh();
+                })?;
+                shot(&mut fx, "api-empty")?;
+                fx.type_text("sk-fixture-rejected")?;
+                shot(&mut fx, "api-paste")?;
+                fx.cx
+                    .update(|cx| ui::composer::Composer::set_caret_transparent(cx, false));
+            }
             if expected
                 != (Policy::Ready {
                     api: true,
@@ -405,135 +422,122 @@ mod signin_checks {
         Ok(())
     }
 
-    struct OnboardingHost {
-        context: Value,
-        writes: std::sync::Mutex<Vec<Value>>,
-    }
-
-    impl app::host::Host for OnboardingHost {
-        fn fetch(&self, request: &app::host::Request) -> Result<Value> {
-            if let app::host::Request::Http(request) = request {
-                if request["url"] == "/wham/onboarding/context" {
-                    return Ok(self.context.clone());
-                }
-                if request["url"] == "/wham/onboarding/desktop/complete" {
-                    self.writes.lock().unwrap().push(request.clone());
-                    anyhow::bail!("Offline completion is denied");
-                }
-            }
-            anyhow::bail!("No recorded response for this onboarding request")
-        }
-        fn projects(&self) -> Result<Vec<ui::screens::sidebar::Project>> {
-            Ok(Vec::new())
-        }
-    }
-
     #[test]
-    fn onboarding_keeps_failed_saves_and_cancelled_skips_on_the_page() -> Result<()> {
+    fn bedrock_restart_requires_warning_confirmation() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt as _;
+
         common::install_panic_hook();
-        let original: Value = serde_json::from_str(&std::fs::read_to_string(format!(
-            "{}/tools/route1/oracle.json",
-            common::ROOT
-        ))?)?;
-        let context = original
-            .as_object()
-            .unwrap()
-            .iter()
-            .find(|(key, _)| key.contains("/wham/onboarding/context"))
-            .unwrap()
-            .1
-            .clone();
-        let host = std::sync::Arc::new(OnboardingHost {
-            context,
-            writes: Default::default(),
-        });
-        let mut fx = Fx::new()?;
-        fx.root
-            .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
-        let root = fx.root.clone();
-        fx.cx.update_window(fx.window, |_, window, cx| {
-            root.update(cx, |root, cx| {
-                root.show_onboarding(ui::screens::onboarding::Page::Welcome, window, cx)
-            })
-        })?;
-        fx.wait("onboarding context", |fx| {
-            fx.read(|root, cx| {
-                root.onboarding()
-                    .is_some_and(|page| !page.read(cx).loading())
-            })
-        })?;
-        shot(&mut fx, "onboarding-role")?;
-        for _ in 0..14 {
-            fx.keys("tab")?;
+        if std::env::var_os("CGX_BEDROCK_REPLAY_CHILD").is_some() {
+            return bedrock_warning_replay();
         }
-        fx.keys("enter")?;
-        fx.wait("onboarding save error", |fx| {
-            fx.read(|root, cx| {
-                root.onboarding()
-                    .is_some_and(|page| page.read(cx).error().is_some())
-            })
-        })?;
-        ensure!(fx.route() == app::Route::Onboarding(ui::screens::onboarding::Page::Welcome));
-        ensure!(host.writes.lock().unwrap().len() == 1);
-        shot(&mut fx, "onboarding-save-error")?;
-        fx.cx.update_window(fx.window, |_, window, cx| {
-            root.update(cx, |root, cx| {
-                root.show_onboarding(ui::screens::onboarding::Page::Onboarding, window, cx)
-            })
-        })?;
-        fx.wait("second onboarding context", |fx| {
-            fx.read(|root, cx| {
-                root.onboarding()
-                    .is_some_and(|page| !page.read(cx).loading())
-            })
-        })?;
-        for _ in 0..15 {
-            fx.keys("tab")?;
-        }
-        fx.keys("enter")?;
-        ensure!(fx.read(|root, cx| root.onboarding().unwrap().read(cx).confirming_skip()));
-        shot(&mut fx, "onboarding-skip-dialog")?;
-        fx.keys("escape")?;
-        ensure!(!fx.read(|root, cx| root.onboarding().unwrap().read(cx).confirming_skip()));
-        ensure!(host.writes.lock().unwrap().len() == 1);
+        let directory = tempfile::tempdir()?;
+        let executable = std::env::current_exe()?;
+        let shim = directory.path().join("codex-fixture");
+        let home = directory.path().join("home");
+        let transcript = directory.path().join("replacement.jsonl");
+        let log = directory.path().join("replacement.log");
+        std::fs::create_dir(&home)?;
+        std::fs::write(
+            &shim,
+            "#!/bin/sh\nexec \"$CGX_BEDROCK_TEST_BIN\" --exact proxy --nocapture --quiet\n",
+        )?;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o700))?;
+        let mut replacement = script(None, |_| {})?;
+        replacement.extend(exchange(
+            "account/bedrock/checkGovCloudRequirements",
+            json!({"isGovCloud":true}),
+        ));
+        std::fs::write(
+            &transcript,
+            replacement
+                .iter()
+                .map(|line| format!("{line}\n"))
+                .collect::<String>(),
+        )?;
+        std::fs::write(&log, "")?;
+        let status = std::process::Command::new(&executable)
+            .args([
+                "--exact",
+                "signin_checks::bedrock_restart_requires_warning_confirmation",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("CGX_BEDROCK_REPLAY_CHILD", "1")
+            .env("CGX_BEDROCK_TEST_BIN", &executable)
+            .env("CGX_PROXY_SCRIPT", &transcript)
+            .env("CGX_PROXY_LOG", &log)
+            .env("CODEX_BIN", &shim)
+            .env("CODEX_HOME", &home)
+            .env("CODEX_API_BASE_URL", "http://127.0.0.1:1")
+            .status()?;
+        ensure!(status.success(), "Isolated Bedrock replay failed: {status}");
         Ok(())
     }
 
-    #[test]
-    fn first_run_preserves_back_bounds_and_finishes_after_all_steps() -> Result<()> {
-        common::install_panic_hook();
-        let mut fx = Fx::fixed_clock()?;
-        let shell = fx.read(|root, _| root.shell().clone());
-        shell.update(&mut fx.cx, |shell, cx| {
-            shell.sidebar_open = false;
-            cx.notify();
+    fn bedrock_warning_replay() -> Result<()> {
+        use ui::screens::signin::{Options, bedrock::GovCloud};
+
+        let mut lines = script(None, signed_out)?;
+        lines.extend(exchange(
+            "configRequirements/read",
+            json!({"requirements":{"allowedLoginMethods":["api","chatgpt"]}}),
+        ));
+        lines.extend(exchange(
+            "account/bedrock/discover",
+            json!({"profiles":[],"environmentCredentials":[{"region":"us-gov-west-1"}]}),
+        ));
+        lines.extend(exchange("account/bedrock/setup", json!({})));
+        let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+        fx.wait("Bedrock sign-in policy", |fx| {
+            matches!(
+                policy(fx),
+                Some(Policy::Ready {
+                    api: true,
+                    chatgpt: true
+                })
+            )
+        })?;
+        fx.root.update(&mut fx.cx, |root, cx| {
+            root.login().unwrap().update(cx, |login, cx| {
+                login.set_options(
+                    Options {
+                        bedrock: true,
+                        ..Options::default()
+                    },
+                    cx,
+                )
+            });
         });
-        let root = fx.root.clone();
-        fx.cx.update_window(fx.window, |_, window, cx| {
-            root.update(cx, |root, cx| {
-                root.show_onboarding(ui::screens::onboarding::Page::FirstRun, window, cx)
+        let original_bridge =
+            fx.read(|_, cx| cx.global::<ui::screens::settings::AppServer>().0.clone());
+        fx.keys("tab tab tab enter")?;
+        fx.keys("tab tab tab enter")?;
+        fx.wait("Bedrock discovery request", |fx| {
+            fx.sent().is_ok_and(|requests| {
+                requests
+                    .iter()
+                    .any(|request| request["method"] == "account/bedrock/discover")
             })
         })?;
-        fx.hover((768., 6.))?;
-        shot(&mut fx, "first-run-0")?;
-        fx.click((500., 770.))?;
-        fx.click((828., 770.))?;
-        fx.click((500., 770.))?;
-        for step in 0..4 {
-            ensure!(fx.route() == app::Route::Onboarding(ui::screens::onboarding::Page::FirstRun));
-            if step > 0 {
-                fx.hover((768., 6.))?;
-                shot(&mut fx, &format!("first-run-{step}"))?;
-            }
-            fx.click((828., 770.))?;
-        }
-        fx.wait("first-run completion", |fx| fx.route() == app::Route::Home)?;
-        ensure!(fx.read(|_, cx| {
-            cx.global::<app::host_settings::Settings>()
-                .read_all()
-                .get("viewed2025-09-15-nux")
-                == Some(&json!(true))
-        }));
+        fx.advance(std::time::Duration::ZERO)?;
+        fx.keys("tab enter")?;
+        fx.keys("enter")?;
+        fx.wait("Bedrock replacement and GovCloud warning", |fx| {
+            fx.read(|root, cx| {
+                !std::sync::Arc::ptr_eq(
+                    &original_bridge,
+                    &cx.global::<ui::screens::settings::AppServer>().0,
+                ) && root.login().is_some_and(|login| {
+                    login.read(cx).bedrock_warning() == Some(GovCloud::Warning)
+                })
+            })
+        })?;
+        ensure!(fx.read(|root, _| root.signed_out()));
+        shot(&mut fx, "bedrock-govcloud-warning")?;
+        fx.keys("tab enter")?;
+        fx.wait("explicit Bedrock confirmation", |fx| {
+            fx.read(|root, _| !root.signed_out())
+        })?;
         Ok(())
     }
 }

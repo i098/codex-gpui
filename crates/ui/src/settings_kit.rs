@@ -1,3 +1,6 @@
+mod select;
+pub use select::{Select, Selected};
+
 use crate::{composer::popover, focus, icon::icon, text};
 use gpui::{
     Anchor, App, Context, Div, ElementId, EventEmitter, FocusHandle, Focusable, InteractiveElement,

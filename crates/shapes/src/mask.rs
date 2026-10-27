@@ -30,10 +30,12 @@ pub(crate) fn paint_opacity(alpha: u8, bounds: Bounds<Pixels>, window: &mut Wind
 pub(crate) fn paint_top_fade(fade: Pixels, bounds: Bounds<Pixels>, window: &mut Window, cx: &App) {
     let s = window.scale_factor();
     let dev = |v: Pixels| (f32::from(v) * s).round() as i32;
-    let (x0, y0, fade) = (dev(bounds.left()), dev(bounds.top()), dev(fade));
+    let (x0, y0) = (dev(bounds.left()), dev(bounds.top()));
+    // The mask layer's gradient starts at its snapped origin and runs the unrounded length.
+    let fade = f32::from(fade) * s;
     let (w, h) = (
         dev(bounds.right()) - x0,
-        fade.min(dev(bounds.bottom()) - y0),
+        (fade.ceil() as i32).min(dev(bounds.bottom()) - y0),
     );
     if w <= 0 || h <= 0 {
         return;
@@ -43,7 +45,7 @@ pub(crate) fn paint_top_fade(fade: Pixels, bounds: Bounds<Pixels>, window: &mut 
         // fade are opaque and need no sprite.
         let blits = (0..h)
             .flat_map(|y| {
-                let alpha = ((y as f32 + 0.5) / fade as f32 * 255.).round() as u8;
+                let alpha = ((y as f32 + 0.5) / fade * 255.).round() as u8;
                 std::iter::repeat_n([alpha, DST_IN, 0, MASK] as Blits, w as usize)
             })
             .collect();
@@ -78,46 +80,6 @@ pub(crate) fn paint_x_fade(
         let blits = row.repeat(h as usize);
         ([x0, y0, w, h], blits)
     });
-    paint_sprites(&sprites, Hsla::default(), [0, 0], window, cx);
-}
-
-pub(crate) fn paint_radial_fade(
-    stops: [(f32, f32); 3],
-    bounds: Bounds<Pixels>,
-    window: &mut Window,
-    cx: &App,
-) {
-    let scale = window.scale_factor();
-    let dev = |value: Pixels| (f32::from(value) * scale).round() as i32;
-    let (x0, y0) = (dev(bounds.left()), dev(bounds.top()));
-    let (width, height) = (dev(bounds.right()) - x0, dev(bounds.bottom()) - y0);
-    if width <= 0 || height <= 0 {
-        return;
-    }
-    let sprites = sprites(
-        format!("radial_fade {x0} {y0} {width} {height} {stops:?}"),
-        || {
-            let mut blits = Vec::with_capacity(width as usize * height as usize);
-            for y in 0..height {
-                let dy = (y as f32 + 0.5 - height as f32 / 2.)
-                    / (height as f32 * std::f32::consts::FRAC_1_SQRT_2);
-                for x in 0..width {
-                    let dx = (x as f32 + 0.5 - width as f32 / 2.)
-                        / (width as f32 * std::f32::consts::FRAC_1_SQRT_2);
-                    let radius = dx.hypot(dy);
-                    let [start, end] = if radius < stops[1].0 {
-                        [stops[0], stops[1]]
-                    } else {
-                        [stops[1], stops[2]]
-                    };
-                    let progress = ((radius - start.0) / (end.0 - start.0)).clamp(0., 1.);
-                    let alpha = ((start.1 + (end.1 - start.1) * progress) * 255.).round() as u8;
-                    blits.push([alpha, DST_IN, 0, MASK] as Blits);
-                }
-            }
-            ([x0, y0, width, height], blits)
-        },
-    );
     paint_sprites(&sprites, Hsla::default(), [0, 0], window, cx);
 }
 

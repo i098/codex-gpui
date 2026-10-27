@@ -408,6 +408,8 @@ pub enum LoginEvent {
         provider: Provider,
         email: Option<String>,
     },
+    /// The sign-in requirements are read and the screen shows its methods.
+    MethodsLoaded,
     Authenticated,
     RestartBedrock {
         region: String,
@@ -498,9 +500,10 @@ impl EventEmitter<LoginEvent> for Login {}
 
 impl Login {
     pub fn new(cx: &mut Context<Self>) -> Self {
+        let text_color = login_theme(cx).text;
         let api_key = cx.new(|cx| {
             let mut field = Composer::settings_field("sk-…", "", false, cx);
-            field.set_compact_field(cx);
+            field.set_compact_field(text_color, cx);
             field.set_field_label("OpenAI API key", cx);
             field
         });
@@ -543,6 +546,11 @@ impl Login {
 
     pub fn options(&self) -> &Options {
         &self.options
+    }
+
+    pub fn set_browser_url(&mut self, url: String, cx: &mut Context<Self>) {
+        self.login_url = Some(url);
+        cx.notify();
     }
 
     pub fn set_browser_loading(&mut self, loading: bool, cx: &mut Context<Self>) {
@@ -606,6 +614,7 @@ impl Login {
                 if !policy.permits_api() {
                     this.stage = Stage::Welcome;
                 }
+                cx.emit(LoginEvent::MethodsLoaded);
                 cx.notify();
             })
             .ok();
@@ -648,6 +657,7 @@ impl Login {
         };
         let bridge = bridge.clone();
         self.pending = true;
+        self.login_url = None;
         self.restart_blocked = true;
         self.error = None;
         self.attempt += 1;
@@ -665,7 +675,6 @@ impl Login {
                     Ok(value) => match (value["loginId"].as_str(), value["authUrl"].as_str()) {
                         (Some(id), Some(url)) => {
                             this.login_id = Some(id.to_owned());
-                            this.login_url = Some(url.to_owned());
                             cx.emit(LoginEvent::OpenBrowser { url: url.to_owned(), provider, email });
                         }
                         _ => { this.pending = false; this.error = Some("Sign-in failed: invalid sign-in response".into()); }
@@ -732,12 +741,19 @@ impl Login {
                 self.stage = Stage::OtherMethods;
                 self.error = None;
             }
-            Command::BedrockMethod(method) => self.choose_bedrock(method, window, cx),
-            Command::BedrockChoices => self.bedrock_choices(cx),
-            Command::BedrockSubmit => self.submit_bedrock(cx),
-            Command::BedrockBack => self.bedrock_back(cx),
-            Command::BedrockRetry => self.bedrock_retry(cx),
-            Command::BedrockFinish if !self.pending => cx.emit(LoginEvent::Authenticated),
+            Command::BedrockMethod(_)
+            | Command::BedrockChoices
+            | Command::BedrockSubmit
+            | Command::BedrockBack
+            | Command::BedrockRetry
+            | Command::BedrockFinish => self.bedrock_command(command, window, cx),
+            _ => self.setup_command(command, window, cx),
+        }
+        cx.notify();
+    }
+
+    fn setup_command(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
+        match command {
             Command::ShowApiKey if self.policy.permits_api() => {
                 self.stage = Stage::ApiKey;
                 self.error = None;
@@ -772,7 +788,6 @@ impl Login {
             Command::Retry => self.load_policy(cx),
             _ => {}
         }
-        cx.notify();
     }
 
     fn button(
@@ -789,30 +804,7 @@ impl Login {
         let api_form =
             self.stage == Stage::ApiKey && matches!(command, Command::Submit | Command::Back);
         let hovered = self.hovered_button == Some(id);
-        let color = match style {
-            Style::Primary => t.text_inverse,
-            Style::Link if !hovered => t.text_description,
-            Style::Link => t.text,
-            Style::Outline => t.text,
-        };
-        let (fill, border) = match style {
-            Style::Primary => (
-                Some(if hovered {
-                    t.text.opacity(0.8)
-                } else {
-                    t.button_primary_solid
-                }),
-                api_form.then_some((px(1.), t.border)),
-            ),
-            Style::Outline if api_form => {
-                (Some(t.text.opacity(if hovered { 0.1 } else { 0.05 })), None)
-            }
-            Style::Outline => (
-                Some(if hovered { t.ghost_hover } else { t.surface }),
-                Some((px(1.), t.border)),
-            ),
-            Style::Link => (None, None),
-        };
+        let color = style.color(hovered, &t);
         let mut button = div()
             .id(id)
             .role(gpui::Role::Button)
@@ -835,17 +827,7 @@ impl Login {
             .text_color(color)
             .on_click(cx.listener(move |this, _, window, cx| this.command(command, window, cx)))
             .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-                let next = if *hovered {
-                    Some(id)
-                } else if this.hovered_button == Some(id) {
-                    None
-                } else {
-                    return;
-                };
-                if this.hovered_button != next {
-                    this.hovered_button = next;
-                    cx.notify();
-                }
+                this.hover_button(id, *hovered, cx);
             }))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                 let key = &event.keystroke;
@@ -860,35 +842,56 @@ impl Login {
         if matches!(style, Style::Link) {
             button = button.h(px(36.)).w_auto().px(px(8.));
         } else {
-            button = button.child(shapes::decoration(shapes::Decoration {
-                radius: gpui::Corners::all(Theme::RADIUS_FULL),
-                corner: shapes::Corner::Round,
-                fill,
-                border,
-                ..Default::default()
-            }));
+            button = button.child(shapes::decoration(style.decoration(api_form, hovered, &t)));
         }
         let label = div()
             .text_size(px(14.))
             .line_height(px(if api_form { 18. } else { 20. }))
             .font_weight(gpui::FontWeight(if api_form { 430. } else { 500. }))
             .whitespace_nowrap()
-            .child(label)
-            .when(matches!(style, Style::Link), |label| label.underline());
-        if matches!(command, Command::Start(Provider::SignIn)) && matches!(style, Style::Primary) {
-            button = button.child(icon("signin-provider", 24., color));
-        }
-        if let Command::Start(provider @ (Provider::Google | Provider::Microsoft)) = command {
-            let asset = if provider == Provider::Google {
-                "icons/signin-google.svg"
-            } else {
-                "icons/signin-microsoft.svg"
-            };
-            button = button.child(gpui::img(asset).size(px(20.)).flex_none());
-        }
+            .when(matches!(style, Style::Link), |link| {
+                link.relative().child(underline(label.clone()))
+            })
+            .child(label);
+        let button = button.children(command.icon(style, color));
         let focus = focus::handle(id, 0, window, cx);
         focus::ring(button.child(label), &focus, Theme::RADIUS_FULL, px(2.), cx)
     }
+}
+
+/// Blink's auto `text-decoration: underline` under one line of `text`, painted before the text:
+/// `max(1, font size / 10)` device px thick, truncated to whole px, its top
+/// `ceil(thickness / 2)` device px below the baseline. Ink skipping is not drawn.
+fn underline(text: SharedString) -> impl IntoElement {
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let style = window.text_style();
+            let size = style.font_size.to_pixels(window.rem_size());
+            let run = style.to_run(text.len());
+            let line = window
+                .text_system()
+                .shape_line(text.clone(), size, &[run], None);
+            let scale = window.scale_factor();
+            let thickness = (f32::from(size) * scale / 10.).max(1.);
+            let gap = (thickness / 2.).ceil();
+            // The text's baseline: Blink floors the half leading to whole device px.
+            let leading = f32::from(bounds.size.height - line.ascent - line.descent) * scale;
+            let below = px(((leading / 2.).floor() + gap) / scale);
+            let top = bounds.top() + line.ascent + below;
+            window.paint_underline(
+                gpui::point(bounds.left(), top),
+                line.width,
+                &gpui::UnderlineStyle {
+                    color: Some(style.color),
+                    thickness: px(thickness.trunc() / scale),
+                    wavy: false,
+                },
+            );
+        },
+    )
+    .absolute()
+    .inset_0()
 }
 
 fn cancel(id: String, cx: &App) {
@@ -923,104 +926,451 @@ impl Render for Login {
             return frame.child(self.snake_view(cx));
         }
         if let Some(message) = self.policy.message() {
-            let retry = self.policy != Policy::Loading;
-            return frame.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(12.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .when(!retry, |row| {
-                                row.child(icon("sidebar-cmd-spinner", 16., t.text))
-                            })
-                            .child(text(message, 14., 20., 400., t.text_description)),
-                    )
-                    .when(retry, |body| {
-                        body.child(self.button(
-                            "signin-retry",
-                            "Retry",
-                            Command::Retry,
-                            Style::Outline,
-                            window,
-                            cx,
-                        ))
-                    }),
-            );
+            return self.requirements_view(frame, message, window, cx);
         }
         if self.bedrock.is_some() {
             return frame.child(self.bedrock_view(window, cx));
         }
         if self.pending && self.stage == Stage::Welcome {
-            let controls = div()
-                .w_full()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(px(24.))
-                .child(
-                    self.button(
-                        "cancel",
-                        "Cancel sign-in",
-                        Command::Cancel,
-                        Style::Outline,
-                        window,
-                        cx,
-                    )
-                    .h(px(42.))
-                    .text_color(t.text_description),
-                )
-                .when(self.options.browser_help, |controls| {
-                    controls.child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.))
-                            .child(text(
-                                "Browser didn't open?",
-                                14.,
-                                20.,
-                                400.,
-                                t.text_description,
-                            ))
-                            .child(
-                                self.button(
-                                    "copy-signin-link",
-                                    "Copy sign-in link",
-                                    Command::CopyLink,
-                                    Style::Link,
-                                    window,
-                                    cx,
-                                )
-                                .when(self.login_url.is_none(), |button| button.opacity(0.5)),
-                            ),
-                    )
-                });
-            return frame.pb(px(48.)).child(
-                div()
-                    .w(px(340.))
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .gap(px(32.))
-                    .child(icon("signin-chatgpt", 40., t.text))
-                    .child(text(
-                        "Continue signing in with your browser",
-                        14.,
-                        20.,
-                        400.,
-                        t.text_description,
-                    ))
-                    .child(controls),
-            );
+            return self.browser_pending_view(frame, window, cx);
         }
         if self.browser_loading && self.stage == Stage::Welcome {
             return frame.child(text("Loading…", 14., 20., 400., t.text_description));
         }
+        let header = self.login_header(window, cx);
+        let body = self.signin_controls(window, cx);
+        frame.pb(px(24.)).child(
+            // The original composites this column: its text, icons and pill edges blend
+            // into a transparent tile that is then drawn over the surface.
+            div()
+                .w(px(340.))
+                .layer()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(32.))
+                .child(header)
+                .child(body)
+                .children(
+                    self.error
+                        .clone()
+                        .map(|error| text(error, 14., 20., 400., t.text_error).whitespace_normal()),
+                ),
+        )
+    }
+}
+
+impl Style {
+    fn decoration(self, api_form: bool, hovered: bool, t: &Theme) -> shapes::Decoration {
+        let style = self;
+        let (fill, border) = match style {
+            Style::Primary => (
+                Some(if hovered {
+                    t.text.opacity(0.8)
+                } else {
+                    t.button_primary_solid
+                }),
+                Some((
+                    px(1.),
+                    if api_form {
+                        t.border
+                    } else {
+                        gpui::transparent_black()
+                    },
+                )),
+            ),
+            Style::Outline if api_form => {
+                (Some(t.text.opacity(if hovered { 0.1 } else { 0.05 })), None)
+            }
+            Style::Outline => (
+                Some(if hovered { t.ghost_hover } else { t.surface }),
+                Some((px(1.), t.border)),
+            ),
+            Style::Link => (None, None),
+        };
+        shapes::Decoration {
+            radius: gpui::Corners::all(Theme::RADIUS_FULL),
+            corner: shapes::Corner::Round,
+            fill,
+            border,
+            ..Default::default()
+        }
+    }
+}
+
+impl Login {
+    fn account_choices(&self, mut body: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = login_theme(cx);
+        for (index, profile) in self.options.browser_profiles.iter().take(3).enumerate() {
+            let email = profile.email.clone();
+            let name = profile
+                .name
+                .as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .unwrap_or(&email);
+            let avatar = if let Some(url) = &profile.avatar_url {
+                gpui::img(SharedString::from(url.clone()))
+                    .size(px(40.))
+                    .rounded_full()
+                    .into_any_element()
+            } else {
+                div()
+                    .size(px(40.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(t.button_secondary)
+                    .child(text(
+                        name.chars()
+                            .next()
+                            .map(|letter| letter.to_uppercase().to_string())
+                            .unwrap_or_default(),
+                        16.,
+                        24.,
+                        500.,
+                        t.text,
+                    ))
+                    .into_any_element()
+            };
+            let control = div()
+                .id(("browser-account", index))
+                .role(gpui::Role::Button)
+                .aria_label(if profile.name.is_some() {
+                    format!("Continue as {name}, {email}")
+                } else {
+                    format!("Continue as {name}")
+                })
+                .cursor_pointer()
+                .relative()
+                .w_full()
+                .h(px(64.))
+                .border_1()
+                .border_color(t.border)
+                .rounded_full()
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .px(px(16.))
+                .child(avatar)
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .child(text(name.to_owned(), 14., 20., 500., t.text))
+                        .when(profile.name.is_some(), |label| {
+                            label.child(text(email.clone(), 13., 20., 400., t.text_description))
+                        }),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.command(Command::Recognized(index), window, cx)
+                }))
+                .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        this.command(Command::Recognized(index), window, cx);
+                        cx.stop_propagation();
+                    }
+                }));
+            let handle = focus::handle(("browser-account", index), 0, window, cx);
+            body = body.child(focus::ring(
+                control,
+                &handle,
+                Theme::RADIUS_FULL,
+                px(2.),
+                cx,
+            ));
+        }
+        body
+    }
+
+    fn signin_controls(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let mut body = div().w_full().flex().flex_col().items_center().gap(px(12.));
+        if self.stage == Stage::ApiKey {
+            body = self.api_controls(body, window, cx);
+        } else if self.stage == Stage::OtherMethods {
+            body = body
+                .child(self.button(
+                    "api-key",
+                    "OpenAI API Key",
+                    Command::ShowApiKey,
+                    Style::Outline,
+                    window,
+                    cx,
+                ))
+                .child(self.button(
+                    "amazon-bedrock",
+                    "Use Amazon Bedrock",
+                    Command::ShowBedrock,
+                    Style::Outline,
+                    window,
+                    cx,
+                ))
+                .child(self.button("other-back", "Back", Command::Back, Style::Link, window, cx));
+        } else {
+            if self.policy.permits_chatgpt() {
+                body = self.chatgpt_controls(body, window, cx);
+            }
+            if self.policy.permits_api() {
+                body = body.child(self.button(
+                    "another-way",
+                    if !self.options.bedrock
+                        && (self.options.explicit_api_key || !self.policy.permits_chatgpt())
+                    {
+                        "Sign in with an API key"
+                    } else {
+                        "Sign in another way"
+                    },
+                    if self.options.bedrock {
+                        Command::ShowOtherMethods
+                    } else {
+                        Command::ShowApiKey
+                    },
+                    Style::Outline,
+                    window,
+                    cx,
+                ));
+            }
+            if self.policy.permits_chatgpt() {
+                body = body.child(self.button(
+                    "sign-up",
+                    "Sign up",
+                    Command::Start(Provider::SignUp),
+                    Style::Link,
+                    window,
+                    cx,
+                ));
+            }
+        }
+        body
+    }
+
+    fn chatgpt_controls(&self, mut body: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = login_theme(cx);
+        body = self.account_choices(body, window, cx);
+        let recognized = !self.options.browser_profiles.is_empty();
+        if recognized {
+            body = body.child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap(px(16.))
+                    .py(px(8.))
+                    .child(div().flex_1().h(px(1.)).bg(t.border))
+                    .child(text("OR", 12., 16., 500., t.text_description))
+                    .child(div().flex_1().h(px(1.)).bg(t.border)),
+            );
+        }
+        body = body.child(self.button(
+            "continue",
+            if recognized {
+                "Use another account"
+            } else {
+                "Continue to sign in"
+            },
+            Command::Start(if recognized {
+                Provider::OtherAccount
+            } else {
+                Provider::SignIn
+            }),
+            if recognized {
+                Style::Outline
+            } else {
+                Style::Primary
+            },
+            window,
+            cx,
+        ));
+        if self.options.providers {
+            body = body
+                .child(self.button(
+                    "google",
+                    "Continue with Google",
+                    Command::Start(Provider::Google),
+                    Style::Outline,
+                    window,
+                    cx,
+                ))
+                .child(self.button(
+                    "microsoft",
+                    "Continue with Microsoft",
+                    Command::Start(Provider::Microsoft),
+                    Style::Outline,
+                    window,
+                    cx,
+                ));
+        }
+        body
+    }
+}
+
+impl Command {
+    fn icon(self, style: Style, color: gpui::Hsla) -> Option<gpui::AnyElement> {
+        match self {
+            Command::Start(Provider::SignIn) if matches!(style, Style::Primary) => {
+                Some(icon("signin-provider", 24., color).into_any_element())
+            }
+            Command::Start(Provider::Google) => Some(
+                gpui::img("icons/signin-google.svg")
+                    .size(px(20.))
+                    .flex_none()
+                    .into_any_element(),
+            ),
+            Command::Start(Provider::Microsoft) => Some(
+                gpui::img("icons/signin-microsoft.svg")
+                    .size(px(20.))
+                    .flex_none()
+                    .into_any_element(),
+            ),
+            _ => None,
+        }
+    }
+}
+
+impl Style {
+    fn color(self, hovered: bool, t: &Theme) -> gpui::Hsla {
+        match self {
+            Style::Primary => t.text_inverse,
+            Style::Link if !hovered => t.text_description,
+            Style::Link | Style::Outline => t.text,
+        }
+    }
+}
+
+impl Login {
+    fn bedrock_command(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
+        match command {
+            Command::BedrockMethod(method) => self.choose_bedrock(method, window, cx),
+            Command::BedrockChoices => self.bedrock_choices(cx),
+            Command::BedrockSubmit => self.submit_bedrock(cx),
+            Command::BedrockBack => self.bedrock_back(cx),
+            Command::BedrockRetry => self.bedrock_retry(cx),
+            Command::BedrockFinish if !self.pending => cx.emit(LoginEvent::Authenticated),
+            _ => {}
+        }
+    }
+
+    fn hover_button(&mut self, id: &'static str, hovered: bool, cx: &mut Context<Self>) {
+        let next = if hovered {
+            Some(id)
+        } else if self.hovered_button == Some(id) {
+            None
+        } else {
+            return;
+        };
+        if self.hovered_button != next {
+            self.hovered_button = next;
+            cx.notify();
+        }
+    }
+
+    fn requirements_view(
+        &self,
+        frame: Div,
+        message: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let t = login_theme(cx);
+        let retry = self.policy != Policy::Loading;
+        frame.child(
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(12.))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .when(!retry, |row| {
+                            row.child(icon("sidebar-cmd-spinner", 16., t.text))
+                        })
+                        .child(text(message, 14., 20., 400., t.text_description)),
+                )
+                .when(retry, |body| {
+                    body.child(self.button(
+                        "signin-retry",
+                        "Retry",
+                        Command::Retry,
+                        Style::Outline,
+                        window,
+                        cx,
+                    ))
+                }),
+        )
+    }
+
+    fn browser_pending_view(&self, frame: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = login_theme(cx);
+        let controls = div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(24.))
+            .child(
+                self.button(
+                    "cancel",
+                    "Cancel sign-in",
+                    Command::Cancel,
+                    Style::Outline,
+                    window,
+                    cx,
+                )
+                .h(px(42.))
+                .text_color(t.text_description),
+            )
+            .when(self.options.browser_help, |controls| {
+                controls.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .child(text(
+                            "Browser didn't open?",
+                            14.,
+                            20.,
+                            400.,
+                            t.text_description,
+                        ))
+                        .child(
+                            self.button(
+                                "copy-signin-link",
+                                "Copy sign-in link",
+                                Command::CopyLink,
+                                Style::Link,
+                                window,
+                                cx,
+                            )
+                            .when(self.login_url.is_none(), |button| button.opacity(0.5)),
+                        ),
+                )
+            });
+        frame.pb(px(48.)).child(
+            div()
+                .w(px(340.))
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(32.))
+                .child(icon("signin-chatgpt", 40., t.text))
+                .child(text(
+                    "Continue signing in with your browser",
+                    14.,
+                    20.,
+                    400.,
+                    t.text_description,
+                ))
+                .child(controls),
+        )
+    }
+
+    fn login_header(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = login_theme(cx);
         let heading = if self.stage == Stage::OtherMethods {
             "Sign in another way"
         } else if !self.policy.permits_chatgpt() {
@@ -1054,7 +1404,7 @@ impl Render for Login {
             px(2.),
             cx,
         );
-        let header = div()
+        div()
             .flex()
             .flex_col()
             .items_center()
@@ -1077,281 +1427,75 @@ impl Render for Login {
                         t.text_description,
                     ))
                 },
-            );
-        let mut body = div().w_full().flex().flex_col().items_center().gap(px(12.));
-        if self.stage == Stage::ApiKey {
-            let field = self.api_key.clone();
-            body = body
-                .items_start()
-                .child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_col()
-                        .gap(px(8.))
-                        .child(text("OpenAI API key", 14., 21., 500., t.text))
-                        .child(
-                            div()
-                                .w_full()
-                                .capture_action(cx.listener(
-                                    |this, _: &crate::composer::Submit, _, cx| {
-                                        this.submit(cx);
-                                        cx.stop_propagation();
-                                    },
-                                ))
-                                .child(field),
-                        ),
-                )
-                .when(self.options.api_key_help, |body| {
-                    body.child(self.button(
-                        "create-api-key",
-                        "Don’t have an API key? Create one here.",
-                        Command::CreateKey,
-                        Style::Link,
-                        window,
-                        cx,
-                    ))
-                })
-                .child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .gap(px(8.))
-                        .child(
-                            self.button(
-                                "api-cancel",
-                                "Cancel",
-                                Command::Back,
-                                Style::Outline,
-                                window,
-                                cx,
-                            )
-                            .flex_1(),
-                        )
-                        .child(
-                            self.button(
-                                "api-continue",
-                                "Continue",
-                                Command::Submit,
-                                Style::Primary,
-                                window,
-                                cx,
-                            )
-                            .flex_1()
-                            .when(
-                                self.pending
-                                    || self.api_key.read(cx).field_text().trim().is_empty(),
-                                |button| button.opacity(0.4),
-                            ),
-                        ),
-                );
-        } else if self.stage == Stage::OtherMethods {
-            body = body
-                .child(self.button(
-                    "api-key",
-                    "OpenAI API Key",
-                    Command::ShowApiKey,
-                    Style::Outline,
-                    window,
-                    cx,
-                ))
-                .child(self.button(
-                    "amazon-bedrock",
-                    "Use Amazon Bedrock",
-                    Command::ShowBedrock,
-                    Style::Outline,
-                    window,
-                    cx,
-                ))
-                .child(self.button("other-back", "Back", Command::Back, Style::Link, window, cx));
-        } else {
-            if self.policy.permits_chatgpt() {
-                for (index, profile) in self.options.browser_profiles.iter().take(3).enumerate() {
-                    let email = profile.email.clone();
-                    let name = profile
-                        .name
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|name| !name.is_empty())
-                        .unwrap_or(&email);
-                    let avatar = if let Some(url) = &profile.avatar_url {
-                        gpui::img(SharedString::from(url.clone()))
-                            .size(px(40.))
-                            .rounded_full()
-                            .into_any_element()
-                    } else {
-                        div()
-                            .size(px(40.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_full()
-                            .bg(t.button_secondary)
-                            .child(text(
-                                name.chars()
-                                    .next()
-                                    .map(|letter| letter.to_uppercase().to_string())
-                                    .unwrap_or_default(),
-                                16.,
-                                24.,
-                                500.,
-                                t.text,
-                            ))
-                            .into_any_element()
-                    };
-                    let control = div()
-                        .id(("browser-account", index))
-                        .role(gpui::Role::Button)
-                        .aria_label(if profile.name.is_some() {
-                            format!("Continue as {name}, {email}")
-                        } else {
-                            format!("Continue as {name}")
-                        })
-                        .cursor_pointer()
-                        .relative()
-                        .w_full()
-                        .h(px(64.))
-                        .border_1()
-                        .border_color(t.border)
-                        .rounded_full()
-                        .flex()
-                        .items_center()
-                        .gap(px(12.))
-                        .px(px(16.))
-                        .child(avatar)
-                        .child(
-                            div()
-                                .flex_1()
-                                .flex()
-                                .flex_col()
-                                .child(text(name.to_owned(), 14., 20., 500., t.text))
-                                .when(profile.name.is_some(), |label| {
-                                    label.child(text(
-                                        email.clone(),
-                                        13.,
-                                        20.,
-                                        400.,
-                                        t.text_description,
-                                    ))
-                                }),
-                        )
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.command(Command::Recognized(index), window, cx)
-                        }))
-                        .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-                            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                                this.command(Command::Recognized(index), window, cx);
-                                cx.stop_propagation();
-                            }
-                        }));
-                    let handle = focus::handle(("browser-account", index), 0, window, cx);
-                    body = body.child(focus::ring(
-                        control,
-                        &handle,
-                        Theme::RADIUS_FULL,
-                        px(2.),
-                        cx,
-                    ));
-                }
-                let recognized = !self.options.browser_profiles.is_empty();
-                if recognized {
-                    body = body.child(
+            )
+    }
+
+    fn api_controls(&self, mut body: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = login_theme(cx);
+        let field = self.api_key.clone();
+        body = body
+            .items_start()
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(text("OpenAI API key", 14., 21., 500., t.text))
+                    .child(
                         div()
                             .w_full()
-                            .flex()
-                            .items_center()
-                            .gap(px(16.))
-                            .py(px(8.))
-                            .child(div().flex_1().h(px(1.)).bg(t.border))
-                            .child(text("OR", 12., 16., 500., t.text_description))
-                            .child(div().flex_1().h(px(1.)).bg(t.border)),
-                    );
-                }
-                body = body.child(self.button(
-                    "continue",
-                    if recognized {
-                        "Use another account"
-                    } else {
-                        "Continue to sign in"
-                    },
-                    Command::Start(if recognized {
-                        Provider::OtherAccount
-                    } else {
-                        Provider::SignIn
-                    }),
-                    if recognized {
-                        Style::Outline
-                    } else {
-                        Style::Primary
-                    },
-                    window,
-                    cx,
-                ));
-                if self.options.providers {
-                    body = body
-                        .child(self.button(
-                            "google",
-                            "Continue with Google",
-                            Command::Start(Provider::Google),
-                            Style::Outline,
-                            window,
-                            cx,
-                        ))
-                        .child(self.button(
-                            "microsoft",
-                            "Continue with Microsoft",
-                            Command::Start(Provider::Microsoft),
-                            Style::Outline,
-                            window,
-                            cx,
-                        ));
-                }
-            }
-            if self.policy.permits_api() {
-                body = body.child(self.button(
-                    "another-way",
-                    if !self.options.bedrock
-                        && (self.options.explicit_api_key || !self.policy.permits_chatgpt())
-                    {
-                        "Sign in with an API key"
-                    } else {
-                        "Sign in another way"
-                    },
-                    if self.options.bedrock {
-                        Command::ShowOtherMethods
-                    } else {
-                        Command::ShowApiKey
-                    },
-                    Style::Outline,
-                    window,
-                    cx,
-                ));
-            }
-            if self.policy.permits_chatgpt() {
-                body = body.child(self.button(
-                    "sign-up",
-                    "Sign up",
-                    Command::Start(Provider::SignUp),
+                            .capture_action(cx.listener(
+                                |this, _: &crate::composer::Submit, _, cx| {
+                                    this.submit(cx);
+                                    cx.stop_propagation();
+                                },
+                            ))
+                            .child(field),
+                    ),
+            )
+            .when(self.options.api_key_help, |body| {
+                body.child(self.button(
+                    "create-api-key",
+                    "Don’t have an API key? Create one here.",
+                    Command::CreateKey,
                     Style::Link,
                     window,
                     cx,
-                ));
-            }
-        }
-        frame.pb(px(24.)).child(
-            div()
-                .w(px(340.))
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(px(32.))
-                .child(header)
-                .child(body)
-                .children(
-                    self.error
-                        .clone()
-                        .map(|error| text(error, 14., 20., 400., t.text_error).whitespace_normal()),
-                ),
-        )
+                ))
+            })
+            .child(
+                div()
+                    .w_full()
+                    .flex()
+                    .gap(px(8.))
+                    .child(
+                        self.button(
+                            "api-cancel",
+                            "Cancel",
+                            Command::Back,
+                            Style::Outline,
+                            window,
+                            cx,
+                        )
+                        .flex_1(),
+                    )
+                    .child(
+                        self.button(
+                            "api-continue",
+                            "Continue",
+                            Command::Submit,
+                            Style::Primary,
+                            window,
+                            cx,
+                        )
+                        .flex_1()
+                        .when(
+                            self.pending || self.api_key.read(cx).field_text().trim().is_empty(),
+                            |button| button.opacity(0.4),
+                        ),
+                    ),
+            );
+        body
     }
 }

@@ -360,6 +360,7 @@ impl MacPlatform {
                     os_action,
                     checked,
                     disabled,
+                    hidden,
                 } => {
                     // Note that this is intentionally using earlier bindings, whereas typically
                     // later ones take display precedence. See the discussion on
@@ -389,6 +390,18 @@ impl MacPlatform {
                         Some(gpui::OsAction::Copy) => selector("copy:"),
                         Some(gpui::OsAction::Paste) => selector("paste:"),
                         Some(gpui::OsAction::SelectAll) => selector("selectAll:"),
+                        Some(gpui::OsAction::ShowSubstitutions) => {
+                            selector("orderFrontSubstitutionsPanel:")
+                        }
+                        Some(gpui::OsAction::SmartQuotes) => {
+                            selector("toggleAutomaticQuoteSubstitution:")
+                        }
+                        Some(gpui::OsAction::SmartDashes) => {
+                            selector("toggleAutomaticDashSubstitution:")
+                        }
+                        Some(gpui::OsAction::TextReplacement) => {
+                            selector("toggleAutomaticTextReplacement:")
+                        }
                         // "undo:" and "redo:" are always disabled in our case, as
                         // we don't have a NSTextView/NSTextField to enable them on.
                         Some(gpui::OsAction::Undo) => selector("handleGPUIMenuItem:"),
@@ -458,10 +471,18 @@ impl MacPlatform {
                         item.setState_(NSVisualEffectState::Active);
                     }
                     item.setEnabled_(if *disabled { NO } else { YES });
+                    let _: () = msg_send![item, setHidden: if *hidden { YES } else { NO }];
+                    let _: () = msg_send![item, setAllowsKeyEquivalentWhenHidden: if *hidden { YES } else { NO }];
 
-                    let tag = actions.len() as NSInteger;
-                    let _: () = msg_send![item, setTag: tag];
-                    actions.push(action.boxed_clone());
+                    // ponytail: linear lookup over app and dock actions; index if menus become large.
+                    let tag = actions
+                        .iter()
+                        .position(|entry| entry.partial_eq(action.as_ref()))
+                        .unwrap_or_else(|| {
+                            actions.push(action.boxed_clone());
+                            actions.len() - 1
+                        });
+                    let _: () = msg_send![item, setTag: tag as NSInteger];
                     item
                 }
                 MenuItem::Submenu(Menu {

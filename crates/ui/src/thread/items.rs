@@ -2,11 +2,119 @@ use super::*;
 use base64::Engine as _;
 use gpui::{Image, ImageFormat};
 
+#[path = "items/automation.rs"]
+mod automation;
+use automation::automation_item;
+pub(super) use automation::cache_automation_result;
+
 pub(super) type McpImages = RefCell<HashMap<String, Vec<(usize, Arc<Image>)>>>;
 
-/// Right-aligned user message: `bg-user-message`, 22 px squircle, at most 70% wide.
-pub(super) fn user_bubble(message: &str, t: &Theme) -> Div {
-    div().flex().flex_col().items_end().pb(px(30.)).child(
+/// Right-aligned user message: `bg-user-message`, 22 px squircle, at most 70% wide. A message
+/// that wraps to more than 20 lines collapses to 19 with `Show more`
+/// (`collapsible-user-message-content`, `collapsedLineCount` 20, ellipsis indicator).
+pub(super) fn user_bubble(
+    id: &SharedString,
+    message: &str,
+    find: Option<&FindPaint>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Div {
+    const COLLAPSED_LINES: usize = 20;
+    const LINE: f32 = 22.75;
+    const CONTROLS_WIDTH: f32 = 187.73;
+    let t = cx.theme().clone();
+    let width = markdown::line_width() * 0.7 - 32.;
+    let lines = if width > 0. {
+        let run = TextRun {
+            len: message.len(),
+            font: gpui::Font {
+                weight: FontWeight(430.),
+                ..font(SANS)
+            },
+            color: white(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        window
+            .text_system()
+            .shape_text(
+                message.to_owned().into(),
+                px(14.),
+                &[run],
+                Some(px(width)),
+                None,
+            )
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|line| line.wrap_boundaries.len() + 1)
+                    .sum::<usize>()
+            })
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    // The hover controls row sits 4 px below the bubble. Its time label wraps to two lines
+    // (row 32 px instead of 26) once the column is narrower than the row's widest layout,
+    // 187.73 px in the original's wide state.
+    let line = markdown::line_width();
+    let reserve = if line > 0. && line < CONTROLS_WIDTH {
+        36.
+    } else {
+        30.
+    };
+    let collapsible = lines > COLLAPSED_LINES;
+    let expanded =
+        window.use_keyed_state(SharedString::from(format!("{id}-expanded")), cx, |_, _| {
+            false
+        });
+    let collapsed = collapsible && !*expanded.read(cx);
+    let body = div()
+        .text_size(px(14.))
+        .line_height(px(LINE))
+        .font_weight(FontWeight(430.))
+        .text_color(white())
+        .when(collapsed, |d| {
+            // `collapsible-user-message-content` sets `max-height: ceil(line-height * 19)`.
+            d.max_h(px((LINE * (COLLAPSED_LINES - 1) as f32).ceil()))
+                .line_clamp(COLLAPSED_LINES - 1)
+        })
+        .child(match find {
+            Some(find) => find.text(message, 0).into_any_element(),
+            None => message.to_owned().into_any_element(),
+        });
+    let toggle = collapsible.then(|| {
+        let state = expanded.clone();
+        div()
+            .id(SharedString::from(format!("{id}-toggle")))
+            .role(gpui::Role::Button)
+            .aria_label(if collapsed { "Show more" } else { "Show less" })
+            .mt(px(6.))
+            .h(px(21.))
+            .self_start()
+            .flex()
+            .items_center()
+            .gap(px(4.))
+            .cursor_pointer()
+            .on_click(move |_, _, cx| {
+                state.update(cx, |open, cx| {
+                    *open = !*open;
+                    cx.notify();
+                })
+            })
+            .child(text(
+                if collapsed { "Show more" } else { "Show less" },
+                14.,
+                21.,
+                430.,
+                t.text_tertiary,
+            ))
+            .when(collapsed, |d| {
+                d.child(icon("chevron-down-small", 14., t.text_tertiary))
+            })
+    });
+    div().flex().flex_col().items_end().pb(px(reserve)).child(
         div()
             .relative()
             .max_w(relative(0.7))
@@ -20,11 +128,16 @@ pub(super) fn user_bubble(message: &str, t: &Theme) -> Div {
             }))
             .child(
                 div()
-                    .text_size(px(14.))
-                    .line_height(px(22.75))
-                    .font_weight(FontWeight(430.))
-                    .text_color(white())
-                    .child(message.to_owned()),
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .w_full()
+                            .child(body)
+                            .when(collapsed, |d| d.child(text("…", 14., LINE, 430., white()))),
+                    )
+                    .children(toggle),
             ),
     )
 }
@@ -40,73 +153,82 @@ pub(super) fn wrap_row() -> Div {
 /// in degrees (90 = open). At rest it is the fitted icon; while it turns, the svg path is
 /// rotated about its viewBox centre and rasterized like any icon (no clipping: the path stays
 /// 5.5 px from the centre). The sprite fallback (Linux) rotates the mask instead.
-pub(super) fn disclosure(label: String, angle: f32, window: &Window, t: &Theme) -> Div {
+/// `None` draws the running status without a disclosure control.
+pub(super) fn disclosure(label: String, angle: Option<f32>, window: &Window, t: &Theme) -> Div {
     let color = t.text_tertiary;
-    let chevron = if angle == 0. {
-        icon("thread-chevron-right", 14., color).into_any_element()
-    } else {
-        canvas(
-            |_, _, _| {},
-            move |bounds, (), window, cx| {
-                let path = "icons/thread-chevron-right.svg";
-                let Ok(Some(src)) = cx.asset_source().load(path) else {
-                    return;
-                };
-                // ponytail: one parsed icon per 0.1 deg (at most 900), keyed by the angle.
-                let angle = (angle * 10.).round() / 10.;
-                let (sin, cos) = angle.to_radians().sin_cos();
-                let rotated = String::from_utf8_lossy(&src)
-                    .replacen(
-                        "><path",
-                        &format!(
-                            "><g transform=\"matrix({cos} {sin} {} {cos} {} {})\"><path",
-                            -sin,
-                            10. - 10. * cos + 10. * sin,
-                            10. - 10. * sin - 10. * cos
-                        ),
-                        1,
-                    )
-                    .replacen("</svg>", "</g></svg>", 1);
-                let key = format!("{path}@{angle:.1}");
-                if shapes::paint_icon(
-                    rotated.as_bytes(),
-                    &key,
-                    bounds,
-                    false,
-                    color,
-                    None,
-                    window,
-                    cx,
-                ) {
-                    return;
-                }
-                let scale = window.scale_factor();
-                let center = bounds.center();
-                let matrix = TransformationMatrix::unit()
-                    .translate(center.scale(scale))
-                    .rotate(radians(angle.to_radians()))
-                    .translate(center.scale(-scale));
-                window
-                    .paint_svg(bounds, path.into(), None, matrix, color, cx)
-                    .ok();
-            },
-        )
-        .flex_none()
-        .w(px(14.))
-        .h(px(14.))
-        .into_any_element()
-    };
+    let chevron = angle.map(|angle| {
+        if angle == 0. {
+            icon("thread-chevron-right", 14., color).into_any_element()
+        } else {
+            canvas(
+                |_, _, _| {},
+                move |bounds, (), window, cx| {
+                    let path = "icons/thread-chevron-right.svg";
+                    let Ok(Some(src)) = cx.asset_source().load(path) else {
+                        return;
+                    };
+                    // ponytail: one parsed icon per 0.1 deg (at most 900), keyed by the angle.
+                    let angle = (angle * 10.).round() / 10.;
+                    let (sin, cos) = angle.to_radians().sin_cos();
+                    let rotated = String::from_utf8_lossy(&src)
+                        .replacen(
+                            "><path",
+                            &format!(
+                                "><g transform=\"matrix({cos} {sin} {} {cos} {} {})\"><path",
+                                -sin,
+                                10. - 10. * cos + 10. * sin,
+                                10. - 10. * sin - 10. * cos
+                            ),
+                            1,
+                        )
+                        .replacen("</svg>", "</g></svg>", 1);
+                    let key = format!("{path}@{angle:.1}");
+                    if shapes::paint_icon(
+                        rotated.as_bytes(),
+                        &key,
+                        bounds,
+                        false,
+                        color,
+                        None,
+                        window,
+                        cx,
+                    ) {
+                        return;
+                    }
+                    let scale = window.scale_factor();
+                    let center = bounds.center();
+                    let matrix = TransformationMatrix::unit()
+                        .translate(center.scale(scale))
+                        .rotate(radians(angle.to_radians()))
+                        .translate(center.scale(-scale));
+                    window
+                        .paint_svg(bounds, path.into(), None, matrix, color, cx)
+                        .ok();
+                },
+            )
+            .flex_none()
+            .w(px(14.))
+            .h(px(14.))
+            .into_any_element()
+        }
+    });
+    // In a column narrower than the label and chevron the chevron wraps under the label (the
+    // button's `flex-wrap`, `gap-1` both ways) and the label overflows the column. Beside the
+    // label the row sits 1.3 px below its line box's top (the button's inline baseline).
+    let line = markdown::line_width();
+    let wraps = line > 0. && f32::from(width(window, &label, 14., 430., None)) + 4. + 14. > line;
     div()
         .flex()
         .flex_col()
         .child(
-            div().h(px(22.3)).pt(px(1.3)).child(
+            div().when(!wraps, |d| d.min_h(px(22.3)).pt(px(1.3))).child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_center()
                     .gap(px(4.))
                     .child(measured(window, label, 14., 21., 430., color, None))
-                    .child(chevron),
+                    .children(chevron),
             ),
         )
         .child(
@@ -121,6 +243,7 @@ pub(super) fn disclosure(label: String, angle: f32, window: &Window, t: &Theme) 
 pub(super) fn diff_card(
     turn_id: &str,
     items: &[ThreadItem],
+    focus: &TurnFocus,
     window: &Window,
     t: &Theme,
 ) -> Option<Div> {
@@ -132,6 +255,7 @@ pub(super) fn diff_card(
         })
         .collect();
     let first = changes.first()?;
+    let review_path = first.path.clone();
     let (added, removed) = diff_counts(changes.iter().copied());
     let mut files: Vec<&str> = changes.iter().map(|c| c.path.as_str()).collect();
     files.dedup();
@@ -157,9 +281,12 @@ pub(super) fn diff_card(
             .children(decoration)
             .child(measured(window, label, 13., 18., 430., t.text, None))
     };
+    let engaged = focus.engaged;
+    let card_group = SharedString::from(format!("diff-card-{turn_id}"));
     Some(
         div()
             .relative()
+            .group(card_group.clone())
             .child(shapes::decoration(shapes::Decoration {
                 radius: Corners::all(Theme::RADIUS_LG),
                 corner: shapes::Corner::Squircle,
@@ -174,6 +301,8 @@ pub(super) fn diff_card(
                     .items_center()
                     .gap(px(10.))
                     .p(px(12.))
+                    // The card clips its buttons in a narrow column.
+                    .overflow_hidden()
                     .child(
                         div()
                             .relative()
@@ -201,11 +330,43 @@ pub(super) fn diff_card(
                             .flex()
                             .flex_col()
                             .child(text(title, 14., 21., 500., t.text).text_ellipsis())
-                            .child(
-                                div().h(px(19.5)).pt(px(3.)).overflow_hidden().child(
+                            // `turn-diff-default-subtitle` / `turn-diff-hover-subtitle`: hover or
+                            // focus within the card swaps the counts for `View changes`.
+                            .child({
+                                let default = div().h(px(19.5)).pt(px(3.)).overflow_hidden().child(
                                     crate::screens::diff::panel::stats(added, removed, 13., t),
-                                ),
-                            ),
+                                );
+                                let hover = div()
+                                    .h(px(19.5))
+                                    .overflow_hidden()
+                                    .items_center()
+                                    .gap(px(4.))
+                                    .child(measured(
+                                        window,
+                                        "View changes",
+                                        13.,
+                                        19.5,
+                                        430.,
+                                        t.text_secondary,
+                                        None,
+                                    ))
+                                    .child(icon("thread-chevron-right", 14., t.text_secondary));
+                                // Both lines occupy the same box; only paint swaps.
+                                let default = if engaged {
+                                    default.invisible()
+                                } else {
+                                    default.group_hover(card_group.clone(), |s| s.invisible())
+                                };
+                                let hover = hover.absolute().top_0().left_0().w_full().flex();
+                                let hover = if engaged {
+                                    hover
+                                } else {
+                                    hover
+                                        .invisible()
+                                        .group_hover(card_group.clone(), |s| s.visible())
+                                };
+                                div().relative().child(default).child(hover)
+                            }),
                     )
                     .child(
                         div()
@@ -218,11 +379,19 @@ pub(super) fn diff_card(
                                 button("Undo", None)
                                     .child(icon("thread-undo", 14., t.text))
                                     .id("undo-turn")
-                                    .on_click(move |_, window, cx| {
-                                        window.dispatch_action(
-                                            Box::new(RevertTurn(turn_id.clone())),
-                                            cx,
-                                        )
+                                    .track_focus(&focus.undo)
+                                    .on_click({
+                                        let thread_id = focus.thread_id.clone();
+                                        move |_, window, cx| {
+                                            window.dispatch_action(
+                                                Box::new(ThreadPressed(thread_id.clone())),
+                                                cx,
+                                            );
+                                            window.dispatch_action(
+                                                Box::new(RevertTurn(turn_id.clone())),
+                                                cx,
+                                            )
+                                        }
                                     })
                             })
                             // Blink's background bleed avoidance paints the fill and the
@@ -246,7 +415,20 @@ pub(super) fn diff_card(
                                     ),
                                 )
                                 .id("view-changes")
-                                .on_click(crate::dispatch::<crate::OpenChangesPanel>),
+                                .track_focus(&focus.view)
+                                .on_click({
+                                    let thread_id = focus.thread_id.clone();
+                                    move |_, window, cx| {
+                                        window.dispatch_action(
+                                            Box::new(ThreadPressed(thread_id.clone())),
+                                            cx,
+                                        );
+                                        window.dispatch_action(
+                                            Box::new(crate::ViewChanges(review_path.clone())),
+                                            cx,
+                                        )
+                                    }
+                                }),
                             ),
                     ),
             ),
@@ -352,6 +534,7 @@ pub(super) fn activities<'a>(items: &'a [ThreadItem], running: bool) -> Vec<Acti
                 flush(&mut out, &mut group);
                 out.push(Activity::Running(command));
             }
+            ThreadItem::McpToolCall { .. } if automation_item(item).is_some() => {}
             ThreadItem::McpToolCall { .. } => {
                 flush(&mut out, &mut group);
                 out.push(Activity::Mcp(item));
@@ -359,7 +542,7 @@ pub(super) fn activities<'a>(items: &'a [ThreadItem], running: bool) -> Vec<Acti
             ThreadItem::CommandExecution { .. } | ThreadItem::FileChange { .. } => {
                 group.push(item);
             }
-            ThreadItem::AgentMessage { id, text } if !text.is_empty() => {
+            ThreadItem::AgentMessage { id, text, .. } if !text.is_empty() => {
                 flush(&mut out, &mut group);
                 out.push(Activity::Markdown(id, text));
             }
@@ -407,7 +590,7 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                 // command line without one. ponytail: `search` and `list_files` rows also read
                 // as `Ran <command>`; the original words them per action (`Searched for …`).
                 let parsed = match command_actions.as_slice() {
-                    [] => shell_command(command).to_owned(),
+                    [] => shell_command(command, command_actions).to_owned(),
                     actions => actions
                         .iter()
                         .map(|a| a.command.as_str())
@@ -429,7 +612,7 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
                         stats: None,
                         shell: Some(Shell {
                             key: format!("shell-{id}"),
-                            command: shell_command(command).to_owned(),
+                            command: shell_command(command, command_actions).to_owned(),
                             output: aggregated_output
                                 .as_deref()
                                 .unwrap_or_default()
@@ -509,12 +692,23 @@ pub(super) fn activity(
         let w = width(window, &s, 14., 430., None);
         (text(s, 14., 21., 430., color), w)
     };
-    let boxed = |label: gpui::AnyElement, w: Pixels| div().flex_none().w(w).child(label);
+    // The label is exactly as wide as its text, and shrinks with an ellipsis (`truncate`) in a
+    // column too narrow for it.
+    let boxed = |label: gpui::AnyElement, w: Pixels| {
+        div()
+            .w(w)
+            .min_w_0()
+            .flex_shrink(1.)
+            .overflow_hidden()
+            .text_ellipsis()
+            .child(label)
+    };
     let plain = |(label, w): (Div, Pixels)| boxed(label.into_any_element(), w);
     // A 21 px line: a 16 px icon, then its words.
     let row = |icon_name: &'static str, words: Div| {
         div()
             .h(px(21.))
+            .min_w_0()
             .flex()
             .items_center()
             .gap(px(6.))
@@ -538,6 +732,9 @@ pub(super) fn activity(
         div()
             .id(group.clone())
             .group(group.clone())
+            .min_w_0()
+            .max_w_full()
+            .self_start()
             .flex()
             .items_center()
             .gap(px(4.))
@@ -636,8 +833,19 @@ pub(super) fn activity(
                                     if let Some((_, image)) =
                                         decoded.iter().find(|(at, _)| *at == index)
                                     {
-                                        output =
-                                            output.child(gpui::img(image.clone()).max_w_full());
+                                        let context = crate::image_context::ImageContext {
+                                            image: image.clone(),
+                                            path: None,
+                                        };
+                                        output = output.child(
+                                            gpui::img(image.clone()).max_w_full()
+                                                .on_mouse_down(gpui::MouseButton::Right, cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
+                                                    this.menu = Some(context.menu(event.position, window, cx));
+                                                    this.context_image = Some(context.clone());
+                                                    cx.stop_propagation();
+                                                    cx.notify();
+                                                })),
+                                        );
                                     } else {
                                         output = output.child(text(
                                             "Could not display tool image",

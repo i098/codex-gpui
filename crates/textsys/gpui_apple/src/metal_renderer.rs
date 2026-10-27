@@ -120,6 +120,7 @@ pub struct MetalRenderer {
     path_sprites_pipeline_state: metal::RenderPipelineState,
     shadows_pipeline_state: metal::RenderPipelineState,
     quads_pipeline_state: metal::RenderPipelineState,
+    gradient_quads_pipeline_state: metal::RenderPipelineState,
     underlines_pipeline_state: metal::RenderPipelineState,
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
@@ -133,7 +134,7 @@ pub struct MetalRenderer {
     path_intermediate_texture: Option<metal::Texture>,
     path_intermediate_msaa_texture: Option<metal::Texture>,
     path_sample_count: u32,
-    /// The monochrome sprite shader's per-pixel layer state, color attachments 1 to 4.
+    /// The sprite shader's four layer pixels, backdrop, identifiers, and alphas.
     layer_textures: Vec<metal::Texture>,
     /// Offscreen render target reused across `render_scene` calls when
     /// rendering headlessly without reading pixels back.
@@ -355,6 +356,14 @@ impl MetalRenderer {
             "quad_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
+        let gradient_quads_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "gradient_quads",
+            "quad_vertex",
+            "gradient_quad_fragment",
+            MTLPixelFormat::BGRA8Unorm,
+        );
         let underlines_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -432,6 +441,7 @@ impl MetalRenderer {
             path_sprites_pipeline_state,
             shadows_pipeline_state,
             quads_pipeline_state,
+            gradient_quads_pipeline_state,
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
@@ -817,7 +827,14 @@ impl MetalRenderer {
                     self.draw_shadows(range, instance_bindings, viewport_size, command_encoder)
                 }
                 PrimitiveBatch::Quads(range) => {
-                    self.draw_quads(range, instance_bindings, viewport_size, command_encoder)
+                    let layered = scene.quads[range.start].layers != [0; 4];
+                    self.draw_quads(
+                        range,
+                        layered,
+                        instance_bindings,
+                        viewport_size,
+                        command_encoder,
+                    )
                 }
                 PrimitiveBatch::Paths(range) => {
                     let paths = &scene.paths[range];
@@ -863,7 +880,7 @@ impl MetalRenderer {
                         command_encoder,
                     ),
                 PrimitiveBatch::PolychromeSprites { texture_id, range } => {
-                    let layered = scene.polychrome_sprites[range.start].layers != 0;
+                    let layered = scene.polychrome_sprites[range.start].layers != [0; 4];
                     self.draw_polychrome_sprites(
                         texture_id,
                         range,
@@ -1004,6 +1021,7 @@ impl MetalRenderer {
     fn draw_quads(
         &self,
         quads: Range<usize>,
+        layered: bool,
         instance_bindings: &InstanceBindings,
         viewport_size: Size<DevicePixels>,
         command_encoder: &metal::RenderCommandEncoderRef,
@@ -1012,7 +1030,11 @@ impl MetalRenderer {
             return;
         }
 
-        command_encoder.set_render_pipeline_state(&self.quads_pipeline_state);
+        command_encoder.set_render_pipeline_state(if layered {
+            &self.gradient_quads_pipeline_state
+        } else {
+            &self.quads_pipeline_state
+        });
         command_encoder.set_vertex_buffer(
             QuadInputIndex::Vertices as u64,
             Some(&self.unit_vertices),
@@ -1483,7 +1505,9 @@ fn build_pipeline_state(
     // Layer-aware sprite shaders blend themselves through framebuffer fetch.
     let layered = matches!(
         fragment_fn_name,
-        "monochrome_sprite_fragment" | "polychrome_sprite_layer_fragment"
+        "monochrome_sprite_fragment"
+            | "polychrome_sprite_layer_fragment"
+            | "gradient_quad_fragment"
     );
     color_attachment.set_blending_enabled(!layered);
     color_attachment.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
@@ -1499,8 +1523,8 @@ fn build_pipeline_state(
         .expect("could not create render pipeline state")
 }
 
-/// Color attachments 1 to 4 of the main pass hold the layer-aware sprite state.
-const LAYER_TARGETS: u64 = 4;
+/// Seven state attachments plus the output use Metal's eight color targets.
+const LAYER_TARGETS: u64 = 7;
 const LAYER_FORMAT: MTLPixelFormat = MTLPixelFormat::RGBA8Unorm;
 
 fn set_layer_targets(descriptor: &metal::RenderPipelineDescriptorRef, write: bool) {
@@ -1838,6 +1862,10 @@ impl gpui::PlatformHeadlessRenderer for MetalHeadlessRenderer {
 
     fn sprite_atlas(&self) -> Arc<dyn gpui::PlatformAtlas> {
         self.renderer.sprite_atlas().clone()
+    }
+
+    fn set_transparent(&mut self, transparent: bool) {
+        self.renderer.update_transparency(transparent);
     }
 }
 

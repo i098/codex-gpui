@@ -5,6 +5,16 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use ui::screens::onboarding::{Completion, Onboarding, OnboardingEvent, Page, Project};
 
+pub fn route(path: &str) -> Option<Route> {
+    let page = match path {
+        "/welcome" => Page::Welcome,
+        "/onboarding" => Page::Onboarding,
+        "/select-workspace" => Page::SelectWorkspace,
+        _ => return None,
+    };
+    Some(Route::Onboarding(page))
+}
+
 pub(crate) struct ContextData {
     account: Option<Value>,
     projects: Vec<Project>,
@@ -17,7 +27,7 @@ fn context_request() -> host::Request {
 }
 
 fn projects(host: &dyn host::Host) -> Result<Vec<Project>> {
-    Ok(host
+    let mut projects: Vec<_> = host
         .projects()?
         .into_iter()
         .filter(|project| !project.missing)
@@ -27,52 +37,21 @@ fn projects(host: &dyn host::Host) -> Result<Vec<Project>> {
                 label: project.label.to_string(),
             })
         })
-        .collect())
+        .collect();
+    projects.sort_by(|left, right| left.root.cmp(&right.root));
+    projects.dedup_by(|left, right| left.root == right.root);
+    Ok(projects)
 }
 
 impl Root {
-    pub fn show_onboarding(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
-        self.navigate(Route::Onboarding(page), window, cx);
-    }
-
     pub fn onboarding(&self) -> Option<&Entity<Onboarding>> {
         self.onboarding_page.as_ref()
-    }
-    pub fn first_app_connected(
-        &self,
-        previous: Option<&[Value]>,
-        next: &[Value],
-        cx: &mut Context<Self>,
-    ) {
-        if !first_accessible_app(previous, next) {
-            return;
-        }
-        let host = self.host.clone();
-        let Some(home) = std::env::var_os("HOME") else {
-            return;
-        };
-        let home = PathBuf::from(home);
-        cx.background_spawn(async move {
-            for domain in [None, Some("science")] {
-                let request = host::Request::post("ambient-suggestions-refresh", Some(json!({
-                    "domain":domain,"hostId":"local","projectRoot":home,"mode":"first-plugin-connect"
-                })));
-                if let Err(error) = host.fetch(&request).and_then(|response| host::json_body(&response)) {
-                    eprintln!("Failed to refresh first-app suggestions: {error}");
-                }
-            }
-        }).detach();
     }
 
     pub(crate) fn maybe_onboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.chatgpt_account
             || self.state.route != Route::Home
             || self.onboarding_load.is_some()
-            || cx
-                .global::<host_settings::Settings>()
-                .read_all()
-                .get("electron:onboarding-projectless-completed")
-                == Some(&Value::Bool(true))
         {
             return;
         }
@@ -123,7 +102,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let view = cx.new(|_| Onboarding::new(page, self.chatgpt_account, self.clock));
+        let view = cx.new(|cx| Onboarding::new(page, cx));
         cx.subscribe_in(
             &view,
             window,
@@ -140,17 +119,6 @@ impl Root {
                         window,
                         cx,
                     ),
-                    OnboardingEvent::FirstRunComplete => {
-                        let result = cx
-                            .global_mut::<host_settings::Settings>()
-                            .write("viewed2025-09-15-nux", json!(true));
-                        match result {
-                            Ok(()) => this.navigate(Route::Home, window, cx),
-                            Err(error) => view.update(cx, |view, cx| {
-                                view.set_error(format!("Could not save setup: {error}"), cx)
-                            }),
-                        }
-                    }
                     OnboardingEvent::PickFolder => {
                         this.pick_onboarding_folder(view.clone(), window, cx)
                     }
@@ -171,9 +139,7 @@ impl Root {
         )
         .detach();
         self.onboarding_page = Some(view.clone());
-        if page != Page::FirstRun {
-            self.read_onboarding(view, window, cx);
-        }
+        self.read_onboarding(view, window, cx);
     }
 
     fn read_onboarding(
@@ -275,7 +241,6 @@ impl Root {
     ) {
         let host = self.host.clone();
         let chatgpt = self.chatgpt_account && view.read(cx).page() != Page::SelectWorkspace;
-        let project_root = self.cwd.clone();
         let payload = json!({"conversational_onboarding_skipped":true,"onboarding_credit_reward_warning_shown":false,"role":completion.representative_role()});
         cx.spawn_in(window,async move |this,cx| {
             let result=cx.background_spawn(async move {
@@ -284,10 +249,6 @@ impl Root {
                     successful_response(&host.fetch(&request)?)?;
                 }
                 for root in &completion.roots {host.add_project(Path::new(root))?;}
-                if completion.personalized_suggestions {
-                    let response=host.fetch(&host::Request::post("ambient-suggestions-refresh",Some(json!({"domain":null,"hostId":"local","projectRoot":project_root}))));
-                    if let Err(error)=response.and_then(|response|host::json_body(&response)) {eprintln!("Failed to refresh ambient suggestions after onboarding: {error}");}
-                }
                 Ok::<_,anyhow::Error>(completion)
             }).await;
             this.update_in(cx,|this,window,cx| {
@@ -296,7 +257,6 @@ impl Root {
                     let settings=cx.global_mut::<host_settings::Settings>();
                     settings.write("electron:onboarding-welcome-v2-role-state",json!({"roles":completion.roles,"personalizedSuggestionsEnabled":completion.personalized_suggestions,"workMode":completion.work_mode()}))?;
                     settings.write("last_completed_onboarding",json!(chrono::Utc::now().timestamp()))?;
-                    settings.write("electron:onboarding-projectless-completed",json!(true))?;
                     Ok(completion)
                 });
                 match result {
@@ -426,11 +386,6 @@ fn create_project(documents: &Path) -> Result<PathBuf> {
     unreachable!()
 }
 
-fn first_accessible_app(previous: Option<&[Value]>, next: &[Value]) -> bool {
-    let active = |app: &Value| app["isAccessible"] == true && app["isEnabled"] == true;
-    previous.is_some_and(|apps| !apps.iter().any(active)) && next.iter().any(active)
-}
-
 fn successful_response(response: &Value) -> Result<()> {
     let response = response.get("value").unwrap_or(response);
     ensure!(
@@ -452,16 +407,6 @@ fn successful_response(response: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn first_app_refresh_requires_a_known_zero_to_one_transition() {
-        let enabled = [json!({"isAccessible":true,"isEnabled":true})];
-        let disabled = [json!({"isAccessible":true,"isEnabled":false})];
-        assert!(!first_accessible_app(None, &enabled));
-        assert!(first_accessible_app(Some(&[]), &enabled));
-        assert!(first_accessible_app(Some(&disabled), &enabled));
-        assert!(!first_accessible_app(Some(&enabled), &enabled));
-        assert!(!first_accessible_app(Some(&disabled), &disabled));
-    }
     #[test]
     fn workspace_creation_preserves_existing_folders() -> Result<()> {
         let home = tempfile::tempdir()?;

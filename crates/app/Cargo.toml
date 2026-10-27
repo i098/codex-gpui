@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+test-support = []
+
 [[bin]]
 name = "codex-gpui"
 path = "src/main.rs"
@@ -22,13 +25,18 @@ bridge = { path = "../bridge" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 chrono-tz = "0.10"
 gpui.workspace = true
+glob = "0.3.4"
 gpui_platform.workspace = true
 iana-time-zone = "0.1"
+notify = "8"
 pollster = "0.4"
+portable-pty = "0.9"
 rrule = { path = "../../vendor/rrule", features = ["exrule"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha1 = "0.10"
+shlex = "2"
 sha2 = "0.10"
 tempfile = "3"
 toml = "0.8"
@@ -36,11 +44,16 @@ theme = { path = "../theme" }
 ui = { path = "../ui" }
 ureq = "3"
 url = "2"
+vt100 = "0.15.2"
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+rustix = { version = "1.1.5", features = ["fs"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSRunningApplication", "NSImage", "NSImageRep", "NSBitmapImageRep"] }
 objc2 = "0.6.5"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "NSData", "NSDictionary", "NSString"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "NSData", "NSDictionary", "NSString", "NSValue", "NSURL", "NSError"] }
 raw-window-handle = "0.6"
 
 [dev-dependencies]

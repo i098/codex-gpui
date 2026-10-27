@@ -20,6 +20,7 @@ use std::{
 
 pub(super) enum Content {
     File,
+    ContextFile,
     Text(String),
     Image(Arc<gpui::Image>),
 }
@@ -40,6 +41,10 @@ impl Attachment {
             content: Content::File,
             persisted: false,
         }
+    }
+
+    pub(super) fn is_context_file(&self) -> bool {
+        matches!(self.content, Content::ContextFile)
     }
 
     /// A dropped or picked file: an image shows its thumbnail (its bytes stay where they
@@ -210,6 +215,20 @@ fn persist(image: Arc<gpui::Image>) -> io::Result<Attachment> {
 }
 
 impl Composer {
+    pub fn attachment_generation(&self) -> u64 {
+        self.attachment_generation
+    }
+
+    pub fn attach_png(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        self.save_paste(
+            Content::Image(Arc::new(gpui::Image::from_bytes(
+                gpui::ImageFormat::Png,
+                bytes,
+            ))),
+            cx,
+        );
+    }
+
     pub(super) fn save_paste(&mut self, content: Content, cx: &mut Context<Self>) {
         self.pending_attachments += 1;
         self.attachment_error = None;
@@ -230,7 +249,9 @@ impl Composer {
                 cx.background_executor()
                     .spawn(async move { persist(image).map_err(Into::into) }),
             ),
-            Content::File => unreachable!("only clipboard contents are persisted"),
+            Content::File | Content::ContextFile => {
+                unreachable!("only clipboard contents are persisted")
+            }
         };
         cx.spawn(async move |this, cx| {
             let result = save.await;
@@ -286,6 +307,22 @@ impl Composer {
         cx.notify();
     }
 
+    /// Adds a context-file card without changing the draft or its selection.
+    pub fn add_context_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if self.attachments.iter().any(|attachment| {
+            matches!(attachment.content, Content::File | Content::ContextFile)
+                && attachment.path == path
+        }) {
+            return;
+        }
+        self.attachments.push(Attachment {
+            path,
+            content: Content::ContextFile,
+            persisted: false,
+        });
+        cx.notify();
+    }
+
     pub(super) fn attachments_row(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
         div()
             .pt(px(8.))
@@ -294,9 +331,16 @@ impl Composer {
             .flex()
             .flex_wrap()
             .gap(px(6.))
-            .when(!self.attachments.is_empty(), |d| {
-                d.pt(px(12.)).px(px(12.)).gap(px(12.)).items_end()
-            })
+            .when(
+                !self.attachments.is_empty() || !self.diff_comments.is_empty(),
+                |d| {
+                    d.pt(px(12.))
+                        .px(px(12.))
+                        .pb(px(10.))
+                        .gap(px(12.))
+                        .items_end()
+                },
+            )
             .children(
                 self.attachments
                     .iter()
@@ -310,21 +354,42 @@ impl Composer {
                     )
                     .map(|(i, attachment)| {
                         match &attachment.content {
+                            Content::ContextFile => {
+                                return self.context_file_card(i, attachment, t, cx);
+                            }
                             Content::Text(content) => {
                                 return self.text_attachment(i, content, t, cx);
                             }
                             Content::Image(image) => {
-                                return div()
+                                let context = crate::image_context::ImageContext {
+                                    image: image.clone(),
+                                    path: Some(attachment.path.clone()),
+                                };
+                                let surface = div()
                                     .relative()
-                                    .size(px(122.))
-                                    .rounded(px(8.))
-                                    .overflow_hidden()
-                                    .child(
-                                        gpui::img(image.clone())
-                                            .size_full()
-                                            .object_fit(gpui::ObjectFit::Cover),
+                                    .size_full()
+                                    .child(shapes::decoration(deco(
+                                        0.,
+                                        t.surface_secondary,
+                                        vec![],
+                                    )))
+                                    .child(image_thumbnail(image.clone(), t));
+                                return self
+                                    .attachment_surface(i, attachment, px(122.), surface, t, cx)
+                                    .on_mouse_down(
+                                        MouseButton::Right,
+                                        cx.listener(
+                                            move |this, event: &MouseDownEvent, window, cx| {
+                                                this.menu = None;
+                                                this.context_spelling = None;
+                                                this.context_menu =
+                                                    Some(context.menu(event.position, window, cx));
+                                                this.context_image = Some(context.clone());
+                                                cx.stop_propagation();
+                                                cx.notify();
+                                            },
+                                        ),
                                     )
-                                    .child(self.remove_paste_button(i, t, cx))
                                     .into_any_element();
                             }
                             Content::File => {}
@@ -357,9 +422,185 @@ impl Composer {
                             .into_any_element()
                     }),
             )
+            .when(!self.diff_comments.is_empty(), |d| {
+                d.child(self.diff_comment_attachment(t, cx))
+            })
     }
 
-    fn remove_paste_button(&self, i: usize, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+    fn context_file_card(
+        &self,
+        i: usize,
+        attachment: &Attachment,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let name = attachment
+            .path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let code = attachment
+            .path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| {
+                [
+                    "py", "rs", "js", "jsx", "ts", "tsx", "go", "c", "cpp", "h", "java", "swift",
+                    "json", "toml", "yaml", "yml", "sh", "css", "html",
+                ]
+                .iter()
+                .any(|suffix| ext.eq_ignore_ascii_case(suffix))
+            });
+        let surface = div()
+            .relative()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(shapes::decoration(deco(0., t.surface_secondary, vec![])))
+            .child(
+                div()
+                    .h(px(90.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(icon("context-file-document", 24., t.text.opacity(0.65)).runtime()),
+            )
+            .child(
+                div()
+                    .relative()
+                    .h(px(32.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .px(px(8.))
+                    .child(shapes::decoration(deco(0., t.surface, vec![])))
+                    .child(
+                        icon(
+                            if code {
+                                "context-file-code"
+                            } else {
+                                "context-file-document"
+                            },
+                            16.,
+                            t.text,
+                        )
+                        .runtime(),
+                    )
+                    .child(
+                        text(name, 12., 16., 430., t.text)
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis(),
+                    ),
+            );
+        self.attachment_surface(i, attachment, px(160.), surface, t, cx)
+            .into_any_element()
+    }
+
+    /// The original's `composer-attachment-surface`: `content` in a squircle clip, an inset ring
+    /// that strengthens on hover, and a remove button shown only on hover or focus.
+    fn attachment_surface(
+        &self,
+        i: usize,
+        attachment: &Attachment,
+        width: Pixels,
+        content: Div,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let name = attachment
+            .path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let remove_label = format!("Remove {name}");
+        let group: SharedString = format!("attachment-surface-{i}").into();
+        let surface_decoration = |color, fill| {
+            shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(10.)),
+                corner: shapes::Corner::Squircle,
+                fill,
+                shadows: vec![shapes::Shadow {
+                    color,
+                    offset: point(px(0.), px(0.)),
+                    blur: px(0.),
+                    spread: px(1.),
+                    inset: true,
+                }],
+                ..Default::default()
+            })
+        };
+        div()
+            .id(("attachment-surface", i))
+            .group(group.clone())
+            .role(gpui::Role::Group)
+            .aria_label(name)
+            .relative()
+            .w(width)
+            .h(px(122.))
+            .flex_none()
+            .child(crate::rounded_clip(
+                px(10.),
+                shapes::Corner::Squircle,
+                content,
+            ))
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .group_hover(group.clone(), |s| s.opacity(0.))
+                    .child(surface_decoration(t.border, None)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .opacity(0.)
+                    .group_hover(group.clone(), |s| s.opacity(1.))
+                    .child(surface_decoration(t.border_strong, Some(t.text_alpha_5))),
+            )
+            .child(
+                self.remove_paste_button(i, t, cx)
+                    .role(gpui::Role::Button)
+                    .focusable()
+                    .tab_index(0)
+                    .focus_visible(crate::focus::trigger_focus)
+                    .aria_label(remove_label)
+                    .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
+                        if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                            this.remove_paste(i, cx);
+                            cx.stop_propagation();
+                        }
+                    }))
+                    .top(px(-2.))
+                    .right(px(-2.))
+                    .shadow(vec![
+                        gpui::BoxShadow {
+                            color: t.surface,
+                            offset: point(px(0.), px(0.)),
+                            blur_radius: px(0.),
+                            spread_radius: px(2.),
+                            inset: false,
+                        },
+                        gpui::BoxShadow {
+                            color: t.shadow_sm,
+                            offset: point(px(0.), px(1.)),
+                            blur_radius: px(2.),
+                            spread_radius: -px(1.),
+                            inset: false,
+                        },
+                    ])
+                    .opacity(0.)
+                    .group_hover(group, |s| s.opacity(1.))
+                    .focus(|s| s.opacity(1.)),
+            )
+    }
+
+    fn remove_paste_button(&self, i: usize, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
         div()
             .id(("remove-attachment", i))
             .absolute()
@@ -470,5 +711,130 @@ impl Composer {
             )
             .child(self.remove_paste_button(i, t, cx))
             .into_any_element()
+    }
+}
+
+/// An image's decoded premultiplied pixels and its last raster: box, scale, card color.
+type Thumbnail = (
+    image::RgbaImage,
+    Option<(gpui::Bounds<Pixels>, f32, Hsla, Arc<gpui::RenderImage>)>,
+);
+
+/// The image card's `<img class="size-full object-cover">` in its `overflow-hidden` squircle
+/// `bg-surface-secondary` span, rasterized as Chromium does (Skia bilinear inside the
+/// anti-aliased clip, over the composer card); a GPU-scaled sprite blends with other weights.
+fn image_thumbnail(image: Arc<gpui::Image>, t: &Theme) -> AnyElement {
+    if !cfg!(target_os = "macos") {
+        return gpui::img(image)
+            .size_full()
+            .rounded(px(10.))
+            .object_fit(gpui::ObjectFit::Cover)
+            .into_any_element();
+    }
+    thread_local! {
+        // shortcut: entries outlive removed attachments (one decode and raster each); evict
+        // by the live attachments if long sessions paste many images.
+        static CACHE: std::cell::RefCell<std::collections::HashMap<u64, Thumbnail>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    let (fill, under) = (t.surface_secondary, t.composer_surface);
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let scale = window.scale_factor();
+            let snap = |v: Pixels| px((f32::from(v) * scale).round() / scale);
+            let at = gpui::Bounds::from_corners(
+                point(snap(bounds.left()), snap(bounds.top())),
+                point(snap(bounds.right()), snap(bounds.bottom())),
+            );
+            let raster = CACHE.with_borrow_mut(|cache| {
+                let entry = match cache.entry(image.id) {
+                    std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        let mut pixels = image::load_from_memory(&image.bytes).ok()?.to_rgba8();
+                        shapes::premultiply(&mut pixels);
+                        entry.insert((pixels, None))
+                    }
+                };
+                if let Some((b, s, u, raster)) = &entry.1
+                    && (*b, *s, *u) == (bounds, scale, under)
+                {
+                    return Some(raster.clone());
+                }
+                let pixels = &entry.0;
+                let (w, h) = (pixels.width() as f32, pixels.height() as f32);
+                let cover =
+                    (f32::from(bounds.size.width) / w).max(f32::from(bounds.size.height) / h);
+                let drawn = gpui::size(px(w * cover), px(h * cover));
+                let destination = gpui::Bounds::new(
+                    bounds.origin
+                        + point(
+                            (bounds.size.width - drawn.width) / 2.,
+                            (bounds.size.height - drawn.height) / 2.,
+                        ),
+                    drawn,
+                );
+                let raster = Arc::new(shapes::raster_decorated_images(
+                    &[(pixels, destination)],
+                    bounds,
+                    &shapes::Decoration {
+                        radius: Corners::all(px(10.)),
+                        corner: shapes::Corner::Squircle,
+                        fill: Some(fill),
+                        ..Default::default()
+                    },
+                    shapes::ImageComposition::Direct(under),
+                    window,
+                )?);
+                if let Some((.., old)) = entry.1.replace((bounds, scale, under, raster.clone())) {
+                    window.drop_image(old).ok();
+                }
+                Some(raster)
+            });
+            if let Some(raster) = raster {
+                window
+                    .paint_image(at, at, Corners::default(), raster, 0, false)
+                    .ok();
+            }
+        },
+    )
+    .size_full()
+    .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::AppContext as _;
+
+    #[test]
+    fn context_cards_preserve_the_draft_and_deduplicate_files() {
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut cx = gpui::HeadlessAppContext::new(textsys::text_system());
+        let composer = cx.new(|cx| Composer::new("Work with Codex", true, cx));
+        composer.update(&mut cx, |composer, cx| {
+            composer.set_text("before after", cx);
+            composer.selected_range = 7..7;
+            composer.add_context_file("/work/main.rs".into(), cx);
+            composer.add_context_file("/work/main.rs".into(), cx);
+            composer
+                .attachments
+                .push(Attachment::file("/work/attached.rs".into()));
+            composer.add_context_file("/work/attached.rs".into(), cx);
+            assert_eq!(composer.prompt(), "before after");
+            assert_eq!(composer.selected_range, 7..7);
+            assert_eq!(
+                composer
+                    .attachments
+                    .iter()
+                    .map(|a| a.path.as_path())
+                    .collect::<Vec<_>>(),
+                [Path::new("/work/main.rs"), Path::new("/work/attached.rs")]
+            );
+        });
     }
 }

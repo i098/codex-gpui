@@ -37,6 +37,7 @@ pub struct Thread {
     pub reasoning_effort: Option<String>,
     pub model_provider: String,
     pub cwd: String,
+    pub path: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
     pub section: Option<ThreadSection>,
@@ -106,6 +107,8 @@ pub enum ThreadItem {
     AgentMessage {
         id: String,
         text: String,
+        #[serde(default)]
+        phase: Option<String>,
     },
     Plan {
         id: String,

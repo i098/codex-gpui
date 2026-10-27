@@ -4694,7 +4694,9 @@
   {
    "id": "toggleTerminal",
    "title": "Open terminal",
-   "mac_keys": [],
+   "mac_keys": [
+    "Control+`"
+   ],
    "scope": "menu/default",
    "group": "panels",
    "command_menu": true

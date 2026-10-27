@@ -150,6 +150,7 @@ mod browser {
         state: &str,
         remaining: Duration,
     ) -> Result<Vec<BrowserProfile>> {
+        stream.set_nonblocking(false)?;
         let deadline = Instant::now() + remaining;
         let mut bytes = Vec::new();
         let header_end = loop {
@@ -277,7 +278,7 @@ mod browser {
                     );
                     Ok(BrowserProfile {
                         email: email.to_owned(),
-                        avatar_url: avatar_url(profile["avatarUrl"].as_str()),
+                        avatar_url: avatar_url(profile["avatar_url"].as_str()),
                         name: profile["name"]
                             .as_str()
                             .map(|name| name.trim().chars().take(256).collect())
@@ -317,6 +318,31 @@ mod browser {
     mod tests {
         use super::*;
 
+        #[cfg(target_os = "macos")]
+        #[test]
+        fn callback_accepts_a_delayed_body() -> Result<()> {
+            let listener = TcpListener::bind(("127.0.0.1", 0))?;
+            listener.set_nonblocking(true)?;
+            let mut client = TcpStream::connect(listener.local_addr()?)?;
+            let (mut stream, _) = listener.accept()?;
+            stream.set_nonblocking(true)?;
+            let body = b"state=token&email=test%40example.com";
+            write!(
+                client,
+                "POST /browser-session HTTP/1.1\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            )?;
+            let profiles = std::thread::scope(|scope| {
+                scope.spawn(move || {
+                    std::thread::sleep(Duration::from_millis(50));
+                    client.write_all(body)
+                });
+                receive(&mut stream, "token", Duration::from_secs(2))
+            })?;
+            assert_eq!(profiles[0].email, "test@example.com");
+            Ok(())
+        }
+
         #[test]
         fn stalled_lookup_helper_is_stopped() {
             let mut command = std::process::Command::new("/bin/sleep");
@@ -342,6 +368,26 @@ mod browser {
             assert_eq!(profiles[0].email, "test@example.com");
             assert_eq!(profiles[0].name.as_deref(), Some("Test"));
         }
+
+        #[test]
+        fn callback_preserves_avatar_urls_for_both_profile_shapes() {
+            let avatar = "https://example.com/avatar.png";
+            let multiple = serde_json::json!([{
+                "email": "test@example.com",
+                "avatar_url": avatar
+            }])
+            .to_string();
+            for (key, value) in [("avatar_url", avatar), ("profiles", multiple.as_str())] {
+                let mut body = url::form_urlencoded::Serializer::new(String::new());
+                body.append_pair("state", "token");
+                if key == "avatar_url" {
+                    body.append_pair("email", "test@example.com");
+                }
+                body.append_pair(key, value);
+                let profiles = parse(body.finish().as_bytes(), "token").unwrap();
+                assert_eq!(profiles[0].avatar_url.as_deref(), Some(avatar));
+            }
+        }
     }
 }
 
@@ -353,7 +399,7 @@ use ui::screens::signin::bedrock::GovCloud;
 use ui::screens::signin::{Login, LoginEvent, Options, Provider};
 use url::Url;
 
-const ORIGINAL_APP_VERSION: &str = "26.1007.30912";
+pub(crate) const ORIGINAL_APP_VERSION: &str = "26.1007.30912";
 
 impl Root {
     pub(crate) fn new_login(
@@ -361,6 +407,7 @@ impl Root {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> Entity<Login> {
+        self.ready = false;
         let login = cx.new(Login::new);
         cx.subscribe_in(
             &login,
@@ -375,19 +422,24 @@ impl Root {
                         provider,
                         email,
                     } => {
-                        let stable_id = cx
-                            .global::<host_settings::Settings>()
-                            .read_all()
-                            .get("statsig-stable-id")
-                            .and_then(Value::as_str);
-                        match browser_url(
-                            url,
-                            *provider,
-                            email.as_deref(),
-                            source.read(cx).options(),
-                            stable_id,
-                        ) {
-                            Ok(url) => cx.open_url(url.as_str()),
+                        let resolved = {
+                            let settings = cx.global::<host_settings::Settings>().read_all();
+                            let stable_id =
+                                settings.get("statsig-stable-id").and_then(Value::as_str);
+                            browser_url(
+                                url,
+                                *provider,
+                                email.as_deref(),
+                                source.read(cx).options(),
+                                stable_id,
+                            )
+                        };
+                        match resolved {
+                            Ok(url) => {
+                                cx.open_url(url.as_str());
+                                source
+                                    .update(cx, |login, cx| login.set_browser_url(url.into(), cx));
+                            }
                             Err(error) => this.toast(
                                 ui::toast::Toast::danger(format!("Sign-in failed: {error}")),
                                 cx,
@@ -408,14 +460,11 @@ impl Root {
                         })
                         .detach();
                     }
-                    LoginEvent::Authenticated => {
-                        this.login = None;
-                        this.read_account_email(window, cx);
-                        this.refresh_threads(cx);
-                        this.load_projects(cx);
-                        this.load_sections(cx);
+                    LoginEvent::MethodsLoaded => {
+                        this.ready = true;
                         cx.notify();
                     }
+                    LoginEvent::Authenticated => this.finish_sign_in(window, cx),
                 }
             },
         )
@@ -483,31 +532,6 @@ impl Root {
 
     pub fn login(&self) -> Option<&Entity<Login>> {
         self.login.as_ref()
-    }
-
-    fn read_account_email(&self, window: &mut gpui::Window, cx: &mut Context<Self>) {
-        let bridge = self.bridge.clone();
-        let host = self.host.clone();
-        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            cx.background_spawn(async move { host.invalidate_identity() })
-                .await;
-            let account = bridge.account_read().await?;
-            this.update_in(cx, |this, window, cx| {
-                this.account_email = crate::chatgpt_email(&account);
-                this.chatgpt_account = matches!(
-                    account.account,
-                    Some(bridge::types::Account::Chatgpt { .. })
-                );
-                if this.chatgpt_account
-                    && this.host.supports_cloud_search()
-                    && let Some(menu) = &this.command_menu
-                {
-                    menu.update(cx, |menu, cx| menu.enable_cloud_search(cx));
-                }
-                this.maybe_onboard(window, cx);
-            })
-        });
-        crate::log_err(task, cx);
     }
 
     fn restart_bedrock(&mut self, login: Entity<Login>, region: String, cx: &mut Context<Self>) {
@@ -659,6 +683,47 @@ fn browser_url(
     } else {
         None
     };
+    provider_parameters(&mut url, provider, email);
+    if let Some(email) = email {
+        url.query_pairs_mut().append_pair("login_hint", email);
+    }
+    url.query_pairs_mut()
+        .append_pair("codex_app_version", ORIGINAL_APP_VERSION);
+    if let Some(id) = stable_id {
+        url.query_pairs_mut()
+            .append_pair("source_surface_stable_id", id)
+            .append_pair("codex_origin_stable_id", id);
+    }
+    if options.streamlined_login {
+        url.query_pairs_mut()
+            .append_pair("codex_streamlined_login", "true");
+    }
+    if desktop.is_some() || options.desktop_auth {
+        let mut desktop = match desktop.take() {
+            Some(desktop) => desktop,
+            None => Url::parse("https://chatgpt.com/codex/desktop-auth")?,
+        };
+        let query: Vec<_> = desktop
+            .query_pairs()
+            .filter(|(key, _)| key != "authorize_url" && key != "codex_streamlined_login")
+            .map(|(key, value)| (key.into_owned(), value.into_owned()))
+            .collect();
+        desktop
+            .query_pairs_mut()
+            .clear()
+            .extend_pairs(query)
+            .append_pair("authorize_url", url.as_str());
+        if options.streamlined_login {
+            desktop
+                .query_pairs_mut()
+                .append_pair("codex_streamlined_login", "true");
+        }
+        return Ok(desktop);
+    }
+    Ok(url)
+}
+
+fn provider_parameters(url: &mut Url, provider: Provider, email: Option<&str>) {
     let query: Vec<(String, String)> = url
         .query_pairs()
         .filter(|(key, _)| match provider {
@@ -702,43 +767,6 @@ fn browser_url(
                 .append_pair("prompt", "select_account");
         }
     }
-    if let Some(email) = email {
-        url.query_pairs_mut().append_pair("login_hint", email);
-    }
-    url.query_pairs_mut()
-        .append_pair("codex_app_version", ORIGINAL_APP_VERSION);
-    if let Some(id) = stable_id {
-        url.query_pairs_mut()
-            .append_pair("source_surface_stable_id", id)
-            .append_pair("codex_origin_stable_id", id);
-    }
-    if options.streamlined_login {
-        url.query_pairs_mut()
-            .append_pair("codex_streamlined_login", "true");
-    }
-    if desktop.is_some() || options.desktop_auth {
-        let mut desktop = match desktop.take() {
-            Some(desktop) => desktop,
-            None => Url::parse("https://chatgpt.com/codex/desktop-auth")?,
-        };
-        let query: Vec<_> = desktop
-            .query_pairs()
-            .filter(|(key, _)| key != "authorize_url" && key != "codex_streamlined_login")
-            .map(|(key, value)| (key.into_owned(), value.into_owned()))
-            .collect();
-        desktop
-            .query_pairs_mut()
-            .clear()
-            .extend_pairs(query)
-            .append_pair("authorize_url", url.as_str());
-        if options.streamlined_login {
-            desktop
-                .query_pairs_mut()
-                .append_pair("codex_streamlined_login", "true");
-        }
-        return Ok(desktop);
-    }
-    Ok(url)
 }
 
 #[cfg(test)]
@@ -774,5 +802,54 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn desktop_handoff_preserves_nested_provider_and_account_parameters() {
+        let raw = "https://auth.openai.com/authorize?state=fixture&login_hint=old&connection=old";
+        let mut wrapped = Url::parse("https://chatgpt.com/codex/desktop-auth").unwrap();
+        wrapped.query_pairs_mut().append_pair("authorize_url", raw);
+        let options = Options {
+            desktop_auth: true,
+            streamlined_login: true,
+            ..Options::default()
+        };
+        for source in [raw, wrapped.as_str()] {
+            let outer = browser_url(
+                source,
+                Provider::Google,
+                Some("test+fixture@example.com"),
+                &options,
+                None,
+            )
+            .unwrap();
+            assert_eq!(outer.path(), "/codex/desktop-auth");
+            let flags: Vec<_> = outer
+                .query_pairs()
+                .filter(|(key, _)| key == "codex_streamlined_login")
+                .map(|(_, value)| value.into_owned())
+                .collect();
+            assert_eq!(flags, ["true"]);
+            let authorization = outer
+                .query_pairs()
+                .find(|(key, _)| key == "authorize_url")
+                .unwrap()
+                .1;
+            let inner = Url::parse(&authorization).unwrap();
+            let pairs: Vec<_> = inner.query_pairs().collect();
+            for (key, expected) in [
+                ("state", "fixture"),
+                ("connection", "google-oauth2"),
+                ("login_hint", "test+fixture@example.com"),
+                ("codex_streamlined_login", "true"),
+            ] {
+                let values: Vec<_> = pairs
+                    .iter()
+                    .filter(|(name, _)| name == key)
+                    .map(|(_, value)| value.as_ref())
+                    .collect();
+                assert_eq!(values, [expected], "{key}");
+            }
+        }
     }
 }

@@ -78,12 +78,18 @@ pub fn show_definition(
     );
     view.showDefinitionForAttributedString_atPoint(
         Some(&text),
-        definition_baseline(view.bounds(), view.isFlipped(), baseline),
+        definition_baseline(view.bounds(), view.isFlipped(), baseline, window.ui_scale()),
     );
     Ok(())
 }
 
-fn definition_baseline(bounds: NSRect, flipped: bool, baseline: gpui::Point<Pixels>) -> NSPoint {
+fn definition_baseline(
+    bounds: NSRect,
+    flipped: bool,
+    baseline: gpui::Point<Pixels>,
+    ui_scale: f32,
+) -> NSPoint {
+    let baseline = baseline.map(|value| value * ui_scale);
     let x = bounds.origin.x + f64::from(baseline.x);
     let y = if flipped {
         bounds.origin.y + f64::from(baseline.y)
@@ -109,12 +115,15 @@ struct State {
     by_postscript_name: HashMap<String, FontId>,
     /// Descriptors of `add_fonts` data, searched before installed families.
     added: Vec<CTFontDescriptor>,
-    /// `(face, size bits)` -> font at that CSS size.
+    /// `(face, size bits)` -> font at that layout size, with `opsz` at its CSS size.
     sized: HashMap<(usize, u32), CTFont>,
-    shapers: HashMap<(usize, u32), shape::HbFont>,
+    shapers: HashMap<(usize, u32, u32), shape::HbFont>,
     /// Per face: CSS `letter-spacing` (from [`crate::letter_spacing`]) and the other
     /// `FontFeatures` as OpenType (tag, value) pairs for HarfBuzz.
     shaping: HashMap<usize, (f32, Vec<(u32, u32)>)>,
+    /// Per face: CSS px per layout px of the font size (from [`crate::outside_zoom`]); 1 if
+    /// absent.
+    css_scale: HashMap<usize, f32>,
 }
 
 enum Face {
@@ -126,8 +135,7 @@ enum Face {
     Fixed(CTFont),
 }
 
-/// `layout_line` gets no scale factor; Blink rounds line metrics in device px.
-/// ponytail: fixed 2x (the reference displays); pass the window scale if 1x parity matters.
+/// Default device scale for text queries that do not belong to a window.
 const DEVICE_SCALE: f64 = 2.;
 
 /// GPUI rounds glyph origins half toward zero (x to 1/4 device px, y to 1 px), Skia rounds ties
@@ -144,21 +152,33 @@ impl State {
         if let Some(font) = self.sized.get(&key) {
             return font.clone();
         }
-        let size = f64::from(size);
-        let base = match &self.faces[id.0] {
-            Face::System { weight, italic } => system_font(*weight, *italic, size),
-            Face::Fixed(font) => font.clone(),
-        };
-        let font = exact_copy(&base, size, size);
+        let font = self.uncached_font(id, size);
         self.sized.insert(key, font.clone());
         font
     }
 
-    fn hb(&mut self, id: FontId, size: f32) -> &shape::HbFont {
+    fn uncached_font(&self, id: FontId, size: f32) -> CTFont {
+        let css = f64::from(self.css_size(id, size));
+        let base = match &self.faces[id.0] {
+            Face::System { weight, italic } => system_font(*weight, *italic, css),
+            Face::Fixed(font) => font.clone(),
+        };
+        exact_copy(&base, f64::from(size), css)
+    }
+
+    /// The CSS font size of `size` layout px; `opsz` and AAT `trak` follow it.
+    fn css_size(&self, id: FontId, size: f32) -> f32 {
+        self.css_scale.get(&id.0).map_or(size, |scale| size * scale)
+    }
+
+    fn hb(&mut self, id: FontId, size: f32, scale_factor: f32) -> &shape::HbFont {
         let font = self.font(id, size);
+        let css = f64::from(self.css_size(id, size));
         self.shapers
-            .entry((id.0, size.to_bits()))
-            .or_insert_with(|| shape::HbFont::new(&font, f64::from(size), DEVICE_SCALE))
+            .entry((id.0, size.to_bits(), scale_factor.to_bits()))
+            .or_insert_with(|| {
+                shape::HbFont::new(&font, f64::from(size), css, f64::from(scale_factor))
+            })
     }
 
     fn face_id(&mut self, face: Face, postscript_name: Option<String>) -> FontId {
@@ -323,10 +343,11 @@ fn skia_bounds(font: &CTFont, glyph: u16, sub_x: f64) -> Bounds<DevicePixels> {
 impl SkiaMatchedTextSystem {
     /// The glyph's font at device size (Skia scaler context font).
     fn device_font(&self, params: &RenderGlyphParams) -> CTFont {
-        let css = f32::from(params.font_size);
-        let font = self.0.lock().font(params.font_id, css);
-        let css = f64::from(css);
-        exact_copy(&font, css * f64::from(params.scale_factor), css)
+        let size = f32::from(params.font_size);
+        let mut state = self.0.lock();
+        let font = state.font(params.font_id, size);
+        let css = f64::from(state.css_size(params.font_id, size));
+        exact_copy(&font, f64::from(size) * f64::from(params.scale_factor), css)
     }
 
     fn sub_x(params: &RenderGlyphParams) -> f64 {
@@ -378,7 +399,9 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
         let mut shaping = (0., Vec::new());
         for (tag, value) in font.features.tag_value_list() {
             if tag == crate::LETTER_SPACING_TAG {
-                shaping.0 = *value as i32 as f32 / 100.;
+                shaping.0 = f32::from_bits(*value);
+            } else if tag == crate::OUTSIDE_ZOOM_TAG {
+                state.css_scale.insert(id.0, f32::from_bits(*value));
             } else if let Ok(tag) = <[u8; 4]>::try_from(tag.as_bytes()) {
                 shaping.1.push((u32::from_be_bytes(tag), *value));
             }
@@ -410,6 +433,19 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
         }
     }
 
+    fn x_height_at_size(&self, font_id: FontId, font_size: Pixels) -> Pixels {
+        let size = f32::from(font_size);
+        if size <= 0. || !size.is_finite() {
+            return self.font_metrics(font_id).x_height(font_size);
+        }
+        let state = self.0.lock();
+        let height = match state.sized.get(&(font_id.0, size.to_bits())) {
+            Some(font) => font.x_height(),
+            None => state.uncached_font(font_id, size).x_height(),
+        };
+        px(height as f32)
+    }
+
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
         let font = self.0.lock().font(font_id, METRICS_SIZE as f32);
         let s = font.units_per_em() as f64 / METRICS_SIZE;
@@ -436,6 +472,21 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
             (advance.width * s) as f32,
             (advance.height * s) as f32,
         ))
+    }
+
+    fn advance_at_size(
+        &self,
+        font_id: FontId,
+        glyph_id: GlyphId,
+        font_size: Pixels,
+    ) -> Result<Size<Pixels>> {
+        // CSS character units use untracked font advances, not CoreText's tracked widths.
+        let width = self
+            .0
+            .lock()
+            .hb(font_id, f32::from(font_size), DEVICE_SCALE as f32)
+            .advance(glyph_id.0, DEVICE_SCALE as f32);
+        Ok(size(px(width), px(0.)))
     }
 
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
@@ -527,6 +578,17 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+        self.layout_line_with_scale(text, font_size, runs, DEVICE_SCALE as f32)
+    }
+
+    fn layout_line_with_scale(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+        scale_factor: f32,
+    ) -> LineLayout {
+        let device_scale = f64::from(scale_factor);
         let mut state = self.0.lock();
         let css = f32::from(font_size);
         let mut string = CFMutableAttributedString::new();
@@ -543,13 +605,14 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
             let font = state.font(run.font_id, css);
             // Blink lays out in device px (zoom for DSF) and rounds the primary font's
             // ascent and descent there.
-            let device = |v: CGFloat| (v * DEVICE_SCALE).round();
+            let device = |v: CGFloat| (v * device_scale).round();
             let (a, d) = (device(font.ascent()), device(font.descent()));
-            ascent = ascent.max((a / DEVICE_SCALE) as f32);
-            descent = descent.max((d / DEVICE_SCALE) as f32);
+            ascent = ascent.max((a / device_scale) as f32);
+            descent = descent.max((d / device_scale) as f32);
             // Alternate a 1-ulp size change so CoreText never forms ligatures across runs.
             let font = if i % 2 == 0 {
-                exact_copy(&font, f64::from(css.next_up()), f64::from(css))
+                let opsz = f64::from(state.css_size(run.font_id, css));
+                exact_copy(&font, f64::from(css.next_up()), opsz)
             } else {
                 font
             };
@@ -610,9 +673,9 @@ impl PlatformTextSystem for SkiaMatchedTextSystem {
                 let (spacing, features) = covering
                     .and_then(|(_, id, _)| state.shaping.get(&id.0).cloned())
                     .unwrap_or_default();
-                let (hb_glyphs, width) = state.hb(font_id, css).shape(
+                let (hb_glyphs, width) = state.hb(font_id, css, scale_factor).shape(
                     &text[start..end],
-                    DEVICE_SCALE as f32,
+                    scale_factor,
                     spacing,
                     &features,
                 );
@@ -688,17 +751,95 @@ mod tests {
     use objc2_foundation::NSSize;
 
     #[test]
-    fn definition_baseline_preserves_bounds_origin_and_view_orientation() {
+    fn definition_baseline_applies_zoom_bounds_and_view_orientation() {
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
         let bounds = NSRect::new(NSPoint::new(11., 13.), NSSize::new(200., 120.));
         let baseline = point(px(17.5), px(23.25));
+        for (scale, flipped, expected) in [
+            (1., true, NSPoint::new(28.5, 36.25)),
+            (1., false, NSPoint::new(28.5, 109.75)),
+            (2., true, NSPoint::new(46., 59.5)),
+            (2., false, NSPoint::new(46., 86.5)),
+        ] {
+            assert_eq!(
+                definition_baseline(bounds, flipped, baseline, scale),
+                expected
+            );
+        }
+    }
 
-        assert_eq!(
-            definition_baseline(bounds, true, baseline),
-            NSPoint::new(28.5, 36.25)
+    #[test]
+    fn x_height_uses_the_requested_optical_size() {
+        let platform = std::sync::Arc::new(SkiaMatchedTextSystem::default());
+        let system = gpui::TextSystem::new(platform.clone());
+        for weight in [400., 430.] {
+            let font = system.resolve_font(&gpui::Font {
+                weight: gpui::FontWeight(weight),
+                ..gpui::font(".SystemUIFont")
+            });
+            for size in [12., 14., 64.] {
+                let actual = f32::from(system.x_height(font, px(size)));
+                let expected = platform.0.lock().font(font, size).x_height() as f32;
+                assert!(
+                    (actual - expected).abs() < 1e-5,
+                    "weight {weight}, size {size}: {actual} != {expected}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn x_height_preserves_zero_and_nonphysical_sizes() {
+        let platform = std::sync::Arc::new(SkiaMatchedTextSystem::default());
+        let system = gpui::TextSystem::new(platform.clone());
+        let font = system.resolve_font(&gpui::font(".SystemUIFont"));
+        for size in [0., -12., f32::INFINITY, f32::NEG_INFINITY, f32::NAN] {
+            let expected = f32::from(platform.font_metrics(font).x_height(px(size)));
+            let actual = f32::from(system.x_height(font, px(size)));
+            assert!(
+                actual == expected || (actual.is_nan() && expected.is_nan()),
+                "size {size}: {actual} != {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn css_character_width_excludes_optical_tracking() -> anyhow::Result<()> {
+        let system = gpui::TextSystem::new(std::sync::Arc::new(SkiaMatchedTextSystem::default()));
+        let font = system.resolve_font(&gpui::Font {
+            weight: gpui::FontWeight(430.),
+            ..gpui::font(".SystemUIFont")
+        });
+        let width = system.ch_advance(font, px(14.))?;
+        assert_eq!((f32::from(width) * 64.).round() / 64., 8.890625);
+        Ok(())
+    }
+
+    #[test]
+    fn outside_zoom_text_shapes_at_its_css_size() -> anyhow::Result<()> {
+        let system = SkiaMatchedTextSystem::default();
+        let width = |features, size| -> anyhow::Result<f32> {
+            let font_id = system.font_id(&gpui::Font {
+                weight: gpui::FontWeight(430.),
+                features,
+                ..gpui::font(".SystemUIFont")
+            })?;
+            let line = system.layout_line("Reset", px(size), &[FontRun { len: 5, font_id }]);
+            Ok(f32::from(line.width))
+        };
+        let css = width(gpui::FontFeatures::default(), 13.)?;
+        // 26 layout px at half zoom: the optical size and tracking of 13 CSS px, twice as wide.
+        let outside = width(crate::outside_zoom(0.5), 26.)?;
+        let zoomed = width(gpui::FontFeatures::default(), 26.)?;
+        assert!(
+            (outside - 2. * css).abs() < 1e-3,
+            "{outside} vs {}",
+            2. * css
         );
-        assert_eq!(
-            definition_baseline(bounds, false, baseline),
-            NSPoint::new(28.5, 109.75)
-        );
+        assert!((zoomed - 2. * css).abs() > 0.05, "{zoomed} vs {}", 2. * css);
+        Ok(())
     }
 }

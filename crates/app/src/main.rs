@@ -7,6 +7,11 @@ use gpui::{
 use std::path::PathBuf;
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
     if std::env::args().nth(1).as_deref() == Some("--qa-build-info") {
         println!("{}", app::qa::build_info());
         return;
@@ -19,8 +24,16 @@ fn main() {
         }
         return;
     }
-    let state = State::load();
-    if std::env::args().nth(1).as_deref() == Some("/diff") {
+    let launch_path = std::env::args().nth(1);
+    let mut state = State::load();
+    if let Some(route) = launch_path.as_deref().and_then(|path| {
+        app::Route::remote_path(path)
+            .or_else(|| app::Route::pull_request_path(path))
+            .or_else(|| app::onboarding::route(path))
+    }) {
+        state.route = route;
+    }
+    if launch_path.as_deref() == Some("/diff") {
         let path = std::env::args_os().nth(2).unwrap_or_else(|| {
             eprintln!("usage: codex-gpui /diff <patch-file>");
             std::process::exit(2)
@@ -40,6 +53,18 @@ fn main() {
                 cx.set_global(state.theme.theme(cx.window_appearance()));
                 app::init(cx);
                 cx.on_action(|_: &app::CloseWindow, cx| cx.quit());
+                let settings = state.path.as_ref().map_or_else(
+                    || Ok(app::host_settings::Settings::default()),
+                    |path| {
+                        app::host_settings::Settings::load(
+                            path.with_file_name("host-settings.json"),
+                        )
+                    },
+                );
+                match settings {
+                    Ok(settings) => cx.set_global(settings),
+                    Err(error) => eprintln!("codex-gpui: cannot load host settings: {error:#}"),
+                }
                 cx.on_window_closed(|cx, _| cx.quit()).detach();
                 cx.open_window(
                     WindowOptions {
@@ -57,7 +82,14 @@ fn main() {
                         ..Default::default()
                     },
                     |_, cx| {
-                        cx.new(|_| ui::screens::diff::panel::DiffPanel::from_patch(&cwd, &patch))
+                        let panel = cx
+                            .new(|_| ui::screens::diff::panel::DiffPanel::from_patch(&cwd, &patch));
+                        app::diff_content::bind_standalone_diff(
+                            &panel,
+                            std::sync::Arc::new(app::host::LocalHost::from_env()),
+                            cx,
+                        );
+                        panel
                     },
                 )
                 .expect("open diff window");
@@ -73,6 +105,16 @@ fn main() {
         .to_string_lossy()
         .into_owned();
     let application = gpui_platform::application().with_assets(theme::Assets);
+    // `codex://` deep links (SH-151..155): the OS-delivered URLs navigate the primary
+    // window like the original host's queued deep-link flush.
+    application.on_open_urls(|urls, cx| {
+        for url in urls.iter().rev() {
+            if app::deep_link::parse(url).is_some() {
+                app::deep_link::open(url, cx);
+                break;
+            }
+        }
+    });
     application.on_reopen(|cx| {
         if let Err(error) = app::windows::reopen(cx) {
             eprintln!("codex-gpui: cannot reopen the window: {error:#}");
@@ -83,11 +125,37 @@ fn main() {
         cx.set_global(state.theme.theme(cx.window_appearance()));
         app::init(cx);
         cx.set_menus(app::menus());
+        // Launch argv deep links (the original's `queueProcessArgs`): the last codex://
+        // argument navigates the new window once it exists.
+        let argv_link = std::env::args()
+            .filter_map(|arg| app::deep_link::parse(&arg).map(|link| (arg, link)))
+            .next_back()
+            .map(|(url, link)| {
+                eprintln!("codex-gpui: applying launch deep link {url}");
+                link
+            });
         let handle = app::windows::open_primary(state, cwd, cx).unwrap_or_else(|error| {
             eprintln!("codex-gpui: cannot open the primary window: {error:#}");
             std::process::exit(1)
         });
+        if let Some(link) = argv_link {
+            let _ = handle.update(cx, |root, window, cx| {
+                root.open_deep_link(&link, window, cx)
+            });
+        }
+        app::screenshot::register(cx);
         app::qa::monitor(handle, cx);
+        if let Some(path) = std::env::args()
+            .nth(1)
+            .filter(|path| path.starts_with("/hotkey-window") || path == "/spotlight")
+        {
+            match app::hotkey::Target::parse(&path)
+                .and_then(|target| app::hotkey::open(handle, target, cx))
+            {
+                Ok(popout) => app::qa::monitor(popout, cx),
+                Err(error) => eprintln!("codex-gpui: {error:#}"),
+            }
+        }
         if !app::qa::ENABLED {
             cx.activate(true);
         }

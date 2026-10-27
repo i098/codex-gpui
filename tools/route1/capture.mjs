@@ -5,7 +5,7 @@
 // state by clicking.
 import fs from "node:fs";
 import path from "node:path";
-import { openPage } from "./chrome.mjs";
+import { openPage, isCaptureRequest } from "./chrome.mjs";
 
 const SERVER = process.env.R1_SERVER || "http://127.0.0.1:4517";
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36";
@@ -39,7 +39,7 @@ function driver(p, w, h) {
   const type = (text) => p.send("Input.insertText", { text });
   // The pointer rests on the empty titlebar centre, where nothing reacts to hover.
   const park = () => mouse("mouseMoved", Math.round(w * 0.6), 6);
-  return { waitFor, click, key, type, park, sleep };
+  return { waitFor, click, key, type, park, sleep, evaluate: p.evaluate };
 }
 
 // Each state starts on a freshly loaded Home route.
@@ -96,6 +96,29 @@ const STATES = {
     await d.click(byText("Help"));
     await d.click(byText("Set up mobile"));
     await d.waitFor(`document.body.innerText.includes("Connect your phone to this Mac")`, "mobile setup");
+  },
+  // The public plugin catalog is a ChatGPT backend read (`/ps/plugins/home`) that offline mode
+  // does not have, so this state is the page's own load failure.
+  plugins: async (d) => {
+    await d.click(byText("Plugins"));
+    await d.waitFor(`document.body.innerText.includes("Failed to load plugins")`, "plugin directory");
+  },
+  skills: async (d) => {
+    await STATES.plugins(d);
+    await d.click(byText("Skills"));
+    await d.waitFor(`document.body.innerText.includes("Extend Codex with task-specific skills") && document.body.innerText.includes("Recommended")`, "skill directory");
+  },
+  // `screenshotToCurrentChat` hands the selected PNG to the composer as an image data URL; an
+  // image paste takes the same attachment path. The PNG is the s017 recording's image.
+  screenshot: async (d) => {
+    const png = JSON.parse(read("../../refs/interactions/s017.json")).steps[1].clipboard.pngDataUrl;
+    await d.click(`document.querySelector(".ProseMirror")`, "composer");
+    await d.evaluate(`(async () => {
+      const t = new DataTransfer();
+      t.items.add(new File([await (await fetch(${JSON.stringify(png)})).blob()], "image.png", { type: "image/png" }));
+      document.querySelector(".ProseMirror").dispatchEvent(new ClipboardEvent("paste", { clipboardData: t, bubbles: true, cancelable: true }));
+    })()`);
+    await d.waitFor(`[...document.images].some((i) => i.complete && i.naturalWidth === 2)`, "image attachment");
   },
 };
 
@@ -174,7 +197,8 @@ export async function capture(screen, theme, w, h, outDir = new URL("../../refs/
   p.on((x) => {
     if (x.sessionId !== p.sessionId || !x.method?.startsWith("Network.")) return;
     net.last = Date.now();
-    if (x.method === "Network.requestWillBeSent" && x.params.type !== "EventSource" && x.params.loaderId && /^https?:/.test(x.params.request.url)) net.inflight.set(x.params.requestId, `${x.params.type} ${x.params.request.url}`);
+    if (x.method === "Network.requestWillBeSent" && isCaptureRequest(x.params))
+      net.inflight.set(x.params.requestId, `${x.params.type} ${x.params.request.url}`);
     if (x.method === "Network.loadingFinished" || x.method === "Network.loadingFailed") net.inflight.delete(x.params.requestId);
   });
   // Resolves once DOM and network have been quiet for `quiet` ms with fonts and images loaded.
@@ -214,7 +238,8 @@ export async function capture(screen, theme, w, h, outDir = new URL("../../refs/
       if (await p.evaluate(`!!(${byText(t)})`)) await d.click(byText(t));
     await STATES[screen](d).catch(async (e) => {
       const shot = await p.send("Page.captureScreenshot", { format: "png" });
-      fs.writeFileSync(`/tmp/r1-fail-${screen}-${theme}.png`, Buffer.from(shot.data, "base64"));
+      fs.mkdirSync(path.join(outDir, screen), { recursive: true });
+      fs.writeFileSync(path.join(outDir, screen, `${theme}@${w}x${h}.failed.png`), Buffer.from(shot.data, "base64"));
       throw e;
     });
     // The announcement modal can come back after navigation; close it again.

@@ -206,28 +206,27 @@ fn creates_the_automation_worktree_at_the_remote_default_without_touching_the_so
     assert!(exported["set"].get("CODEX_WORKTREE_PATH").is_none());
     assert!(exported["set"].get("PWD").is_none());
 
-    let owned = call(
-        &host,
-        "set-worktree-owner-thread",
-        json!({"worktree": root, "conversationId": "thread-1"}),
-    )?;
-    assert_eq!(owned, json!({"success": true}));
-    let owner = root.join(git(
-        &root,
-        &["rev-parse", "--git-path", "codex-thread.json"],
-    )?);
-    assert_eq!(
-        fs::read_to_string(owner)?,
-        "{\n  \"version\": 1,\n  \"ownerThreadId\": \"thread-1\"\n}\n"
-    );
-    // The main checkout is never marked as a worktree owned by a thread.
-    let refused = call(
-        &host,
-        "set-worktree-owner-thread",
-        json!({"worktree": source, "conversationId": "thread-1"}),
-    );
-    assert!(refused.is_err());
-    assert!(!source.join(".git/codex-thread.json").exists());
+    for endpoint in ["set-worktree-owner-thread", "worktree-set-owner-thread"] {
+        let owned = call(
+            &host,
+            endpoint,
+            json!({"worktree": root, "conversationId": "thread-1"}),
+        )?;
+        assert_eq!(owned, json!({"success": true}));
+        let owner = root.join(git(
+            &root,
+            &["rev-parse", "--git-path", "codex-thread.json"],
+        )?);
+        let owner: Value = serde_json::from_slice(&fs::read(owner)?)?;
+        assert_eq!(owner, json!({"version": 1, "ownerThreadId": "thread-1"}));
+        let refused = call(
+            &host,
+            endpoint,
+            json!({"worktree": source, "conversationId": "thread-1"}),
+        );
+        assert!(refused.is_err());
+        assert!(!source.join(".git/codex-thread.json").exists());
+    }
 
     // Without a local `main`, the remote-tracking start gets a local branch that tracks it.
     git(&source, &["branch", "-q", "-D", "main"])?;
@@ -363,5 +362,32 @@ fn head_start_records_the_synced_branch_and_failures_clean_up_only_safe_worktree
             {"type": "branch", "branchName": "main", "remoteRef": "refs/remotes/origin/main"}}),
     );
     assert!(remote_ref.is_err());
+    Ok(())
+}
+
+#[test]
+fn invalid_action_platform_rejects_setup_like_the_original_schema() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let (source, _, _) = fixture(dir.path())?;
+    let environment = dir.path().join("invalid.toml");
+    write(
+        &environment,
+        "version=1\nname='Invalid action'\n[setup]\nscript='exit 0'\n[[actions]]\nname='Run'\ncommand='echo run'\nplatform='macos'\n",
+    )?;
+    let before = snapshot(&source)?;
+    let home = dir.path().join("codex");
+    let host = LocalHost::new(&home);
+    let result = call(
+        &host,
+        "create-worktree",
+        json!({"cwd": source, "localEnvironmentConfigPath": environment}),
+    );
+    let error = result.expect_err("invalid action platform must reject worktree setup");
+    assert!(
+        format!("{error:#}").contains("unknown action platform"),
+        "{error:#}"
+    );
+    assert_eq!(snapshot(&source)?, before);
+    assert!(reservations(&home.join("worktrees"))?.is_empty());
     Ok(())
 }

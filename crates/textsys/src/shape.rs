@@ -49,9 +49,9 @@ unsafe extern "C" fn drop_font(font: *mut c_void) {
 }
 
 impl HbFont {
-    /// `font` is the CSS-size font; its variation position (with `opsz` = CSS size, as Blink
-    /// sets it) becomes the HarfBuzz variation.
-    pub fn new(font: &CTFont, css_size: f64, device_scale: f64) -> Self {
+    /// `font` is the font at `size` layout px; its variation position (with `opsz` = CSS size,
+    /// as Blink sets it) becomes the HarfBuzz variation, and AAT `trak` uses the CSS size.
+    pub fn new(font: &CTFont, size: f64, css_size: f64, device_scale: f64) -> Self {
         unsafe {
             let face = hb::hb_face_create_for_tables(
                 Some(reference_table),
@@ -62,7 +62,7 @@ impl HbFont {
             hb::hb_face_destroy(face);
             let variations = variations(font, css_size);
             hb::hb_font_set_variations(hb_font, variations.as_ptr(), variations.len() as u32);
-            let scale = (css_size * device_scale * 65536.) as i32;
+            let scale = (size * device_scale * 65536.) as i32;
             hb::hb_font_set_scale(hb_font, scale, scale);
             // The bundled HarfBuzz also shifts glyphs by half the `trak` value; Chromium's
             // does not. Shape without `trak` and add its advance per cluster instead.
@@ -74,6 +74,11 @@ impl HbFont {
             hb::hb_font_set_ptem(hb_font, 0.);
             Self(hb_font, tracking)
         }
+    }
+
+    /// The CSS glyph advance before AAT tracking and letter spacing.
+    pub fn advance(&self, glyph: u32, device_scale: f32) -> f32 {
+        unsafe { hb::hb_font_get_glyph_h_advance(self.0, glyph) as f32 / 65536. / device_scale }
     }
 
     /// Glyphs and the total advance, CSS px. `features` are OpenType (tag, value) pairs.

@@ -96,14 +96,116 @@ Items are reorderable by drag (dnd-kit, activation distance 6 px; screen reader 
 | 2 | Space | `sidebarElectron.spaceRouteNavLink` | `/space` | route starts with `/space` |
 | 3 | Scheduled | `sidebarElectron.inboxRouteNavLink` | `/scheduled` (automations, `ScheduledSidebar` in sidebar-a9ef58c0cd4b.js) | route starts with `/automations` |
 | 4 | Plugins | `sidebarElectron.skillsAppsRouteNavLink` | `/plugins` | route starts with `/skills` or `/plugins` |
-| 5 | Explore (`…`, blue dot) | `sidebarCustomization.moreMenu` | menu with secondary destinations and `Customize sidebar` | — |
+| 5 | Explore (`…`, conditional blue dot) | `sidebarCustomization.moreMenu` | menu with secondary destinations and `Customize sidebar` | — |
 | 6 | Code Review | `sidebarElectron.codeReviewRouteNavLink` | `/pull-requests` (`CodeReviewSidebar` in sidebar-6f96a2b5f34d.js) | route starts with `/pull-requests` |
 | 7 | Sites | `sidebarElectron.sitesRouteNavLink` | `/sites` | route starts with `/sites` |
 | footer | Profile avatar | `codex.profileFooter.openProfileMenu` | profile menu (Profile, Settings, Usage, Log out, Show Mini, …; `codex.profileDropdown.*`, profile-dropdown-items-*.js) | — |
 
 - Reselecting the current destination calls its `onReselect` (Home resets the view) instead of navigating.
 - Rail settings button (`sidebarElectron.rail.settings`) opens settings when no footer is supplied.
-- Only Home is in scope for v1 behavior; the other rail destinations need only their route switch and an empty placeholder.
+- The native Code Review destination implements the pull-request inbox. Other destination families have separate parity checks.
+
+### 3.1 Native pull-request routes
+
+Open Code Review to search, filter, and group pull requests for the active GitHub CLI account.
+The All and Reviewing views remove duplicate requests across review and authored sections.
+Each search stream retains its rows and cursor after a failed page request.
+Retry reloads the failed data without creating a GitHub write.
+Retry reads the active GitHub account again before reloading.
+The search field stays on one line and keeps the caret visible during horizontal editing.
+The detail pane keeps its width ratio when its measured content width changes.
+Each route mount computes its reset width from the current shell size and the preceding measured inline inset.
+The original `VIi`, `CPt`, `DPt`, and `OPt` functions in `app-initial-6350d04672d0.js` define this lifecycle.
+The original `GIi` ResizeObserver updates the inline inset after layout without replacing the ratio or reset width.
+The native shell records its inset during prepaint, after layout assigns the content bounds.
+The route reads the preceding shell measurement before it replaces that shell.
+The pane records its own content width during prepaint and requests another frame only when that width changes.
+The shell measurement does not request a frame; the pane width cannot change its parent bounds.
+Thus a settled layout does not create a repaint loop.
+Selecting a request or returning through Home mounts a new reset default.
+Explicit drag and keyboard resizing retain the user ratio across these mounts.
+Double-clicking the divider restores the mount default, not a new viewport-only default.
+The original uses the shared `app-shell:right-panel-width:v3` storage key when no pane-specific configuration overrides it.
+Reset replay cases start with separate page contexts, as the original capture driver does.
+Each case checks the width before reset; the selected-detail case requires 724 px before and after reset.
+The inbox uses the original compact toolbar, row spacing, and grouped change counts.
+
+The executable also accepts `/pull-requests` and `/pull-requests/<host>/<owner>/<repository>/<number>` as its first argument.
+The host runs GitHub CLI reads through the existing app-server `process/spawn` connection.
+Missing CLI, unavailable access, empty results, loading, and partial failures remain distinct states.
+Ask Codex fills a new chat draft; it does not install software or start a turn.
+Summary shows the author, branches, reviewers, review-comment counts, checks, status, and description.
+Descriptions preserve source line breaks and render Markdown tables with copy controls.
+List counts use the original tabular digits, disambiguation features, and tight tracking.
+Section chevrons use the original vector with its settled rotation applied before rasterization.
+The list keeps its bottom padding inside the scroll area so the viewport does not clip the final visible row early.
+Code loads the authenticated read-only patch into the existing diff view; a failed load preserves Summary and offers retry.
+The detail toolbar expands the workspace pane without changing the operating system's fullscreen state.
+Media requests validate HTTPS hosts and stop at the size limit.
+Each selected request has at most eight attachment previews.
+Each page runs one preview job at a time, including when the selected request changes.
+Image decoding runs off the UI thread with a 64 MiB per-image limit and a 512 MiB retention limit.
+Video attachments show the original `Preview unavailable` card and `Open in GitHub` action instead of an inline player.
+The host rejects video content before downloading its body.
+`fixtures/pull-requests.json` retains scoped GitHub reads for `i098/codex-gpui`, with original response normalization and no credential tokens.
+The native replay binds recorded account identity, persisted navigation atoms, and MCP capabilities before capture.
+
+Implementation: `crates/app/src/pull_requests.rs`, `crates/app/src/host/github_pull_requests.rs`, and `crates/ui/src/screens/pull_requests.rs`.
+
+### 3.2 Browser image-error resource
+
+Failed author avatars use Chromium's original `IDR_BROKENIMAGE` resource, not pixels copied from a reference screenshot.
+The embedded 100% asset is [broken_image.png](https://chromium.googlesource.com/chromium/src/+/a49e2e3d4addfd84e765b52afe230bedb81096db/third_party/blink/public/default_100_percent/blink/broken_image.png).
+Its SHA-256 is `efcb5c77b9b97421b60982637d0a3d1e352b0275f294be3c62173743b3f0d8ee`.
+The error box follows [HTMLImageFallbackHelper](https://chromium.googlesource.com/chromium/src/+/a49e2e3d4addfd84e765b52afe230bedb81096db/third_party/blink/renderer/core/html/html_image_fallback_helper.cc): a 16-pixel marker, one-pixel silver border, and one-pixel padding.
+Chromium retains this [image license notice](https://chromium.googlesource.com/chromium/src/+/a49e2e3d4addfd84e765b52afe230bedb81096db/content/shell/resources/README.txt):
+
+```text
+Copyright (C) 2003, 2004, 2005, 2006 Apple Computer, Inc.  All rights reserved.
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+THIS SOFTWARE IS PROVIDED BY APPLE COMPUTER, INC. ``AS IS'' AND ANY
+EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE COMPUTER, INC. OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
+
+### Explore unread state
+
+The native marker uses the actual rail destination registry and global UI entrypoints from `mcpServerStatus/list`.
+MCP entries require a valid `ui://` resource and a global entrypoint.
+Native route identities replace their equivalent MCP entrypoints without creating a second discovery marker.
+
+The existing `get-global-state` transport reads `electron-persisted-atom-state`.
+`sidebar-customization-snapshots-v2` supplies signed-in pin overrides for the exact account and user.
+When no matching snapshot exists, `inline-sidebar-customization-state-by-account-id-v2` supplies the account-scoped fallback.
+Canonical IDs take precedence over legacy aliases; default pins fill at most eight slots.
+`sidebar-more-menu-seen-mcp-destination-ids-by-account-id-v1` supplies the account's seen MCP IDs.
+Pinned destinations do not light Explore.
+
+`mcp-global-entrypoints-v2` is a fallback for the exact user, account, and local host.
+A complete live catalog removes stale entries.
+Partial catalog reads retain unqueried cached servers; failed server reads require the same plugin identity.
+
+Reads run off the UI thread and refresh on account, host, MCP lifecycle, and window-activation events.
+No polling service is added.
+The reader checks identity again before publishing, cancels old callbacks, and keeps unavailable state distinct from an empty unread set.
+Every route shell receives the same bound unread IDs; Home chat attention remains separate.
+This prerequisite supplies notification state, not replacement navigation controls.
 
 ## 4. Screen: Sidebar (thread list and search)
 
@@ -232,12 +334,20 @@ Chunks: thread-side-panel-tab-content-e9ce64182d53.js (`ReviewThreadSidePanelTab
 
 ### 8.1 Component outline
 
-- Header (`Changes controls`): source selector (`Uncommitted`, `Staged`, `Unstaged`, `Last turn`, `Branch`, `Commits`, `Cloud changes`, `All repos`), `Show files` / `Hide files`, `Refresh`, `Changes options` (`Copy git apply command`, `Expand all diffs`, `Collapse all diffs`, `Load full files`, `Word wrap`, `Hide white space`, `Word diffs`, `Rich preview`).
+- Header (`Changes controls`): source selector (`Uncommitted`, `Staged`, `Unstaged`, `Last Turn`, `Branch`, `Committed`, `Cloud changes`), `Show files` / `Hide files`, `Refresh`, `Changes options` (`Refresh`, `Word wrap`, diff layout, `Expand all diffs` / `Collapse all diffs`, `Load full files`, `Rich preview`, `Word diffs`, `Hide white space`, `Hide imports`, `Copy git apply command`).
 - File tree pane: filter `Filter files…`, `Filter changed files`, `Filter generated files`, context menu `Copy path`, `Open in {target}`, `Open with`.
 - Diff list: per file header (`File actions`: `Copy path`, `Open in editor`, `Collapse file` / `Expand file`), `Mark as viewed`, hunks with `Revert`, `Stage` / `Unstage`.
 - Large diff mode: `This diff is large, showing one file at a time` with `Previous file` / `Next file`.
 - Diff renderer sets `data-diff-type="split"|"single"`, `data-indicators="bars"|"classic"`, `data-overflow`, `--diffs-min-number-column-width-default` (app-initial).
 - `/diff` window: `{fileCount} files changed`, `Switch to split diff` / `Switch to unified diff`, `Auto` mode, `Toggle rich preview`.
+- Panel divider: a centered 12 px drag handle (`split-view-b3740eb7ebfa.js`). Its drag area must leave the comment control reachable.
+- Inline comments support line ranges, creation, editing, cancellation, deletion, and submission with the next message.
+- Native comment controls expose tab stops. Tab moves from a new comment editor to `Cancel`, then `Comment`; empty submission controls do not receive focus.
+- Repository choices use the current project's roots and worktrees owned by the thread. `All repos` labels Last Turn mode, not a menu item.
+- The branch picker filters names. The commit picker and repository picker load data from the selected repository.
+- Wide review headers show refresh, wrap, layout, and expand controls outside the options menu.
+- Import filtering hides only complete, unannotated import-only hunks. It preserves new files, deleted files, and public Rust imports.
+- The import filter supports JavaScript, TypeScript, TSX, Python, Rust, Go, and Java up to 1,000,000 bytes per file.
 
 ### 8.2 States
 
@@ -250,6 +360,8 @@ Chunks: thread-side-panel-tab-content-e9ce64182d53.js (`ReviewThreadSidePanelTab
 - Turn diff arrives in `turn/diff/updated` (`threadId`, `turnId`, `diff`) and `item/fileChange/patchUpdated` (`changes`).
 - Working tree data comes from the git worker over `codex_desktop:worker:git:*`: `status-summary`, `review-summary`, `review-diff`, `review-patch`, `branch-diff-stats`, `base-branch`, `current-branch`, `apply-patch`, `apply-changes`, `apply-review-section-changes`, `revert` (full list in `/tmp/cgx/e1-out/git-worker-cases.txt`, source `.vite/build/worker.js`).
 - `update-diff-if-open` is posted from local-conversation-turn-632904a8790c.js to refresh an open diff window.
+- The native `git-changes` adapter applies `hideWhitespace` through Git. The native `git-review-patch` adapter exports the unfiltered binary patch.
+- Patch records follow `--numstat -z`, not raw status entries. Apple Git can retain raw status rows for hidden whitespace-only changes.
 
 ## 9. Screen: Settings, login and onboarding
 
@@ -312,9 +424,18 @@ Section registry: `gWa` (order) and `lQa` (lazy pages) in app-initial-6350d04672
 | `cloud-computer` | — | `ChatGptCloudBrowserSettings` | settings-65381b73a1a2.js |
 | `passwords` | — | `PasswordsSettings` | settings-156aaa691e7d.js |
 | `teams` | — | `TeamSettingsPage` | team-settings-page-9276d495b863.js |
+| `open-source-licenses` | General > View | `OpenSourceLicensesPage` | open-source-licenses-page-aa8c2e98f58d.js |
 
 - General settings (general-settings-65e65871cdcd.js): `Theme` `Light` / `Dark` / `System`, light and dark chrome themes (accent, background, foreground, UI/code fonts, contrast, translucent sidebar, import/copy theme), `UI font size`, `Code font size`, `Diff markers` (`Color` / `+/-`), `Use pointer cursors`, `Font smoothing`, `Reduce motion`, `Dock icon`, `Send shortcut`, `Follow-up behavior`.
 - Keyboard shortcuts (keyboard-shortcuts-settings-e5d452e7d34c.js) lists and rebinds the commands of section 11; `⌘/` opens `KeyboardShortcutsDialog` (keyboard-shortcuts-dialog-a55e88bf0464.js).
+- Native `/settings/open-source-licenses` reads `THIRD_PARTY_NOTICES.txt` from the app bundle, then the working directory's asset paths.
+  Bundle assembly generates the file from production dependency metadata and available package license files.
+  It retains loading and missing-file states.
+  Back replaces the subtree with General; selecting another settings section leaves the subtree.
+  A virtual list keeps painted rows bounded for large notices files.
+  The card uses its full wrapped height in the scroll layer; the Back arrow uses the main rounded clip.
+  The retained original/native pair passes with zero outside-text differences and 0.0690411% inside-text differences.
+  Measuring all wrapped lines remains costly during initial load and resize.
 
 ### 9.2 Login and onboarding
 
@@ -741,7 +862,7 @@ Scope `app` means the renderer handles the key; `OS-global` keys are registered 
 | `toggleFileTreePanel` | Toggle navigation panel | `CmdOrCtrl+Shift+E` | app | panels | yes | app-initial-6350d04672d0.js |
 | `toggleBottomPanel` | Toggle bottom panel | `CmdOrCtrl+J` | menu/default | panels | yes | app-initial-6350d04672d0.js |
 | `togglePinnedSummary` | Toggle pinned summary | — | menu/default | panels | yes | app-initial-6350d04672d0.js |
-| `toggleTerminal` | Open terminal | — | menu/default | panels | yes | app-initial-6350d04672d0.js |
+| `toggleTerminal` | Open terminal | ``Control+` `` (`electron.defaultKeybindings`) | menu/default | panels | yes | app-initial-6350d04672d0.js |
 | `openBrowserTab` | Open browser tab | `CmdOrCtrl+T` | menu/default | panels | yes | app-initial-6350d04672d0.js |
 | `closeOtherTabs` | Close other tabs | `CmdOrCtrl+Alt+W` | app | — | no | app-initial-6350d04672d0.js |
 | `showWorkspaceTabView` | Full view | `CmdOrCtrl+Shift+F` | app | panels | yes | app-initial-6350d04672d0.js |
@@ -796,7 +917,7 @@ Built in `.vite/build/main-CqEoQDOU.js` (template `Ut`, rebuilt on feature or ke
 - **Codex** (app menu): `About {appName}`, separator, `Settings…` (`⌘,`), `Check for Updates…` (when updater exists), `Log Out`, separator, `Services`, separator, `Hide {appName}`, `Hide Others`, `Show All`, separator, `Quit {appName}`.
 - **File**: `New Window` (multi-window only), `New Chat` (`⌘N`), `New Temporary Chat` (`⌘⇧N`, enabled when allowed), `New Project…`, `New standalone chat` (`⌘⌥O`), separator, `Open Folder…` (`⌘O`), separator, `Close` (`⌘W`).
 - **Edit**: `Undo`, `Redo`, `Cut`, `Copy`, `Paste`, `Paste and Match Style` (`⌘⇧V`), `Delete`, `Select All`, `Substitutions` ▸, `Speech` ▸.
-- **View**: `Toggle Sidebar` (`⌘⇧S`, also `⌘B`), `Toggle Bottom Panel` (`⌘J`), `Toggle Pinned Summary`, `Open Terminal`, `Toggle navigation panel` (`⌘⇧E`), `Full view` (`⌘⇧F`, unified tab strip only), `Toggle Changes Panel` (`⌘⌥B`; label `Switch between Chat and tabs` with unified tab strip), `Browser` ▸ (browser pane only), separator, `Find` (`⌘F`), separator, `Previous Chat` (`⌘⇧[`), `Next Chat` (`⌘⇧]`), `Back` (`⌘[`), `Forward` (`⌘]`), `Reload Window` (dev), separator, `Zoom In`, `Zoom Out`, `Actual Size`, `Developer` ▸ (dev), separator, hidden full screen item; hidden accelerators: command menu (`⌘K`, `⌘⇧P`), `Search Chats…`, `Search Files…` (`⌘P`), pin (`⌘⌥P`), rename (`⌘⌥R`), archive (`⌘⇧A`), copy working directory (`⌘⇧C`), copy deeplink (`⌘⌥L`), copy conversation path (`⌘⌥⇧C`), `Go to Chat 1…9`.
+- **View**: `Toggle Sidebar` (`⌘⇧S`, also `⌘B`), `Toggle Bottom Panel` (`⌘J`), `Toggle Pinned Summary`, `Open Terminal` (``⌃` ``), `Toggle navigation panel` (`⌘⇧E`), `Full view` (`⌘⇧F`, unified tab strip only), `Toggle Changes Panel` (`⌘⌥B`; label `Switch between Chat and tabs` with unified tab strip), `Browser` ▸ (browser pane only), separator, `Find` (`⌘F`), separator, `Previous Chat` (`⌘⇧[`), `Next Chat` (`⌘⇧]`), `Back` (`⌘[`), `Forward` (`⌘]`), `Reload Window` (dev), separator, `Zoom In`, `Zoom Out`, `Actual Size`, `Developer` ▸ (dev), separator, hidden full screen item; hidden accelerators: command menu (`⌘K`, `⌘⇧P`), `Search Chats…`, `Search Files…` (`⌘P`), pin (`⌘⌥P`), rename (`⌘⌥R`), archive (`⌘⇧A`), copy working directory (`⌘⇧C`), copy deeplink (`⌘⌥L`), copy conversation path (`⌘⌥⇧C`), `Go to Chat 1…9`.
 - **Window**: `Minimize`, `Zoom`, `Bring All to Front`.
 - **Help**: `Documentation` (opens developers.openai.com/codex/app), `Keyboard Shortcuts` (`⌘/`), `What's New`, separator, `Troubleshooting`, `System Status`, `Send Feedback`, `Task Manager`, trace items.
 

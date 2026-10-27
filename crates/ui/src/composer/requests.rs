@@ -848,6 +848,7 @@ impl Composer {
                                             && event.keystroke.modifiers
                                                 == gpui::Modifiers::default()
                                         {
+                                            this.cancel_dictation(cx);
                                             this.request_draft.index = target;
                                             this.request_draft.error = None;
                                             this.request_focus_pending = true;
@@ -858,6 +859,7 @@ impl Composer {
                                     },
                                 ))
                                 .on_click(self.request_listener(cx, move |this, _, window, cx| {
+                                    this.cancel_dictation(cx);
                                     this.request_draft.index = target;
                                     this.request_draft.error = None;
                                     this.request_focus_pending = true;
@@ -1583,6 +1585,7 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.cancel_dictation(cx);
         if let Some(form) = self
             .approval
             .as_ref()
@@ -1730,6 +1733,10 @@ mod tests {
                 let field = cx.new(|cx| Composer::settings_field("Secret", "a😀b", false, cx));
                 field.update(cx, |field, cx| {
                     field.secret = true;
+                    assert!(
+                        !gpui::EntityInputHandler::text_input_configuration(field, window, cx)
+                            .text_substitutions
+                    );
                     let mut actual = None;
                     let text = gpui::EntityInputHandler::text_for_range(
                         field,

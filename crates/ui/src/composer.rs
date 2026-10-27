@@ -14,11 +14,11 @@ use bridge::types::{
     PermissionsApprovalRequest, QueuedSubmission,
 };
 use gpui::{
-    AnyElement, App, AvailableSpace, Bounds, ClipboardItem, Context, Corners, CursorStyle, Div,
-    ElementId, ElementInputHandler, Entity, EntityInputHandler, ExternalPaths, FocusHandle,
+    AnyElement, AnyView, App, AvailableSpace, Bounds, ClipboardItem, Context, Corners, CursorStyle,
+    Div, ElementId, ElementInputHandler, Entity, EntityInputHandler, ExternalPaths, FocusHandle,
     Focusable, GlobalElementId, Hsla, InspectorElementId, InteractiveElement, IntoElement,
     KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement,
-    PathPromptOptions, Pixels, Point, Render, SharedString, Size, Stateful,
+    PathPromptOptions, Pixels, Point, Render, ScrollHandle, SharedString, Size, Stateful,
     StatefulInteractiveElement, Style, Styled, Task, TextAlign, TextRun, UTF16Selection,
     UnderlineStyle, Window, WrappedLine, actions, deferred, div, fill, point,
     prelude::FluentBuilder as _, px, relative, size,
@@ -27,11 +27,56 @@ use serde_json::{Value, json};
 use std::{ops::Range, path::PathBuf, rc::Rc, time::Duration};
 use theme::{ActiveTheme as _, Appearance, Theme};
 
+pub(crate) fn normalize_newlines(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains('\r') {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut normalized = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\r' {
+            normalized.push('\n');
+            if chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+        } else {
+            normalized.push(ch);
+        }
+    }
+    std::borrow::Cow::Owned(normalized)
+}
+
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub enum EnterBehavior {
+    #[default]
+    Enter,
+    CmdIfMultiline,
+    CmdAlways,
+}
+
+impl EnterBehavior {
+    pub fn from_setting(value: &str) -> Self {
+        match value {
+            "cmdIfMultiline" => Self::CmdIfMultiline,
+            "cmdAlways" => Self::CmdAlways,
+            _ => Self::Enter,
+        }
+    }
+
+    fn inserts_newline(self, content: &str) -> bool {
+        self == Self::CmdAlways || self == Self::CmdIfMultiline && content.contains('\n')
+    }
+}
+
+impl gpui::Global for EnterBehavior {}
 actions!(
     composer,
     [
         /// Send the prompt (Enter).
         Submit,
+        /// Home composer only (`composer.submitInBackground`): send the prompt and stay on Home.
+        SubmitInBackground,
+        ModifiedSubmit,
         Stop,
         RequestFullAccess,
         /// Insert a line break (Shift+Enter).
@@ -67,10 +112,13 @@ actions!(
 
 mod attach;
 pub mod computer_use;
+pub mod dictation;
+mod diff_comments;
 mod editor;
+pub use diff_comments::DiffCommentsChanged;
 mod footer;
 mod requests;
-mod menu {
+pub(crate) mod menu {
     //! Focus rules for the recorded Radix menus: arrows stop at the ends, Escape returns
     //! focus to the trigger, and Enter or Space activates the focused item.
 
@@ -159,7 +207,7 @@ mod menu {
         }
     }
 
-    pub(super) fn trigger_focus(style: StyleRefinement) -> StyleRefinement {
+    pub(crate) fn trigger_focus(style: StyleRefinement) -> StyleRefinement {
         style.shadow(vec![BoxShadow {
             color: rgb(0x3a83f7).into(),
             offset: point(px(0.), px(0.)),
@@ -183,6 +231,46 @@ const SM_WIDTH: f32 = 440.;
 const XS_WIDTH: f32 = 300.;
 const FONT_SIZE: Pixels = px(14.);
 const LINE_HEIGHT: Pixels = px(20.);
+/// Smallest content height the textarea grip resizes to: the original's `min-h-24` (96 px)
+/// border box less its 1 px borders and 8 px vertical padding.
+const MIN_TEXTAREA_CONTENT_HEIGHT: Pixels = px(78.);
+
+/// Blink's `DrawPlatformResizerImage` at 2x: two unantialiased 2 px strokes in 60% black, each
+/// repeated 2 device px lower in 60% white. Each stroke starts at its top row's 1 px tip, runs
+/// down-left 3 px wide, and ends 2 px wide on the row 7 device px above the border box's bottom.
+/// shortcut: the device pattern is measured at scale 2; derive Blink's geometry if 1x matters.
+fn paint_resizer(bounds: Bounds<Pixels>, window: &mut Window) {
+    let scale = window.scale_factor();
+    let (right, bottom) = (
+        (f32::from(bounds.right()) * scale).round(),
+        (f32::from(bounds.bottom()) * scale).round(),
+    );
+    for (top, color) in [
+        (-21, gpui::black()),
+        (-14, gpui::black()),
+        (-19, gpui::white()),
+        (-12, gpui::white()),
+    ] {
+        for row in top..=-7 {
+            let left = -7 - (row - top);
+            let (x, width) = match row {
+                _ if row == top => (left, 1),
+                -7 => (left + 1, 2),
+                _ => (left, 3),
+            };
+            window.paint_quad(fill(
+                Bounds::new(
+                    point(
+                        px((right + x as f32) / scale),
+                        px((bottom + row as f32) / scale),
+                    ),
+                    size(px(width as f32 / scale), px(1. / scale)),
+                ),
+                color.opacity(0.6),
+            ));
+        }
+    }
+}
 
 /// Composer keys (inventory §7.2): Enter sends, Shift+Enter inserts a newline. Edit menu
 /// commands (`crate::Cut`, `Copy`, `Paste`, `SelectAll`) are bound by the app.
@@ -190,6 +278,7 @@ pub fn bind_keys(cx: &mut App) {
     let c = Some(KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("enter", Submit, c),
+        KeyBinding::new("cmd-enter", ModifiedSubmit, c),
         KeyBinding::new("escape", Dismiss, Some(REQUEST_CONTEXT)),
         KeyBinding::new("cmd-enter", Submit, Some(REQUEST_FORM_CONTEXT)),
         KeyBinding::new("ctrl-enter", Submit, Some(REQUEST_FORM_CONTEXT)),
@@ -282,6 +371,17 @@ pub fn model_label(name: &str) -> String {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum FieldStyle {
+    Settings,
+    Form,
+    Compact,
+    /// A settings-row value: frameless, right-aligned, secondary text.
+    Inline,
+    /// Like `Inline`, but left-aligned in primary text.
+    Dialog,
+}
+
 /// One `model/list` entry as the picker shows it.
 #[derive(Clone)]
 struct ModelOption {
@@ -325,7 +425,7 @@ impl Permission {
     ];
 
     /// The preset `config/read` matches; anything else is `Custom (config.toml)`.
-    fn from_config(config: &Value) -> Self {
+    pub fn from_config(config: &Value) -> Self {
         match (
             config["approval_policy"].as_str(),
             config["sandbox_mode"].as_str(),
@@ -371,12 +471,21 @@ impl Permission {
 pub struct Submission {
     pub text: String,
     pub attachments: Vec<PathBuf>,
+    /// File references added as context, not image uploads.
+    pub context_files: Vec<PathBuf>,
     pub model: String,
-    pub effort: String,
+    pub effort: Option<String>,
     pub permission: Permission,
     /// Fast mode (bolt toggle in the model picker).
     pub fast: bool,
+    /// `composer.submitInBackground`: create the chat and start its turn without opening it.
+    pub background: bool,
 }
+
+/// Enter in a single-line settings form field.
+pub struct SettingsFieldSubmit;
+
+impl gpui::EventEmitter<SettingsFieldSubmit> for Composer {}
 
 #[derive(Debug, PartialEq)]
 struct RequestIdentity {
@@ -528,6 +637,7 @@ enum Menu {
     Permissions,
     Effort,
     Models,
+    Comments,
 }
 
 /// Index of the `Speed` sub trigger among the effort menu's items.
@@ -547,6 +657,7 @@ type CancelEditHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 type ApprovalHandler = Rc<dyn Fn(Value, String, Value, &mut Window, &mut App)>;
 /// `(model id, effort)` after the user picks them.
 type ModelHandler = Rc<dyn Fn(&str, &str, &mut App)>;
+type SettingsPasteHandler = Rc<dyn Fn(&str, &mut App) -> bool>;
 
 /// What a queued row's buttons and `Queued message actions` menu ask of the app.
 #[derive(Clone)]
@@ -555,6 +666,8 @@ pub enum QueueAction {
     Delete(String),
     /// `Edit message`: the queued submission with this id returns to the composer.
     Edit(String),
+    /// `Open in side chat`: the queued submission with this id continues in a side chat.
+    SideChat(String),
     /// `Turn off queueing` / `Turn on queueing`: the new `Follow-up behavior` is queue (`true`).
     Queueing(bool),
 }
@@ -570,8 +683,14 @@ pub struct QueuedMessage {
 
 const QUEUE_ACTIONS: &str = "Queued message actions";
 const QUEUE_EDIT: &str = "queuedEdit";
+const QUEUE_SIDE_CHAT: &str = "queuedSideChat";
 const QUEUE_SWITCH: &str = "queuedQueueing";
-const QUEUE_MENU_WIDTH: f32 = 220.;
+
+#[derive(Clone, Copy)]
+struct EmbeddedField {
+    font_size: Pixels,
+    line_height: Pixels,
+}
 pub struct Composer {
     focus_handle: FocusHandle,
     placeholder: SharedString,
@@ -587,14 +706,20 @@ pub struct Composer {
     history: editor::History,
     /// The right-click menu (Electron's native editable-field menu).
     context_menu: Option<crate::screens::thread::view::menu::ContextMenu>,
+    context_spelling: Option<(Range<usize>, String)>,
+    context_image: Option<crate::image_context::ImageContext>,
     is_selecting: bool,
     /// Shaped lines and editor bounds of the last paint, for hit testing.
     lines: Vec<WrappedLine>,
     bounds: Option<Bounds<Pixels>>,
+    line_height: Pixels,
     attachments: Vec<attach::Attachment>,
     /// The attachments of the last submission, until the next one: [`Self::restore_submission`]
     /// puts them back when starting the chat failed.
     submitted: Vec<attach::Attachment>,
+    diff_comments: Vec<crate::screens::diff::panel::comments::Comment>,
+    submitted_diff_comments: Vec<crate::screens::diff::panel::comments::Comment>,
+    comments_close: Option<Task<()>>,
     pending_attachments: usize,
     attachment_generation: u64,
     attachment_error: Option<&'static str>,
@@ -602,8 +727,8 @@ pub struct Composer {
     drag_active: bool,
     models: Vec<ModelOption>,
     model: usize,
-    effort: String,
-    default_selection: (usize, String),
+    effort: Option<String>,
+    default_selection: (usize, Option<String>),
     fast: bool,
     permission: Permission,
     menu: Option<Menu>,
@@ -616,6 +741,7 @@ pub struct Composer {
     speed_timer: Option<Task<()>>,
     permissions_focus: FocusHandle,
     model_focus: FocusHandle,
+    comments_focus: FocusHandle,
     /// The card's (`composer-footer` container's) width, CSS px: see `SM_WIDTH`, `XS_WIDTH`.
     footer_width: f32,
     menu_trigger_hovered: bool,
@@ -625,6 +751,9 @@ pub struct Composer {
     request_drafts: Vec<(Rc<RequestIdentity>, RequestDraft)>,
     request_focus_pending: bool,
     request_compact: bool,
+    /// The sign-in `input`'s text color (set by [`Self::set_compact_field`]); its placeholder
+    /// is `text-tertiary` at full opacity.
+    field_text: Option<Hsla>,
     request_number: bool,
     request_label: Option<SharedString>,
     secret: bool,
@@ -638,6 +767,9 @@ pub struct Composer {
     queue_mode: bool,
     /// The app-server's queued follow-ups of the open thread, shown in a tray over the card.
     queued: Vec<QueuedMessage>,
+    /// The app can continue a queued row in a side chat: the row's menu offers `Open in side
+    /// chat`, as the original does when its host passes `onOpenSideChatMessage`.
+    side_chat: bool,
     queue_pending: bool,
     on_submit: Option<SubmitHandler>,
     on_cancel_edit: Option<CancelEditHandler>,
@@ -645,6 +777,26 @@ pub struct Composer {
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
     plain_field: Option<bool>,
+    field_style: FieldStyle,
+    hotkey_controls: Option<AnyView>,
+    document_field: bool,
+    mini: bool,
+    search_field: bool,
+    field_min_height: Pixels,
+    field_scroll: Option<ScrollHandle>,
+    field_autoscroll: bool,
+    /// The grip drag of a plain multiline field: pointer y and field height at its start.
+    field_resize: Option<(Pixels, Pixels)>,
+    dictation: Option<dictation::Active>,
+    dictation_error: Option<String>,
+    embedded_field: Option<EmbeddedField>,
+    on_settings_paste: Option<SettingsPasteHandler>,
+    /// Script and command fields use the original code textarea's monospace text.
+    monospace: bool,
+    /// A textarea in the original settings input style: strong border, unfaded placeholder.
+    input_style: bool,
+    /// The original's 28 px settings input (`h-7`, 8 px inline padding).
+    small_input: bool,
 }
 
 impl Composer {
@@ -675,19 +827,25 @@ impl Composer {
             marked_range: None,
             history: editor::History::default(),
             context_menu: None,
+            context_spelling: None,
+            context_image: None,
             is_selecting: false,
             lines: Vec::new(),
             bounds: None,
+            line_height: LINE_HEIGHT,
             attachments: Vec::new(),
             submitted: Vec::new(),
+            diff_comments: Vec::new(),
+            submitted_diff_comments: Vec::new(),
+            comments_close: None,
             pending_attachments: 0,
             attachment_generation: 0,
             attachment_error: None,
             drag_active: false,
             models: Vec::new(),
             model: 0,
-            effort: "medium".into(),
-            default_selection: (0, "medium".into()),
+            effort: Some("medium".into()),
+            default_selection: (0, Some("medium".into())),
             fast: false,
             permission: Permission::Custom,
             menu: None,
@@ -698,6 +856,7 @@ impl Composer {
             speed_timer: None,
             permissions_focus: cx.focus_handle().tab_stop(true),
             model_focus: cx.focus_handle().tab_stop(true),
+            comments_focus: cx.focus_handle().tab_stop(true),
             footer_width: f32::INFINITY,
             menu_trigger_hovered: false,
             approval: None,
@@ -706,6 +865,7 @@ impl Composer {
             request_drafts: Vec::new(),
             request_focus_pending: false,
             request_compact: false,
+            field_text: None,
             request_number: false,
             request_label: None,
             secret: false,
@@ -714,6 +874,7 @@ impl Composer {
             stop_armed: None,
             queue_mode: false,
             queued: Vec::new(),
+            side_chat: false,
             queue_pending: false,
             on_submit: None,
             on_cancel_edit: None,
@@ -721,7 +882,41 @@ impl Composer {
             on_approval: None,
             on_model: None,
             plain_field: None,
+            field_style: FieldStyle::Settings,
+            hotkey_controls: None,
+            document_field: false,
+            mini: false,
+            search_field: false,
+            field_min_height: px(48.),
+            field_scroll: None,
+            field_autoscroll: false,
+            field_resize: None,
+            dictation: None,
+            dictation_error: None,
+            embedded_field: None,
+            on_settings_paste: None,
+            monospace: false,
+            input_style: false,
+            small_input: false,
         }
+    }
+
+    pub fn set_hotkey_home(
+        &mut self,
+        controls: AnyView,
+        placeholder: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.hotkey_controls = Some(controls);
+        self.placeholder = placeholder.into();
+        cx.notify();
+    }
+
+    pub fn set_mini(&mut self, cx: &mut Context<Self>) {
+        self.mini = true;
+        self.search_field = true;
+        self.placeholder = "Ask".into();
+        cx.notify();
     }
 
     pub fn settings_field(
@@ -732,10 +927,168 @@ impl Composer {
     ) -> Self {
         let mut editor = Self::new(placeholder, false, cx);
         editor.plain_field = Some(multiline);
+        if multiline {
+            editor.field_scroll = Some(ScrollHandle::new());
+            editor.field_min_height = MIN_TEXTAREA_CONTENT_HEIGHT;
+        }
         editor.set_text(value, cx);
         editor
     }
 
+    pub fn form_field(
+        placeholder: &'static str,
+        value: &str,
+        multiline: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut field = Self::settings_field(placeholder, value, multiline, cx);
+        field.field_style = FieldStyle::Form;
+        field
+    }
+
+    pub fn settings_form_field(
+        label: &'static str,
+        placeholder: &'static str,
+        value: &str,
+        multiline: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut field = Self::settings_field(placeholder, value, multiline, cx);
+        field.field_style = FieldStyle::Compact;
+        field.request_compact = true;
+        field.request_label = Some(label.into());
+        field.line_height = px(18.571_428);
+        field
+    }
+
+    pub fn on_settings_paste(&mut self, handler: impl Fn(&str, &mut App) -> bool + 'static) {
+        self.on_settings_paste = Some(Rc::new(handler));
+    }
+
+    pub fn inline_field(placeholder: &'static str, value: &str, cx: &mut Context<Self>) -> Self {
+        let mut field = Self::settings_field(placeholder, value, false, cx);
+        field.field_style = FieldStyle::Inline;
+        field
+    }
+
+    /// A frameless single-line field for a dialog that draws its own frame, labelled `label`.
+    pub fn dialog_field(
+        label: &'static str,
+        placeholder: &'static str,
+        value: &str,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut field = Self::settings_field(placeholder, value, false, cx);
+        field.field_style = FieldStyle::Dialog;
+        field.request_label = Some(label.into());
+        field
+    }
+
+    pub fn search_field(placeholder: &'static str, cx: &mut Context<Self>) -> Self {
+        let mut field = Self::settings_field(placeholder, "", false, cx);
+        field.search_field = true;
+        field
+    }
+
+    pub fn embedded_field(
+        placeholder: &'static str,
+        value: &str,
+        text_size: Pixels,
+        line_height: Pixels,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut editor = Self::settings_field(placeholder, value, false, cx);
+        editor.embedded_field = Some(EmbeddedField {
+            font_size: text_size,
+            line_height,
+        });
+        editor
+    }
+
+    pub fn with_field_min_height(mut self, height: Pixels) -> Self {
+        self.field_min_height = height;
+        self
+    }
+
+    pub fn input_style(mut self) -> Self {
+        self.input_style = true;
+        self
+    }
+
+    pub fn small_input(mut self) -> Self {
+        self.small_input = true;
+        self
+    }
+
+    pub fn monospace_field(mut self) -> Self {
+        self.monospace = true;
+        self
+    }
+
+    pub fn field_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.request_label = Some(label.into());
+        self
+    }
+
+    pub fn set_document_style(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.document_field = enabled;
+        if enabled {
+            self.normalize_document();
+        }
+        cx.notify();
+    }
+
+    /// A settings textarea: a multiline plain field that is not the diff comment editor, which
+    /// draws inside its comment card instead.
+    fn textarea(&self) -> bool {
+        self.plain_field == Some(true) && self.on_cancel_edit.is_none()
+    }
+
+    /// 13 px text and 10 px insets: a settings textarea, a sign-in field, or a compact request
+    /// field that is not secret.
+    fn compact_text(&self) -> bool {
+        self.textarea() || (self.request_compact && (self.request_parent.is_none() || !self.secret))
+    }
+
+    fn editor_font_size(&self) -> Pixels {
+        if self.document_field {
+            px(14.)
+        } else if let Some(field) = self.embedded_field {
+            field.font_size
+        } else if self.compact_text() {
+            px(13.)
+        } else {
+            FONT_SIZE
+        }
+    }
+
+    fn editor_line_height(&self) -> Pixels {
+        if self.document_field {
+            px(23.59375)
+        } else if let Some(field) = self.embedded_field {
+            field.line_height
+        } else if self.search_field || self.textarea() {
+            px(18.571_428)
+        } else {
+            self.line_height
+        }
+    }
+
+    pub fn settings_search(placeholder: &'static str, cx: &mut Context<Self>) -> Self {
+        let mut editor = Self::settings_field(placeholder, "", false, cx);
+        editor.search_field = true;
+        editor.request_compact = true;
+        editor
+    }
+    pub fn settings_compact_field(
+        placeholder: &'static str,
+        value: &str,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut editor = Self::settings_field(placeholder, value, false, cx);
+        editor.request_compact = true;
+        editor
+    }
     pub fn field_text(&self) -> &str {
         &self.content
     }
@@ -750,8 +1103,9 @@ impl Composer {
         cx.notify();
     }
 
-    pub(crate) fn set_compact_field(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn set_compact_field(&mut self, text: Hsla, cx: &mut Context<Self>) {
         self.request_compact = true;
+        self.field_text = Some(text);
         cx.notify();
     }
 
@@ -814,8 +1168,7 @@ impl Composer {
                 let id = &self.models.get(self.model)?.id;
                 let m = models.iter().find(|m| &m.id == id)?;
                 Some(m.default_reasoning_effort.clone())
-            })
-            .unwrap_or_else(|| "medium".into());
+            });
         self.default_selection = (self.model, self.effort.clone());
         self.permission = Permission::from_config(config);
         self.queue_mode = config["desktop"]["followUpQueueMode"] == "queue";
@@ -828,9 +1181,13 @@ impl Composer {
     pub fn set_model_and_effort(&mut self, model: &str, effort: &str, cx: &mut Context<Self>) {
         if let Some(index) = self.models.iter().position(|option| option.id == model) {
             self.model = index;
-            self.effort = effort.into();
+            self.effort = Some(effort.into());
             cx.notify();
         }
+    }
+
+    fn displayed_effort(&self) -> &str {
+        self.effort.as_deref().unwrap_or("medium")
     }
 
     pub fn on_submit(&mut self, f: impl Fn(&Submission, &mut Window, &mut App) + 'static) {
@@ -862,6 +1219,7 @@ impl Composer {
 
     pub fn restart_ready(&self) -> bool {
         self.content.is_empty()
+            && self.diff_comments.is_empty()
             && self.attachments.is_empty()
             && self.pending_attachments == 0
             && self.marked_range.is_none()
@@ -889,6 +1247,9 @@ impl Composer {
             .as_ref()
             .map(|approval| approval.identity.as_ref())
             == approval.as_ref().map(|approval| approval.identity.as_ref());
+        if !same_request {
+            self.cancel_dictation(cx);
+        }
         if !same_request
             && let Some(old) = &self.approval
             && old.form.is_some()
@@ -942,6 +1303,10 @@ impl Composer {
         &self.queued
     }
 
+    pub fn set_side_chat(&mut self, available: bool) {
+        self.side_chat = available;
+    }
+
     /// `Edit message`: the queued draft returns to the editor. A draft already there stays
     /// below it ([`Self::restore_text`]) and the images join the current attachments.
     pub fn load_queued(
@@ -968,39 +1333,57 @@ impl Composer {
     ) {
         match id {
             QUEUE_EDIT => cx.emit(QueueAction::Edit(subject)),
+            QUEUE_SIDE_CHAT => cx.emit(QueueAction::SideChat(subject)),
             QUEUE_SWITCH => cx.emit(QueueAction::Queueing(!self.queue_mode)),
             _ => self.activate_context_item(id, subject, window, cx),
         }
     }
 
-    /// The row's `Queued message actions` menu (`composer.queuedMessage.more`): `Edit message`
-    /// and the follow-up behavior switch, at the pointer like the editor's context menu.
+    /// The row's `Queued message actions` menu (`composer.queuedMessage.more`): `Edit message`,
+    /// `Open in side chat` where the app offers it, and the follow-up behavior switch, below its
+    /// button with the right edges aligned.
     fn open_queue_menu(
         &mut self,
         id: &str,
-        at: gpui::Point<Pixels>,
+        button: Bounds<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         use crate::screens::thread::view::menu::{ContextMenu, Item};
         self.menu = None;
         self.slash.reset();
-        let items = vec![
-            Item::new(QUEUE_EDIT, "Edit message", true),
-            Item::new(
-                QUEUE_SWITCH,
-                if self.queue_mode {
-                    "Turn off queueing"
-                } else {
-                    "Turn on queueing"
-                },
-                true,
-            ),
-        ];
-        // The original's dropdown is `align: end` under the button: the menu's right edge
-        // meets the button's.
-        let at = gpui::point(at.x - px(QUEUE_MENU_WIDTH - 12.), at.y + px(4.));
-        self.context_menu = Some(ContextMenu::open(items, id.to_owned(), at, window, cx));
+        let item = |id, label, icon: &'static [u8]| Item {
+            icon: Some(icon),
+            ..Item::new(id, label, true)
+        };
+        let mut items = vec![item(
+            QUEUE_EDIT,
+            "Edit message",
+            include_bytes!("../../../assets/icons/pencil.svg"),
+        )];
+        if self.side_chat {
+            items.push(item(
+                QUEUE_SIDE_CHAT,
+                "Open in side chat",
+                include_bytes!("../../../assets/icons/side-chat.svg"),
+            ));
+        }
+        items.push(item(
+            QUEUE_SWITCH,
+            if self.queue_mode {
+                "Turn off queueing"
+            } else {
+                "Turn on queueing"
+            },
+            include_bytes!("../../../assets/icons/queue-handle.svg"),
+        ));
+        self.context_menu = Some(ContextMenu::dropdown(
+            items,
+            id.to_owned(),
+            button,
+            window,
+            cx,
+        ));
         cx.notify();
     }
 
@@ -1044,7 +1427,13 @@ impl Composer {
                 .id(kind)
                 .h(px(24.))
                 .min_w(px(24.))
-                .px(px(4.))
+                .px(px(if matches!(action, QueueAction::Steer(_)) {
+                    8.
+                } else {
+                    0.
+                }))
+                .border_1()
+                .border_color(gpui::transparent_black())
                 .flex_shrink_0()
                 .flex()
                 .items_center()
@@ -1055,14 +1444,18 @@ impl Composer {
                 .aria_disabled(self.queue_pending)
                 .focusable()
                 .tab_index(0)
-                .focus_visible(menu::trigger_focus)
+                .focus_visible(crate::focus::trigger_focus)
                 .opacity(if self.queue_pending { 0.4 } else { 1. })
                 .when(!self.queue_pending, |d| d.hover(|s| s.bg(t.ghost_hover)))
                 .child(match action {
-                    QueueAction::Steer(_) => {
-                        text("Steer", 12., 20., 400., t.text).into_any_element()
-                    }
-                    _ => icon("close", 14., t.text_tertiary).into_any_element(),
+                    QueueAction::Steer(_) => div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(icon("queue-steer", 14., t.text_tertiary))
+                        .child(text("Steer", 13., 18., 430., t.text_tertiary))
+                        .into_any_element(),
+                    _ => icon("queue-delete", 14., t.text_tertiary).into_any_element(),
                 })
                 .on_key_down(
                     cx.listener(move |this, event: &gpui::KeyDownEvent, window, cx| {
@@ -1085,11 +1478,30 @@ impl Composer {
         &self,
         id: String,
         t: &Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> crate::tooltip::Tooltip {
+        let bounds = window.use_keyed_state(
+            SharedString::from(format!(
+                "queue-menu-bounds-{:?}-{id}",
+                cx.entity().entity_id()
+            )),
+            cx,
+            |_, _| Bounds::<Pixels>::default(),
+        );
+        let measured = bounds.clone();
         crate::tooltip::tooltip(
             div()
                 .id(SharedString::from(format!("queued-actions-{id}")))
+                .relative()
+                .child(
+                    gpui::canvas(
+                        move |rect, _, cx| measured.update(cx, |stored, _| *stored = rect),
+                        |_, (), _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
+                )
                 .size(px(24.))
                 .flex_shrink_0()
                 .flex()
@@ -1101,7 +1513,7 @@ impl Composer {
                 .aria_disabled(self.queue_pending)
                 .focusable()
                 .tab_index(0)
-                .focus_visible(menu::trigger_focus)
+                .focus_visible(crate::focus::trigger_focus)
                 .opacity(if self.queue_pending { 0.4 } else { 1. })
                 .when(!self.queue_pending, |d| d.hover(|s| s.bg(t.ghost_hover)))
                 .child(icon("diff-more", 14., t.text_tertiary))
@@ -1111,13 +1523,11 @@ impl Composer {
                         cx.stop_propagation();
                     }
                 }))
-                .on_click(
-                    cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                        if !this.queue_pending {
-                            this.open_queue_menu(&id, event.position(), window, cx);
-                        }
-                    }),
-                ),
+                .on_click(cx.listener(move |this, _: &gpui::ClickEvent, window, cx| {
+                    if !this.queue_pending {
+                        this.open_queue_menu(&id, *bounds.read(cx), window, cx);
+                    }
+                })),
             QUEUE_ACTIONS,
             None,
             crate::tooltip::Side::Top,
@@ -1130,11 +1540,22 @@ impl Composer {
         &self.placeholder
     }
 
+    pub(crate) fn set_placeholder(
+        &mut self,
+        placeholder: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.placeholder = placeholder.into();
+        cx.notify();
+    }
+
     /// The submit button's accessible label (`composer.submitButtonTooltip.*`): `Stop` while a
     /// turn runs and the composer is empty, else the follow-up mode (`Queue` or `Steer`) while
     /// a turn runs, else `Send`. The original shows no tooltip on this button.
     pub fn send_label(&self) -> &'static str {
-        let has_input = !self.content.is_empty() || !self.attachments.is_empty();
+        let has_input = !self.content.is_empty()
+            || !self.attachments.is_empty()
+            || !self.diff_comments.is_empty();
         match (self.running, has_input, self.queue_mode) {
             (false, _, _) => "Send",
             (true, false, _) => "Stop",
@@ -1144,11 +1565,19 @@ impl Composer {
     }
 
     pub fn set_text(&mut self, s: &str, cx: &mut Context<Self>) {
-        self.content = s.into();
+        self.cancel_dictation(cx);
+        self.dictation_error = None;
+        self.content = if self.document_field {
+            normalize_newlines(s).into_owned()
+        } else {
+            s.into()
+        };
         self.mentions.clear();
-        self.selected_range = s.len()..s.len();
+        self.selected_range = self.content.len()..self.content.len();
         self.marked_range = None;
         self.history = editor::History::default();
+        self.context_spelling = None;
+        self.context_image = None;
         self.slash.reset();
         self.end_search(cx);
         cx.notify();
@@ -1158,6 +1587,8 @@ impl Composer {
     pub fn clear_session(&mut self, cx: &mut Context<Self>) {
         self.attachment_generation = self.attachment_generation.wrapping_add(1);
         self.attachments.clear();
+        self.diff_comments.clear();
+        self.submitted_diff_comments.clear();
         self.pending_attachments = 0;
         self.attachment_error = None;
         self.context_menu = None;
@@ -1183,7 +1614,11 @@ impl Composer {
         let mut restored = std::mem::take(&mut self.submitted);
         restored.append(&mut self.attachments);
         self.attachments = restored;
-        self.restore_text(text, cx);
+        let mut comments = std::mem::take(&mut self.submitted_diff_comments);
+        comments.append(&mut self.diff_comments);
+        self.diff_comments = comments;
+        cx.emit(DiffCommentsChanged(self.diff_comments.clone()));
+        self.restore_text(crate::screens::diff::panel::comments::prompt_body(text), cx);
     }
 
     /// Open the model picker (`Select effort`), as `⌘⇧M`-style commands and the menu do.
@@ -1202,17 +1637,18 @@ impl Composer {
     fn select_model(&mut self, index: usize) {
         self.model = index;
         let efforts = &self.models[index].efforts;
-        if !efforts.contains(&self.effort)
+        let effort = self.effort.get_or_insert_with(|| "medium".into());
+        if !efforts.contains(effort)
             && let Some(first) = efforts.first()
         {
-            self.effort = first.clone();
+            *effort = first.clone();
         }
     }
 
     /// Reports the picked model and effort to [`Self::on_model`].
     fn picked(&self, cx: &mut App) {
         if let (Some(f), Some(model)) = (self.on_model.clone(), self.current_model()) {
-            f(&model.id, &self.effort, cx);
+            f(&model.id, self.displayed_effort(), cx);
         }
     }
 
@@ -1224,6 +1660,8 @@ impl Composer {
         if let Some(multiline) = self.plain_field {
             if multiline {
                 self.insert("\n", window, cx);
+            } else if self.field_style == FieldStyle::Compact {
+                cx.emit(SettingsFieldSubmit);
             } else {
                 window.blur(cx);
             }
@@ -1240,10 +1678,42 @@ impl Composer {
                 return;
             }
         }
-        self.submit(&Submit, window, cx);
+        let newline = cx
+            .try_global::<EnterBehavior>()
+            .is_some_and(|behavior| behavior.inserts_newline(&self.content));
+        if newline && !self.slash.open {
+            self.newline(&Newline, window, cx);
+        } else {
+            self.submit(&Submit, window, cx);
+        }
+    }
+
+    fn modified_enter(&mut self, _: &ModifiedSubmit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.plain_field.is_some() {
+            self.enter(&Submit, window, cx);
+        } else {
+            self.submit(&Submit, window, cx);
+        }
     }
 
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
+        self.send_draft(false, window, cx);
+    }
+
+    /// `composer.submitInBackground`: the original enables it only for the Home composer
+    /// (`kind === "home"`), never in an open chat, and not over an approval or request form.
+    fn submit_in_background(
+        &mut self,
+        _: &SubmitInBackground,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.docked && self.approval.is_none() && self.plain_field.is_none() {
+            self.send_draft(true, window, cx);
+        }
+    }
+
+    fn send_draft(&mut self, background: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.slash.open {
             self.activate_slash(window, cx);
             return;
@@ -1251,33 +1721,20 @@ impl Composer {
         if self.edit_pending
             || (!self.running && self.current_model().is_none())
             || self.pending_attachments > 0
-            || (self.content.trim().is_empty() && self.attachments.is_empty())
+            || (self.content.trim().is_empty()
+                && self.attachments.is_empty()
+                && self.diff_comments.is_empty())
         {
             return;
         }
-        let submission = Submission {
-            text: if self.mentions.is_empty() && self.on_cancel_edit.is_none() {
-                std::mem::take(&mut self.content)
-            } else {
-                self.prompt()
-            },
-            attachments: {
-                self.submitted = std::mem::take(&mut self.attachments);
-                self.submitted.iter().map(|a| a.path.clone()).collect()
-            },
-            model: self
-                .current_model()
-                .map(|m| m.id.clone())
-                .unwrap_or_default(),
-            effort: self.effort.clone(),
-            permission: self.permission,
-            fast: self.fast,
-        };
+        self.cancel_dictation(cx);
+        let submission = self.take_submission(background);
         if self.on_cancel_edit.is_some() {
             self.edit_pending = true;
         } else {
             self.content.clear();
             self.mentions.clear();
+            self.take_diff_comments(cx);
             self.selected_range = 0..0;
             self.marked_range = None;
             self.menu = None;
@@ -1290,7 +1747,41 @@ impl Composer {
         }
     }
 
+    fn take_submission(&mut self, background: bool) -> Submission {
+        self.submitted = std::mem::take(&mut self.attachments);
+        let mut attachments = Vec::new();
+        let mut context_files = Vec::new();
+        for attachment in &self.submitted {
+            if attachment.is_context_file() {
+                context_files.push(attachment.path.clone());
+            } else {
+                attachments.push(attachment.path.clone());
+            }
+        }
+        Submission {
+            text: if self.mentions.is_empty()
+                && self.on_cancel_edit.is_none()
+                && self.diff_comments.is_empty()
+            {
+                std::mem::take(&mut self.content)
+            } else {
+                self.prompt()
+            },
+            attachments,
+            context_files,
+            model: self
+                .current_model()
+                .map(|m| m.id.clone())
+                .unwrap_or_default(),
+            effort: self.effort.clone(),
+            permission: self.permission,
+            fast: self.fast,
+            background,
+        }
+    }
+
     fn decide(&mut self, decision: ApprovalDecision, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_dictation(cx);
         if self.approval.is_none() {
             return;
         }
@@ -1342,10 +1833,12 @@ impl Composer {
                 Menu::Permissions => Permission::ALL.len(),
                 Menu::Models => self.models.len(),
                 Menu::Effort => 3,
+                Menu::Comments => self.diff_comments.len(),
             };
             self.menu_focus.prepare(count, cx);
             self.menu_focus.trigger = match menu {
                 Menu::Permissions => self.permissions_focus.clone(),
+                Menu::Comments => self.comments_focus.clone(),
                 _ => self.model_focus.clone(),
             };
             self.menu_focus.content.focus(window, cx);
@@ -1354,6 +1847,10 @@ impl Composer {
     }
 
     fn dismiss(&mut self, _: &Dismiss, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dictation.is_some() {
+            self.cancel_dictation(cx);
+            return;
+        }
         if self.marked_range.is_some() {
             return;
         }
@@ -1368,7 +1865,7 @@ impl Composer {
             // Escape returns focus to the trigger of the Radix menus (permissions, the
             // `Speed` submenu: f2c.json step 24); the model picker's close focuses the editor
             // (refs/interactions/s033.json).
-            if menu == Menu::Permissions || self.speed_open {
+            if matches!(menu, Menu::Permissions | Menu::Comments) || self.speed_open {
                 self.menu_focus.restore(window, cx);
             } else {
                 self.focus_handle.focus(window, cx);
@@ -1404,6 +1901,8 @@ impl Composer {
             && let Some(cancel) = self.on_cancel_edit.clone()
         {
             cancel(window, cx);
+        } else if self.plain_field.is_some() {
+            cx.propagate();
         }
     }
 
@@ -1574,6 +2073,7 @@ impl Composer {
                 }
                 _ => {}
             },
+            Some(Menu::Comments) => self.open_comment_attachment(index, window, cx),
             None => {}
         }
         cx.notify();
@@ -1617,14 +2117,13 @@ impl Composer {
         permission: Permission,
         cx: &mut Context<Self>,
     ) {
-        if let Some(model) = mode["settings"]["model"].as_str() {
-            self.set_model_and_effort(
-                model,
-                mode["settings"]["reasoning_effort"]
-                    .as_str()
-                    .unwrap_or("medium"),
-                cx,
-            );
+        if let Some(model) = mode["settings"]["model"].as_str()
+            && let Some(index) = self.models.iter().position(|option| option.id == model)
+        {
+            self.model = index;
+            self.effort = mode["settings"]["reasoning_effort"]
+                .as_str()
+                .map(str::to_owned);
         }
         self.permission = permission;
         cx.notify();
@@ -1666,7 +2165,7 @@ pub fn label(s: impl Into<SharedString>, color: Hsla) -> Div {
 }
 
 /// The model name sits in a `tabular-nums` span (`GPT-6`'s digit takes its tabular advance).
-fn tabular(d: Div) -> Div {
+pub(crate) fn tabular(d: Div) -> Div {
     d.font_features(gpui::FontFeatures(std::sync::Arc::new(vec![(
         "tnum".into(),
         1,
@@ -1877,6 +2376,8 @@ impl Render for Composer {
             })
             .track_focus(&self.focus_handle)
             .on_action(self.request_listener(cx, Self::enter))
+            .on_action(cx.listener(Self::submit_in_background))
+            .on_action(self.request_listener(cx, Self::modified_enter))
             .on_action(cx.listener(Self::newline))
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
@@ -1903,25 +2404,316 @@ impl Render for Composer {
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(|this, _: &crate::Paste, window, cx| this.paste(window, cx)))
+            .on_action(
+                cx.listener(|this, _: &crate::PasteAndMatchStyle, window, cx| {
+                    this.paste_and_match_style(window, cx)
+                }),
+            )
+            .on_action(cx.listener(|this, _: &crate::DeleteSelection, window, cx| {
+                if !this.selected_range.is_empty() {
+                    this.insert("", window, cx);
+                }
+            }))
+            .when(
+                cfg!(target_os = "macos") && !self.secret && !self.content.is_empty(),
+                |card| card.on_action(cx.listener(Self::speak_selection)),
+            )
             .on_action(self.request_listener(cx, Self::dismiss))
             .on_action(cx.listener(Self::complete_command))
             .on_action(cx.listener(Self::next_command))
             .on_action(cx.listener(Self::previous_command))
             .relative();
-        if self.plain_field.is_some() {
+        if self.mini {
+            let enabled = self.current_model().is_some() && !self.content.trim().is_empty();
             return div().w_full().child(
                 card.key_context(KEY_CONTEXT)
-                    .when(self.request_parent.is_none(), |d| {
-                        d.border_1()
-                            .border_color(t.border)
-                            .rounded(if self.request_compact {
-                                Theme::RADIUS_MD
-                            } else {
-                                px(8.)
-                            })
-                            .bg(t.background_panel)
-                            .py(px(if self.request_compact { 7. } else { 8. }))
+                    .role(gpui::Role::TextInput)
+                    .aria_label("Chat")
+                    .aria_placeholder(self.placeholder.clone())
+                    .aria_value(self.content.clone())
+                    .h(px(40.))
+                    .px(px(6.))
+                    .pl(px(14.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(20.)),
+                        fill: Some(t.control_background),
+                        ..Default::default()
+                    }))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .child(self.editor(cx)),
+                    )
+                    .child(
+                        div()
+                            .id("mini-send")
+                            .role(gpui::Role::Button)
+                            .aria_label("Send chat")
+                            .aria_disabled(!enabled)
+                            .size(px(28.))
+                            .rounded_full()
+                            .bg(gpui::rgb(0x636363))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(crate::icon::icon("composer-arrow-up", 16., gpui::white()))
+                            .when(enabled, |button| {
+                                button.on_click(cx.listener(|this, _, window, cx| {
+                                    this.submit(&Submit, window, cx);
+                                }))
+                            }),
+                    ),
+            );
+        }
+        if self.field_style == FieldStyle::Compact {
+            let multiline = self.plain_field == Some(true);
+            return div().w_full().when(multiline, |d| d.pb(px(6.))).child(
+                card.key_context(KEY_CONTEXT)
+                    .role(if self.secret {
+                        gpui::Role::PasswordInput
+                    } else {
+                        gpui::Role::TextInput
                     })
+                    .aria_label(
+                        self.request_label
+                            .as_ref()
+                            .unwrap_or(&self.placeholder)
+                            .clone(),
+                    )
+                    .aria_placeholder(self.placeholder.clone())
+                    .when(!self.secret, |d| d.aria_value(self.content.clone()))
+                    .px(px(1.))
+                    .when(multiline, |d| {
+                        d.py(px(9.))
+                            .max_h(px(120.))
+                            .overflow_y_scroll()
+                            .track_scroll(
+                                self.field_scroll.as_ref().expect("multiline field scroll"),
+                            )
+                    })
+                    .when(!multiline, |d| d.h(px(36.)).flex().items_center())
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(10.)),
+                        corner: shapes::Corner::Squircle,
+                        fill: Some(t.control_background.opacity(0.96)),
+                        border: Some((px(1.), t.border_strong)),
+                        ..Default::default()
+                    }))
+                    .child(self.editor(cx)),
+            );
+        }
+        if self.plain_field.is_some() && self.field_style != FieldStyle::Settings {
+            let multiline = self.plain_field == Some(true);
+            let inline = matches!(self.field_style, FieldStyle::Inline | FieldStyle::Dialog);
+            let input = self
+                .editor(cx)
+                .w_full()
+                .min_w_0()
+                .px(px(if inline {
+                    0.
+                } else if multiline {
+                    18.
+                } else {
+                    20.
+                }))
+                .pb_0()
+                .min_h(px(20.))
+                .when(inline, |d| d.h(px(20.)).overflow_hidden())
+                .when(!inline && !multiline, |d| d.relative().top(px(0.5)))
+                .font_weight(gpui::FontWeight(400.));
+            let field = card
+                .w_full()
+                .role(gpui::Role::TextInput)
+                .aria_label(
+                    self.request_label
+                        .clone()
+                        .unwrap_or(self.placeholder.clone()),
+                )
+                .aria_placeholder(self.placeholder.clone())
+                .aria_value(self.content.clone())
+                .when(!inline, |d| {
+                    d.p(px(1.)).child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(20.)),
+                        corner: shapes::Corner::Squircle,
+                        border: Some((px(1.), t.border)),
+                        ..Default::default()
+                    }))
+                })
+                .when(multiline, |d| d.min_h(px(122.)).py(px(17.)))
+                .when(!multiline, |d| {
+                    d.h(px(if inline { 40. } else { 48. }))
+                        .flex()
+                        .items_center()
+                })
+                .child(input);
+            return div().w_full().child(field);
+        }
+        if self.embedded_field.is_some() {
+            return div().w_full().child(
+                card.key_context(KEY_CONTEXT)
+                    .role(gpui::Role::TextInput)
+                    .aria_label(self.placeholder.clone())
+                    .aria_value(self.content.clone())
+                    .h(self.editor_line_height())
+                    .overflow_hidden()
+                    .child(self.editor(cx)),
+            );
+        }
+        if self.plain_field.is_some() {
+            if self.document_field {
+                return div().size_full().child(
+                    card.size_full().child(
+                        div()
+                            .id("document-scroll")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(self.field_scroll.as_ref().expect("document scroll"))
+                            .child(self.editor(cx).px_0().py_0()),
+                    ),
+                );
+            }
+            let card = if self.textarea() {
+                let border = if self.focus_handle.is_focused(window) {
+                    gpui::rgb(0x3a83f7).into()
+                } else if self.input_style {
+                    t.border_strong
+                } else {
+                    t.border
+                };
+                let scroll = self
+                    .field_scroll
+                    .as_ref()
+                    .expect("multiline field scroll")
+                    .clone();
+                let line_height = self.editor_line_height();
+                let mut content_height = px(0.);
+                let scrolling = self.lines.iter().any(|line| {
+                    content_height += line.size(line_height).height;
+                    content_height > self.field_min_height
+                });
+                card.px(px(1.))
+                    .py(px(1.))
+                    .top_layer()
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: Corners::all(px(10.)),
+                        corner: shapes::Corner::Squircle,
+                        fill: Some(t.control_background.opacity(0.96)),
+                        border: Some((px(1.), border)),
+                        ..Default::default()
+                    }))
+                    .child(
+                        div()
+                            .id("textarea-scroll")
+                            .h(self.field_min_height + px(16.))
+                            .overflow_y_scroll()
+                            .track_scroll(&scroll)
+                            .child(
+                                div()
+                                    .py(px(8.))
+                                    .when(scrolling, |content| content.top_layer())
+                                    .child(self.editor(cx)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("textarea-resize")
+                            .absolute()
+                            .right_0()
+                            .bottom_0()
+                            .size(px(16.))
+                            .cursor(CursorStyle::ResizeUpDown)
+                            .child(
+                                gpui::canvas(
+                                    |_, _, _| {},
+                                    |bounds, (), window, _| paint_resizer(bounds, window),
+                                )
+                                .size_full(),
+                            )
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                                    this.field_resize =
+                                        Some((event.position.y, this.field_min_height));
+                                    this.focus_handle.focus(window, cx);
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            ),
+                    )
+                    .when_some(self.field_resize, |card, (start, height)| {
+                        let moved = cx.entity().downgrade();
+                        let released = moved.clone();
+                        card.child(crate::drag_layer(
+                            move |_, window, cx| {
+                                let next = (height + window.mouse_position().y - start)
+                                    .max(MIN_TEXTAREA_CONTENT_HEIGHT);
+                                moved
+                                    .update(cx, |this, cx| {
+                                        if this.field_min_height != next {
+                                            this.field_min_height = next;
+                                            this.field_autoscroll = true;
+                                            cx.notify();
+                                        }
+                                    })
+                                    .ok();
+                            },
+                            move |cx| {
+                                released
+                                    .update(cx, |this, cx| {
+                                        this.field_resize = None;
+                                        cx.notify();
+                                    })
+                                    .ok();
+                            },
+                        ))
+                    })
+            } else {
+                card.key_context(KEY_CONTEXT)
+                    .when(
+                        self.request_parent.is_none()
+                            && !self.request_compact
+                            && !self.search_field
+                            && !editing,
+                        |d| {
+                            d.border_1()
+                                .border_color(t.border)
+                                .focus_visible(|style| style.border_color(gpui::rgb(0x3a83f7)))
+                                .rounded(px(8.))
+                                .bg(t.background_panel)
+                                .py(px(8.))
+                        },
+                    )
+                    // The select search row is a bare input inside the menu, as in the original.
+                    .when(
+                        self.request_parent.is_none() && self.request_compact && !self.search_field,
+                        |d| {
+                            d.px(px(1.))
+                                .py(px(if self.small_input { 4. } else { 8. }))
+                                .child(shapes::decoration(shapes::Decoration {
+                                    radius: Corners::all(Theme::RADIUS_MD),
+                                    corner: shapes::Corner::Squircle,
+                                    fill: Some(if t.appearance == Appearance::Dark {
+                                        gpui::rgba(0x2d2d2df5).into()
+                                    } else {
+                                        t.background_panel
+                                    }),
+                                    border: Some((
+                                        px(1.),
+                                        if self.focus_handle.is_focused(window) {
+                                            gpui::rgba(0x83c3ffc2).into()
+                                        } else {
+                                            t.border_strong
+                                        },
+                                    )),
+                                    ..Default::default()
+                                }))
+                        },
+                    )
                     .when(self.request_parent.is_some(), |d| {
                         d.px(px(1.))
                             .py(px(if self.secret {
@@ -1939,66 +2731,90 @@ impl Render for Composer {
                                 })),
                                 corner: shapes::Corner::Squircle,
                                 border: Some((px(1.), t.border_strong)),
+                                fill: (self.request_parent.is_none() && self.request_compact)
+                                    .then_some(t.control_background.opacity(0.96)),
                                 ..Default::default()
                             }))
                     })
-                    .when(
-                        self.request_parent.is_some() || self.plain_field.is_some(),
-                        |d| {
-                            d.role(if self.secret {
-                                gpui::Role::PasswordInput
-                            } else {
-                                gpui::Role::TextInput
-                            })
-                            .aria_label(
-                                self.request_label
-                                    .as_ref()
-                                    .unwrap_or(&self.placeholder)
-                                    .clone(),
-                            )
-                            .aria_placeholder(self.placeholder.clone())
-                            .when(!self.secret, |d| d.aria_value(self.content.clone()))
-                        },
+                    .role(if self.secret {
+                        gpui::Role::PasswordInput
+                    } else {
+                        gpui::Role::TextInput
+                    })
+                    .aria_label(
+                        self.request_label
+                            .as_ref()
+                            .unwrap_or(&self.placeholder)
+                            .clone(),
                     )
-                    .child(self.editor(cx).when(self.request_number, |d| d.pr(px(30.))))
+                    .aria_placeholder(self.placeholder.clone())
+                    .when(!self.secret, |d| d.aria_value(self.content.clone()))
+                    .child(
+                        self.editor(cx)
+                            .id("composer-field-editor")
+                            .when(editing, |d| {
+                                d.max_h(window.viewport_size().height / 4.)
+                                    .overflow_y_scroll()
+                            })
+                            .when(self.request_number, |editor| editor.pr(px(30.))),
+                    )
                     .when(self.request_number, |d| {
                         d.child(self.request_number_stepper(&t, cx))
-                    }),
-            );
+                    })
+                    .when(
+                        self.request_parent.is_some() && !self.secret && !self.request_number,
+                        |d| d.child(self.dictation_button(&t, cx)),
+                    )
+                    .when_some(self.dictation_error.clone(), |d, error| {
+                        d.child(text(error, 12., 16., 400., t.text))
+                    })
+            };
+            return if self.textarea() {
+                div().w_full().child(crate::recorded_bounds(card))
+            } else {
+                div().w_full().child(card)
+            };
         }
         let card = card
             .flex()
             .flex_col()
-            .child(shapes::decoration(if editing {
-                shapes::Decoration {
-                    radius: Corners::all(px(24.)),
-                    fill: Some(match t.appearance {
-                        Appearance::Dark => t.control_background.opacity(0.95),
-                        Appearance::Light => t.text_alpha_5,
-                    }),
-                    ..Default::default()
-                }
-            } else if self.drag_active(cx) {
-                // `[data-composer-drag-active]`: `surface-elevated-secondary` at 50%.
-                shapes::Decoration {
-                    fill: Some(t.surface_elevated_secondary.opacity(0.5)),
-                    ..card_decoration(&t)
-                }
-            } else {
-                card_decoration(&t)
-            }))
+            .when(self.hotkey_controls.is_none(), |card| {
+                card.child(shapes::decoration(if editing {
+                    shapes::Decoration {
+                        radius: Corners::all(px(24.)),
+                        fill: Some(match t.appearance {
+                            Appearance::Dark => t.control_background.opacity(0.95),
+                            Appearance::Light => t.text_alpha_5,
+                        }),
+                        ..Default::default()
+                    }
+                } else if self.drag_active(cx) {
+                    // `[data-composer-drag-active]`: `surface-elevated-secondary` at 50%.
+                    shapes::Decoration {
+                        fill: Some(t.surface_elevated_secondary.opacity(0.5)),
+                        ..card_decoration(&t)
+                    }
+                } else {
+                    card_decoration(&t)
+                }))
+            })
             // See `docked`: the docked body is a transparent cc layer over the card.
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .when(self.docked, |d| d.layer())
-                    .when(!editing, |d| d.child(self.attachments_row(&t, cx)))
+                    .when(
+                        !editing
+                            && (self.hotkey_controls.is_none() || !self.attachments.is_empty()),
+                        |d| d.child(self.attachments_row(&t, cx)),
+                    )
                     .when_some(self.attachment_error, |d, error| {
                         d.child(label(error, t.text))
                     })
                     .child(
                         self.editor(cx)
+                            .when(self.hotkey_controls.is_some(), |d| d.px_0().min_h(px(48.)))
                             .when(editing, |d| d.pt(px(12.)).pb_0().min_h(px(52.))),
                     )
                     .child(if editing {
@@ -2089,21 +2905,32 @@ impl Render for Composer {
                             430.,
                             t.text,
                         )))
-                        .child(self.queue_button(
-                            QueueAction::Steer(row.submission.id.clone()),
-                            "Steer",
-                            "Submit without interrupting the model",
-                            &t,
-                            cx,
-                        ))
-                        .child(self.queue_button(
-                            QueueAction::Delete(row.submission.id.clone()),
-                            "Delete queued message",
-                            "Delete queued message",
-                            &t,
-                            cx,
-                        ))
-                        .child(self.queue_menu_button(row.submission.id.clone(), &t, cx))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(4.))
+                                .child(self.queue_button(
+                                    QueueAction::Steer(row.submission.id.clone()),
+                                    "Steer",
+                                    "Submit without interrupting the model",
+                                    &t,
+                                    cx,
+                                ))
+                                .child(self.queue_button(
+                                    QueueAction::Delete(row.submission.id.clone()),
+                                    "Delete queued message",
+                                    "Delete queued message",
+                                    &t,
+                                    cx,
+                                ))
+                                .child(self.queue_menu_button(
+                                    row.submission.id.clone(),
+                                    &t,
+                                    window,
+                                    cx,
+                                )),
+                        )
                 }))
         });
         div()
@@ -2115,11 +2942,16 @@ impl Render for Composer {
                 d.child(self.approval_card(&a, &t, cx))
             })
             .child(div().children(tray).child(card))
+            .when_some(self.dictation_error.clone(), |d, error| {
+                d.child(text(error, 12., 16., 400., t.text))
+            })
             .when_some(self.context_menu.as_ref(), |d, menu| {
                 d.child(menu.overlay(
                     "composer-menu",
                     if menu.items.first().is_some_and(|item| item.id == QUEUE_EDIT) {
                         QUEUE_ACTIONS
+                    } else if self.context_image.is_some() {
+                        "Image actions"
                     } else {
                         "Edit actions"
                     },
@@ -2135,6 +2967,84 @@ impl Render for Composer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn send_shortcut_controls_enter_without_changing_shift_enter() {
+        use gpui::{AppContext as _, HeadlessAppContext, Keystroke};
+        use std::{cell::RefCell, sync::Arc};
+
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+
+        let mut app =
+            HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
+        app.update(|cx| {
+            cx.set_global(Theme::dark());
+            theme::load_fonts(cx);
+            bind_keys(cx);
+        });
+        let sent = Rc::new(RefCell::new(Vec::new()));
+        let received = sent.clone();
+        let window = app
+            .open_window(size(px(600.), px(400.)), |window, cx| {
+                let composer = cx.new(|cx| {
+                    let mut composer = Composer::home(window, cx);
+                    composer.models.push(ModelOption {
+                        id: "gpt-6.1-sol".into(),
+                        label: "GPT-6.1 Sol".into(),
+                        efforts: vec!["medium".into()],
+                    });
+                    composer.on_submit(move |submission, _, _| {
+                        received.borrow_mut().push(submission.text.clone());
+                    });
+                    composer
+                });
+                composer.read(cx).focus_handle(cx).focus(window, cx);
+                composer
+            })
+            .unwrap();
+        for (setting, draft, key, sends) in [
+            ("enter", "one", "enter", true),
+            ("enter", "one\ntwo", "cmd-enter", true),
+            ("cmdIfMultiline", "one", "enter", true),
+            ("cmdIfMultiline", "one\ntwo", "enter", false),
+            ("cmdIfMultiline", "one\ntwo", "cmd-enter", true),
+            ("cmdAlways", "one", "enter", false),
+            ("cmdAlways", "one", "cmd-enter", true),
+            ("cmdAlways", "one", "shift-enter", false),
+            ("unknown", "one", "enter", true),
+        ] {
+            sent.borrow_mut().clear();
+            app.update(|cx| {
+                cx.set_global(EnterBehavior::from_setting(setting));
+                window
+                    .update(cx, |composer, _, cx| composer.set_text(draft, cx))
+                    .unwrap();
+            });
+            app.run_until_parked();
+            app.update_window(window.into(), |_, window, cx| {
+                window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx);
+            })
+            .unwrap();
+            app.run_until_parked();
+            app.update(|cx| {
+                window
+                    .update(cx, |composer, _, _| {
+                        if sends {
+                            assert_eq!(*sent.borrow(), [draft], "{setting}: {key}");
+                            assert!(composer.content.is_empty());
+                        } else {
+                            assert!(sent.borrow().is_empty(), "{setting}: {key}");
+                            assert_eq!(composer.content, format!("{draft}\n"));
+                        }
+                    })
+                    .unwrap();
+            });
+        }
+    }
 
     #[test]
     fn model_selection_preserves_other_composer_choices() {
@@ -2159,14 +3069,42 @@ mod tests {
                 composer.set_text("Keep this draft", cx);
                 composer.set_model_and_effort("announced", "high", cx);
                 assert_eq!(composer.current_model().unwrap().id, "announced");
-                assert_eq!(composer.effort, "high");
+                assert_eq!(composer.effort.as_deref(), Some("high"));
                 composer.set_model_and_effort("missing", "low", cx);
                 assert_eq!(composer.current_model().unwrap().id, "announced");
-                assert_eq!(composer.effort, "high");
+                assert_eq!(composer.effort.as_deref(), Some("high"));
                 assert_eq!(composer.permission, Permission::FullAccess);
                 assert!(composer.queue_mode);
-                assert_eq!(composer.default_selection, (0, "medium".into()));
+                assert_eq!(composer.default_selection, (0, Some("medium".into())));
                 assert_eq!(composer.content, "Keep this draft");
+            });
+        });
+    }
+
+    #[test]
+    fn restored_effort_stays_unset_while_displaying_medium() {
+        use gpui::{AppContext as _, HeadlessAppContext};
+        let mut app = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            let composer = cx.new(|cx| Composer::new("Do anything", false, cx));
+            composer.update(cx, |composer, cx| {
+                composer.models = vec![ModelOption {
+                    id: "gpt-6.1-sol".into(),
+                    label: "GPT-6.1 Sol".into(),
+                    efforts: vec!["low".into(), "medium".into()],
+                }];
+                composer.restore_run_settings(
+                    &json!({"settings":{"model":"gpt-6.1-sol","reasoning_effort":null}}),
+                    Permission::Ask,
+                    cx,
+                );
+                assert!(composer.effort.is_none());
+                assert_eq!(composer.displayed_effort(), "medium");
+                assert!(composer.run_settings().0["settings"]["reasoning_effort"].is_null());
             });
         });
     }

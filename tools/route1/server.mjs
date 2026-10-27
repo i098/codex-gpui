@@ -1,8 +1,8 @@
 // Route 1: serves the original Codex renderer (/tmp/cgx/asar-x/webview) to a plain Chromium and
 // plays the Electron main process for it. Usage: `node tools/route1/server.mjs` (port R1_PORT, 4517).
 //
-// - App-server JSON-RPC (`mcp-request` for host `local`) goes to a real `codex app-server` on the
-//   Mac (CODEX_HOME=/tmp/cgx-mac/home); methods that would change that state are refused.
+// - App-server JSON-RPC (`mcp-request` for host `local`) uses recorded fixtures when R1_OFFLINE=1.
+//   Live mode uses an explicitly prepared scratch app-server on the Mac; writes are refused.
 // - Everything else the main process answers (HTTP/vscode:// fetches, persisted atoms, shared
 //   objects, cloud host requests, git worker) comes from oracle.json. A miss is asked once from the
 //   live scratch app over CDP (tools/capture/cdp.mjs), scrubbed and stored, so replays are offline.
@@ -16,7 +16,7 @@ import { createInterface } from "node:readline";
 const HERE = path.dirname(new URL(import.meta.url).pathname);
 const WEBVIEW = process.env.R1_WEBVIEW || "/tmp/cgx/asar-x/webview";
 const FONTS = process.env.R1_FONTS || "/tmp/cgx/route1-fonts";
-const ORACLE = path.join(HERE, "oracle.json");
+const ORACLE = process.env.R1_ORACLE || path.join(HERE, "oracle.json");
 const PORT = +(process.env.R1_PORT || 4517);
 // 2026-10-15 10:00 PDT: one day after the fixture threads were recorded.
 const NOW = Date.UTC(2026, 9, 15, 17, 0, 0);
@@ -153,12 +153,14 @@ learn(oracle);
 const READ_ONLY = /\/(read|list|get|search|status)[A-Za-z]*$|\/(installed|loaded\/list|capabilities\/read)$|^(getAuthStatus|gitDiffToRemote|fuzzyFileSearch|getConversationSummary|thread\/resume|account\/login\/start)$/;
 // vscode://codex/<handler> fetches that only read (handler names from main-CqEoQDOU.js). Not
 // external-agent-import-detect: it lists the owner's Claude/Cursor sessions.
-const VSCODE_READ = /^(ambient-suggestions|app-server-connection-state|browser-use-origin-state-read|claude-code-import-status|codex-agents-md|codex-command-keymap-state|codex-home|developer-instructions|external-agent-import-status|external-agent-imported-connectors|fast-mode-rollout-metrics|find-files|get-.*|git-merge-base|git-origins|global-dictation-hotkey-state|has-custom-cli-executable|home-directory|inbox-items|is-.*|list-.*|local-custom-agents|locale-info|local-environment-config|mcp-codex-config|native-desktop-apps?|native-desktop-app-(icon|by-bundle-id)|os-info|paths-exist|projectless-.*|read-.*|recommended-skills|.*directory-entries|settings-read|third-party-notices|workspace-root-options|worktree-shell-environment-config|wsl-bash-availability|statsig-.*)$/;
+const VSCODE_READ = /^(ambient-suggestions|app-server-connection-state|browser-use-origin-state-read|claude-code-import-status|codex-agents-md|codex-command-keymap-state|codex-home|developer-instructions|discover-remote-ssh-connections|external-agent-import-status|external-agent-imported-connectors|fast-mode-rollout-metrics|find-files|get-.*|git-merge-base|git-origins|global-dictation-hotkey-state|has-custom-cli-executable|home-directory|inbox-items|is-.*|list-.*|local-custom-agents|locale-info|local-environment-config|mcp-codex-config|native-desktop-apps?|native-desktop-app-(icon|by-bundle-id)|os-info|paths-exist|projectless-.*|read-.*|recommended-skills|.*directory-entries|settings-read|third-party-notices|workspace-root-options|worktree-shell-environment-config|wsl-bash-availability|statsig-.*)$/;
 let appServer;
 const rpcPending = new Map();
 let rpcId = 0;
 function startAppServer() {
-  const p = spawn("ssh", ["mac", APP_SERVER], { stdio: ["pipe", "pipe", "inherit"] });
+  const p = process.env.R1_OFFLINE
+    ? spawn(process.execPath, [path.join(HERE, "linux/mock-app-server.mjs")], { stdio: ["pipe", "pipe", "inherit"] })
+    : spawn("ssh", ["mac", APP_SERVER], { stdio: ["pipe", "pipe", "inherit"] });
   createInterface({ input: p.stdout }).on("line", (line) => {
     let m;
     try {
@@ -271,14 +273,15 @@ async function fromView(s, msg) {
 
 async function mcpRequest(s, msg) {
   const { method, id } = msg.request;
-  if (!READ_ONLY.test(method)) {
+  const recordedArchive = process.env.R1_OFFLINE && msg.hostId === "local" && /^thread\/(archive|unarchive)$/.test(method);
+  if (!READ_ONLY.test(method) && !recordedArchive) {
     log("refused", msg.hostId, method);
     s.emit({ type: "mcp-response", hostId: msg.hostId, message: { id, error: { code: -32000, message: `route1: ${method} is not allowed` } } });
     return;
   }
-  // thread/resume goes to the live app too: its app-server holds the fixture threads' writer
-  // locks, so a second server answers "This is open in another app".
-  if (msg.hostId !== "local" || method === "thread/resume") {
+  // Live resumes use the original process, which owns the fixture writer locks.
+  // Offline resumes use the recorded adapter and match the thread, not transient view options.
+  if (msg.hostId !== "local" || (method === "thread/resume" && !process.env.R1_OFFLINE)) {
     const key = `mcp ${msg.hostId} ${method} ${keyOf(msg.request.params ?? null)}`;
     const res = await recall(key, () => {
       const rid = `r1-${crypto.randomUUID()}`;
@@ -310,7 +313,7 @@ const sharedValue = (key) => recall(`shared ${key}`, () => liveEval(`electronBri
 
 // App-host services (see preload-stub.js). Only calls that read are asked from the live app;
 // anything else answers undefined so the scratch app's state never changes.
-const LIVE_RPC = `(await import("./assets/rpc-f6f57972be0d.js")).appServices`;
+const LIVE_RPC = `(await import(${JSON.stringify(process.env.R1_RPC_MODULE || "./assets/rpc-f6f57972be0d.js")})).appServices`;
 const services = () =>
   recall("app-services", () =>
     liveEval(`(async () => { const s = ${LIVE_RPC}; return Object.fromEntries(Object.keys(s).map((k) => [k, typeof s[k] === "function" ? "function" : s[k] ?? null])); })()`),
@@ -337,7 +340,7 @@ function privateAnswer(svc, method, args) {
   if (PRIVATE_URL.test(url) || (!get && !POST_READ_URL.test(url))) return jsonResponse(get ? 404 : 200, "{}");
 }
 async function callService(s, { svc, method, args }) {
-  if (!READ_METHOD.test(method)) {
+  if (!READ_METHOD.test(method) && !(svc === "startup" && method === "whenReady") && !(svc === "threadReadState" && method === "open")) {
     log("svc (local no-op)", `${svc}.${method}`);
     return {};
   }

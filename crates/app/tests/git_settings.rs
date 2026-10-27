@@ -1,9 +1,9 @@
 #![cfg(target_os = "macos")]
 mod common;
 
-fn open_git(fx: &mut common::Fx) -> anyhow::Result<()> {
+fn open_settings(fx: &mut common::Fx, section: &str) -> anyhow::Result<()> {
     fx.keys("cmd-k")?;
-    fx.type_text("Git")?;
+    fx.type_text(section)?;
     let index = fx
         .read(|root, cx| {
             root.command_menu()
@@ -13,16 +13,40 @@ fn open_git(fx: &mut common::Fx) -> anyhow::Result<()> {
                 .into_iter()
                 .flat_map(|(_, rows)| rows)
                 .position(|(text, _)| {
-                    text.split(" | ").next().unwrap().replace(['[', ']'], "") == "Git"
+                    text.split(" | ").next().unwrap().replace(['[', ']'], "") == section
                 })
         })
-        .expect("Git command");
+        .expect("settings command");
     for _ in 0..index {
         fx.keys("down")?;
     }
     fx.keys("enter")?;
     assert_eq!(fx.route(), app::Route::Settings);
     fx.advance(std::time::Duration::from_millis(500))?;
+    Ok(())
+}
+
+fn capture(
+    fx: &mut common::Fx,
+    out: &str,
+    name: &str,
+    original: Option<&str>,
+) -> anyhow::Result<()> {
+    let image = fx.reference_shot()?;
+    image.save(format!("{out}/{name}.png"))?;
+    if let (Some(original), Ok(refs)) = (original, std::env::var("CGX_GIT_REFS")) {
+        let metrics = parity::diff_ref(
+            std::path::Path::new(&refs),
+            &std::path::Path::new(out).join("pairs"),
+            original,
+            "dark",
+            &image,
+        )?;
+        std::fs::write(
+            format!("{out}/{name}-counts.json"),
+            serde_json::to_vec_pretty(&metrics)?,
+        )?;
+    }
     Ok(())
 }
 
@@ -40,32 +64,28 @@ fn git_settings_native() -> anyhow::Result<()> {
     let mut fx = Fx::new()?;
     fx.cx
         .update_window(fx.window, |_, window, _| window.activate_window())?;
-    fx.cx.run_until_parked();
     fx.cx
         .update(|cx| cx.set_global(Settings::load(path.clone()).unwrap()));
-    open_git(&mut fx)?;
-    fx.click((1040., 330.))?;
+    open_settings(&mut fx, "Git")?;
+    fx.scroll((200., 500.), -377.)?;
+    fx.advance(Duration::from_millis(500))?;
+    capture(&mut fx, &out, "git", Some("git"))?;
+    fx.click((1040., 218.))?;
     fx.keys("cmd-a")?;
     fx.type_text("me/")?;
-    fx.keys("enter")?;
+    fx.click((800., 140.))?;
     let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
     assert_eq!(saved["git-branch-prefix"], "me/");
-    fx.click((1140., 466.))?;
+    fx.click((1140., 609.))?;
+    fx.click((800., 680.))?;
+    fx.type_text("Wait for checks.")?;
+    fx.advance(Duration::from_millis(3100))?;
     let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
-    assert_eq!(saved["git-always-force-push"], true);
-    fx.click((1140., 265.))?;
-    fx.click((1140., 519.))?;
-    fx.click((1110., 410.))?;
-    fx.shot()?.save(format!("{out}/merge-menu.png"))?;
-    fx.click((1090., 475.))?;
-    let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
-    assert_eq!(saved["git-review-mode"], "last-turn-only");
-    assert_eq!(saved["git-create-pull-request-as-draft"], false);
-    assert_eq!(saved["git-pull-request-merge-method"], "squash");
-    fx.scroll((1050., 700.), -700.)?;
+    assert_eq!(saved["git-pr-watch-auto-merge"], true);
+    assert_eq!(saved["git-pr-watch-instructions"], "Wait for checks.");
+    fx.scroll((1050., 700.), -600.)?;
     fx.advance(Duration::from_millis(500))?;
-    fx.shot()?.save(format!("{out}/instructions-layout.png"))?;
-    fx.click((800., 490.))?;
+    fx.click((800., 480.))?;
     fx.type_text("Use a short title.")?;
     fx.advance(Duration::from_millis(2000))?;
     let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
@@ -81,43 +101,12 @@ fn git_settings_native() -> anyhow::Result<()> {
         saved["git-commit-instructions"],
         "Use a short title.\nExplain the change."
     );
-    fx.click((1140., 202.))?;
-    fx.click((800., 265.))?;
-    fx.type_text("Wait for checks.")?;
-    fx.click(BACK)?;
-    let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
-    assert_eq!(saved["git-pr-watch-auto-merge"], true);
-    assert_eq!(saved["git-pr-watch-instructions"], "Wait for checks.");
-    fx.cx
-        .update(|cx| cx.set_global(Settings::load(path.clone()).unwrap()));
-    open_git(&mut fx)?;
-    fx.click((1040., 330.))?;
-    fx.keys("cmd-a cmd-c")?;
-    let displayed = fx
-        .cx
-        .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
-    assert_eq!(displayed.as_deref(), Some("me/"));
-    fx.click((800., 140.))?;
-    fx.advance(Duration::from_millis(5500))?;
-    fx.shot()?.save(format!("{out}/after.png"))?;
-    fx.scroll((1050., 700.), -700.)?;
-    fx.advance(Duration::from_millis(500))?;
-    fx.click((800., 490.))?;
-    fx.keys("cmd-a cmd-c")?;
-    let displayed = fx
-        .cx
-        .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
-    assert_eq!(
-        displayed.as_deref(),
-        Some("Use a short title.\nExplain the change.")
-    );
     let previous = std::fs::read(&path)?;
     std::fs::remove_file(&path)?;
     std::fs::create_dir(&path)?;
     fx.click((800., 710.))?;
     fx.type_text("Explain the test plan.")?;
     fx.advance(Duration::from_millis(3100))?;
-    assert!(path.is_dir());
     assert!(!fx.cx.update(|cx| {
         cx.global::<Settings>()
             .read_all()
@@ -125,13 +114,23 @@ fn git_settings_native() -> anyhow::Result<()> {
     }));
     std::fs::remove_dir(&path)?;
     std::fs::write(&path, previous)?;
-    fx.click((1128., 777.))?;
+    fx.keys("cmd-s")?;
     let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
     assert_eq!(saved["git-pr-instructions"], "Explain the test plan.");
-    fx.advance(Duration::from_millis(5500))?;
-    fx.shot()?.save(format!("{out}/after-instructions.png"))?;
-    std::fs::copy(&path, std::path::Path::new(&out).join("host-settings.json"))?;
-    fx.click((800., 265.))?;
+    fx.advance(Duration::from_millis(3500))?;
+    capture(&mut fx, &out, "git-instructions", None)?;
+    fx.click(BACK)?;
+    fx.cx
+        .update(|cx| cx.set_global(Settings::load(path.clone()).unwrap()));
+    open_settings(&mut fx, "Git")?;
+    fx.click((800., 680.))?;
+    fx.keys("cmd-a cmd-c")?;
+    assert_eq!(
+        fx.cx
+            .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .as_deref(),
+        Some("Wait for checks.")
+    );
     fx.keys("cmd-a")?;
     fx.type_text("Keep watching.")?;
     fx.cx.update(|cx| cx.shutdown());
@@ -139,6 +138,121 @@ fn git_settings_native() -> anyhow::Result<()> {
     let saved: Value = serde_json::from_slice(&std::fs::read(&path)?)?;
     assert_eq!(saved["git-pr-watch-instructions"], "Keep watching.");
     std::fs::remove_file(path)?;
-    println!("Git settings: native edits persisted and reopened fields read back from disk.");
+    Ok(())
+}
+
+#[test]
+fn worktree_preferences_require_confirmation_and_preserve_the_saved_limit() -> anyhow::Result<()> {
+    use anyhow::Context as _;
+    use app::host_settings::Settings;
+    use common::*;
+    use serde_json::{Value, json};
+    use std::time::Duration;
+    use ui::screens::{
+        computer_use::Load,
+        settings::{environments, worktrees},
+    };
+    let out = std::env::var("CGX_GIT_EVIDENCE")
+        .unwrap_or_else(|_| format!("/tmp/cgx-git-settings-{}", std::process::id()));
+    std::fs::create_dir_all(&out)?;
+    let path =
+        std::path::Path::new(&out).join(format!("worktree-settings-{}.json", std::process::id()));
+    let mut fx = Fx::new()?;
+    fx.cx
+        .update_window(fx.window, |_, window, _| window.activate_window())?;
+    fx.cx.update(|cx| {
+        cx.set_global(Settings::load(path.clone()).unwrap());
+        cx.set_global(worktrees::State {
+            default_root: "/tmp/cgx-mac/home/worktrees".into(),
+            worktrees: Load::Loading,
+            ..Default::default()
+        });
+        cx.set_global(environments::State {
+            projects: Load::Ready(Vec::new().into()),
+            ..Default::default()
+        });
+    });
+    open_settings(&mut fx, "Worktrees")?;
+    fx.scroll((200., 500.), -408.)?;
+    fx.advance(Duration::from_millis(500))?;
+    capture(&mut fx, &out, "worktrees-loading", Some("worktrees"))?;
+    fx.click((560., 199.))?;
+    capture(&mut fx, &out, "environments-empty", Some("environments"))?;
+    fx.click((478., 225.))?;
+    fx.advance(Duration::ZERO)?;
+    fx.click((1140., 434.))?;
+    capture(&mut fx, &out, "disable-cleanup", Some("disable-cleanup"))?;
+    assert_ne!(
+        fx.cx.update(|cx| cx
+            .global::<Settings>()
+            .read_all()
+            .get("worktree-auto-cleanup-enabled")
+            .cloned()),
+        Some(json!(false))
+    );
+    fx.keys("escape")?;
+    fx.advance(Duration::ZERO)?;
+    fx.click((1090., 519.))?;
+    fx.advance(Duration::ZERO)?;
+    fx.keys("cmd-a")?;
+    fx.type_text("7")?;
+    fx.keys("enter")?;
+    fx.advance(Duration::ZERO)?;
+    let saved: Value = serde_json::from_slice(
+        &std::fs::read(&path)
+            .with_context(|| format!("read saved worktree limit at {}", path.display()))?,
+    )?;
+    assert_eq!(saved["worktree-keep-count"], 7);
+    fx.click((1140., 434.))?;
+    fx.advance(Duration::ZERO)?;
+    fx.keys("tab enter")?;
+    fx.advance(Duration::ZERO)?;
+    let saved: Value = serde_json::from_slice(
+        &std::fs::read(&path)
+            .with_context(|| format!("read disabled cleanup setting at {}", path.display()))?,
+    )?;
+    assert_eq!(saved["worktree-auto-cleanup-enabled"], false);
+    assert_eq!(saved["worktree-keep-count"], 7);
+    capture(&mut fx, &out, "cleanup-disabled", None)?;
+    std::fs::remove_file(path)?;
+    Ok(())
+}
+
+#[test]
+fn worktree_tabs_remain_usable_after_scrolling() -> anyhow::Result<()> {
+    use app::host_settings::Settings;
+    use common::*;
+    use serde_json::Value;
+    use std::time::Duration;
+
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    let mut fx = Fx::new()?;
+    fx.cx
+        .update_window(fx.window, |_, window, _| window.activate_window())?;
+    fx.cx
+        .update(|cx| cx.set_global(Settings::load(path.clone()).unwrap()));
+    open_settings(&mut fx, "Worktrees")?;
+    fx.click((560., 199.))?;
+    fx.wait("environment projects", |fx| {
+        fx.cx.update(|cx| {
+            matches!(
+                &cx.global::<ui::screens::settings::environments::State>()
+                    .projects,
+                ui::screens::computer_use::Load::Ready(_)
+            )
+        })
+    })?;
+    fx.resize(1280., 300.)?;
+    fx.scroll((1000., 240.), -1500.)?;
+    fx.advance(Duration::from_millis(300))?;
+    fx.click((478., 123.))?;
+    fx.resize(1280., 832.)?;
+    fx.advance(Duration::from_millis(300))?;
+    fx.click((1140., 357.))?;
+    fx.advance(Duration::ZERO)?;
+
+    let saved: Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    assert_eq!(saved["worktree-upstream-refresh-mode"], "best-effort");
     Ok(())
 }

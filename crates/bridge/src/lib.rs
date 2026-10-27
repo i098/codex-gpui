@@ -16,7 +16,12 @@
 mod acp;
 mod automation;
 pub use automation::AutomationTurn;
+mod cloud;
+pub use cloud::CLOUD_ENDPOINT;
+pub mod imports;
 mod replay;
+pub mod security;
+pub mod storage;
 pub mod types;
 
 use std::collections::HashMap;
@@ -48,6 +53,8 @@ pub enum Event {
         method: String,
         params: Value,
     },
+    /// A spawned server process exited (stdout closed); replayed transcripts never send it.
+    Closed,
 }
 
 /// JSON-RPC error returned by the server; reach it with `err.downcast_ref::<RpcError>()`.
@@ -73,17 +80,30 @@ type Pending = Arc<Mutex<Option<HashMap<i64, Sender<Reply>>>>>;
 type Subscribers = Arc<Mutex<Vec<std::sync::mpsc::Sender<Event>>>>;
 type EventSubscribers = Arc<Mutex<Vec<Sender<Event>>>>;
 
+struct PendingRequest<'a> {
+    id: i64,
+    pending: &'a Pending,
+}
+
+impl Drop for PendingRequest<'_> {
+    fn drop(&mut self) {
+        if let Some(pending) = self.pending.lock().as_mut() {
+            pending.remove(&self.id);
+        }
+    }
+}
+
 /// Where a [`Bridge`] sends the client's requests, notifications and answers.
 trait Backend: Send {
-    fn send(&mut self, msg: &Value) -> Result<()>;
+    fn send(&mut self, msg: Value) -> Result<()>;
 }
 
 /// Newline-delimited JSON as is: the `codex app-server` transport.
 struct Lines(Box<dyn Write + Send>);
 
 impl Backend for Lines {
-    fn send(&mut self, msg: &Value) -> Result<()> {
-        let mut line = serde_json::to_string(msg)?;
+    fn send(&mut self, msg: Value) -> Result<()> {
+        let mut line = serde_json::to_string(&msg)?;
         line.push('\n');
         self.0.write_all(line.as_bytes())?;
         self.0.flush()?;
@@ -140,6 +160,23 @@ impl Sink {
         });
     }
 
+    fn incoming(&self, msg: Incoming) {
+        match (msg.method, msg.id) {
+            (Some(method), Some(id)) => self.event(Event::Request {
+                id,
+                method,
+                params: msg.params,
+            }),
+            (Some(method), None) => self.notify(&method, msg.params),
+            (None, Some(id)) => {
+                if let Some(id) = id.as_i64() {
+                    self.reply(id, msg.error.map_or(Ok(msg.result), Err));
+                }
+            }
+            (None, None) => {}
+        }
+    }
+
     /// Dropping the waiters wakes them with "closed"; later requests fail at once.
     fn close(&self) {
         self.pending.lock().take();
@@ -153,9 +190,10 @@ pub struct Bridge {
     pending: Pending,
     next_id: AtomicI64,
     event_subscribers: EventSubscribers,
-    initialized: std::sync::OnceLock<InitializeResponse>,
+    initialized: async_lock::Mutex<Option<InitializeResponse>>,
     child: Option<Child>,
     acp: bool,
+    cloud_account_id: Option<String>,
     automation_turns: Mutex<HashMap<String, Arc<AutomationTurn>>>,
     subscribers: Subscribers,
 }
@@ -232,7 +270,14 @@ impl Bridge {
     ) -> (Bridge, Receiver<Event>) {
         let (sink, events) = Sink::new();
         let listener = sink.clone();
-        std::thread::spawn(move || read_loop(BufReader::new(read), &listener));
+        let spawned = child.is_some();
+        std::thread::spawn(move || {
+            read_loop(BufReader::new(read), &listener);
+            if spawned {
+                listener.event(Event::Closed);
+            }
+            listener.close();
+        });
         let backend = Box::new(Lines(Box::new(write)));
         (Self::new(backend, sink, child, false), events)
     }
@@ -252,10 +297,11 @@ impl Bridge {
             backend: Mutex::new(backend),
             pending: sink.pending,
             event_subscribers: sink.events,
-            initialized: std::sync::OnceLock::new(),
+            initialized: async_lock::Mutex::new(None),
             next_id: AtomicI64::new(1),
             child,
             acp,
+            cloud_account_id: None,
             automation_turns: Mutex::new(HashMap::new()),
             subscribers: sink.subscribers,
         }
@@ -268,6 +314,11 @@ impl Bridge {
             subscribers.push(sender);
         }
         receiver
+    }
+
+    /// Whether the app-server has closed its response stream.
+    pub fn is_closed(&self) -> bool {
+        self.pending.lock().is_none()
     }
 
     /// Whether this connection runs an ACP agent ([`Bridge::spawn_acp`]).
@@ -314,12 +365,11 @@ impl Bridge {
             .as_mut()
             .context("app-server closed")?
             .insert(id, tx);
-        if let Err(err) = self.write(&msg) {
-            if let Some(map) = self.pending.lock().as_mut() {
-                map.remove(&id);
-            }
-            return Err(err);
-        }
+        let _pending = PendingRequest {
+            id,
+            pending: &self.pending,
+        };
+        self.write(msg)?;
         let result = rx
             .recv()
             .await
@@ -328,21 +378,22 @@ impl Bridge {
     }
 
     pub fn notify(&self, method: &str, params: impl Serialize) -> Result<()> {
-        self.write(&message(method, params)?)
+        self.write(message(method, params)?)
     }
 
     /// Answers a server [`Event::Request`].
     pub fn respond(&self, id: Value, result: impl Serialize) -> Result<()> {
-        self.write(&json!({ "id": id, "result": serde_json::to_value(result)? }))
+        self.write(json!({ "id": id, "result": serde_json::to_value(result)? }))
     }
 
-    fn write(&self, msg: &Value) -> Result<()> {
+    fn write(&self, msg: Value) -> Result<()> {
         self.backend.lock().send(msg)
     }
 
     /// Sends `initialize` (opting into the experimental API, like the desktop app), then `initialized`.
     pub async fn initialize(&self, client_name: &str, version: &str) -> Result<InitializeResponse> {
-        if let Some(response) = self.initialized.get() {
+        let mut initialized = self.initialized.lock().await;
+        if let Some(response) = initialized.as_ref() {
             return Ok(response.clone());
         }
         let params = json!({
@@ -351,7 +402,7 @@ impl Bridge {
         });
         let response: InitializeResponse = self.request("initialize", params).await?;
         self.notify("initialized", ())?;
-        let _ = self.initialized.set(response.clone());
+        *initialized = Some(response.clone());
         Ok(response)
     }
 
@@ -452,27 +503,36 @@ fn read_loop(reader: impl BufRead, sink: &Sink) {
                 continue;
             }
         };
-        match (msg.method, msg.id) {
-            (Some(method), Some(id)) => sink.event(Event::Request {
-                id,
-                method,
-                params: msg.params,
-            }),
-            (Some(method), None) => sink.notify(&method, msg.params),
-            (None, Some(id)) => {
-                if let Some(id) = id.as_i64() {
-                    sink.reply(id, msg.error.map_or(Ok(msg.result), Err));
-                }
-            }
-            (None, None) => {}
-        }
+        sink.incoming(msg);
     }
-    sink.close();
 }
 
 #[cfg(test)]
 mod event_tests {
     use super::*;
+
+    #[test]
+    fn dropping_a_request_releases_its_pending_reply() {
+        use std::{
+            future::Future,
+            pin::pin,
+            task::{Context, Poll, Waker},
+        };
+        let (input, producer) = std::io::pipe().unwrap();
+        let (bridge, _) = Bridge::from_io(input, std::io::sink(), None);
+        {
+            let mut request = pin!(bridge.request::<_, Value>("process/spawn", json!({})));
+            assert!(matches!(
+                request
+                    .as_mut()
+                    .poll(&mut Context::from_waker(Waker::noop())),
+                Poll::Pending
+            ));
+            assert_eq!(bridge.pending.lock().as_ref().unwrap().len(), 1);
+        }
+        assert!(bridge.pending.lock().as_ref().unwrap().is_empty());
+        drop(producer);
+    }
 
     #[test]
     fn closing_one_window_preserves_other_event_subscribers() {
@@ -504,6 +564,60 @@ mod event_tests {
         );
         drop(producer);
         assert!(second.recv_blocking().is_err());
+        assert!(bridge.is_closed());
         assert!(bridge.subscribe_async().is_closed());
+    }
+
+    #[test]
+    fn concurrent_windows_initialize_the_shared_server_once() {
+        use std::{
+            future::Future as _,
+            pin::pin,
+            sync::atomic::{AtomicUsize, Ordering},
+            task::Poll,
+        };
+        let (input, mut response) = std::io::pipe().unwrap();
+        let (requests, output) = std::io::pipe().unwrap();
+        let (bridge, _) = Bridge::from_io(input, output, None);
+        let (release, ready) = std::sync::mpsc::channel();
+        let count = Arc::new(AtomicUsize::new(0));
+        let calls = count.clone();
+        let server = std::thread::spawn(move || {
+            for line in BufReader::new(requests).lines() {
+                let request: Value = serde_json::from_str(&line.unwrap()).unwrap();
+                match request["method"].as_str().unwrap() {
+                    "initialize" => {
+                        let first = calls.fetch_add(1, Ordering::SeqCst) == 0;
+                        if first {
+                            ready.recv().unwrap();
+                        }
+                        let reply = if first {
+                            json!({"id":request["id"],"result":{"userAgent":"shared","codexHome":"/fixture","platformOs":"macos"}})
+                        } else {
+                            json!({"id":request["id"],"error":{"code":-32600,"message":"Already initialized"}})
+                        };
+                        writeln!(response, "{reply}").unwrap();
+                    }
+                    "initialized" => break,
+                    _ => panic!("unexpected initialization method"),
+                }
+            }
+        });
+        futures_lite::future::block_on(async {
+            let mut first = pin!(bridge.initialize("primary", "1"));
+            let mut second = pin!(bridge.initialize("popout", "1"));
+            futures_lite::future::poll_fn(|cx| {
+                assert!(first.as_mut().poll(cx).is_pending());
+                assert!(second.as_mut().poll(cx).is_pending());
+                release.send(()).unwrap();
+                Poll::Ready(())
+            })
+            .await;
+            let (first, second) = futures_lite::future::zip(first, second).await;
+            assert_eq!(first.unwrap().user_agent, "shared");
+            assert_eq!(second.unwrap().user_agent, "shared");
+        });
+        server.join().unwrap();
+        assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 }

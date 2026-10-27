@@ -72,6 +72,7 @@ fn loaded(fx: &mut Fx) -> Result<()> {
 
 #[test]
 fn header_wrap_retry_and_line_navigation_use_native_input() -> Result<()> {
+    common::install_panic_hook();
     fs::create_dir_all(out())?;
     let repo = tempfile::tempdir_in(out())?;
     git(repo.path(), &["init", "-q"])?;
@@ -243,7 +244,7 @@ fn header_wrap_retry_and_line_navigation_use_native_input() -> Result<()> {
     fx.resize(1280., 832.)?;
     let large = format!(
         "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -0,0 +1 @@\n+{}\n",
-        "x".repeat(10_001)
+        "x".repeat(1_048_577)
     );
     let big = fx.cx.open_window(size(px(1280.), px(832.)), |_, cx| {
         cx.new(|_| DiffPanel::from_patch(&cwd, &large))
@@ -289,5 +290,79 @@ fn header_wrap_retry_and_line_navigation_use_native_input() -> Result<()> {
     );
     shot(&mut fx, "line-100")?;
     println!("native Diff controls and boundary frames verified");
+    Ok(())
+}
+
+#[test]
+fn decoded_patch_paths_reach_native_file_headers_and_copy() -> Result<()> {
+    common::install_panic_hook();
+    fs::create_dir_all(out())?;
+    let repo = tempfile::tempdir_in(out())?;
+    let root = repo.path();
+    let quoted = "a space/é\tname.txt";
+    fs::create_dir_all(root.join("a space"))?;
+    fs::write(root.join(quoted), "before\n")?;
+    fs::write(root.join("old.txt"), "rename content\n")?;
+    fs::write(root.join("image.bin"), b"\0before")?;
+    git(root, &["init", "-q"])?;
+    git(root, &["config", "user.name", "Path integration proof"])?;
+    git(root, &["config", "user.email", "paths@example.invalid"])?;
+    git(root, &["add", "--all"])?;
+    git(root, &["commit", "-qm", "before paths"])?;
+    fs::write(root.join(quoted), "after\n")?;
+    fs::rename(root.join("old.txt"), root.join("renamed file.txt"))?;
+    fs::write(root.join("image.bin"), b"\0after")?;
+    git(root, &["add", "--all"])?;
+    let patch = Command::new("git")
+        .current_dir(root)
+        .args(["diff", "--cached", "--binary", "--find-renames", "HEAD"])
+        .output()?;
+    ensure!(patch.status.success(), "cannot read the real patch");
+    let patch = String::from_utf8(patch.stdout)?;
+    let mut recording = script(None, |_| {})?;
+    for row in &mut recording {
+        if let Some(thread) = row.pointer_mut("/msg/result/thread") {
+            thread["cwd"] = root.to_string_lossy().into_owned().into();
+        }
+    }
+    let mut fx = Fx::scripted(recording)?;
+    fx.keys("cmd-2")?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.keys("alt-cmd-b")?;
+    let turn = fx.read(|root, cx| {
+        root.thread()
+            .unwrap()
+            .read(cx)
+            .turns()
+            .last()
+            .unwrap()
+            .id
+            .clone()
+    });
+    notify(
+        &mut fx,
+        "turn/diff/updated",
+        json!({"threadId":SUBTRACT,"turnId":turn,"diff":patch}),
+    );
+    let paths = fx.read(|root, cx| {
+        root.diff_panel()
+            .unwrap()
+            .read(cx)
+            .files
+            .iter()
+            .map(|file| format!("{}{}", file.dir, file.name))
+            .collect::<Vec<_>>()
+    });
+    ensure!(paths == [quoted, "image.bin", "renamed file.txt"]);
+    fx.click((1252., 110.))?;
+    choose(&mut fx, "Copy path")?;
+    ensure!(
+        fx.cx
+            .update(|cx| cx.read_from_clipboard().and_then(|item| item.text()))
+            .as_deref()
+            == Some(quoted),
+        "Copy path did not preserve the decoded Git filename"
+    );
+    shot(&mut fx, "decoded-file-paths")?;
     Ok(())
 }

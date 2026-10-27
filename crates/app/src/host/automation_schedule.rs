@@ -5,6 +5,10 @@ use std::collections::HashSet;
 
 pub(super) const NO_FUTURE_RUN: &str = "Automation schedule has no future runs. Check that its start time, interval, and BYHOUR/BYMINUTE/BYSECOND values can reach a future occurrence.";
 
+pub(super) fn valid(rule: &str, now: i64) -> bool {
+    Schedule::parse(rule, now).is_some()
+}
+
 // Original GF/KF/JF/XF: recurrence iteration stays in the RFC library.
 pub(super) fn next_run(
     rule: &str,

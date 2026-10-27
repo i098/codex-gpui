@@ -26,6 +26,11 @@ use ui::composer::Composer;
 use ui::screens::settings::AppServer;
 
 pub const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+fn target_tmpdir() -> PathBuf {
+    option_env!("CARGO_TARGET_TMPDIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(env::temp_dir)
+}
 /// The fixtures' project (`thread/start` cwd).
 pub const CWD: &str = "/tmp/cgx-mac/proj";
 /// Recents order of readback.jsonl's `thread/list`.
@@ -58,10 +63,8 @@ pub fn replay_adapter(recording: &Path) -> Result<Vec<Value>> {
                 .is_file(),
         "unsupported recording contract {stem:?}: no dedicated adapter"
     );
-    let log = (stem == "s017").then(|| {
-        Path::new(env!("CARGO_TARGET_TMPDIR"))
-            .join(format!("replay-{stem}-{}.log", std::process::id()))
-    });
+    let log = (stem == "s017")
+        .then(|| target_tmpdir().join(format!("replay-{stem}-{}.log", std::process::id())));
     let mut command = Command::new(env!("CARGO"));
     command.current_dir(ROOT).args([
         "test",
@@ -117,6 +120,7 @@ pub fn recorded_host_settings() -> Result<app::host_settings::Settings> {
     ensure!(history.is_array(), "original host history is missing");
     let mut settings = app::host_settings::Settings::default();
     settings.write("seen-model-upgrade-list", history)?;
+    settings.write("primary-number-shortcut-target", json!("sidebar"))?;
     Ok(settings)
 }
 
@@ -152,8 +156,22 @@ impl Fx {
         Self::with("dark", (1280., 832.), None, |_| {})
     }
 
-    /// Dark replay with time paused at the original fixture epoch.
-    pub fn fixed_clock() -> Result<Self> {
+    /// The app on an app-server that exits at once: the crash page (SH-145).
+    pub fn crashed() -> Result<Self> {
+        let (bridge, events) = Bridge::spawn(Command::new("false"))?;
+        Self::boot(
+            "dark",
+            (1280., 832.),
+            bridge,
+            events,
+            recorded_host_settings()?,
+            Route::Home,
+            false,
+        )
+    }
+
+    /// The app before `initialize` answers: the startup loader (SH-147) is showing.
+    pub fn loading() -> Result<Self> {
         let lines = script(None, |_| {})?;
         let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
         Self::boot(
@@ -162,7 +180,8 @@ impl Fx {
             bridge,
             events,
             recorded_host_settings()?,
-            Some(CAPTURE_CLOCK),
+            Route::Home,
+            false,
         )
     }
 
@@ -184,7 +203,15 @@ impl Fx {
 
     pub fn open(theme: &'static str, size: (f32, f32), lines: Vec<Value>) -> Result<Self> {
         let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
-        Self::boot(theme, size, bridge, events, recorded_host_settings()?, None)
+        Self::boot(
+            theme,
+            size,
+            bridge,
+            events,
+            recorded_host_settings()?,
+            Route::Home,
+            true,
+        )
     }
 
     /// Like [`Fx::open`], but the app-server is this test binary again as a proxy
@@ -214,29 +241,49 @@ impl Fx {
             .env(PROXY_SCRIPT, &script)
             .env(PROXY_LOG, &log);
         let (bridge, events) = Bridge::spawn(cmd)?;
-        let mut fx = Self::boot(theme, size, bridge, events, settings, None)?;
+        let mut fx = Self::boot(theme, size, bridge, events, settings, Route::Home, true)?;
         fx.log = Some(log);
         Ok(fx)
     }
 
-    fn boot(
+    pub fn on_route(route: Route) -> Result<Self> {
+        let lines = script(None, |_| {})?;
+        let (bridge, events) = Bridge::replay(&write_script(&lines)?)?;
+        Self::boot(
+            "dark",
+            (1280., 832.),
+            bridge,
+            events,
+            recorded_host_settings()?,
+            route,
+            true,
+        )
+    }
+
+    pub(super) fn boot(
         theme: &'static str,
         (w, h): (f32, f32),
         bridge: Bridge,
         events: async_channel::Receiver<Event>,
         settings: app::host_settings::Settings,
-        clock: Option<ui::screens::thread::view::Clock>,
+        route: Route,
+        wait_ready: bool,
     ) -> Result<Self> {
         #[cfg(target_os = "macos")]
         install_panic_hook();
-        let clock = clock.unwrap_or_else(|| ui::screens::thread::view::Clock {
+        let clock = ui::screens::thread::view::Clock {
             elapsed_since: Some(Instant::now()),
             ..CAPTURE_CLOCK
-        });
+        };
+        // Linux checks need layout and input; macOS captures need the native renderer.
+        #[cfg(not(target_os = "linux"))]
+        let renderer = gpui_platform::current_headless_renderer;
+        #[cfg(target_os = "linux")]
+        let renderer = || Ok(None);
         let mut cx = HeadlessAppContext::with_platform(
             textsys::text_system(),
             Arc::new(theme::Assets),
-            gpui_platform::current_headless_renderer,
+            renderer,
         );
         cx.update(|cx| {
             theme::load_fonts(cx);
@@ -255,6 +302,7 @@ impl Fx {
                 _ => ThemeSetting::Dark,
             };
             let state = State {
+                route,
                 theme,
                 ..State::default()
             };
@@ -264,7 +312,10 @@ impl Fx {
         // Never the user's `CODEX_HOME`: its project rows move the recorded sidebar layout.
         // No project state yet; a scenario that expects rows installs its own host.
         let host_home = tempfile::tempdir()?;
-        let host = Arc::new(app::host::LocalHost::new(host_home.path()));
+        let settings = cx.update(|cx| cx.try_global::<app::host_settings::Settings>().cloned());
+        let host = Arc::new(ActivityFixtureHost(
+            app::host::LocalHost::new(host_home.path()).with_settings(settings),
+        ));
         cx.update(|cx| root.update(cx, |root, cx| root.set_host(host, cx)));
         let mut fx = Self {
             cx,
@@ -275,7 +326,9 @@ impl Fx {
             log: None,
             _host_home: host_home,
         };
-        fx.wait("startup", |fx| fx.read(|r, _| r.ready()))?;
+        if wait_ready {
+            fx.wait("startup", |fx| fx.read(|r, _| r.ready()))?;
+        }
         Ok(fx)
     }
 
@@ -548,7 +601,9 @@ impl Fx {
             Composer::set_caret_transparent(cx, true);
             window.refresh();
         })?;
-        let image = self.shot();
+        let image = self
+            .advance(Duration::ZERO)
+            .and_then(|()| parity::capture_frozen(&mut self.cx, self.window));
         self.cx.update_window(self.window, |_, window, cx| {
             Composer::set_caret_transparent(cx, false);
             window.refresh();
@@ -595,10 +650,13 @@ impl Fx {
     }
 }
 
-/// readback.jsonl, then `session` (under fixtures/), each recorded line rewritten by `edit`.
+/// Loads the baseline, optional scenario, and projected session settings; `edit` rewrites each line.
 pub fn script(session: Option<&str>, edit: fn(&mut Value)) -> Result<Vec<Value>> {
     let mut lines = Vec::new();
-    for file in std::iter::once("readback.jsonl").chain(session) {
+    for file in std::iter::once("readback.jsonl")
+        .chain(session)
+        .chain(std::iter::once("sessions/thread-settings.jsonl"))
+    {
         let path = format!("{ROOT}/fixtures/{file}");
         let text = fs::read_to_string(&path).with_context(|| path.clone())?;
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
@@ -632,6 +690,17 @@ pub fn recorded_thread(id: &str) -> Result<Value> {
         .with_context(|| format!("no thread/read of {id}"))
 }
 
+pub fn recorded_resume(id: &str) -> Result<Value> {
+    script(None, |_| {})?
+        .into_iter()
+        .find_map(|mut line| {
+            let result = line.pointer_mut("/msg/result")?.take();
+            (result["thread"]["id"] == id && result["collaborationMode"].is_object())
+                .then_some(result)
+        })
+        .with_context(|| format!("no thread/resume of {id}"))
+}
+
 /// Device pixels that differ inside the CSS-px `rect` (the window is 2x).
 pub fn changed(a: &RgbaImage, b: &RgbaImage, [x, y, w, h]: [f32; 4]) -> usize {
     let (x0, y0) = ((x * 2.) as u32, (y * 2.) as u32);
@@ -661,7 +730,7 @@ pub fn assert_hover(fx: &mut Fx, at: (f32, f32), rect: [f32; 4], min: usize) -> 
 
 /// Compares a captured image with the original reference and fails on a strict pixel mismatch.
 pub fn parity_image(screen: &str, theme: &str, port: &RgbaImage) -> Result<String> {
-    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("flows-parity");
+    let out = target_tmpdir().join("flows-parity");
     let refs = PathBuf::from(format!("{ROOT}/refs"));
     let m = parity::diff_ref(&refs, &out, screen, theme, port)?;
     let note = format!(
@@ -680,7 +749,7 @@ pub fn parity_image(screen: &str, theme: &str, port: &RgbaImage) -> Result<Strin
 /// Runs `reach` in each theme at each ref size of `screen`, then the parity diff.
 pub fn parity_flow(screen: &str, reach: fn(&mut Fx) -> Result<()>) -> Result<String> {
     let route = match screen {
-        "home" | "composer" | "sidebar" => Route::Home,
+        "home" | "composer" | "sidebar" | "screenshot" => Route::Home,
         "thread" | "diff" | "terminal" => Route::Thread(SUBTRACT.into()),
         "settings" => Route::Settings,
         "automations" => Route::Scheduled,
@@ -810,6 +879,8 @@ fn serve_proxy(script: &Path, log: &Path) -> Result<()> {
                 Event::Request { id, method, params } => {
                     json!({ "id": id, "method": method, "params": params })
                 }
+                // The proxy app-server exits with the test; nothing to forward.
+                Event::Closed => continue,
             };
             send(&server_out, msg);
         }
@@ -931,4 +1002,114 @@ pub fn open_recorded_sidebar_search(fx: &mut Fx) -> Result<Arc<SidebarSearchHost
         },
     )?;
     Ok(host)
+}
+
+pub struct ActivityFixtureHost(pub app::host::LocalHost);
+
+impl app::host::Host for ActivityFixtureHost {
+    fn fetch(&self, request: &app::host::Request) -> Result<Value> {
+        if matches!(request, app::host::Request::Http(http) if http["url"] == "/wham/statsig/bootstrap")
+        {
+            static POLICY: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {
+                let recording: Value =
+                    serde_json::from_str(include_str!("../../../../refs/interactions/host.json"))
+                        .expect("host recording");
+                let response = recording["exchanges"]
+                    .as_array()
+                    .expect("host exchanges")
+                    .iter()
+                    .find(|entry| entry["request"]["request"]["url"] == "/wham/statsig/bootstrap")
+                    .expect("recorded feature gates");
+                let body =
+                    app::host::json_body(&response["response"]).expect("recorded bootstrap body");
+                let payload: Value = serde_json::from_str(
+                    body["statsigPayload"]
+                        .as_str()
+                        .expect("recorded Statsig payload"),
+                )
+                .expect("Statsig JSON");
+                // Activity and the Import settings entry; every recorded settings capture shows Import.
+                let gates: serde_json::Map<_, _> = ["4039078146", "3278809559", "2373428540"]
+                    .into_iter()
+                    .filter_map(|id| {
+                        Some((id.to_owned(), payload["feature_gates"].get(id)?.clone()))
+                    })
+                    .collect();
+                let body = json!({"statsigPayload": json!({"feature_gates": gates}).to_string()});
+                json!({"status": 200, "body": body.to_string()})
+            });
+            return Ok(POLICY.clone());
+        }
+        self.0.fetch(request)
+    }
+
+    fn identity(&self) -> Option<app::host::Identity> {
+        Some(app::host::Identity {
+            account_id: "00000000-0000-4000-8000-000000000000".into(),
+            user_id: "user-000000000000000000000000".into(),
+            device_id: "activity-fixture".into(),
+        })
+    }
+
+    fn take_app_tool_events(&self) -> Option<app::host::AppToolEvents> {
+        self.0.take_app_tool_events()
+    }
+
+    fn app_tool_thread_config(&self, thread: &str, source: Option<&str>) -> Result<Option<Value>> {
+        self.0.app_tool_thread_config(thread, source)
+    }
+
+    fn clear_inbox_unreads(&self) -> Result<()> {
+        self.0.clear_inbox_unreads()
+    }
+
+    fn bind_context_files(&self) -> Option<async_channel::Receiver<PathBuf>> {
+        self.0.bind_context_files()
+    }
+
+    fn prepare_projectless(&self, prompt: &str) -> Result<app::host::Workspace> {
+        self.0.prepare_projectless(prompt)
+    }
+
+    fn record_projectless(&self, thread: &str, workspace: &app::host::Workspace) -> Result<()> {
+        self.0.record_projectless(thread, workspace)
+    }
+
+    fn voice_settings(&self) -> Result<app::host::voice::Settings> {
+        self.0.voice_settings()
+    }
+
+    fn computer_use_settings(&self) -> Result<&app::host::computer_use::ComputerUseSettings> {
+        self.0.computer_use_settings()
+    }
+
+    fn computer_use_native(
+        &self,
+    ) -> Option<Arc<app::host::computer_use_native::NativeComputerUse>> {
+        self.0.computer_use_native()
+    }
+
+    fn projects(&self) -> Result<Vec<ui::screens::sidebar::Project>> {
+        self.0.projects()
+    }
+
+    fn terminal_workspaces(&self, thread: &str, cwd: &str) -> Result<Vec<String>> {
+        self.0.terminal_workspaces(thread, cwd)
+    }
+
+    fn review_repositories(
+        &self,
+        thread: &str,
+        cwd: &str,
+    ) -> Result<Vec<ui::screens::diff::panel::ReviewRepository>> {
+        self.0.review_repositories(thread, cwd)
+    }
+
+    fn finish_automation_run(&self, thread: &str, turn: &Value) -> Result<bool> {
+        self.0.finish_automation_run(thread, turn)
+    }
+
+    fn add_project(&self, root: &Path) -> Result<String> {
+        self.0.add_project(root)
+    }
 }

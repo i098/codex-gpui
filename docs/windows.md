@@ -43,9 +43,11 @@ Other child windows remain independent.
 Use `Presentation::Background` for non-activating display and `Presentation::Hidden` for prewarming.
 QA builds never request foreground presentation.
 The AppKit adapter supplies work-area bounds, background presentation, hiding, and overlay policies.
+Fullscreen moves the history and sidebar controls into the space left by the window controls.
+Leaving fullscreen restores their windowed positions.
 Unsupported background presentation returns an error instead of claiming success on other platforms.
 The page controllers retain responsibility for hotkey registration, browser transfer, overlay input transitions, and permissions.
-This change does not trigger those permissions or implement those separate pages.
+The window manager does not trigger permissions.
 
 The existing command-menu entry `Open in new window` now opens the selected local thread in another primary window.
 Each root retains its own composer and backend connection.
@@ -55,10 +57,21 @@ If the retained window is fullscreen, the manager waits for fullscreen exit befo
 A dock reopen displays the retained primary before creating another one.
 The manager stores primary geometry through the existing host settings store.
 Page and auxiliary windows do not overwrite that geometry.
+Shared `Bridge` clients serialize initialization and reuse the first successful handshake.
+The Quit command checks active local chats and scheduled tasks before it exits.
+The native warning offers Quit and Cancel when either check finds work.
+Cancel keeps the windows open.
+The check starts after the current window action returns so it can read every primary window.
+The warning uses a remaining primary window if another window closes during the check.
+If the task store cannot be read, the warning includes the error and still offers Quit and Cancel.
+`Host::prepare_projectless` and `Host::record_projectless` expose the existing standalone workspace allocation and metadata writes.
 
 ## Verification
 
 Run the geometry regression with `cargo test -p app --lib windows::tests`.
+Run `cargo test -p bridge concurrent_windows_initialize_the_shared_server_once` for concurrent initialization.
+Run `cargo test -p app --test quit_guard` for a Quit action from a primary window with an active scheduled task.
+Run `cargo test -p app --test fullscreen` on macOS for fullscreen control placement and history navigation.
 Run `native_windows` on macOS with `CODEX_GPUI_QA=1` and an owned recorded `CODEX_BIN` executable.
 Pass `--qa-smoke-profile /tmp/cgx-qa-smoke-<owned-name>` to isolate all profile state.
 The smoke opens two actual native primary windows, checks independent drafts, closes one, hides the last, and restores it without activation.
@@ -67,3 +80,54 @@ The example installs a panic hook before initialization so failures exit with co
 It does not require microphone, accessibility, screen recording, account access, or a live turn.
 No page painting code changes in this slice.
 The separate page owners still owe their original-versus-native appearance checks.
+
+## Popout and Spotlight controller
+
+`app::hotkey::open(owner, target, cx)` opens the local popout or Spotlight without changing the primary window's route or draft.
+The controller accepts `/hotkey-window`, `/hotkey-window/new-thread`, `/hotkey-window/thread/:id`, `/hotkey-window/remote/:id`, and `/spotlight`.
+The popout uses the existing composer, thread renderer, app-server connection, and window manager.
+Its settings menu selects a project, local, worktree or cloud execution, a branch, an environment, and permissions.
+Worktree execution uses the existing `create-worktree` and `set-worktree-owner-thread` host calls.
+The window expands for a thread and collapses for a new chat.
+Open in Main Window transfers navigation to the owning primary window.
+
+On macOS, the controller registers Spotlight `Alt+K` and screenshot selection `Control+Shift+4` and `Control+Alt+Shift+4`.
+`replace_global_bindings` applies the saved command map; an empty override disables its shortcut.
+`suspend_global_bindings` removes native registrations while the shortcut editor captures input.
+No popout shortcut is set by default.
+Screenshot selection attaches the captured image without sending the chat.
+Shortcut registration failures remain errors.
+Other platforms reject native shortcut registration.
+
+Global dictation uses the saved shortcut map and the existing voice settings store.
+It requires the account rollout and workspace permission checks before registration.
+The controller records through the selected native microphone, retains recoverable audio, and calls the existing transcription request.
+It restores the clipboard only if another application has not changed it.
+Recovery exposes Copy, the Accessibility settings link, and saved recordings.
+
+Run `cargo test -p app --lib hotkey -- --nocapture --test-threads=1` for the local regression checks.
+The checks exercise real temporary worktree creation, environment parsing, route boundaries, and separate primary and popout drafts.
+Set `CGX_HOTKEY_EVIDENCE` to save native home, settings and Spotlight frames from the recorded backend.
+These checks do not activate a microphone or screen capture.
+Strict original-versus-native appearance checks remain separate from these behavior checks.
+
+## Mini
+
+`Show Mini` and `openAvatarOverlay` use one retained `/avatar-overlay` window.
+The profile menu and command menu use the same action.
+The macOS global shortcut defaults to `Alt+Space` and follows the saved command map.
+The menu toggles visibility; the global shortcut opens the compact chat input.
+Mini keeps its draft separate from the primary window and uses the existing standalone chat pipeline.
+The native pointer monitor leaves transparent areas inactive.
+Opening Mini does not request microphone access or start audio capture.
+
+The nine built-in pet sprites come from the pinned renderer.
+Unknown pet IDs report an error instead of selecting a different pet.
+`notchVoice` and `toggleNotch` stay inactive because the pinned host has no active Notch controller.
+
+Run `native_mini` on macOS with `CODEX_GPUI_QA=1` and an owned recorded `CODEX_BIN`.
+Pass an isolated `--qa-smoke-profile`, as for `native_windows`.
+Set `CGX_MINI_EVIDENCE` to retain the pet and compact-input frames.
+The smoke checks native visibility, background presentation, draft separation, dismissal, and window reuse.
+It does not start a model turn or record audio.
+Original-versus-native appearance approval still requires a matching original capture.

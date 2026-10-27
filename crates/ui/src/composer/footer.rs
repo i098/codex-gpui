@@ -68,9 +68,49 @@ fn loading_model(color: Hsla) -> impl IntoElement {
     .flex_none()
 }
 
+fn effort_icon(effort: &str) -> &'static str {
+    match effort {
+        "none" | "minimal" => "composer-model-none",
+        "low" => "composer-model",
+        "high" => "composer-model-high",
+        "xhigh" | "max" | "ultra" | "persistent" => "composer-model-extra-high",
+        _ => "composer-model-medium",
+    }
+}
+
 impl Composer {
+    pub(super) fn dictation_button(&self, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
+        let label = self.dictation_label();
+        pill("dictate", t)
+            .justify_center()
+            .child(if self.dictation.is_some() {
+                div()
+                    .size(px(8.8))
+                    .rounded(px(1.))
+                    .bg(t.text)
+                    .into_any_element()
+            } else {
+                icon("mic", 16., t.text)
+                    .when(self.docked, |i| i.own_layer(None))
+                    .into_any_element()
+            })
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .aria_disabled(label == "Transcribing")
+            .tab_index(0)
+            .focus_visible(crate::focus::trigger_focus)
+            .size(px(28.))
+            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.dictate(window, cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .on_click(cx.listener(|this, _, window, cx| this.dictate(window, cx)))
+    }
     pub(super) fn footer(&self, window: &Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let open = matches!(self.menu, Some(Menu::Effort | Menu::Models));
+        let hotkey_home = self.hotkey_controls.is_some();
         let model = self.current_model();
         let loading = model.is_none();
         let model_label = model.map_or("Loading model…".into(), |m| m.label.clone());
@@ -86,8 +126,11 @@ impl Composer {
             )
             .when(model.is_some(), |d| {
                 d.child(
-                    label(effort_label(&self.effort).to_string(), t.text_tertiary)
-                        .when(open, |d| d.invisible()),
+                    label(
+                        effort_label(self.displayed_effort()).to_string(),
+                        t.text_tertiary,
+                    )
+                    .when(open, |d| d.invisible()),
                 )
             })
             .when(open, |d| {
@@ -102,20 +145,23 @@ impl Composer {
             });
         let trigger = if loading {
             let value = "Loading model…";
-            let width = window
-                .text_system()
-                .layout_line(
-                    value,
-                    px(13.),
-                    &[TextRun {
-                        len: value.len(),
-                        font: gpui::font(crate::SANS),
-                        color: t.text_tertiary,
-                        ..Default::default()
-                    }],
-                    None,
-                )
-                .width;
+            let width = crate::run_width(
+                window
+                    .text_system()
+                    .layout_line(
+                        value,
+                        px(13.),
+                        &[TextRun {
+                            len: value.len(),
+                            font: gpui::font(crate::SANS),
+                            color: t.text_tertiary,
+                            ..Default::default()
+                        }],
+                        None,
+                    )
+                    .width,
+                window,
+            );
             pill("model-picker", t)
                 .aria_label(value)
                 .aria_disabled(true)
@@ -127,7 +173,11 @@ impl Composer {
             pill("model-picker", t)
                 .w(px(28.))
                 .justify_center()
-                .child(icon("composer-model", 16., t.text_tertiary))
+                .child(icon(
+                    effort_icon(self.displayed_effort()),
+                    16.,
+                    t.text_tertiary,
+                ))
         } else {
             pill("model-picker", t)
                 .px(px(8.))
@@ -155,7 +205,7 @@ impl Composer {
             .child(
                 trigger
                     .track_focus(&self.model_focus)
-                    .focus_visible(menu::trigger_focus)
+                    .focus_visible(crate::focus::trigger_focus)
                     .when(!loading, |d| {
                         d.on_hover(cx.listener(|this, hovered: &bool, _, _| {
                             this.menu_trigger_hovered = *hovered
@@ -174,7 +224,9 @@ impl Composer {
             .when(self.menu == Some(Menu::Models), |d| {
                 d.child(self.anchored_menu(self.models_menu(t, cx), Some(EFFORT_MENU_SLOT), cx))
             });
-        let has_input = !self.content.is_empty() || !self.attachments.is_empty();
+        let has_input = !self.content.is_empty()
+            || !self.attachments.is_empty()
+            || !self.diff_comments.is_empty();
         let stopping = self.running && !has_input;
         let waiting_for_model = loading && !self.running;
         let armed = stopping && self.stop_armed.is_some();
@@ -195,7 +247,7 @@ impl Composer {
                         .aria_label("Add files and more")
                         .aria_expanded(self.slash.open && self.slash.mention)
                         .tab_index(0)
-                        .focus_visible(menu::trigger_focus)
+                        .focus_visible(crate::focus::trigger_focus)
                         .w(px(28.))
                         .justify_center()
                         .child(footer_icon("plus", t.text))
@@ -224,7 +276,7 @@ impl Composer {
                     .child(
                         pill("permissions", t)
                             .track_focus(&self.permissions_focus)
-                            .focus_visible(menu::trigger_focus)
+                            .focus_visible(crate::focus::trigger_focus)
                             .on_hover(cx.listener(|this, hovered: &bool, _, _| {
                                 this.menu_trigger_hovered = *hovered
                             }))
@@ -233,7 +285,14 @@ impl Composer {
                             }))
                             .px(px(6.))
                             .gap(px(4.))
-                            .child(footer_icon("permissions", t.text_tertiary))
+                            .child(footer_icon(
+                                if self.permission == Permission::Ask {
+                                    "composer-permission-ask"
+                                } else {
+                                    "permissions"
+                                },
+                                t.text_tertiary,
+                            ))
                             .when(self.footer_width > SM_WIDTH, |d| {
                                 d.child(
                                     text(
@@ -258,7 +317,7 @@ impl Composer {
             .id("send")
             .role(gpui::Role::Button)
             .aria_label(self.send_label())
-            .aria_disabled(waiting_for_model)
+            .aria_disabled(waiting_for_model || (hotkey_home && !has_input))
             .tab_index(0)
             .rounded(Theme::RADIUS_FULL)
             .focus_visible(move |style| {
@@ -271,8 +330,12 @@ impl Composer {
                 }])
             })
             .ml(px(8.))
+            .flex_none()
             .size(px(28.))
             .p(px(2.))
+            .when(hotkey_home && !has_input, |button| {
+                button.opacity(0.5).layer()
+            })
             .flex()
             .items_center()
             .justify_center()
@@ -297,7 +360,7 @@ impl Composer {
             .when(!stopping && !waiting_for_model, |d| {
                 d.child(
                     icon(
-                        if has_input {
+                        if has_input || hotkey_home {
                             "composer-arrow-up"
                         } else {
                             "voice"
@@ -321,26 +384,43 @@ impl Composer {
                     this.submit(&Submit, window, cx);
                 }
             }));
+        // The original's right group: the model picker's slot is `flex-1 min-w-0` and takes what
+        // the microphone and send (`shrink-0`) leave, so it clips to nothing in a narrow
+        // footer; the fixed pair overflows to the left of the footer's end.
         let right = div()
             .flex()
+            .flex_1()
+            .min_w_0()
+            .justify_end()
             .items_center()
-            .child(model_button)
             .child(
-                pill("dictate", t)
-                    .tab_index(0)
-                    .focus_visible(menu::trigger_focus)
-                    .w(px(28.))
-                    .justify_center()
-                    .child(footer_icon("mic", t.text)),
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .justify_end()
+                    .overflow_hidden()
+                    .child(model_button),
             )
+            .children(self.hotkey_controls.clone())
+            .child(self.dictation_button(t, cx))
             .child(send);
+        // Grid columns: controls, an empty column, then the right group, 5 px apart.
         div()
             .flex()
             .items_center()
-            .justify_between()
-            .px(px(8.))
-            .pb(px(8.))
-            .child(left)
+            .gap(px(10.))
+            .px(px(if self.hotkey_controls.is_some() {
+                0.
+            } else {
+                8.
+            }))
+            .pb(px(if self.hotkey_controls.is_some() {
+                0.
+            } else {
+                8.
+            }))
+            .child(left.min_w_0().flex_shrink(1.))
             .child(right)
     }
 }
