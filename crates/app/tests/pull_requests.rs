@@ -162,12 +162,15 @@ fn replay_pane_states(reset_state: Option<&str>) -> Result<()> {
         .find(|line| line["msg"]["result"]["account"].is_object())
         .context("recorded account")?["msg"]["result"]
         .clone();
-    script.extend(common::exchange("account/read", account));
-    let [mut request, response] =
-        common::exchange("mcpServerStatus/list", data["navigation"]["catalog"].take());
-    request["msg"]["params"] =
-        serde_json::json!({"cursor": null, "detail": "toolsAndAuthOnly", "limit": 100});
-    script.extend([request, response]);
+    let catalog = data["navigation"]["catalog"].take();
+    // Host and account changes each restart the navigation read, so answer every restart.
+    for _ in 0..4 {
+        script.extend(common::exchange("account/read", account.clone()));
+        let [mut request, response] = common::exchange("mcpServerStatus/list", catalog.clone());
+        request["msg"]["params"] =
+            serde_json::json!({"cursor": null, "detail": "toolsAndAuthOnly", "limit": 100});
+        script.extend([request, response]);
+    }
     let mut fx = Fx::scripted(script)?;
     let host = Arc::new(AccountHost {
         replay: ReplayHost::from_recording(&recording)?,
