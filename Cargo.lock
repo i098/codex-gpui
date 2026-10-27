@@ -174,6 +174,7 @@ dependencies = [
  "rrule",
  "rusqlite",
  "rustix",
+ "semver",
  "serde",
  "serde_json",
  "sha1",

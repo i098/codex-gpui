@@ -4,10 +4,8 @@
 //! workspace root (minus worktrees with a pending archive), else the cwd. A failed refresh
 //! copies nothing.
 
-use super::path_identity::same_path;
 use crate::*;
 use gpui::ClipboardItem;
-use std::cmp::Ordering;
 
 actions!(app, [CopyWorkingDirectory]);
 
@@ -84,77 +82,9 @@ fn supports_thread_attachments(user_agent: &str) -> bool {
     else {
         return false;
     };
-    version == "0.0.0"
-        || compare_versions(version, MIN_VERSION).is_some_and(|order| order != Ordering::Less)
-}
-
-#[derive(PartialEq, Eq)]
-enum Part {
-    Number(u64),
-    Text(String),
-}
-
-fn parse_version(version: &str) -> Option<([u64; 3], Vec<Part>)> {
-    let version = version
-        .split_once('+')
-        .map_or(version, |(version, _)| version);
-    let (core, pre) = match version.split_once('-') {
-        Some((core, pre)) => (core, Some(pre)),
-        None => (version, None),
-    };
-    let number = |s: &str| {
-        (!s.is_empty()
-            && s.bytes().all(|b| b.is_ascii_digit())
-            && (s == "0" || !s.starts_with('0')))
-        .then(|| s.parse().ok())
-        .flatten()
-    };
-    let mut core = core.split('.');
-    let numbers = [
-        number(core.next()?)?,
-        number(core.next()?)?,
-        number(core.next()?)?,
-    ];
-    if core.next().is_some() {
-        return None;
-    }
-    let mut parts = Vec::new();
-    for part in pre.into_iter().flat_map(|pre| pre.split('.')) {
-        if part.is_empty() || !part.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
-            return None;
-        }
-        parts.push(number(part).map_or_else(|| Part::Text(part.into()), Part::Number));
-    }
-    let pre = parts;
-    Some((numbers, pre))
-}
-
-/// `bM`: semver precedence; `None` when either side is not a version.
-fn compare_versions(a: &str, b: &str) -> Option<Ordering> {
-    let ((a, pa), (b, pb)) = (parse_version(a)?, parse_version(b)?);
-    if a != b {
-        return Some(a.cmp(&b));
-    }
-    match (pa.is_empty(), pb.is_empty()) {
-        (true, true) => return Some(Ordering::Equal),
-        (true, false) => return Some(Ordering::Greater),
-        (false, true) => return Some(Ordering::Less),
-        _ => {}
-    }
-    for index in 0..pa.len().max(pb.len()) {
-        let order = match (pa.get(index), pb.get(index)) {
-            (None, _) => Ordering::Less,
-            (_, None) => Ordering::Greater,
-            (Some(Part::Number(x)), Some(Part::Number(y))) => x.cmp(y),
-            (Some(Part::Number(_)), Some(Part::Text(_))) => Ordering::Less,
-            (Some(Part::Text(_)), Some(Part::Number(_))) => Ordering::Greater,
-            (Some(Part::Text(x)), Some(Part::Text(y))) => x.cmp(y),
-        };
-        if order != Ordering::Equal {
-            return Some(order);
-        }
-    }
-    Some(Ordering::Equal)
+    static MINIMUM: std::sync::LazyLock<semver::Version> =
+        std::sync::LazyLock::new(|| semver::Version::parse(MIN_VERSION).expect("valid version"));
+    version == "0.0.0" || semver::Version::parse(version).is_ok_and(|version| version >= *MINIMUM)
 }
 
 /// `u2`'s select over the attachment pages: worktree attachments whose `identityKey` is their
@@ -186,6 +116,19 @@ fn latest_workspace_root(
         }
     }
     latest.map(|(_, workspace)| workspace.to_owned())
+}
+
+/// The original's path identity `WM` for the macOS and Linux paths this app sees: trailing
+/// slashes do not change a location.
+// shortcut: no Windows drive, UNC or WSL spellings; port the rest of `WM` if the app ships on Windows.
+fn same_path(a: &str, b: &str) -> bool {
+    fn trim(path: &str) -> &str {
+        match path.trim_end_matches('/') {
+            "" if path.starts_with('/') => "/",
+            trimmed => trimmed,
+        }
+    }
+    trim(a) == trim(b)
 }
 
 #[cfg(test)]
