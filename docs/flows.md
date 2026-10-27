@@ -901,6 +901,11 @@ Each Root owns its manager state and dispatch callback; another window cannot re
 The manager reads the app-server and keeps confirmed state after each completed operation.
 MCP edits preserve fields outside the form, exact argument values, and empty arguments.
 Project-owned server definitions stay read-only, and new names cannot replace hidden servers.
+`OpenMcpSettings(query)` opens the MCP management tab and applies the supplied search, including when Settings is already open.
+Search ignores leading and trailing whitespace.
+An unmatched search does not offer an Add server action.
+Configured servers use their configuration key before their display name when matching authentication status.
+Successful removal hides both names from the stale runtime list until restart.
 Form writes use the captured user-file version and retain the draft when that version is stale.
 OAuth links must use HTTP or HTTPS.
 The `mcpServer/oauthLogin/completed` notification refreshes server status; a refresh queues while another operation is pending.
