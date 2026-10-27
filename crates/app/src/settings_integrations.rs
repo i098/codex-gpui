@@ -155,13 +155,16 @@ impl Root {
         snapshot: Option<Snapshot>,
         cx: &mut Context<Self>,
     ) {
-        let removed_name = match &action {
-            Action::RemoveServer(key) => self.settings_integrations.read(cx).configuration
-                ["config"]["mcp_servers"][key]["name"]
-                .as_str()
-                .map(str::to_owned),
-            _ => None,
-        };
+        let removed_name =
+            match &action {
+                Action::RemoveServer(key) => {
+                    self.settings_integrations.read(cx).configuration["config"]["mcp_servers"][key]
+                        ["name"]
+                        .as_str()
+                        .map(str::to_owned)
+                }
+                _ => None,
+            };
         if let Some(snapshot) = snapshot {
             if let Ok(configuration) = &snapshot.configuration {
                 self.config = configuration["config"].clone();
