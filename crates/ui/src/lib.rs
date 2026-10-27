@@ -214,7 +214,7 @@ pub struct Shell {
     sidebar: AnyView,
     main: AnyView,
     main_content_inline_inset: Pixels,
-    bottom: Option<AnyView>,
+    pub bottom: Option<AnyView>,
 }
 
 /// The fixture account's 24 px avatar (`rounded-full object-cover` `<img>`), rasterized the way
@@ -1477,15 +1477,13 @@ impl Shell {
                     focus::ring(
                         icon_button(
                             "toggle-sidebar",
-                            icon::icon(
-                                if self.sidebar_open {
-                                    "sidebar"
-                                } else {
-                                    "sidebar-hidden"
-                                },
-                                16.,
-                                t.text_tertiary,
-                            ),
+                            if self.sidebar_open {
+                                icon::icon("sidebar", 16., t.text_tertiary)
+                            } else {
+                                // Closed, Chromium composites the titlebar's Show sidebar and
+                                // New chat icons: they blit into a layer of their own.
+                                icon::icon("sidebar-hidden", 16., t.text_tertiary).own_layer(None)
+                            },
                             t,
                         ),
                         &sidebar_focus,
@@ -1509,6 +1507,25 @@ impl Shell {
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
                     "Toggle sidebar",
                     Some("⇧⌘S"),
+                    Side::Bottom,
+                ))
+            })
+            // Closed, the titlebar also carries New chat after Show sidebar.
+            .when(self.chat_chrome && !self.sidebar_open, |d| {
+                d.child(tooltip(
+                    icon_button(
+                        "titlebar-new-chat",
+                        icon::icon("sidebar-cmd-new-chat", 16., t.text_tertiary).own_layer(None),
+                        t,
+                    )
+                    .role(gpui::Role::Button)
+                    .aria_label("New chat")
+                    .absolute()
+                    .left(px(190.) - fullscreen_shift)
+                    .top(px(8.))
+                    .on_click(dispatch::<NewChat>),
+                    "New chat",
+                    Some("⌘N"),
                     Side::Bottom,
                 ))
             })
@@ -1801,6 +1818,8 @@ impl Render for Shell {
                                 };
                                 shapes::paint(&fill, None, bounds, window, cx);
                                 main = frame(bounds, u8::from(!main_layer), false, window, cx);
+                                // A lone thread draws its right corners, and its top-left one
+                                // when the sidebar is closed (`ThreadView::clip_top_left`).
                                 let own = clips_right || main_layer;
                                 let own = Corners {
                                     top_right: own,

@@ -623,6 +623,8 @@ Use it when placing multiline field glyphs to retain Blink's baseline positions.
 Text layouts use each window's effective device scale and discard stale cached metrics when that scale changes.
 
 Inline-code backgrounds use both snapped label edges, so fractional text widths do not expand their right edge.
+Their height and position follow the active code font's metrics.
+The thread's top fade preserves content that scrolls below it.
 
 Monochrome glyphs and SVGs keep their paint alpha.
 Element opacity is applied once when the enclosing layer is restored.
