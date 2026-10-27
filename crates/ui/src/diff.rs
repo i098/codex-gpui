@@ -1111,109 +1111,125 @@ impl DiffPanel {
             .flex()
             .flex_col()
             .font_family(SANS)
-            .child(
-                div()
-                    .h(px(44.))
-                    .flex()
-                    .items_center()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .items_center()
-                            .pl(px(16.))
-                            .gap(px(8.))
-                            .child(icon("diff-find-search", 16., t.text))
-                            .child(
-                                div()
-                                    .id("diff-find-input")
-                                    .flex_1()
-                                    .cursor_text()
-                                    .role(gpui::Role::TextInput)
-                                    .aria_label("Find in diff")
-                                    .aria_placeholder("Search diff…")
-                                    .aria_value(query.to_owned())
-                                    .aria_active_descendant()
-                                    .child(text(
-                                        if query.is_empty() {
-                                            "Search diff…"
-                                        } else {
-                                            query
-                                        },
-                                        14.,
-                                        24.,
-                                        430.,
-                                        if query.is_empty() {
-                                            t.text_tertiary
-                                        } else {
-                                            t.text
-                                        },
-                                    )),
-                            ),
-                    )
-                    .when(!self.standalone, |d| {
-                        d.child(find_scope_buttons(query, true, t))
-                    })
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .pr(px(16.))
-                            .child(div().mx(px(8.)).w(px(1.)).h(px(16.)).bg(t.border))
-                            .child(
-                                button(
-                                    "diff-find-close",
-                                    "diff-find-close",
-                                    "Close find",
-                                    24.,
-                                    t.text,
-                                )
-                                .mx(px(-2.))
-                                .on_click(cx.listener(|this, _, _, cx| this.close_find(cx))),
-                            ),
-                    ),
-            )
-            .child(
+            // `overflow-hidden rounded-[20px]` with a 0.5px border: the content sits in an AA
+            // rounded clip (padding box, radius 19.5) that changes the icons' edge pixels.
+            .child(crate::rounded_clip(
+                px(19.5),
+                shapes::Corner::Round,
                 div()
                     .flex_1()
                     .flex()
-                    .items_center()
-                    .px(px(16.))
-                    .gap(px(12.))
-                    .border_t_1()
-                    .border_color(t.border)
+                    .flex_col()
                     .child(
-                        button(
-                            "diff-find-previous",
-                            "diff-find-previous",
-                            "Previous result",
-                            16.,
-                            t.text_tertiary,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.next_find(true, cx);
-                        })),
+                        div()
+                            .h(px(44.))
+                            .flex()
+                            .items_center()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .items_center()
+                                    .pl(px(16.))
+                                    .gap(px(8.))
+                                    .child(icon("diff-find-search", 16., t.text))
+                                    .child(
+                                        div()
+                                            .id("diff-find-input")
+                                            .flex_1()
+                                            .cursor_text()
+                                            .role(gpui::Role::TextInput)
+                                            .aria_label("Find in diff")
+                                            .aria_placeholder("Search diff…")
+                                            .aria_value(query.to_owned())
+                                            .aria_active_descendant()
+                                            .child(text(
+                                                if query.is_empty() {
+                                                    "Search diff…"
+                                                } else {
+                                                    query
+                                                },
+                                                14.,
+                                                24.,
+                                                430.,
+                                                if query.is_empty() {
+                                                    t.text_tertiary
+                                                } else {
+                                                    t.text
+                                                },
+                                            )),
+                                    ),
+                            )
+                            .when(!self.standalone, |d| {
+                                d.child(find_scope_buttons(query, true, t))
+                            })
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .pr(px(16.))
+                                    .child(div().mx(px(8.)).w(px(1.)).h(px(16.)).bg(t.border))
+                                    .child(
+                                        button(
+                                            "diff-find-close",
+                                            "diff-find-close",
+                                            "Close find",
+                                            24.,
+                                            t.text,
+                                        )
+                                        .mx(px(-2.))
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.close_find(cx)),
+                                        ),
+                                    ),
+                            ),
                     )
                     .child(
-                        button(
-                            "diff-find-next",
-                            "diff-find-next",
-                            "Next result",
-                            16.,
-                            t.text_tertiary,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.next_find(false, cx);
-                        })),
-                    )
-                    .child(div().flex_1())
-                    .child(
-                        text(count, 14., 24., 430., t.text_tertiary)
-                            .self_start()
-                            .mt(px(7.)),
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .px(px(16.))
+                            .gap(px(12.))
+                            .border_t_1()
+                            .border_color(t.border)
+                            .child(
+                                button(
+                                    "diff-find-previous",
+                                    "diff-find-previous",
+                                    "Previous result",
+                                    16.,
+                                    t.text_tertiary,
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.next_find(true, cx);
+                                    },
+                                )),
+                            )
+                            .child(
+                                button(
+                                    "diff-find-next",
+                                    "diff-find-next",
+                                    "Next result",
+                                    16.,
+                                    t.text_tertiary,
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.next_find(false, cx);
+                                    },
+                                )),
+                            )
+                            .child(div().flex_1())
+                            .child(
+                                text(count, 14., 24., 430., t.text_tertiary)
+                                    .self_start()
+                                    .mt(px(7.)),
+                            ),
                     ),
-            );
+            ));
         // Include the shadow's three-sigma raster extent in the composited layer.
         let outset = find_shadow.blur * 1.5 + find_shadow.spread;
         deferred(
