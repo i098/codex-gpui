@@ -1029,6 +1029,16 @@ fn automation_execution_settings_survive_reload_and_kind_changes() -> Result<()>
         )?,
         ("[]".into(), None, None, "existing-thread".into())
     );
+    let path = home.path().join("automations/task/automation.toml");
+    let previous = fs::read(&path)?;
+    assert!(
+        host.fetch(&Request::post(
+            "automation-update",
+            Some(json!({"id":"task", "status":"PAUSED", "kind":"cron"})),
+        ))
+        .is_err()
+    );
+    assert_eq!(fs::read(&path)?, previous);
     host.fetch(&Request::post(
         "automation-update",
         Some(json!({

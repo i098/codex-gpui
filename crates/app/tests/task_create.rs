@@ -257,6 +257,20 @@ mod editor {
             draft.execution["reasoningEffort"].is_string(),
             "selected model did not supply an effort"
         );
+        fx.keys("enter enter")?;
+        let reopened_effort = fx.read(|root, cx| {
+            root.automation_editor()
+                .unwrap()
+                .read(cx)
+                .draft(cx)
+                .unwrap()
+                .execution["reasoningEffort"]
+                .clone()
+        });
+        ensure!(
+            reopened_effort == draft.execution["reasoningEffort"],
+            "reopening the effort picker changed its selected value"
+        );
         if let Ok(dir) = std::env::var("CGX_AUTOMATION_EDITOR_SHOTS") {
             fs::create_dir_all(&dir)?;
             fx.advance(Duration::from_millis(200))?;
@@ -331,6 +345,78 @@ mod editor {
         ensure!(changed["items"][0]["kind"] == "heartbeat");
         ensure!(changed["items"][0]["targetThreadId"] == thread_id);
         ensure!(changed["items"][0]["model"].is_null());
+        fx.cx.update_window(fx.window, |_, window, cx| {
+            window.dispatch_action(Box::new(EditAutomation { id: id.clone() }), cx);
+        })?;
+        fx.advance(Duration::from_millis(20))?;
+        fx.keys("tab tab tab tab tab tab enter")?;
+        fx.keys("tab tab space")?;
+        let workspace = fx.read(|root, cx| {
+            root.automation_editor()
+                .unwrap()
+                .read(cx)
+                .draft(cx)
+                .unwrap()
+                .execution["cwds"]
+                .clone()
+        });
+        ensure!(workspace.as_array().is_some_and(|paths| !paths.is_empty()));
+        fx.keys("cmd-enter")?;
+        fx.wait("new-chat update", |fx| {
+            fx.read(|root, _| root.automation_editor().is_none())
+        })?;
+        let changed = json_body(
+            &LocalHost::new(home.path()).fetch(&Request::post("list-automations", None))?,
+        )?;
+        ensure!(changed["items"][0]["kind"] == "cron");
+        ensure!(changed["items"][0]["cwds"] == workspace);
+        ensure!(changed["items"][0]["targetThreadId"].is_null());
+        Ok(())
+    }
+
+    #[test]
+    fn name_edit_persists_original_resolved_defaults() -> Result<()> {
+        let home = tempfile::tempdir()?;
+        let host = Arc::new(LocalHost::new(home.path()));
+        let created = json_body(&host.fetch(&Request::post(
+            "automation-create",
+            Some(serde_json::json!({
+                "name":"Inherited task", "prompt":"Review local changes",
+                "rrule":"FREQ=DAILY;BYHOUR=9;BYMINUTE=0", "cwds":[home.path()]
+            })),
+        ))?)?;
+        ensure!(created["item"]["model"].is_null());
+        ensure!(created["item"]["reasoningEffort"].is_null());
+        let id = created["item"]["id"].as_str().unwrap().to_owned();
+        let mut fx = Fx::with("dark", (1280., 832.), None, |record| {
+            if record["msg"]["result"]["config"].is_object() {
+                record["msg"]["result"]["config"]["codex_automation_model_slug"] =
+                    serde_json::json!("gpt-5.6-terra");
+            }
+        })?;
+        fx.root
+            .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+        fx.click(RAIL_SCHEDULED)?;
+        fx.wait("inherited task loaded", |fx| {
+            fx.read(|root, _| root.automations().is_some())
+        })?;
+        fx.cx.update_window(fx.window, |_, window, cx| {
+            window.dispatch_action(Box::new(EditAutomation { id: id.clone() }), cx);
+        })?;
+        fx.advance(Duration::from_millis(20))?;
+        fx.keys("cmd-a")?;
+        fx.type_text("Renamed inherited task")?;
+        fx.keys("cmd-enter")?;
+        fx.wait("inherited defaults saved", |fx| {
+            fx.read(|root, _| root.automation_editor().is_none())
+        })?;
+        let saved = json_body(
+            &LocalHost::new(home.path()).fetch(&Request::post("list-automations", None))?,
+        )?;
+        ensure!(saved["items"][0]["name"] == "Renamed inherited task");
+        ensure!(saved["items"][0]["model"] == "gpt-5.6-terra");
+        ensure!(saved["items"][0]["reasoningEffort"] == "medium");
+        ensure!(saved["items"][0]["rrule"] == "FREQ=DAILY;BYHOUR=9;BYMINUTE=0");
         Ok(())
     }
 
