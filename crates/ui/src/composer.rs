@@ -235,6 +235,43 @@ const LINE_HEIGHT: Pixels = px(20.);
 /// border box less its 1 px borders and 8 px vertical padding.
 const MIN_TEXTAREA_CONTENT_HEIGHT: Pixels = px(78.);
 
+/// Blink's `DrawPlatformResizerImage` at 2x: two unantialiased 2 px strokes in 60% black, each
+/// repeated 2 device px lower in 60% white. Each stroke starts at its top row's 1 px tip, runs
+/// down-left 3 px wide, and ends 2 px wide on the row 7 device px above the border box's bottom.
+/// shortcut: the device pattern is measured at scale 2; derive Blink's geometry if 1x matters.
+fn paint_resizer(bounds: Bounds<Pixels>, window: &mut Window) {
+    let scale = window.scale_factor();
+    let (right, bottom) = (
+        (f32::from(bounds.right()) * scale).round(),
+        (f32::from(bounds.bottom()) * scale).round(),
+    );
+    for (top, color) in [
+        (-21, gpui::black()),
+        (-14, gpui::black()),
+        (-19, gpui::white()),
+        (-12, gpui::white()),
+    ] {
+        for row in top..=-7 {
+            let left = -7 - (row - top);
+            let (x, width) = match row {
+                _ if row == top => (left, 1),
+                -7 => (left + 1, 2),
+                _ => (left, 3),
+            };
+            window.paint_quad(fill(
+                Bounds::new(
+                    point(
+                        px((right + x as f32) / scale),
+                        px((bottom + row as f32) / scale),
+                    ),
+                    size(px(width as f32 / scale), px(1. / scale)),
+                ),
+                color.opacity(0.6),
+            ));
+        }
+    }
+}
+
 /// Composer keys (inventory §7.2): Enter sends, Shift+Enter inserts a newline. Edit menu
 /// commands (`crate::Cut`, `Copy`, `Paste`, `SelectAll`) are bound by the app.
 pub fn bind_keys(cx: &mut App) {
@@ -2478,7 +2515,13 @@ impl Render for Composer {
                             .bottom_0()
                             .size(px(16.))
                             .cursor(CursorStyle::ResizeUpDown)
-                            .child(icon("textarea-resize", 16., t.text))
+                            .child(
+                                gpui::canvas(
+                                    |_, _, _| {},
+                                    |bounds, (), window, _| paint_resizer(bounds, window),
+                                )
+                                .size_full(),
+                            )
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
