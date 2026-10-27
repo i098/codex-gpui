@@ -81,8 +81,8 @@ use ui::screens::computer_use::{
     Plugin as ComputerUsePlugin, SoundMode as ComputerUseSoundMode,
 };
 use ui::screens::diff::panel::{
-    ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile, SplitScreen, Tab,
-    with_side_tabs,
+    ActivateSideTab, CloseSideTab, DiffPanel, DiffRequest, FileView, OpenFile,
+    SIDE_PANEL_BREAKPOINT, SplitScreen, Tab, with_side_tabs,
 };
 use ui::screens::home::{HomeMain, OpenFolder};
 use ui::screens::recovery;
@@ -145,8 +145,6 @@ pub struct GoToRecentChat(pub usize);
 
 /// The original collapses the sidebar at widths of 720 px or less.
 const SIDEBAR_BREAKPOINT: Pixels = px(720.);
-/// At most this wide, the side panel hides like the original's compact layout.
-const SIDE_PANEL_BREAKPOINT: Pixels = px(960.);
 
 /// Fixed platform bindings and app-level commands; configurable bindings are installed by the keymap module.
 pub fn init(cx: &mut App) {

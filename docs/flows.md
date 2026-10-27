@@ -55,7 +55,7 @@ The `scroll_*` flows send wheel events (pixel deltas, a trackpad flick with its 
 At 1280x320, the largest offset of the sidebar sections is 82 px, the same as in the original.
 This value was recorded through `tools/route1` with a copy of the fixture `CODEX_HOME`.
 The other panes must repaint on the first wheel, stay still past the end, and show the start again.
-Div scroll limits use raw layout sizes rounded to logical pixels; painting keeps device-snapped bounds.
+Div scroll limits use raw layout sizes rounded to device pixels; painting keeps device-snapped bounds.
 
 ## Parity of the states the flows reach
 

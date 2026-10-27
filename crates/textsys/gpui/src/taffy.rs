@@ -404,7 +404,7 @@ impl TaffyLayoutEngine {
                 - layout.border.bottom
                 - layout.scrollbar_size.height.min(layout.size.height),
         );
-        let logical = |value: f32| (value / scale_factor).round();
+        let logical = |value: f32| value.round() / scale_factor;
         Point::from(Size::from(layout.content_size).map(logical) - client.map(logical))
             .map(Pixels)
             .max(&Point::default())
