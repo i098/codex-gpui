@@ -29,6 +29,7 @@ pub enum Route {
     Automation(String),
     /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
     Mobile,
+    Security,
     Plugins(String),
     Archive,
     SelectWorkspace,
@@ -41,6 +42,7 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = settings::actions(root, cx);
     root = automations::actions(root, cx);
     root = mobile::actions(root, cx);
+    root = crate::security::actions(root, cx);
     root = plugins::actions(root, cx);
     root = archive::actions(root, cx);
     root
@@ -169,6 +171,7 @@ impl Root {
                 Some(automations::thread(self, cx))
             }
             Route::Mobile => Some(mobile::page(self, cx)),
+            Route::Security => Some(crate::security::shell(self, window, cx)),
             Route::Plugins(path) => Some(self.plugins_shell(path, window, cx)),
             Route::Onboarding(page) => {
                 self.open_onboarding(page, window, cx);
@@ -185,10 +188,12 @@ impl Root {
             self.load_suggestions(cx);
         }
         if let Some(page) = &self.page {
-            page.update(cx, |shell, _| {
+            page.update(cx, |shell, cx| {
                 shell.can_go_back = can_back;
                 shell.can_go_forward = can_forward;
                 shell.unread_destinations = self.unread_destinations.clone();
+                let access = self.security_access.read(cx);
+                shell.security_available = access.gate_enabled && access.plugin_available;
             });
         }
         let thread_id = match &self.state.route {

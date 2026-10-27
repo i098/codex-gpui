@@ -16,6 +16,7 @@ pub mod onboarding;
 pub mod plugins;
 pub mod pull_requests;
 pub mod recovery;
+pub mod security;
 pub mod settings;
 pub mod sidebar;
 pub mod signin;

@@ -1409,6 +1409,11 @@ impl Composer {
         &self.placeholder
     }
 
+    pub(crate) fn set_placeholder(&mut self, placeholder: &'static str, cx: &mut Context<Self>) {
+        self.placeholder = placeholder.into();
+        cx.notify();
+    }
+
     /// The submit button's accessible label (`composer.submitButtonTooltip.*`): `Stop` while a
     /// turn runs and the composer is empty, else the follow-up mode (`Queue` or `Steer`) while
     /// a turn runs, else `Send`. The original shows no tooltip on this button.

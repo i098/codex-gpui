@@ -11,6 +11,7 @@ There is no release yet.
 - A contributing guide, issue and pull request templates, a security policy, and this changelog.
 - Add Storage usage measurement and safe review before deleting old local chats.
 - Add Import settings for Claude Code and Cursor, with saved sync choices and preserved imported workspaces.
+- Add the native Security workbench for scans, repository history, finding triage, remediation, and source viewing.
 
 ### Fixed
 

@@ -34,6 +34,7 @@ mod plugins;
 pub mod screenshot;
 mod search;
 mod section_actions;
+mod security;
 pub mod settings_import;
 pub(crate) mod settings_integrations;
 mod settings_subtrees;
@@ -417,6 +418,7 @@ pub struct Root {
     settings_page: Option<Entity<settings::SettingsPage>>,
     writing_dialog_preference: Option<Arc<WritingPreference>>,
     settings_integrations: Entity<settings::integrations::State>,
+    security_access: Entity<ui::screens::security::Access>,
     settings_integration_task: Option<Task<()>>,
     pending_settings_leave: Option<SettingsLeave>,
     workspace: Entity<workspace::Workspace>,
@@ -754,6 +756,7 @@ impl Root {
             settings_page: None,
             writing_dialog_preference: None,
             settings_integrations: cx.new(|_| settings::integrations::State::default()),
+            security_access: cx.new(|_| ui::screens::security::Access::default()),
             settings_integration_task: None,
             pending_settings_leave: None,
             workspace: cx.new(workspace::Workspace::new),
@@ -860,6 +863,7 @@ impl Root {
         cx.on_focus_lost(window, |this, window, cx| window.focus(&this.focus, cx))
             .detach();
         root.bind_context_files(cx);
+        security::bind(&root, cx);
         root.connect(window, cx);
         root.install_import(cx);
         root.load_projects(cx);
@@ -1001,6 +1005,7 @@ impl Root {
                 this.models = models;
                 this.refresh_automation_editor_options(None, cx);
                 this.ready = this.login.is_none();
+                security::load(this, cx);
                 hotkey::policy::refresh(this, cx);
                 this.select_route(cx);
                 this.sync(window, cx);
