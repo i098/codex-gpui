@@ -23,6 +23,7 @@ mod plugins;
 pub mod screenshot;
 mod search;
 mod section_actions;
+pub(crate) mod settings_integrations;
 mod settings_subtrees;
 mod signin;
 mod storage;
@@ -135,7 +136,6 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-c", Copy, None),
         KeyBinding::new("cmd-v", Paste, None),
         KeyBinding::new("cmd-a", SelectAll, None),
-        KeyBinding::new("cmd-f", FindInThread, None),
         KeyBinding::new("cmd-g", FindNext, None),
         KeyBinding::new("cmd-shift-g", FindPrevious, None),
         KeyBinding::new("cmd-m", Minimize, None),
@@ -397,6 +397,8 @@ pub struct Root {
     settings_section: Option<&'static str>,
     settings_page: Option<Entity<settings::SettingsPage>>,
     writing_dialog_preference: Option<Arc<WritingPreference>>,
+    settings_integrations: Entity<settings::integrations::State>,
+    settings_integration_task: Option<Task<()>>,
     pending_settings_leave: Option<SettingsLeave>,
     workspace: Entity<workspace::Workspace>,
     /// `⌘K` command menu over the window.
@@ -716,6 +718,8 @@ impl Root {
             settings_section: None,
             settings_page: None,
             writing_dialog_preference: None,
+            settings_integrations: cx.new(|_| settings::integrations::State::default()),
+            settings_integration_task: None,
             pending_settings_leave: None,
             workspace: cx.new(workspace::Workspace::new),
             command_menu: None,
@@ -1102,6 +1106,7 @@ impl Root {
     /// Replaces the desktop host and cancels pending UI callbacks for its reads and updates.
     pub fn set_host(&mut self, host: Arc<dyn host::Host>, cx: &mut Context<Self>) {
         self.invalidate_oauth(cx);
+        self.invalidate_settings_integrations(cx);
         self.cloud = None;
         self.automation_load = None;
         self.automation_editor = None;
@@ -1136,6 +1141,9 @@ impl Root {
             self.load_suggestions(cx);
         }
         self.refresh_git_actions(cx);
+        if self.settings_page.is_some() {
+            self.load_settings_integrations(cx);
+        }
         cx.notify();
     }
 
@@ -2483,6 +2491,15 @@ impl Root {
         self.sync(window, cx);
     }
 
+    /// `Next tab` / `Previous tab`: the neighbouring side tab, wrapping.
+    fn step_side(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.tabs.iter().position(|t| Some(*t) == self.side) else {
+            return;
+        };
+        let next = (ix as isize + delta).rem_euclid(self.tabs.len() as isize) as usize;
+        self.set_side(self.tabs[next], window, cx);
+    }
+
     /// Closes tab `side` (`Close {title} tab`, `⌘W` on the selected one): the next tab, else
     /// the previous, is selected; closing the last tab closes the panel. A side chat's tab
     /// discards its conversation.
@@ -3126,8 +3143,9 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// `⌘W`: Electron main runs `closeTab` (`close-active-app-shell-tab`) while the thread
-    /// route's panel shows a tab, else the window closes.
+    /// `⌘W` (an accelerator of `closeTab`): Electron main closes the focused window's active
+    /// shell tab when it can (`close-active-app-shell-tab`; the main focus area counts as the
+    /// right panel), else the window.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.dialog.is_some() || self.automation_editor.is_some() {
             return;
@@ -3141,6 +3159,14 @@ impl Root {
             .filter(|_| self.split.is_some() && self.workspace_layout() != WorkspaceLayout::Chat)
         {
             return self.close_side(side, window, cx);
+        }
+        self.close_whole_window(window, cx);
+    }
+
+    /// An accelerator that only `closeWindow` has: no tab routing, the window closes.
+    fn close_whole_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dialog.is_some() {
+            return;
         }
         if self.state.confirm_before_close == ConfirmBeforeClose::Never {
             self.flush_settings(cx);
@@ -5371,6 +5397,7 @@ impl Root {
             cx.notify();
             return;
         }
+        self.settings_integration_event(&event, cx);
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             return;
@@ -6702,6 +6729,21 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
                 this.navigate(Route::Settings, window, cx)
             }))
+            .on_action(cx.listener(
+                |this, _: &settings::integrations::OpenPluginManager, window, cx| {
+                    this.open_settings_section("Plugins", window, cx)
+                },
+            ))
+            .on_action(cx.listener(
+                |this, action: &settings::integrations::OpenExtensionDirectory, window, cx| {
+                    this.open_plugins(action.0, window, cx);
+                },
+            ))
+            .on_action(cx.listener(
+                |this, _: &settings::integrations::OpenPluginCreator, window, cx| {
+                    this.open_plugin_creator(window, cx);
+                },
+            ))
             .on_action(cx.listener(|this, _: &LogOut, window, cx| {
                 if !this.logout_pending {
                     let email = this.account_email.clone();

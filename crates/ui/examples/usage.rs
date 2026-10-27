@@ -107,7 +107,14 @@ fn main() -> anyhow::Result<()> {
         ui::fixture::response("readback.jsonl", "config/read", 0);
     let skills: serde_json::Value = ui::fixture::response("readback.jsonl", "skills/list", 0);
     let window = cx.open_window(size(px(1280.), px(832.)), |_, cx| {
-        let (shell, _) = settings::shell(&config.config, &skills, Some("Usage & billing"), cx);
+        let integrations = cx.new(|_| settings::integrations::State::default());
+        let (shell, _) = settings::shell(
+            &config.config,
+            &skills,
+            Some("Usage & billing"),
+            integrations,
+            cx,
+        );
         shell.update(cx, |shell, _| shell.can_go_back = true);
         cx.new(|_| Preview(shell.into()))
     })?;

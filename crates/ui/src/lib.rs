@@ -127,6 +127,21 @@ pub const SANS: &str = ".SystemUIFont";
 /// `ui-monospace`, which Chromium on macOS resolves to Menlo.
 pub const MONO: &str = "Menlo";
 
+static CODE_FONT: std::sync::RwLock<&'static str> = std::sync::RwLock::new(MONO);
+
+/// The code font of the appearance settings (`fonts.code`); `MONO` until one is set.
+pub fn code_font() -> &'static str {
+    *CODE_FONT.read().unwrap_or_else(|error| error.into_inner())
+}
+
+/// Follows the appearance setting. A changed name is leaked once so callers keep `&'static str`.
+pub fn set_code_font(name: &str) {
+    if name != code_font() {
+        *CODE_FONT.write().unwrap_or_else(|error| error.into_inner()) =
+            Box::leak(name.to_owned().into_boxed_str());
+    }
+}
+
 /// A native destination shown after the rail divider.
 pub struct RailDestination {
     pub id: &'static str,
@@ -1465,7 +1480,15 @@ impl Shell {
                     focus::ring(
                         icon_button(
                             "toggle-sidebar",
-                            icon::icon("sidebar", 16., t.text_tertiary),
+                            icon::icon(
+                                if self.sidebar_open {
+                                    "sidebar"
+                                } else {
+                                    "sidebar-hidden"
+                                },
+                                16.,
+                                t.text_tertiary,
+                            ),
                             t,
                         ),
                         &sidebar_focus,
@@ -1728,6 +1751,7 @@ impl Render for Shell {
         .absolute()
         .size_full();
         // `_MainContentSurface` clips its content with a rounded `clip-path`.
+        let docked = self.bottom.is_some();
         let corners = canvas(
             |_, _, _| {},
             move |bounds, (), window, cx| {
@@ -1750,7 +1774,8 @@ impl Render for Shell {
                         // page, then the content C (painted over the square F). In a layer of
                         // the page with the rounded F (the frame), C is drawn that way onto it.
                         // At `main_clips_right` and `main_layer` the layer's pixel stays: the
-                        // view (or the shell, below) draws the content onto it.
+                        // view (or the shell, below) draws the content onto it. A docked bottom
+                        // panel holds the bottom-right corner instead of the view: C is drawn here.
                         let x0 = if dx < 0. { x - rd } else { x };
                         let y0 = if dy > 0. { y } else { y - rd };
                         let square = Bounds::new(
@@ -1771,7 +1796,7 @@ impl Render for Shell {
                                 let own = clips_right || main_layer;
                                 let own = Corners {
                                     top_right: own,
-                                    bottom_right: own,
+                                    bottom_right: main_layer || (clips_right && !docked),
                                     ..Default::default()
                                 };
                                 shapes::paint_rounded_clip(radius, own, main, window, cx);
