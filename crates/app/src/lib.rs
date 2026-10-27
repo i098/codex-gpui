@@ -136,7 +136,6 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("cmd-c", Copy, None),
         KeyBinding::new("cmd-v", Paste, None),
         KeyBinding::new("cmd-a", SelectAll, None),
-        KeyBinding::new("cmd-f", FindInThread, None),
         KeyBinding::new("cmd-g", FindNext, None),
         KeyBinding::new("cmd-shift-g", FindPrevious, None),
         KeyBinding::new("cmd-m", Minimize, None),
@@ -2491,6 +2490,15 @@ impl Root {
         self.sync(window, cx);
     }
 
+    /// `Next tab` / `Previous tab`: the neighbouring side tab, wrapping.
+    fn step_side(&mut self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.tabs.iter().position(|t| Some(*t) == self.side) else {
+            return;
+        };
+        let next = (ix as isize + delta).rem_euclid(self.tabs.len() as isize) as usize;
+        self.set_side(self.tabs[next], window, cx);
+    }
+
     /// Closes tab `side` (`Close {title} tab`, `⌘W` on the selected one): the next tab, else
     /// the previous, is selected; closing the last tab closes the panel. A side chat's tab
     /// discards its conversation.
@@ -3133,8 +3141,9 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// `⌘W`: Electron main runs `closeTab` (`close-active-app-shell-tab`) while the thread
-    /// route's panel shows a tab, else the window closes.
+    /// `⌘W` (an accelerator of `closeTab`): Electron main closes the focused window's active
+    /// shell tab when it can (`close-active-app-shell-tab`; the main focus area counts as the
+    /// right panel), else the window.
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.dialog.is_some() || self.automation_editor.is_some() {
             return;
@@ -3151,6 +3160,14 @@ impl Root {
             .filter(|_| self.split.is_some() && self.workspace_layout() != WorkspaceLayout::Chat)
         {
             return self.close_side(side, window, cx);
+        }
+        self.close_whole_window(window, cx);
+    }
+
+    /// An accelerator that only `closeWindow` has: no tab routing, the window closes.
+    fn close_whole_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dialog.is_some() {
+            return;
         }
         if self.state.confirm_before_close == ConfirmBeforeClose::Never {
             self.flush_settings(cx);
