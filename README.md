@@ -390,15 +390,19 @@ The app opens that thread after a successful start, unless you navigate away whi
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
 The New task options menu also opens the full manual editor or a new chat with the original task setup prompt.
 The manual editor saves Name, multiline Prompt, Interval, Daily, Weekdays, Weekly, Monthly, and Custom schedules.
+Name and time controls use single-line inputs; Prompt accepts multiple lines.
 Custom schedules support Hourly, Daily, Weekly, Monthly, and Yearly repeats, with interval, weekday, month-day, month, minute, and local time fields.
 The time presets use 09:00, 14:00, 18:00, and 22:00.
 The row menu's Edit action updates the task through `automation-update`, without changing its identity or unrelated definition fields.
 The editor keeps an existing advanced rule unchanged when only Name or Prompt changes.
 Prefilled drafts stay in Create mode until their data includes an existing task ID.
 Escape closes an open schedule picker first; otherwise, it discards the editor without saving.
+Command-Enter saves the editor, including when Name or Prompt has keyboard focus.
 The local Trigger menu keeps Schedule active and explains why cloud-only Date and time is unavailable.
 Advanced controls update notifications, new-chat or existing-chat execution, automatic archive, project, model, and effort.
+Switching an existing-chat task back to new-chat execution supplies its current local workspace.
 Model and effort choices come from app-server `model/list` and `config/read`; existing chats come from `thread/list`.
+Inherited model and effort values follow the original automation catalog precedence, not ordinary chat defaults.
 The editor saves those choices atomically through `automation-create` or `automation-update` and retains unrelated definition fields.
 Run `cargo test -p app --test task_create editor:: -- --test-threads=1` on macOS for the native editor, schedule, and Create menu checks.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
@@ -672,6 +676,8 @@ Nested filters use the parent layer's content, not its already-filtered backdrop
 
 `shapes::raster_images` decodes to the smallest mip that covers the rounded target before bilinear sampling.
 Callers choose direct composition, a saved image group, or a transparent compositor tile to match the original layer.
+An image group keeps its save-layer even when it contains one image, so clipped sampling retains the original interpolation.
+Transparent image groups retain straight-alpha pixels for GPUI, so the background and shadow remain visible through rounded corners.
 Use `ImageComposition::Composited` with an opaque background for compositor tiles.
 Rasterize these images during paint, when the layer context is available.
 

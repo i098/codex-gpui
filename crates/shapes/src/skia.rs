@@ -2598,7 +2598,7 @@ pub(crate) fn raster_images(
             Some((image, rect))
         })
         .collect();
-    let grouped = group_images && draws.len() > 1;
+    let grouped = group_images && !draws.is_empty();
     let sampling = SamplingOptions::new(FilterMode::Linear, MipmapMode::None);
     let mut out = vec![0; (w * h * 4) as usize];
     for (o, ts, [ox0, oy0, ox1, oy1]) in layer.tiles([x0, y0, x0 + w, y0 + h], layer.size()) {
@@ -4015,6 +4015,62 @@ mod tests {
         );
         assert_eq!(image_decode_size([40, 20], [20., 20.]), Some([40, 20]));
         assert_eq!(image_decode_size([40, 20], [0.1, 20.]), None);
+    }
+
+    #[test]
+    fn single_image_group_preserves_half_pixel_interpolation() -> anyhow::Result<()> {
+        use gpui::{AppContext, IntoElement, ParentElement, Render, Styled};
+
+        struct SingleImage;
+        impl Render for SingleImage {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                gpui::div().size_full().child(
+                    gpui::canvas(
+                        |_, _, _| {
+                            image::RgbaImage::from_fn(160, 96, |x, _| {
+                                let value = if x < 16 { 16 } else { 240 };
+                                image::Rgba([value, value, value, 255])
+                            })
+                        },
+                        |bounds, pixels, window, _| {
+                            let raster = raster_images(
+                                &[(&pixels, bounds)],
+                                bounds,
+                                &Decoration {
+                                    radius: gpui::Corners::all(px(7.5)),
+                                    ..Default::default()
+                                },
+                                ImageComposition::Group(gpui::rgb(0x181818).into()),
+                                window,
+                            );
+                            window
+                                .paint_image(
+                                    bounds,
+                                    bounds,
+                                    gpui::Corners::default(),
+                                    Arc::new(raster),
+                                    0,
+                                    false,
+                                )
+                                .expect("paint the single-image group");
+                        },
+                    )
+                    .w(px(157.5))
+                    .ml(px(32.5))
+                    .h(px(95.)),
+                )
+            }
+        }
+        let mut cx = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(()),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx.open_window(size(px(200.), px(100.)), |_, cx| cx.new(|_| SingleImage))?;
+        cx.run_until_parked();
+        let image = cx.capture_screenshot(window.into())?;
+        assert_eq!(image.get_pixel(96, 32).0, [128, 128, 128, 255]);
+        Ok(())
     }
 
     #[test]

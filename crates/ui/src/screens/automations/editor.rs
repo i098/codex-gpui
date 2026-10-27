@@ -41,19 +41,28 @@ const INTERVAL: usize = 3;
 const MONTH_DAYS: usize = 4;
 const MONTH: usize = 5;
 const MINUTE: usize = 6;
-const TRIGGER: usize = 15;
-const ADVANCED: usize = 11;
-const NOTIFICATIONS: usize = 16;
-const NEW_CHAT: usize = 17;
-const AUTO_ARCHIVE: usize = 18;
-const PROJECT: usize = 19;
-const MODEL: usize = 20;
-const EFFORT: usize = 21;
-const THREAD: usize = 22;
+const ADVANCED: usize = 5;
+const CLOSE: usize = 6;
+const CANCEL: usize = 7;
+const SAVE: usize = 8;
+const TRIGGER: usize = 9;
+const NOTIFICATIONS: usize = 10;
+const NEW_CHAT: usize = 11;
+const AUTO_ARCHIVE: usize = 12;
+const PROJECT: usize = 13;
+const MODEL: usize = 14;
+const EFFORT: usize = 15;
+const THREAD: usize = 16;
 static FORM_BODY_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
     std::sync::LazyLock::new(|| textsys::letter_spacing(-0.15));
 static FORM_TITLE_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
     std::sync::LazyLock::new(|| textsys::letter_spacing(-0.32));
+static FORM_TABULAR_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
+    std::sync::LazyLock::new(|| {
+        let mut features = FORM_BODY_FEATURES.0.as_ref().clone();
+        features.push(("tnum".into(), 1));
+        gpui::FontFeatures(std::sync::Arc::new(features))
+    });
 
 #[derive(Clone, Debug)]
 pub struct Draft {
@@ -85,10 +94,10 @@ enum Picker {
 
 pub struct Editor {
     fields: [Entity<Composer>; 7],
-    controls: [FocusHandle; 23],
+    controls: [FocusHandle; 17],
     scroll: ScrollHandle,
     field_anchors: [ScrollAnchor; 7],
-    control_anchors: [ScrollAnchor; 23],
+    control_anchors: [ScrollAnchor; 17],
     mode: Option<usize>,
     frequency: usize,
     minutes: bool,
@@ -187,13 +196,14 @@ impl Editor {
         cwd: &str,
         cx: &mut Context<Self>,
     ) {
-        self.execution
+        let (models_changed, projects_changed, threads_changed) = self
+            .execution
             .set_options(models, threads, projects, config, cwd);
-        if self.menu.is_some_and(|(picker, _)| {
-            matches!(
-                picker,
-                Picker::Model | Picker::Effort | Picker::Project | Picker::Thread
-            )
+        if self.menu.is_some_and(|(picker, _)| match picker {
+            Picker::Model | Picker::Effort => models_changed,
+            Picker::Project => projects_changed,
+            Picker::Thread => threads_changed,
+            _ => false,
         }) {
             self.menu = None;
         }
@@ -316,15 +326,26 @@ impl Editor {
             .filter(|n| (min..=max).contains(n))
     }
 
+    fn fields_error(&self, cx: &App) -> Option<&'static str> {
+        for (index, limit, missing, too_long) in [
+            (NAME, 250, "Enter a name", "Name is too long"),
+            (PROMPT, 100_000, "Enter a prompt", "Prompt is too long"),
+        ] {
+            let value = self.value(index, cx);
+            if value.is_empty() {
+                return Some(missing);
+            }
+            if value.chars().nth(limit).is_some() {
+                return Some(too_long);
+            }
+        }
+        None
+    }
+
     pub fn draft(&self, cx: &App) -> Option<Draft> {
         let name = self.value(NAME, cx);
         let prompt = self.value(PROMPT, cx);
-        if name.is_empty()
-            || name.chars().count() > 250
-            || prompt.is_empty()
-            || prompt.chars().count() > 100_000
-            || !self.execution.valid()
-        {
+        if self.fields_error(cx).is_some() || !self.execution.valid() {
             return None;
         }
         Some(Draft {
@@ -430,7 +451,7 @@ impl Editor {
         if let Some(draft) = self.draft(cx) {
             self.saving = true;
             self.menu = None;
-            self.controls[14].focus(window, cx);
+            self.controls[SAVE].focus(window, cx);
             cx.emit(Outcome::Save(draft));
             cx.notify();
         }
@@ -628,43 +649,54 @@ impl Editor {
             self.controls[TRIGGER].clone(),
             self.controls[0].clone(),
         ];
-        if self.mode == Some(5) && !self.raw_rule {
-            handles.push(self.controls[1].clone());
-        }
-        let days =
-            self.mode == Some(3) || self.mode == Some(5) && self.frequency == 2 && !self.raw_rule;
-        for index in self.visible_fields() {
-            if index == TIME && days {
-                handles.push(self.controls[4].clone());
+        if !self.raw_rule {
+            if self.mode == Some(5) {
+                handles.push(self.controls[1].clone());
             }
-            handles.push(self.fields[index].focus_handle(cx));
-        }
-        if self.mode == Some(0) {
-            handles.push(self.controls[2].clone());
-        }
-        if self.visible_fields().contains(&TIME) {
-            handles.push(self.controls[3].clone());
+            let fields = self.visible_fields();
+            let days = self.mode == Some(3) || self.mode == Some(5) && self.frequency == 2;
+            for &index in &fields {
+                if index == TIME && days {
+                    handles.push(self.controls[4].clone());
+                }
+                handles.push(self.fields[index].focus_handle(cx));
+            }
+            if self.mode == Some(0) {
+                handles.push(self.controls[2].clone());
+            }
+            if fields.contains(&TIME) {
+                handles.push(self.controls[3].clone());
+            }
         }
         handles.push(self.controls[ADVANCED].clone());
-        if self.advanced {
-            handles.push(self.controls[NOTIFICATIONS].clone());
-            handles.push(self.controls[NEW_CHAT].clone());
-            if self.execution.new_chat() {
-                handles.extend([
-                    self.controls[AUTO_ARCHIVE].clone(),
-                    self.controls[PROJECT].clone(),
-                    self.controls[MODEL].clone(),
-                    self.controls[EFFORT].clone(),
-                ]);
-            } else {
-                handles.push(self.controls[THREAD].clone());
-            }
-        }
+        self.append_advanced_controls(&mut handles);
         if !self.editing {
-            handles.push(self.controls[13].clone());
+            handles.push(self.controls[CANCEL].clone());
         }
-        handles.extend([self.controls[14].clone(), self.controls[12].clone()]);
+        handles.extend([self.controls[SAVE].clone(), self.controls[CLOSE].clone()]);
         handles
+    }
+
+    fn append_advanced_controls(&self, handles: &mut Vec<FocusHandle>) {
+        if !self.advanced {
+            return;
+        }
+        handles.push(self.controls[NOTIFICATIONS].clone());
+        handles.push(self.controls[NEW_CHAT].clone());
+        if self.execution.new_chat() {
+            handles.extend([
+                self.controls[AUTO_ARCHIVE].clone(),
+                self.controls[PROJECT].clone(),
+            ]);
+            if self.execution.model_count() > 0 {
+                handles.push(self.controls[MODEL].clone());
+            }
+            if self.execution.effort_count() > 0 {
+                handles.push(self.controls[EFFORT].clone());
+            }
+        } else {
+            handles.push(self.controls[THREAD].clone());
+        }
     }
 
     fn row(label: &'static str, control: impl IntoElement, t: &Theme, divided: bool) -> Div {
@@ -845,7 +877,6 @@ impl Editor {
                 .py(px(1.))
                 .child(shapes::decoration(shapes::Decoration {
                     radius: gpui::Corners::all(px(20.)),
-                    corner: shapes::Corner::Squircle,
                     border: Some((px(1.), t.border)),
                     ..Default::default()
                 }))
@@ -959,14 +990,16 @@ impl Editor {
         t: &Theme,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
+        let disabled = self.option_count(picker) == 0;
         let selected = (0..self.option_count(picker))
             .position(|index| self.option_label(picker, index).as_ref() == value)
             .unwrap_or(0);
-        let color = if picker == Picker::Trigger {
-            t.text_tertiary
-        } else {
-            t.text_secondary
-        };
+        let setting = matches!(
+            picker,
+            Picker::Notifications | Picker::Project | Picker::Thread
+        );
+        let color = Self::picker_color(picker, t);
+        let (indicator, gap) = Self::picker_icon(picker, color, t);
         div()
             .id(("automation-picker", control))
             .anchor_scroll(Some(self.control_anchors[control].clone()))
@@ -974,33 +1007,39 @@ impl Editor {
             .role(Role::Button)
             .aria_label(label)
             .aria_expanded(self.menu.is_some_and(|(open, _)| open == picker))
+            .aria_disabled(disabled)
+            .opacity(if disabled { 0.5 } else { 1. })
             .track_focus(&self.controls[control])
-            .h(px(40.))
+            .h(px(if setting { 28. } else { 40. }))
             .when(picker == Picker::Time, |d| d.w(px(20.)).flex_none())
             .rounded(px(10.))
+            .when(setting, |d| d.px(px(7.)).rounded(px(9999.)))
             .focus_visible(|s| s.border_2().border_color(gpui::rgb(0x3a83f7)))
             .flex()
             .items_center()
             .justify_end()
-            .gap(px(if picker == Picker::Trigger { 6. } else { 8. }))
+            .gap(px(gap))
             .hover(|s| s.bg(t.ghost_hover))
             .when(!value.is_empty(), |d| {
-                d.child(text(value.to_owned(), 14., 20., 400., color))
+                d.child(
+                    text(
+                        value.to_owned(),
+                        14.,
+                        if setting { 18. } else { 20. },
+                        400.,
+                        color,
+                    )
+                    .when(picker == Picker::Model, |d| {
+                        d.font_features(FORM_TABULAR_FEATURES.clone())
+                    }),
+                )
             })
             .when(picker == Picker::Trigger, |d| {
                 d.child(icon("automation-scheduled", 16., color))
             })
-            .child(icon(
-                if picker == Picker::Trigger {
-                    "chevron-down-medium"
-                } else {
-                    "automation-chevron-down"
-                },
-                if picker == Picker::Trigger { 16. } else { 20. },
-                color,
-            ))
+            .child(indicator)
             .on_click(cx.listener(move |this, _, window, cx| {
-                if !this.saving {
+                if !this.saving && !disabled {
                     this.controls[control].focus(window, cx);
                     this.menu = Some((picker, selected));
                     cx.notify();
@@ -1009,6 +1048,7 @@ impl Editor {
             }))
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
                 if !this.saving
+                    && !disabled
                     && this.menu.is_none()
                     && matches!(event.keystroke.key.as_str(), "enter" | "space" | "down")
                 {
@@ -1030,6 +1070,26 @@ impl Editor {
                     .with_priority(3),
                 )
             })
+    }
+
+    fn picker_color(picker: Picker, t: &Theme) -> gpui::Hsla {
+        match picker {
+            Picker::Notifications | Picker::Project | Picker::Thread => t.text,
+            Picker::Trigger => t.text_tertiary,
+            _ => t.text_secondary,
+        }
+    }
+
+    fn picker_icon(picker: Picker, color: gpui::Hsla, t: &Theme) -> (crate::icon::Icon, f32) {
+        let (name, size, gap, color) = match picker {
+            Picker::Notifications | Picker::Project | Picker::Thread => {
+                ("chevron-down", 14., 4., t.text_tertiary)
+            }
+            Picker::Trigger => ("chevron-down-medium", 16., 6., t.text_tertiary),
+            Picker::Model | Picker::Effort => ("chevron-down-medium", 16., 8., t.text_tertiary),
+            _ => ("automation-chevron-down", 20., 8., color),
+        };
+        (icon(name, size, color), gap)
     }
 
     fn schedule(&self, t: &Theme, window: &Window, cx: &Context<Self>) -> Div {
@@ -1108,7 +1168,7 @@ impl Editor {
             if index == TIME {
                 let value = self.value(TIME, cx);
                 let mut font = gpui::font(crate::SANS);
-                font.features = FORM_BODY_FEATURES.clone();
+                font.features = FORM_TABULAR_FEATURES.clone();
                 let time_width = window
                     .text_system()
                     .shape_line(
@@ -1155,6 +1215,7 @@ impl Editor {
                             div()
                                 .w(time_width)
                                 .flex_none()
+                                .font_features(FORM_TABULAR_FEATURES.clone())
                                 .child(self.input(TIME, "Time", cx)),
                         )
                         .child(self.picker(Picker::Time, "Time presets", "", 3, t, cx)),
@@ -1192,10 +1253,10 @@ impl Editor {
     ) -> Stateful<Div> {
         let (height, padding, radius, gap) = match control {
             ADVANCED => (28., 8., 10., 8.),
-            12 => (32., 0., 10., 6.),
+            CLOSE => (32., 0., 10., 6.),
             _ => (36., 16., 9999., 6.),
         };
-        let (weight, color) = if control == 14 {
+        let (weight, color) = if control == SAVE {
             (500., t.surface_elevated_secondary)
         } else {
             (400., t.text_secondary)
@@ -1208,8 +1269,8 @@ impl Editor {
             .h(px(height))
             .px(px(padding))
             .rounded(px(radius))
-            .when(control == 12, |d| d.w(px(32.)))
-            .when(control == 14, |d| {
+            .when(control == CLOSE, |d| d.w(px(32.)))
+            .when(control == SAVE, |d| {
                 d.px(px(17.)).child(shapes::decoration(shapes::Decoration {
                     radius: gpui::Corners::all(px(9999.)),
                     fill: Some(t.text),
@@ -1222,18 +1283,22 @@ impl Editor {
             .items_center()
             .justify_center()
             .gap(px(gap))
-            .when(control != 12, |d| {
+            .when(control != CLOSE, |d| {
                 d.child(
                     text(label, 14., 20., weight, color)
                         .when(control == ADVANCED, |d| d.w(px(58.87)).flex_none()),
                 )
             })
-            .when(control == 12, |d| {
+            .when(control == CLOSE, |d| {
                 d.child(icon("close", 20., t.text_tertiary))
             })
             .when(control == ADVANCED, |d| {
                 d.aria_expanded(self.advanced).child(icon(
-                    "automation-chevron-down",
+                    if self.advanced {
+                        "automation-chevron-up"
+                    } else {
+                        "automation-chevron-down"
+                    },
                     20.,
                     t.text_secondary,
                 ))
@@ -1252,44 +1317,37 @@ impl Editor {
     fn activate_button(&mut self, control: usize, window: &mut Window, cx: &mut Context<Self>) {
         if control == ADVANCED {
             self.toggle_control(control, cx);
-        } else if control == 14 {
+        } else if control == SAVE {
             self.submit(window, cx);
         } else if !self.saving {
             cx.emit(Outcome::Dismiss);
         }
     }
 
-    fn save_state(&self, cx: &App) -> (bool, &'static str) {
+    fn footer(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let field_error = self.fields_error(cx);
         let valid = !self.saving
-            && !self.value(NAME, cx).is_empty()
-            && self.value(NAME, cx).chars().count() <= 250
-            && !self.value(PROMPT, cx).is_empty()
-            && self.value(PROMPT, cx).chars().count() <= 100_000
+            && field_error.is_none()
             && self.execution.valid()
             && self.rule(cx).is_some();
-        let reason = if self.value(NAME, cx).is_empty() {
-            "Enter a name"
-        } else if self.value(PROMPT, cx).is_empty() {
-            "Enter a prompt"
+        let reason = if let Some(error) = field_error {
+            error
         } else if !self.execution.valid() {
             "Select a chat"
         } else {
             "Enter valid schedule fields"
         };
-        (valid, reason)
-    }
-
-    fn footer(&self, t: &Theme, cx: &Context<Self>) -> Div {
-        let (valid, reason) = self.save_state(cx);
         div()
             .flex()
             .justify_end()
             .gap(px(12.))
             .pt(px(20.))
-            .when(!self.editing, |d| d.child(self.button(13, "Cancel", t, cx)))
+            .when(!self.editing, |d| {
+                d.child(self.button(CANCEL, "Cancel", t, cx))
+            })
             .child(tooltip(
                 self.button(
-                    14,
+                    SAVE,
                     match (self.saving, self.editing) {
                         (true, _) => "Saving…",
                         (false, true) => "Save",
@@ -1406,6 +1464,7 @@ impl Render for Editor {
                     cx.stop_propagation();
                 }
             }))
+            // Name and Prompt bind cmd-enter to `ModifiedSubmit`, which wins over key listeners.
             .capture_action(cx.listener(|this, _: &ModifiedSubmit, window, cx| {
                 this.submit(window, cx);
                 cx.stop_propagation();
@@ -1424,7 +1483,7 @@ impl Render for Editor {
                             .absolute()
                             .right(px(-6.))
                             .top(px(-4.))
-                            .child(self.button(12, "Close dialog", t, cx)),
+                            .child(self.button(CLOSE, "Close dialog", t, cx)),
                     ),
             )
             .child(
@@ -1434,6 +1493,7 @@ impl Render for Editor {
                     .min_h_0()
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
+                    .when(self.advanced, |d| d.top_layer())
                     .flex()
                     .flex_col()
                     .gap(px(16.))
@@ -1489,7 +1549,21 @@ impl Render for Editor {
                     this.dismiss(cx);
                 }),
             )
-            .child(form)
+            // Chromium composites the dialog as a layer of its own, whose tiles start at its
+            // shadows' ink (1.5 x blur + spread, moved by the offset): `0 20px 25px -5px`
+            // reaches 32.5 px left and right, 12.5 px above and 52.5 px below the box. The
+            // original's tile seams and squircle border raster match this origin.
+            .child(
+                div()
+                    .top_layer()
+                    .px(px(32.5))
+                    .pt(px(12.5))
+                    .pb(px(52.5))
+                    .mx(px(-32.5))
+                    .mt(px(-12.5))
+                    .mb(px(-52.5))
+                    .child(form),
+            )
     }
 }
 

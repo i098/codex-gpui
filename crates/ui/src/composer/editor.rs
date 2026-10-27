@@ -773,11 +773,8 @@ impl Composer {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
-            // `--opacity-composer-placeholder: .5` on the placeholder. The text blends like
-            // Chromium's: blitted into a transparent layer (`_ComposerLayoutInput`'s
-            // `overflow-y: auto` contents), then composited onto the card. A settings textarea
-            // never scrolls here, so it has no such layer: its text blends onto the field's fill.
-            // The sign-in `input` has neither the opacity nor the layer.
+            // Rich text uses Chromium's transparent scroll layer; its placeholder has opacity .5.
+            // Settings textareas and single-line form inputs paint directly.
             .child(
                 div()
                     .when(!self.search_field && self.field_text.is_none(), |d| {
@@ -789,7 +786,13 @@ impl Composer {
                             |d| d.opacity(0.5),
                         )
                         .when(
-                            (self.embedded_field.is_none() && self.plain_field != Some(true)
+                            (self.embedded_field.is_none()
+                                && matches!(
+                                    (self.plain_field, self.field_style),
+                                    (None, _)
+                                        | (Some(false), FieldStyle::Settings)
+                                        | (Some(true), FieldStyle::Form | FieldStyle::Inline)
+                                )
                                 || self.search_field)
                                 && !compact_settings,
                             |d| d.layer(),
