@@ -2528,7 +2528,8 @@ impl Render for SplitScreen {
         let chat = self.layout == WorkspaceLayout::Chat;
         self.thread
             .update(cx, |view, cx| view.set_clips(chat, chat && !open, cx));
-        // A hidden panel at compact width shows its own controls instead of `New tab`.
+        // A visible panel's tab strip brings its own `New tab`; a hidden one at compact width
+        // shows its own controls instead.
         let compact =
             chat && !self.tabs.is_empty() && window.viewport_size().width <= SIDE_PANEL_BREAKPOINT;
         let new_tab = chat && !compact;
@@ -2740,8 +2741,6 @@ pub fn with_side_tabs(
     let (main, panel_focus) =
         workspace_content(&thread, panel.as_ref().map(|(view, ..)| view), layout, cx);
     shell.update(cx, |shell, cx| {
-        // A visible panel's tab strip brings its own `New tab`.
-        shell.new_tab = layout == WorkspaceLayout::Chat;
         // File and Changes panels also composite the surface itself.
         shell.main_composited = true;
         shell.main_opaque_scroll = panel.as_ref().and_then(|(view, ..)| {
