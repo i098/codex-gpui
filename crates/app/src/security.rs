@@ -26,18 +26,13 @@ pub(super) fn bind(root: &Root, cx: &mut Context<Root>) {
     .detach();
 }
 
-pub(super) fn load(root: &mut Root, cx: &mut Context<Root>) {
+pub(super) fn load(root: &mut Root, evaluations: &Value, cx: &mut Context<Root>) {
     if root.bridge.is_acp() || root.settings_integrations.read(cx).pending {
         return;
     }
-    let host = root.host.clone();
     let bridge = root.bridge.clone();
+    let mut access = security::Access::from_evaluations(evaluations, false, true);
     root.security_access_task = Some(cx.spawn(async move |this, cx| {
-        let evaluations = cx
-            .background_spawn(async move { settings_integrations::read_bootstrap(host.as_ref()) })
-            .await
-            .unwrap_or_default();
-        let mut access = security::Access::from_evaluations(&evaluations, false, true);
         if access.gate_enabled {
             let plugins = bridge
                 .request::<_, Value>("plugin/installed", json!({"cwds": []}))

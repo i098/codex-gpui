@@ -1007,7 +1007,6 @@ impl Root {
                 this.models = models;
                 this.refresh_automation_editor_options(None, cx);
                 this.ready = this.login.is_none();
-                security::load(this, cx);
                 hotkey::policy::refresh(this, cx);
                 this.select_route(cx);
                 this.sync(window, cx);
@@ -1207,8 +1206,6 @@ impl Root {
         self.refresh_git_actions(cx);
         if self.settings_page.is_some() {
             self.load_settings_integrations(cx);
-        } else if self.ready {
-            security::load(self, cx);
         }
         cx.notify();
     }
@@ -5689,7 +5686,6 @@ impl Root {
         match event {
             Event::Notification { method, params } => match method.as_str() {
                 "account/updated" if self.ready => {
-                    security::load(self, cx);
                     self.destination_load = None;
                     self.set_unread_destinations(None, cx);
                     self.read_account(None, cx);
