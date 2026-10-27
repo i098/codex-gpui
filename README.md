@@ -245,6 +245,14 @@ Branch prefix saves on blur or Enter; multiline instructions save after three id
 The focused `cargo test -p app --test git_settings -- --test-threads=1` native replay verifies saved values after reopening Git settings.
 This page does not implement Git operations or active pull request watchers, and it does not complete other settings pages.
 
+Settings > Voice keeps microphone, sound, screen-context, and local dictionary preferences in the same host settings store.
+Its gate adapter accepts trusted original Statsig and capability values; missing inputs never enable Voice.
+Saved recording controls read `$CODEX_HOME/dictation-history` and the legacy `transcription-history.jsonl` file.
+Downloads stream audio bytes and never replace an existing file.
+Retry transcription buffers at most 128 MiB; larger saved recordings remain available for download.
+Account dictionaries, voice selection, language selection, and retry transcription use the existing authenticated host.
+The shared keyboard service owns global shortcut storage and registration.
+Run `cargo test -p app --test voice_settings` for recording, preference, gate, and binary HTTP checks.
 Changes > Load full files reads Git objects and working files when their rows enter the view.
 Expand a context separator to show 20 more lines in either direction or the complete gap.
 The view checks full content against the displayed patch and preserves the patch when a read fails.
@@ -253,6 +261,11 @@ Line wrapping, word differences, and full-file loading use the existing host set
 Run `cargo test -p app --test diff_file_reads` for file boundaries and `cargo test -p app --test diff_context` on macOS for expansion and retry.
 Image and PDF previews read bytes from each selected Git version or working file.
 PDF previews use macOS rendering and keep separate page controls for each side.
+The controls appear when the pointer or keyboard focus enters the PDF preview.
+The file tree omits zero change counts and groups thousands in large totals.
+Oversized text retains its change counts and Open in editor action instead of rendering a partial file.
+Large-diff notices clip their fill and controls together while painting the outer shadow separately.
+Stage and Unstage actions apply only to the separate Unstaged and Staged sources, not the combined Uncommitted view.
 Use the Rich preview option to switch SVG files between rendered previews and text.
 Run `cargo test -p app --test diff_preview` on macOS for image version and PDF page checks.
 
@@ -299,6 +312,12 @@ The multi-select emits `SelectionChanged`; the caller saves the value and can re
 Use `Composer::settings_field` for multiline text and `Toast` for existing information, error, and success messages.
 Run `cargo test -p ui --test settings_kit` for the keyboard and locked-choice check.
 
+Cloud environment routes use `Root::open_cloud_environment` and the existing authenticated host transport.
+The legacy editor preserves unchanged secret values and keeps package version choices in the environment draft.
+Cloud access follows the original account policy and feature gates; Cloud computer stays hidden on the Codex surface.
+Run `cargo test -p ui --lib screens::cloud::model::tests` for secret updates and `.env` parsing.
+Cloud v2 setup still needs the durable app-server connection; configuration creation alone does not prove that setup completed.
+Original-versus-native pixel validation for these pages remains pending.
 `app::diff_content::read_full_file` loads typed before/after data through the existing Git object host.
 It preserves line endings and the host's working-file fallback policy, with a 5 MiB object limit.
 Missing or oversized objects return `FullError::Unavailable`; invalid disk-fallback paths or reply structures return `FullError::Failed`.
@@ -371,12 +390,20 @@ The app opens that thread after a successful start, unless you navigate away whi
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
 The New task options menu also opens the full manual editor or a new chat with the original task setup prompt.
 The manual editor saves Name, multiline Prompt, Interval, Daily, Weekdays, Weekly, Monthly, and Custom schedules.
+Name and time controls use single-line inputs; Prompt accepts multiple lines.
 Custom schedules support Hourly, Daily, Weekly, Monthly, and Yearly repeats, with interval, weekday, month-day, month, minute, and local time fields.
 The time presets use 09:00, 14:00, 18:00, and 22:00.
 The row menu's Edit action updates the task through `automation-update`, without changing its identity or unrelated definition fields.
 The editor keeps an existing advanced rule unchanged when only Name or Prompt changes.
 Prefilled drafts stay in Create mode until their data includes an existing task ID.
 Escape closes an open schedule picker first; otherwise, it discards the editor without saving.
+Command-Enter saves the editor, including when Name or Prompt has keyboard focus.
+The local Trigger menu keeps Schedule active and explains why cloud-only Date and time is unavailable.
+Advanced controls update notifications, new-chat or existing-chat execution, automatic archive, project, model, and effort.
+Switching an existing-chat task back to new-chat execution supplies its current local workspace.
+Model and effort choices come from app-server `model/list` and `config/read`; existing chats come from `thread/list`.
+Inherited model and effort values follow the original automation catalog precedence, not ordinary chat defaults.
+The editor saves those choices atomically through `automation-create` or `automation-update` and retains unrelated definition fields.
 Run `cargo test -p app --test task_create editor:: -- --test-threads=1` on macOS for the native editor, schedule, and Create menu checks.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 Use `-- --include-ignored` on macOS to check the installed adapter.
@@ -403,6 +430,22 @@ They do not certify live Cloud access or original pixel parity.
 General settings shows the read-only `In-app updates` row with `Managed` when the app-server disables `in_app_updates`.
 The row uses `experimentalFeature/list`, not a local preference.
 The app hides the row when that policy is absent or enabled.
+
+### Legacy Codex Cloud threads
+
+Open an existing task with `cargo run -p app -- /remote/<task-id>`.
+The `/hotkey-window/remote/<task-id>` path selects the compact content variant.
+The page uses the app-server's ChatGPT identity for the original `/wham/tasks` API.
+It reads task turns, streams setup logs and thread events, and supports image previews and follow-up image uploads.
+A log download failure does not hide the task's setup error.
+Applying changes selects a configured local project with the same Git remote.
+Apply and Revert use a temporary Git index, so they do not change the user's staged files.
+The result dialog lists applied, conflicted, and skipped paths.
+`Root::open_remote_task` and `Root::remote_page` provide the same page to native window hosts.
+This route is separate from the durable `codex_cloud` thread service.
+Run `cargo test -p app -p ui --lib cloud` and `cargo test -p app --test host` for the protocol and native state checks.
+Live-account and strict pixel validation remain pending for this page.
+
 
 ## Release bundle
 
@@ -488,6 +531,9 @@ That command does not close QA or any normal app.
 
 | Crate | Role |
 |---|---|
+| `bridge` | Client for `codex app-server`: newline-delimited JSON-RPC over stdio, hand-written protocol types, replay of recorded sessions, and the ACP backend. |
+| `ui` | The window shell (titlebar, navigation rail, sidebar, main panel), the page modules in `screens/`, the composer, the thread view, the diff view and the icons. |
+| `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths. It links Skia. |
 | `bridge` | JSON-RPC client for `codex app-server` over stdio or durable cloud WebSocket, protocol types, recorded sessions, and the ACP backend. |
 | `ui` | The window shell (titlebar, navigation rail, sidebar, main panel), the page modules in `screens/`, the composer, the thread view, the diff view and the icons. |
 | `shapes` | Box decorations that land on Chromium's pixels: rounded and squircle corners, borders, `box-shadow`, backdrop blur, SVG icon paths and circles. It links Skia. |
@@ -596,6 +642,8 @@ Use it when placing multiline field glyphs to retain Blink's baseline positions.
 Text layouts use each window's effective device scale and discard stale cached metrics when that scale changes.
 
 Inline-code backgrounds use both snapped label edges, so fractional text widths do not expand their right edge.
+Their height and position follow the active code font's metrics.
+The thread's top fade preserves content that scrolls below it.
 
 Monochrome glyphs and SVGs keep their paint alpha.
 Element opacity is applied once when the enclosing layer is restored.
@@ -634,6 +682,8 @@ Nested filters use the parent layer's content, not its already-filtered backdrop
 
 `shapes::raster_images` decodes to the smallest mip that covers the rounded target before bilinear sampling.
 Callers choose direct composition, a saved image group, or a transparent compositor tile to match the original layer.
+An image group keeps its save-layer even when it contains one image, so clipped sampling retains the original interpolation.
+Transparent image groups retain straight-alpha pixels for GPUI, so the background and shadow remain visible through rounded corners.
 Use `ImageComposition::Composited` with an opaque background for compositor tiles.
 Rasterize these images during paint, when the layer context is available.
 

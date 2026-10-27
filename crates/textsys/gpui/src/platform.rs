@@ -1446,6 +1446,9 @@ pub trait PlatformHeadlessRenderer {
 
     /// Returns the sprite atlas used by this renderer.
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
+
+    /// Clears to transparent instead of opaque black, as a transparent window does.
+    fn set_transparent(&mut self, _transparent: bool) {}
 }
 
 /// Type alias for runnables with metadata.

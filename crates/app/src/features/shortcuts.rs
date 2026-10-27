@@ -41,8 +41,6 @@ pub(crate) struct ShortcutState {
     pub ephemeral: HashSet<String>,
     pub confirmation: Option<Entity<Confirmation>>,
     pub zoom_banner: Option<Entity<ui::zoom::ZoomBanner>>,
-    pub terminal: Option<Entity<super::terminal::Terminal>>,
-    pub bottom_open: bool,
     undo: Vec<AppEdit>,
     redo: Vec<AppEdit>,
     undo_pending: bool,
@@ -72,6 +70,7 @@ pub(super) fn init(cx: &mut App) {
         KeyBinding::new("ctrl-tab", NextRecentChat, None),
         KeyBinding::new("ctrl-shift-tab", PreviousRecentChat, None),
         KeyBinding::new("ctrl-shift-g", OpenChangesPanel, None),
+        KeyBinding::new("ctrl-`", OpenBackgroundTerminal, None),
         KeyBinding::new("cmd-+", ZoomIn, None),
         KeyBinding::new("cmd-=", ZoomIn, None),
         KeyBinding::new("cmd-shift-=", ZoomIn, None),
@@ -534,6 +533,7 @@ impl Root {
         let computer_use = computer_use_overrides(&self.config);
         let mode = self.shortcut_state.new_chat_mode;
         let host = self.host.clone();
+        let hotkey_options = hotkey::start_options(self, cx);
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let workspace = if mode == features::shortcuts::NewChatMode::Standalone {
                 let prepare = host.clone();
@@ -546,10 +546,24 @@ impl Root {
                     }
                 }
             } else { None };
+            let prepared = if mode != NewChatMode::Standalone {
+                if let Some(options) = hotkey_options {
+                    let host = host.clone();
+                    let prompt = s.text.clone();
+                    match cx.background_executor().spawn(async move { hotkey::prepare_start(host, options, &prompt) }).await {
+                        Ok(prepared) => Some(prepared),
+                        Err(error) => {
+                            this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
+                            return Err(error);
+                        }
+                    }
+                } else { None }
+            } else { None };
             let mut params = json!({ "cwd": workspace.as_ref().map(|workspace| workspace.cwd.as_str()).unwrap_or(&cwd), "model": model(&s) });
             if let Some(workspace) = &workspace {
                 params["developerInstructions"] = json!(workspace.instructions());
             }
+            if let Some(prepared) = &prepared { prepared.apply(&mut params); }
             if mode == features::shortcuts::NewChatMode::Temporary {
                 params["ephemeral"] = json!(true);
             }
@@ -577,6 +591,13 @@ impl Root {
                 let record = host.clone();
                 let thread_id = id.clone();
                 if let Err(error) = cx.background_executor().spawn(async move { record.record_projectless(&thread_id, &workspace) }).await {
+                    this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
+                    return Err(error);
+                }
+            }
+            if let Some(prepared) = prepared.filter(|prepared| prepared.needs_recording()) {
+                let thread_id = id.clone();
+                if let Err(error) = cx.background_executor().spawn(async move { prepared.record(&thread_id) }).await {
                     this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
                     return Err(error);
                 }

@@ -5,10 +5,16 @@ use std::{cell::RefCell, rc::Rc};
 pub(super) struct FindScroll {
     pub(super) target: Rc<RefCell<Option<(gpui::TextLayout, usize)>>>,
     pub(super) pending: Rc<Cell<bool>>,
+    /// Typing a query keeps the scroll while any match is on screen, as Chromium's find does.
+    pub(super) typing: Rc<Cell<bool>>,
+    pub(super) lines: Rc<RefCell<Vec<gpui::TextLayout>>>,
 }
 
 impl FindScroll {
     pub(super) fn track(&self, line: &Line, active: usize, layout: &gpui::TextLayout) {
+        if !line.matches.is_empty() {
+            self.lines.borrow_mut().push(layout.clone());
+        }
         if let Some(range) = active
             .checked_sub(line.match_start)
             .and_then(|index| line.matches.get(index))
@@ -20,6 +26,8 @@ impl FindScroll {
     pub(super) fn probe(&self, scroll: ScrollHandle, view: gpui::EntityId) -> impl IntoElement {
         let target = self.target.clone();
         let pending = self.pending.clone();
+        let typing = self.typing.clone();
+        let lines = self.lines.clone();
         gpui::canvas(
             |_, _, _| {},
             move |_, (), window, cx| {
@@ -29,10 +37,18 @@ impl FindScroll {
                 let Some((layout, index)) = target.borrow().clone() else {
                     return;
                 };
+                let viewport = scroll.bounds();
+                if typing.replace(false)
+                    && lines.borrow().iter().any(|line| {
+                        line.position_for_index(0)
+                            .is_some_and(|p| p.y >= viewport.top() && p.y < viewport.bottom())
+                    })
+                {
+                    return;
+                }
                 let Some(position) = layout.position_for_index(index) else {
                     return;
                 };
-                let viewport = scroll.bounds();
                 let center = (viewport.top() + viewport.bottom()) / 2.;
                 let mut offset = scroll.offset();
                 offset.y = (offset.y + center - position.y - layout.line_height() / 2.)
@@ -54,6 +70,8 @@ impl DiffPanel {
         self.active_match = 0;
         self.selected_query = true;
         self.search_changed();
+        self.find_scroll.pending.set(self.matches > 0);
+        self.find_scroll.typing.set(false);
         if let Some(focus) = &self.focus {
             window.focus(focus, cx);
         }
@@ -75,6 +93,7 @@ impl DiffPanel {
                 (self.active_match + if previous { self.matches - 1 } else { 1 }) % self.matches;
             self.reveal_find_match();
             self.find_scroll.pending.set(true);
+            self.find_scroll.typing.set(false);
             cx.notify();
         }
         true
@@ -129,15 +148,19 @@ pub(crate) fn find_scope_buttons(query: &str, diffs: bool, t: &Theme) -> Div {
                 .items_center()
                 .justify_center()
                 .rounded(px(10.))
-                .child(crate::icon(
-                    icon,
-                    16.,
-                    if diff == diffs {
-                        t.text
-                    } else {
-                        t.text_tertiary
-                    },
-                ))
+                // The fitted header icon has a different raster position.
+                .child(
+                    crate::icon::icon(
+                        icon,
+                        16.,
+                        if diff == diffs {
+                            t.text
+                        } else {
+                            t.text_tertiary
+                        },
+                    )
+                    .runtime(),
+                )
                 .id(label)
                 .role(gpui::Role::Button)
                 .aria_label(label)

@@ -80,6 +80,7 @@ pub struct Personalization {
     unified_instructions: bool,
     show_source: bool,
     saved: String,
+    line_ending: &'static str,
     editor: Option<Entity<Composer>>,
     memory_requested: bool,
     memory: Option<Result<MemorySettings, String>>,
@@ -105,6 +106,7 @@ impl Personalization {
             unified_instructions: false,
             show_source: false,
             saved: String::new(),
+            line_ending: "\n",
             editor: None,
             memory_requested: false,
             memory: None,
@@ -143,6 +145,11 @@ impl Personalization {
 
     pub fn set_unified_instructions(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.unified_instructions = enabled;
+        if enabled
+            && let std::borrow::Cow::Owned(saved) = crate::composer::normalize_newlines(&self.saved)
+        {
+            self.saved = saved;
+        }
         if let Some(editor) = &self.editor {
             editor.update(cx, |editor, cx| editor.set_document_style(enabled, cx));
         }
@@ -278,6 +285,17 @@ impl Personalization {
             Ok(value) if value["contents"].is_string() && value["path"].is_string() => {
                 self.has_override = value["hasOverride"].as_bool().unwrap_or(false);
                 self.saved = value["contents"].as_str().unwrap().to_owned();
+                self.line_ending = match self.saved.find(['\r', '\n']) {
+                    Some(at) if self.saved[at..].starts_with("\r\n") => "\r\n",
+                    Some(at) if self.saved[at..].starts_with('\r') => "\r",
+                    _ => "\n",
+                };
+                if self.unified_instructions
+                    && let std::borrow::Cow::Owned(saved) =
+                        crate::composer::normalize_newlines(&self.saved)
+                {
+                    self.saved = saved;
+                }
                 let editor = cx.new(|cx| {
                     Composer::settings_field("Add your custom instructions…", &self.saved, true, cx)
                         .with_field_min_height(px(241.40625))
@@ -305,13 +323,12 @@ impl Personalization {
         if self.saving || !self.dirty(cx) {
             return;
         }
-        let contents = self
-            .editor
-            .as_ref()
-            .unwrap()
-            .read(cx)
-            .field_text()
-            .to_owned();
+        let contents = self.editor.as_ref().unwrap().read(cx).field_text();
+        let contents = if self.unified_instructions && self.line_ending != "\n" {
+            contents.replace('\n', self.line_ending)
+        } else {
+            contents.to_owned()
+        };
         self.saving = true;
         cx.emit(Event::Save(contents));
         cx.notify();
@@ -319,7 +336,11 @@ impl Personalization {
 
     pub fn saved(&mut self, contents: String, cx: &mut Context<Self>) {
         self.saving = false;
-        self.saved = contents;
+        self.saved = if self.unified_instructions && contents.contains('\r') {
+            crate::composer::normalize_newlines(&contents).into_owned()
+        } else {
+            contents
+        };
         if !self.dirty(cx) {
             self.discard(cx);
         }
@@ -1241,6 +1262,74 @@ impl Render for Personalization {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn document_saves_preserve_the_loaded_line_ending() -> anyhow::Result<()> {
+        #[cfg(target_os = "macos")]
+        std::panic::set_hook(Box::new(|info| {
+            eprintln!("{info}");
+            std::process::exit(101);
+        }));
+        let mut app = gpui::HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            theme::load_fonts(cx);
+            cx.set_global(theme::Theme::dark());
+        });
+        let window = app.open_window(gpui::size(px(1280.), px(832.)), |_, cx| {
+            cx.new(Personalization::new)
+        })?;
+        for ending in ["\r\n", "\r", "\n"] {
+            let saved = std::rc::Rc::new(std::cell::RefCell::new(None));
+            let received = saved.clone();
+            window.update(&mut app, |view, window, cx| {
+                let entity = cx.entity();
+                cx.subscribe(&entity, move |_, _, event, _| {
+                    if let Event::Save(contents) = event {
+                        *received.borrow_mut() = Some(contents.clone());
+                    }
+                })
+                .detach();
+                view.set_unified_instructions(true, cx);
+                view.load(cx);
+                view.loaded(
+                    view.load_generation,
+                    Ok(serde_json::json!({
+                        "path": "/fixture/AGENTS.md",
+                        "contents": format!("First{ending}Second{ending}"),
+                    })),
+                    window,
+                    cx,
+                );
+                let editor = view.editor.as_ref().unwrap();
+                editor.update(cx, |editor, cx| {
+                    assert_eq!(editor.field_text(), "First\nSecond\n");
+                    let length = editor.field_text().encode_utf16().count();
+                    gpui::EntityInputHandler::replace_text_in_range(
+                        editor,
+                        Some(0..length),
+                        "First\r\nChanged\r",
+                        window,
+                        cx,
+                    );
+                    assert_eq!(editor.field_text(), "First\nChanged\n");
+                });
+                view.save(cx);
+            })?;
+            assert_eq!(
+                *saved.borrow(),
+                Some(format!("First{ending}Changed{ending}"))
+            );
+            window.update(&mut app, |view, _, cx| {
+                view.saved(saved.borrow().clone().unwrap(), cx);
+                assert!(!view.opened());
+            })?;
+        }
+        Ok(())
+    }
 
     #[test]
     fn stale_instruction_reads_preserve_the_current_draft() -> anyhow::Result<()> {

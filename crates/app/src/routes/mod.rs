@@ -229,7 +229,7 @@ impl Root {
         {
             self.list_queue(id, cx);
         }
-        self.sync_terminal_panel(cx);
+        self.sync_terminal(cx);
         self.save(window, cx);
         cx.notify();
     }

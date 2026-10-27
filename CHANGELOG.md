@@ -13,7 +13,10 @@ There is no release yet.
 
 ### Fixed
 
+- Keep the diff scroll position while typing a Find query that already has a match on screen, and when expanding context, instead of re-centring the first match.
 - Preserve titled-thread identity in the titlebar and derive compositor tiles from painted bounds.
 - Replay Skia's pinned scanner operations for legacy hairline icon strokes through a new versioned `skia-hairline-sys` package.
 - Preserve page-frame occlusion under opaque scrolling content at rounded surface corners.
 - Draw the Code Review open-request status dot as the original sub-pixel SVG circle.
+- Group the diff find bar in one composited layer and paint its icons under the bar's rounded overflow clip, as the original does.
+- Clip the diff line-number gutters to the scroller so scrolled-out rows no longer paint over the panel header.

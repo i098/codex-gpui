@@ -7,6 +7,11 @@ use gpui::{
 use std::path::PathBuf;
 
 fn main() {
+    #[cfg(target_os = "macos")]
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("{info}");
+        std::process::exit(101);
+    }));
     if std::env::args().nth(1).as_deref() == Some("--qa-build-info") {
         println!("{}", app::qa::build_info());
         return;
@@ -138,6 +143,17 @@ fn main() {
         }
         app::screenshot::register(cx);
         app::qa::monitor(handle, cx);
+        if let Some(path) = std::env::args()
+            .nth(1)
+            .filter(|path| path.starts_with("/hotkey-window") || path == "/spotlight")
+        {
+            match app::hotkey::Target::parse(&path)
+                .and_then(|target| app::hotkey::open(handle, target, cx))
+            {
+                Ok(popout) => app::qa::monitor(popout, cx),
+                Err(error) => eprintln!("codex-gpui: {error:#}"),
+            }
+        }
         if !app::qa::ENABLED {
             cx.activate(true);
         }

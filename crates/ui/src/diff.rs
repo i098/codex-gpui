@@ -99,6 +99,9 @@ const MIN_CHAT: f32 = 320.;
 /// `--diffs-font-size`, `--diffs-line-height`.
 const CODE_SIZE: f32 = 12.;
 const CODE_LINE: f32 = 21.6;
+/// The row box: Blink rounds the 1.8 line height to 2765/64 device px at 2x, while an authored
+/// length truncates (`to_taffy`), so 21.6 would leave each row 1/64 px short.
+const CODE_ROW: f32 = 2765. / 128.;
 const FILE_LINE_HEIGHT: f32 = 22.;
 /// Menlo advance at 12 px (0.602em); `--diffs-min-number-column-width` is 4ch.
 const CH: f32 = 7.224_609_4;
@@ -963,7 +966,6 @@ impl DiffPanel {
             }
         }
         self.active_match = self.active_match.min(self.matches.saturating_sub(1));
-        self.find_scroll.pending.set(self.matches > 0);
         self.reveal_find_match();
     }
 
@@ -1065,6 +1067,8 @@ impl DiffPanel {
             return;
         }
         self.search_changed();
+        self.find_scroll.pending.set(self.matches > 0);
+        self.find_scroll.typing.set(true);
         cx.stop_propagation();
         cx.notify();
     }
@@ -1095,130 +1099,154 @@ impl DiffPanel {
                 .cursor_pointer()
                 .hover(|style| style.bg(t.text_alpha_10))
         };
+        let find_shadow = shadow(black().opacity(0.12), 8., 16., -4., false);
+        let bar = div()
+            .w(px(340.))
+            .h(px(81.))
+            .rounded(px(20.))
+            .p(px(0.5))
+            .child(shapes::decoration(Decoration {
+                fill: Some(t.surface_secondary),
+                border: Some((px(0.5), t.border)),
+                radius: Corners::all(px(20.)),
+                shadows: vec![find_shadow],
+                ..Default::default()
+            }))
+            .flex()
+            .flex_col()
+            .font_family(SANS)
+            // `overflow-hidden rounded-[20px]` with a 0.5px border: the content sits in an AA
+            // rounded clip (padding box, radius 19.5) that changes the icons' edge pixels.
+            .child(crate::rounded_clip(
+                px(19.5),
+                shapes::Corner::Round,
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .h(px(44.))
+                            .flex()
+                            .items_center()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .items_center()
+                                    .pl(px(16.))
+                                    .gap(px(8.))
+                                    .child(icon("diff-find-search", 16., t.text))
+                                    .child(
+                                        div()
+                                            .id("diff-find-input")
+                                            .flex_1()
+                                            .cursor_text()
+                                            .role(gpui::Role::TextInput)
+                                            .aria_label("Find in diff")
+                                            .aria_placeholder("Search diff…")
+                                            .aria_value(query.to_owned())
+                                            .aria_active_descendant()
+                                            .child(text(
+                                                if query.is_empty() {
+                                                    "Search diff…"
+                                                } else {
+                                                    query
+                                                },
+                                                14.,
+                                                24.,
+                                                430.,
+                                                if query.is_empty() {
+                                                    t.text_tertiary
+                                                } else {
+                                                    t.text
+                                                },
+                                            )),
+                                    ),
+                            )
+                            .when(!self.standalone, |d| {
+                                d.child(find_scope_buttons(query, true, t))
+                            })
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .pr(px(16.))
+                                    .child(div().mx(px(8.)).w(px(1.)).h(px(16.)).bg(t.border))
+                                    .child(
+                                        button(
+                                            "diff-find-close",
+                                            "diff-find-close",
+                                            "Close find",
+                                            24.,
+                                            t.text,
+                                        )
+                                        .mx(px(-2.))
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.close_find(cx)),
+                                        ),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .px(px(16.))
+                            .gap(px(12.))
+                            .border_t_1()
+                            .border_color(t.border)
+                            .child(
+                                button(
+                                    "diff-find-previous",
+                                    "diff-find-previous",
+                                    "Previous result",
+                                    16.,
+                                    t.text_tertiary,
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.next_find(true, cx);
+                                    },
+                                )),
+                            )
+                            .child(
+                                button(
+                                    "diff-find-next",
+                                    "diff-find-next",
+                                    "Next result",
+                                    16.,
+                                    t.text_tertiary,
+                                )
+                                .on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.next_find(false, cx);
+                                    },
+                                )),
+                            )
+                            .child(div().flex_1())
+                            .child(
+                                text(count, 14., 24., 430., t.text_tertiary)
+                                    .self_start()
+                                    .mt(px(7.)),
+                            ),
+                    ),
+            ));
+        // Include the shadow's three-sigma raster extent in the composited layer.
+        let outset = find_shadow.blur * 1.5 + find_shadow.spread;
         deferred(
             div()
                 .absolute()
-                .top(px(-36.))
-                .right(px(12.))
-                .w(px(340.))
-                .h(px(81.))
-                .rounded(px(20.))
-                .p(px(0.5))
-                // The fixed bar overlaps composited content: Chromium paints it into a layer
-                // of its own and blends that onto the page.
-                .child(shapes::composited_decoration(Decoration {
-                    fill: Some(t.surface_secondary),
-                    border: Some((px(0.5), t.border)),
-                    radius: Corners::all(px(20.)),
-                    shadows: vec![shadow(black().opacity(0.12), 8., 16., -4., false)],
-                    ..Default::default()
-                }))
-                .flex()
-                .flex_col()
-                .font_family(SANS)
-                .child(
-                    div()
-                        .h(px(44.))
-                        .flex()
-                        .items_center()
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .items_center()
-                                .pl(px(16.))
-                                .gap(px(8.))
-                                .child(icon("diff-find-search", 16., t.text))
-                                .child(
-                                    div()
-                                        .id("diff-find-input")
-                                        .flex_1()
-                                        .cursor_text()
-                                        .role(gpui::Role::TextInput)
-                                        .aria_label("Find in diff")
-                                        .aria_placeholder("Search diff…")
-                                        .aria_value(query.to_owned())
-                                        .aria_active_descendant()
-                                        .child(text(
-                                            if query.is_empty() {
-                                                "Search diff…"
-                                            } else {
-                                                query
-                                            },
-                                            14.,
-                                            24.,
-                                            430.,
-                                            if query.is_empty() {
-                                                t.text_tertiary
-                                            } else {
-                                                t.text
-                                            },
-                                        )),
-                                ),
-                        )
-                        .when(!self.standalone, |d| {
-                            d.child(find_scope_buttons(query, true, t))
-                        })
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .pr(px(16.))
-                                .child(div().mx(px(8.)).w(px(1.)).h(px(16.)).bg(t.border))
-                                .child(
-                                    button(
-                                        "diff-find-close",
-                                        "diff-find-close",
-                                        "Close find",
-                                        24.,
-                                        t.text,
-                                    )
-                                    .mx(px(-2.))
-                                    .on_click(cx.listener(|this, _, _, cx| this.close_find(cx))),
-                                ),
-                        ),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .items_center()
-                        .px(px(16.))
-                        .gap(px(12.))
-                        .border_t_1()
-                        .border_color(t.border)
-                        .child(
-                            button(
-                                "diff-find-previous",
-                                "diff-find-previous",
-                                "Previous result",
-                                16.,
-                                t.text_tertiary,
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.next_find(true, cx);
-                            })),
-                        )
-                        .child(
-                            button(
-                                "diff-find-next",
-                                "diff-find-next",
-                                "Next result",
-                                16.,
-                                t.text_tertiary,
-                            )
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.next_find(false, cx);
-                            })),
-                        )
-                        .child(div().flex_1())
-                        .child(
-                            text(count, 14., 24., 430., t.text_tertiary)
-                                .self_start()
-                                .mt(px(7.)),
-                        ),
-                ),
+                .top(px(-36.) - (outset - find_shadow.offset.y))
+                .right(px(12.) - outset)
+                .w(px(340.) + outset * 2.)
+                .h(px(81.) + outset * 2.)
+                .pt(outset - find_shadow.offset.y)
+                .pl(outset)
+                .top_layer()
+                .child(bar),
         )
         .with_priority(3)
     }
@@ -1260,7 +1288,26 @@ impl DiffPanel {
                 .justify_center()
                 .layer()
                 .child(lens())
-                .child(icon(name, 16., t.text_tertiary))
+                .when(self.show_tree, |d| {
+                    d.child(shapes::decoration(Decoration {
+                        radius: Corners::all(px(14.)),
+                        fill: Some(over(t.accent.opacity(0.1), t.surface)),
+                        ..Default::default()
+                    }))
+                })
+                .child(icon(
+                    name,
+                    16.,
+                    if self.show_tree {
+                        if t.appearance == Appearance::Dark {
+                            over(t.accent.opacity(0.61), gpui::white())
+                        } else {
+                            t.text_accent
+                        }
+                    } else {
+                        t.text_tertiary
+                    },
+                ))
         };
         div()
             .h(px(48.))
@@ -1501,6 +1548,7 @@ impl Render for DiffPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.request_visible_full_files(cx);
         *self.find_scroll.target.borrow_mut() = None;
+        self.find_scroll.lines.borrow_mut().clear();
         let t = cx.theme().clone();
         let width = self
             .container_width
@@ -1572,7 +1620,7 @@ impl Render for DiffPanel {
                     .when(file.open, |d| d.children(self.full_error_notice(i, cx)))
                     .map(|d| {
                         if file.open
-                            && let Some(preview) = self.preview(i, code_width, cx)
+                            && let Some(preview) = self.preview(i, code_width, window, cx)
                         {
                             d.child(preview)
                         } else if file.open && file.problem.is_some() {
@@ -1795,9 +1843,9 @@ impl Render for DiffPanel {
                     .relative()
                     .flex_none()
                     .overflow_hidden()
-                    .when(!self.standalone, |d| d.pb(px(1.)))
+                    .when(!self.standalone && notices.is_none(), |d| d.pb(px(1.)))
                     // Skia blends it like Chromium (a GPUI quad rounds apart).
-                    .when(!self.standalone, |d| {
+                    .when(!self.standalone && notices.is_none(), |d| {
                         d.child(
                             div()
                                 .absolute()
@@ -2414,22 +2462,30 @@ impl Render for SplitScreen {
                 crate::RAIL_WIDTH
             }),
         };
-        // ponytail: like refs/thread, the header only follows the open-sidebar titlebar layout.
         let open = self.shell.read(cx).sidebar_open;
+        let chat = self.layout == WorkspaceLayout::Chat;
+        self.thread
+            .update(cx, |view, cx| view.set_clips(chat, chat && !open, cx));
         let sidebar_width = self.shell.read(cx).sidebar_width;
+        // Without an open sidebar the header starts where the leading titlebar controls end.
+        let header_left = if open {
+            sidebar_width
+        } else {
+            TITLEBAR_LAYER_X
+        };
         div()
             .size_full()
             .relative()
             .font_family(SANS)
             .on_key_down(crate::focus::tab)
             .child(self.shell.clone())
-            .when(open && self.layout != WorkspaceLayout::Full, |d| {
+            .when(self.layout != WorkspaceLayout::Full, |d| {
                 d.child(titlebar_layer(
-                    Some(sidebar_width),
+                    open.then_some(sidebar_width),
                     self.thread
                         .update(cx, |view, cx| view.titlebar_header(left.is_some(), cx))
-                        .when_some(left, |h, left| h.w(left - sidebar_width)),
-                    sidebar_width,
+                        .when_some(left, |h, left| h.w(left - header_left)),
+                    header_left,
                 ))
             })
             // Without a panel the shell's `New tab` group follows the header behind a divider.
@@ -2603,8 +2659,8 @@ pub fn with_side_tabs(
     let (main, panel_focus) =
         workspace_content(&thread, panel.as_ref().map(|(view, ..)| view), layout, cx);
     shell.update(cx, |shell, cx| {
-        // A panel's tab strip brings its own `New tab`.
-        shell.new_tab = panel.is_none();
+        // A visible panel's tab strip brings its own `New tab`.
+        shell.new_tab = layout == WorkspaceLayout::Chat;
         // File and Changes panels also composite the surface itself.
         shell.main_composited = true;
         shell.main_opaque_scroll = panel.as_ref().and_then(|(view, ..)| {
@@ -2620,9 +2676,6 @@ pub fn with_side_tabs(
         // A lone thread draws its own px at the surface's right corners.
         shell.main_clips_right = layout == WorkspaceLayout::Chat;
         shell.set_main(main, cx);
-    });
-    thread.update(cx, |thread, _| {
-        thread.clip_right = layout == WorkspaceLayout::Chat
     });
     let (tabs, active) = panel
         .map(|(_, tabs, active)| (tabs, active))
@@ -3089,14 +3142,16 @@ pub(crate) fn stats_features(size: f32) -> FontFeatures {
 /// `tabular-nums` and `disambiguated-digits` (`cv01`, `cv02`).
 pub fn stats(added: usize, removed: usize, size: f32, t: &Theme) -> Div {
     let features = stats_features(size);
-    let tracked =
-        |s: String, color: Hsla| text(s, size, size, 430., color).font_features(features.clone());
+    let tracked = |count, sign, color: Hsla| {
+        text(states::signed_count(count, sign), size, size, 430., color)
+            .font_features(features.clone())
+    };
     div()
         .flex()
         .items_center()
         .gap(px(4.))
-        .child(tracked(format!("+{added}"), t.git_added))
-        .child(tracked(format!("-{removed}"), t.git_deleted))
+        .child(tracked(added, '+', t.git_added))
+        .child(tracked(removed, '-', t.git_deleted))
 }
 
 fn file_header(
@@ -3328,7 +3383,13 @@ fn change_marker(kind: Kind, split: bool, t: &Theme) -> Div {
     } else {
         t.git_deleted
     };
-    let marker = div().absolute().left_0().top_0().w(px(4.)).h_full();
+    // The original's `contain: strict` marker ends two device px (at 2x) above the row box.
+    let marker = div()
+        .absolute()
+        .left_0()
+        .top_0()
+        .bottom(px(1. / 64.))
+        .w(px(4.));
     if kind != Kind::Removed || split {
         return marker.child(shapes::decoration(Decoration {
             fill: Some(color),
@@ -3406,8 +3467,8 @@ fn hunk(
                bar: Option<Kind>,
                utility: Option<gpui::AnyElement>| {
         div()
-            .h(px(CODE_LINE))
-            .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_LINE)))
+            .h(px(CODE_ROW))
+            .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_ROW)))
             .flex()
             .gap(px(2.))
             .child(
@@ -3432,14 +3493,16 @@ fn hunk(
                         .when_some(number, |d, n| d.child(n.to_string()))
                         .children(utility),
                 )
-                .with_priority(1),
+                .with_priority(1)
+                // Deferred only for paint order: scrolled-out rows stay inside the scroller.
+                .clipped(),
             )
             .child(
                 div()
                     .relative()
                     .flex_1()
                     .h_full()
-                    .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_LINE)).min_w_0())
+                    .when(panel.wrap, |d| d.h_auto().min_h(px(CODE_ROW)).min_w_0())
                     .flex()
                     .items_center()
                     .when(panel.wrap, |d| d.flex_col().items_stretch())
@@ -3681,7 +3744,7 @@ fn hunk(
                                 .flex_1()
                                 .min_w_0()
                                 .overflow_hidden()
-                                .min_h(px(CODE_LINE))
+                                .min_h(px(CODE_ROW))
                                 .children(old.map(|i| {
                                     render_line(
                                         &h.lines[i],
@@ -3696,7 +3759,7 @@ fn hunk(
                                 .flex_1()
                                 .min_w_0()
                                 .overflow_hidden()
-                                .min_h(px(CODE_LINE))
+                                .min_h(px(CODE_ROW))
                                 .children(new.map(|i| {
                                     render_line(
                                         &h.lines[i],
