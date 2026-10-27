@@ -18,6 +18,7 @@ There is no release yet.
 - Add the Cloud environment UI with repository selection and saved setup flows
 
 ### Fixed
+- Match the original Home logo, zoom banner and titlebar buttons at 90% and 110% zoom.
 - Draw the bottom terminal panel's tab close glyph once, and snap a selected tab at a fractional position to the device grid as the original does.
 - Show the original Steer, Delete, and menu icons on queued messages, and place the queued-message menu where the original opens it.
 - Match the original Keyboard shortcuts dialog list, search field, keycaps and close icon, and the original Keyboard settings row, menu check and search text offsets.
