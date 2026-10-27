@@ -26,6 +26,11 @@ use ui::composer::Composer;
 use ui::screens::settings::AppServer;
 
 pub const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+fn target_tmpdir() -> PathBuf {
+    option_env!("CARGO_TARGET_TMPDIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(env::temp_dir)
+}
 /// The fixtures' project (`thread/start` cwd).
 pub const CWD: &str = "/tmp/cgx-mac/proj";
 /// Recents order of readback.jsonl's `thread/list`.
@@ -58,10 +63,8 @@ pub fn replay_adapter(recording: &Path) -> Result<Vec<Value>> {
                 .is_file(),
         "unsupported recording contract {stem:?}: no dedicated adapter"
     );
-    let log = (stem == "s017").then(|| {
-        Path::new(env!("CARGO_TARGET_TMPDIR"))
-            .join(format!("replay-{stem}-{}.log", std::process::id()))
-    });
+    let log = (stem == "s017")
+        .then(|| target_tmpdir().join(format!("replay-{stem}-{}.log", std::process::id())));
     let mut command = Command::new(env!("CARGO"));
     command.current_dir(ROOT).args([
         "test",
@@ -727,7 +730,7 @@ pub fn assert_hover(fx: &mut Fx, at: (f32, f32), rect: [f32; 4], min: usize) -> 
 
 /// Compares a captured image with the original reference and fails on a strict pixel mismatch.
 pub fn parity_image(screen: &str, theme: &str, port: &RgbaImage) -> Result<String> {
-    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("flows-parity");
+    let out = target_tmpdir().join("flows-parity");
     let refs = PathBuf::from(format!("{ROOT}/refs"));
     let m = parity::diff_ref(&refs, &out, screen, theme, port)?;
     let note = format!(
