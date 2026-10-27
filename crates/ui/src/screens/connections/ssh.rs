@@ -95,11 +95,7 @@ impl ConnectionsPage {
             (("Identity file path", ""), draft.identity.as_str()),
         ]
         .map(|((label, placeholder), value)| {
-            cx.new(|cx| {
-                let mut field = Composer::inline_field(placeholder, value, cx);
-                field.set_field_label(label, cx);
-                field
-            })
+            cx.new(|cx| Composer::dialog_field(label, placeholder, value, cx))
         });
         let previous = self
             .discovery

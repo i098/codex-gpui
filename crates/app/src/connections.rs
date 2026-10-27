@@ -55,10 +55,27 @@ impl Drop for Runtime {
     }
 }
 
+/// Every window calls this; the runtime and page state are app-wide, so later windows only
+/// re-point `dispatch` (the last window wins, like `ComputerUseState`).
 pub(super) fn install(cx: &mut Context<Root>) {
-    let runtime = Arc::new(Runtime::default());
-    cx.set_global(Registry(runtime.clone()));
+    let runtime = match cx.try_global::<Registry>() {
+        Some(registry) => registry.0.clone(),
+        None => {
+            let runtime = Arc::new(Runtime::default());
+            cx.set_global(Registry(runtime.clone()));
+            runtime
+        }
+    };
     let weak = cx.weak_entity();
+    let dispatch: view::Dispatch = Arc::new(move |action, cx| {
+        let runtime = runtime.clone();
+        weak.update(cx, |root, cx| handle(root, runtime, action, cx))
+            .ok();
+    });
+    if cx.has_global::<ConnectionsState>() {
+        cx.update_global::<ConnectionsState, _>(|state, _| state.dispatch = Some(dispatch));
+        return;
+    }
     let keep_awake = cx
         .try_global::<host_settings::Settings>()
         .and_then(|s| {
@@ -69,16 +86,12 @@ pub(super) fn install(cx: &mut Context<Root>) {
         .unwrap_or(false);
     cx.set_global(ConnectionsState {
         keep_awake,
-        dispatch: Some(Arc::new(move |action, cx| {
-            let runtime = runtime.clone();
-            weak.update(cx, |root, cx| handle(root, runtime, action, cx))
-                .ok();
-        })),
+        dispatch: Some(dispatch),
         ..Default::default()
     });
 }
 
-pub(super) fn sync(root: &mut Root, cx: &mut Context<Root>) {
+pub(super) fn sync(cx: &mut Context<Root>) {
     let native = cx
         .try_global::<ui::screens::computer_use_native::NativeSettingsState>()
         .map(|s| s.policy.clone())
@@ -87,8 +100,6 @@ pub(super) fn sync(root: &mut Root, cx: &mut Context<Root>) {
         state.generation = state.generation.wrapping_add(1);
         state.pending = false;
         state.active_setup = None;
-        state.gates.remote_connections = root.config["features"]["remote_connections"] == true
-            || root.config["features.remote_connections"] == true;
         state.gates.slingshot = native.slingshot_enabled;
         state.gates.available = native.remote_control_available;
         state.gates.access_required = native.remote_control_access_required;
@@ -121,10 +132,11 @@ impl Runtime {
             .map_err(|_| anyhow::anyhow!("Remote connection lock is poisoned"))
     }
 
-    async fn refresh_rows(
+    /// Saved, WSL and connected rows; auto-connect runs afterwards as a `ConnectBatch`
+    /// so the list shows without waiting on SSH.
+    fn refresh_rows(
         &self,
         host: &dyn host::Host,
-        executor: &gpui::BackgroundExecutor,
     ) -> Result<(host::connections::SavedConnections, Option<String>)> {
         let wsl_error = match host::connections::discover_wsl() {
             Ok(rows) => {
@@ -136,19 +148,7 @@ impl Runtime {
             }
             Err(error) => Some(error.to_string()),
         };
-        let mut rows = self.rows(host)?;
-        for row in &mut rows.rows {
-            if row.auto_connect && row.state != "connected" {
-                match self.connect(host, &row.host_id, true, executor).await {
-                    Ok(()) => row.state = "connected".into(),
-                    Err(error) => {
-                        row.state = "error".into();
-                        row.error = Some(error.to_string());
-                    }
-                }
-            }
-        }
-        Ok((rows, wsl_error))
+        Ok((self.rows(host)?, wsl_error))
     }
 
     fn rows(&self, host: &dyn host::Host) -> Result<host::connections::SavedConnections> {
@@ -528,7 +528,7 @@ fn handle(root: &mut Root, runtime: Arc<Runtime>, action: Action, cx: &mut Conte
                     let (rows, wsl_error) = if mobile_only {
                         (None, None)
                     } else {
-                        let (rows, error) = runtime.refresh_rows(host.as_ref(), &executor).await?;
+                        let (rows, error) = runtime.refresh_rows(host.as_ref())?;
                         (Some(rows), error)
                     };
                     let remote = if read_control {
@@ -748,6 +748,12 @@ fn handle(root: &mut Root, runtime: Arc<Runtime>, action: Action, cx: &mut Conte
                     cx.update_global::<ConnectionsState, _>(|state, _| match update {
                         Update::Refresh(snapshot) => {
                             if let Some(rows) = snapshot.rows {
+                                connect_saved = rows
+                                    .rows
+                                    .iter()
+                                    .filter(|row| row.auto_connect && row.state != "connected")
+                                    .map(|row| row.host_id.clone())
+                                    .collect();
                                 state.setup_complete = rows.setup_complete;
                                 state.connections = Some(rows.rows);
                                 state.wsl_error = snapshot.wsl_error;
@@ -969,15 +975,6 @@ pub(super) fn mobile_page(root: &Root, cx: &App) -> Option<gpui::Entity<mobile::
         .or_else(|| cx.global::<ConnectionsState>().active_setup.clone())
 }
 
-pub(super) fn remote_route(root: &mut Root, cx: &mut Context<Root>) {
-    if cx.global::<ConnectionsState>().gates.remote_connections {
-        root.state.route = Route::Settings;
-        root.settings_section = Some("Connections");
-    } else {
-        root.state.route = Route::Home;
-    }
-}
-
 pub(super) fn startup(root: &Root, cx: &mut Context<Root>) {
     if root.state.path.is_some() && !root.bridge.is_acp() {
         cx.defer(|cx| view::dispatch(Action::Refresh, cx));
@@ -985,30 +982,14 @@ pub(super) fn startup(root: &Root, cx: &mut Context<Root>) {
 }
 
 impl Root {
+    /// Opens Settings > Connections at `tab` (`codex://settings/connections/<tab>`).
     pub fn open_connections(
         &mut self,
-        path: &str,
+        tab: view::Tab,
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
-    ) -> bool {
-        if path.contains('?') || path.contains('#') {
-            return false;
-        }
-        let path = path.trim_start_matches('/');
-        if path == "remote-connections" {
-            self.navigate(Route::RemoteConnections, window, cx);
-            return true;
-        }
-        let path = path.strip_prefix("settings/").unwrap_or(path);
-        let tab = match path {
-            "connections" | "connections/computer" => view::Tab::Computer,
-            "connections/devices" => view::Tab::Devices,
-            "connections/ssh" => view::Tab::Ssh,
-            "connections/wsl" => view::Tab::Wsl,
-            _ => return false,
-        };
+    ) {
         cx.update_global::<ConnectionsState, _>(|state, _| state.requested_tab = tab);
         self.open_settings_section("Connections", window, cx);
-        true
     }
 }

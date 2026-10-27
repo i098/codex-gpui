@@ -29,7 +29,6 @@ pub enum Route {
     Automation(String),
     /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
     Mobile,
-    RemoteConnections,
     Security,
     Plugins(String),
     Archive,
@@ -128,10 +127,7 @@ impl Root {
     /// Shows the route (loading its thread if needed), pushes history into the shell and
     /// persists the state.
     pub(crate) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        crate::connections::sync(self, cx);
-        if self.state.route == Route::RemoteConnections {
-            crate::connections::remote_route(self, cx);
-        }
+        crate::connections::sync(cx);
         let home = matches!(self.state.route, Route::Home);
         if cx.has_global::<ui::screens::settings::keyboard_shortcuts::KeyboardState>() {
             cx.update_global::<ui::screens::settings::keyboard_shortcuts::KeyboardState, _>(
@@ -183,7 +179,6 @@ impl Root {
                 None
             }
             Route::Home | Route::Thread(_) | Route::SelectWorkspace => None,
-            Route::RemoteConnections => unreachable!("remote route resolves before rendering"),
         };
         if let Some(sidebar) = &self.scheduled {
             for id in self.automation_updates.keys() {

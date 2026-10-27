@@ -1197,7 +1197,7 @@ impl Root {
         {
             self.load_import_policy(cx);
         }
-        connections::sync(self, cx);
+        connections::sync(cx);
         self.automations = None;
         self.load_projects(cx);
         if self.ready && !self.signed_out() {

@@ -20,20 +20,8 @@ pub enum Tab {
     Wsl,
 }
 
-impl Tab {
-    pub fn path(self) -> &'static str {
-        match self {
-            Self::Computer => "/settings/connections/computer",
-            Self::Devices => "/settings/connections/devices",
-            Self::Ssh => "/settings/connections/ssh",
-            Self::Wsl => "/settings/connections/wsl",
-        }
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct Gates {
-    pub remote_connections: bool,
     pub slingshot: bool,
     pub available: Option<bool>,
     pub access_required: bool,

@@ -338,7 +338,10 @@ pub fn model_label(name: &str) -> String {
 enum FieldStyle {
     Settings,
     Form,
+    /// A settings-row value: frameless, right-aligned, secondary text.
     Inline,
+    /// Like `Inline`, but left-aligned in primary text.
+    Dialog,
 }
 
 /// One `model/list` entry as the picker shows it.
@@ -891,6 +894,19 @@ impl Composer {
     pub fn inline_field(placeholder: &'static str, value: &str, cx: &mut Context<Self>) -> Self {
         let mut field = Self::settings_field(placeholder, value, false, cx);
         field.field_style = FieldStyle::Inline;
+        field
+    }
+
+    /// A frameless single-line field for a dialog that draws its own frame, labelled `label`.
+    pub fn dialog_field(
+        label: &'static str,
+        placeholder: &'static str,
+        value: &str,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut field = Self::settings_field(placeholder, value, false, cx);
+        field.field_style = FieldStyle::Dialog;
+        field.request_label = Some(label.into());
         field
     }
 
@@ -2334,7 +2350,7 @@ impl Render for Composer {
         }
         if self.plain_field.is_some() && self.field_style != FieldStyle::Settings {
             let multiline = self.plain_field == Some(true);
-            let inline = self.field_style == FieldStyle::Inline;
+            let inline = matches!(self.field_style, FieldStyle::Inline | FieldStyle::Dialog);
             let input = self
                 .editor(cx)
                 .w_full()
