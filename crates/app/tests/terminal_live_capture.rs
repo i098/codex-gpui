@@ -5,6 +5,11 @@ use anyhow::{Context as _, Result, ensure};
 use common::{Fx, SUBTRACT};
 use serde_json::json;
 
+#[test]
+fn proxy() {
+    common::proxy_child();
+}
+
 fn wait_prompt(fx: &mut Fx) -> Result<()> {
     fx.wait("real shell prompt", |fx| {
         fx.read(|root, cx| {
