@@ -6,7 +6,8 @@ use gpui::{
     Entity, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, point, px,
 };
 use std::{fs, path::Path, sync::Arc};
-use ui::screens::settings::archived_chats::{ArchivedChats, OpenArchivedChats};
+use ui::screens::settings::archived_chats::ArchivedChats;
+use ui::screens::settings::storage::ManageArchivedChats;
 
 #[test]
 fn proxy() {
@@ -42,7 +43,7 @@ fn fixture_with_host(host: Option<Arc<dyn app::host::Host>>) -> Result<Fx> {
     }
     fx.cx
         .update(|cx| ui::composer::Composer::set_caret_transparent(cx, true));
-    fx.action(Box::new(OpenArchivedChats))?;
+    fx.action(Box::new(ManageArchivedChats))?;
     fx.wait("archived settings", |fx| {
         fx.read(|root, cx| {
             root.archived_settings()
@@ -124,6 +125,17 @@ fn native_archive_interactions() -> Result<()> {
         shot(&mut fx, "no-matches")?;
         fx.keys("cmd-a backspace")?;
     }
+    // Keyboard menu path: Down opens the rows, Enter picks "Cloud", which hides every local row.
+    fx.click((916., 203.))?;
+    fx.keys("escape")?;
+    fx.keys("down down down down enter")?;
+    fx.click((1054., 324.))?;
+    ensure!(
+        fx.read(|_, cx| page(&fx).read(cx).confirmation().is_none()),
+        "Keyboard filter choice did not hide the local rows"
+    );
+    fx.click((916., 203.))?;
+    fx.keys("escape down down enter")?;
     fx.click((1115., 324.))?;
     fx.wait("restored archived chat", |fx| {
         !ids(fx).contains(&initial[0])

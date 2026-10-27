@@ -1,15 +1,12 @@
 use super::*;
 use gpui::Div;
 use ui::screens::settings::archived_chats::{
-    ArchiveAction, ArchiveData, CloudArchive, DeleteScope, OpenArchivedChats, Operation,
+    ArchiveAction, ArchiveData, CloudArchive, DeleteScope, Operation,
 };
 use ui::screens::sidebar::archived_threads;
 
 pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
-    root.on_action(cx.listener(|this, _: &OpenArchivedChats, window, cx| {
-        this.open_settings_section("Archived chats", window, cx);
-    }))
-    .on_action(cx.listener(|this, action: &ArchiveAction, window, cx| {
+    root.on_action(cx.listener(|this, action: &ArchiveAction, window, cx| {
         this.archive_action(action.page.clone(), action.operation.clone(), window, cx);
     }))
 }

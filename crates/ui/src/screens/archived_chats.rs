@@ -41,8 +41,6 @@ pub struct ArchiveAction {
     pub operation: Operation,
 }
 
-gpui::actions!(archived_chats, [OpenArchivedChats]);
-
 #[derive(Clone, Deserialize)]
 pub struct CloudArchive {
     pub id: String,
@@ -197,6 +195,7 @@ pub struct ArchivedChats {
     removed: HashSet<String>,
     menu: Option<Menu>,
     menu_hovered: bool,
+    menu_items: Vec<gpui::FocusHandle>,
     confirmation: Option<Entity<Confirmation>>,
     layer: Layer,
 }
@@ -240,6 +239,7 @@ impl ArchivedChats {
             removed: HashSet::new(),
             menu: None,
             menu_hovered: false,
+            menu_items: Vec::new(),
             confirmation: None,
             layer: Layer::default(),
         }
@@ -371,12 +371,16 @@ impl ArchivedChats {
                 DeleteScope::Single(thread.id.clone()),
             )
         } else if let Some(project) = project {
-            let ids: Vec<_> = self
-                .groups
+            let ids: Vec<_> = threads
                 .iter()
-                .filter(|group| group.project == Some(project))
-                .flat_map(|group| &group.rows)
-                .filter_map(|&index| threads.get(index))
+                .filter(|thread| {
+                    project_for(
+                        &thread.id,
+                        Some(&thread.cwd),
+                        &self.projects,
+                        &self.metadata,
+                    ) == Some(project)
+                })
                 .map(|thread| thread.id.clone())
                 .collect();
             let noun = if ids.len() == 1 { "chat" } else { "chats" };
@@ -523,7 +527,7 @@ impl ArchivedChats {
             self.menu = None;
             cx.notify();
         } else if event.keystroke.key == "down" && open {
-            window.focus_next(cx);
+            self.move_menu(1, window, cx);
         } else {
             return false;
         }
@@ -557,12 +561,19 @@ impl ArchivedChats {
         }
         let popup = open.then(|| self.popup(window, cx)).flatten();
         let click = command.clone();
+        let key_focus = handle.clone();
         focus::ring(body.children(popup), &focus, px(12.5), px(0.), cx)
             .when(disabled, |d| d.opacity(0.4))
             .capture_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                // Keys on a focused menu row belong to the popup inside this control.
+                if open && !key_focus.is_focused(window) {
+                    return;
+                }
+                let key = event.keystroke.key.as_str();
                 if !this.control_menu_key(event, open, window, cx)
                     && !disabled
-                    && matches!(event.keystroke.key.as_str(), "enter" | "space" | "down")
+                    && (matches!(key, "enter" | "space")
+                        || (key == "down" && matches!(command, Control::Menu(_))))
                 {
                     this.activate(command.clone(), window, cx);
                     cx.stop_propagation();
@@ -598,14 +609,40 @@ impl ArchivedChats {
                 self.query.focus_handle(cx).focus(window, cx);
             }
             Control::Menu(menu) => {
+                self.menu_hovered = false;
                 self.menu = if self.menu.as_ref() == Some(&menu) {
                     None
                 } else {
+                    let items = self.menu_entries(&menu).len();
+                    self.menu_items = (0..items).map(|_| cx.focus_handle()).collect();
                     Some(menu)
                 };
                 cx.notify();
             }
         }
+    }
+
+    /// Moves focus by `delta` among the open menu's selectable rows, wrapping at the ends.
+    fn move_menu(&self, delta: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = &self.menu else {
+            return;
+        };
+        let rows: Vec<_> = self
+            .menu_entries(menu)
+            .iter()
+            .zip(&self.menu_items)
+            .filter(|((_, _, choice), _)| choice.is_some())
+            .map(|(_, handle)| handle)
+            .collect();
+        if rows.is_empty() {
+            return;
+        }
+        let next = match rows.iter().position(|handle| handle.is_focused(window)) {
+            Some(current) => (current as isize + delta).rem_euclid(rows.len() as isize) as usize,
+            None if delta < 0 => rows.len() - 1,
+            None => 0,
+        };
+        rows[next].focus(window, cx);
     }
 
     fn row(&self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> Div {
@@ -895,17 +932,12 @@ impl ArchivedChats {
             Some(MenuChoice::Project(ProjectFilter::Project(_))) => Some("archive-folder"),
             _ => None,
         };
-        let focus = focus::handle(
-            SharedString::from(format!("archive-menu-{index}")),
-            0,
-            window,
-            cx,
-        );
+        let focus = self.menu_items.get(index).filter(|_| choice.is_some());
+        let focused = focus.is_some_and(|handle| handle.is_focused(window));
         div()
             .id(("archive-menu-item", index))
-            .when(choice.is_some(), |d| {
-                d.role(gpui::Role::MenuItem)
-                    .track_focus(&focus.read(cx).handle)
+            .when_some(focus, |d, handle| {
+                d.role(gpui::Role::MenuItem).track_focus(handle)
             })
             .rounded(px(15.))
             .px(px(8.))
@@ -914,6 +946,7 @@ impl ArchivedChats {
             .items_center()
             .gap(px(6.))
             .when(choice.is_some(), |d| d.hover(|s| s.bg(t.menu_item_hover)))
+            .when(focused, |d| d.bg(t.menu_item_hover))
             .when_some(leading, |d, glyph| {
                 d.child(icon(glyph, 16., color).opacity(0.75))
             })
@@ -982,8 +1015,8 @@ impl ArchivedChats {
                                                 this.menu = None;
                                                 cx.notify();
                                             }
-                                            "down" => window.focus_next(cx),
-                                            "up" => window.focus_prev(cx),
+                                            "down" => this.move_menu(1, window, cx),
+                                            "up" => this.move_menu(-1, window, cx),
                                             _ => return,
                                         }
                                         cx.stop_propagation();
@@ -1123,7 +1156,7 @@ impl Render for ArchivedChats {
             Some(Ok(threads)) if threads.is_empty() && self.cloud.is_empty() => {
                 content = content.child(self.message_row("No archived chats", None, cx))
             }
-            Some(_) if self.groups.is_empty() && !show_error => {
+            Some(_) if self.groups.is_empty() && self.pending.is_empty() => {
                 content = content.child(self.message_row("No matching archived chats", None, cx))
             }
             _ => {
