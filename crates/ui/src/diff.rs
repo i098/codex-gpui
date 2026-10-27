@@ -2301,6 +2301,68 @@ impl SplitScreen {
                     .on_click(dispatch_action(crate::StepWorkspaceLayout)),
             )
     }
+
+    /// The compact titlebar of a hidden panel: a `w-px` divider, then `Enter full view` and
+    /// `Show tabs` with the tab count.
+    fn compact_controls(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        let focus = crate::focus::handle("compact-show-tabs", 0, window, cx);
+        let count = div()
+            .relative()
+            .size(px(16.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                icon("tab-count", 16., t.text_tertiary)
+                    .absolute()
+                    .top_0()
+                    .left_0(),
+            )
+            .child(text(
+                self.tabs.len().to_string(),
+                8.,
+                8.,
+                600.,
+                t.text_tertiary,
+            ));
+        let show = crate::icon_button("compact-show-tabs", count, &t)
+            .tab_index(0)
+            .aria_label("Show tabs")
+            .on_click(dispatch_action(crate::StepWorkspaceLayout))
+            .on_key_down(dispatch_key(crate::StepWorkspaceLayout));
+        div()
+            .absolute()
+            .right(px(8.))
+            .top(px(8.))
+            .flex()
+            .gap(px(6.))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(-7.))
+                    .top(px(6.))
+                    .w(px(1.))
+                    .h(px(16.))
+                    .bg(over(t.border, layout_color(&t))),
+            )
+            .child(
+                crate::icon_button(
+                    "compact-full-view",
+                    icon("diff-full-view", 16., t.text_tertiary),
+                    &t,
+                )
+                .aria_label("Enter full view")
+                .on_click(dispatch_action(crate::ShowWorkspaceTabView)),
+            )
+            .child(crate::focus::ring(
+                show,
+                &focus,
+                Theme::RADIUS_LG,
+                px(0.),
+                cx,
+            ))
+    }
 }
 
 // Paint the fill directly into the titlebar layer's transparent tile.
@@ -2470,6 +2532,17 @@ impl Render for SplitScreen {
         let chat = self.layout == WorkspaceLayout::Chat;
         self.thread
             .update(cx, |view, cx| view.set_clips(chat, chat && !open, cx));
+        // A visible panel's tab strip brings its own `New tab`; a hidden one at compact width
+        // shows its own controls instead.
+        let compact =
+            chat && !self.tabs.is_empty() && window.viewport_size().width <= SIDE_PANEL_BREAKPOINT;
+        let new_tab = chat && !compact;
+        self.shell.update(cx, |shell, cx| {
+            if shell.new_tab != new_tab {
+                shell.new_tab = new_tab;
+                cx.notify();
+            }
+        });
         let sidebar_width = self.shell.read(cx).sidebar_width;
         // Without an open sidebar the header starts where the leading titlebar controls end.
         let header_left = if open {
@@ -2488,12 +2561,15 @@ impl Render for SplitScreen {
                     open.then_some(sidebar_width),
                     self.thread
                         .update(cx, |view, cx| view.titlebar_header(left.is_some(), cx))
-                        .when_some(left, |h, left| h.w(left - header_left)),
+                        .when_some(left, |h, left| h.w(left - header_left))
+                        .when(compact, |h| {
+                            h.w(window.viewport_size().width - header_left - COMPACT_CONTROLS_WIDTH)
+                        }),
                     header_left,
                 ))
             })
             // Without a panel the shell's `New tab` group follows the header behind a divider.
-            .when(open && left.is_none(), |d| {
+            .when(open && left.is_none() && !compact, |d| {
                 let t = cx.theme();
                 d.child(
                     div()
@@ -2505,31 +2581,29 @@ impl Render for SplitScreen {
                         .bg(over(t.border, layout_color(t))),
                 )
             })
-            .when(
-                self.layout == WorkspaceLayout::Chat && !self.tabs.is_empty(),
-                |d| {
-                    d.child(
-                        div()
-                            .id("workspace-show-tabs")
-                            .role(gpui::Role::Button)
-                            .aria_label("Show tabs")
-                            .focusable()
-                            .tab_index(0)
-                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .absolute()
-                            .top(px(8.))
-                            .right(px(8.))
-                            .size(px(28.))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .on_click(dispatch_action(crate::StepWorkspaceLayout))
-                            .on_key_down(dispatch_key(crate::StepWorkspaceLayout))
-                            .focus_visible(|style| style.border_2().border_color(rgb(0x3a83f7)))
-                            .child(icon("diff-hide-tabs", 16., cx.theme().text_tertiary)),
-                    )
-                },
-            )
+            .when(chat && !self.tabs.is_empty() && !compact, |d| {
+                d.child(
+                    div()
+                        .id("workspace-show-tabs")
+                        .role(gpui::Role::Button)
+                        .aria_label("Show tabs")
+                        .focusable()
+                        .tab_index(0)
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .absolute()
+                        .top(px(8.))
+                        .right(px(8.))
+                        .size(px(28.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .on_click(dispatch_action(crate::StepWorkspaceLayout))
+                        .on_key_down(dispatch_key(crate::StepWorkspaceLayout))
+                        .focus_visible(|style| style.border_2().border_color(rgb(0x3a83f7)))
+                        .child(icon("diff-hide-tabs", 16., cx.theme().text_tertiary)),
+                )
+            })
+            .when(compact, |d| d.child(self.compact_controls(window, cx)))
             .when_some(left, |d, left| {
                 d.child(
                     // In the composited `group/titlebar`, like the thread's header: the
@@ -2604,6 +2678,14 @@ fn titlebar_layer(sidebar: Option<Pixels>, header: Div, header_left: Pixels) -> 
 /// Left edge of Chromium's composited `group/titlebar` layer.
 const TITLEBAR_LAYER_X: Pixels = px(224.);
 
+/// At most this wide, a thread's side panel hides like the original's compact layout.
+pub const SIDE_PANEL_BREAKPOINT: Pixels = px(960.);
+
+/// The compact titlebar's controls (`compact_controls`): a `w-px` divider, then `Enter full
+/// view` and `Show tabs` (`size-7`), `gap-1.5` apart, inside `pe-2`. The thread's toolbar ends
+/// at the divider.
+const COMPACT_CONTROLS_WIDTH: Pixels = px(1. + 6. + 28. + 6. + 28. + 8.);
+
 /// A thread route (refs/thread): `thread` beside the sidebar; with `panel` (refs/diff,
 /// refs/terminal) the panel view on the right under a titlebar tab `(view, icon, label)`.
 pub fn split_screen(
@@ -2663,8 +2745,6 @@ pub fn with_side_tabs(
     let (main, panel_focus) =
         workspace_content(&thread, panel.as_ref().map(|(view, ..)| view), layout, cx);
     shell.update(cx, |shell, cx| {
-        // A visible panel's tab strip brings its own `New tab`.
-        shell.new_tab = layout == WorkspaceLayout::Chat;
         // File and Changes panels also composite the surface itself.
         shell.main_composited = true;
         shell.main_opaque_scroll = panel.as_ref().and_then(|(view, ..)| {

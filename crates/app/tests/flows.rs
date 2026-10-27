@@ -63,6 +63,21 @@ const FLOWS: &[(&str, Flow)] = &[
             Ok(())
         })
     }),
+    ("parity_screenshot", || {
+        parity_flow("screenshot", |fx| {
+            // The selection result of `screenshotToCurrentChat`: the s017 recording's PNG.
+            let rec: Value = serde_json::from_slice(&std::fs::read(format!(
+                "{ROOT}/refs/interactions/s017.json"
+            ))?)?;
+            let png: Vec<u8> =
+                serde_json::from_value(rec["steps"][1]["clipboard"]["pngBytes"].clone())?;
+            let composer = fx.composer();
+            fx.cx
+                .update(|cx| composer.update(cx, |composer, cx| composer.attach_png(png, cx)));
+            fx.cx.run_until_parked();
+            Ok(())
+        })
+    }),
     ("back_forward_titlebar", back_forward_titlebar),
     ("back_forward_keys", back_forward_keys),
     ("parity_thread", || {

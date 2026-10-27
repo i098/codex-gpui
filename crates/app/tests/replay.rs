@@ -413,8 +413,9 @@ fn check_pixels(
 // --- State ---
 
 /// `result.state`: port-side facts after the last step. Keys: `route` (`home`, `settings`,
-/// `settings/<subtree>`, `scheduled`, `mobile`, `thread:<id>`, `remote/<id>`,
-/// `hotkey-window/remote/<id>`), `selectedRail` (id or null), `sidebarOpen`,
+/// `settings/<subtree>`, `scheduled`, `mobile`, `archive`, `pull-requests`,
+/// `thread:<id>`, `remote/<id>`, `hotkey-window/remote/<id>`),
+/// `selectedRail` (id or null), `sidebarOpen`,
 /// `canGoBack`, `canGoForward`, `commandMenu` (open), `composerFocused`. A slice that needs
 /// another fact adds its key here.
 fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
@@ -438,6 +439,7 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
                 Route::Mobile => "mobile".to_owned(),
                 Route::Security => "security".to_owned(),
                 Route::Archive => "archive".to_owned(),
+                Route::PullRequests(_) => "pull-requests".to_owned(),
                 Route::SelectWorkspace => "select-workspace".to_owned(),
                 Route::Plugins(path) => path,
                 Route::Onboarding(page) => page.path().trim_start_matches('/').to_owned(),

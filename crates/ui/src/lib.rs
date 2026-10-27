@@ -52,6 +52,7 @@ actions!(
         OpenMini,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
+        OpenPullRequests,
         OpenPlugins,
         OpenSecurity,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
@@ -987,7 +988,7 @@ impl Shell {
             let fg = if on { t.text } else { t.text_tertiary };
             let id = SharedString::from(format!("rail-{name}"));
             let focus = focus::handle(id.clone(), 0, window, cx);
-            let glyph = if on && name != "explore" {
+            let glyph = if on && !matches!(name, "explore" | "rail-code-review") {
                 format!("{name}-filled")
             } else {
                 name.to_string()
@@ -1143,11 +1144,15 @@ impl Shell {
                             .h(px(scale.floor().max(1.) / scale))
                             .bg(t.border),
                     )
-                    .children(
-                        RAIL_DESTINATIONS
-                            .iter()
-                            .map(|destination| rail_tip(item(destination.icon), destination.label)),
-                    )
+                    .children(RAIL_DESTINATIONS.iter().map(|destination| {
+                        rail_tip(
+                            item(destination.icon)
+                                .when(destination.id == "builtin:pull-requests", |item| {
+                                    item.on_click(dispatch::<OpenPullRequests>)
+                                }),
+                            destination.label,
+                        )
+                    }))
                     .child(shapes::top_fade(px(16.))),
             )
             .child(
@@ -1410,11 +1415,13 @@ impl Shell {
     }
 
     fn titlebar(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let fullscreen_shift = if window.is_fullscreen() {
-            px(80.)
+        let native_inset = if window.is_fullscreen() {
+            px(2.)
         } else {
-            px(0.)
+            px(82.)
         };
+        // The native traffic-light inset does not scale with the UI.
+        let nav_left = native_inset / window.ui_scale() + px(6.);
         // The header is the window drag region (`-webkit-app-region: drag`, macOS hiddenInset);
         // its buttons are `no-drag`: each stops the press before the move handler below.
         // Disabled history controls do not participate in keyboard navigation.
@@ -1469,15 +1476,14 @@ impl Shell {
                 }
             })
             .child(tooltip(
-                back.left(px(88.) - fullscreen_shift)
-                    .on_click(dispatch::<GoBack>),
+                back.left(nav_left).on_click(dispatch::<GoBack>),
                 "Back",
                 Some("⌘["),
                 Side::Bottom,
             ))
             .child(tooltip(
                 forward
-                    .left(px(122.) - fullscreen_shift)
+                    .left(nav_left + px(34.))
                     .on_click(dispatch::<GoForward>),
                 "Forward",
                 Some("⌘]"),
@@ -1509,7 +1515,7 @@ impl Shell {
                         "Show sidebar"
                     })
                     .absolute()
-                    .left(px(156.) - fullscreen_shift)
+                    .left(nav_left + px(68.))
                     .top(px(8.))
                     .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                         sidebar_focus.read(cx).handle.clone().focus(window, cx);
@@ -1532,7 +1538,7 @@ impl Shell {
                     .role(gpui::Role::Button)
                     .aria_label("New chat")
                     .absolute()
-                    .left(px(190.) - fullscreen_shift)
+                    .left(nav_left + px(102.))
                     .top(px(8.))
                     .on_click(dispatch::<NewChat>),
                     "New chat",

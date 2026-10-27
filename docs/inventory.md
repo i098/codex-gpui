@@ -103,7 +103,86 @@ Items are reorderable by drag (dnd-kit, activation distance 6 px; screen reader 
 
 - Reselecting the current destination calls its `onReselect` (Home resets the view) instead of navigating.
 - Rail settings button (`sidebarElectron.rail.settings`) opens settings when no footer is supplied.
-- Only Home is in scope for v1 behavior; the other rail destinations need only their route switch and an empty placeholder.
+- The native Code Review destination implements the pull-request inbox. Other destination families have separate parity checks.
+
+### 3.1 Native pull-request routes
+
+Open Code Review to search, filter, and group pull requests for the active GitHub CLI account.
+The All and Reviewing views remove duplicate requests across review and authored sections.
+Each search stream retains its rows and cursor after a failed page request.
+Retry reloads the failed data without creating a GitHub write.
+Retry reads the active GitHub account again before reloading.
+The search field stays on one line and keeps the caret visible during horizontal editing.
+The detail pane keeps its width ratio when its measured content width changes.
+Each route mount computes its reset width from the current shell size and the preceding measured inline inset.
+The original `VIi`, `CPt`, `DPt`, and `OPt` functions in `app-initial-6350d04672d0.js` define this lifecycle.
+The original `GIi` ResizeObserver updates the inline inset after layout without replacing the ratio or reset width.
+The native shell records its inset during prepaint, after layout assigns the content bounds.
+The route reads the preceding shell measurement before it replaces that shell.
+The pane records its own content width during prepaint and requests another frame only when that width changes.
+The shell measurement does not request a frame; the pane width cannot change its parent bounds.
+Thus a settled layout does not create a repaint loop.
+Selecting a request or returning through Home mounts a new reset default.
+Explicit drag and keyboard resizing retain the user ratio across these mounts.
+Double-clicking the divider restores the mount default, not a new viewport-only default.
+The original uses the shared `app-shell:right-panel-width:v3` storage key when no pane-specific configuration overrides it.
+Reset replay cases start with separate page contexts, as the original capture driver does.
+Each case checks the width before reset; the selected-detail case requires 724 px before and after reset.
+The inbox uses the original compact toolbar, row spacing, and grouped change counts.
+
+The executable also accepts `/pull-requests` and `/pull-requests/<host>/<owner>/<repository>/<number>` as its first argument.
+The host runs GitHub CLI reads through the existing app-server `process/spawn` connection.
+Missing CLI, unavailable access, empty results, loading, and partial failures remain distinct states.
+Ask Codex fills a new chat draft; it does not install software or start a turn.
+Summary shows the author, branches, reviewers, review-comment counts, checks, status, and description.
+Descriptions preserve source line breaks and render Markdown tables with copy controls.
+List counts use the original tabular digits, disambiguation features, and tight tracking.
+Section chevrons use the original vector with its settled rotation applied before rasterization.
+The list keeps its bottom padding inside the scroll area so the viewport does not clip the final visible row early.
+Code loads the authenticated read-only patch into the existing diff view; a failed load preserves Summary and offers retry.
+The detail toolbar expands the workspace pane without changing the operating system's fullscreen state.
+Media requests validate HTTPS hosts and stop at the size limit.
+Each selected request has at most eight attachment previews.
+Each page runs one preview job at a time, including when the selected request changes.
+Image decoding runs off the UI thread with a 64 MiB per-image limit and a 512 MiB retention limit.
+Video attachments show the original `Preview unavailable` card and `Open in GitHub` action instead of an inline player.
+The host rejects video content before downloading its body.
+`fixtures/pull-requests.json` retains scoped GitHub reads for `i098/codex-gpui`, with original response normalization and no credential tokens.
+The native replay binds recorded account identity, persisted navigation atoms, and MCP capabilities before capture.
+
+Implementation: `crates/app/src/pull_requests.rs`, `crates/app/src/host/github_pull_requests.rs`, and `crates/ui/src/screens/pull_requests.rs`.
+
+### 3.2 Browser image-error resource
+
+Failed author avatars use Chromium's original `IDR_BROKENIMAGE` resource, not pixels copied from a reference screenshot.
+The embedded 100% asset is [broken_image.png](https://chromium.googlesource.com/chromium/src/+/a49e2e3d4addfd84e765b52afe230bedb81096db/third_party/blink/public/default_100_percent/blink/broken_image.png).
+Its SHA-256 is `efcb5c77b9b97421b60982637d0a3d1e352b0275f294be3c62173743b3f0d8ee`.
+The error box follows [HTMLImageFallbackHelper](https://chromium.googlesource.com/chromium/src/+/a49e2e3d4addfd84e765b52afe230bedb81096db/third_party/blink/renderer/core/html/html_image_fallback_helper.cc): a 16-pixel marker, one-pixel silver border, and one-pixel padding.
+Chromium retains this [image license notice](https://chromium.googlesource.com/chromium/src/+/a49e2e3d4addfd84e765b52afe230bedb81096db/content/shell/resources/README.txt):
+
+```text
+Copyright (C) 2003, 2004, 2005, 2006 Apple Computer, Inc.  All rights reserved.
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+THIS SOFTWARE IS PROVIDED BY APPLE COMPUTER, INC. ``AS IS'' AND ANY
+EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE COMPUTER, INC. OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
+
 
 ### Explore unread state
 

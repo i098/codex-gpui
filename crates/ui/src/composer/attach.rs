@@ -333,15 +333,13 @@ impl Composer {
             .gap(px(6.))
             .when(
                 !self.attachments.is_empty() || !self.diff_comments.is_empty(),
-                |d| d.pt(px(12.)).px(px(12.)).gap(px(12.)).items_end(),
-            )
-            .when(
-                !self.diff_comments.is_empty()
-                    || self
-                        .attachments
-                        .iter()
-                        .any(|a| matches!(a.content, Content::ContextFile)),
-                |row| row.pb(px(10.)),
+                |d| {
+                    d.pt(px(12.))
+                        .px(px(12.))
+                        .pb(px(10.))
+                        .gap(px(12.))
+                        .items_end()
+                },
             )
             .children(
                 self.attachments
@@ -367,11 +365,17 @@ impl Composer {
                                     image: image.clone(),
                                     path: Some(attachment.path.clone()),
                                 };
-                                return div()
+                                let surface = div()
                                     .relative()
-                                    .size(px(122.))
-                                    .rounded(px(8.))
-                                    .overflow_hidden()
+                                    .size_full()
+                                    .child(shapes::decoration(deco(
+                                        0.,
+                                        t.surface_secondary,
+                                        vec![],
+                                    )))
+                                    .child(image_thumbnail(image.clone(), t));
+                                return self
+                                    .attachment_surface(i, attachment, px(122.), surface, t, cx)
                                     .on_mouse_down(
                                         MouseButton::Right,
                                         cx.listener(
@@ -386,12 +390,6 @@ impl Composer {
                                             },
                                         ),
                                     )
-                                    .child(
-                                        gpui::img(image.clone())
-                                            .size_full()
-                                            .object_fit(gpui::ObjectFit::Cover),
-                                    )
-                                    .child(self.remove_paste_button(i, t, cx))
                                     .into_any_element();
                             }
                             Content::File => {}
@@ -442,7 +440,6 @@ impl Composer {
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned();
-        let remove_label = format!("Remove {name}");
         let code = attachment
             .path
             .extension()
@@ -455,22 +452,6 @@ impl Composer {
                 .iter()
                 .any(|suffix| ext.eq_ignore_ascii_case(suffix))
             });
-        let group: SharedString = format!("context-file-{i}").into();
-        let surface_decoration = |color, fill| {
-            shapes::decoration(shapes::Decoration {
-                radius: Corners::all(px(10.)),
-                corner: shapes::Corner::Squircle,
-                fill,
-                shadows: vec![shapes::Shadow {
-                    color,
-                    offset: point(px(0.), px(0.)),
-                    blur: px(0.),
-                    spread: px(1.),
-                    inset: true,
-                }],
-                ..Default::default()
-            })
-        };
         let surface = div()
             .relative()
             .size_full()
@@ -509,25 +490,63 @@ impl Composer {
                         .runtime(),
                     )
                     .child(
-                        text(name.clone(), 12., 16., 430., t.text)
+                        text(name, 12., 16., 430., t.text)
                             .min_w_0()
                             .overflow_hidden()
                             .text_ellipsis(),
                     ),
             );
+        self.attachment_surface(i, attachment, px(160.), surface, t, cx)
+            .into_any_element()
+    }
+
+    /// The original's `composer-attachment-surface`: `content` in a squircle clip, an inset ring
+    /// that strengthens on hover, and a remove button shown only on hover or focus.
+    fn attachment_surface(
+        &self,
+        i: usize,
+        attachment: &Attachment,
+        width: Pixels,
+        content: Div,
+        t: &Theme,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let name = attachment
+            .path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let remove_label = format!("Remove {name}");
+        let group: SharedString = format!("attachment-surface-{i}").into();
+        let surface_decoration = |color, fill| {
+            shapes::decoration(shapes::Decoration {
+                radius: Corners::all(px(10.)),
+                corner: shapes::Corner::Squircle,
+                fill,
+                shadows: vec![shapes::Shadow {
+                    color,
+                    offset: point(px(0.), px(0.)),
+                    blur: px(0.),
+                    spread: px(1.),
+                    inset: true,
+                }],
+                ..Default::default()
+            })
+        };
         div()
-            .id(("context-file", i))
+            .id(("attachment-surface", i))
             .group(group.clone())
             .role(gpui::Role::Group)
             .aria_label(name)
             .relative()
-            .w(px(160.))
+            .w(width)
             .h(px(122.))
             .flex_none()
             .child(crate::rounded_clip(
                 px(10.),
                 shapes::Corner::Squircle,
-                surface,
+                content,
             ))
             .child(
                 div()
@@ -579,7 +598,6 @@ impl Composer {
                     .group_hover(group, |s| s.opacity(1.))
                     .focus(|s| s.opacity(1.)),
             )
-            .into_any_element()
     }
 
     fn remove_paste_button(&self, i: usize, t: &Theme, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -694,6 +712,94 @@ impl Composer {
             .child(self.remove_paste_button(i, t, cx))
             .into_any_element()
     }
+}
+
+/// An image's decoded premultiplied pixels and its last raster: box, scale, card color.
+type Thumbnail = (
+    image::RgbaImage,
+    Option<(gpui::Bounds<Pixels>, f32, Hsla, Arc<gpui::RenderImage>)>,
+);
+
+/// The image card's `<img class="size-full object-cover">` in its `overflow-hidden` squircle
+/// `bg-surface-secondary` span, rasterized as Chromium does (Skia bilinear inside the
+/// anti-aliased clip, over the composer card); a GPU-scaled sprite blends with other weights.
+fn image_thumbnail(image: Arc<gpui::Image>, t: &Theme) -> AnyElement {
+    if !cfg!(target_os = "macos") {
+        return gpui::img(image)
+            .size_full()
+            .rounded(px(10.))
+            .object_fit(gpui::ObjectFit::Cover)
+            .into_any_element();
+    }
+    thread_local! {
+        // shortcut: entries outlive removed attachments (one decode and raster each); evict
+        // by the live attachments if long sessions paste many images.
+        static CACHE: std::cell::RefCell<std::collections::HashMap<u64, Thumbnail>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    let (fill, under) = (t.surface_secondary, t.composer_surface);
+    gpui::canvas(
+        |_, _, _| {},
+        move |bounds, (), window, _| {
+            let scale = window.scale_factor();
+            let snap = |v: Pixels| px((f32::from(v) * scale).round() / scale);
+            let at = gpui::Bounds::from_corners(
+                point(snap(bounds.left()), snap(bounds.top())),
+                point(snap(bounds.right()), snap(bounds.bottom())),
+            );
+            let raster = CACHE.with_borrow_mut(|cache| {
+                let entry = match cache.entry(image.id) {
+                    std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        let mut pixels = image::load_from_memory(&image.bytes).ok()?.to_rgba8();
+                        shapes::premultiply(&mut pixels);
+                        entry.insert((pixels, None))
+                    }
+                };
+                if let Some((b, s, u, raster)) = &entry.1
+                    && (*b, *s, *u) == (bounds, scale, under)
+                {
+                    return Some(raster.clone());
+                }
+                let pixels = &entry.0;
+                let (w, h) = (pixels.width() as f32, pixels.height() as f32);
+                let cover =
+                    (f32::from(bounds.size.width) / w).max(f32::from(bounds.size.height) / h);
+                let drawn = gpui::size(px(w * cover), px(h * cover));
+                let destination = gpui::Bounds::new(
+                    bounds.origin
+                        + point(
+                            (bounds.size.width - drawn.width) / 2.,
+                            (bounds.size.height - drawn.height) / 2.,
+                        ),
+                    drawn,
+                );
+                let raster = Arc::new(shapes::raster_decorated_images(
+                    &[(pixels, destination)],
+                    bounds,
+                    &shapes::Decoration {
+                        radius: Corners::all(px(10.)),
+                        corner: shapes::Corner::Squircle,
+                        fill: Some(fill),
+                        ..Default::default()
+                    },
+                    shapes::ImageComposition::Direct(under),
+                    window,
+                )?);
+                if let Some((.., old)) = entry.1.replace((bounds, scale, under, raster.clone())) {
+                    window.drop_image(old).ok();
+                }
+                Some(raster)
+            });
+            if let Some(raster) = raster {
+                window
+                    .paint_image(at, at, Corners::default(), raster, 0, false)
+                    .ok();
+            }
+        },
+    )
+    .size_full()
+    .into_any_element()
 }
 
 #[cfg(test)]
