@@ -205,7 +205,8 @@ impl gpui::EventEmitter<Operation> for ArchivedChats {}
 
 impl ArchivedChats {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let query = cx.new(|cx| Composer::search_field("Search archived chats", cx));
+        let query = cx
+            .new(|cx| Composer::embedded_field("Search archived chats", "", px(14.), px(18.), cx));
         cx.observe(&query, |this, _, cx| {
             this.rebuild(cx);
             cx.notify();
