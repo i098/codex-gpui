@@ -1508,6 +1508,25 @@ impl Shell {
                     Side::Bottom,
                 ))
             })
+            // Closed, the titlebar also carries New chat after Show sidebar.
+            .when(self.chat_chrome && !self.sidebar_open, |d| {
+                d.child(tooltip(
+                    icon_button(
+                        "titlebar-new-chat",
+                        icon::icon("new-chat", 16., t.text_tertiary).own_layer(None),
+                        t,
+                    )
+                    .role(gpui::Role::Button)
+                    .aria_label("New chat")
+                    .absolute()
+                    .left(px(190.) - fullscreen_shift)
+                    .top(px(8.))
+                    .on_click(dispatch::<NewChat>),
+                    "New chat",
+                    Some("⌘N"),
+                    Side::Bottom,
+                ))
+            })
             .when(self.new_tab, |d| {
                 d.child(
                     focus::ring(div().id("new-tab"), &new_tab_focus, px(8.), px(2.), cx)
