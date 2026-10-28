@@ -3,7 +3,7 @@
 set -euo pipefail
 if [[ ${1:-} != --assemble ]]; then
     cd "$(git rev-parse --show-toplevel)"
-    version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/app/Cargo.toml)
+    version=$(tools/version.sh)
     mode=${1:-normal}
     [[ $mode == normal || $mode == --qa ]] || { echo 'usage: tools/bundle.sh [--qa]' >&2; exit 2; }
     revision=$(git rev-parse HEAD)
@@ -21,7 +21,7 @@ if [[ ${1:-} != --assemble ]]; then
 fi
 out=$2 mode=$3 revision=$4
 [[ $(uname -s) == Darwin && $out == /tmp/* && ! -L $out ]] || { echo 'assembly requires an owned /tmp directory on macOS' >&2; exit 2; }
-version=$(sed -n 's/^version = "\(.*\)"/\1/p' crates/app/Cargo.toml)
+version=$(tools/version.sh)
 name='Codex GPUI' identifier=dev.codexgpui.app
 # The normal bundle declares the `codex://` URL scheme (the original's packaged
 # CFBundleURLTypes); the QA bundle stays out of it so it never contends with the real

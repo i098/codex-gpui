@@ -1,6 +1,7 @@
 mod about;
 pub(crate) mod context_files;
 pub(crate) mod navigation;
+mod updates;
 
 use crate::{
     CloseWindow, FindInThread, GoBack, GoForward, Hide, HideOthers, LogOut, Minimize, NewChat,
@@ -17,6 +18,7 @@ actions!(
     native_menus,
     [
         ShowAbout,
+        CheckForUpdates,
         OpenDocumentation,
         OpenChangelog,
         OpenTroubleshooting,
@@ -34,6 +36,7 @@ actions!(
 
 pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &ShowAbout, cx| cx.defer(about::open));
+    cx.on_action(|_: &CheckForUpdates, cx| updates::check(cx));
     cx.bind_keys([
         KeyBinding::new("cmd-shift-v", PasteAndMatchStyle, None),
         KeyBinding::new("cmd-alt-shift-v", PasteAndMatchStyle, None),
@@ -148,6 +151,7 @@ fn menus_for_route(sidebar_collapsible: bool) -> Vec<Menu> {
             MenuItem::action("About Codex", ShowAbout),
             MenuItem::separator(),
             MenuItem::action("Settings…", OpenSettings),
+            MenuItem::action("Check for Updates…", CheckForUpdates),
             MenuItem::action("Log Out", LogOut),
             MenuItem::separator(),
             MenuItem::os_submenu("Services", SystemMenuType::Services),
