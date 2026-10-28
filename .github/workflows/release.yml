@@ -1,0 +1,28 @@
+name: release
+# A `vMAJOR.MINOR.PATCH` tag on a merged `tools/version.sh` bump publishes the macOS arm64 zip.
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  macos-arm64:
+    runs-on: macos-14
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag matches the workspace version
+        run: |
+          version=$(tools/version.sh)
+          [[ $GITHUB_REF_NAME == "v$version" ]] || { echo "tag $GITHUB_REF_NAME is not v$version" >&2; exit 1; }
+          echo "VERSION=$version" >>"$GITHUB_ENV"
+      - name: Build, sign and verify the bundle
+        run: bash tools/bundle.sh --assemble /tmp/codex-gpui-release normal "$GITHUB_SHA" archive
+      - name: Publish the release
+        run: |
+          zip=codex-gpui-$VERSION-macos-arm64.zip
+          mv /tmp/codex-gpui-release/bundle.zip "$zip"
+          awk -v heading="## [$VERSION]" 'index($0, heading) == 1 { found = 1; next } found && /^## \[/ { exit } found' CHANGELOG.md >notes.md
+          gh release create "$GITHUB_REF_NAME" "$zip" --title "Codex GPUI $VERSION" --notes-file notes.md --verify-tag

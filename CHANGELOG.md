@@ -2,12 +2,13 @@
 
 All notable changes to this project are in this file.
 The format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/).
-There is no release yet.
+Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ## [Unreleased]
 
 ### Added
 - A contributing guide, issue and pull request templates, a security policy, and this changelog.
+- Add one workspace version for the app, the `tools/version.sh` bump script, the `v*` tag release workflow that publishes the macOS arm64 zip, and `Codex` > `Check for Updates…`, which shows the current and latest versions.
 - Add the native `/first-run` tour with the IDE, cloud, code, and autonomy pages and the original noise background.
 - Add native Code Review search, filters, and pull request details.
 - Add Storage usage measurement and safe review before deleting old local chats.

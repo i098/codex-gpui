@@ -527,7 +527,7 @@ tools/bundle.sh
 ```
 
 The script builds the release binary on the Mac build host through `tools/mac.sh`.
-It assembles `Codex GPUI.app` (bundle id `dev.codexgpui.app`, version from `crates/app/Cargo.toml`, macOS 13.0 or later).
+It assembles `Codex GPUI.app` (bundle id `dev.codexgpui.app`, version from `tools/version.sh`, macOS 13.0 or later).
 It signs the bundle ad hoc, checks it with `plutil -lint` and `codesign --verify --strict`, and zips it with `ditto`.
 The zip goes to `/tmp/cgx/release/codex-gpui-<version>-macos-arm64.zip`.
 The script does not open the app.
@@ -542,6 +542,18 @@ swiftc -O assets/app/icon.swift -o /tmp/icon
 /tmp/icon Assets.car /tmp/AppIcon.iconset
 iconutil -c icns /tmp/AppIcon.iconset -o assets/app/AppIcon.icns
 ```
+
+### Versions and releases
+
+The workspace `version` in the root `Cargo.toml` is the app version.
+Every crate under `crates/` except `skia-hairline-sys` inherits it.
+`tools/version.sh` prints it.
+`tools/version.sh 0.2.0` bumps it in `Cargo.toml` and `Cargo.lock` and adds a `## [0.2.0]` section under `## [Unreleased]` in `CHANGELOG.md`.
+Merge the bump, then push the tag `v0.2.0`.
+The `release` workflow builds the bundle on a GitHub macOS arm64 runner and stops if the tag is not `v` plus the workspace version.
+It publishes `codex-gpui-0.2.0-macos-arm64.zip` as a GitHub release with that version's changelog section as notes.
+About Codex shows the version.
+`Codex` > `Check for Updates…` compares it with the latest GitHub release and shows both versions.
 
 ## Live QA build
 
