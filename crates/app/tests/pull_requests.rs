@@ -236,6 +236,10 @@ fn replay_pane_states(reset_state: Option<&str>) -> Result<()> {
             .map(|item| item.node_id.clone())
             .collect::<Vec<_>>()
     });
+    #[cfg(target_os = "macos")]
+    if reset_state.is_none() {
+        assert_original_icons(&mut fx)?;
+    }
     if capture_pane(&mut fx, "merged-first-page", reset_state)? {
         return Ok(());
     }
@@ -480,6 +484,36 @@ fn reset_pane(fx: &mut Fx) -> Result<()> {
         modifiers: gpui::Modifiers::default(),
         click_count: 2,
     }))
+}
+
+/// The merged first page's tabs, toolbar icons and the row icons on the list layer's tile seams
+/// match crops of the original capture (`fixtures/pull-requests-icons/<x>_<y>.png`, device px)
+/// exactly, as the pixel gate requires.
+#[cfg(target_os = "macos")]
+fn assert_original_icons(fx: &mut Fx) -> Result<()> {
+    let shot = fx.reference_shot()?;
+    for entry in std::fs::read_dir(format!("{}/fixtures/pull-requests-icons", common::ROOT))? {
+        let path = entry?.path();
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .context("crop name")?;
+        let (x, y) = name.split_once('_').context("crop origin")?;
+        let original = image::open(&path)?.to_rgba8();
+        let native = image::imageops::crop_imm(
+            &shot,
+            x.parse()?,
+            y.parse()?,
+            original.width(),
+            original.height(),
+        )
+        .to_image();
+        assert!(
+            native == original,
+            "{name}: native pixels differ from the original"
+        );
+    }
+    Ok(())
 }
 
 fn capture_pane(fx: &mut Fx, state: &str, reset_state: Option<&str>) -> Result<bool> {

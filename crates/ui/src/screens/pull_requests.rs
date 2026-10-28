@@ -1104,13 +1104,16 @@ impl Page {
         let width = self.pane_width.as_ref().map_or(0., |pane| {
             (pane.available_width - pane.width()).max(0.) as f32
         });
+        // Chromium's fixed titlebar header: a transparent composited layer outside the main
+        // surface's anti-aliased clip.
         let mut navigation = div()
             .h(px(46.))
             .flex_none()
             .px(px(8.))
             .flex()
             .items_center()
-            .gap(px(2.));
+            .gap(px(2.))
+            .layer();
         for (index, (view, label)) in [
             (View::All, "All"),
             (View::Reviewing, "Reviewing"),
@@ -1160,6 +1163,8 @@ impl Page {
             );
         }
         let search = self.input(cx);
+        // Chromium's sticky `bg-surface` header: a composited layer at its own rect, so its
+        // icons and shapes raster on its opaque fill without the main surface's AA clip.
         let mut toolbar = div()
             .relative()
             .px(px(30.))
@@ -1169,6 +1174,11 @@ impl Page {
             .flex()
             .gap(px(8.))
             .items_center()
+            .layer()
+            .child(shapes::decoration(shapes::Decoration {
+                fill: Some(t.surface),
+                ..Default::default()
+            }))
             .child(search)
             .child(
                 div()
@@ -1217,8 +1227,17 @@ impl Page {
             .flex_col()
             .min_h_0()
             .child(navigation)
-            .child(toolbar)
-            .child(body.px(px(30.)).pt(px(20.)))
+            // The scroller's contents layer: its tiles start at the sticky toolbar's top.
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .layer()
+                    .child(toolbar)
+                    .child(body.px(px(30.)).pt(px(20.))),
+            )
             .child(
                 crate::screens::thread::view::skia_gradient(
                     &[(t.surface, 0.), (t.surface.opacity(0.), 1.)],
@@ -1312,7 +1331,6 @@ impl Page {
             .min_h_0()
             .flex()
             .flex_col()
-            .layer()
             .pb(px(20.))
             .gap(px(16.));
         for (index, stream) in self.streams.iter().enumerate() {

@@ -21,6 +21,7 @@ There is no release yet.
 - Bind `⇧⌘C` and `⌥⇧⌘C` to copy the open chat's newest managed worktree root, else its working directory, and route `⇧⌘F` and `⇧⌘B` through the editable keymap.
 
 ### Fixed
+- Paint the Code Review tabs, search toolbar and pull request list in the original's composited layers, so their icon and pill edges match the original pixel for pixel.
 - Place the Git review file tree's `+N`/`-N` line counts on the original's SVG text baseline.
 - Paint a short Plugins or Hooks settings page without a composited layer, as the original does, so the empty Hooks page matches its text, card corners and disabled reload button.
 - Let the Git review header's capsule shadows reach the large-diff notice area, as in the original.
