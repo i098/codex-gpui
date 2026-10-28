@@ -7,6 +7,7 @@ use anyhow::{Context as _, Result, ensure};
 use app::{Route, SidePanel};
 use common::{EXPLAIN, Fx, GREETING, SUBTRACT, exchange, recorded_thread, script};
 use serde_json::{Value, json};
+use ui::workspace::WorkspaceLayout;
 
 fn command(fx: &mut Fx, label: &str) -> Result<()> {
     fx.keys("cmd-k")?;
@@ -193,6 +194,29 @@ fn panel_commands_keep_the_selected_chat_and_existing_tabs() -> Result<()> {
     ensure!(fx.route() == Route::Thread(SUBTRACT.into()) && !fx.composer_focused()?);
     fx.shot()?
         .save(std::env::temp_dir().join("command-dispatch-after-terminal.png"))?;
+    Ok(())
+}
+
+#[test]
+fn layout_summary_and_skills_commands_run_their_existing_actions() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-2")?;
+    fx.wait_thread(SUBTRACT)?;
+    let summary = |fx: &mut Fx| fx.read(|root, cx| root.thread().unwrap().read(cx).summary_open);
+    let open = summary(&mut fx);
+    command(&mut fx, "Toggle pinned summary")?;
+    ensure!(summary(&mut fx) != open, "pinned summary did not toggle");
+    command(&mut fx, "Toggle bottom panel")?;
+    ensure!(fx.read(|root, cx| root.shell().read(cx).bottom.is_some()));
+    command(&mut fx, "Toggle bottom panel")?;
+    ensure!(fx.read(|root, cx| root.shell().read(cx).bottom.is_none()));
+    command(&mut fx, "Open Changes tab")?;
+    command(&mut fx, "New tab in full view")?;
+    ensure!(fx.read(|root, _| root.workspace_layout() == WorkspaceLayout::Full));
+    command(&mut fx, "Cycle workspace layout")?;
+    ensure!(fx.read(|root, _| root.workspace_layout() == WorkspaceLayout::Split));
+    command(&mut fx, "Go to skills")?;
+    ensure!(fx.route() == Route::Plugins("/skills".into()));
     Ok(())
 }
 

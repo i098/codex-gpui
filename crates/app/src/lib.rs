@@ -3438,6 +3438,24 @@ impl Root {
                 "Toggle navigation panel" => {
                     window.dispatch_action(Box::new(native_menus::ToggleNavigationPanel), cx)
                 }
+                "Toggle pinned summary" => {
+                    window.dispatch_action(Box::new(native_menus::TogglePinnedSummary), cx)
+                }
+                "Toggle bottom panel" => {
+                    window.dispatch_action(Box::new(features::shortcuts::ToggleBottomPanel), cx)
+                }
+                "New tab in full view" => {
+                    window.dispatch_action(Box::new(ui::ShowWorkspaceTabView), cx)
+                }
+                "Cycle workspace layout" => {
+                    window.dispatch_action(Box::new(ui::StepWorkspaceLayout), cx)
+                }
+                "Toggle pin" => {
+                    window.dispatch_action(Box::new(features::shortcuts::ToggleThreadPin), cx)
+                }
+                "Go to skills" => {
+                    self.open_plugins("/skills", window, cx);
+                }
                 "Commit or push" => self.open_git_form(DialogKind::Commit, window, cx),
                 "Manage scheduled tasks" => window.dispatch_action(Box::new(OpenScheduled), cx),
                 "Log out" => window.dispatch_action(Box::new(LogOut), cx),
