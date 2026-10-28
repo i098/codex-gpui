@@ -13,6 +13,7 @@ pub mod home;
 pub mod hotkey;
 pub mod mini;
 pub mod mobile;
+pub mod new_project;
 pub mod oauth;
 pub mod onboarding;
 pub mod plugins;

@@ -50,6 +50,83 @@ fn adding_a_folder_preserves_projects_and_unrelated_host_state() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn new_project_keeps_root_order_appearance_and_existing_thread_owners() -> Result<()> {
+    let profile = tempfile::tempdir()?;
+    let alpha = profile.path().join("alpha");
+    let beta = profile.path().join("beta");
+    fs::create_dir(&alpha)?;
+    fs::create_dir(&beta)?;
+    let (alpha, beta) = (alpha.canonicalize()?, beta.canonicalize()?);
+    let file = profile.path().join(".codex-global-state.json");
+    fs::write(
+        &file,
+        serde_json::to_vec(&json!({
+            "local-projects": {"old": {
+                "id": "old", "name": "Alpha", "rootPaths": [alpha], "createdAt": 1, "updatedAt": 1,
+            }},
+            "project-order": ["old"],
+            "projectless-thread-ids": ["loose"],
+            "thread-project-assignments": {"kept": {"projectKind": "local", "projectId": "x"}},
+        }))?,
+    )?;
+    let host = LocalHost::new(profile.path());
+    let marker = json!({"color": "blue", "marker": {"kind": "icon", "icon": "brain"}});
+    let cwd = alpha.to_str().unwrap().to_owned();
+    let threads = [
+        ("moving".to_owned(), cwd.clone()),
+        ("kept".to_owned(), cwd.clone()),
+        ("loose".to_owned(), cwd),
+    ];
+    let root = host.create_project(
+        "  Both  ",
+        &[beta.clone(), alpha.clone(), beta.clone()],
+        Some(marker.clone()),
+        &threads,
+    )?;
+    assert_eq!(root, beta.to_str().unwrap());
+    let state: Value = serde_json::from_slice(&fs::read(&file)?)?;
+    let id = state["project-order"][0].as_str().unwrap().to_owned();
+    assert_eq!(state["project-order"], json!([id, "old"]));
+    assert_eq!(state["local-projects"][&id]["name"], "Both");
+    assert_eq!(
+        state["local-projects"][&id]["rootPaths"],
+        json!([beta, alpha])
+    );
+    assert_eq!(state["project-appearances"][&id], marker);
+    assert_eq!(
+        state["selected-project"],
+        json!({"type": "local", "projectId": id})
+    );
+    let assignments = &state["thread-project-assignments"];
+    assert_eq!(
+        assignments["moving"],
+        json!({"projectKind": "local", "projectId": "old"})
+    );
+    assert_eq!(assignments["kept"]["projectId"], "x");
+    assert!(assignments["loose"].is_null());
+
+    // Same roots again: the existing project is reused, not duplicated.
+    host.create_project("Other", &[alpha.clone(), beta.clone()], None, &[])?;
+    assert_eq!(host.projects()?.len(), 2);
+
+    // No folder: a fresh `name` folder under the default workspace parent becomes the root.
+    let first = host.create_project("Notes/Plans", &[], None, &[])?;
+    let second = host.create_project("Notes/Plans", &[], None, &[])?;
+    assert!(first.ends_with("projects/Notes-Plans"), "{first}");
+    assert!(second.ends_with("projects/Notes-Plans 2"), "{second}");
+    assert_eq!(host.projects()?.len(), 4);
+
+    // A missing folder fails without touching the store.
+    let saved = fs::read(&file)?;
+    assert!(
+        host.create_project("Bad", &[profile.path().join("missing")], None, &[])
+            .is_err()
+    );
+    assert_eq!(fs::read(file)?, saved);
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn proxy() {
@@ -230,6 +307,88 @@ fn sidebar_project_rows_start_chats_in_their_own_roots_and_leave_open_chats_alon
         .map(|start| start["params"]["cwd"].as_str().unwrap().to_owned())
         .collect();
     assert_eq!(starts, [beta, alpha]);
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn new_project_form_creates_and_selects_a_multi_folder_project() -> Result<()> {
+    use app::Route;
+    use common::{exchange, script};
+    use std::sync::Arc;
+
+    common::install_panic_hook();
+    let temp = tempfile::tempdir()?;
+    let alpha = temp.path().join("alpha");
+    let beta = temp.path().join("beta");
+    fs::create_dir(&alpha)?;
+    fs::create_dir(&beta)?;
+    let (alpha, beta) = (alpha.canonicalize()?, beta.canonicalize()?);
+    let state_path = temp.path().join("state.json");
+    let host = Arc::new(LocalHost::new(temp.path().join("codex")));
+    let mut lines = script(None, |_| {})?;
+    for _ in 0..2 {
+        lines.extend(exchange(
+            "thread/list",
+            json!({"data": [], "nextCursor": null}),
+        ));
+    }
+    let (mut fx, _, log) = isolated_root(temp.path(), &lines, &state_path)?;
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+    fx.cx.run_until_parked();
+    let shot = |fx: &mut common::Fx, name: &str| -> Result<()> {
+        let path = format!("{}/new-project-{name}.png", env!("CARGO_TARGET_TMPDIR"));
+        Ok(fx.shot()?.save(path)?)
+    };
+
+    fx.menu("File", "New Project…")?;
+    fx.wait("form", |fx| fx.read(|root, _| root.new_project().is_some()))?;
+    shot(&mut fx, "empty")?;
+    fx.click((870., 280.))?;
+    fx.wait("close", |fx| {
+        fx.read(|root, _| root.new_project().is_none())
+    })?;
+    assert!(
+        host.projects()?.is_empty(),
+        "closing must not create a project"
+    );
+
+    fx.menu("File", "New Project…")?;
+    fx.wait("form", |fx| fx.read(|root, _| root.new_project().is_some()))?;
+    fx.type_text("Launch")?;
+    fx.click((639., 457.))?;
+    assert!(
+        fx.cx.did_prompt_for_paths(),
+        "Add must open the folder picker"
+    );
+    fx.cx.simulate_path_prompt_response(|options| {
+        assert!(options.directories && !options.files && options.multiple);
+        Some(vec![alpha.clone(), beta.clone()])
+    });
+    fx.cx.run_until_parked();
+    assert_eq!(
+        fx.read(|root, cx| root.new_project().unwrap().read(cx).sources().to_vec()),
+        [alpha.to_str().unwrap(), beta.to_str().unwrap()]
+    );
+    shot(&mut fx, "sources")?;
+
+    fx.click((700., 312.))?;
+    fx.keys("enter")?;
+    fx.wait("created", |fx| {
+        fx.read(|root, _| root.new_project().is_none()) && fx.route() == Route::Home
+    })?;
+    let projects = host.projects()?;
+    assert_eq!(projects.len(), 1);
+    assert_eq!(projects[0].label.as_ref(), "Launch");
+    let state: Value = serde_json::from_slice(&fs::read(&state_path)?)?;
+    assert_eq!(state["project_root"], json!(alpha));
+    let lists = fs::read_to_string(&log)?
+        .lines()
+        .filter(|line| line.contains("\"thread/list\"") && line.contains("\"cwd\":["))
+        .count();
+    assert_eq!(lists, 2, "both chat lists are read before the roots change");
+    shot(&mut fx, "created")?;
     Ok(())
 }
 
