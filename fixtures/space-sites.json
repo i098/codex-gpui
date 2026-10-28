@@ -1,0 +1,220 @@
+{
+  "provenance": {
+    "appVersion": "26.1007.30912",
+    "queries": [
+      "appgen-sites-query-8ee1359247fa.js /websites",
+      "appgen-sites-query-8ee1359247fa.js /websites/shared (query O)",
+      "app-initial-6350d04672d0.js /files/library/nodes (entry_surface=spaces)",
+      "app-initial-6350d04672d0.js Mwr /pages/{page_id}"
+    ],
+    "schema": "Response fields follow the original zod schemas A and j (items, cursor).",
+    "origin": "Owned synthetic data derived from the contract. No live account call. Placeholders: user@example.com, Demo User, example.invalid.",
+    "clock": "2026-10-15T17:00:00-07:00 (all updated_at values precede it)"
+  },
+  "exchanges": [
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/websites?limit=20",
+          "method": "GET",
+          "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "originator": "Codex Desktop"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"items\":[{\"id\":\"site-000000000000000000000001\",\"is_pinned\":true,\"title\":\"Launch page\",\"description\":null,\"slug\":\"launch\",\"status\":\"active\",\"live_url\":\"https://launch.example.invalid\",\"hosted_url\":null,\"latest_edit_context\":null,\"screenshot_url\":null,\"current_user_role\":\"owner\",\"owner\":{\"name\":\"Demo User\",\"email\":\"user@example.com\"},\"sharing\":{\"access_mode\":\"private\",\"user_count\":0,\"group_count\":0},\"updated_at\":\"2026-10-15T23:00:00Z\"},{\"id\":\"site-000000000000000000000002\",\"is_pinned\":false,\"title\":\"Team handbook\",\"description\":null,\"slug\":\"handbook\",\"status\":\"active\",\"live_url\":\"https://handbook.example.invalid\",\"hosted_url\":null,\"latest_edit_context\":null,\"screenshot_url\":null,\"current_user_role\":\"owner\",\"owner\":{\"name\":\"Demo User\",\"email\":\"user@example.com\"},\"sharing\":{\"access_mode\":\"workspace\",\"user_count\":3,\"group_count\":1},\"updated_at\":\"2026-10-15T23:00:00Z\"}],\"cursor\":null}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/websites?limit=20&include_editable=true",
+          "method": "GET",
+          "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "originator": "Codex Desktop"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"items\":[{\"id\":\"site-000000000000000000000001\",\"is_pinned\":true,\"title\":\"Launch page\",\"description\":null,\"slug\":\"launch\",\"status\":\"active\",\"live_url\":\"https://launch.example.invalid\",\"hosted_url\":null,\"latest_edit_context\":null,\"screenshot_url\":null,\"current_user_role\":\"owner\",\"owner\":{\"name\":\"Demo User\",\"email\":\"user@example.com\"},\"sharing\":{\"access_mode\":\"private\",\"user_count\":0,\"group_count\":0},\"updated_at\":\"2026-10-15T23:00:00Z\"},{\"id\":\"site-000000000000000000000002\",\"is_pinned\":false,\"title\":\"Team handbook\",\"description\":null,\"slug\":\"handbook\",\"status\":\"active\",\"live_url\":\"https://handbook.example.invalid\",\"hosted_url\":null,\"latest_edit_context\":null,\"screenshot_url\":null,\"current_user_role\":\"owner\",\"owner\":{\"name\":\"Demo User\",\"email\":\"user@example.com\"},\"sharing\":{\"access_mode\":\"workspace\",\"user_count\":3,\"group_count\":1},\"updated_at\":\"2026-10-15T23:00:00Z\"},{\"id\":\"site-000000000000000000000003\",\"is_pinned\":false,\"title\":\"Docs preview\",\"description\":null,\"slug\":\"docs-preview\",\"status\":\"active\",\"live_url\":\"https://docs-preview.example.invalid\",\"hosted_url\":null,\"latest_edit_context\":null,\"screenshot_url\":null,\"current_user_role\":\"editor\",\"owner\":{\"name\":\"Demo User\",\"email\":\"user@example.com\"},\"sharing\":{\"access_mode\":\"invited\",\"user_count\":2,\"group_count\":0},\"updated_at\":\"2026-10-15T23:00:00Z\"}],\"cursor\":null}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/websites/shared?limit=20",
+          "method": "GET",
+          "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "originator": "Codex Desktop"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"items\":[{\"id\":\"site-000000000000000000000003\",\"is_pinned\":false,\"title\":\"Docs preview\",\"description\":null,\"slug\":\"docs-preview\",\"status\":\"active\",\"live_url\":\"https://docs-preview.example.invalid\",\"hosted_url\":null,\"latest_edit_context\":null,\"screenshot_url\":null,\"current_user_role\":\"editor\",\"owner\":{\"name\":\"Demo User\",\"email\":\"user@example.com\"},\"sharing\":{\"access_mode\":\"invited\",\"user_count\":2,\"group_count\":0},\"updated_at\":\"2026-10-15T23:00:00Z\"}],\"cursor\":null}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/websites/shared?limit=20&query=docs",
+          "method": "GET",
+          "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "originator": "Codex Desktop"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"items\":[{\"id\":\"site-000000000000000000000003\",\"is_pinned\":false,\"title\":\"Docs preview\",\"description\":null,\"slug\":\"docs-preview\",\"status\":\"active\",\"live_url\":\"https://docs-preview.example.invalid\",\"hosted_url\":null,\"latest_edit_context\":null,\"screenshot_url\":null,\"current_user_role\":\"editor\",\"owner\":{\"name\":\"Demo User\",\"email\":\"user@example.com\"},\"sharing\":{\"access_mode\":\"invited\",\"user_count\":2,\"group_count\":0},\"updated_at\":\"2026-10-15T23:00:00Z\"}],\"cursor\":null}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/files/library/nodes?entry_surface=spaces&include_files=false&include_saved_entities=true&include_pages=true&include_sites=true&include_folder_counts=false&include_onedrive=false&hydrate_folder_thumbnails=true",
+          "method": "GET",
+          "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "originator": "Codex Desktop"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"items\":[{\"kind\":\"space\",\"space_id\":\"space-0000000000000000000000001\",\"backing_type\":\"native\",\"root_page_id\":\"page-00000000000000000000000001\",\"name\":\"Demo space\"}],\"cursor\":null}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/pages/page-00000000000000000000000001?include_block_attributions=true&include_content=false&include_parent_metadata=false",
+          "method": "GET",
+          "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "originator": "Codex Desktop"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"metadata\":{\"page_id\":\"page-00000000000000000000000001\",\"title\":\"Demo space\",\"document_type\":\"page\",\"has_children\":false},\"actor_displays\":[],\"block_attributions\":[]}"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

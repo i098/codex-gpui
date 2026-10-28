@@ -76,3 +76,9 @@ These responses enable action captures; they do not prove archive-list transitio
 Pillow wrote it: each page places one 180×240 4:2:0 JPEG.
 `media/guide-page-1-pdfjs.png` is its first page as the original app's PDF.js canvas drew it: the 314×418 device px under the revised preview of the retained Codex 26.1007 frame at 2x (`mediaPdf/dark@1280x832`, origin 1713, 440).
 Its corners show the rounded page clip over the canvas.
+
+## Owned Space and Sites fixture
+
+`space-sites.json` holds synthetic offline HTTP exchanges for Sites (`/websites`, `/websites/shared`) and Space (`/files/library/nodes`, `/pages/{id}`).
+The shapes come from the original zod schemas in Codex 26.1007.30912. No account call was made. Replay refuses every other request, including mutations.
+The clock is frozen at 2026-10-15T17:00:00-07:00. `crates/app/tests/space_sites.rs` replays each exchange.
