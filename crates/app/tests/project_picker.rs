@@ -398,7 +398,10 @@ fn project_selection_changes_new_chats_but_not_existing_chats() -> Result<()> {
         .iter()
         .find(|request| request["method"] == "thread/resume")
         .unwrap();
-    assert_eq!(resume["params"], json!({"threadId": GREETING}));
+    assert_eq!(
+        resume["params"],
+        json!({"threadId": GREETING, "excludeTurns": true})
+    );
     let turns: Vec<_> = requests
         .iter()
         .filter(|request| request["method"] == "turn/start")
