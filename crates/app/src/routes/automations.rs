@@ -43,6 +43,21 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     .on_action(cx.listener(|this, _: &automations::NewTask, window, cx| {
         this.open_dialog(DialogKind::ScheduleTask, window, cx)
     }))
+    .on_action(cx.listener(|this, _: &automations::RetryAutomations, _, cx| {
+        this.automations = None;
+        if let Some(sidebar) = &this.scheduled {
+            sidebar.update(cx, |sidebar, cx| sidebar.set_load(ListState::Loading, cx));
+        }
+        this.load_automations(cx);
+    }))
+    .on_action(cx.listener(|this, a: &automations::OpenAutomationRun, window, cx| {
+        this.navigate_with_sidebar(
+            Route::Thread(a.thread_id.clone()),
+            Some(a.automation_id.clone()),
+            window,
+            cx,
+        );
+    }))
     .on_action(
         cx.listener(|this, _: &automations::StartSuggestedTask, _, cx| {
             this.toast(
@@ -53,12 +68,30 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     )
 }
 
+/// Hands the list's load state and run history to a newly built Scheduled sidebar.
+fn fill_sidebar(
+    root: &mut Root,
+    sidebar: Entity<automations::ScheduledSidebar>,
+    cx: &mut Context<Root>,
+) {
+    let (state, runs, run) = (
+        root.automation_list_state(),
+        root.automation_runs.clone(),
+        root.sidebar_run(),
+    );
+    sidebar.update(cx, |sidebar, cx| {
+        sidebar.set_load(state, cx);
+        sidebar.set_runs(runs, run, cx);
+    });
+    root.scheduled = Some(sidebar);
+    root.sync_starting(cx);
+}
+
 pub(super) fn scheduled(root: &mut Root, cx: &mut Context<Root>) -> Entity<Shell> {
     let tasks = root.tasks();
     root.load_automations(cx);
     let (shell, sidebar, page) = automations::shell(tasks, None, utc_offset(), cx);
-    root.scheduled = Some(sidebar);
-    root.sync_starting(cx);
+    fill_sidebar(root, sidebar, cx);
     root.suggestions = page;
     shell
 }
@@ -79,8 +112,7 @@ pub(super) fn automation(
         (task, composer)
     });
     let (shell, sidebar, page) = automations::shell(tasks, selected, utc_offset(), cx);
-    root.scheduled = Some(sidebar);
-    root.sync_starting(cx);
+    fill_sidebar(root, sidebar, cx);
     root.suggestions = page;
     shell
 }
@@ -93,8 +125,7 @@ pub(super) fn thread(root: &mut Root, cx: &mut Context<Root>) -> Entity<Shell> {
         .cloned();
     let selected = task.map(|task| (task, cx.new(|_| ui::EmptyMain).into()));
     let (shell, sidebar, _) = automations::shell(tasks, selected, utc_offset(), cx);
-    root.scheduled = Some(sidebar);
-    root.sync_starting(cx);
+    fill_sidebar(root, sidebar, cx);
     shell
 }
 
