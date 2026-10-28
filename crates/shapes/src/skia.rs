@@ -909,13 +909,14 @@ impl Layer {
             },
         };
         let recorded_bounds = RECORDED_BOUNDS.get();
-        let tile_origin =
-            if composited.is_none() && window.window_space_recording() && recorded_bounds.is_none()
-            {
-                std::mem::take(&mut origin)
-            } else {
-                [0, 0]
-            };
+        let own_space = composited.is_none() && recorded_bounds.is_none();
+        let tile_origin = if own_space && window.window_space_recording() {
+            std::mem::take(&mut origin)
+        } else if own_space && window.page_tiles() {
+            origin.map(|v| -v)
+        } else {
+            [0, 0]
+        };
         // The innermost `with_layer`, else a `saved_layer` div: Skia's layer device.
         let floor = |v: Pixels| (f32::from(v) * s).floor() as i32;
         let ceil = |v: Pixels| (f32::from(v) * s).ceil() as i32;

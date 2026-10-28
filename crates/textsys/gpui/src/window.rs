@@ -1264,6 +1264,7 @@ pub struct Window {
     composited_layer: Option<(Bounds<Pixels>, bool)>,
     composited_layer_id: Option<u8>,
     window_space_recording: bool,
+    page_tiles: bool,
     /// The bounds of the innermost `Styled::saved_layer` element being painted.
     saved_layer: Option<Bounds<Pixels>>,
     next_layer_id: u8,
@@ -2185,6 +2186,7 @@ impl Window {
             composited_layer: None,
             composited_layer_id: None,
             window_space_recording: false,
+            page_tiles: false,
             saved_layer: None,
             next_layer_id: 0,
             requested_autoscroll: None,
@@ -4347,11 +4349,12 @@ impl Window {
             return f(self);
         }
         let previous_opacity = self.element_opacity;
-        let (previous_layer, previous_saved, previous_layer_id, previous_recording) = (
+        let (previous_layer, previous_saved, previous_layer_id, previous_recording, previous_tiles) = (
             self.composited_layer,
             self.saved_layer,
             self.composited_layer_id,
             self.window_space_recording,
+            self.page_tiles,
         );
         self.element_opacity = previous_opacity * opacity;
         match layer {
@@ -4359,6 +4362,7 @@ impl Window {
             Some((b, s)) => {
                 self.composited_layer = Some((b, s.cc_tiles));
                 self.window_space_recording = s.window_space_recording;
+                self.page_tiles = s.page_tiles;
                 // A composited layer's content draws on its own tiles, not in an outer saved
                 // layer.
                 self.saved_layer = None;
@@ -4385,6 +4389,7 @@ impl Window {
         self.saved_layer = previous_saved;
         self.composited_layer_id = previous_layer_id;
         self.window_space_recording = previous_recording;
+        self.page_tiles = previous_tiles;
         result
     }
 
@@ -4416,6 +4421,11 @@ impl Window {
     /// Whether the innermost composited layer records Skia paths in window coordinates.
     pub fn window_space_recording(&self) -> bool {
         self.window_space_recording
+    }
+
+    /// Whether the innermost composited layer rasters in the page's tile grid.
+    pub fn page_tiles(&self) -> bool {
+        self.page_tiles
     }
 
     /// The window bounds of the innermost `Styled::saved_layer` element being painted: Skia
