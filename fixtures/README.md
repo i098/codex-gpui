@@ -77,6 +77,13 @@ Pillow wrote it: each page places one 180×240 4:2:0 JPEG.
 `media/guide-page-1-pdfjs.png` is its first page as the original app's PDF.js canvas drew it: the 314×418 device px under the revised preview of the retained Codex 26.1007 frame at 2x (`mediaPdf/dark@1280x832`, origin 1713, 440).
 Its corners show the rounded page clip over the canvas.
 
+## Owned images and Library fixture
+
+`images-library.json` replays the ChatGPT `/images/*` and `/files/library/*` reads that the pinned `26.1007.30912` renderer sends.
+Paths, methods and query names come from its consumer chunks; the data is owned synthetic example data, not a live account recording.
+Writes other than the favorite-status reads have no exchange, so `ReplayHost` refuses them.
+`crates/app/tests/images_library_fixture.rs` proves each exchange replays and unknown mutations fail.
+
 ## Owned Space and Sites fixture
 
 `space-sites.json` holds synthetic offline HTTP exchanges for Sites (`/websites`, `/websites/shared`) and Space (`/files/library/nodes`, `/pages/{id}`).
