@@ -76,3 +76,9 @@ These responses enable action captures; they do not prove archive-list transitio
 Pillow wrote it: each page places one 180×240 4:2:0 JPEG.
 `media/guide-page-1-pdfjs.png` is its first page as the original app's PDF.js canvas drew it: the 314×418 device px under the revised preview of the retained Codex 26.1007 frame at 2x (`mediaPdf/dark@1280x832`, origin 1713, 440).
 Its corners show the rounded page clip over the canvas.
+
+## Conversation streams
+
+`conversations.json` holds offline ChatGPT conversation exchanges for `ReplayHost`: the list, one conversation, stream status (found and 404), search, and the `/f/conversation` and `/f/conversation/resume` SSE bodies.
+The contract comes from Codex 26.1007.30912 (`app-initial` callers and event decoders). The responses are crafted, not a live capture, and every time field derives from the frozen clock 2026-10-15T17:00:00-07:00.
+`ReplayHost` matches the whole request, so every unrecorded request, including each mutation, is refused. `crates/app/tests/conversation_fixtures.rs` proves both.
