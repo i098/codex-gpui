@@ -791,6 +791,15 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Keeps this layer's Skia paths in its own space but rasters them in the page's tile
+    /// grid, which starts at the window origin: Blink's paint offset translation of a scroll
+    /// container that paints into the page's layer instead of a composited one.
+    fn page_tiles(mut self) -> Self {
+        self.style().layer = Some(true);
+        self.style().page_tiles = Some(true);
+        self
+    }
+
     /// Starts this element and its content at its origin rounded to device pixels, dropping
     /// the subpixel fraction its content would inherit: Blink's paint offset at a CSS
     /// `contain: paint` box, or a transform rounded by Floating UI's `roundByDPR`.

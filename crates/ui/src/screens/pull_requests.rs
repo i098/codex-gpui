@@ -134,9 +134,6 @@ fn missing_avatar() -> gpui::AnyElement {
         shapes::premultiply(&mut pixels);
         pixels
     });
-    static WHITE: std::sync::LazyLock<image::RgbaImage> = std::sync::LazyLock::new(|| {
-        image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 255, 255, 255]))
-    });
     static SILVER: std::sync::LazyLock<image::RgbaImage> = std::sync::LazyLock::new(|| {
         image::RgbaImage::from_pixel(1, 1, image::Rgba([192, 192, 192, 255]))
     });
@@ -200,8 +197,7 @@ fn missing_avatar() -> gpui::AnyElement {
                 let clipped =
                     image::RgbaImage::from_raw(size.width.into(), size.height.into(), bytes)
                         .expect("raster size");
-                let images: [(&image::RgbaImage, gpui::Bounds<gpui::Pixels>); 6] = [
-                    (&WHITE, bounds),
+                let images: [(&image::RgbaImage, gpui::Bounds<gpui::Pixels>); 5] = [
                     (&SILVER, rect(0., 0., 18., 1.)),
                     (&SILVER, rect(0., 17., 18., 1.)),
                     (&SILVER, rect(0., 1., 1., 16.)),
@@ -209,11 +205,15 @@ fn missing_avatar() -> gpui::AnyElement {
                     (&clipped, snapped(inner_bounds)),
                 ];
                 let rendered = Arc::new(
-                    shapes::raster_images(
+                    shapes::raster_decorated_images(
                         &images,
                         bounds,
-                        gpui::Corners::all(px(9.)),
-                        shapes::Corner::Round,
+                        &shapes::Decoration {
+                            radius: gpui::Corners::all(px(9.)),
+                            corner: shapes::Corner::Round,
+                            fill: Some(gpui::white()),
+                            ..Default::default()
+                        },
                         shapes::ImageComposition::Composited(page),
                         window,
                     )
@@ -2212,12 +2212,15 @@ impl Render for Page {
                             d.border_l_1().border_color(cx.theme().border)
                         })
                         .child(
-                            // Chromium composites the detail section with its opaque surface.
+                            // Chromium composites the empty detail section with its opaque
+                            // surface; a shown one paints into the page's tiles from its own
+                            // origin (the overflow-hidden panel's paint offset).
                             div()
                                 .relative()
                                 .flex_1()
                                 .min_h_0()
                                 .layer()
+                                .when(self.selected.is_some(), |d| d.page_tiles())
                                 .child(shapes::decoration(shapes::Decoration {
                                     fill: Some(cx.theme().surface),
                                     ..Default::default()

@@ -321,6 +321,9 @@ pub struct Style {
     /// Construct this layer's Skia paths in window coordinates while retaining its tile grid.
     pub window_space_recording: bool,
 
+    /// With `layer`: its Skia paths stay in its own space, rastered in the page's tile grid.
+    pub page_tiles: bool,
+
     /// The element and its content start at its origin rounded to device pixels
     /// (`Styled::snap_origin`).
     pub snap_origin: bool,
@@ -838,6 +841,7 @@ impl Default for Style {
             saved_layer: false,
             cc_tiles: false,
             window_space_recording: false,
+            page_tiles: false,
             snap_origin: false,
             grid_rows: None,
             grid_cols: None,
