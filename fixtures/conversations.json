@@ -1,0 +1,276 @@
+{
+  "provenance": {
+    "appVersion": "26.1007.30912",
+    "clock": "2026-10-15T17:00:00-07:00 (epoch 1792108800); every time field derives from it",
+    "contract": "Request shapes from app-initial-6350d04672d0.js safeGet/safePost/streamPost callers for /conversations, /conversation/{conversation_id}, /conversation/{conversation_id}/stream_status, /conversations/search, /f/conversation and /f/conversation/resume; SSE events from the delta_encoding, delta, message_stream_complete and title_generation decoders.",
+    "recording": "Crafted from the contract; not a live account capture. Identifiers and the device id are fixed scrubbed values. No live call, sign-in or model turn.",
+    "unknownRequests": "ReplayHost matches the complete request, so any unrecorded request, including every mutation (rename, feedback, delete, new_branch), is refused."
+  },
+  "exchanges": [
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/conversations?offset=0&limit=28&order=updated",
+          "method": "GET",
+          "headers": {
+            "x-openai-web-frontend": "codex_webview",
+            "x-oai-mcp-form-version": "2",
+            "x-openai-codex-window-type": "electron",
+            "OAI-Language": "en-US",
+            "oai-did": "27e59b98-5ac3-4533-ad5e-5979fd07c633",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"items\":[{\"id\":\"68f00000-0000-4000-8000-0000000000c1\",\"conversation_id\":\"68f00000-0000-4000-8000-0000000000c1\",\"title\":\"Clock fixture chat\",\"create_time\":1792108200,\"update_time\":1792108500,\"is_archived\":false,\"is_starred\":false,\"conversation_origin\":null,\"gizmo_id\":null}],\"total\":1,\"limit\":28,\"offset\":0,\"has_missing_conversations\":false}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/conversation/68f00000-0000-4000-8000-0000000000c1",
+          "method": "GET",
+          "headers": {
+            "x-openai-web-frontend": "codex_webview",
+            "x-oai-mcp-form-version": "2",
+            "x-openai-codex-window-type": "electron",
+            "OAI-Language": "en-US",
+            "oai-did": "27e59b98-5ac3-4533-ad5e-5979fd07c633",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"title\":\"Clock fixture chat\",\"create_time\":1792108200,\"update_time\":1792108500,\"mapping\":{\"client-created-root\":{\"id\":\"client-created-root\",\"message\":null,\"parent\":null,\"children\":[\"68f00000-0000-4000-8000-0000000000a1\"]},\"68f00000-0000-4000-8000-0000000000a1\":{\"id\":\"68f00000-0000-4000-8000-0000000000a1\",\"message\":{\"id\":\"68f00000-0000-4000-8000-0000000000a1\",\"author\":{\"role\":\"user\",\"name\":null,\"metadata\":{}},\"create_time\":1792108200,\"update_time\":null,\"content\":{\"content_type\":\"text\",\"parts\":[\"Say hello.\"]},\"status\":\"finished_successfully\",\"end_turn\":true,\"weight\":1.0,\"metadata\":{},\"recipient\":\"all\",\"channel\":null},\"parent\":\"client-created-root\",\"children\":[\"68f00000-0000-4000-8000-0000000000a2\"]},\"68f00000-0000-4000-8000-0000000000a2\":{\"id\":\"68f00000-0000-4000-8000-0000000000a2\",\"message\":{\"id\":\"68f00000-0000-4000-8000-0000000000a2\",\"author\":{\"role\":\"assistant\",\"name\":null,\"metadata\":{}},\"create_time\":1792108210,\"update_time\":null,\"content\":{\"content_type\":\"text\",\"parts\":[\"Hello.\"]},\"status\":\"finished_successfully\",\"end_turn\":true,\"weight\":1.0,\"metadata\":{},\"recipient\":\"all\",\"channel\":null},\"parent\":\"68f00000-0000-4000-8000-0000000000a1\",\"children\":[]}},\"moderation_results\":[],\"current_node\":\"68f00000-0000-4000-8000-0000000000a2\",\"conversation_id\":\"68f00000-0000-4000-8000-0000000000c1\",\"is_archived\":false,\"is_starred\":false,\"safe_urls\":[],\"blocked_urls\":[],\"default_model_slug\":\"gpt-6.1-sol\",\"conversation_origin\":null,\"gizmo_id\":null,\"id\":\"68f00000-0000-4000-8000-0000000000c1\"}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/conversation/68f00000-0000-4000-8000-0000000000c1/stream_status",
+          "method": "GET",
+          "headers": {
+            "x-openai-web-frontend": "codex_webview",
+            "x-oai-mcp-form-version": "2",
+            "x-openai-codex-window-type": "electron",
+            "OAI-Language": "en-US",
+            "oai-did": "27e59b98-5ac3-4533-ad5e-5979fd07c633",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"status\":\"IS_STREAMING\"}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/conversation/68f00000-0000-4000-8000-0000000000ff/stream_status",
+          "method": "GET",
+          "headers": {
+            "x-openai-web-frontend": "codex_webview",
+            "x-oai-mcp-form-version": "2",
+            "x-openai-codex-window-type": "electron",
+            "OAI-Language": "en-US",
+            "oai-did": "27e59b98-5ac3-4533-ad5e-5979fd07c633",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 404,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"detail\":\"Not Found\"}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/conversations/search?query=hello",
+          "method": "GET",
+          "headers": {
+            "x-openai-web-frontend": "codex_webview",
+            "x-oai-mcp-form-version": "2",
+            "x-openai-codex-window-type": "electron",
+            "OAI-Language": "en-US",
+            "oai-did": "27e59b98-5ac3-4533-ad5e-5979fd07c633",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"items\":[{\"conversation_id\":\"68f00000-0000-4000-8000-0000000000c1\",\"title\":\"Clock fixture chat\",\"is_archived\":false,\"create_time\":1792108200,\"update_time\":1792108500,\"payload\":{\"kind\":\"conversation\"}}],\"cursor\":null}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/f/conversation",
+          "method": "POST",
+          "headers": {
+            "x-openai-web-frontend": "codex_webview",
+            "x-oai-mcp-form-version": "2",
+            "x-openai-codex-window-type": "electron",
+            "OAI-Language": "en-US",
+            "oai-did": "27e59b98-5ac3-4533-ad5e-5979fd07c633",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "accept": "text/event-stream",
+            "content-type": "application/json"
+          },
+          "body": "{\"action\":\"next\",\"messages\":[{\"id\":\"68f00000-0000-4000-8000-0000000000b1\",\"author\":{\"role\":\"user\"},\"create_time\":1792108800,\"content\":{\"content_type\":\"text\",\"parts\":[\"Say hello.\"]},\"metadata\":{}}],\"conversation_id\":\"68f00000-0000-4000-8000-0000000000c1\",\"parent_message_id\":\"68f00000-0000-4000-8000-0000000000a2\",\"model\":\"gpt-6.1-sol\",\"timezone_offset_min\":420,\"history_and_training_disabled\":false}",
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "text/event-stream; charset=utf-8"
+                ]
+              ],
+              "body": "event: delta_encoding\ndata: \"v1\"\n\nevent: delta\ndata: {\"p\":\"\",\"o\":\"add\",\"v\":{\"message\":{\"id\":\"68f00000-0000-4000-8000-0000000000b2\",\"author\":{\"role\":\"assistant\",\"name\":null,\"metadata\":{}},\"create_time\":1792108801,\"update_time\":null,\"content\":{\"content_type\":\"text\",\"parts\":[\"\"]},\"status\":\"in_progress\",\"end_turn\":null,\"weight\":1.0,\"metadata\":{},\"recipient\":\"all\",\"channel\":null},\"conversation_id\":\"68f00000-0000-4000-8000-0000000000c1\"},\"c\":0}\n\nevent: delta\ndata: {\"p\":\"/message/content/parts/0\",\"o\":\"append\",\"v\":\"Hel\"}\n\nevent: delta\ndata: {\"v\":\"lo again.\"}\n\nevent: delta\ndata: [{\"p\":\"/message/status\",\"o\":\"replace\",\"v\":\"finished_successfully\"},{\"p\":\"/message/end_turn\",\"o\":\"replace\",\"v\":true}]\n\ndata: {\"type\":\"message_stream_complete\",\"conversation_id\":\"68f00000-0000-4000-8000-0000000000c1\"}\n\ndata: {\"type\":\"title_generation\",\"conversation_id\":\"68f00000-0000-4000-8000-0000000000c1\",\"title\":\"Clock fixture chat\"}\n\ndata: [DONE]\n\n"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/f/conversation/resume",
+          "method": "POST",
+          "headers": {
+            "x-openai-web-frontend": "codex_webview",
+            "x-oai-mcp-form-version": "2",
+            "x-openai-codex-window-type": "electron",
+            "OAI-Language": "en-US",
+            "oai-did": "27e59b98-5ac3-4533-ad5e-5979fd07c633",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "accept": "text/event-stream",
+            "content-type": "application/json"
+          },
+          "body": "{\"conversation_id\":\"68f00000-0000-4000-8000-0000000000c1\",\"offset\":0}",
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "text/event-stream; charset=utf-8"
+                ]
+              ],
+              "body": "event: delta_encoding\ndata: \"v1\"\n\nevent: delta\ndata: {\"p\":\"\",\"o\":\"add\",\"v\":{\"message\":{\"id\":\"68f00000-0000-4000-8000-0000000000b2\",\"author\":{\"role\":\"assistant\",\"name\":null,\"metadata\":{}},\"create_time\":1792108801,\"update_time\":null,\"content\":{\"content_type\":\"text\",\"parts\":[\"\"]},\"status\":\"in_progress\",\"end_turn\":null,\"weight\":1.0,\"metadata\":{},\"recipient\":\"all\",\"channel\":null},\"conversation_id\":\"68f00000-0000-4000-8000-0000000000c1\"},\"c\":0}\n\nevent: delta\ndata: {\"p\":\"/message/content/parts/0\",\"o\":\"append\",\"v\":\"Hel\"}\n\nevent: delta\ndata: {\"v\":\"lo again.\"}\n\nevent: delta\ndata: [{\"p\":\"/message/status\",\"o\":\"replace\",\"v\":\"finished_successfully\"},{\"p\":\"/message/end_turn\",\"o\":\"replace\",\"v\":true}]\n\ndata: {\"type\":\"message_stream_complete\",\"conversation_id\":\"68f00000-0000-4000-8000-0000000000c1\"}\n\ndata: {\"type\":\"title_generation\",\"conversation_id\":\"68f00000-0000-4000-8000-0000000000c1\",\"title\":\"Clock fixture chat\"}\n\ndata: [DONE]\n\n"
+            }
+          }
+        }
+      }
+    }
+  ]
+}
