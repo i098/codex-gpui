@@ -82,3 +82,8 @@ Its corners show the rounded page clip over the canvas.
 `space-sites.json` holds synthetic offline HTTP exchanges for Sites (`/websites`, `/websites/shared`) and Space (`/files/library/nodes`, `/pages/{id}`).
 The shapes come from the original zod schemas in Codex 26.1007.30912. No account call was made. Replay refuses every other request, including mutations.
 The clock is frozen at 2026-10-15T17:00:00-07:00. `crates/app/tests/space_sites.rs` replays each exchange.
+## Conversation streams
+
+`conversations.json` holds offline ChatGPT conversation exchanges for `ReplayHost`: the list, one conversation, stream status (found and 404), search, and the `/f/conversation` and `/f/conversation/resume` SSE bodies.
+The contract comes from Codex 26.1007.30912 (`app-initial` callers and event decoders). The responses are crafted, not a live capture, and every time field derives from the frozen clock 2026-10-15T17:00:00-07:00.
+`ReplayHost` matches the whole request, so every unrecorded request, including each mutation, is refused. `crates/app/tests/conversation_fixtures.rs` proves both.
