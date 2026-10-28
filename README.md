@@ -567,7 +567,7 @@ Merge the bump, then push the tag `v0.2.0`.
 The `release` workflow builds the bundle on a GitHub macOS arm64 runner and stops if the tag is not `v` plus the workspace version.
 It publishes `codex-gpui-0.2.0-macos-arm64.zip` as a GitHub release with that version's changelog section as notes.
 About Codex shows the version.
-`Codex` > `Check for Updates…` compares it with the latest GitHub release and shows both versions.
+`Codex` > `Check for Updates…` uses the signed update feed when the bundle has one and organization policy permits updates.
 
 ## Live QA build
 

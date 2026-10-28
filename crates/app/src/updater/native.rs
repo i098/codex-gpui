@@ -43,6 +43,11 @@ define_class!(
     unsafe impl NSObjectProtocol for UserDriver {}
 
     impl UserDriver {
+        #[unsafe(method(updater:mayPerformUpdateCheck:error:))]
+        fn may_check(&self, _: &AnyObject, _: isize, _: *mut *mut NSError) -> bool {
+            !self.ivars().blocked.get()
+        }
+
         #[unsafe(method(showUpdatePermissionRequest:reply:))]
         fn permission(&self, request: &AnyObject, reply: &DynBlock<dyn Fn(*mut AnyObject)>) {
             unsafe { let _: () = msg_send![&*self.ivars().standard, showUpdatePermissionRequest: request, reply: reply]; }
@@ -57,8 +62,9 @@ define_class!(
 
         #[unsafe(method(showUpdateFoundWithAppcastItem:state:reply:))]
         fn found(&self, item: &AnyObject, state: &AnyObject, reply: &DynBlock<dyn Fn(isize)>) {
+            let stage: isize = unsafe { msg_send![state, stage] };
             if self.ivars().blocked.get() {
-                reply.call((DISMISS,));
+                reply.call((if stage == STAGE_INSTALLING { SKIP } else { DISMISS },));
                 return;
             }
             unsafe {
@@ -67,9 +73,8 @@ define_class!(
                     let _: () = msg_send![&*self.ivars().standard, showUpdateFoundWithAppcastItem: item, state: state, reply: reply];
                     return;
                 }
-                let stage: isize = msg_send![state, stage];
                 if stage == STAGE_INSTALLING {
-                    *self.ivars().install.borrow_mut() = Some(Installation { reply: reply.copy(), cancel_choice: DISMISS });
+                    *self.ivars().install.borrow_mut() = Some(Installation { reply: reply.copy(), cancel_choice: SKIP });
                     self.emit(Status::Ready);
                 } else {
                     self.dismiss_standard();
@@ -200,6 +205,9 @@ pub(super) struct Backend {
 
 impl Backend {
     pub(super) fn check(&self) {
+        if self.driver.ivars().blocked.get() {
+            return;
+        }
         unsafe {
             let allowed: bool = msg_send![&*self.updater, canCheckForUpdates];
             if allowed {
@@ -209,6 +217,9 @@ impl Backend {
     }
 
     pub(super) fn install(&self) {
+        if self.driver.ivars().blocked.get() {
+            return;
+        }
         let reply = self.driver.ivars().install.borrow_mut().take();
         if let Some(reply) = reply {
             self.driver.emit(Status::Installing);
@@ -216,8 +227,11 @@ impl Backend {
         }
     }
 
-    pub(super) fn cancel(&self) {
-        self.driver.ivars().blocked.set(true);
+    pub(super) fn set_managed(&self, managed: bool) {
+        self.driver.ivars().blocked.set(managed);
+        if !managed {
+            return;
+        }
         let cancel = self.driver.ivars().cancel.borrow_mut().take();
         if let Some(cancel) = cancel {
             cancel.call(());
@@ -226,6 +240,7 @@ impl Backend {
         if let Some(install) = install {
             install.reply.call((install.cancel_choice,));
         }
+        self.driver.emit(Status::Idle);
     }
 }
 
@@ -273,7 +288,7 @@ pub(super) fn start() -> Result<Option<(Backend, Receiver<Status>)>> {
     let class = AnyClass::get(c"SPUUpdater").context("Sparkle updater is unavailable")?;
     let updater: Retained<AnyObject> = unsafe {
         let allocated: Allocated<AnyObject> = msg_send![class, alloc];
-        msg_send![allocated, initWithHostBundle: &*bundle, applicationBundle: &*bundle, userDriver: &*driver, delegate: std::ptr::null::<AnyObject>()]
+        msg_send![allocated, initWithHostBundle: &*bundle, applicationBundle: &*bundle, userDriver: &*driver, delegate: &*driver]
     };
     let mut error: Option<Retained<NSError>> = None;
     let started: bool = unsafe { msg_send![&*updater, startUpdater: &mut error] };

@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+use crate::native_menus::CheckForUpdates;
 use bridge::Bridge;
 #[cfg(target_os = "macos")]
 use gpui::Global;
@@ -5,11 +7,9 @@ use gpui::{App, Task};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
-use ui::updater::Updates;
-#[cfg(target_os = "macos")]
-use crate::native_menus::CheckForUpdates;
 #[cfg(target_os = "macos")]
 use ui::updater::InstallUpdate;
+use ui::updater::Updates;
 
 #[cfg(target_os = "macos")]
 mod native;
@@ -147,14 +147,15 @@ pub fn poll_policy(bridge: Arc<Bridge>, cx: &mut App) -> Option<Task<()>> {
 
 #[cfg(target_os = "macos")]
 fn configure(managed: bool, cx: &mut App) {
-    if managed {
-        if let Some(runtime) = cx.try_global::<Runtime>() {
-            runtime.backend.cancel();
-            cx.remove_global::<Runtime>();
+    if let Some(runtime) = cx.try_global::<Runtime>() {
+        runtime.backend.set_managed(managed);
+        cx.global_mut::<Updates>().available = !managed;
+        if managed {
+            cx.global_mut::<Updates>().status = ui::updater::Status::Idle;
         }
-        cx.global_mut::<Updates>().available = false;
-        cx.global_mut::<Updates>().status = ui::updater::Status::Idle;
-    } else if !cx.has_global::<Runtime>() {
+        return;
+    }
+    if !managed {
         match native::start() {
             Ok(Some((backend, events))) => {
                 cx.global_mut::<Updates>().available = true;
@@ -178,7 +179,6 @@ fn configure(managed: bool, cx: &mut App) {
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

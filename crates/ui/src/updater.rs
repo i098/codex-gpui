@@ -65,7 +65,9 @@ fn glyph(status: Status) -> gpui::AnyElement {
         _ => icon("sidebar-cmd-spinner", 16., gpui::white())
             .with_animation(
                 "updater-spinner",
-                Animation::new(Duration::from_secs(1)).repeat(),
+                Animation::new(Duration::from_secs(2))
+                    .with_easing(crate::motion::steps(60))
+                    .repeat(),
                 |icon, phase| {
                     icon.with_transformation(Transformation::rotate(radians(
                         phase * std::f32::consts::TAU,
@@ -90,9 +92,11 @@ pub fn rail<T: 'static>(
     let ready = status == Status::Ready;
     let handle = focus::handle("rail-update", 0, window, cx);
     let button = focus::ring(div().id("rail-update"), &handle, px(12.5), px(1.), cx)
+        .debug_selector(|| "rail-update".into())
         .size(px(36.))
         .mb(px(8.))
         .flex_none()
+        .rounded(px(12.5))
         .flex()
         .items_center()
         .justify_center()
