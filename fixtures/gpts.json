@@ -1,0 +1,233 @@
+{
+ "provenance": {
+  "appVersion": "26.1007.30912",
+  "clock": "2026-10-15T17:00:00-07:00",
+  "source": "app-initial webview module: gizmos bootstrap/detail/discovery/pins/snorlax sidebar/conversations safeGet calls",
+  "scrub": "Synthetic ids, Demo User, no live account call; request encoding follows the recorded /models request in tools/route1/oracle.json",
+  "policy": "ReplayHost refuses any request without an exact recorded exchange, so GPT create, update and delete are refused"
+ },
+ "exchanges": [
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/gizmos/bootstrap?limit=20",
+     "method": "GET",
+     "headers": {
+      "x-openai-web-frontend": "codex_webview",
+      "x-oai-mcp-form-version": "2",
+      "x-openai-codex-window-type": "electron",
+      "OAI-Language": "en-US",
+      "oai-did": "27e59b98-5ac3-4533-ad5e-5979fd07c633",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Desktop-Surface": "1",
+      "X-OpenAI-Attach-Integrity-State": "1"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"gizmos\":[{\"resource\":{\"gizmo\":{\"id\":\"g-000000001-demo-gpt\",\"organization_id\":null,\"short_url\":\"000000001-demo-gpt\",\"author\":{\"user_id\":\"user-000000000000000000000000\",\"display_name\":\"Demo User\",\"link_to\":null,\"is_verified\":false},\"voice\":null,\"display\":{\"name\":\"Demo GPT\",\"description\":\"Fixture GPT\",\"welcome_message\":null,\"prompt_starters\":[],\"profile_picture_url\":null,\"emoji\":null,\"theme\":null,\"categories\":[]},\"instructions\":\"\",\"tags\":[\"public\"],\"created_at\":\"2026-10-16T00:00:00.000000+00:00\",\"updated_at\":\"2026-10-16T00:00:00.000000+00:00\",\"num_interactions\":0,\"gizmo_type\":\"gpt\",\"gizmo_snorlax_type\":null,\"current_user_permission\":{\"can_read\":true,\"can_view_config\":true,\"can_write\":true,\"can_delete\":true},\"sharing\":{\"subjects\":[]}}},\"flair\":null}],\"cursor\":null}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/public-api/gizmos/discovery",
+     "method": "GET",
+     "headers": {
+      "x-openai-web-frontend": "codex_webview",
+      "x-oai-mcp-form-version": "2",
+      "x-openai-codex-window-type": "electron",
+      "OAI-Language": "en-US",
+      "oai-did": "27e59b98-5ac3-4533-ad5e-5979fd07c633",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Desktop-Surface": "1",
+      "X-OpenAI-Attach-Integrity-State": "1"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"list\":{\"items\":[{\"resource\":{\"gizmo\":{\"id\":\"g-000000001-demo-gpt\",\"organization_id\":null,\"short_url\":\"000000001-demo-gpt\",\"author\":{\"user_id\":\"user-000000000000000000000000\",\"display_name\":\"Demo User\",\"link_to\":null,\"is_verified\":false},\"voice\":null,\"display\":{\"name\":\"Demo GPT\",\"description\":\"Fixture GPT\",\"welcome_message\":null,\"prompt_starters\":[],\"profile_picture_url\":null,\"emoji\":null,\"theme\":null,\"categories\":[]},\"instructions\":\"\",\"tags\":[\"public\"],\"created_at\":\"2026-10-16T00:00:00.000000+00:00\",\"updated_at\":\"2026-10-16T00:00:00.000000+00:00\",\"num_interactions\":0,\"gizmo_type\":\"gpt\",\"gizmo_snorlax_type\":null,\"current_user_permission\":{\"can_read\":true,\"can_view_config\":true,\"can_write\":true,\"can_delete\":true},\"sharing\":{\"subjects\":[]}},\"tools\":[],\"files\":[]},\"flair\":null}]},\"cursor\":null}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/gizmos/g-000000001-demo-gpt",
+     "method": "GET",
+     "headers": {
+      "x-openai-web-frontend": "codex_webview",
+      "x-oai-mcp-form-version": "2",
+      "x-openai-codex-window-type": "electron",
+      "OAI-Language": "en-US",
+      "oai-did": "27e59b98-5ac3-4533-ad5e-5979fd07c633",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Desktop-Surface": "1",
+      "X-OpenAI-Attach-Integrity-State": "1"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"gizmo\":{\"id\":\"g-000000001-demo-gpt\",\"organization_id\":null,\"short_url\":\"000000001-demo-gpt\",\"author\":{\"user_id\":\"user-000000000000000000000000\",\"display_name\":\"Demo User\",\"link_to\":null,\"is_verified\":false},\"voice\":null,\"display\":{\"name\":\"Demo GPT\",\"description\":\"Fixture GPT\",\"welcome_message\":null,\"prompt_starters\":[],\"profile_picture_url\":null,\"emoji\":null,\"theme\":null,\"categories\":[]},\"instructions\":\"\",\"tags\":[\"public\"],\"created_at\":\"2026-10-16T00:00:00.000000+00:00\",\"updated_at\":\"2026-10-16T00:00:00.000000+00:00\",\"num_interactions\":0,\"gizmo_type\":\"gpt\",\"gizmo_snorlax_type\":null,\"current_user_permission\":{\"can_read\":true,\"can_view_config\":true,\"can_write\":true,\"can_delete\":true},\"sharing\":{\"subjects\":[]}},\"tools\":[],\"files\":[],\"product_features\":{}}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/pins?item_type=gizmo",
+     "method": "GET",
+     "headers": {
+      "x-openai-web-frontend": "codex_webview",
+      "x-oai-mcp-form-version": "2",
+      "x-openai-codex-window-type": "electron",
+      "OAI-Language": "en-US",
+      "oai-did": "27e59b98-5ac3-4533-ad5e-5979fd07c633",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Desktop-Surface": "1",
+      "X-OpenAI-Attach-Integrity-State": "1"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "[{\"item_type\":\"gizmo\",\"item\":{\"gizmo\":{\"id\":\"g-000000001-demo-gpt\",\"organization_id\":null,\"short_url\":\"000000001-demo-gpt\",\"author\":{\"user_id\":\"user-000000000000000000000000\",\"display_name\":\"Demo User\",\"link_to\":null,\"is_verified\":false},\"voice\":null,\"display\":{\"name\":\"Demo GPT\",\"description\":\"Fixture GPT\",\"welcome_message\":null,\"prompt_starters\":[],\"profile_picture_url\":null,\"emoji\":null,\"theme\":null,\"categories\":[]},\"instructions\":\"\",\"tags\":[\"public\"],\"created_at\":\"2026-10-16T00:00:00.000000+00:00\",\"updated_at\":\"2026-10-16T00:00:00.000000+00:00\",\"num_interactions\":0,\"gizmo_type\":\"gpt\",\"gizmo_snorlax_type\":null,\"current_user_permission\":{\"can_read\":true,\"can_view_config\":true,\"can_write\":true,\"can_delete\":true},\"sharing\":{\"subjects\":[]}}},\"pinned_at\":\"2026-10-16T00:00:00.000000+00:00\"}]"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/gizmos/snorlax/sidebar?conversations_per_gizmo=0&limit=20&owned_only=true",
+     "method": "GET",
+     "headers": {
+      "x-openai-web-frontend": "codex_webview",
+      "x-oai-mcp-form-version": "2",
+      "x-openai-codex-window-type": "electron",
+      "OAI-Language": "en-US",
+      "oai-did": "27e59b98-5ac3-4533-ad5e-5979fd07c633",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Desktop-Surface": "1",
+      "X-OpenAI-Attach-Integrity-State": "1"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"items\":[{\"gizmo\":{\"gizmo\":{\"id\":\"g-p-000000000000000000000001\",\"organization_id\":null,\"short_url\":\"p-000000000000000000000001\",\"author\":{\"user_id\":\"user-000000000000000000000000\",\"display_name\":\"Demo User\",\"link_to\":null,\"is_verified\":false},\"voice\":null,\"display\":{\"name\":\"Demo project\",\"description\":\"Fixture GPT\",\"welcome_message\":null,\"prompt_starters\":[],\"profile_picture_url\":null,\"emoji\":null,\"theme\":null,\"categories\":[]},\"instructions\":\"\",\"tags\":[\"public\"],\"created_at\":\"2026-10-16T00:00:00.000000+00:00\",\"updated_at\":\"2026-10-16T00:00:00.000000+00:00\",\"num_interactions\":0,\"gizmo_type\":\"snorlax\",\"gizmo_snorlax_type\":\"project\",\"current_user_permission\":{\"can_read\":true,\"can_view_config\":true,\"can_write\":true,\"can_delete\":true},\"sharing\":{\"subjects\":[]}},\"tools\":[],\"files\":[]},\"conversations\":{\"items\":[]}}],\"cursor\":null}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/gizmos/g-p-000000000000000000000001/conversations?limit=5&owned_only=true",
+     "method": "GET",
+     "headers": {
+      "x-openai-web-frontend": "codex_webview",
+      "x-oai-mcp-form-version": "2",
+      "x-openai-codex-window-type": "electron",
+      "OAI-Language": "en-US",
+      "oai-did": "27e59b98-5ac3-4533-ad5e-5979fd07c633",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Desktop-Surface": "1",
+      "X-OpenAI-Attach-Integrity-State": "1"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"items\":[{\"id\":\"00000000-0000-4000-8000-0000000000c1\",\"title\":\"Demo project chat\",\"create_time\":\"2026-10-16T00:00:00.000000+00:00\",\"update_time\":\"2026-10-16T00:00:00.000000+00:00\",\"gizmo_id\":\"g-p-000000000000000000000001\",\"is_archived\":false}],\"cursor\":null}"
+      }
+     }
+    }
+   }
+  }
+ ]
+}
