@@ -33,6 +33,41 @@ struct DriverState {
     status: Cell<Status>,
 }
 
+impl DriverState {
+    fn emit(&self, status: Status) {
+        if self.status.replace(status) != status {
+            let _ = self.events.try_send(status);
+        }
+    }
+
+    fn install(&self) {
+        if self.blocked.get() {
+            return;
+        }
+        let reply = self.install.borrow_mut().take();
+        if let Some(reply) = reply {
+            self.emit(Status::Installing);
+            reply.reply.call((INSTALL,));
+        }
+    }
+
+    fn set_managed(&self, managed: bool) {
+        self.blocked.set(managed);
+        if !managed {
+            return;
+        }
+        let cancel = self.cancel.borrow_mut().take();
+        if let Some(cancel) = cancel {
+            cancel.call(());
+        }
+        let install = self.install.borrow_mut().take();
+        if let Some(install) = install {
+            install.reply.call((install.cancel_choice,));
+        }
+        self.emit(Status::Idle);
+    }
+}
+
 define_class!(
     #[unsafe(super = NSObject)]
     #[thread_kind = MainThreadOnly]
@@ -176,9 +211,7 @@ define_class!(
 
 impl UserDriver {
     fn emit(&self, status: Status) {
-        if self.ivars().status.replace(status) != status {
-            let _ = self.ivars().events.try_send(status);
-        }
+        self.ivars().emit(status);
     }
 
     fn progress(&self) {
@@ -217,30 +250,11 @@ impl Backend {
     }
 
     pub(super) fn install(&self) {
-        if self.driver.ivars().blocked.get() {
-            return;
-        }
-        let reply = self.driver.ivars().install.borrow_mut().take();
-        if let Some(reply) = reply {
-            self.driver.emit(Status::Installing);
-            reply.reply.call((INSTALL,));
-        }
+        self.driver.ivars().install();
     }
 
     pub(super) fn set_managed(&self, managed: bool) {
-        self.driver.ivars().blocked.set(managed);
-        if !managed {
-            return;
-        }
-        let cancel = self.driver.ivars().cancel.borrow_mut().take();
-        if let Some(cancel) = cancel {
-            cancel.call(());
-        }
-        let install = self.driver.ivars().install.borrow_mut().take();
-        if let Some(install) = install {
-            install.reply.call((install.cancel_choice,));
-        }
-        self.driver.emit(Status::Idle);
+        self.driver.ivars().set_managed(managed);
     }
 }
 
@@ -300,4 +314,42 @@ pub(super) fn start() -> Result<Option<(Backend, Receiver<Status>)>> {
             .unwrap_or_else(|| "Sparkle could not start".into())
     );
     Ok(Some((Backend { updater, driver }, receiver)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::rc::Rc;
+
+    #[test]
+    fn managed_policy_cancels_a_staged_update_before_install() {
+        let (events, receiver) = async_channel::unbounded();
+        let choice = Rc::new(Cell::new(None));
+        let reply_choice = choice.clone();
+        let canceled = Rc::new(Cell::new(false));
+        let cancel_called = canceled.clone();
+        let standard = unsafe { msg_send![objc2::class!(NSObject), new] };
+        let state = DriverState {
+            events,
+            standard,
+            install: RefCell::new(Some(Installation {
+                reply: RcBlock::new(move |value| reply_choice.set(Some(value))),
+                cancel_choice: SKIP,
+            })),
+            cancel: RefCell::new(Some(RcBlock::new(move || cancel_called.set(true)))),
+            blocked: Cell::new(false),
+            expected: Cell::new(0),
+            received: Cell::new(0),
+            status: Cell::new(Status::Ready),
+        };
+
+        state.set_managed(true);
+        state.install();
+
+        assert!(canceled.get());
+        assert_eq!(choice.get(), Some(SKIP));
+        assert_eq!(receiver.try_recv().unwrap(), Status::Idle);
+        assert!(receiver.try_recv().is_err());
+        assert!(state.install.borrow().is_none());
+    }
 }

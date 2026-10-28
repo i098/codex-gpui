@@ -539,6 +539,7 @@ Development bundles have no update feed, so update checks and the update menu st
 For a release, set `CODEX_GPUI_UPDATE_FEED`, `CODEX_GPUI_UPDATE_PUBLIC_KEY`, and `CODEX_GPUI_SPARKLE_FRAMEWORK` before running `tools/bundle.sh`.
 The framework path refers to the Mac build host and must contain the verified Sparkle 2.9 framework.
 Set `CODEX_GPUI_SIGN_IDENTITY` to the release signing identity.
+The script rejects an update feed with an ad-hoc signing identity.
 The script embeds the feed and Ed25519 public key, then signs Sparkle's helpers, framework, and app with that identity.
 The release owner must supply the production feed and complete signing and notarization before distribution.
 
@@ -547,6 +548,8 @@ The rail shows download progress and enables `Update available` only when instal
 The app reads the `in_app_updates` policy through `experimentalFeature/list`.
 A disabled policy removes the update action and shows the read-only `Managed` row in General settings.
 The native Sparkle dialogs show check progress, no-update results, and update errors.
+Run `cargo test -p app --lib updater` on macOS for the feed and managed-policy checks.
+Run `cargo test -p app --test updater -- --test-threads=1` for native rail visibility and input checks.
 
 The app icon is the original icon from `ChatGPT.app/Contents/Resources/Assets.car`.
 To make `assets/app/AppIcon.icns` again, run this on the Mac:

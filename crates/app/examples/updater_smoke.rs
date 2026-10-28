@@ -28,7 +28,9 @@ fn main() -> anyhow::Result<()> {
         .unwrap()
         .to_string();
     if version == "2" {
-        std::fs::write("/tmp/cgx-feat-updater-proof/relaunched", "version=2\n")?;
+        let marker = std::path::PathBuf::from(NSBundle::mainBundle().bundlePath().to_string())
+            .with_file_name("relaunched");
+        std::fs::write(marker, "version=2\n")?;
         return Ok(());
     }
     let (backend, events) = native::start()?.expect("configured native updater");
