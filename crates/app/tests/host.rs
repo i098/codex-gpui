@@ -295,6 +295,72 @@ fn inbox_preserves_order_filtering_counts_and_account_isolation() -> Result<()> 
 }
 
 #[test]
+fn run_bulk_actions_preserve_other_tasks_running_archived_and_owned_rows() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let db = database(home.path())?;
+    db.execute(
+        "INSERT INTO automations (id, name) VALUES ('other', 'Other task')",
+        [],
+    )?;
+    db.execute("INSERT INTO automation_runs (thread_id, automation_id, status, created_at) VALUES ('other-run', 'other', 'PENDING_REVIEW', 6)", [])?;
+    let host = LocalHost::new(home.path());
+    let scoped = json_body(&host.fetch(&Request::post(
+        "inbox-items",
+        Some(json!({"automationId":"local"})),
+    ))?)?;
+    assert_eq!(scoped["items"].as_array().unwrap().len(), 4);
+    let result = json_body(&host.fetch(&Request::post(
+        "inbox-automation-runs-mark-all-read",
+        Some(json!({"automationId":"local"})),
+    ))?)?;
+    assert_eq!(result["changed"], 2);
+    for id in ["running", "archived", "private-run", "other-run"] {
+        assert_eq!(
+            db.query_row(
+                "SELECT read_at FROM automation_runs WHERE thread_id = ?",
+                [id],
+                |row| row.get::<_, Option<i64>>(0)
+            )?,
+            None,
+            "{id}"
+        );
+    }
+    for (automation, thread) in [
+        ("local", "running"),
+        ("local", "archived"),
+        ("local", "other-run"),
+        ("private", "private-run"),
+    ] {
+        assert!(
+            host.fetch(&Request::post(
+                "automation-run-archive",
+                Some(json!({"automationId":automation,"threadId":thread}))
+            ))
+            .is_err(),
+            "{thread}"
+        );
+    }
+    host.fetch(&Request::post(
+        "automation-run-archive",
+        Some(json!({"automationId":"local","threadId":"review"})),
+    ))?;
+    assert_eq!(
+        db.query_row(
+            "SELECT status FROM automation_runs WHERE thread_id='review'",
+            [],
+            |row| row.get::<_, String>(0)
+        )?,
+        "ARCHIVED"
+    );
+    let scoped = json_body(&host.fetch(&Request::post(
+        "inbox-items",
+        Some(json!({"automationId":"private"})),
+    ))?)?;
+    assert!(scoped["items"].as_array().unwrap().is_empty());
+    Ok(())
+}
+
+#[test]
 fn local_definitions_use_matching_schedule_metadata_not_another_accounts_cache() -> Result<()> {
     let home = tempfile::tempdir()?;
     let _db = database(home.path())?;

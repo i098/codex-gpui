@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Show scheduled previous runs with saved read state, mark-all-as-read, and confirmed bulk archive with partial-failure reporting.
 - Add the native `File` > `New Project…` form with a name, marker, ordered source folders, and a device picker.
 - A contributing guide, issue and pull request templates, a security policy, and this changelog.
 - Add one workspace version, a version bump script, and a tag release workflow that publishes the macOS arm64 zip.
@@ -25,6 +26,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Restore `View` > `Toggle Bottom Panel` and `View` > `Open Terminal` in the macOS menu bar, in the original order.
 
 ### Fixed
+- Show saved hourly and minute intervals in scheduled task rows without changing daily or weekly labels.
 - Raster a shown Code Review pull request in the page's tile grid, as the original does, so its status glyph and the main panel's corners match the original, and paint the author avatar's white fill as its box background.
 - Paint the Code Review tabs, search toolbar and pull request list in the original's composited layers, so their icon and pill edges match the original pixel for pixel.
 - Place the Git review file tree's `+N`/`-N` line counts on the original's SVG text baseline.
