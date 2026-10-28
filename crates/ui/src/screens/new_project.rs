@@ -678,13 +678,21 @@ impl Dialog {
                     t.text_tertiary
                 },
             ))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if primary {
-                    this.submit(cx)
-                } else {
-                    this.dismiss(cx)
+            .on_click(cx.listener(move |this, _, _, cx| this.press(primary, cx)))
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    this.press(primary, cx);
+                    cx.stop_propagation();
                 }
             }))
+    }
+
+    fn press(&mut self, primary: bool, cx: &mut Context<Self>) {
+        if primary {
+            self.submit(cx)
+        } else {
+            self.dismiss(cx)
+        }
     }
 }
 

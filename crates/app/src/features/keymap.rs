@@ -203,6 +203,7 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "undoAppAction" => Box::new(Undo),
         "redoAppAction" => Box::new(Redo),
         "openFolder" | "composer.openProjectPicker" => Box::new(OpenFolder),
+        "newProject" => Box::new(ui::screens::new_project::NewProject),
         "openCommandMenu" => Box::new(OpenCommandMenu),
         "searchFiles" => Box::new(super::command_destinations::SearchFiles),
         "archiveThread" => Box::new(ArchiveChat),

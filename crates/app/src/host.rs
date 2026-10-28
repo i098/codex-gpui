@@ -1570,10 +1570,15 @@ impl Host for LocalHost {
                 })
                 .collect();
             self.update_global_state(|state| {
-                for key in ["local-projects", "thread-project-assignments"] {
+                for key in [
+                    "local-projects",
+                    "thread-project-assignments",
+                    "project-appearances",
+                ] {
                     if state[key].is_null() {
                         state[key] = json!({});
                     }
+                    ensure!(state[key].is_object(), "{key} must be an object");
                 }
                 let owns = |project: &Value, path: &str| {
                     project["rootPaths"]
@@ -1630,9 +1635,6 @@ impl Host for LocalHost {
                     }
                 };
                 if let Some(appearance) = appearance {
-                    if state["project-appearances"].is_null() {
-                        state["project-appearances"] = json!({});
-                    }
                     state["project-appearances"][id.as_str()] = appearance;
                 }
                 let mut order = vec![Value::from(id.clone())];

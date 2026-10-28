@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Add the native `File` > `New Project…` form with a name, marker, ordered source folders, and a device picker.
 - A contributing guide, issue and pull request templates, a security policy, and this changelog.
 - Add one workspace version for the app, the `tools/version.sh` bump script, the `v*` tag release workflow that publishes the macOS arm64 zip, and `Codex` > `Check for Updates…`, which shows the current and latest versions.
 - Add the native `/first-run` tour with the IDE, cloud, code, and autonomy pages and the original noise background.
