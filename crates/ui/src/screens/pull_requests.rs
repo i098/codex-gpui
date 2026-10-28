@@ -304,15 +304,46 @@ impl Focusable for Page {
 
 pub fn shell(page: Entity<Page>, cx: &mut App) -> Entity<Shell> {
     let sidebar = cx.new(|_| EmptySidebar).into();
-    cx.new(|_| {
-        let mut shell = Shell::new(sidebar, page.into());
+    let shell = cx.new(|_| {
+        let mut shell = Shell::new(sidebar, page.clone().into());
         shell.sidebar_open = false;
         shell.selected_rail = None;
         shell.chat_chrome = false;
         shell.new_tab = false;
-        shell.main_backgrounds = 1;
+        set_corners(&mut shell, false);
         shell
-    })
+    });
+    shell.update(cx, |_, cx| {
+        cx.observe(&page, |shell, page, cx| {
+            if set_corners(shell, page.read(cx).selected.is_some()) {
+                cx.notify();
+            }
+        })
+        .detach();
+    });
+    shell
+}
+
+/// Each corner's background boxes and composited layers, fitted to the original captures at
+/// 0 differing px: the empty detail pane composites the right corners, a shown detail paints
+/// two boxes at the top-right and three at the bottom-right. Returns whether it changed.
+fn set_corners(shell: &mut Shell, detail: bool) -> bool {
+    let backgrounds = Some(gpui::Corners {
+        top_left: 0,
+        top_right: if detail { 2 } else { 0 },
+        bottom_right: if detail { 3 } else { 0 },
+        bottom_left: 1,
+    });
+    let composited = gpui::Corners {
+        top_right: !detail,
+        bottom_right: !detail,
+        ..Default::default()
+    };
+    let changed =
+        shell.main_corner_backgrounds != backgrounds || shell.main_composited_corners != composited;
+    shell.main_corner_backgrounds = backgrounds;
+    shell.main_composited_corners = composited;
+    changed
 }
 
 impl Page {

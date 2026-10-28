@@ -519,6 +519,10 @@ fn assert_original_icons(fx: &mut Fx) -> Result<()> {
 fn capture_pane(fx: &mut Fx, state: &str, reset_state: Option<&str>) -> Result<bool> {
     if reset_state.is_none() {
         capture(fx, state)?;
+        #[cfg(target_os = "macos")]
+        if matches!(state, "open-all" | "merged-detail") {
+            corners_match_the_original(fx, state)?;
+        }
         return Ok(false);
     }
     if reset_state != Some(state) {
@@ -544,6 +548,39 @@ fn capture_pane(fx: &mut Fx, state: &str, reset_state: Option<&str>) -> Result<b
     );
     capture(fx, &format!("{state}-reset"))?;
     Ok(true)
+}
+
+/// The main panel's corner rings equal the original's pixel for pixel
+/// (`refs/pull-requests/<state>/dark@1280x832.png`, from the stable Codex capture): each
+/// 24 device px arc square, from 2 px inside the arc outward, so the content stays out.
+#[cfg(target_os = "macos")]
+fn corners_match_the_original(fx: &mut Fx, state: &str) -> Result<()> {
+    let path = format!(
+        "{}/refs/pull-requests/{state}/dark@1280x832.png",
+        common::ROOT
+    );
+    let reference = image::open(&path).context(path)?.into_rgba8();
+    let port = fx.reference_shot()?;
+    // Each arc square's origin and its arc's center.
+    for (x0, y0, cx, cy) in [
+        (104, 88, 128., 112.),
+        (2528, 88, 2528., 112.),
+        (104, 1632, 128., 1632.),
+        (2528, 1632, 2528., 1632.),
+    ] {
+        let differing = (y0..y0 + 24)
+            .flat_map(|y| (x0..x0 + 24).map(move |x| (x, y)))
+            .filter(|&(x, y)| {
+                let (dx, dy) = (f64::from(x) + 0.5 - cx, f64::from(y) + 0.5 - cy);
+                dx.hypot(dy) >= 22. && reference.get_pixel(x, y) != port.get_pixel(x, y)
+            })
+            .count();
+        anyhow::ensure!(
+            differing == 0,
+            "{state}: {differing} px differ in the corner ring at ({x0}, {y0})"
+        );
+    }
+    Ok(())
 }
 
 fn capture(fx: &mut Fx, name: &str) -> Result<()> {
