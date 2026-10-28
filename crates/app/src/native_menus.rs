@@ -210,7 +210,15 @@ fn menus_for_route(sidebar_collapsible: bool) -> Vec<Menu> {
         ]),
         Menu::new("View").items([
             MenuItem::action("Toggle Sidebar", ToggleSidebar).hidden(!sidebar_collapsible),
+            MenuItem::action(
+                "Toggle Bottom Panel",
+                features::shortcuts::ToggleBottomPanel,
+            ),
             MenuItem::action("Toggle Pinned Summary", TogglePinnedSummary),
+            MenuItem::action(
+                "Open Terminal",
+                features::shortcuts::OpenInteractiveTerminal,
+            ),
             MenuItem::action("Toggle navigation panel", ToggleNavigationPanel),
             MenuItem::action("Toggle Changes Panel", ToggleChangesPanel),
             MenuItem::separator(),
