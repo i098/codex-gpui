@@ -2206,10 +2206,24 @@ impl Render for Page {
                         .w(pane_width)
                         .flex_none()
                         .h_full()
+                        .flex()
+                        .flex_col()
                         .when(!self.detail_fullscreen, |d| {
                             d.border_l_1().border_color(cx.theme().border)
                         })
-                        .child(self.detail(window, cx)),
+                        .child(
+                            // Chromium composites the detail section with its opaque surface.
+                            div()
+                                .relative()
+                                .flex_1()
+                                .min_h_0()
+                                .layer()
+                                .child(shapes::decoration(shapes::Decoration {
+                                    fill: Some(cx.theme().surface),
+                                    ..Default::default()
+                                }))
+                                .child(self.detail(window, cx)),
+                        ),
                 )
             })
             .when(ready && !self.detail_fullscreen, |d| {
