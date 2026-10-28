@@ -82,3 +82,10 @@ Its corners show the rounded page clip over the canvas.
 `conversations.json` holds offline ChatGPT conversation exchanges for `ReplayHost`: the list, one conversation, stream status (found and 404), search, and the `/f/conversation` and `/f/conversation/resume` SSE bodies.
 The contract comes from Codex 26.1007.30912 (`app-initial` callers and event decoders). The responses are crafted, not a live capture, and every time field derives from the frozen clock 2026-10-15T17:00:00-07:00.
 `ReplayHost` matches the whole request, so every unrecorded request, including each mutation, is refused. `crates/app/tests/conversation_fixtures.rs` proves both.
+
+## Orbit rooms and remote tasks
+
+`orbit-tasks.json` is a `ReplayHost` recording of Cloud task lists (current, archived with cursor), one task detail and turns, `mark_read`, `archive`, `recover`, a 404, and one Orbit room (room, messages, read).
+It is constructed offline from the 26.1007.30912 webview paths and the native parsers, not recorded from an account; `provenance` names what is attested.
+The clock is frozen at 2026-10-15T17:00:00-07:00 (epoch 1792108800).
+Requests outside the file, including unlisted mutations, fail in the replay host; `crates/app/tests/orbit_tasks_fixture.rs` proves both.

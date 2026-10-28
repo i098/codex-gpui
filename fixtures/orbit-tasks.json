@@ -1,0 +1,456 @@
+{
+ "provenance": {
+  "appVersion": "26.1007.30912",
+  "clock": "2026-10-15T17:00:00-07:00 (epoch 1792108800); all timestamps precede it",
+  "remoteTasks": "Paths, query names and mutations from webview assets app-initial-6350d04672d0.js and app-shared-8bd9d0399038.js (/wham/tasks/list task_filter current|archived with cursor, /wham/tasks/{task_id}, /turns, mark_read, archive, recover). Bodies follow the native parsers (parse_task_response, CloudArchive).",
+  "orbitRooms": "Paths and read-receipt fields (id, aeon_id, read_receipts[account_user_id,last_read_at,read_cursor_updated_at]) from the same assets: /messaging/rooms/{room_id}, /messages, /read. Message item fields beyond id, room_id and created_at are not attested and are omitted.",
+  "recording": "Constructed offline; no live account call, sign-in or model turn. Not recorded original account data.",
+  "requestEncoding": "Native cloud_task::request header and identity shape."
+ },
+ "exchanges": [
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/wham/tasks/list?limit=20&task_filter=current",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop"
+     },
+     "expectedIdentity": {
+      "accountId": "acct-fixture",
+      "userId": "user-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"items\":[{\"id\":\"task-fixture-1\",\"title\":\"Update the greeting\",\"created_at\":1792101600,\"updated_at\":1792101660,\"archived\":false,\"has_unread_turn\":true,\"task_status_display\":{\"environment_label\":\"Fixture environment\",\"latest_turn_status_display\":{\"turn_status\":\"completed\"}}},{\"id\":\"task-fixture-2\",\"title\":\"Fix the flaky timer\",\"created_at\":1792108200,\"updated_at\":1792108260,\"archived\":false,\"has_unread_turn\":false,\"task_status_display\":{\"environment_label\":\"Fixture environment\",\"latest_turn_status_display\":{\"turn_status\":\"in_progress\"}}}],\"cursor\":null}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/wham/tasks/list?limit=20&task_filter=archived",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop"
+     },
+     "expectedIdentity": {
+      "accountId": "acct-fixture",
+      "userId": "user-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"items\":[{\"id\":\"task-fixture-3\",\"title\":\"Rename the helper\",\"created_at\":1792022400,\"updated_at\":1792022460,\"archived\":true,\"has_unread_turn\":false,\"task_status_display\":{\"environment_label\":\"Fixture environment\",\"latest_turn_status_display\":{\"turn_status\":\"completed\"}}}],\"cursor\":\"cursor-2\"}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/wham/tasks/list?limit=20&cursor=cursor-2&task_filter=archived",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop"
+     },
+     "expectedIdentity": {
+      "accountId": "acct-fixture",
+      "userId": "user-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"items\":[{\"id\":\"task-fixture-4\",\"title\":\"Remove dead flags\",\"created_at\":1791936000,\"updated_at\":1791936060,\"archived\":true,\"has_unread_turn\":false,\"task_status_display\":{\"environment_label\":\"Fixture environment\",\"latest_turn_status_display\":{\"turn_status\":\"completed\"}}}],\"cursor\":null}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/wham/tasks/task-fixture-1",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop"
+     },
+     "expectedIdentity": {
+      "accountId": "acct-fixture",
+      "userId": "user-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"task\":{\"id\":\"task-fixture-1\",\"title\":\"Update the greeting\",\"created_at\":1792101600},\"current_user_turn\":{\"id\":\"user-1\",\"created_at\":1792101600,\"input_items\":[{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"content_type\":\"text\",\"text\":\"Update the greeting in hello.py.\"}]}]},\"current_assistant_turn\":{\"id\":\"assistant-1\",\"previous_turn_id\":\"user-1\",\"turn_status\":\"completed\",\"created_at\":1792101660,\"output_items\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"content_type\":\"text\",\"text\":\"Updated the greeting in `hello.py`.\"}]},{\"type\":\"output_diff\",\"output_diff\":{\"diff\":\"diff --git a/hello.py b/hello.py\\n--- a/hello.py\\n+++ b/hello.py\\n@@ -1 +1 @@\\n-before\\n+after\\n\"}}],\"error\":null,\"thread_events\":{\"events\":[]},\"environment\":{\"id\":\"environment-fixture\",\"label\":\"Fixture environment\",\"repos\":[\"fixture-repo\"],\"repo_map\":{\"fixture-repo\":{\"clone_url\":\"https://github.com/i098/cgx-fixture-scratch.git\"}}}},\"current_diff_task_turn\":{\"id\":\"assistant-1\",\"previous_turn_id\":\"user-1\",\"turn_status\":\"completed\",\"created_at\":1792101660,\"output_items\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"content_type\":\"text\",\"text\":\"Updated the greeting in `hello.py`.\"}]},{\"type\":\"output_diff\",\"output_diff\":{\"diff\":\"diff --git a/hello.py b/hello.py\\n--- a/hello.py\\n+++ b/hello.py\\n@@ -1 +1 @@\\n-before\\n+after\\n\"}}],\"error\":null,\"thread_events\":{\"events\":[]},\"environment\":{\"id\":\"environment-fixture\",\"label\":\"Fixture environment\",\"repos\":[\"fixture-repo\"],\"repo_map\":{\"fixture-repo\":{\"clone_url\":\"https://github.com/i098/cgx-fixture-scratch.git\"}}}}}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/wham/tasks/task-fixture-1/turns",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop"
+     },
+     "expectedIdentity": {
+      "accountId": "acct-fixture",
+      "userId": "user-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"turn_mapping\":{\"user-1\":{\"turn\":{\"id\":\"user-1\",\"created_at\":1792101600,\"input_items\":[{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"content_type\":\"text\",\"text\":\"Update the greeting in hello.py.\"}]}]}},\"assistant-1\":{\"turn\":{\"id\":\"assistant-1\",\"previous_turn_id\":\"user-1\",\"turn_status\":\"completed\",\"created_at\":1792101660,\"output_items\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"content_type\":\"text\",\"text\":\"Updated the greeting in `hello.py`.\"}]},{\"type\":\"output_diff\",\"output_diff\":{\"diff\":\"diff --git a/hello.py b/hello.py\\n--- a/hello.py\\n+++ b/hello.py\\n@@ -1 +1 @@\\n-before\\n+after\\n\"}}],\"error\":null,\"thread_events\":{\"events\":[]},\"environment\":{\"id\":\"environment-fixture\",\"label\":\"Fixture environment\",\"repos\":[\"fixture-repo\"],\"repo_map\":{\"fixture-repo\":{\"clone_url\":\"https://github.com/i098/cgx-fixture-scratch.git\"}}}}}}}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/wham/tasks/task-fixture-1/mark_read",
+     "method": "POST",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop"
+     },
+     "expectedIdentity": {
+      "accountId": "acct-fixture",
+      "userId": "user-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/wham/tasks/task-fixture-1/archive",
+     "method": "POST",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop"
+     },
+     "expectedIdentity": {
+      "accountId": "acct-fixture",
+      "userId": "user-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/wham/tasks/task-fixture-3/recover",
+     "method": "POST",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop"
+     },
+     "expectedIdentity": {
+      "accountId": "acct-fixture",
+      "userId": "user-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/wham/tasks/task-fixture-404",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop"
+     },
+     "expectedIdentity": {
+      "accountId": "acct-fixture",
+      "userId": "user-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 404,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"detail\":\"Not found\"}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/messaging/rooms/room-fixture-1",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop"
+     },
+     "expectedIdentity": {
+      "accountId": "acct-fixture",
+      "userId": "user-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"id\":\"room-fixture-1\",\"aeon_id\":\"aeon-fixture-1\",\"read_receipts\":[{\"account_user_id\":\"user-fixture\",\"last_read_at\":\"2026-10-15T23:00:00.000000Z\",\"read_cursor_updated_at\":\"2026-10-15T23:00:01.000000Z\"}]}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/messaging/rooms/room-fixture-1/messages",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop"
+     },
+     "expectedIdentity": {
+      "accountId": "acct-fixture",
+      "userId": "user-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"items\":[{\"id\":\"message-fixture-1\",\"room_id\":\"room-fixture-1\",\"created_at\":\"2026-10-15T23:30:00.000000Z\"}],\"cursor\":null}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/messaging/rooms/room-fixture-1/read",
+     "method": "POST",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop"
+     },
+     "expectedIdentity": {
+      "accountId": "acct-fixture",
+      "userId": "user-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{}"
+      }
+     }
+    }
+   }
+  }
+ ]
+}
