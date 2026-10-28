@@ -2,7 +2,11 @@
 //! with a name and marker, ordered source folders whose first entry is primary, and a device
 //! picker. The app owns folder picking, creation and the Connections remote flow.
 
-use crate::{composer::Composer, icon::icon, text};
+use crate::{
+    composer::{Composer, Dismiss, Submit},
+    icon::icon,
+    text,
+};
 use gpui::{
     AnyElement, App, AppContext as _, Context, Corners, Div, Entity, EventEmitter, FocusHandle,
     Focusable, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
@@ -188,9 +192,6 @@ impl Dialog {
                 cx.notify();
             }
             "escape" => self.dismiss(cx),
-            "enter" if !key.modifiers.shift && self.name.focus_handle(cx).is_focused(window) => {
-                self.submit(cx)
-            }
             _ => return crate::focus::tab(event, window, cx),
         }
         cx.stop_propagation();
@@ -754,6 +755,20 @@ impl Render for Dialog {
                 }),
             )
             .on_key_down(cx.listener(Self::key))
+            // The name field's Enter binding runs before key listeners, so submit from its action.
+            .capture_action(cx.listener(|this, _: &Submit, window, cx| {
+                if this.name.focus_handle(cx).contains_focused(window, cx) {
+                    this.submit(cx);
+                    cx.stop_propagation();
+                }
+            }))
+            .on_action(cx.listener(|this, _: &Dismiss, _, cx| {
+                if this.popover.take().is_some() {
+                    cx.notify();
+                } else {
+                    this.dismiss(cx);
+                }
+            }))
             .child(shapes::backdrop_blur(
                 px(24.),
                 shapes::Fill::Color,
