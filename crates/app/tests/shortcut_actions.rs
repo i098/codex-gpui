@@ -1,6 +1,6 @@
 mod common;
 
-use anyhow::{Result, ensure};
+use anyhow::{Context as _, Result, ensure};
 use app::GoToChat;
 use common::{EXPLAIN, Fx, GREETING, SUBTRACT, exchange, script};
 use serde_json::{Value, json};
@@ -149,5 +149,29 @@ fn terminal_output_survives_bottom_panel_visibility_changes() -> Result<()> {
     })?;
     fx.type_text("exit")?;
     fx.keys("enter")?;
+    Ok(())
+}
+
+#[test]
+fn view_menu_opens_hides_and_restores_the_same_terminal() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let mut fx = Fx::new()?;
+    fx.action(Box::new(ui::screens::sidebar::SelectProject(
+        directory.path().to_string_lossy().into_owned(),
+    )))?;
+    let process = |fx: &Fx| {
+        fx.read(|root, cx| {
+            root.terminal_panel()
+                .and_then(|panel| panel.read(cx).process_id().map(str::to_owned))
+        })
+    };
+    fx.menu("View", "Open Terminal")?;
+    ensure!(fx.read(|root, _| root.terminal_visible()));
+    let opened = process(&fx).context("terminal process")?;
+    fx.menu("View", "Toggle Bottom Panel")?;
+    ensure!(!fx.read(|root, _| root.terminal_visible()));
+    fx.menu("View", "Open Terminal")?;
+    ensure!(fx.read(|root, _| root.terminal_visible()));
+    ensure!(process(&fx).as_deref() == Some(opened.as_str()));
     Ok(())
 }

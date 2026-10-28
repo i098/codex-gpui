@@ -21,6 +21,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add the Cloud environment UI with repository selection and saved setup flows
 - Bind `⇧⌘C` and `⌥⇧⌘C` to copy the open chat's newest managed worktree root, else its working directory, and route `⇧⌘F` and `⇧⌘B` through the editable keymap.
 - Add signed native updates with download progress, installation, relaunch, and organization policy controls.
+- Restore `View` > `Toggle Bottom Panel` and `View` > `Open Terminal` in the macOS menu bar, in the original order.
 
 ### Fixed
 - Raster a shown Code Review pull request in the page's tile grid, as the original does, so its status glyph and the main panel's corners match the original, and paint the author avatar's white fill as its box background.
