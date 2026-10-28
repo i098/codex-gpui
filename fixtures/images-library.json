@@ -1,0 +1,776 @@
+{
+ "provenance": {
+  "appVersion": "26.1007.30912",
+  "contract": "Request paths, methods and query names come from the pinned consumers: prompts (/images/init, /images/styles), app-initial (/files/library/nodes, storage/usage, files/{id}), selectable-library-item, query, action and api chunks.",
+  "data": "Owned synthetic example data from the unmerged route1 ChatGPT responses (origin/fm/cgx-full-fixtures-chatgpt); not a recording of a live account. Media URLs are owned relative paths.",
+  "clock": "2026-10-15T17:00:00-07:00",
+  "liveCalls": "none",
+  "mutations": "POST status reads only; every other write is refused by ReplayHost because no exchange matches."
+ },
+ "exchanges": [
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/images/init",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"groups\":[{\"id\":\"walks\",\"title\":\"Outdoors\",\"kind\":\"prompt_collection\",\"action\":{\"type\":\"prompt\",\"input_requirements\":{}},\"items\":[{\"id\":\"walk-prompt\",\"title\":\"A quiet trail\",\"prompt\":\"Draw a quiet woodland trail.\",\"image_url\":\"/__r1/media/walking-route.svg\",\"section\":\"trending\"}]}]}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/images/styles?include_image_suggestions=true",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"styles\":[],\"image_suggestions\":[]}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/images/prompt-items",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"items\":[{\"id\":\"walk-prompt\",\"prompt\":\"Draw a quiet woodland trail.\"}],\"cursor\":null}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/images/image-tags",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"items\":[],\"cursor\":null}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/files/library/nodes?entry_surface=library&categories=image&include_files=true&include_saved_entities=true",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"items\":[{\"id\":\"file-owned-image\",\"type\":\"file\",\"name\":\"walking-route.svg\",\"file\":{\"id\":\"file-owned-image\",\"name\":\"walking-route.svg\",\"file_name\":\"walking-route.svg\",\"mime_type\":\"image/svg+xml\",\"size\":40,\"created_at\":\"2026-10-16T00:00:00Z\",\"updated_at\":\"2026-10-16T00:00:00Z\",\"status\":\"ready\",\"source\":\"imagegen\",\"conversation_id\":\"10000000-0000-4000-8000-000000000001\",\"is_favorite\":false,\"download_url\":\"/__r1/media/walking-route.svg\",\"thumbnail_url\":\"/__r1/media/walking-route.svg\",\"width\":640,\"height\":480},\"parent_directory_id\":\"10000000-0000-4000-8000-000000000011\",\"created_at\":\"2026-10-16T00:00:00Z\",\"updated_at\":\"2026-10-16T00:00:00Z\"}],\"cursor\":null}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/files/library/nodes?entry_surface=library&include_files=true&include_saved_entities=true",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"items\":[{\"id\":\"10000000-0000-4000-8000-000000000011\",\"type\":\"directory\",\"name\":\"Walks\",\"parent_directory_id\":null,\"created_at\":\"2026-10-16T00:00:00Z\",\"updated_at\":\"2026-10-16T00:00:00Z\"},{\"id\":\"file-owned-notes\",\"type\":\"file\",\"name\":\"walking-notes.txt\",\"file\":{\"id\":\"file-owned-notes\",\"name\":\"walking-notes.txt\",\"file_name\":\"walking-notes.txt\",\"mime_type\":\"text/plain\",\"size\":40,\"created_at\":\"2026-10-16T00:00:00Z\",\"updated_at\":\"2026-10-16T00:00:00Z\",\"status\":\"ready\",\"source\":\"upload\",\"conversation_id\":\"10000000-0000-4000-8000-000000000001\",\"is_favorite\":false,\"download_url\":\"/__r1/media/walking-notes.txt\"},\"parent_directory_id\":\"10000000-0000-4000-8000-000000000011\",\"created_at\":\"2026-10-16T00:00:00Z\",\"updated_at\":\"2026-10-16T00:00:00Z\"},{\"id\":\"file-owned-image\",\"type\":\"file\",\"name\":\"walking-route.svg\",\"file\":{\"id\":\"file-owned-image\",\"name\":\"walking-route.svg\",\"file_name\":\"walking-route.svg\",\"mime_type\":\"image/svg+xml\",\"size\":40,\"created_at\":\"2026-10-16T00:00:00Z\",\"updated_at\":\"2026-10-16T00:00:00Z\",\"status\":\"ready\",\"source\":\"imagegen\",\"conversation_id\":\"10000000-0000-4000-8000-000000000001\",\"is_favorite\":false,\"download_url\":\"/__r1/media/walking-route.svg\",\"thumbnail_url\":\"/__r1/media/walking-route.svg\",\"width\":640,\"height\":480},\"parent_directory_id\":\"10000000-0000-4000-8000-000000000011\",\"created_at\":\"2026-10-16T00:00:00Z\",\"updated_at\":\"2026-10-16T00:00:00Z\"}],\"cursor\":null}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/files/library/recents",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"items\":[{\"id\":\"file-owned-notes\",\"name\":\"walking-notes.txt\",\"file_name\":\"walking-notes.txt\",\"mime_type\":\"text/plain\",\"size\":40,\"created_at\":\"2026-10-16T00:00:00Z\",\"updated_at\":\"2026-10-16T00:00:00Z\",\"status\":\"ready\",\"source\":\"upload\",\"conversation_id\":\"10000000-0000-4000-8000-000000000001\",\"is_favorite\":false,\"download_url\":\"/__r1/media/walking-notes.txt\"},{\"id\":\"file-owned-image\",\"name\":\"walking-route.svg\",\"file_name\":\"walking-route.svg\",\"mime_type\":\"image/svg+xml\",\"size\":40,\"created_at\":\"2026-10-16T00:00:00Z\",\"updated_at\":\"2026-10-16T00:00:00Z\",\"status\":\"ready\",\"source\":\"imagegen\",\"conversation_id\":\"10000000-0000-4000-8000-000000000001\",\"is_favorite\":false,\"download_url\":\"/__r1/media/walking-route.svg\",\"thumbnail_url\":\"/__r1/media/walking-route.svg\",\"width\":640,\"height\":480}],\"cursor\":null}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/files/library/reference-images",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"items\":[{\"id\":\"file-owned-image\",\"name\":\"walking-route.svg\",\"file_name\":\"walking-route.svg\",\"mime_type\":\"image/svg+xml\",\"size\":40,\"created_at\":\"2026-10-16T00:00:00Z\",\"updated_at\":\"2026-10-16T00:00:00Z\",\"status\":\"ready\",\"source\":\"imagegen\",\"conversation_id\":\"10000000-0000-4000-8000-000000000001\",\"is_favorite\":false,\"download_url\":\"/__r1/media/walking-route.svg\",\"thumbnail_url\":\"/__r1/media/walking-route.svg\",\"width\":640,\"height\":480}],\"cursor\":null}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/files/library/directories/path?directory_id=10000000-0000-4000-8000-000000000011",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"path\":[{\"id\":\"10000000-0000-4000-8000-000000000011\",\"type\":\"directory\",\"name\":\"Walks\",\"parent_directory_id\":null,\"created_at\":\"2026-10-16T00:00:00Z\",\"updated_at\":\"2026-10-16T00:00:00Z\"}],\"items\":[{\"id\":\"10000000-0000-4000-8000-000000000011\",\"type\":\"directory\",\"name\":\"Walks\",\"parent_directory_id\":null,\"created_at\":\"2026-10-16T00:00:00Z\",\"updated_at\":\"2026-10-16T00:00:00Z\"}]}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/files/library/files/file-owned-notes",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"id\":\"file-owned-notes\",\"name\":\"walking-notes.txt\",\"file_name\":\"walking-notes.txt\",\"mime_type\":\"text/plain\",\"size\":40,\"created_at\":\"2026-10-16T00:00:00Z\",\"updated_at\":\"2026-10-16T00:00:00Z\",\"status\":\"ready\",\"source\":\"upload\",\"conversation_id\":\"10000000-0000-4000-8000-000000000001\",\"is_favorite\":false,\"download_url\":\"/__r1/media/walking-notes.txt\"}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/files/library/files/file-owned-notes/node",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"id\":\"file-owned-notes\",\"type\":\"file\",\"name\":\"walking-notes.txt\",\"file\":{\"id\":\"file-owned-notes\",\"name\":\"walking-notes.txt\",\"file_name\":\"walking-notes.txt\",\"mime_type\":\"text/plain\",\"size\":40,\"created_at\":\"2026-10-16T00:00:00Z\",\"updated_at\":\"2026-10-16T00:00:00Z\",\"status\":\"ready\",\"source\":\"upload\",\"conversation_id\":\"10000000-0000-4000-8000-000000000001\",\"is_favorite\":false,\"download_url\":\"/__r1/media/walking-notes.txt\"},\"parent_directory_id\":\"10000000-0000-4000-8000-000000000011\",\"created_at\":\"2026-10-16T00:00:00Z\",\"updated_at\":\"2026-10-16T00:00:00Z\"}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/files/library/files/file-owned-notes/versions",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"items\":[],\"cursor\":null}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/files/library/files/file-owned-notes/content_url",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"url\":\"/__r1/media/walking-notes.txt\"}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/files/library/files/file-owned-notes/download_url",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"url\":\"/__r1/media/walking-notes.txt\"}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/files/library/files/file-owned-image/thumbnail_url",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"url\":\"/__r1/media/walking-route.svg\"}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/files/library/favorites",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"items\":[],\"cursor\":null}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/files/library/favorites/status",
+     "method": "POST",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001",
+      "content-type": "application/json"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true,
+     "body": "{\"file_ids\":[\"file-owned-notes\",\"file-owned-image\"]}"
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"favorites\":[]}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/files/library/image-favorites/status",
+     "method": "POST",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001",
+      "content-type": "application/json"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true,
+     "body": "{\"file_ids\":[\"file-owned-image\"]}"
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"favorites\":[]}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/files/library/storage/usage",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"used_bytes\":80,\"limit_bytes\":1073741824}"
+      }
+     }
+    }
+   }
+  },
+  {
+   "request": {
+    "transport": "http",
+    "request": {
+     "url": "/files/library/mounted/capabilities",
+     "method": "GET",
+     "headers": {
+      "OAI-Language": "en-US",
+      "X-OpenAI-Attach-Auth": "1",
+      "X-OpenAI-Attach-Integrity-State": "1",
+      "originator": "Codex Desktop",
+      "oai-did": "00000000-0000-4000-8000-000000000001"
+     },
+     "expectedIdentity": {
+      "accountId": "00000000-0000-4000-8000-000000000000",
+      "userId": "user-owned-fixture"
+     },
+     "returnErrorResponse": true
+    }
+   },
+   "response": {
+    "value": {
+     "response": {
+      "__response": {
+       "status": 200,
+       "statusText": "",
+       "headers": [
+        [
+         "content-type",
+         "application/json"
+        ]
+       ],
+       "body": "{\"items\":[],\"cursor\":null}"
+      }
+     }
+    }
+   }
+  }
+ ]
+}
