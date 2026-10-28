@@ -192,10 +192,16 @@ pub struct Shell {
     /// edge once more. With any, the shell paints those corners itself, over what the main
     /// panel's content painted there.
     pub main_backgrounds: u8,
+    /// Per-corner `main_backgrounds`, when the boxes differ by corner (Code Review).
+    pub main_corner_backgrounds: Option<Corners<u8>>,
     /// The main surface is a composited layer (thread routes): Chromium clips each layer in
     /// it, so its rounded corners show its own fill and then the content (the thread's top fade
     /// or composer band, or the side panel) at the clip's coverage.
     pub main_composited: bool,
+    /// Corners where only the content is a composited layer (Code Review's empty detail
+    /// pane): the page's raster draws the rounded F, then viz draws the content through the
+    /// clip's coverage, as at `main_composited`'s corners.
+    pub main_composited_corners: Corners<bool>,
     /// With `main_composited`: the main surface itself (fill and hairline) is one more
     /// composited layer (Chromium's layer tree of refs/diff), not part of the page's; the shell
     /// draws its right corners' px of partial clip coverage.
@@ -297,7 +303,9 @@ impl Shell {
             new_tab: true,
             header_actions: None,
             main_backgrounds: 0,
+            main_corner_backgrounds: None,
             main_composited: false,
+            main_composited_corners: Corners::default(),
             main_layer: false,
             main_opaque_scroll: None,
             main_clips_right: false,
@@ -1690,10 +1698,24 @@ impl Render for Shell {
         let main_layer = composited && self.main_layer;
         let clip_twice = main_layer && screens::diff::panel::panel_clamped(window, cx);
         let clips_right = composited && self.main_clips_right;
+        let n = self.main_backgrounds;
+        let backgrounds = self.main_corner_backgrounds.unwrap_or(Corners {
+            top_left: n,
+            top_right: n,
+            bottom_right: n,
+            bottom_left: n,
+        });
+        let viz_corners = self.main_composited_corners;
+        let viz_any = viz_corners != Corners::default();
         let fills = if composited {
             1
         } else {
-            1 + self.main_backgrounds
+            let b = &backgrounds;
+            1 + b
+                .top_left
+                .max(b.top_right)
+                .max(b.bottom_right)
+                .max(b.bottom_left)
         };
         let r = Theme::RADIUS_XL_BASE;
         // The corners a composited main surface's compositor clip rounds.
@@ -1803,14 +1825,22 @@ impl Render for Shell {
                 let (left, top) = (dev(main_left), dev(Theme::TITLEBAR_HEIGHT));
                 let right = dev(bounds.size.width - PAGE_INSET);
                 let bottom = dev(bounds.size.height - PAGE_INSET);
-                // Each corner: its point and which way the main panel lies.
-                let mut corners = vec![(right, top, -1., 1.), (right, bottom, -1., -1.)];
+                // Each corner: its point, which way the main panel lies, its background boxes
+                // and whether viz draws its content.
+                let (b, viz) = (&backgrounds, &viz_corners);
+                let mut corners = vec![
+                    (right, top, -1., 1., b.top_right, viz.top_right),
+                    (right, bottom, -1., -1., b.bottom_right, viz.bottom_right),
+                ];
                 if !open {
-                    corners.extend([(left, top, 1., 1.), (left, bottom, 1., -1.)]);
+                    corners.extend([
+                        (left, top, 1., 1., b.top_left, viz.top_left),
+                        (left, bottom, 1., -1., b.bottom_left, viz.bottom_left),
+                    ]);
                 }
                 let mut main = bounds;
-                for (x, y, dx, dy) in corners {
-                    if composited {
+                for (x, y, dx, dy, backgrounds, viz) in corners {
+                    if composited || viz {
                         // viz draws each layer of the clipped surface through the clip's
                         // coverage `m`, partial px with `SkBlendARGB32`: its own fill F onto the
                         // page, then the content C (painted over the square F). In a layer of
@@ -1864,7 +1894,7 @@ impl Render for Shell {
                         };
                         window.with_content_mask(Some(mask), |window| {
                             window.paint_quad(fill(bounds, under));
-                            frame(bounds, fills, false, window, cx);
+                            frame(bounds, 1 + backgrounds, false, window, cx);
                         });
                     }
                 }
@@ -1929,9 +1959,7 @@ impl Render for Shell {
                 )
             })
             .child(self.main_panel(main_left, open, &main_focus, window, &t, hairline_width, cx))
-            .when(composited || self.main_backgrounds > 0, |d| {
-                d.child(corners)
-            })
+            .when(composited || fills > 1 || viz_any, |d| d.child(corners))
             .when(self.sidebar_open, |d| {
                 d.child(
                     div()
