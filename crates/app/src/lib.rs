@@ -27,6 +27,7 @@ pub mod host;
 pub mod host_settings;
 pub mod hotkey;
 pub mod native_menus;
+mod new_project;
 pub mod oauth;
 pub mod onboarding;
 mod personalization;
@@ -440,6 +441,7 @@ pub struct Root {
     dialog: Option<Entity<Dialog>>,
     diff_confirmation: Option<Entity<ui::confirmation::Confirmation>>,
     automation_editor: Option<Entity<automations::editor::Editor>>,
+    new_project: Option<Entity<ui::screens::new_project::Dialog>>,
     /// The open dialog came from the composer: its close returns focus there.
     dialog_to_composer: bool,
     /// Signed out: replaces the whole window.
@@ -782,6 +784,7 @@ impl Root {
             dialog: None,
             diff_confirmation: None,
             automation_editor: None,
+            new_project: None,
             dialog_to_composer: false,
             login: None,
             logout_pending: false,
@@ -1183,6 +1186,7 @@ impl Root {
         self.cloud_modal = None;
         self.automation_load = None;
         self.automation_editor = None;
+        self.new_project = None;
         self.project_load = None;
         self.destination_load = None;
         self.set_unread_destinations(None, cx);
@@ -3254,6 +3258,7 @@ impl Root {
                         this.dialog = None;
                         this.diff_confirmation = None;
                         this.automation_editor = None;
+                        this.new_project = None;
                         this.cloud_modal = None;
                         this.thread = None;
                         this.diff = None;
@@ -3418,6 +3423,9 @@ impl Root {
                 }
                 "Open folder" => window.dispatch_action(Box::new(OpenFolder), cx),
                 "Archive chat" => window.dispatch_action(Box::new(ArchiveChat), cx),
+                "New project" => {
+                    window.dispatch_action(Box::new(ui::screens::new_project::NewProject), cx)
+                }
                 "Find" => window.dispatch_action(Box::new(FindInThread), cx),
                 "Back" => window.dispatch_action(Box::new(GoBack), cx),
                 "Forward" => window.dispatch_action(Box::new(GoForward), cx),
@@ -6978,6 +6986,11 @@ impl Render for Root {
             }))
             .on_action(cx.listener(|this, _: &NewChat, window, cx| this.new_chat(window, cx)))
             .on_action(cx.listener(|this, _: &OpenFolder, window, cx| this.open_folder(window, cx)))
+            .on_action(cx.listener(
+                |this, _: &ui::screens::new_project::NewProject, window, cx| {
+                    this.open_new_project(window, cx)
+                },
+            ))
             .on_action(cx.listener(|this, _: &ui::composer::Stop, window, cx| {
                 let side = this.focused_side(window, cx);
                 this.stop(side, cx)
@@ -7138,6 +7151,7 @@ impl Render for Root {
             .children(self.shortcut_state.confirmation.clone())
             .children(self.shortcut_state.zoom_banner.clone())
             .children(self.automation_editor.clone())
+            .children(self.new_project.clone())
             .children(self.diff_confirmation.clone())
             .children(
                 self.archived_settings

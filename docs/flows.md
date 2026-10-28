@@ -1460,6 +1460,25 @@ It then checks the toast, the route, the restored text, and that a second send s
 
 Run `tools/mac.sh -l cgx-asap-workable 'cargo test -p app --test start_failure -- --test-threads=1'`.
 
+### New Project (SH-093)
+
+File > New Project… and the `New project` command open the native `Create project` form.
+The form has a name field, a marker button, ordered source folders, a device picker, `Cancel` and `Create project`.
+The marker picker offers the 30 schema icons and 8 colors of `PROJECT_APPEARANCES`; `Clear` restores the folder default.
+The original emoji and icon browser is not recorded, so the native picker is a grid.
+`Add` and `Add folder` open GPUI's multi-folder picker; new folders go after the current ones and duplicates are skipped.
+The first folder is primary; `Make primary` moves a folder first, and the close button removes it.
+The device menu lists this computer and connected remotes; `Add remote` opens Settings > Connections at SSH.
+Remote rows are disabled because the native app has no remote-project store yet.
+
+`Create project` asks `thread/list` for chats in the chosen folders, then calls `Host::create_project`.
+The local host first pins each such chat that has no assignment to its current single owner project.
+It then reuses a project with the same roots or adds one, saves the appearance, puts the project first in `project-order` and sets `selected-project`.
+Without folders, it makes a `name` folder (or `name 2`, …) under `~/Documents/ChatGPT`.
+A failure shows `Failed to create project`, keeps the form open with its input, and removes a folder it made.
+`crates/app/tests/project_picker.rs` checks root order, appearance, ownership pins, reuse, default folders and failure.
+`crates/ui/src/screens/new_project.rs` checks source order and the stored appearance.
+
 
 ## F3c: Model announcement (SH-142)
 

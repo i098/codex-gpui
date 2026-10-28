@@ -152,6 +152,20 @@ pub trait Host: Send + Sync {
         bail!("adding a local project is unsupported by this host")
     }
 
+    /// `File > New Project…` (`createLocal`): registers `name` over `roots`, the first primary, or
+    /// over a new `name` folder under Documents/ChatGPT when `roots` is empty, and returns the
+    /// primary root. `threads` (`(id, cwd)`) are first pinned to the project that owns them now,
+    /// so the new roots do not take them over.
+    fn create_project(
+        &self,
+        _name: &str,
+        _roots: &[PathBuf],
+        _appearance: Option<Value>,
+        _threads: &[(String, String)],
+    ) -> Result<String> {
+        bail!("creating a local project is unsupported by this host")
+    }
+
     fn prepare_projectless(&self, _prompt: &str) -> Result<Workspace> {
         bail!("projectless workspaces are unsupported by this host")
     }
@@ -780,27 +794,30 @@ impl LocalHost {
     }
 
     fn onboarding_workspace(&self) -> Result<Value> {
+        let path = self.new_workspace_folder("New project")?;
+        match self.add_project(&path) {
+            Ok(root) => Ok(json!({"success": true, "root": root})),
+            Err(error) => {
+                let _ = fs::remove_dir(&path);
+                Err(error)
+            }
+        }
+    }
+
+    /// Creates `name`, or `name 2`, `name 3`… when taken, under the default workspace folder.
+    fn new_workspace_folder(&self, name: &str) -> Result<PathBuf> {
         fs::create_dir_all(&self.workspace_parent)?;
         for index in 1usize.. {
             let name = if index == 1 {
-                "New project".to_owned()
+                name.to_owned()
             } else {
-                format!("New project {index}")
+                format!("{name} {index}")
             };
             let path = self.workspace_parent.join(name);
             match fs::create_dir(&path) {
-                Ok(()) => {
-                    let root = match self.add_project(&path) {
-                        Ok(root) => root,
-                        Err(error) => {
-                            let _ = fs::remove_dir(&path);
-                            return Err(error);
-                        }
-                    };
-                    return Ok(json!({"success": true, "root": root}));
-                }
+                Ok(()) => return Ok(path),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(error).context("create onboarding project"),
+                Err(error) => return Err(error).context("create default project folder"),
             }
         }
         unreachable!()
@@ -1507,6 +1524,140 @@ impl Host for LocalHost {
         Ok(root.to_owned())
     }
 
+    fn create_project(
+        &self,
+        name: &str,
+        roots: &[PathBuf],
+        appearance: Option<Value>,
+        threads: &[(String, String)],
+    ) -> Result<String> {
+        let name = name.trim();
+        let created = if roots.is_empty() {
+            let folder = name.replace(['/', '\\', ':'], "-");
+            let folder = folder.trim_matches(['.', ' ']);
+            Some(self.new_workspace_folder(if folder.is_empty() {
+                "New project"
+            } else {
+                folder
+            })?)
+        } else {
+            None
+        };
+        let result = (|| {
+            let mut paths = Vec::new();
+            for root in created.iter().chain(roots) {
+                let root = root
+                    .canonicalize()
+                    .with_context(|| format!("resolve project folder {}", root.display()))?;
+                ensure!(root.is_dir(), "{} is not a folder", root.display());
+                let root = root
+                    .to_str()
+                    .context("project path must be UTF-8")?
+                    .to_owned();
+                if !paths.contains(&root) {
+                    paths.push(root);
+                }
+            }
+            let threads: Vec<_> = threads
+                .iter()
+                .map(|(id, cwd)| {
+                    let cwd = Path::new(cwd)
+                        .canonicalize()
+                        .ok()
+                        .and_then(|path| path.to_str().map(str::to_owned))
+                        .unwrap_or_else(|| cwd.clone());
+                    (id, cwd)
+                })
+                .collect();
+            self.update_global_state(|state| {
+                for key in ["local-projects", "thread-project-assignments"] {
+                    if state[key].is_null() {
+                        state[key] = json!({});
+                    }
+                }
+                let owns = |project: &Value, path: &str| {
+                    project["rootPaths"]
+                        .as_array()
+                        .is_some_and(|roots| roots.iter().any(|root| root.as_str() == Some(path)))
+                };
+                // `assignUnassignedThreadsBeforeProjectRootsChange`: a chat whose owner came
+                // from its cwd keeps that owner once the new roots also match the cwd.
+                for (id, cwd) in &threads {
+                    let projectless = state["projectless-thread-ids"]
+                        .as_array()
+                        .is_some_and(|ids| ids.iter().any(|thread| thread == id.as_str()));
+                    if projectless || !state["thread-project-assignments"][id.as_str()].is_null() {
+                        continue;
+                    }
+                    let mut owners = state["local-projects"]
+                        .as_object()
+                        .into_iter()
+                        .flat_map(|projects| projects.iter())
+                        .filter(|(_, project)| owns(project, cwd));
+                    let owner = match (owners.next(), owners.next()) {
+                        (Some((owner, _)), None) => owner.clone(),
+                        _ => continue,
+                    };
+                    state["thread-project-assignments"][id.as_str()] =
+                        json!({"projectKind": "local", "projectId": owner});
+                }
+                let projects = state["local-projects"]
+                    .as_object_mut()
+                    .context("local-projects must be an object")?;
+                let existing = projects.iter().find_map(|(id, project)| {
+                    let stored = project["rootPaths"].as_array()?;
+                    (stored.len() == paths.len() && paths.iter().all(|path| owns(project, path)))
+                        .then(|| id.clone())
+                });
+                let id = match existing {
+                    Some(id) => id,
+                    None => {
+                        let id = crate::uuid_v4();
+                        let now = chrono::Utc::now().timestamp_millis();
+                        let fallback = Path::new(&paths[0])
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .unwrap_or(&paths[0]);
+                        projects.insert(
+                            id.clone(),
+                            json!({
+                                "id": id,
+                                "name": if name.is_empty() { fallback } else { name },
+                                "rootPaths": paths, "createdAt": now, "updatedAt": now,
+                            }),
+                        );
+                        id
+                    }
+                };
+                if let Some(appearance) = appearance {
+                    if state["project-appearances"].is_null() {
+                        state["project-appearances"] = json!({});
+                    }
+                    state["project-appearances"][id.as_str()] = appearance;
+                }
+                let mut order = vec![Value::from(id.clone())];
+                order.extend(
+                    state["project-order"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|other| other.as_str() != Some(&id))
+                        .cloned(),
+                );
+                state["project-order"] = order.into();
+                state["selected-project"] = json!({"type": "local", "projectId": id});
+                Ok(true)
+            })?;
+            Ok(paths.swap_remove(0))
+        })();
+        if result.is_err()
+            && let Some(folder) = &created
+        {
+            let _ = fs::remove_dir(folder);
+        }
+        result
+    }
+
     fn fetch(&self, request: &Request) -> Result<Value> {
         let Request::Fetch { method, url, body } = request else {
             bail!("authenticated remote HTTP is unsupported by LocalHost");
@@ -2085,6 +2236,16 @@ impl Host for CloudHost {
 
     fn add_project(&self, root: &Path) -> Result<String> {
         self.local.add_project(root)
+    }
+
+    fn create_project(
+        &self,
+        name: &str,
+        roots: &[PathBuf],
+        appearance: Option<Value>,
+        threads: &[(String, String)],
+    ) -> Result<String> {
+        self.local.create_project(name, roots, appearance, threads)
     }
 
     fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {

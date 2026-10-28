@@ -165,6 +165,7 @@ fn menus_for_route(sidebar_collapsible: bool) -> Vec<Menu> {
         Menu::new("File").items([
             MenuItem::action("New Chat", NewChat),
             MenuItem::action("New Temporary Chat", features::shortcuts::NewTemporaryChat),
+            MenuItem::action("New Project…", ui::screens::new_project::NewProject),
             MenuItem::action(
                 "New standalone chat",
                 features::shortcuts::NewStandaloneChat,
