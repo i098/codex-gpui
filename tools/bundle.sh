@@ -10,7 +10,10 @@ if [[ ${1:-} != --assemble ]]; then
     [[ -z $(git status --porcelain) ]] || revision=$revision-dirty
     lane=bundle
     [[ $mode == normal ]] || { mode=qa; lane=qa-sync; }
-    tools/mac.sh -l "$lane" "bash tools/bundle.sh --assemble /tmp/cgx-mac/release-$lane $mode $revision archive"
+    printf -v update_env 'CODEX_GPUI_UPDATE_FEED=%q CODEX_GPUI_UPDATE_PUBLIC_KEY=%q CODEX_GPUI_SPARKLE_FRAMEWORK=%q CODEX_GPUI_SIGN_IDENTITY=%q' \
+        "${CODEX_GPUI_UPDATE_FEED:-}" "${CODEX_GPUI_UPDATE_PUBLIC_KEY:-}" \
+        "${CODEX_GPUI_SPARKLE_FRAMEWORK:-}" "${CODEX_GPUI_SIGN_IDENTITY:--}"
+    tools/mac.sh -l "$lane" "$update_env bash tools/bundle.sh --assemble /tmp/cgx-mac/release-$lane $mode $revision archive"
     destination=/tmp/cgx/release
     filename=codex-gpui-$version-macos-arm64.zip
     [[ $mode == normal ]] || { destination=/sdc-disk/tmp/cgx/qa-sync; filename=codex-gpui-qa.zip; }
@@ -70,8 +73,38 @@ cat >"$app/Contents/Info.plist" <<PLIST
 $url_types
 </dict></plist>
 PLIST
+feed=${CODEX_GPUI_UPDATE_FEED:-}
+key=${CODEX_GPUI_UPDATE_PUBLIC_KEY:-}
+identity=${CODEX_GPUI_SIGN_IDENTITY:--}
+sign_args=(--force --sign "$identity")
+if [[ $identity == - ]]; then
+    sign_args+=(--timestamp=none)
+else
+    sign_args+=(--timestamp --options runtime)
+fi
+if [[ -n $feed || -n $key ]]; then
+    [[ -n $feed && -n $key && -d ${CODEX_GPUI_SPARKLE_FRAMEWORK:-} ]] || {
+        echo 'updates require a feed, public key, and Sparkle.framework' >&2
+        exit 2
+    }
+    [[ $feed == https://?* ]] || { echo 'the release update feed requires HTTPS' >&2; exit 2; }
+    [[ $identity != - ]] || { echo 'an update feed requires a release signing identity' >&2; exit 2; }
+    key_bytes=$(printf '%s' "$key" | base64 -D | wc -c)
+    [[ $key_bytes -eq 32 ]] || { echo 'the update public key must contain 32 bytes' >&2; exit 2; }
+    codesign --verify --deep --strict "$CODEX_GPUI_SPARKLE_FRAMEWORK"
+    mkdir -p "$app/Contents/Frameworks"
+    ditto "$CODEX_GPUI_SPARKLE_FRAMEWORK" "$app/Contents/Frameworks/Sparkle.framework"
+    framework="$app/Contents/Frameworks/Sparkle.framework"
+    for helper in Autoupdate Updater.app XPCServices/Downloader.xpc XPCServices/Installer.xpc; do
+        codesign "${sign_args[@]}" --preserve-metadata=entitlements "$framework/Versions/Current/$helper"
+    done
+    codesign "${sign_args[@]}" "$framework"
+    plutil -insert SUFeedURL -string "$feed" "$app/Contents/Info.plist"
+    plutil -insert SUPublicEDKey -string "$key" "$app/Contents/Info.plist"
+    plutil -insert SUEnableAutomaticChecks -bool YES "$app/Contents/Info.plist"
+fi
 plutil -lint "$app/Contents/Info.plist"
-codesign --force --sign - --timestamp=none "$app"
+codesign "${sign_args[@]}" "$app"
 codesign --verify --strict --verbose=2 "$app"
 "$app/Contents/MacOS/codex-gpui" --qa-build-info
 if [[ ${5:-} == archive ]]; then

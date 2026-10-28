@@ -1,7 +1,6 @@
 mod about;
 pub(crate) mod context_files;
 pub(crate) mod navigation;
-mod updates;
 
 use crate::{
     CloseWindow, FindInThread, GoBack, GoForward, Hide, HideOthers, LogOut, Minimize, NewChat,
@@ -36,7 +35,6 @@ actions!(
 
 pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &ShowAbout, cx| cx.defer(about::open));
-    cx.on_action(|_: &CheckForUpdates, cx| updates::check(cx));
     cx.bind_keys([
         KeyBinding::new("cmd-shift-v", PasteAndMatchStyle, None),
         KeyBinding::new("cmd-alt-shift-v", PasteAndMatchStyle, None),
@@ -119,7 +117,10 @@ pub(crate) fn refresh_menus(cx: &mut App) {
     let sidebar_collapsible = cx
         .try_global::<NativeMenuState>()
         .is_none_or(|state| state.0);
-    cx.set_menus(menus_for_route(sidebar_collapsible));
+    let updates = cx
+        .try_global::<ui::updater::Updates>()
+        .is_some_and(|updates| updates.available && !updates.managed);
+    cx.set_menus(menus_for_route(sidebar_collapsible, updates));
 }
 
 impl crate::Root {
@@ -142,16 +143,16 @@ impl crate::Root {
 
 /// Builds the native menu items backed by the app's registered actions.
 pub(crate) fn menus() -> Vec<Menu> {
-    menus_for_route(true)
+    menus_for_route(true, false)
 }
 
-fn menus_for_route(sidebar_collapsible: bool) -> Vec<Menu> {
+fn menus_for_route(sidebar_collapsible: bool, updates: bool) -> Vec<Menu> {
     vec![
         Menu::new("Codex").items([
             MenuItem::action("About Codex", ShowAbout),
             MenuItem::separator(),
             MenuItem::action("Settings…", OpenSettings),
-            MenuItem::action("Check for Updates…", CheckForUpdates),
+            MenuItem::action("Check for Updates…", CheckForUpdates).hidden(!updates),
             MenuItem::action("Log Out", LogOut),
             MenuItem::separator(),
             MenuItem::os_submenu("Services", SystemMenuType::Services),

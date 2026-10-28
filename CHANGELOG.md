@@ -8,7 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - A contributing guide, issue and pull request templates, a security policy, and this changelog.
-- Add one workspace version for the app, the `tools/version.sh` bump script, the `v*` tag release workflow that publishes the macOS arm64 zip, and `Codex` > `Check for Updates…`, which shows the current and latest versions.
+- Add one workspace version, a version bump script, and a tag release workflow that publishes the macOS arm64 zip.
 - Add the native `/first-run` tour with the IDE, cloud, code, and autonomy pages and the original noise background.
 - Add native Code Review search, filters, and pull request details.
 - Add Storage usage measurement and safe review before deleting old local chats.
@@ -20,6 +20,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Show the Plugins and Skills directories in the original `Customize` sidebar, with the original header, scope pills, and two-column skill rows.
 - Add the Cloud environment UI with repository selection and saved setup flows
 - Bind `⇧⌘C` and `⌥⇧⌘C` to copy the open chat's newest managed worktree root, else its working directory, and route `⇧⌘F` and `⇧⌘B` through the editable keymap.
+- Add signed native updates with download progress, installation, relaunch, and organization policy controls.
 - Restore `View` > `Toggle Bottom Panel` and `View` > `Open Terminal` in the macOS menu bar, in the original order.
 
 ### Fixed
