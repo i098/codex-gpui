@@ -94,12 +94,20 @@ fn normal_profile_keeps_existing_state_and_settings() -> Result<()> {
     std::fs::create_dir_all(&directory)?;
     std::fs::write(
         directory.join("state.json"),
-        br#"{"width":777,"height":666}"#,
+        br#"{"width":777,"height":666,"sidebar_open":false,"theme":"dark","route":{"Thread":"t1"}}"#,
     )?;
     let state = app::State::load();
     assert_eq!(state.width, 777.);
     assert_eq!(state.height, 666.);
+    assert!(!state.sidebar_open);
+    assert_eq!(state.theme, app::ThemeSetting::Dark);
+    assert_eq!(state.route, app::Route::Home);
     assert_eq!(state.path, Some(directory.join("state.json")));
+    std::fs::write(
+        directory.join("state.json"),
+        br#"{"route":"SelectWorkspace"}"#,
+    )?;
+    assert_eq!(app::State::load().route, app::Route::SelectWorkspace);
     let settings_path = directory.join("host-settings.json");
     let mut settings = app::host_settings::Settings::load(settings_path.clone())?;
     settings.write("qa-normal-proof", json!(true))?;

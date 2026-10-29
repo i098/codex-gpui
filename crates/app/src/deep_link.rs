@@ -1,211 +1,207 @@
-//! `codex://` deep links (SH-151..155): parse like the original renderer's bootstrap
-//! `LE`, then bring up the primary window and navigate it like the host's
-//! `queueCodexDeepLinkUrl` flush.
-//!
-//! Destinations whose products are not built (plugins, skills, space, sites, teams,
-//! mini/spotlight, chatgpt.com shares) are recognized below and parse to `None`: the
-//! original routes each to its own page, which this port does not carry. `space` and
-//! `sites` are excluded products; the rest wait on their owning families.
+//! Native Codex URL parsing and page-family dispatch (SH-151..155).
 
 use crate::{Root, Route, State, windows};
-use gpui::{App, Context, Focusable, Window};
+use gpui::{App, AppContext as _, Context, Focusable, Window};
+use std::borrow::Cow;
 use ui::screens::connections::Tab;
+use url::Url;
 
-/// A parsed `codex://` link this port can navigate.
+mod navigation;
+
+/// A supported native destination. Excluded products do not produce a route.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Link {
-    /// `threads/new` / `new`: a fresh thread, optionally with a prefilled prompt and a
-    /// working directory (the prompt prefills and focuses the composer).
     NewThread {
         prompt: Option<String>,
         path: Option<String>,
+        project_id: Option<String>,
+        origin_url: Option<String>,
     },
-    /// `threads/<uuid>`: a local conversation, optionally with a prefilled prompt.
-    Thread { id: String, prompt: Option<String> },
-    /// `settings` or `settings/<section>`: Settings, opened at the nav `label` when the
-    /// section has one.
+    Thread {
+        id: String,
+        prompt: Option<String>,
+        host_id: Option<String>,
+        shared: bool,
+    },
     Settings(Option<&'static str>),
-    /// `settings/connections[/computer|/devices|/ssh|/ssh/add]`: Settings > Connections at
-    /// that tab. `ssh/add` opens the SSH tab without its add dialog.
     Connections(Tab),
-    /// `automations`: the Scheduled page.
+    AddSsh {
+        name: String,
+        project_path: Option<String>,
+        enabled: bool,
+    },
     Scheduled,
-    /// `automations/<id>`: that task's thread (`automationId`, `automationSource`).
-    Automation(String),
-    /// `launch`: show the window without navigating.
+    Automation {
+        id: String,
+        source: &'static str,
+        edit: bool,
+    },
+    OAuth(String),
     Launch,
 }
 
-/// `settings/<section>` deep-link sections (the original's `DE` allow-list) mapped to
-/// this port's Settings nav labels; `connections/*` parse to [`Link::Connections`].
-/// Sections without a page here (`chronicle`, `personal-vault`) open Settings itself,
-/// like an unknown section.
-const SETTINGS: &[(&str, &str)] = &[("browser-use", "Browser")];
-
-/// Parses one `codex://` (or dev `codex-dev://`) URL. `None` for anything else, exactly
-/// like the original's `LE` returning `null`.
-pub fn parse(url: &str) -> Option<Link> {
-    let url = url.trim();
-    let rest = strip_scheme(url)?;
-    let (rest, query) = rest.split_once('?').unwrap_or((rest, ""));
-    let mut segments = rest.split('/').filter(|s| !s.is_empty());
-    let destination = segments.next()?.to_ascii_lowercase();
-    let sub: Vec<&str> = segments.collect();
-    let params = Params::parse(query);
-    match destination.as_str() {
-        "threads" => threads(&sub, &params),
-        "new" => new_thread(&params, true),
-        "settings" => settings(&sub),
-        "automations" => automations(&sub, &params),
-        // The original's `launch` brings the window up and navigates nowhere; its
-        // query is ignored.
-        "launch" => sub.is_empty().then_some(Link::Launch),
+/// Parses the original native URL grammar without accepting excluded products.
+pub fn parse(value: &str) -> Option<Link> {
+    let url = Url::parse(value).ok()?;
+    if !matches!(url.scheme(), "codex" | "codex-dev")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+    {
+        return None;
+    }
+    let destination = url.host_str()?;
+    let sub: Vec<_> = url.path().split('/').filter(|s| !s.is_empty()).collect();
+    let params = Params(url.query_pairs().collect());
+    match destination {
+        "threads" if sub.as_slice() == ["new"] => new_thread(&params, false),
+        "threads" => thread(sub.first()?, &params),
+        "new" if sub.is_empty() => new_thread(&params, true),
+        "settings" => Some(settings(&sub, &params)),
+        "automations" if sub.is_empty() => Some(Link::Scheduled),
+        "automations" if sub.len() == 1 => automation(sub[0], &params),
+        "connector" if sub.as_slice() == ["oauth_callback"] => Some(Link::OAuth(value.to_owned())),
+        "launch" if sub.is_empty() => Some(Link::Launch),
         _ => None,
     }
 }
 
-fn strip_scheme(url: &str) -> Option<&str> {
-    // `new URL` accepts `codex://x`, `codex:/x` and `codex:x`; the scheme is
-    // case-insensitive, and any leading slashes drop from the path.
-    for scheme in ["codex:", "codex-dev:"] {
-        if url.len() >= scheme.len() && url[..scheme.len()].eq_ignore_ascii_case(scheme) {
-            return Some(url[scheme.len()..].trim_start_matches('/'));
-        }
-    }
-    None
-}
-
-fn threads(sub: &[&str], params: &Params) -> Option<Link> {
-    if sub.first().is_some_and(|s| s.eq_ignore_ascii_case("new")) && sub.len() == 1 {
-        return new_thread(params, false);
-    }
-    let id = *sub.first()?;
+fn thread(id: &str, params: &Params<'_>) -> Option<Link> {
     if !uuid(id) {
         return None;
     }
-    // Extra path segments and `view=review` stay accepted, like
-    // `allowExtraPathSegments`; the review opens with the thread view this port has.
-    // `hostId` and `threadAccess` are accepted like the original's free-form values;
-    // this port has the one local host.
-    params.http("browserUrl")?;
-    let prompt = params.value("prompt");
+    params.browser()?;
+    let access = params.text("threadAccess");
+    if access.is_some_and(|access| access != "shared") {
+        return None;
+    }
     Some(Link::Thread {
         id: id.to_owned(),
-        prompt,
+        prompt: params.value("prompt"),
+        host_id: params.value("hostId"),
+        shared: access == Some("shared"),
     })
 }
 
-/// The original's `qE`: `gated` marks the bare `new` destination, where a link
-/// without parameters is null (`threads/new` without parameters is a plain new thread).
-fn new_thread(params: &Params, gated: bool) -> Option<Link> {
+fn automation(id: &str, params: &Params<'_>) -> Option<Link> {
+    let source = match params.text("automationSource") {
+        None | Some("cloud") => "cloud",
+        Some("local") => "local",
+        _ => return None,
+    };
+    Some(Link::Automation {
+        id: component(id)?,
+        source,
+        edit: params.raw("edit") == Some("true"),
+    })
+}
+
+fn new_thread(params: &Params<'_>, gated: bool) -> Option<Link> {
     let keyed = ["browserUrl", "mode", "originUrl", "path", "prompt"]
         .iter()
-        .any(|k| params.raw(k).is_some());
-    if !keyed {
-        return (!gated).then_some(Link::NewThread {
+        .any(|key| params.raw(key).is_some());
+    if !gated && !keyed {
+        return Some(Link::NewThread {
             prompt: None,
             path: None,
+            project_id: None,
+            origin_url: None,
         });
     }
-    let prompt = params.value("prompt");
-    // `path` goes through the original's absolute-path schema; anything else nulls
-    // the link.
-    let path = match params.value("path") {
-        None => None,
-        Some(path) if path.starts_with('/') => Some(path),
-        Some(_) => return None,
-    };
-    params.http("browserUrl")?;
-    params.http("originUrl")?;
-    if let Some(active) = params.raw("browserActive")
-        && !matches!(active, "true" | "false")
+    if params.0.iter().filter(|(key, _)| key == "mode").count() > 1
+        || params
+            .raw("mode")
+            .is_some_and(|mode| !matches!(mode, "codex" | "chat"))
     {
         return None;
     }
-    // Every parameter decoded to null: `qE` rejects the link.
+    params.browser()?;
+    let prompt = params.value("prompt");
+    let path = params.value("path");
+    let project_id = params.value("projectId");
+    let origin_url = params.value("originUrl");
     if prompt.is_none()
         && path.is_none()
-        && params.value("browserUrl").is_none()
-        && params.value("originUrl").is_none()
+        && project_id.is_none()
+        && origin_url.is_none()
+        && params.text("browserUrl").is_none()
         && params.raw("mode").is_none()
-        && params.raw("projectId").is_none()
     {
         return None;
     }
-    // `mode` selects an app mode this port does not carry; the link still opens the
-    // new thread, as the original does for every valid mode.
-    Some(Link::NewThread { prompt, path })
+    Some(Link::NewThread {
+        prompt,
+        path,
+        project_id,
+        origin_url,
+    })
 }
 
-fn settings(sub: &[&str]) -> Option<Link> {
-    let section = sub.join("/");
-    let tab = match section.as_str() {
-        "connections" | "connections/computer" => Some(Tab::Computer),
-        "connections/devices" => Some(Tab::Devices),
-        "connections/ssh" | "connections/ssh/add" => Some(Tab::Ssh),
-        _ => None,
-    };
-    if let Some(tab) = tab {
-        return Some(Link::Connections(tab));
-    }
-    let label = SETTINGS
-        .iter()
-        .find(|(path, _)| *path == section)
-        .map(|&(_, label)| label);
-    Some(Link::Settings(label))
-}
-
-fn automations(sub: &[&str], params: &Params) -> Option<Link> {
-    if sub.is_empty() {
-        // The original's bare `automations` ignores its query.
-        return Some(Link::Scheduled);
-    }
-    let id = component(sub[0])?;
-    if sub.len() > 1 {
-        return None;
-    }
-    if let Some(source) = params.raw("automationSource")
-        && !matches!(source, "cloud" | "local")
-    {
-        return None;
-    }
-    // `edit=true` opens the task's edit dialog in the original; this port opens the
-    // task's thread, which carries that edit surface.
-    Some(Link::Automation(id))
-}
-
-/// Query parameters, read like the original's `URLSearchParams`.
-struct Params<'a> {
-    query: &'a str,
-}
-
-impl<'a> Params<'a> {
-    fn parse(query: &'a str) -> Self {
-        Self { query }
-    }
-
-    /// The raw (still encoded) first value of `name`; a bare key counts, as
-    /// `URLSearchParams.has`.
-    fn raw(&self, name: &str) -> Option<&'a str> {
-        self.query.split('&').find_map(|pair| {
-            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-            (key == name).then_some(value)
-        })
-    }
-
-    /// The trimmed non-empty decoded value of `name`, like the original's `Z`.
-    fn value(&self, name: &str) -> Option<String> {
-        // `URLSearchParams` decodes `+` as a space before percent escapes.
-        component(&self.raw(name)?.trim().replace('+', " "))
-    }
-
-    /// An `http(s)` URL value, like the original's `rD`; any other value makes the
-    /// link invalid. Absent parameters pass.
-    fn http(&self, name: &str) -> Option<()> {
-        match self.value(name) {
-            None => Some(()),
-            Some(url) => (url.starts_with("http://") || url.starts_with("https://")).then_some(()),
+fn settings(sub: &[&str], params: &Params<'_>) -> Link {
+    match sub {
+        ["connections"] | ["connections", "computer"] => Link::Connections(Tab::Computer),
+        ["connections", "devices"] => Link::Connections(Tab::Devices),
+        ["connections", "ssh", "add"] => {
+            let valid = params.0.iter().all(|(key, _)| {
+                matches!(key.as_ref(), "name" | "alias" | "projectPath" | "enabled")
+                    && params.0.iter().filter(|(other, _)| other == key).count() == 1
+            }) && !(params.raw("name").is_some() && params.raw("alias").is_some())
+                && params
+                    .raw("enabled")
+                    .is_none_or(|v| matches!(v, "true" | "false"));
+            let name = params.text("name").or_else(|| params.text("alias"));
+            match name.filter(|_| valid) {
+                Some(name) => Link::AddSsh {
+                    name: name.trim().to_owned(),
+                    project_path: params
+                        .text("projectPath")
+                        .map(|path| path.trim().to_owned()),
+                    enabled: params.raw("enabled") == Some("true"),
+                },
+                None => Link::Connections(Tab::Ssh),
+            }
         }
+        ["connections", "ssh"] => Link::Connections(Tab::Ssh),
+        ["browser-use"] => Link::Settings(Some("Browser")),
+        _ => Link::Settings(None),
+    }
+}
+
+struct Params<'a>(Vec<(Cow<'a, str>, Cow<'a, str>)>);
+
+impl Params<'_> {
+    fn raw(&self, name: &str) -> Option<&str> {
+        self.0
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_ref())
+    }
+
+    fn text(&self, name: &str) -> Option<&str> {
+        self.raw(name).filter(|value| !value.trim().is_empty())
+    }
+
+    fn value(&self, name: &str) -> Option<String> {
+        self.text(name).map(str::to_owned)
+    }
+
+    fn browser(&self) -> Option<()> {
+        let browser = self.text("browserUrl");
+        if let Some(value) = browser {
+            let url = Url::parse(value).ok()?;
+            if !matches!(url.scheme(), "http" | "https") {
+                return None;
+            }
+        }
+        if self.raw("browserTabId").is_some() && browser.is_none() {
+            return None;
+        }
+        if let Some(active) = self.raw("browserActive")
+            && (browser.is_none() || !matches!(active, "true" | "false"))
+        {
+            return None;
+        }
+        Some(())
     }
 }
 
@@ -256,27 +252,65 @@ impl Root {
     /// Navigates to `link` in this window: the deep-link route, then a prompt prefill
     /// (and focus) of the route's composer.
     pub fn open_deep_link(&mut self, link: &Link, window: &mut Window, cx: &mut Context<Self>) {
+        if self.host_id() != "local"
+            && !matches!(link, Link::Thread { .. } | Link::OAuth(_) | Link::Launch)
+        {
+            self.open_link_host("local", link, window, cx);
+            return;
+        }
         let mut prompt = None;
         match link {
             Link::NewThread {
-                prompt: prefill,
-                path: _,
+                prompt,
+                path,
+                project_id,
+                origin_url,
             } => {
-                self.navigate(Route::Home, window, cx);
-                prompt = prefill.clone();
+                self.open_link_project(
+                    project_id.clone(),
+                    path.clone(),
+                    origin_url.clone(),
+                    prompt.clone(),
+                    window,
+                    cx,
+                );
+                return;
             }
             Link::Thread {
                 id,
                 prompt: prefill,
+                host_id,
+                shared,
             } => {
+                let host_id = host_id.as_deref().unwrap_or("local");
+                if host_id != self.host_id() {
+                    self.open_link_host(host_id, link, window, cx);
+                    return;
+                }
+                self.bridge.set_thread_access(id, *shared);
                 self.navigate(Route::Thread(id.clone()), window, cx);
                 prompt = prefill.clone();
             }
             Link::Settings(None) => self.navigate(Route::Settings, window, cx),
             Link::Settings(Some(label)) => self.open_settings_section(label, window, cx),
             Link::Connections(tab) => self.open_connections(*tab, window, cx),
+            Link::AddSsh {
+                name,
+                project_path,
+                enabled,
+            } => {
+                self.open_ssh_link(name.clone(), project_path.clone(), *enabled, window, cx);
+                return;
+            }
             Link::Scheduled => self.navigate(Route::Scheduled, window, cx),
-            Link::Automation(id) => self.navigate(Route::Automation(id.clone()), window, cx),
+            Link::Automation { id, source, edit } => {
+                self.open_automation_link(id.clone(), source, *edit, window, cx);
+                return;
+            }
+            Link::OAuth(value) => {
+                self.receive_oauth_redirect(value, window, cx);
+                return;
+            }
             Link::Launch => {}
         }
         if let Some(prompt) = prompt.filter(|p| !p.is_empty()) {
@@ -288,20 +322,42 @@ impl Root {
     }
 }
 
-/// Opens `url` in the last active primary window, starting one at the link when none
-/// exists — the original's `ensurePrimaryWindowVisible` then `navigateToRoute`.
+/// Opens a native URL in its owning window, or the primary window.
 pub fn open(url: &str, cx: &mut App) {
     let Some(link) = parse(url) else {
         return;
     };
-    if let Some(handle) = windows::primary(cx).and_then(|handle| handle.downcast::<Root>()) {
+    let owner = match &link {
+        Link::OAuth(url) => Url::parse(url).ok().and_then(|url| {
+            let state = url
+                .query_pairs()
+                .find(|(key, _)| key == "state")?
+                .1
+                .into_owned();
+            cx.windows()
+                .into_iter()
+                .filter_map(|window| window.downcast::<Root>())
+                .find(|window| {
+                    window
+                        .read(cx)
+                        .is_ok_and(|root| root.owns_oauth_state(&state))
+                })
+        }),
+        Link::Thread { host_id, .. } => {
+            navigation::host_window(host_id.as_deref().unwrap_or("local"), None, cx)
+        }
+        _ => navigation::host_window("local", None, cx),
+    };
+    if let Some(handle) =
+        owner.or_else(|| windows::primary(cx).and_then(|window| window.downcast::<Root>()))
+    {
         let result = handle
             .update(cx, |root, window, cx| {
                 root.open_deep_link(&link, window, cx);
             })
             .and_then(|()| windows::show(handle.into(), windows::Presentation::Foreground, cx));
         if let Err(error) = result {
-            eprintln!("codex-gpui: deep link {url}: {error:#}");
+            eprintln!("codex-gpui: cannot open deep link: {error:#}");
         }
         return;
     }
@@ -320,174 +376,144 @@ pub fn open(url: &str, cx: &mut App) {
 mod tests {
     use super::*;
 
-    const ID: &str = "01a13de9-c48a-7b20-8382-db900881cb99";
+    const ID: &str = "00000000-0000-4000-8000-000000000001";
 
     #[test]
-    fn parses_thread_links() {
+    fn preserves_thread_host_access_and_prompt() {
         assert_eq!(
-            parse(&format!("codex://threads/{ID}")),
-            Some(Link::Thread {
-                id: ID.into(),
-                prompt: None
-            })
-        );
-        assert_eq!(
-            parse(&format!("codex://threads/{ID}?prompt=Hi%20there")),
-            Some(Link::Thread {
-                id: ID.into(),
-                prompt: Some("Hi there".into())
-            })
-        );
-        // Empty prompts are absent, like the original's `Z`.
-        assert_eq!(
-            parse(&format!("codex://threads/{ID}?prompt=%20")),
-            Some(Link::Thread {
-                id: ID.into(),
-                prompt: None
-            })
-        );
-        // Extra segments stay accepted (`allowExtraPathSegments`), as does `hostId`.
-        assert!(parse(&format!("codex://threads/{ID}/review")).is_some());
-        assert!(
             parse(&format!(
-                "codex://threads/{ID}?hostId=remote&threadAccess=shared"
-            ))
-            .is_some()
+                "codex://threads/{ID}/review?hostId=ssh%3Adev&threadAccess=shared&prompt=%20a%2Bb%20"
+            )),
+            Some(Link::Thread {
+                id: ID.into(),
+                host_id: Some("ssh:dev".into()),
+                shared: true,
+                prompt: Some(" a+b ".into()),
+            })
         );
-        assert_eq!(parse("codex://threads/not-a-uuid"), None);
-        assert_eq!(parse("codex://threads"), None);
-        // A browser URL that is not http(s) makes the link null, like `rD`.
-        assert_eq!(
-            parse(&format!("codex://threads/{ID}?browserUrl=ftp://x")),
-            None
-        );
+        assert!(parse(&format!("codex://threads/{ID}?threadAccess=private")).is_none());
     }
 
     #[test]
-    fn parses_new_thread_links() {
+    fn preserves_new_thread_project_precedence_inputs() {
         assert_eq!(
-            parse("codex://threads/new"),
+            parse("codex://new?projectId=p%2Fq&path=relative&originUrl=repo&prompt=hi"),
             Some(Link::NewThread {
-                prompt: None,
-                path: None
+                project_id: Some("p/q".into()),
+                path: Some("relative".into()),
+                origin_url: Some("repo".into()),
+                prompt: Some("hi".into()),
+            })
+        );
+        assert!(parse("codex://threads/new?mode=invalid").is_none());
+        assert!(parse("codex://threads/new?mode=chat&mode=chat").is_none());
+    }
+
+    #[test]
+    fn preserves_automation_source_and_edit() {
+        assert_eq!(
+            parse("codex://automations/a%2Fb?edit=true"),
+            Some(Link::Automation {
+                id: "a/b".into(),
+                source: "cloud",
+                edit: true,
             })
         );
         assert_eq!(
-            parse("codex://threads/new?prompt=Fix%20it&path=/tmp/proj"),
-            Some(Link::NewThread {
-                prompt: Some("Fix it".into()),
-                path: Some("/tmp/proj".into())
-            })
-        );
-        assert_eq!(
-            parse("codex://new?prompt=Hi"),
-            Some(Link::NewThread {
-                prompt: Some("Hi".into()),
-                path: None
-            })
-        );
-        // A relative `path` fails the original's path schema, so the link is null.
-        assert_eq!(parse("codex://threads/new?path=relative"), None);
-        // `browserActive` is outside the `threads/new` parameter gate, so the original
-        // never validates it there; on the bare `new` destination it nulls the link.
-        assert_eq!(
-            parse("codex://threads/new?browserActive=maybe"),
-            Some(Link::NewThread {
-                prompt: None,
-                path: None
-            })
-        );
-        assert_eq!(parse("codex://new?prompt=Hi&browserActive=maybe"), None);
-        // `qE` rejects a link whose every parameter decoded to null, and the bare
-        // `new` destination is always `qE`.
-        assert_eq!(parse("codex://new"), None);
-        assert_eq!(parse("codex://threads/new?prompt="), None);
-        // `projectId` is not in `threads/new`'s parameter gate: a bare new thread.
-        assert_eq!(
-            parse("codex://threads/new?projectId=x"),
-            Some(Link::NewThread {
-                prompt: None,
-                path: None
+            parse("codex://automations/task?automationSource=local"),
+            Some(Link::Automation {
+                id: "task".into(),
+                source: "local",
+                edit: false,
             })
         );
     }
 
     #[test]
-    fn parses_settings_links() {
-        assert_eq!(parse("codex://settings"), Some(Link::Settings(None)));
+    fn preserves_ssh_registration_and_oauth_callback() {
         assert_eq!(
-            parse("codex://settings/connections"),
-            Some(Link::Connections(Tab::Computer))
+            parse(
+                "codex://settings/connections/ssh/add?alias=dev&projectPath=%2Fwork&enabled=true"
+            ),
+            Some(Link::AddSsh {
+                name: "dev".into(),
+                project_path: Some("/work".into()),
+                enabled: true
+            })
         );
-        assert_eq!(
-            parse("codex://settings/connections/devices"),
-            Some(Link::Connections(Tab::Devices))
-        );
-        assert_eq!(
-            parse("codex://settings/connections/ssh/add"),
-            Some(Link::Connections(Tab::Ssh))
-        );
-        // `wsl` is outside the original's allow-list.
-        assert_eq!(
-            parse("codex://settings/connections/wsl"),
-            Some(Link::Settings(None))
-        );
-        assert_eq!(
-            parse("codex://settings/browser-use"),
-            Some(Link::Settings(Some("Browser")))
-        );
-        // Unknown sections open Settings itself, like the original's fallback.
-        assert_eq!(
-            parse("codex://settings/chronicle"),
-            Some(Link::Settings(None))
-        );
+        let callback = "codex://connector/oauth_callback?state=s&code=a%2Bb&returnTo=%2Fsettings";
+        assert_eq!(parse(callback), Some(Link::OAuth(callback.into())));
     }
 
     #[test]
-    fn parses_automation_links() {
-        // The original's bare `automations` ignores its query.
-        assert_eq!(parse("codex://automations?x=1"), Some(Link::Scheduled));
-        assert_eq!(
-            parse("codex://automations/task%202?automationSource=local"),
-            Some(Link::Automation("task 2".into()))
-        );
-        assert_eq!(parse("codex://automations/a/b"), None);
-        assert_eq!(parse("codex://automations/a?automationSource=bogus"), None);
-    }
-
-    #[test]
-    fn parses_launch_and_rejects_the_rest() {
-        assert_eq!(parse("codex://launch"), Some(Link::Launch));
-        // `launch` ignores its query, like the original.
-        assert_eq!(parse("codex://launch?x=1"), Some(Link::Launch));
-        assert_eq!(parse("codex://launch/x"), None);
-        assert_eq!(parse("codex://plugins"), None);
-        assert_eq!(parse("codex://skills"), None);
-        assert_eq!(parse("codex://space"), None);
-        assert_eq!(parse("codex://sites/edit"), None);
-        assert_eq!(
-            parse("codex://shared-thread/cx_0123456789abcdef0123456789abcdef"),
-            None
-        );
-        assert_eq!(parse("codex://connector/callback"), None);
-        assert_eq!(parse("https://chatgpt.com/"), None);
-        assert_eq!(parse("not a url"), None);
-        // The dev scheme and mixed case parse like the packaged one.
-        assert_eq!(parse("codex-dev://automations"), Some(Link::Scheduled));
-        assert_eq!(parse("CODEX://Settings"), Some(Link::Settings(None)));
-        // `new URL` accepts the single-slash and no-slash forms too.
-        assert_eq!(parse("codex:/settings"), Some(Link::Settings(None)));
-        assert_eq!(parse("CODEX:automations"), Some(Link::Scheduled));
-    }
-
-    #[test]
-    fn component_matches_decode_uri_component() {
-        assert_eq!(component("a%20b"), Some("a b".into()));
-        assert_eq!(component("%C3%A9"), Some("é".into()));
-        assert_eq!(component("a+b"), Some("a+b".into()));
-        assert_eq!(component("%4"), None);
-        assert_eq!(component("%zz"), None);
-        assert_eq!(component("%C3"), None);
-        assert_eq!(component("  "), None);
+    fn matches_original_native_acceptance() {
+        let cases: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/deep_links.json")).unwrap();
+        for case in cases.as_array().unwrap() {
+            let value = case["url"].as_str().unwrap();
+            let parsed = parse(value);
+            let expected = &case["result"];
+            assert_eq!(parsed.is_some(), !expected.is_null(), "{value}");
+            match parsed {
+                Some(Link::NewThread {
+                    prompt,
+                    path,
+                    project_id,
+                    origin_url,
+                }) => {
+                    assert_eq!(expected["kind"], "newThread", "{value}");
+                    for (actual, key) in [
+                        (prompt, "prompt"),
+                        (path, "path"),
+                        (project_id, "projectId"),
+                        (origin_url, "originUrl"),
+                    ] {
+                        assert_eq!(actual.as_deref(), expected[key].as_str(), "{value}: {key}");
+                    }
+                }
+                Some(Link::Thread {
+                    id,
+                    prompt,
+                    host_id,
+                    shared,
+                }) => {
+                    assert_eq!(expected["kind"], "localConversation", "{value}");
+                    assert_eq!(id, expected["conversationId"].as_str().unwrap(), "{value}");
+                    assert_eq!(prompt.as_deref(), expected["prompt"].as_str(), "{value}");
+                    assert_eq!(host_id.as_deref(), expected["hostId"].as_str(), "{value}");
+                    assert_eq!(shared, expected["threadAccess"] == "shared", "{value}");
+                }
+                Some(Link::Automation { id, source, edit }) => {
+                    assert_eq!(expected["kind"], "automation", "{value}");
+                    assert_eq!(id, expected["automationId"].as_str().unwrap(), "{value}");
+                    assert_eq!(
+                        source,
+                        expected["automationSource"].as_str().unwrap(),
+                        "{value}"
+                    );
+                    assert_eq!(edit, expected["edit"].as_bool().unwrap(), "{value}");
+                }
+                Some(Link::OAuth(url)) => {
+                    assert_eq!(url, expected["fullRedirectUrl"].as_str().unwrap())
+                }
+                Some(Link::Scheduled) => assert_eq!(expected["kind"], "automations", "{value}"),
+                Some(Link::Settings(_) | Link::Connections(_) | Link::AddSsh { .. }) => {
+                    assert_eq!(expected["kind"], "settings", "{value}")
+                }
+                Some(Link::Launch) | None => {}
+            }
+        }
+        for value in [
+            "codex://plugins",
+            "codex://skills",
+            "codex://space",
+            "codex://sites/edit",
+            "codex://shared-thread/cx_0123456789abcdef0123456789abcdef",
+            "codex://connector/callback",
+            "https://chatgpt.com/",
+            "codex://launch/x",
+        ] {
+            assert!(parse(value).is_none(), "{value}");
+        }
     }
 }
