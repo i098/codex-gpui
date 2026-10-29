@@ -839,7 +839,7 @@ fn rail_focus_ring() -> Result<String> {
 fn home_beacon() -> Result<String> {
     let mut fx = Fx::new()?;
     fx.capture_evidence("CGX_BEACON_EVIDENCE", "before-home")?;
-    let home = fx.read(|root, _| root.home());
+    let home = fx.read(|root, _| root.home().clone());
     fx.cx
         .update(|cx| home.update(cx, |home, cx| home.set_beacon(true, cx)));
     fx.cx.run_until_parked();
