@@ -492,6 +492,13 @@ Run `cargo test -p app --test task_create editor:: -- --test-threads=1` on macOS
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 Use `-- --include-ignored` on macOS to check the installed adapter.
 
+Cloud automation storage uses `cloud-list-automations`, `cloud-read-automation`, and the `cloud-automation-*` mutation endpoints.
+These endpoints use the signed-in account's original `/automations` and `/automation` APIs.
+Mutation requests carry the loaded task's `expectedIdentity`; account changes reject the write.
+Cloud edits keep schedule, timezone, notification, and model fields that the editor does not change.
+Local endpoints reject `automationSource: "cloud"` instead of reading or changing a matching local task.
+Run `cargo test -p app --test host cloud_automation_` for source isolation and account-change checks.
+
 ### Legacy Codex Cloud threads
 
 Open an existing task with `cargo run -p app -- /remote/<task-id>`.

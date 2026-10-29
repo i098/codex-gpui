@@ -46,6 +46,7 @@ use url::Url;
 mod app_tools;
 pub use app_tools::{AppToolEvents, AppTools, ToolEvent};
 mod automation_schedule;
+pub mod automation_source;
 pub mod computer_use;
 pub mod computer_use_native;
 pub mod connections;
@@ -1761,6 +1762,10 @@ impl Host for LocalHost {
         };
         ensure!(params.is_object(), "host parameters must be an object");
         ensure!(
+            automation_source::Source::from_params(&params)? == automation_source::Source::Local,
+            "cloud automation storage is unavailable through LocalHost"
+        );
+        ensure!(
             params.get("hostId").is_none_or(|id| id == "local"),
             "remote host is unsupported by LocalHost"
         );
@@ -2379,6 +2384,20 @@ impl Host for CloudHost {
     fn fetch(&self, request: &Request) -> Result<Value> {
         match request {
             Request::Http(http) => self.http(http),
+            Request::Fetch { method, url, body } if url.starts_with("vscode://codex/cloud-") => {
+                ensure!(method == "POST", "unsupported host method: {method}");
+                let params: Value = serde_json::from_str(body)?;
+                ensure!(params.is_object(), "host parameters must be an object");
+                let endpoint = url.strip_prefix("vscode://codex/cloud-").unwrap();
+                let body = automation_source::fetch(self, endpoint, &params)?;
+                Ok(json!({
+                    "type": "fetch-response",
+                    "responseType": "success",
+                    "status": 200,
+                    "headers": {"content-type": "application/json"},
+                    "bodyJsonString": body.to_string()
+                }))
+            }
             Request::Fetch { .. } => self.local.fetch(request),
         }
     }
