@@ -124,7 +124,7 @@ After the native Configuration page was added, the Settings Configuration cell g
 
 ## Home rest matrix
 
-Every capture waits for the navigation destinations, so the rail's Explore marker matches.
+Each Home capture waits for the navigation destinations, so the rail's Explore marker matches.
 All eight Home rest cells pass at the source that added the narrow layout.
 
 | Theme | Size | Outside text pixels | Inside text difference | Gate |

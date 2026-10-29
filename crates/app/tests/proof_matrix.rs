@@ -34,13 +34,14 @@ fn capture_cell() -> Result<()> {
     let mut fx = Fx::open(theme, (width as f32, height as f32), lines)?;
     // A host fixture's storage must outlive the capture.
     let home = tempfile::tempdir()?;
-    // The rail's Explore marker follows an asynchronous catalog read; the original captures it.
-    fx.wait("navigation destinations", |fx| {
-        fx.shell(|shell| shell.unread_destinations.is_some())
-    })?;
     let screen = match (surface.as_str(), state.as_str()) {
         ("home", "rest") => {
             ensure!(fx.route() == Route::Home);
+            // The rail's Explore marker follows an asynchronous catalog read; the original
+            // captures it. Hosts that never serve the catalog (Automations) skip this wait.
+            fx.wait("navigation destinations", |fx| {
+                fx.shell(|shell| shell.unread_destinations.is_some())
+            })?;
             "home"
         }
         ("terminal", "rest") => {
