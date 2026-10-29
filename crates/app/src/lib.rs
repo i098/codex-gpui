@@ -257,16 +257,20 @@ impl Default for State {
 
 impl State {
     /// `~/Library/Application Support/codex-gpui/state.json`, saved back on every change.
+    /// Like the original, a launch opens Home; only an unfinished onboarding page is kept.
     pub fn load() -> Self {
         let path = PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
             .join("Library/Application Support/codex-gpui/state.json");
-        let state: Self = fs::read(&path)
+        let mut state: Self = fs::read(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_else(|| Self {
                 route: Route::SelectWorkspace,
                 ..Self::default()
             });
+        if !matches!(state.route, Route::SelectWorkspace | Route::Onboarding(_)) {
+            state.route = Route::Home;
+        }
         Self {
             path: Some(path),
             ..state
