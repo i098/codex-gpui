@@ -42,9 +42,8 @@ This table preserves the earlier audit totals; section 14.7 records the later Se
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 10 | 0 | 0 |
-| 15.3 Mobile setup | 10 | 7 | 2 | 1 |
-| 15.3 Mobile setup | 10 | 3 | 2 | 5 |
-| **All** | **192** | **96** | **35** | **61** |
+| 15.3 Mobile setup | 10 | 10 | 0 | 0 |
+| **All** | **192** | **99** | **33** | **60** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -1198,8 +1197,8 @@ They do not replace original-versus-native appearance approval or the strict pix
 | 6 | Pairing unavailable | error | `Pairing code unavailable`. | A failed `pairing/start` keeps the waiting step and shows `Pairing code unavailable: <error>` with `Refresh pairing code`. | PASS (`a_failed_pairing_start_keeps_the_waiting_step_with_its_error` in `mobile_pairing`) |
 | 7 | Connected step | click | Toggles, `Done`, `Manage connections`. | A claimed code with a new client opens `You’re connected` with the toggles, `Done` (back to Home) and `Manage connections` (Settings > Connections). | PASS (same flow as row 3; toggle clicks and `Manage connections` are not driven) |
 | 8 | Button hover | hover | Ghost/solid hover. | `Get started` hover fill (55250 px repainted). | PASS (`mobile_button_hover`) |
-| 9 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
-| 10 | Resize | resize | Content stays centered. | — | FAIL (no flow checks the 3 widths on this route) |
+| 9 | Focus ring | focus ring | 2 px ring (`focus-visible:ring-2 ring-offset-0`). | Every step button (`Get started`, `Later`, `Allow`, `Refresh pairing code`, `Continue on chatgpt.com`, `Done`, `Manage connections`) is a tab stop and draws the shared 2 px `#3a83f7` ring only under keyboard focus; a pointer press clears it. The connected step's switches have no ring yet. | PASS (`mobile_focus_ring`; no original capture of the focused button) |
+| 10 | Resize | resize | Content stays centered; the artwork shows only at 1024 px and wider (`hidden lg:block`). | At 1280 px the column centers in its half beside the artwork; at 767 and 600 px the artwork is hidden and the column centers in the whole main surface. | PASS (`mobile_resize_three_widths`) |
 
 ## Changes needed outside crates/app
 
