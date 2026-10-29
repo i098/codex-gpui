@@ -32,6 +32,8 @@ pub struct MultiSelect {
     menu_hovered: bool,
     search: String,
     last_typed: Option<Instant>,
+    /// Shows the checked labels (or this text when none is checked) instead of a count.
+    summary_off: Option<SharedString>,
 }
 
 impl EventEmitter<SelectionChanged> for MultiSelect {}
@@ -57,7 +59,14 @@ impl MultiSelect {
             menu_hovered: false,
             search: String::new(),
             last_typed: None,
+            summary_off: None,
         }
+    }
+
+    /// The trigger lists the checked labels, `, `-joined, or `off` when none is checked.
+    pub fn summarize(mut self, off: impl Into<SharedString>) -> Self {
+        self.summary_off = Some(off.into());
+        self
     }
 
     pub fn choices(&self) -> &[Choice] {
@@ -183,6 +192,18 @@ impl Render for MultiSelect {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let count = self.choices.iter().filter(|choice| choice.checked).count();
+        let summary: SharedString = match &self.summary_off {
+            Some(off) if count == 0 => off.clone(),
+            Some(_) => self
+                .choices
+                .iter()
+                .filter(|choice| choice.checked)
+                .map(|choice| choice.label.as_ref())
+                .collect::<Vec<_>>()
+                .join(", ")
+                .into(),
+            None => format!("{count} selected").into(),
+        };
         let mut trigger = div()
             .id("settings-multiselect-trigger")
             .role(gpui::Role::Button)
@@ -212,7 +233,7 @@ impl Render for MultiSelect {
                     }))
                 },
             )
-            .child(text(format!("{count} selected"), 13., 18., 430., t.text))
+            .child(text(summary, 13., 18., 430., t.text))
             .child(icon("chevron-down", 14., t.text_tertiary))
             .capture_key_down(cx.listener(Self::key))
             .on_click(cx.listener(|this, _, window, cx| {

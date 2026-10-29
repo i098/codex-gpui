@@ -263,6 +263,8 @@ pub mod workspace {
     }
 }
 
+#[path = "settings/notifications.rs"]
+pub mod notifications;
 #[path = "settings_subtrees.rs"]
 pub mod subtrees;
 #[path = "settings/usage.rs"]
@@ -307,6 +309,15 @@ pub fn build(_: &mut Window, cx: &mut App) -> AnyView {
                 sync: true,
                 cursor: true,
             },
+            ..Default::default()
+        });
+    }
+    // The reference was captured with macOS notifications turned off for the app.
+    if !cx.has_global::<notifications::State>() {
+        cx.set_global(notifications::State {
+            permission: Some(computer_use::Load::Ready(
+                notifications::Permission::Disabled,
+            )),
             ..Default::default()
         });
     }
@@ -484,7 +495,7 @@ impl SettingsPage {
     }
 
     /// Stores a setting and reports it to the app's config or host settings service.
-    fn set(&mut self, path: &'static str, value: Value, cx: &mut Context<Self>) {
+    pub fn set(&mut self, path: &'static str, value: Value, cx: &mut Context<Self>) {
         self.pending_instructions
             .retain(|change| change.path != path);
         let (store, key) = path.split_once('.').unwrap_or((path, ""));
@@ -803,6 +814,9 @@ pub struct SettingsPane {
     /// The composited contents layer of the page's scroll container.
     layer: Layer,
     selects: std::collections::HashMap<&'static str, Entity<crate::settings_kit::Select>>,
+    /// ChatGPT notification menus by category, with the channels each was built for.
+    channel_selects:
+        std::collections::HashMap<String, (Vec<String>, Entity<crate::settings_kit::MultiSelect>)>,
     git_fields: Vec<(&'static str, Entity<Composer>)>,
     storage: Entity<storage::StoragePage>,
     git_saved_until: std::collections::HashMap<&'static str, std::time::Instant>,
@@ -834,11 +848,14 @@ impl SettingsPane {
             cx.notify();
         })
         .detach();
+        cx.observe_global::<notifications::State>(|_, cx| cx.notify())
+            .detach();
         Self {
             storage: cx.new(|cx| storage::StoragePage::new(page.clone(), cx)),
             page,
             layer: Layer::default(),
             selects: std::collections::HashMap::new(),
+            channel_selects: std::collections::HashMap::new(),
             git_fields: Vec::new(),
             git_saved_until: Default::default(),
         }
@@ -1041,6 +1058,7 @@ impl SettingsPane {
                     .child(icon("pencil", 16., t.text_tertiary)),
             )
             .into_any_element();
+        let notifications = self.notifications(t, window, cx);
         let row = |title, description, control| settings_row(title, description, control, t);
         vec![
             (
@@ -1272,47 +1290,7 @@ impl SettingsPane {
                     ),
                 ],
             ),
-            (
-                "Notifications",
-                vec![
-                    row(
-                        "Notifications are off",
-                        Some("Turn on notifications in System Settings to use the options below"),
-                        button(
-                            "Open System Settings",
-                            t.primary_soft_alpha,
-                            Some(t.border),
-                            t,
-                        )
-                        .into_any_element(),
-                    ),
-                    row(
-                        "Turn completion notifications",
-                        Some("Set when ChatGPT alerts you that it's finished"),
-                        select("Only when unfocused", None, true, false, t).into_any_element(),
-                    ),
-                    row(
-                        "Enable permission notifications",
-                        Some("Show alerts when notification permissions are required"),
-                        switch("permissions-notifications", true, true, t).into_any_element(),
-                    ),
-                    row(
-                        "Enable question notifications",
-                        Some("Show alerts when input is needed to continue"),
-                        switch("question-notifications", true, true, t).into_any_element(),
-                    ),
-                    row(
-                        "Enable dot notifications",
-                        Some("Show alerts when your dot sends you a message"),
-                        switch("dot-notifications", true, true, t).into_any_element(),
-                    ),
-                    row(
-                        "Notification sound",
-                        Some("Sound for task completion, permission requests, and questions"),
-                        select("Default", None, true, false, t).into_any_element(),
-                    ),
-                ],
-            ),
+            ("Notifications", notifications),
             (
                 "Toys",
                 vec![
@@ -1390,6 +1368,7 @@ impl Render for SettingsPane {
         let groups = match section {
             "General" => self.general(&t, window, cx),
             "Appearance" => self.appearance(&t, window, cx),
+            "Notifications" => self.notifications_page(&t, window, cx),
             _ => Vec::new(),
         };
         let card_border = over(t.border, t.background_panel);
@@ -1533,7 +1512,7 @@ pub(crate) fn settings_row(
 }
 
 pub(crate) fn settings_row_content(
-    title: &'static str,
+    title: impl Into<SharedString>,
     detail: Option<AnyElement>,
     control: AnyElement,
     t: &Theme,

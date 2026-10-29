@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Add working Notifications settings: system permission, turn mode, alert switches, sound with import and preview, and ChatGPT channels.
 - Show the crash page with Try again when the app-server cannot start, and keep unsent composer drafts when Try again restarts it.
 - Show scheduled previous runs with saved read state, mark-all-as-read, and confirmed bulk archive with partial-failure reporting.
 - Add the native `File` > `New Project…` form with a name, marker, ordered source folders, and a device picker.
