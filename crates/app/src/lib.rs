@@ -454,6 +454,7 @@ pub struct Root {
     command_menu: Option<Entity<CommandMenu>>,
     popout: Option<hotkey::Popout>,
     dialog: Option<Entity<Dialog>>,
+    feedback: Option<Entity<features::feedback::Feedback>>,
     diff_confirmation: Option<Entity<ui::confirmation::Confirmation>>,
     automation_editor: Option<Entity<automations::editor::Editor>>,
     new_project: Option<Entity<ui::screens::new_project::Dialog>>,
@@ -689,6 +690,9 @@ impl Root {
                         }
                     }
                     ui::composer::SlashCommand::Compact => this.compact(window, cx),
+                    ui::composer::SlashCommand::Feedback => this.open_feedback(window, cx),
+                    ui::composer::SlashCommand::Export => this.export_transcript(window, cx),
+                    ui::composer::SlashCommand::Recap => this.recap(window, cx),
                     ui::composer::SlashCommand::Fork => this.fork_chat(0, window, cx),
                     ui::composer::SlashCommand::Rename => {
                         if let Route::Thread(id) = this.state.route.clone() {
@@ -875,6 +879,7 @@ impl Root {
             command_menu: None,
             popout: None,
             dialog: None,
+            feedback: None,
             diff_confirmation: None,
             automation_editor: None,
             new_project: None,
@@ -7546,6 +7551,7 @@ impl Render for Root {
             .children(self.shortcut_state.zoom_banner.clone())
             .children(self.automation_editor.clone())
             .children(self.new_project.clone())
+            .children(self.feedback.clone())
             .children(self.diff_confirmation.clone())
             .children(
                 self.archived_settings
