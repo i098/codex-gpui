@@ -500,14 +500,18 @@ impl HomeSidebar {
                 window.dispatch_action(Box::new(PinThread(thread, pin)), cx)
             }
             "archive-thread" => window.dispatch_action(Box::new(ArchiveThread(thread)), cx),
-            "mark-thread-unread" => match self.unread.iter().position(|id| *id == thread) {
-                Some(i) => {
-                    self.unread.remove(i);
-                }
-                None => self.unread.push(thread),
-            },
+            "mark-thread-unread" => self.toggle_thread_unread(&thread, cx),
             _ => {}
         }
+    }
+
+    pub fn toggle_thread_unread(&mut self, thread: &str, cx: &mut Context<Self>) {
+        if let Some(index) = self.unread.iter().position(|id| id == thread) {
+            self.unread.remove(index);
+        } else {
+            self.unread.push(thread.to_owned());
+        }
+        cx.notify();
     }
 
     fn menu_rows(

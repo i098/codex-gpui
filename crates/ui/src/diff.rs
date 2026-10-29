@@ -73,6 +73,8 @@ mod context;
 mod imports;
 #[path = "diff/options.rs"]
 mod options;
+#[path = "diff/viewed.rs"]
+mod viewed;
 pub use context::{ContextRequest, OpenTargetRequest, OpenTargets};
 
 #[path = "diff/content.rs"]
@@ -267,6 +269,10 @@ pub enum DiffRequest {
     LoadFullFile(FullFileLoad),
     LoadPreview(PreviewRequest),
     Preference(&'static str, serde_json::Value),
+    ViewedFile {
+        key: String,
+        revision: Option<String>,
+    },
     CommentsChanged(Vec<comments::Comment>),
     DismissModelComment(String),
     /// Open this absolute path in the configured editor.
@@ -371,6 +377,7 @@ pub struct DiffPanel {
     annotations: comment_view::Annotations,
     context: context::State,
     full_view: Option<gpui::WeakEntity<Shell>>,
+    viewed_files: serde_json::Map<String, serde_json::Value>,
 }
 
 impl DiffPanel {
@@ -530,6 +537,7 @@ impl DiffPanel {
             annotations: comment_view::Annotations::default(),
             context: context::State::default(),
             full_view: None,
+            viewed_files: Default::default(),
         };
         panel
             .annotations
@@ -781,6 +789,7 @@ impl DiffPanel {
             })
             .unwrap_or_default();
         self.replace_files(files);
+        self.apply_viewed_files();
     }
 
     pub fn search(&self) -> Option<(&str, usize)> {
@@ -3290,6 +3299,9 @@ fn file_header(
                 .items_center()
                 .gap(px(4.))
                 .child(stats(file.added, file.removed, 14., t).mx(px(4.)))
+                .when(panel.viewed_identity(i).is_some(), |d| {
+                    d.child(panel.viewed_button(i, t, cx))
+                })
                 .when(
                     matches!(panel.source, DiffSource::Unstaged | DiffSource::Staged),
                     |d| {
