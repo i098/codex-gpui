@@ -753,7 +753,7 @@ impl TextLayout {
                 };
                 let len = text.len();
 
-                let Some(lines) = window
+                let Some(mut lines) = window
                     .text_system()
                     .shape_text(
                         text,
@@ -775,6 +775,26 @@ impl TextLayout {
                     });
                     return Size::default();
                 };
+                if text_style.text_wrap_pretty
+                    && text_style.line_clamp.is_none()
+                    && let Some(wrap_width) = wrap_width
+                {
+                    for line in &mut lines {
+                        if let Some(wrap_boundaries) =
+                            line.layout.unwrapped_layout.pretty_wrap_boundaries(
+                                &line.text,
+                                wrap_width,
+                                &line.layout.wrap_boundaries,
+                            )
+                        {
+                            line.layout = Arc::new(WrappedLineLayout {
+                                unwrapped_layout: line.layout.unwrapped_layout.clone(),
+                                wrap_boundaries,
+                                wrap_width: line.layout.wrap_width,
+                            });
+                        }
+                    }
+                }
 
                 let mut size: Size<Pixels> = Size::default();
                 for line in &lines {

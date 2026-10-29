@@ -34,6 +34,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Restore `View` > `Toggle Bottom Panel` and `View` > `Open Terminal` in the macOS menu bar, in the original order.
 
 ### Fixed
+- Match the original Mobile setup allow-host step: the `Set up Remote` header, balanced heading and description lines (`text-wrap: pretty`), and the Allow button width.
 - Start a guided native conversation from a scheduled-task suggestion, keep the Scheduled sidebar, and report start failures without creating a task.
 - Keep context-only commands out of the live Keyboard shortcuts dialog while retaining them in Settings.
 - Show Login when the account read fails, and keep Coding Home available when access-inputs fails.

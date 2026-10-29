@@ -97,6 +97,13 @@ const STATES = {
     await d.click(byText("Set up mobile"));
     await d.waitFor(`document.body.innerText.includes("Connect your phone to this Mac")`, "mobile setup");
   },
+  // The step after `Get started`: server.mjs answers the MFA requirement (`required`) and the MFA
+  // status (`mfa_enabled_v2: true`) from their recordings, so the allow-host step opens.
+  "mobile-continuation": async (d) => {
+    await STATES.mobile(d);
+    await d.click(byText("Get started"));
+    await d.waitFor(`document.body.innerText.includes("Allow devices to control this computer?")`, "mobile allow-host step");
+  },
   // The public plugin catalog is a ChatGPT backend read (`/ps/plugins/home`) that offline mode
   // does not have, so this state is the page's own load failure.
   plugins: async (d) => {

@@ -764,7 +764,8 @@ impl Render for MobileSetupPage {
                             if self.dialog_mode { 500. } else { 400. },
                             t.text,
                         )
-                        .whitespace_normal(),
+                        .whitespace_normal()
+                        .text_wrap_pretty(),
                     )
                     .child(
                         text(
@@ -774,12 +775,14 @@ impl Render for MobileSetupPage {
                             430.,
                             t.text_tertiary,
                         )
-                        .whitespace_normal(),
+                        .whitespace_normal()
+                        .text_wrap_pretty(),
                     ),
             );
         let column = match step {
             SetupStep::AllowHost | SetupStep::AllowError | SetupStep::Enabling => column
-                .child(button("allow-host", "Allow").px(px(20.)).on_click(|_, _, cx| connections::dispatch(Action::SetEnabled(true), cx)))
+                // `px-5` plus the 1 px border, which the decoration paints outside layout.
+                .child(button("allow-host", "Allow").px(px(21.)).on_click(|_, _, cx| connections::dispatch(Action::SetEnabled(true), cx)))
                 .when(step == SetupStep::AllowError, |column| column.child(text(
                     "Couldn’t enable remote control. Try again", 13., 18.571_428, 430., t.text_error,
                 ))),
@@ -973,11 +976,12 @@ impl Render for MobileSetupPage {
                     artwork_kind(step),
                 )))
             });
+        // The `Set up Remote` toolbar overlays the page (`ps-2` toolbar, `pl-2` title).
         div()
             .id("mobile-page")
             .size_full()
-            .flex()
-            .flex_col()
+            .relative()
+            .child(page)
             .when(
                 matches!(
                     step,
@@ -990,16 +994,20 @@ impl Render for MobileSetupPage {
                 |page| {
                     page.child(
                         div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .right_0()
                             .h(px(46.))
-                            .flex_none()
-                            .px(px(24.))
+                            .pl(px(16.))
                             .flex()
                             .items_center()
-                            .child(text("Set up Remote", 14., 21., 430., t.text)),
+                            // Chromium paints the toolbar into a transparent composited layer.
+                            .layer()
+                            .child(text("Set up Remote", 14., 21., 500., t.text)),
                     )
                 },
             )
-            .child(page.flex_1().min_h_0())
     }
 }
 
