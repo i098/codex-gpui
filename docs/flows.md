@@ -855,7 +855,7 @@ The unmanaged-policy fallback uses the already loaded configuration instead of r
 | 17 | Sign-in requirements loading | loading | `Loading sign-in requirements…`. | The app gates methods on managed requirements; failed or empty policies cannot start authentication. | PASS (`a_policy_with_no_login_methods_never_starts_authentication`, S034b) |
 | 18 | Welcome `/welcome` | entry | The owned original override renders an empty body. | No welcome screen is invented for this state. | BOUNDARY (owned original capture; instruction004) |
 | 19 | Select workspace | click | Pick a folder or Skip. | A new profile opens workspace selection. Picker cancel stays there; selection or a successful Skip enters Home. | PASS (`workspace_picker_cancel_stays_then_selection_enters_home`, `workspace_skip_creates_a_distinct_project_before_entering_home`) |
-| 20 | Resize | resize | [INFERENCE] The nav collapses on narrow widths. | The settings nav stays at all widths. | FAIL (`crates/app/src/lib.rs` `fit` covers the main shell only; the original behavior is an inference) |
+| 20 | Resize | resize | No narrow-width capture exists, and row 6 records `canCollapse:false` for the Settings route. | The settings nav stays at all widths; no collapse is invented. | BOUNDARY (`settings-page-50e3fab957b6.js`; `refs/settings` has 1280 and 1440 px only) |
 
 ### Personal instructions and workspace storage
 
@@ -1192,7 +1192,7 @@ They do not replace original-versus-native appearance approval or the strict pix
 | 1 | Profile menu → Help → `Set up mobile` | entry | `/codex-mobile`. | `Route::Mobile`: sidebar closed, no rail item selected. | PASS (`profile_menu_mobile`, `parity_mobile`) |
 | 2 | Initial step | click | `Get started` reads `/wham/remote/control/mfa_requirement`, then on `required` `/accounts/mfa_info`; `Later` (dialog only). | `GetStarted`: loading button; `required` with `mfa_enabled_v2` off opens the MFA step, otherwise the allow-host step; a failed read or a body without the expected field shows `Couldn’t check security requirements. Try again`. | PASS (`mobile_get_started_follows_the_recorded_mfa_status`) |
 | 3 | Allow host step | click | `Allow`: `remoteControl/enable`. | Step view; `Allow` is disabled with `Remote control can’t be turned on from this app yet`. | NOT WIRED (`crates/app/src/lib.rs`: no `remoteControl/enable`) |
-| 4 | MFA required | error | `Turn on Multi-Factor Authentication`, `Continue on chatgpt.com`. | Step view; the button opens `chatgpt.com/#settings/Security`. | FAIL (no flow reaches it: the recorded account has MFA on, and no MFA-off response is recorded) |
+| 4 | MFA required | error | `Turn on Multi-Factor Authentication`, `Continue on chatgpt.com`. | Step view; the button opens `chatgpt.com/#settings/Security`. | BOUNDARY (the recorded account has MFA on, and no MFA-off response is recorded, so no fixture reaches it) |
 | 5 | Waiting / pairing step | loading | QR code, pairing code. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
 | 6 | Pairing unavailable | error | `Pairing code unavailable`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
 | 7 | Connected step | click | Toggles, `Done`, `Manage connections`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
