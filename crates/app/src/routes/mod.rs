@@ -57,7 +57,12 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
 
 impl Root {
     pub(crate) fn navigate(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
+        let refresh = route == Route::Scheduled && self.set_automation_source("local");
+        let same_route = self.state.route == route;
         self.navigate_with_sidebar(route, None, window, cx);
+        if refresh && same_route {
+            self.sync(window, cx);
+        }
     }
 
     pub(crate) fn navigate_with_sidebar(

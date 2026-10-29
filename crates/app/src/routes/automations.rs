@@ -146,6 +146,17 @@ pub(super) fn thread(root: &mut Root, cx: &mut Context<Root>) -> Entity<Shell> {
 
 impl Root {
     fn load_history(&self, page: Entity<History>, cx: &mut Context<Self>) {
+        if self.automation_source == "cloud" {
+            page.update(cx, |page, cx| {
+                page.loaded(
+                    Err(anyhow::anyhow!(
+                        "Run history is only available for local tasks"
+                    )),
+                    cx,
+                )
+            });
+            return;
+        }
         page.update(cx, |page, cx| {
             page.busy = true;
             cx.notify();
@@ -178,7 +189,7 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         let HistoryAction(page, operation) = action;
-        if self.signed_out() || page.read(cx).busy {
+        if self.signed_out() || self.automation_source == "cloud" || page.read(cx).busy {
             return;
         }
         match operation {
@@ -307,17 +318,17 @@ impl Root {
         .detach();
     }
 
-    /// Builds the original local task URL with a query-encoded automation ID.
-    pub fn automation_link(id: &str) -> String {
+    /// Builds a task URL with the selected storage source and a query-encoded ID.
+    pub fn automation_link(id: &str, source: &str) -> String {
         let mut link = url::Url::parse("https://chatgpt.com/scheduled").expect("constant URL");
         link.query_pairs_mut()
             .append_pair("automationId", id)
-            .append_pair("automationSource", "local");
+            .append_pair("automationSource", source);
         link.into()
     }
 
     fn share_automation(&mut self, id: &str, cx: &mut Context<Self>) {
-        let link = Self::automation_link(id);
+        let link = Self::automation_link(id, self.automation_source);
         cx.write_to_clipboard(gpui::ClipboardItem::new_string(link.clone()));
         // The original confirms only a successful clipboard write.
         if cx

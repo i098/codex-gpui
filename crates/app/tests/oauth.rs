@@ -4,6 +4,7 @@ use anyhow::{Result, bail, ensure};
 use app::host::{Host, Identity, Request};
 use app::oauth::{ConnectRequest, ConnectionEvent};
 use common::Fx;
+use gpui::{AppContext as _, px, size};
 use serde_json::{Value, json};
 use std::sync::{
     Arc, Mutex,
@@ -127,6 +128,49 @@ fn one_callback_claim_completes_once_and_does_not_persist_provider_data() -> Res
     receive(&mut fx, "attempt-1", false)?;
     fx.cx.run_until_parked();
     ensure!(host.callbacks.load(Ordering::SeqCst) == 1);
+    Ok(())
+}
+
+#[test]
+fn native_callback_returns_to_the_window_that_started_oauth() -> Result<()> {
+    let (mut fx, host, events) = setup()?;
+    start(&mut fx, &events)?;
+    let bridge = fx
+        .cx
+        .update(|cx| cx.global::<ui::screens::settings::AppServer>().0.clone());
+    let unrelated_host = Arc::new(CallbackHost::new());
+    let other_window = fx.cx.open_window(size(px(1280.), px(832.)), |window, cx| {
+        cx.new(|cx| {
+            let mut root = app::Root::on_host(
+                app::State::default(),
+                "local".into(),
+                bridge,
+                "/tmp".into(),
+                window,
+                cx,
+            )
+            .unwrap();
+            root.set_host(unrelated_host.clone(), cx);
+            root
+        })
+    })?;
+    let other = fx.cx.read_window(&other_window, |root, _| root)?;
+    fx.cx.update(|cx| {
+        app::deep_link::open(
+            "codex://connector/oauth_callback?code=code&state=attempt-1",
+            cx,
+        );
+    });
+    fx.wait("owning window callback", |_| {
+        events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, ConnectionEvent::Connected(_)))
+    })?;
+    assert_eq!(host.callbacks.load(Ordering::SeqCst), 1);
+    assert_eq!(unrelated_host.callbacks.load(Ordering::SeqCst), 0);
+    assert!(other.read_with(&fx.cx, |root, _| root.oauth_page().is_none()));
     Ok(())
 }
 

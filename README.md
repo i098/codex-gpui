@@ -985,3 +985,24 @@ tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch 
 The `⌘/` dialog searches command IDs, titles and descriptions with the same matching rules as the Settings page.
 `⇧⌘C` and `⌥⇧⌘C` copy the open chat's newest attached worktree root (else its working directory); a failed attachment refresh copies nothing. `⇧⌘F` and `⇧⌘B` follow the editable keymap.
 The Keyboard shortcuts page search controls use their recorded SVG variants; the Settings sidebar keeps its own keyboard glyph.
+
+## Native links
+
+The app handles `codex://` and `codex-dev://` links from launch arguments and native URL events.
+Thread links keep `hostId` and `threadAccess=shared` on the selected connection.
+A private link to the same thread clears shared access.
+New-chat links accept `prompt`, `projectId`, `path`, and `originUrl`.
+Project selection uses a saved project first, then an existing folder, then a saved repository with a matching origin.
+The prompt fills and focuses the composer without sending it.
+
+`codex://settings/connections/<tab>` opens the Computer, Devices, or SSH tab.
+An SSH `add` link accepts `name` or `alias`, `projectPath`, and `enabled=true`.
+The app checks a remote project folder through the connected host before selecting it.
+`codex://automations/<id>` uses cloud storage unless `automationSource=local` selects local storage.
+Add `edit=true` to open the selected task's editor.
+Local and cloud tasks can have the same ID without sharing their stored data.
+The Scheduled button and new tasks use local storage.
+`codex://connector/oauth_callback` returns to the window that owns the pending OAuth state.
+Excluded product links do not open a native page.
+
+Run `cargo test -p app --lib deep_link` and `cargo test -p app --test deep_link --test thread_hosts --test oauth --test automation_share`.

@@ -992,4 +992,165 @@ impl Root {
         cx.update_global::<ConnectionsState, _>(|state, _| state.requested_tab = tab);
         self.open_settings_section("Connections", window, cx);
     }
+
+    pub(crate) fn open_ssh_link(
+        &mut self,
+        name: String,
+        project: Option<String>,
+        enabled: bool,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_connections(view::Tab::Ssh, window, cx);
+        if project.as_ref().is_some_and(|path| !path.starts_with('/')) {
+            self.toast(
+                crate::Toast::danger("Remote project folder must be an absolute path"),
+                cx,
+            );
+            return;
+        }
+        let Some(runtime) = cx
+            .try_global::<Registry>()
+            .map(|registry| registry.0.clone())
+        else {
+            self.toast(crate::Toast::danger("Connections are unavailable"), cx);
+            return;
+        };
+        let host = self.host.clone();
+        let executor = cx.background_executor().clone();
+        let epoch = self.navigation_epoch;
+        let work = cx.background_spawn(async move {
+            let existing = host
+                .remote_connections()?
+                .rows
+                .into_iter()
+                .find(|row| row.alias.as_deref() == Some(name.as_str()));
+            let connection = match existing {
+                Some(connection) => connection,
+                None => host.save_remote_connection(&SshDraft {
+                    display_name: name.clone(),
+                    hostname: name,
+                    alias: true,
+                    ..Default::default()
+                })?,
+            };
+            if enabled && runtime.peers()?.get(&connection.host_id).is_none() {
+                runtime
+                    .connect(host.as_ref(), &connection.host_id, true, &executor)
+                    .await?;
+            }
+            Ok::<_, anyhow::Error>((connection.host_id, runtime.rows(host.as_ref())?.rows))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = work.await;
+            this.update_in(cx, |this, window, cx| match result {
+                Ok((id, rows)) => {
+                    cx.update_global::<ConnectionsState, _>(|state, _| {
+                        state.connections = Some(rows)
+                    });
+                    if this.navigation_epoch == epoch && (project.is_some() || enabled) {
+                        this.wait_for_link_host(id, project, window, cx);
+                    }
+                }
+                Err(error) => this.toast(crate::Toast::danger(error.to_string()), cx),
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn wait_for_link_host(
+        &mut self,
+        id: String,
+        project: Option<String>,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        if bridge(&id, cx).is_some() {
+            self.finish_link_host(id, project, window, cx);
+            return;
+        }
+        self.toast(
+            crate::Toast::info("Connect to the SSH host to finish adding this project"),
+            cx,
+        );
+        let mut pending = Some((id, project));
+        let epoch = self.navigation_epoch;
+        self.pending_link_connection =
+            Some(cx.observe_global::<ConnectionsState>(move |this, cx| {
+                if this.navigation_epoch != epoch {
+                    this.pending_link_connection = None;
+                    return;
+                }
+                if pending
+                    .as_ref()
+                    .is_none_or(|(id, _)| bridge(id, cx).is_none())
+                {
+                    return;
+                }
+                let (id, project) = pending.take().expect("pending connection");
+                this.pending_link_connection = None;
+                let window = this.context_window;
+                cx.spawn(async move |this, cx| {
+                    cx.update_window(window, |_, window, cx| {
+                        this.update(cx, |this, cx| {
+                            this.finish_link_host(id, project, window, cx)
+                        })
+                    })
+                    .ok();
+                })
+                .detach();
+            }));
+    }
+
+    fn finish_link_host(
+        &mut self,
+        id: String,
+        project: Option<String>,
+        window: &mut gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(bridge) = bridge(&id, cx) else {
+            return;
+        };
+        let epoch = self.navigation_epoch;
+        cx.spawn_in(window, async move |this, cx| {
+            let result = async {
+                if let Some(path) = &project {
+                    let metadata = bridge
+                        .request::<_, Value>("fs/getMetadata", json!({"path": path}))
+                        .await?;
+                    anyhow::ensure!(
+                        metadata["isDirectory"] == true,
+                        "Remote project path is not a directory"
+                    );
+                }
+                Ok::<_, anyhow::Error>(())
+            }
+            .await;
+            this.update_in(cx, |this, window, cx| {
+                if this.navigation_epoch != epoch {
+                    return;
+                }
+                match result {
+                    Ok(()) => {
+                        if let Some(handle) =
+                            this.open_link_host(&id, &crate::deep_link::Link::Launch, window, cx)
+                        {
+                            let _ = handle.update(cx, |root, window, cx| {
+                                if let Some(project) = project {
+                                    root.select_project(project, window, cx);
+                                } else {
+                                    root.new_chat(window, cx);
+                                }
+                            });
+                        }
+                    }
+                    Err(error) => this.toast(crate::Toast::danger(error.to_string()), cx),
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
 }
