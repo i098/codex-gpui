@@ -57,6 +57,14 @@ const STATES = {
     await d.click(row("Add a subtract"));
     await d.waitFor(`document.body.innerText.includes("Worked for") && document.body.innerText.includes("View changes")`, "subtract thread");
   },
+  // The Home composer with its focus, empty and with a typed draft.
+  "composer-rest": async (d) => {
+    await d.click(`document.querySelector(".ProseMirror")`, "composer");
+  },
+  "composer-typed": async (d) => {
+    await d.click(`document.querySelector(".ProseMirror")`, "composer");
+    await d.type("Refactor src/math.py");
+  },
   composer: async (d) => {
     await d.click(`document.querySelector(".ProseMirror")`, "composer");
     await d.type("Refactor src/math.py");
