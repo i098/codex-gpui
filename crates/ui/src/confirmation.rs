@@ -18,6 +18,8 @@ pub struct Confirmation {
     confirm_label: SharedString,
     cancel_label: SharedString,
     destructive: bool,
+    /// One primary button (`confirm_label`) and no Cancel, like `Unable to send message`.
+    notice: bool,
     settings_style: bool,
     controls: [FocusHandle; 2],
     return_focus: Option<FocusHandle>,
@@ -31,7 +33,7 @@ impl EventEmitter<Outcome> for Confirmation {}
 
 impl Focusable for Confirmation {
     fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.controls[0].clone()
+        self.controls[self.notice as usize].clone()
     }
 }
 
@@ -52,6 +54,7 @@ impl Confirmation {
             confirm_label: confirm_label.into(),
             cancel_label: "Cancel".into(),
             destructive: false,
+            notice: false,
             settings_style: false,
             controls,
             return_focus,
@@ -64,6 +67,13 @@ impl Confirmation {
 
     pub fn destructive(mut self) -> Self {
         self.destructive = true;
+        self
+    }
+
+    /// Shows only the `confirm_label` button and focuses it.
+    pub fn notice(mut self, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        self.notice = true;
+        self.controls[1].focus(window, cx);
         self
     }
 
@@ -128,7 +138,7 @@ impl Confirmation {
             "escape" => self.finish(Outcome::Cancel, window, cx),
             "tab" if !key.modifiers.platform && !key.modifiers.control && !key.modifiers.alt => {
                 let controls = || {
-                    self.controls
+                    self.controls[self.notice as usize..]
                         .iter()
                         .chain(self.opt_out.iter().map(|(_, _, focus)| focus))
                         .chain(self.documentation.iter().map(|(_, _, focus)| focus))
@@ -258,6 +268,7 @@ impl Render for Confirmation {
         let buttons = [self.cancel_label.clone(), self.confirm_label.clone()]
             .into_iter()
             .enumerate()
+            .skip(self.notice as usize)
             .map(|(index, label)| {
                 let destructive = index == 1 && self.destructive;
                 let fill = if self.settings_style {

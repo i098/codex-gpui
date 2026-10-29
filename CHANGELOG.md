@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Show `Unable to send message` with the reason and `OK` when a composer submit waits for file uploads.
 - Draw the 2 px keyboard focus ring on the diff card's `Undo` and `View changes` buttons in a chat.
 - Add the Configuration settings page: the `config.toml` approval policy, sandbox, network access, web search, output detail, and reasoning summary controls, the available reasoning efforts, the Codex dependencies switch, and Open config.toml.
 - Add the advanced Appearance settings: theme presets, colors, contrast, fonts, translucent sidebar, theme import and copy, separate light and dark modes, font sizes, diff markers, reduced motion, pointer cursors, font smoothing, the macOS Dock icon, and Reset to default.

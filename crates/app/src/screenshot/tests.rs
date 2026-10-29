@@ -247,8 +247,10 @@ fn screenshot_routes_and_discards_stale_results() -> Result<()> {
             .as_ref()
             .map(|_| cx.capture_screenshot(owner.into()))
             .transpose()?;
-        owner.update(&mut cx, |_, window, cx| {
+        cx.update_window(owner.into(), |_, window, cx| {
             window.dispatch_action(Box::new(ui::composer::Submit), cx);
+            // The upload-blocked notice takes focus until Enter acknowledges it.
+            window.dispatch_keystroke(gpui::Keystroke::parse("enter").unwrap(), cx);
         })?;
         if let Some(submission) = submitted.borrow_mut().take() {
             assert!(submission.text.is_empty());
