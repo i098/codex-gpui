@@ -973,12 +973,18 @@ It checks the card fill, the adjacent card, and the icon colors against the Linu
 The existing hover implementation already matches; no production code changes are needed.
 Slice S035b covers the suggestion click (AM-036) with `refs/interactions/s035b.json` and `crates/app/tests/s035b.rs`.
 The original recording shows a failed models read, not a successful guided start.
-The retained live capture reached the Apple DeviceCheck requirement before any conversation or automation write.
-Captain decision 110 selects an unsupported state for this release.
-The click shows `Starting suggested tasks isn’t supported in this version` through the existing danger toast.
-It sends no host request, creates no conversation or task, and keeps the route and every card enabled.
-The native click test checks these effects without changing the recorded fixture.
-Set `S035B_SHOTS` to retain the before and after screenshots outside the Cargo target.
+The native implementation follows the extracted `conversation-actions` start order and the `recommendations` prompts.
+It reads models, prepares a local thread, starts its first turn, and opens that thread with the Scheduled sidebar.
+`LocalHost` serves `start-suggested-task`; app-server notifications and the normal thread reader supply the transcript.
+The card shows `Starting…` and rejects duplicate clicks until the host answers.
+A failed start shows `Couldn’t start this suggested task` and leaves the cards and route available.
+The start uses read-only permissions and asks for schedule confirmation before creating an automation.
+The native path does not call the original cloud `/f/conversation` API.
+The original HTTP 499 recording remains unchanged; it does not prove a successful original start.
+A headless native check started the selected meal-plan suggestion on a real app-server and completed its guided questions.
+It retained the Scheduled sidebar and created no automation.
+No successful original screenshot exists for this state, so its pixel comparison is not comparable.
+Set `S035B_SHOTS` to retain native failure screenshots outside the Cargo target.
 Ordinary local task creation and the existing draft remain unchanged.
 
 `Run now` (AM-021) is the second item of the row `Scheduled task actions` menu, after `Pause` / `Resume`. The original sidebar menu is `q` in `menu-items-19a7bd2f5b31.js`, called with `statusFirst: true` from `actions-b3b1b77c618b.js`; `run-now-11e55df28c95.js` holds only the run action.

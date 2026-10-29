@@ -67,6 +67,7 @@ pub(crate) mod run_now;
 mod settings_git;
 mod skills;
 mod ssh_discovery;
+mod suggested_task;
 pub mod voice;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1824,6 +1825,7 @@ impl Host for LocalHost {
             "automation-delete" => self.delete_automation(&params)?,
             "automation-update" => self.update_automation(&params)?,
             "automation-run-now" => self.automation_run_now(&params)?,
+            "start-suggested-task" => self.start_suggested_task(&params)?,
             "apply-automation-proposal" => {
                 let tools = self
                     .app_tools()?
