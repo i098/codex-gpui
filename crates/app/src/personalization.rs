@@ -968,7 +968,7 @@ impl Root {
                         .is_ok_and(|preference| preference.enabled) =>
             {
                 if let Some(skills) = result.skills {
-                    self.skills = skills;
+                    self.set_skills(skills, cx);
                 }
                 view.update(cx, |view, cx| {
                     view.writing_changed(
@@ -1188,7 +1188,7 @@ impl Root {
                         .as_ref()
                         .is_ok_and(|preference| preference.enabled);
                 if let Some(skills) = result.skills {
-                    this.skills = skills;
+                    this.set_skills(skills, cx);
                 }
                 if let Some(view) = &view {
                     view.update(cx, |view, cx| {
@@ -1319,7 +1319,7 @@ impl Root {
             eprintln!("codex-gpui: update Writing style: {error}");
         }
         if let Some(skills) = result.skills {
-            self.skills = skills;
+            self.set_skills(skills, cx);
         }
         view.update(cx, |view, cx| {
             view.writing_changed(

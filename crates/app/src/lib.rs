@@ -688,6 +688,9 @@ impl Root {
                             this.open_settings_section(section, window, cx);
                         }
                     }
+                    ui::composer::SlashCommand::Mcp => {
+                        this.open_settings_section("MCP servers", window, cx);
+                    }
                     ui::composer::SlashCommand::Compact => this.compact(window, cx),
                     ui::composer::SlashCommand::Fork => this.fork_chat(0, window, cx),
                     ui::composer::SlashCommand::Rename => {
