@@ -761,11 +761,13 @@ const RAIL_EXPLORE: (f32, f32) = (26., 246.);
 
 fn rail_explore_menu() -> Result<String> {
     let mut fx = Fx::new()?;
+    fx.capture_evidence("CGX_BEACON_EVIDENCE", "before-rail")?;
     fx.click(RAIL_EXPLORE)?;
     ensure!(
         fx.shell(|s| s.explore_menu),
         "Explore did not open its menu"
     );
+    fx.capture_evidence("CGX_BEACON_EVIDENCE", "after-explore-menu")?;
     fx.click(RAIL_EXPLORE)?;
     ensure!(fx.shell(|s| !s.explore_menu), "a second click left it open");
     fx.click(RAIL_EXPLORE)?;
@@ -826,10 +828,12 @@ fn rail_focus_ring() -> Result<String> {
 /// Beacon `Start Voice` raises the voice request; `×` hides the banner.
 fn home_beacon() -> Result<String> {
     let mut fx = Fx::new()?;
+    fx.capture_evidence("CGX_BEACON_EVIDENCE", "before-home")?;
     let home = fx.read(|root, _| root.home());
     fx.cx
         .update(|cx| home.update(cx, |home, cx| home.set_beacon(true, cx)));
     fx.cx.run_until_parked();
+    fx.capture_evidence("CGX_BEACON_EVIDENCE", "after-beacon")?;
     let (x, y) = fx.at("home", "Choose project")?;
     // The buttons sit 550 and 622 px right of `Choose project`, one slot above it.
     fx.click((x + 550., y - 61.))?;
