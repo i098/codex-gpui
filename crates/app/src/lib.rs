@@ -1301,7 +1301,6 @@ impl Root {
         self.command_menu.as_ref()
     }
 
-
     /// The composer of the route: Home's, or the one docked under the open thread.
     pub fn composer(&self, cx: &App) -> Entity<Composer> {
         match self.state.route {
