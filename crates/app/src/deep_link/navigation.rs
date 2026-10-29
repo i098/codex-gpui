@@ -293,6 +293,8 @@ mod tests {
         host.add_project(&repository)?;
         let projects = host.projects()?;
         let id = projects[0].id.as_ref();
+        let repository = repository.canonicalize()?;
+        let folder = folder.canonicalize()?;
         let repository = repository.to_str().unwrap();
         let folder = folder.to_str().unwrap();
         assert_eq!(
