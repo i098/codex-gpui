@@ -222,6 +222,8 @@ pub(crate) mod menu {
 }
 mod mention;
 mod menus;
+mod review;
+pub use review::ReviewEvent;
 mod slash;
 pub use slash::SlashCommand;
 

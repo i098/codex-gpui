@@ -1,6 +1,7 @@
 //! Slash completion keeps keyboard focus in the editor and preserves text outside the command token.
-//! Chat commands and MCP use existing app handlers; skill rows insert linked mention chips.
-//! Model, Reasoning, Fork chat, and Work in a project open a submenu. It replaces the token with
+//! Fast, Archive, New chat, Usage, Compact, Rename, Pin chat, Feedback, Export, Recap, MCP and skill rows use existing app handlers.
+//! Model, Reasoning, Fork chat, Work in a project, and Code review (`super::review`) open a
+//! submenu. It replaces the token with
 //! `/id ` and filters on the text typed after it; Backspace over the space returns to the list,
 //! Escape closes it, and only a pick removes the token and its query and acts.
 //! The other commands stay visible but inactive.
@@ -245,6 +246,8 @@ pub(super) struct Slash {
     pub(super) matches: Vec<usize>,
     pub(super) skills: Vec<Skill>,
     pub(super) sub: Option<Sub>,
+    /// `git-review-targets` of the open chat for `Code review`: `None` while it loads.
+    pub(super) review: Option<Result<Value, ()>>,
     /// Home's projects for `/project`: label and root path.
     pub(super) projects: Vec<(SharedString, String)>,
     scroll: gpui::ScrollHandle,
@@ -270,28 +273,33 @@ fn matches_query(text: &str, query: &str) -> bool {
             .any(|part| part.eq_ignore_ascii_case(query.as_bytes()))
 }
 
-/// One submenu row. `action` runs when it is picked.
+/// One submenu row under `heading` (none: no title). `action` runs when it is picked.
 pub(super) struct SubItem {
-    title: String,
-    description: String,
-    icon: &'static str,
-    action: SubAction,
+    pub(super) title: String,
+    pub(super) description: String,
+    pub(super) icon: &'static str,
+    pub(super) heading: Option<&'static str>,
+    pub(super) action: SubAction,
 }
 
 #[derive(Clone)]
-enum SubAction {
+pub(super) enum SubAction {
     Model(usize),
     Effort(String),
     Fork,
     ForkWorktree,
     Project(String),
+    /// `review/start` with this `target`.
+    Review(Value),
+    /// A status row (loading, error): a pick keeps the submenu open.
+    Inactive,
 }
 
 /// The open submenu of command `id`. `items` are all its rows; `Slash::matches` indexes the
 /// rows that the typed query keeps.
 pub(super) struct Sub {
-    id: &'static str,
-    items: Vec<SubItem>,
+    pub(super) id: &'static str,
+    pub(super) items: Vec<SubItem>,
 }
 
 impl Composer {
@@ -407,8 +415,10 @@ impl Composer {
             let query = self.content[range.start + 1..range.end].to_lowercase();
             for (index, command) in COMMANDS.iter().enumerate() {
                 let available = match command.id {
-                    "archive" | "review-mode" | "compact" | "fork" | "init" | "new" | "pin"
-                    | "rename" | "share" | "side" => self.docked,
+                    "archive" | "compact" | "fork" | "init" | "new" | "pin" | "rename"
+                    | "share" | "side" => self.docked,
+                    // `review/start` replaces a running turn, so the CLI hides `/review` then.
+                    "review-mode" => self.docked && !self.running,
                     "project" => !self.docked,
                     "fast" | "model" | "plan-mode" | "reasoning" | "ultrafast" => {
                         self.current_model().is_some()
@@ -562,7 +572,11 @@ impl Composer {
             "feedback" => SlashCommand::Feedback,
             "export" => SlashCommand::Export,
             "recap" => SlashCommand::Recap,
-            "model" | "reasoning" | "fork" | "project" => {
+            "model" | "reasoning" | "fork" | "project" | "review-mode" => {
+                if command.id == "review-mode" {
+                    self.slash.review = None;
+                    cx.emit(super::review::ReviewEvent::LoadTargets);
+                }
                 self.open_sub(command.id, cx);
                 return;
             }
@@ -613,6 +627,7 @@ impl Composer {
                     title: model.label.to_string(),
                     description: current(index == self.model).into(),
                     icon: "composer-model",
+                    heading: None,
                     action: SubAction::Model(index),
                 })
                 .collect(),
@@ -624,6 +639,7 @@ impl Composer {
                     title: effort_label(effort).into(),
                     description: current(effort == self.displayed_effort()).into(),
                     icon: "settings-personalization",
+                    heading: None,
                     action: SubAction::Effort(effort.clone()),
                 })
                 .collect(),
@@ -632,15 +648,18 @@ impl Composer {
                     title: "Fork chat".into(),
                     description: "Fork this chat in the current workspace".into(),
                     icon: "thread-fork",
+                    heading: None,
                     action: SubAction::Fork,
                 },
                 SubItem {
                     title: "Fork into new worktree".into(),
                     description: "Fork this chat in an isolated checkout".into(),
                     icon: "thread-fork",
+                    heading: None,
                     action: SubAction::ForkWorktree,
                 },
             ],
+            "review-mode" => self.review_items(),
             _ => self
                 .slash
                 .projects
@@ -649,6 +668,7 @@ impl Composer {
                     title: label.to_string(),
                     description: root.clone(),
                     icon: "folder",
+                    heading: None,
                     action: SubAction::Project(root.clone()),
                 })
                 .collect(),
@@ -674,7 +694,7 @@ impl Composer {
         self.refresh_sub(cx);
     }
 
-    fn refresh_sub(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn refresh_sub(&mut self, cx: &mut Context<Self>) {
         let Some(sub) = &self.slash.sub else {
             return;
         };
@@ -704,6 +724,9 @@ impl Composer {
         else {
             return;
         };
+        if matches!(action, SubAction::Inactive) {
+            return;
+        }
         self.finish_command(window, cx);
         match action {
             SubAction::Model(model) => {
@@ -716,6 +739,8 @@ impl Composer {
             }
             SubAction::Fork => cx.emit(SlashCommand::Fork),
             SubAction::ForkWorktree => cx.emit(SlashCommand::ForkWorktree),
+            SubAction::Review(target) => cx.emit(super::review::ReviewEvent::Start(target)),
+            SubAction::Inactive => {}
             SubAction::Project(root) => {
                 window.dispatch_action(Box::new(SelectProject(root)), cx);
             }
@@ -769,9 +794,24 @@ impl Composer {
             )
     }
 
+    /// The section title above row `index`: `Skills`, or a submenu row's heading.
+    fn heading(&self, index: usize) -> Option<&'static str> {
+        if self.is_skill(index) {
+            return Some("Skills");
+        }
+        self.slash.sub.as_ref()?.items.get(index)?.heading
+    }
+
     pub(super) fn slash_menu(&self, t: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let has_skills = self.slash.matches.iter().any(|&index| self.is_skill(index));
-        let height = self.slash.matches.len() as f32 * 28.5625 + if has_skills { 30. } else { 0. };
+        let mut previous = None;
+        let mut headings = Vec::new();
+        for &index in &self.slash.matches {
+            let heading = self.heading(index);
+            headings.push(heading.filter(|_| heading != previous));
+            previous = heading;
+        }
+        let height = self.slash.matches.len() as f32 * 28.5625
+            + headings.iter().flatten().count() as f32 * 30.;
         let mut list = div()
             .id("slash-list")
             .overflow_y_scroll()
@@ -783,15 +823,14 @@ impl Composer {
         if self.slash.mention {
             list = list.child(self.mention_list(t, cx));
         } else {
-            let mut skills_heading = false;
-            for (selected, &index) in self.slash.matches.iter().enumerate() {
-                if self.is_skill(index) && !skills_heading {
+            for (selected, (&index, heading)) in self.slash.matches.iter().zip(headings).enumerate()
+            {
+                if let Some(heading) = heading {
                     list = list.child(
-                        text("Skills", 12., 20., 500., t.text.opacity(0.5))
+                        text(heading, 12., 20., 500., t.text.opacity(0.5))
                             .px(px(8.))
                             .py(px(5.)),
                     );
-                    skills_heading = true;
                 }
                 list = list.child(self.suggestion_row(
                     t,

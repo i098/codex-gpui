@@ -934,6 +934,7 @@ mod tests {
                 started_at: None,
                 completed_at: None,
                 duration_ms: None,
+                interrupt_id: None,
             }],
         };
         app.update(|cx| page.update(cx, |page, cx| {

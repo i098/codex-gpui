@@ -1552,6 +1552,11 @@ impl ThreadView {
                 let Ok(mut n) = serde_json::from_value::<TurnNotification>(params.clone()) else {
                     return;
                 };
+                if let Some(root) = params["turn"]["rootTurnId"].as_str()
+                    && root != n.turn.id
+                {
+                    n.turn.interrupt_id = Some(std::mem::replace(&mut n.turn.id, root.into()));
+                }
                 if n.turn.status == TurnStatus::InProgress {
                     self.running_since
                         .entry(n.turn.id.clone())
@@ -1566,6 +1571,7 @@ impl ThreadView {
                         turn.completed_at = n.turn.completed_at;
                         turn.duration_ms = n.turn.duration_ms;
                         turn.error = n.turn.error;
+                        turn.interrupt_id = n.turn.interrupt_id.or(turn.interrupt_id.take());
                         if turn.items.is_empty() {
                             turn.items = n.turn.items;
                             turn.items.iter_mut().for_each(cache_automation_result);
@@ -1618,6 +1624,10 @@ impl ThreadView {
                 let Some(turn) = self.turns.iter_mut().find(|t| t.id == n.turn_id) else {
                     return;
                 };
+                // A review's sub-turn forwards its internal prompt; the CLI hides it too.
+                if turn.interrupt_id.is_some() && matches!(n.item, ThreadItem::UserMessage { .. }) {
+                    return;
+                }
                 cache_automation_result(&mut n.item);
                 let id = item_id(&n.item).map(str::to_owned);
                 if let (ThreadItem::Reasoning { id, .. }, now) =

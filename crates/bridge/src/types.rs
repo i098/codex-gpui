@@ -74,6 +74,10 @@ pub struct Turn {
     pub started_at: Option<i64>,
     pub completed_at: Option<i64>,
     pub duration_ms: Option<i64>,
+    /// A review's running sub-turn (`turn/started` with another `rootTurnId`): the id that
+    /// `turn/interrupt` expects while `id` stays the review turn its items and completion name.
+    #[serde(skip)]
+    pub interrupt_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

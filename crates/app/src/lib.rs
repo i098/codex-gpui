@@ -690,6 +690,8 @@ impl Root {
             },
         )
         .detach();
+        cx.subscribe_in(&thread_composer, window, Self::review_event)
+            .detach();
         for composer in [&home_composer, &thread_composer] {
             cx.subscribe_in(composer, window, |this, composer, command: &ui::composer::SlashCommand, window, cx| {
                 match command {
@@ -4955,7 +4957,7 @@ impl Root {
             .iter()
             .rev()
             .find(|turn| turn.status == TurnStatus::InProgress)
-            .map(|turn| turn.id.clone());
+            .map(|turn| turn.interrupt_id.as_ref().unwrap_or(&turn.id).clone());
         self.loaded.remove(&id);
         self.failed_queued.retain(|row| row.thread_id != id);
         let bridge = self.bridge.clone();
@@ -5050,6 +5052,7 @@ impl Root {
             return;
         };
         let (thread_id, turn_id) = (view.id().to_owned(), turn.id.clone());
+        let interrupt_id = turn.interrupt_id.clone().unwrap_or_else(|| turn_id.clone());
         if !self
             .interrupting
             .insert((thread_id.clone(), turn_id.clone()))
@@ -5058,7 +5061,7 @@ impl Root {
         }
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
-            let result = bridge.turn_interrupt(&thread_id, &turn_id).await;
+            let result = bridge.turn_interrupt(&thread_id, &interrupt_id).await;
             if result.is_err() {
                 this.update(cx, |this, cx| {
                     this.interrupting.remove(&(thread_id, turn_id));
