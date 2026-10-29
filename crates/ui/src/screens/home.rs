@@ -6,10 +6,10 @@ use crate::composer::{Composer, label, pill};
 use crate::{Shell, focus, icon::icon, rounded_clip, text};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyView, AnyWindowHandle, App, AppContext as _, Context, Corners, Div, Entity, Global, Hsla,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement, Pixels, Render,
-    ScrollHandle, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window, actions,
-    div, px, relative,
+    AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Corners, Div, Entity, Global,
+    Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels,
+    Render, ScrollHandle, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window,
+    actions, anchored, canvas, deferred, div, point, px, relative,
 };
 use theme::{ActiveTheme as _, Theme};
 
@@ -26,9 +26,17 @@ impl Global for FinishedScrollAnimation {}
 
 actions!(home, [OpenFolder]);
 
+/// `Work in` menu state: whether it is open, and where its chip was last laid out.
+#[derive(Default)]
+pub struct LocationMenu {
+    pub open: bool,
+    bounds: Bounds<Pixels>,
+}
+
 pub struct HomeMain {
     pub composer: Entity<Composer>,
     pub project: Option<SharedString>,
+    pub location: LocationMenu,
 }
 
 impl HomeMain {
@@ -36,6 +44,7 @@ impl HomeMain {
         Self {
             composer: fixture_composer(window, cx, Composer::home),
             project: None,
+            location: LocationMenu::default(),
         }
     }
 }
@@ -109,6 +118,94 @@ fn chip(
     )
 }
 
+/// Opens or closes the `Work in` menu: `None` toggles.
+fn set_location(owner: &Entity<HomeMain>, open: Option<bool>, cx: &mut App) {
+    owner.update(cx, |main, cx| {
+        main.location.open = open.unwrap_or(!main.location.open);
+        cx.notify();
+    });
+}
+
+/// `Work in` menu (`composer.newTask.thisComputer`): `This computer` is the only location the
+/// port runs; the others are listed disabled, in the original's order.
+fn location_menu(
+    owner: &Entity<HomeMain>,
+    location: &LocationMenu,
+    t: &Theme,
+    window: &Window,
+) -> Option<gpui::AnyElement> {
+    if !location.open {
+        return None;
+    }
+    let trigger = location.bounds;
+    let rows = [
+        ("This computer", true),
+        ("New worktree", false),
+        ("Remote", false),
+        ("Cloud", false),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, (label, enabled))| {
+        let owner = owner.clone();
+        div()
+            .id(("work-in-option", i))
+            .role(gpui::Role::MenuItemRadio)
+            .aria_label(label)
+            .aria_disabled(!enabled)
+            .px(px(8.))
+            .py(px(6.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .rounded(px(12.))
+            .opacity(if enabled { 1. } else { 0.5 })
+            .when(enabled, |d| {
+                let hover = t.menu_item_hover;
+                d.hover(move |s| s.bg(hover))
+            })
+            .child(div().flex_1().child(text(label, 14., 20., 430., t.text)))
+            .child(
+                div()
+                    .size(px(16.))
+                    .children((i == 0).then(|| icon("menu-check", 16., t.text))),
+            )
+            .when(enabled, |d| {
+                d.on_click(move |_, _, cx| set_location(&owner, Some(false), cx))
+            })
+    });
+    let dismiss = owner.clone();
+    let popup = crate::composer::popover(t, 260., |d| d.children(rows))
+        .id("work-in-menu")
+        .role(gpui::Role::Menu)
+        .aria_label("Work in")
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+    // Opens upward from the chip: the bar sits at the bottom of the window. A full-window
+    // backdrop under the popup closes it on a click anywhere else, the chip included.
+    Some(
+        deferred(
+            anchored().position(point(px(0.), px(0.))).child(
+                div()
+                    .w(window.viewport_size().width)
+                    .h(window.viewport_size().height)
+                    .occlude()
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        set_location(&dismiss, Some(false), cx)
+                    })
+                    .child(
+                        anchored()
+                            .position(point(trigger.left(), trigger.top() - px(4.)))
+                            .anchor(gpui::Anchor::BottomLeft)
+                            .snap_to_window_with_margin(px(8.))
+                            .child(popup),
+                    ),
+            ),
+        )
+        .with_priority(4)
+        .into_any_element(),
+    )
+}
+
 fn scroll_fades(offset: Pixels, maximum: Pixels) -> (Pixels, Pixels) {
     if maximum <= px(0.) {
         return (px(0.), px(0.));
@@ -124,6 +221,8 @@ fn scroll_fades(offset: Pixels, maximum: Pixels) -> (Pixels, Pixels) {
 /// `Composer utility bar` (`_rail_1hrlq` attached above the composer): project and
 /// environment.
 fn utility_bar(
+    owner: &Entity<HomeMain>,
+    location: &LocationMenu,
     project: Option<SharedString>,
     compact: bool,
     t: &Theme,
@@ -148,6 +247,7 @@ fn utility_bar(
         })
         .read(cx)
         .clone();
+    let location_menu = location_menu(owner, location, t, window);
     let finished = cx
         .try_global::<FinishedScrollAnimation>()
         .is_some_and(|state| state.0 == window.window_handle());
@@ -201,16 +301,59 @@ fn utility_bar(
                                     )
                                     .focus_handle(&project_focus.read(cx).handle),
                                 )
-                                .child(chip(
-                                    "work-in",
-                                    "laptop",
-                                    "This computer".into(),
-                                    t.text,
-                                    compact,
-                                    t,
-                                    &work_focus,
-                                    cx,
-                                )),
+                                .child({
+                                    let toggle = {
+                                        let owner = owner.clone();
+                                        move |cx: &mut App| set_location(&owner, None, cx)
+                                    };
+                                    let close = {
+                                        let owner = owner.clone();
+                                        move |cx: &mut App| set_location(&owner, Some(false), cx)
+                                    };
+                                    chip(
+                                        "work-in",
+                                        "laptop",
+                                        "This computer".into(),
+                                        t.text,
+                                        compact,
+                                        t,
+                                        &work_focus,
+                                        cx,
+                                    )
+                                    .role(gpui::Role::Button)
+                                    .aria_label("Work in")
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .on_click({
+                                        let toggle = toggle.clone();
+                                        let focus = work_focus.read(cx).handle.clone();
+                                        move |_, window, cx| {
+                                            window.focus(&focus, cx);
+                                            toggle(cx)
+                                        }
+                                    })
+                                    .on_key_down(move |event, _, cx| {
+                                        match event.keystroke.key.as_str() {
+                                            "enter" | "space" => toggle(cx),
+                                            "escape" => close(cx),
+                                            _ => return,
+                                        }
+                                        cx.stop_propagation();
+                                    })
+                                    .child({
+                                        let owner = owner.clone();
+                                        canvas(
+                                            move |b, _, cx| {
+                                                owner.update(cx, |main, _| main.location.bounds = b)
+                                            },
+                                            |_, (), _, _| {},
+                                        )
+                                        .absolute()
+                                        .size_full()
+                                    })
+                                    .children(location_menu)
+                                }),
                         )
                         .child(shapes::x_fade_with(move || {
                             if finished {
@@ -271,6 +414,8 @@ impl Render for HomeMain {
             .flex_col()
             .child(div().h(px(8.)))
             .child(utility_bar(
+                &cx.entity(),
+                &self.location,
                 self.project.clone(),
                 self.composer.read(cx).utility_compact(),
                 &t,

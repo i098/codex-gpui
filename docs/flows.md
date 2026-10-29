@@ -266,8 +266,8 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Sidebar visible | entry | Rail 52 px plus panel 288 px at 1280 px. | Open at launch; parity: see `parity_home`. | PASS (`launch_home`, `parity_home`) |
-| 2 | `Codex ⌄` mode switch | click | Menu: ChatGPT, Codex, Work. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `mode-switch`) |
-| 3 | `⌃1` `⌃2` `⌃3` | shortcut | Switch mode. | — | NOT WIRED (`crates/ui/src/lib.rs`: no modes; then bind in `crates/app/src/lib.rs` `init`) |
+| 2 | `Codex ⌄` mode switch | click | Menu: ChatGPT, Codex, Work. | Opens the menu under the trigger (`ChatGPT`, `Codex` `Build, debug, and ship`, `Work` `Create, learn, and explore`, with a check on the current mode); a pick, Enter, or Escape closes it, a click elsewhere closes it. A pick records the mode (default Codex); the ChatGPT and Work surfaces do not exist, so the sidebar and wordmark stay Codex. | PASS (`mode_switch_menu_picks_with_keys_and_click_outside_closes`; the original popup cannot be captured) |
+| 3 | `⌃1` `⌃2` `⌃3` | shortcut | Switch mode. | Commands `switchToMode1..3` of the recorded keyboard table: `⌃1` ChatGPT, `⌃2` Work, `⌃3` Codex, through the keymap module; the menu rows show these keys. | FAIL (`control_digits_switch_mode` passes, but the ChatGPT and Work surfaces do not exist, so a switch changes no screen) |
 | 4 | Bell `View activity` | click | Toggles the activity view. | `ToggleActivity` selects the existing Home sidebar's priority view when shared access permits it. | PASS (shared access tests and native main-control comparison) |
 | 5 | `⌘⌥U` | shortcut | Toggles the activity view. | Uses the configured activity shortcut and shared access state; keeps a Thread route and opens a hidden sidebar. | PASS (`priority_activity`, native main-control comparison) |
 | 6 | Search | click | Opens the command menu in chat-search mode. | `OpenCommandMenu`: the command menu over live Recents. | PASS (`command_menu_search_click`, `parity_sidebar`) |
@@ -368,7 +368,7 @@ New chat adds a Back entry even when Home is already open.
 | 5 | Beacon `Start Voice` | click | Starts a realtime voice chat. | No beacon. | NOT WIRED (`crates/ui/src/screens/home.rs`) |
 | 6 | Beacon dismiss `×` | click | Hides the banner. | No beacon. | NOT WIRED (`crates/ui/src/screens/home.rs`) |
 | 7 | `Choose project` | click | Project dropdown. | Opens the native folder picker and selects a local project for new chats. | Native local-folder flow (`project_picker`); no project dropdown. |
-| 8 | `Work in` / `This computer` | click | Location menu. | Chip has no handler. | NOT WIRED (`crates/ui/src/screens/home.rs` `utility_bar`) |
+| 8 | `Work in` / `This computer` | click | Location menu. | The chip opens a menu above it: `This computer` (checked) and `New worktree`, `Remote`, `Cloud` listed disabled; Enter or Space on the chip toggles it, Escape, a pick, or a click elsewhere closes it. Choosing another location is not wired. | PASS (`work_in_menu_toggles_and_dismisses`; the original popup cannot be captured) |
 | 9 | Editor `Do anything` | focus | Caret shows. | Click focuses the editor. | PASS (`editor_click_focuses`) |
 | 10 | `+` Add files and more | click | Context menu (files, photos, @-mentions). | Opens the system file picker at once. | FAIL (`crates/ui/src/composer.rs` `add_files`: no context menu) |
 | 11 | `Custom` permissions | click | Permissions dropdown. | Opens; Escape closes. | PASS (`permissions_popover`) |

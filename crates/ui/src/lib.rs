@@ -42,6 +42,12 @@ actions!(
         /// Show or hide the sidebar panel.
         ToggleSidebar,
         ToggleActivity,
+        /// `switchToMode1`, `⌃1`: ChatGPT mode.
+        SwitchMode1,
+        /// `switchToMode2`, `⌃2`: Work mode (the recorded command table).
+        SwitchMode2,
+        /// `switchToMode3`, `⌃3`: Codex mode.
+        SwitchMode3,
         /// Go to Home with an empty composer.
         NewChat,
         GoBack,
@@ -700,7 +706,17 @@ impl Render for EmptySidebar {
             .size_full()
             .flex()
             .flex_col()
-            .child(home_sidebar_header(false, false, true, cx))
+            .child(home_sidebar_header(
+                false,
+                false,
+                true,
+                ModeSwitch {
+                    current: "Codex",
+                    on_click: Box::new(|_, _, _| {}),
+                    menu: None,
+                },
+                cx,
+            ))
             .child(
                 div()
                     .flex_1()
@@ -756,9 +772,22 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
     cx.new(|_| Shell::new(sidebar, main)).into()
 }
 
+/// The `Codex ⌄` trigger's current mode, click handler and open menu.
+pub struct ModeSwitch {
+    pub current: &'static str,
+    pub on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
+    pub menu: Option<AnyElement>,
+}
+
 /// Top of the Home sidebar: `Codex ⌄` mode switch, activity bell and search, then the
 /// `New chat` and `Your dot` rows. With `unread` chats the bell carries the blue dot.
-pub fn home_sidebar_header(unread: bool, activity: bool, available: bool, cx: &App) -> Div {
+pub fn home_sidebar_header(
+    unread: bool,
+    activity: bool,
+    available: bool,
+    mode: ModeSwitch,
+    cx: &App,
+) -> Div {
     let t = cx.theme();
     // The Oklab round-trip leaves blue above one; retain it for Skia's float layer blend.
     let activity_background = gpui::Rgba {
@@ -831,6 +860,11 @@ pub fn home_sidebar_header(unread: bool, activity: bool, available: bool, cx: &A
                 .child(
                     div()
                         .id("mode-switch")
+                        .role(gpui::Role::Button)
+                        .aria_label(format!("Switch mode, current mode: {}", mode.current))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(mode.on_click)
+                        .relative()
                         .tab_index(0)
                         .focus_visible(keyboard_ring(true))
                         .h(px(32.))
@@ -848,7 +882,8 @@ pub fn home_sidebar_header(unread: bool, activity: bool, available: bool, cx: &A
                         .child(
                             icon::icon("chevron-down-medium", 14., t.text_tertiary)
                                 .own_layer(Some(mode_switch)),
-                        ),
+                        )
+                        .children(mode.menu),
                 )
                 .child(div().flex_1())
                 .when(available, |d| {
