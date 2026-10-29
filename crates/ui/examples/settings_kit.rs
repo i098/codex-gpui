@@ -84,9 +84,9 @@ fn main() -> anyhow::Result<()> {
             )
         });
         select.read(cx).focus_handle(cx).focus(window, cx);
-        let dialog = (mode == "confirmation").then(|| {
+        let dialog = mode.starts_with("confirmation").then(|| {
             cx.new(|cx| {
-                Confirmation::new(
+                let dialog = Confirmation::new(
                     "Discard changes?",
                     "You have unsaved changes. If you leave now, your changes will be lost.",
                     "Discard changes",
@@ -94,7 +94,16 @@ fn main() -> anyhow::Result<()> {
                     cx,
                 )
                 .destructive()
-                .cancel_label("Keep editing")
+                .cancel_label("Keep editing");
+                if mode == "confirmation" {
+                    dialog
+                } else {
+                    dialog.with_documentation(
+                        "Read documentation",
+                        "https://developers.openai.com/codex",
+                        cx,
+                    )
+                }
             })
         });
         cx.new(|_| Preview { select, dialog })
@@ -103,6 +112,12 @@ fn main() -> anyhow::Result<()> {
     if mode == "open" {
         cx.update_window(window.into(), |_, window, cx| {
             window.dispatch_keystroke(Keystroke::parse("down").unwrap(), cx);
+        })?;
+        cx.run_until_parked();
+    }
+    if mode == "confirmation-link" {
+        cx.update_window(window.into(), |_, window, cx| {
+            window.dispatch_keystroke(Keystroke::parse("shift-tab").unwrap(), cx);
         })?;
         cx.run_until_parked();
     }
