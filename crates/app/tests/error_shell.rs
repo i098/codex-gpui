@@ -1,5 +1,5 @@
-//! Error shell (SH-145, SH-147): the crash page when a spawned app-server dies, and
-//! the startup loader until the first answers arrive.
+//! Error shell (SH-145, SH-147): the crash page when a spawned app-server dies or cannot
+//! start, and the startup loader until the first answers arrive.
 
 mod common;
 
@@ -24,7 +24,16 @@ fn crash_page_shows_when_the_app_server_dies() -> Result<()> {
     Ok(())
 }
 
-/// "Try again" spawns a new app-server; when it dies too, the crash page returns.
+/// An app-server that cannot start shows the crash page instead of ending the app.
+#[test]
+fn crash_page_shows_when_the_app_server_cannot_start() -> Result<()> {
+    let mut fx = Fx::unstarted()?;
+    fx.wait("crash page", |fx| fx.read(|root, _| root.crashed()))?;
+    Ok(())
+}
+
+/// "Try again" spawns a new app-server and keeps the unsent draft; when the new
+/// app-server dies too, the crash page returns.
 #[test]
 fn try_again_respawns_the_app_server() -> Result<()> {
     // The respawn resolves `CODEX_BIN` at spawn time; the wrapper records the spawn
@@ -45,10 +54,15 @@ fn try_again_respawns_the_app_server() -> Result<()> {
     unsafe { std::env::set_var("CODEX_BIN", &wrapper) };
     let mut fx = Fx::crashed()?;
     fx.wait("crash page", |fx| fx.read(|root, _| root.crashed()))?;
+    fx.composer().update(&mut fx.cx, |composer, cx| {
+        composer.set_text("unsent draft", cx)
+    });
     // The action handler lives in the rendered crash page.
     fx.advance(Duration::ZERO)?;
     fx.action(Box::new(TryAgain))?;
     fx.wait("crash page again", |fx| fx.read(|root, _| root.crashed()))?;
+    let draft = fx.read(|root, cx| root.composer(cx).read(cx).field_text().to_owned());
+    ensure!(draft == "unsent draft", "draft after restart: {draft:?}");
     let spawns = std::fs::read_to_string(&probe)
         .with_context(|| format!("spawn probe {}", probe.display()))?;
     let spawns = spawns.lines().filter(|l| !l.is_empty()).count();

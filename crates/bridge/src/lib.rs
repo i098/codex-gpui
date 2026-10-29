@@ -263,6 +263,16 @@ impl Bridge {
         Ok(Self::from_io(client_read, client_write, None))
     }
 
+    /// The connection of an app-server that could not start: it reports [`Event::Closed`]
+    /// at once, so the app shows its crash page with Try again.
+    pub fn failed() -> (Bridge, Receiver<Event>) {
+        let (sink, events) = Sink::new();
+        sink.event(Event::Closed);
+        sink.close();
+        let backend = Box::new(Lines(Box::new(std::io::sink())));
+        (Self::new(backend, sink, None, false), events)
+    }
+
     fn from_io(
         read: impl Read + Send + 'static,
         write: impl Write + Send + 'static,
