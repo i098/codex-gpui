@@ -73,7 +73,8 @@ fn capture_cell() -> Result<()> {
             fx.keys("alt-cmd-b")?;
             ensure!(fx.read(|root, _| root.side_panel()) == Some(SidePanel::Changes));
             // The original's header row is collapsed; the file header sits at the panel's top.
-            let panel_left = width as f32 - 4. - 664.17f32.min((width as f32 - 344.5 - 320.).max(320.));
+            let panel_left =
+                width as f32 - 4. - 664.17f32.min((width as f32 - 344.5 - 320.).max(320.));
             fx.click((panel_left + 100., 111.))?;
             "diff"
         }
