@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Add working Notifications settings: system permission, turn mode, alert switches, sound with import and preview, and ChatGPT channels.
 - Add the native `File` > `New Project…` form with a name, marker, ordered source folders, and a device picker.
 - A contributing guide, issue and pull request templates, a security policy, and this changelog.
 - Add one workspace version, a version bump script, and a tag release workflow that publishes the macOS arm64 zip.
