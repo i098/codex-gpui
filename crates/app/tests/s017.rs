@@ -1,6 +1,6 @@
 //! Replays the original clipboard interactions in `refs/interactions/s017.json`: a large text
 //! paste goes to the app-server as the recorded `fs/createDirectory`, `fs/writeFile` (file) and
-//! `fs/writeFile` (registry) requests; an image paste sends none and keeps its bytes.
+//! `fs/writeFile` (registry) requests; an image paste saves its bytes on the selected host.
 
 mod common;
 
@@ -41,6 +41,7 @@ fn clipboard_attachments_match_the_original() -> Result<()> {
     for method in pastes
         .into_iter()
         .chain(["fs/writeFile", "fs/remove", "fs/writeFile"])
+        .chain(["fs/createDirectory", "fs/writeFile"])
     {
         lines.extend(exchange(method, json!({})));
     }
@@ -65,6 +66,9 @@ fn clipboard_attachments_match_the_original() -> Result<()> {
         fx.composer_text()?,
         rec["result"]["textPaste"]["editor"].as_str().unwrap()
     );
+    fx.wait("text attachment saved", |fx| {
+        fs_requests(fx).is_ok_and(|sent| sent.len() == 4)
+    })?;
     // The recording retains the data URL and its decoded bytes for a dependency-free replay.
     let bytes: Vec<u8> = serde_json::from_value(rec["steps"][1]["clipboard"]["pngBytes"].clone())?;
     let image = Image::from_bytes(ImageFormat::Png, bytes.clone());
@@ -95,11 +99,10 @@ fn clipboard_attachments_match_the_original() -> Result<()> {
 
     // The text paste's three recorded requests (`replay::recordings` compares their params)
     // under a v4 UUID directory, the only name the original's registry reader accepts. The
-    // port reads the registry on first use where the original read it at startup; the image
-    // paste sent none.
+    // port reads the registry on first use where the original read it at startup.
     let sent = fs_requests(&mut fx)?;
     assert_eq!(sent[0]["method"], "fs/readFile");
-    let sent = &sent[1..];
+    let sent = &sent[1..4];
     assert_eq!(
         sent.len(),
         rec["result"]["requests"].as_array().unwrap().len()
@@ -120,9 +123,13 @@ fn clipboard_attachments_match_the_original() -> Result<()> {
         .iter()
         .find(|p| p.extension().is_some_and(|n| n == "png"))
         .context("image attachment")?;
-    assert_eq!(fs::read(image_path)?, bytes);
-    fs::remove_file(image_path)?;
-    fs::remove_dir(image_path.parent().unwrap())?;
+    let image_requests = fs_requests(&mut fx)?;
+    let image_write = &image_requests[5]["params"];
+    assert_eq!(image_write["path"], json!(image_path));
+    assert_eq!(
+        BASE64.decode(image_write["dataBase64"].as_str().unwrap())?,
+        bytes
+    );
 
     // Restoring the card removes its file like the original (registry, file, registry) and
     // must not overflow the shaper's fixed-point pen for a long line.
@@ -148,10 +155,10 @@ fn clipboard_attachments_match_the_original() -> Result<()> {
     assert_eq!(restored.text, text);
     assert!(restored.attachments.is_empty());
     fx.wait("removal requests", |fx| {
-        fs_requests(fx).is_ok_and(|sent| sent.len() >= 10)
+        fs_requests(fx).is_ok_and(|sent| sent.len() >= 12)
     })?;
     let sent = fs_requests(&mut fx)?;
-    let methods: Vec<_> = sent[4..]
+    let methods: Vec<_> = sent[6..]
         .iter()
         .map(|m| m["method"].as_str().unwrap())
         .collect();
@@ -167,13 +174,13 @@ fn clipboard_attachments_match_the_original() -> Result<()> {
         ]
     );
     assert_eq!(
-        sent[8]["params"],
-        json!({ "path": sent[5]["params"]["path"], "force": true })
+        sent[10]["params"],
+        json!({ "path": sent[7]["params"]["path"], "force": true })
     );
-    let data = sent[9]["params"]["dataBase64"].as_str().unwrap();
+    let data = sent[11]["params"]["dataBase64"].as_str().unwrap();
     let registry = String::from_utf8(BASE64.decode(data)?)?;
     ensure!(
-        registry.contains(id) && !registry.contains(directory_id(&sent[4])?),
+        registry.contains(id) && !registry.contains(directory_id(&sent[6])?),
         "registry after removal: {registry}"
     );
     Ok(())

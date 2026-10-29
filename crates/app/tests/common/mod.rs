@@ -775,7 +775,12 @@ pub fn parity_flow(screen: &str, reach: fn(&mut Fx) -> Result<()>) -> Result<Str
         for size in [(1280., 832.), (1440., 900.)] {
             let result = (|| {
                 let session = (screen == "sidebar").then_some("sessions/sidebar-math-search.jsonl");
-                let mut fx = Fx::with(theme, size, session, |_| {})?;
+                let mut lines = script(session, |_| {})?;
+                if screen == "screenshot" {
+                    lines.extend(exchange("fs/createDirectory", json!({})));
+                    lines.extend(exchange("fs/writeFile", json!({})));
+                }
+                let mut fx = Fx::open(theme, size, lines)?;
                 reach(&mut fx)?;
                 fx.cx.run_until_parked();
                 ensure!(
