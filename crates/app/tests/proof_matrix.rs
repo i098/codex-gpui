@@ -1,7 +1,7 @@
 mod common;
 
 use anyhow::{Context as _, Result, ensure};
-use app::{Route, SidePanel, host::Host as _};
+use app::{Route, SidePanel};
 use common::{Fx, RAIL_SCHEDULED, ROOT, SUBTRACT};
 use image::RgbaImage;
 use serde_json::Value;
