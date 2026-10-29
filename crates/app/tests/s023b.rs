@@ -5,7 +5,7 @@ mod common;
 
 use anyhow::{Context as _, Result};
 use bridge::{Event, types::TurnStatus};
-use common::{Fx, ROOT, SUBTRACT, exchange, proxy_child, script};
+use common::{Fx, ROOT, SUBTRACT, exchange, proxy_child, refusal, script};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use std::{
@@ -119,39 +119,101 @@ fn sent(fx: &mut Fx, method: &str) -> Result<Vec<Value>> {
 }
 
 #[test]
-fn steer_sends_the_message_into_the_running_turn() -> Result<()> {
+fn failed_follow_up_retries_without_changing_the_draft() -> Result<()> {
     if !cfg!(target_os = "macos") {
         return Ok(());
     }
+    for queue in [false, true] {
+        retry_follow_up(queue, false)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn failed_follow_up_retries_as_a_new_turn_after_completion() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    retry_follow_up(true, true)
+}
+
+fn retry_follow_up(queue: bool, finish: bool) -> Result<()> {
     let rec = recording()?;
     let steps = rec["steps"].as_array().context("steps")?;
-    let mut lines = script(None, |_| {})?;
+    let method = if queue {
+        "thread/queue/add"
+    } else {
+        "turn/steer"
+    };
+    let mut lines = script(None, if queue { queue_config } else { |_| {} })?;
     lines.extend(exchange("thread/resume", json!({})));
-    let mut steer = exchange("turn/steer", json!({}));
-    steer[1]["msg"].as_object_mut().unwrap().remove("result");
-    steer[1]["msg"]["error"] = json!({"code":-32000,"message":"route1: turn/steer is not allowed"});
-    lines.extend(steer);
+    for _ in 0..2 {
+        lines.extend(refusal(method, "Submission refused"));
+    }
+    lines.extend(exchange(
+        if finish { "turn/start" } else { method },
+        json!({}),
+    ));
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
-    submit_while_running(&mut fx, steps, "Steer")?;
-    fx.wait("steer error toast", |fx| {
+    submit_while_running(&mut fx, steps, if queue { "Queue" } else { "Steer" })?;
+    fx.wait("failed follow-up row", |fx| queued(fx) == ["more"])?;
+    assert_eq!(fx.composer_text()?, "");
+    assert_eq!(label(&mut fx), "Stop");
+    assert!(fx.composer_focused()?);
+    let original = sent(&mut fx, method)?[0]["params"].clone();
+    if !queue {
+        assert_eq!(
+            core(&original),
+            core(&rec["result"]["submit"]["requests"][0]["params"])
+        );
+    }
+    let row_id = fx.read(|root, cx| root.composer(cx).read(cx).queued()[0].submission.id.clone());
+    fx.shot()?
+        .save(Path::new(env!("CARGO_TARGET_TMPDIR")).join("queued-retry.png"))?;
+    fx.type_text("Keep this draft")?;
+    fx.click((1080., 698.))?;
+    fx.wait("retry refused", |fx| {
+        sent(fx, method).is_ok_and(|r| r.len() == 2)
+    })?;
+    fx.wait("retry enabled again", |fx| {
         fx.read(|root, cx| {
             root.toasts(cx)
                 .iter()
-                .any(|s| s.as_ref() == "Error submitting message")
+                .filter(|s| s.as_ref() == "Error submitting message")
+                .count()
+                == 2
+                && root
+                    .composer(cx)
+                    .read(cx)
+                    .queued()
+                    .first()
+                    .is_some_and(|row| row.submission.id == row_id)
         })
     })?;
-    let want = &rec["result"]["submit"]["requests"][0];
-    assert_eq!(want["method"], "turn/steer");
-    let requests = sent(&mut fx, "turn/steer")?;
-    assert_eq!(requests.len(), 1, "{requests:?}");
-    assert_eq!(core(&requests[0]["params"]), core(&want["params"]));
-    assert!(fx.composer_focused()?);
-    // The refused message comes back to the composer, so the button names the mode again
-    // (the original keeps the message as a failed row with Retry and shows Stop).
-    assert_eq!(fx.composer_text()?, "more");
-    assert_eq!(label(&mut fx), "Steer");
-    fx.shot()?
-        .save(Path::new(env!("CARGO_TARGET_TMPDIR")).join("s023b-steer.png"))?;
+    assert_eq!(sent(&mut fx, method)?[1]["params"], original);
+    assert_eq!(fx.composer_text()?, "Keep this draft");
+    if finish {
+        notify(
+            &mut fx,
+            "turn/completed",
+            json!({
+                "threadId": SUBTRACT,
+                "turn": {"id": steps[1]["params"]["turn"]["id"], "items": [],
+                    "status": "completed", "error": null},
+            }),
+        );
+        fx.wait("turn completed", |fx| label(fx) == "Send")?;
+    }
+    fx.click((1080., 698.))?;
+    fx.wait("retry accepted", |fx| queued(fx).is_empty())?;
+    let accepted = sent(&mut fx, if finish { "turn/start" } else { method })?;
+    let params = &accepted.last().context("accepted request")?["params"];
+    assert_eq!(params["input"], original["input"]);
+    if !finish {
+        assert_eq!(params, &original);
+    }
+    assert_eq!(fx.composer_text()?, "Keep this draft");
+    assert!(sent(&mut fx, "thread/queue/delete")?.is_empty());
     Ok(())
 }
 
@@ -393,21 +455,7 @@ fn queue_proxy(path: &Path, log: &Path, mut options: Value) -> Result<()> {
 
 const MESSAGES: [&str; 3] = ["first queued", "middle 🦀 queued", "last queued"];
 
-fn queue_fixture(options: Value) -> Result<Fx> {
-    let mut lines = script(None, queue_config)?;
-    lines[0]["queueActions"] = options;
-    let oracle: Value =
-        serde_json::from_slice(&fs::read(format!("{ROOT}/tools/route1/oracle.json"))?)?;
-    let resume = oracle
-        .as_object()
-        .unwrap()
-        .iter()
-        .find(|(key, _)| key.starts_with("mcp local thread/resume "))
-        .context("original resume")?;
-    lines.extend(exchange(
-        "thread/resume",
-        resume.1["message"]["result"].clone(),
-    ));
+fn repeat_navigation_reads(lines: &mut Vec<Value>) {
     let list_id = lines
         .iter()
         .find(|line| line["msg"]["method"] == "thread/list")
@@ -435,6 +483,24 @@ fn queue_fixture(options: Value) -> Result<Fx> {
     let mut reopen = exchange("thread/read", result);
     reopen[0]["msg"]["params"] = params;
     lines.extend(reopen);
+}
+
+fn queue_fixture(options: Value) -> Result<Fx> {
+    let mut lines = script(None, queue_config)?;
+    lines[0]["queueActions"] = options;
+    let oracle: Value =
+        serde_json::from_slice(&fs::read(format!("{ROOT}/tools/route1/oracle.json"))?)?;
+    let resume = oracle
+        .as_object()
+        .unwrap()
+        .iter()
+        .find(|(key, _)| key.starts_with("mcp local thread/resume "))
+        .context("original resume")?;
+    lines.extend(exchange(
+        "thread/resume",
+        resume.1["message"]["result"].clone(),
+    ));
+    repeat_navigation_reads(&mut lines);
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     fx.shot()?;
     fx.click(fx.at("home", "Add a subtract")?)?;
@@ -644,5 +710,53 @@ fn queued_row_steer_starts_the_same_submission_when_idle() -> Result<()> {
     );
     assert!(sent(&mut fx, "turn/steer")?.is_empty());
     assert!(sent(&mut fx, "turn/start")?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn failed_follow_up_delete_undo_and_edit_stay_local() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    let rec = recording()?;
+    let steps = rec["steps"].as_array().context("steps")?;
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("thread/resume", json!({})));
+    repeat_navigation_reads(&mut lines);
+    for _ in 0..2 {
+        lines.extend(refusal("turn/steer", "Submission refused"));
+    }
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    submit_while_running(&mut fx, steps, "Steer")?;
+    fx.wait("failed row", |fx| queued(fx) == ["more"])?;
+    let id = fx.read(|root, cx| root.composer(cx).read(cx).queued()[0].submission.id.clone());
+    fx.type_text("later")?;
+    fx.keys("enter")?;
+    fx.wait("second failed row", |fx| queued(fx) == ["more", "later"])?;
+    fx.click((1111., 665.))?;
+    fx.wait("local deletion", |fx| queued(fx) == ["later"])?;
+    fx.keys("cmd-1")?;
+    fx.wait_thread(common::GREETING)?;
+    assert!(queued(&mut fx).is_empty());
+    fx.keys("cmd-z")?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.wait("local undo in its original order", |fx| {
+        queued(fx) == ["more", "later"]
+    })?;
+    assert_eq!(
+        fx.read(|root, cx| { root.composer(cx).read(cx).queued()[0].submission.id.clone() }),
+        id
+    );
+    fx.type_text("Keep this draft")?;
+    fx.click((1141., 665.))?;
+    fx.keys("down enter")?;
+    fx.wait("local edit", |fx| queued(fx) == ["later"])?;
+    let draft = fx.composer_text()?;
+    assert!(
+        draft.starts_with("more") && draft.ends_with("Keep this draft"),
+        "{draft:?}"
+    );
+    assert!(sent(&mut fx, "thread/queue/delete")?.is_empty());
+    assert!(sent(&mut fx, "thread/queue/add")?.is_empty());
     Ok(())
 }
