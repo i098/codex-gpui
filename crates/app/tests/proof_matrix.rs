@@ -44,6 +44,11 @@ fn capture_cell() -> Result<()> {
             })?;
             "home"
         }
+        ("thread", "rest") => {
+            fx.click(fx.at("home", "Add a subtract")?)?;
+            fx.wait_thread(SUBTRACT)?;
+            "thread"
+        }
         ("terminal", "rest") => {
             open_terminal(&mut fx)?;
             "terminal"

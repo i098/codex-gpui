@@ -5,7 +5,7 @@ import { openPage } from "../route1/chrome.mjs";
 
 const [surface, state, theme, width, height, output] = process.argv.slice(2);
 const w = Number(width), h = Number(height);
-if ((state === "rest" && ["home", "terminal"].includes(surface)) || (surface === "automations" && state === "empty")) {
+if ((state === "rest" && ["home", "terminal", "thread"].includes(surface)) || (surface === "automations" && state === "empty")) {
   await capture(surface, theme, w, h, output);
 } else if (surface === "mobile" && state === "get-started") {
   await capture("mobile", theme, w, h, output);
