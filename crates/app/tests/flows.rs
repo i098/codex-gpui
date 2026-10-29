@@ -1083,7 +1083,7 @@ fn thread_card_focus_ring() -> Result<String> {
                 [0x3a, 0x83, 0xf7]
                     .iter()
                     .zip(p.0)
-                    .all(|(want, got)| (*want as i32 - got as i32).abs() <= 8)
+                    .all(|(want, got)| (*want - got as i32).abs() <= 8)
             })
             .count()
     };
