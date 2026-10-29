@@ -55,6 +55,8 @@ actions!(
         OpenPullRequests,
         OpenPlugins,
         OpenSecurity,
+        /// Home beacon `Start Voice` and the composer's `Start new voice chat`.
+        StartVoiceChat,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
         OpenMobileSetup,
         /// `⌥⌘B`: show or hide the Changes side panel.
@@ -224,6 +226,9 @@ pub struct Shell {
     /// Pointer over the avatar: its own click toggles the menu, so a press there must not
     /// also close it as a click outside.
     avatar_hovered: bool,
+    /// The Explore `…` menu is open.
+    pub explore_menu: bool,
+    explore_hovered: bool,
     sidebar: AnyView,
     main: AnyView,
     main_content_inline_inset: Pixels,
@@ -319,6 +324,8 @@ impl Shell {
             scheduled_attention: false,
             profile_menu: false,
             avatar_hovered: false,
+            explore_menu: false,
+            explore_hovered: false,
             sidebar,
             main,
             main_content_inline_inset: px(0.),
@@ -1005,6 +1012,12 @@ impl Shell {
             under
         };
         let scale = window.scale_factor();
+        let explore_hover =
+            cx.listener(|this, hovered: &bool, _, _| this.explore_hovered = *hovered);
+        let explore_click = cx.listener(|this, _: &ClickEvent, _, cx| {
+            this.explore_menu ^= true;
+            cx.notify();
+        });
         let mut item = |name: &'static str| {
             let on = selected == Some(name);
             let fg = if on { t.text } else { t.text_tertiary };
@@ -1116,9 +1129,8 @@ impl Shell {
                     // dot at `scale-50`.
                     .child(
                         item("explore")
-                            .when(self.security_available, |item| {
-                                item.on_click(dispatch::<OpenSecurity>)
-                            })
+                            .on_hover(explore_hover)
+                            .on_click(explore_click)
                             .when(
                                 self.unread_destinations
                                     .as_ref()
@@ -1208,6 +1220,49 @@ impl Shell {
                     selected: false,
                 }),
             )
+    }
+
+    /// The Explore `…` menu (`sidebarCustomization.moreMenu`), right of the rail item: the
+    /// secondary destinations the port has. `Customize sidebar` and MCP destinations need the
+    /// sidebar-customization store, which the port lacks.
+    fn explore_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let hover = t.menu_item_hover;
+        div()
+            .absolute()
+            .left(RAIL_WIDTH)
+            .top(Theme::TITLEBAR_HEIGHT + px(180.))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                if !this.explore_hovered {
+                    this.explore_menu = false;
+                    cx.notify();
+                }
+            }))
+            .child(composer::popover(t, 220., |d| {
+                if self.security_available {
+                    d.child(
+                        div()
+                            .id("explore-security")
+                            .px(px(8.))
+                            .py(px(6.))
+                            .rounded(px(12.))
+                            .hover(move |s| s.bg(hover))
+                            .child(text("Security", 14., 20., 430., t.text))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.explore_menu = false;
+                                cx.notify();
+                                window.dispatch_action(Box::new(OpenSecurity), cx);
+                            })),
+                    )
+                } else {
+                    d.child(div().px(px(8.)).py(px(6.)).child(text(
+                        "No more destinations",
+                        14.,
+                        20.,
+                        400.,
+                        t.text_tertiary,
+                    )))
+                }
+            }))
     }
 
     /// Profile avatar menu (`codex.profileDropdown.*`) above the avatar: `Settings`, then the
@@ -2046,6 +2101,7 @@ impl Render for Shell {
             .child(self.titlebar(&t, window, cx))
             .child(skip_link)
             .when(self.profile_menu, |d| d.child(self.profile_menu(&t, cx)))
+            .when(self.explore_menu, |d| d.child(self.explore_menu(&t, cx)))
     }
 }
 

@@ -230,6 +230,8 @@ impl Composer {
         let stopping = self.running && !has_input;
         let waiting_for_model = loading && !self.running;
         let armed = stopping && self.stop_armed.is_some();
+        // An empty draft turns Send into `Start new voice chat` (hotkey composers keep Send).
+        let voice = !has_input && !hotkey_home && !self.running && !waiting_for_model;
         // The docked body is a cc layer: its icons blend onto its transparent tile, not onto
         // the card as the home composer's do (whose fitted pixels those are).
         let docked = self.docked;
@@ -316,7 +318,11 @@ impl Composer {
         let send = div()
             .id("send")
             .role(gpui::Role::Button)
-            .aria_label(self.send_label())
+            .aria_label(if voice {
+                "Start new voice chat"
+            } else {
+                self.send_label()
+            })
             .aria_disabled(waiting_for_model || (hotkey_home && !has_input))
             .tab_index(0)
             .rounded(Theme::RADIUS_FULL)
@@ -360,11 +366,7 @@ impl Composer {
             .when(!stopping && !waiting_for_model, |d| {
                 d.child(
                     icon(
-                        if has_input || hotkey_home {
-                            "composer-arrow-up"
-                        } else {
-                            "voice"
-                        },
+                        if voice { "voice" } else { "composer-arrow-up" },
                         16.,
                         t.text_composer_primary,
                     )
@@ -380,6 +382,8 @@ impl Composer {
                     this.stop_armed = None;
                     this.focus_handle.focus(window, cx);
                     window.dispatch_action(Box::new(Stop), cx);
+                } else if voice {
+                    window.dispatch_action(Box::new(crate::StartVoiceChat), cx);
                 } else {
                     this.submit(&Submit, window, cx);
                 }
