@@ -25,6 +25,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - A contributing guide, issue and pull request templates, a security policy, and this changelog.
 - Add one workspace version, a version bump script, and a tag release workflow that publishes the macOS arm64 zip.
 - Add the native `/first-run` tour with the IDE, cloud, code, and autonomy pages and the original noise background.
+- Add native feedback upload and ZIP saving, Markdown transcript export, and conversation recap commands.
 - Add native Code Review search, filters, and pull request details.
 - Add Storage usage measurement and safe review before deleting old local chats.
 - Add Import settings for Claude Code and Cursor, with saved sync choices and preserved imported workspaces.

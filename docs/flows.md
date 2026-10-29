@@ -1646,3 +1646,29 @@ Original-versus-native visual approval remains separate from the Linux functiona
 Native checks cover reset confirmation, number/link menus, and modifier-only capture in `keyboard_shortcuts`.
 The `project_picker` scenario checks folder selection, cancellation, and the directory used by new chats.
 The `shortcut_actions` checks cover attention navigation, undo/redo, unread confirmation, and live terminal retention.
+
+## Feedback, transcript export, and recap (S13)
+
+`/feedback` opens a native form without sending anything.
+`Send feedback` calls `feedback/upload`; `Save ZIP` calls `feedback/save`.
+Both use the connected app-server and the current thread ID, when available.
+Diagnostic logs require explicit selection.
+Saving requires an unused absolute `.zip` path on the app-server host, not the client host.
+A server refusal keeps the form and its input.
+Cancel closes the form during a pending request without canceling the server request.
+Late responses do not close a newer form or move keyboard focus.
+
+`/export` reads the complete thread with `thread/read` and `includeTurns: true`.
+The native save picker selects a local Markdown file.
+The export preserves messages, attachments, activity items, and errors.
+It refuses to overwrite an existing file.
+`/recap` starts a normal `turn/start` on the current thread after any required resume.
+It keeps the existing history, model permissions, and composer draft.
+It refuses to run while another turn is active and does not call compaction.
+The recap prompt asks the model not to use tools; the existing permissions remain in force.
+
+`crates/app/tests/feedback.rs` covers the native actions, consent, server paths, and file safety.
+Live protocol evidence uses Codex CLI `0.164.0-alpha.11.1`.
+The synthetic conversation retained both turns after the recap.
+The real server accepted `feedback/save` and `feedback/upload` with logs excluded.
+
