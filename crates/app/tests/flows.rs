@@ -37,6 +37,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("previous_next_chat", previous_next_chat),
     ("new_chat_row", new_chat_row),
     ("new_chat_same_route_history", new_chat_same_route_history),
+    ("your_dot_row", your_dot_row),
     ("sidebar_empty_lists", sidebar_empty_lists),
     ("cmd_n_new_chat", cmd_n_new_chat),
     ("editor_click_focuses", editor_click_focuses),
@@ -394,6 +395,17 @@ fn new_chat_row() -> Result<String> {
     ensure!(fx.route() == Route::Home);
     ensure!(fx.composer_focused()?);
     ensure!(fx.composer_text()?.is_empty());
+    Ok(String::new())
+}
+
+fn your_dot_row() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.click(fx.at("home", "Your dot")?)?;
+    ensure!(
+        fx.cx.take_opened_url().as_deref() == Some("https://chatgpt.com/dots/home"),
+        "Your dot did not open the dot home page"
+    );
+    ensure!(fx.route() == Route::Home, "route {:?}", fx.route());
     Ok(String::new())
 }
 

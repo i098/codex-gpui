@@ -967,7 +967,10 @@ pub fn home_sidebar_header(unread: bool, activity: bool, available: bool, cx: &A
                             .own_layer(Some(overlap))
                             .into_any_element(),
                         "Your dot",
-                    ),
+                    )
+                    // The original navigates in-app to its `/dots/home` route; the port has no
+                    // dot screen, so it opens the same ChatGPT page, like dot search results.
+                    .on_click(|_, _, cx| cx.open_url("https://chatgpt.com/dots/home")),
                 )),
         )
 }
