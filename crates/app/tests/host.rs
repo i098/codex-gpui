@@ -1516,3 +1516,162 @@ fn fresh_profile_task_edits_do_not_require_or_create_the_original_database() -> 
     assert!(!home.path().join("sqlite/codex.db").exists());
     Ok(())
 }
+
+fn cloud_automation(id: &str) -> Value {
+    json!({
+        "id": id, "title": "Cloud task", "prompt": "Cloud prompt",
+        "schedule": "BEGIN:VEVENT\nDTSTART;TZID=Europe/London:20261029T090000\nRRULE:FREQ=DAILY;BYHOUR=9\nEND:VEVENT",
+        "default_timezone": "Europe/London", "is_enabled": true,
+        "email_enabled": false, "notifications_enabled": true,
+        "model": "gpt-5", "reasoning_effort": "high", "emoji": "clock",
+        "executor": "chatgpt", "timing_mode": "flexible_schedule",
+        "created_at": "2026-10-28T12:00:00Z",
+        "next_run_times": ["2026-10-29T09:00:00Z"]
+    })
+}
+
+#[test]
+fn cloud_automation_edits_and_deletion_leave_the_same_local_id_untouched() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let local = LocalHost::new(home.path());
+    local.write_automation("same-id", &definition("same-id", 20))?;
+    let path = home.path().join("automations/same-id/automation.toml");
+    let before = fs::read(&path)?;
+    let original = cloud_automation("same-id");
+    let mut completed = cloud_automation("finished");
+    completed["is_enabled"] = json!(false);
+    completed["next_run_times"] = json!([]);
+    let mut edited = original.clone();
+    edited["title"] = json!("Renamed");
+    edited["prompt"] = json!("Edited prompt");
+    let mut paused = edited.clone();
+    paused["is_enabled"] = json!(false);
+    let (base, received) = mock_backend(vec![
+        (
+            200,
+            "",
+            json!({"items":[{"automation":original}], "cursor":"next+page"}).to_string(),
+        ),
+        (
+            200,
+            "",
+            json!({"items":[{"automation":completed}], "cursor":null}).to_string(),
+        ),
+        (200, "", json!({"automation":original}).to_string()),
+        (200, "", edited.to_string()),
+        (200, "", paused.to_string()),
+        (200, "", "{}".into()),
+        (200, "", "{}".into()),
+    ]);
+    let access = token("cloud-account", "cloud-user", "live");
+    let cloud = CloudHost::new(
+        local,
+        Box::new(move |_| {
+            Ok(Some(Credentials {
+                token: access.clone(),
+                backend_origin: None,
+                routing_override: None,
+            }))
+        }),
+        base,
+    );
+    let list = json_body(&cloud.fetch(&Request::post("cloud-list-automations", Some(json!({}))))?)?;
+    assert_eq!(list["items"][0]["status"], "ACTIVE");
+    assert_eq!(list["items"][1]["status"], "COMPLETED");
+    assert_eq!(list["items"][0]["rrule"], "FREQ=DAILY;BYHOUR=9");
+    assert_eq!(list["items"][0]["model"], "gpt-5");
+    let mut item = json_body(&cloud.fetch(&Request::post(
+        "cloud-read-automation",
+        Some(json!({"id":"same-id"})),
+    ))?)?["item"]
+        .clone();
+    assert_eq!(item["nextRunAt"], 1793264400000_i64);
+    item["name"] = json!(" Renamed ");
+    item["prompt"] = json!(" Edited prompt ");
+    let saved =
+        json_body(&cloud.fetch(&Request::post("cloud-automation-update", Some(item)))?)?["item"]
+            .clone();
+    assert_eq!(saved["name"], "Renamed");
+    assert_eq!(saved["prompt"], "Edited prompt");
+    let mut status = saved.clone();
+    status["status"] = json!("PAUSED");
+    let paused = json_body(
+        &cloud.fetch(&Request::post("cloud-automation-set-status", Some(status)))?,
+    )?["item"]
+        .clone();
+    assert_eq!(paused["status"], "PAUSED");
+    let run = json_body(&cloud.fetch(&Request::post(
+        "cloud-automation-run-now",
+        Some(paused.clone()),
+    ))?)?;
+    assert_eq!(run["success"], true);
+    let deleted = json_body(&cloud.fetch(&Request::post(
+        "cloud-automation-delete",
+        Some(paused.clone()),
+    ))?)?;
+    assert_eq!(deleted["status"], "deleted");
+    let error = cloud
+        .fetch(&Request::post("automation-delete", Some(paused)))
+        .unwrap_err();
+    assert!(error.to_string().contains("unavailable through LocalHost"));
+    assert_eq!(fs::read(path)?, before);
+    let local = json_body(&cloud.fetch(&Request::post("list-automations", None))?)?;
+    assert_eq!(local["items"][0]["id"], "same-id");
+    let requests = received.lock();
+    assert_eq!(
+        requests[1].path,
+        "/backend-api/automations?limit=100&cursor=next%2Bpage"
+    );
+    let update: Value = serde_json::from_slice(&requests[3].body)?;
+    assert_eq!(update["jawbone_id"], "same-id");
+    assert_eq!(update["schedule"], original["schedule"]);
+    assert_eq!(update["default_timezone"], "Europe/London");
+    assert_eq!(update["notifications_enabled"], true);
+    assert_eq!(update["model"], "gpt-5");
+    assert_eq!(update["reasoning_effort"], "high");
+    assert_eq!(update["title"], "Renamed");
+    assert_eq!(update["prompt"], "Edited prompt");
+    assert!(update.get("cwds").is_none());
+    assert_eq!(requests[4].path, "/backend-api/automations/set_status");
+    assert_eq!(requests[5].path, "/backend-api/automation/same-id/run");
+    assert_eq!(requests[6].path, "/backend-api/automations/remove");
+    Ok(())
+}
+
+#[test]
+fn cloud_automation_mutation_rejects_an_account_change_and_quotes_the_id() -> Result<()> {
+    let original = cloud_automation("one/two?x");
+    let (base, received) =
+        mock_backend(vec![(200, "", json!({"automation":original}).to_string())]);
+    let access = Arc::new(Mutex::new(token("first-account", "first-user", "live")));
+    let source = access.clone();
+    let home = tempfile::tempdir()?;
+    let cloud = CloudHost::new(
+        LocalHost::new(home.path()),
+        Box::new(move |_| {
+            Ok(Some(Credentials {
+                token: source.lock().clone(),
+                backend_origin: None,
+                routing_override: None,
+            }))
+        }),
+        base,
+    );
+    let item = json_body(&cloud.fetch(&Request::post(
+        "cloud-read-automation",
+        Some(json!({"id":"one/two?x"})),
+    ))?)?["item"]
+        .clone();
+    assert_eq!(
+        received.lock()[0].path,
+        "/backend-api/automation/one%2Ftwo%3Fx"
+    );
+    *access.lock() = token("second-account", "second-user", "live");
+    cloud.invalidate_identity();
+    let error = cloud
+        .fetch(&Request::post("cloud-automation-delete", Some(item)))
+        .unwrap_err();
+    assert_eq!(error.to_string(), "Automation account changed");
+    assert!(!home.path().join("automations").exists());
+    Ok(())
+}
