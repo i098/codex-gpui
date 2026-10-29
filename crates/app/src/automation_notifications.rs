@@ -311,12 +311,19 @@ mod tests {
             cx.set_global(Theme::dark());
             init(cx);
         });
-        let script = fs::read_to_string(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/readback.jsonl"),
-        )
-        .unwrap();
+        let script = ["readback.jsonl", "sessions/thread-settings.jsonl"]
+            .map(|file| {
+                fs::read_to_string(
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../fixtures")
+                        .join(file),
+                )
+                .unwrap()
+            })
+            .join("\n");
         let mut script: Vec<Value> = script
             .lines()
+            .filter(|line| !line.trim().is_empty())
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
         let mut owned = script
@@ -328,6 +335,16 @@ mod tests {
         owned["name"] = json!("Review");
         owned["preview"] = json!("Review changes");
         owned["turns"] = json!([]);
+        let mut resumed = script
+            .iter()
+            .find_map(|line| {
+                let result = &line["msg"]["result"];
+                result["collaborationMode"]
+                    .is_object()
+                    .then(|| result.clone())
+            })
+            .unwrap();
+        resumed["thread"] = owned.clone();
         let list = script
             .iter()
             .find(|line| line["msg"]["method"] == "thread/list")
@@ -353,6 +370,8 @@ mod tests {
         script.extend([
             json!({"dir": "send", "msg": {"id": 90001, "method": "thread/read", "params": {"threadId": "owned", "includeTurns": true}}}),
             json!({"dir": "recv", "msg": {"id": 90001, "result": {"thread": owned}}}),
+            json!({"dir": "send", "msg": {"id": 90002, "method": "thread/resume", "params": {"threadId": "owned", "excludeTurns": true}}}),
+            json!({"dir": "recv", "msg": {"id": 90002, "result": resumed}}),
         ]);
         let mut recording = tempfile::NamedTempFile::new().unwrap();
         for line in script {

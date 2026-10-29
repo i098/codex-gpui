@@ -3204,6 +3204,9 @@ fn persisted_run_unread_survives_navigation_and_clears_on_open() -> Result<()> {
     )?;
     ensure!(read_at.is_some());
     shot(&mut fx, "thread-read")?;
+    fx.click(RAIL_HOME)?;
+    ensure!(!fx.shell(|shell| shell.scheduled_attention));
+    shot(&mut fx, "home-read")?;
     let response = host.fetch(&app::host::Request::post("inbox-items", None))?;
     ensure!(app::host::json_body(&response)?["unreadRunCounts"]["total"] == 0);
     db.execute(
