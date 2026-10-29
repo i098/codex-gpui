@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Keep refused follow-up messages in the queue tray with Retry, preserving their input, chat, draft and local row actions.
 - Show `Unable to send message` with the reason and `OK` when a composer submit waits for file uploads.
 - Draw the 2 px keyboard focus ring on the mobile setup buttons.
 - Draw the 2 px keyboard focus ring on the diff card's `Undo` and `View changes` buttons in a chat.
@@ -39,6 +40,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Fixed
 - Hide the mobile setup artwork below 1024 px, so the setup column stays centered in the main surface.
+- Correct the Home `+` Add files and more row in `docs/flows.md`: the button opens the original Add menu; four of its actions are not wired.
 - Match Home at narrow windows: icon-only utility chips, the full-width composer, no titlebar New chat, and the 40 px light composer shadow below 640 px.
 - Match the original Mobile setup allow-host step: the `Set up Remote` header, balanced heading and description lines (`text-wrap: pretty`), and the Allow button width.
 - Start a guided native conversation from a scheduled-task suggestion, keep the Scheduled sidebar, and report start failures without creating a task.
