@@ -307,8 +307,8 @@ impl Composer {
         self.refresh_slash(cx);
     }
 
-    /// The token before the cursor: `@` at the start or after whitespace (spaces allowed in
-    /// its query, newlines not), else `/` without whitespace in its query.
+    /// The token before the cursor: `@` or `/` at the start or after whitespace (an `@` query
+    /// allows spaces, newlines not; a `/` query allows no whitespace).
     pub(super) fn refresh_slash(&mut self, cx: &mut Context<Self>) {
         if self.plain_field.is_some() {
             self.field_autoscroll = self.plain_field == Some(true);
@@ -343,6 +343,7 @@ impl Composer {
         });
         let slash = before
             .rfind('/')
+            .filter(|&at| at == 0 || before[..at].ends_with(char::is_whitespace))
             .filter(|&at| !before[at + 1..].contains(char::is_whitespace));
         let (mention, start) = match (self.slash.add, mention, slash) {
             (Some(start), _, _) => (true, start),

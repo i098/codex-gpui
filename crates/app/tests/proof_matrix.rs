@@ -49,6 +49,20 @@ fn capture_cell() -> Result<()> {
             fx.wait_thread(SUBTRACT)?;
             "thread"
         }
+        ("composer", "rest") => {
+            fx.wait("navigation destinations", |fx| {
+                fx.shell(|shell| shell.unread_destinations.is_some())
+            })?;
+            "composer-rest"
+        }
+        ("composer", "typed") => {
+            fx.wait("navigation destinations", |fx| {
+                fx.shell(|shell| shell.unread_destinations.is_some())
+            })?;
+            fx.type_text("Refactor src/math.py")?;
+            ensure!(fx.composer_text()? == "Refactor src/math.py");
+            "composer-typed"
+        }
         ("terminal", "rest") => {
             open_terminal(&mut fx)?;
             "terminal"

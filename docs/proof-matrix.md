@@ -57,6 +57,8 @@ It preserves the existing route1 and Root capture clocks and fixtures.
 | `mobile` | `get-started` | Profile menu, Help, Set up mobile | Profile menu, Set up mobile |
 | `mobile` | `continuation` | The same, then Get started; offline mode answers both MFA reads from `refs/interactions/mobile-mfa.json` | The same, then Get started; the fixture host answers both MFA reads from that recording |
 | `automations` | `empty` | Existing route1 Scheduled capture: the empty task list and the suggestion cards | Scheduled rail item on the recorded host reads |
+| `composer` | `rest` | Home with the composer clicked | Home, composer focused at launch |
+| `composer` | `typed` | The same, then `Refactor src/math.py` typed | The same, typed through keystrokes |
 
 These are the executable adapters, not all 175 census surfaces.
 An unknown surface or state fails before a capture starts.
@@ -154,6 +156,18 @@ Both cells pass at the source that added the cell, with no native change.
 |---|---|---:|---:|---|
 | dark | 1280x832 | 0 | 0.118360% | PASS |
 | light | 1280x832 | 0 | 0.098468% | PASS |
+
+## Composer matrix
+
+Rest is Home with the composer focused; typed adds `Refactor src/math.py`.
+The typed cell failed before the slash menu required a start-of-token `/`: the mid-word `/` of `src/math.py` opened it (100480 outside pixels, 5.716068% inside text).
+
+| State | Theme | Size | Outside text pixels | Inside text difference | Gate |
+|---|---|---|---:|---:|---|
+| rest | dark | 1280x832 | 0 | 0.118360% | PASS |
+| rest | light | 1280x832 | 0 | 0.098468% | PASS |
+| typed | dark | 1280x832 | 0 | 0.029248% | PASS |
+| typed | light | 1280x832 | 0 | 0.029248% | PASS |
 
 ## Thread rest matrix
 
