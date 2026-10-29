@@ -559,7 +559,11 @@ impl SettingsPane {
                 select
             });
         select.update(cx, |select, cx| select.set_value(current, cx));
-        div().w(px(128.)).child(select.clone()).into_any_element()
+        // `max-w-36`: the pill fits its accent name.
+        div()
+            .max_w(px(144.))
+            .child(select.clone())
+            .into_any_element()
     }
 
     /// `Ta`: a swatch and the hex field; Enter or blur saves a valid color, else restores it.
@@ -573,29 +577,43 @@ impl SettingsPane {
         let value = self.theme_of(variant, cx)[role]
             .as_str()
             .unwrap_or("")
-            .to_owned();
-        let field = self.text_field(variant, role, &value, window, cx, move |this, text, cx| {
-            let text = text.trim();
-            let text = if text.starts_with('#') {
-                text.to_owned()
-            } else {
-                format!("#{text}")
-            };
-            match hex(&json!(text)) {
-                Some(color) if this.theme_of(variant, cx)[role] != color.as_str() => {
-                    this.set_theme(variant, json!({role: color}), cx);
-                    true
+            .to_uppercase();
+        let label = match role {
+            "accent" => "Accent color",
+            "surface" => "Background color",
+            _ => "Foreground color",
+        };
+        let field = self.text_field(
+            variant,
+            role,
+            label,
+            &value,
+            window,
+            cx,
+            move |this, text, cx| {
+                let text = text.trim();
+                let text = if text.starts_with('#') {
+                    text.to_owned()
+                } else {
+                    format!("#{text}")
+                };
+                match hex(&json!(text)) {
+                    Some(color) if this.theme_of(variant, cx)[role] != color.as_str() => {
+                        this.set_theme(variant, json!({role: color}), cx);
+                        true
+                    }
+                    _ => false,
                 }
-                _ => false,
-            }
-        });
+            },
+        );
+        // `Ta`: `h-7 w-24 rounded-full border px-2 gap-2`, a 14 px swatch, uppercase hex.
         div()
             .h(px(28.))
-            .w(px(112.))
-            .pl(px(8.))
+            .w(px(96.))
+            .px(px(8.))
             .flex()
             .items_center()
-            .gap(px(6.))
+            .gap(px(8.))
             .rounded_full()
             .border_1()
             .border_color(self.theme_border(cx))
@@ -618,10 +636,12 @@ impl SettingsPane {
 
     /// A one-line field for `(variant, name)` showing `value` while unfocused; `commit` runs on
     /// Enter and blur with the text and returns whether it saved, else the text is restored.
+    #[allow(clippy::too_many_arguments)]
     fn text_field(
         &mut self,
         variant: &'static str,
         name: &'static str,
+        label: &'static str,
         value: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -632,7 +652,7 @@ impl SettingsPane {
             .fields
             .entry((variant, name))
             .or_insert_with(|| {
-                let field = cx.new(|cx| Composer::settings_compact_field("", value, cx));
+                let field = cx.new(|cx| Composer::dialog_field(label, "", value, cx));
                 // A rejected edit shows the saved value again.
                 let done =
                     move |this: &mut Self, field: &Entity<Composer>, cx: &mut Context<Self>| {
@@ -722,7 +742,11 @@ impl SettingsPane {
                 select
             });
         select.update(cx, |select, cx| select.set_value(current, cx));
-        div().w(px(176.)).child(select.clone()).into_any_element()
+        // `max-w-36`: the pill fits its font name.
+        div()
+            .max_w(px(144.))
+            .child(select.clone())
+            .into_any_element()
     }
 
     /// `Cc` / `wc`: a px number field; out-of-range input restores the saved size.
@@ -733,9 +757,15 @@ impl SettingsPane {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let value = self.page.read(cx).get(key).as_f64().unwrap_or(default);
+        let label = if key == SANS_SIZE.0 {
+            "UI font size"
+        } else {
+            "Code font size"
+        };
         let field = self.text_field(
             "",
             key,
+            label,
             &value.to_string(),
             window,
             cx,
@@ -763,12 +793,12 @@ impl SettingsPane {
             .gap(px(8.))
             .child(
                 div()
-                    .w(px(64.))
-                    .h(px(28.))
-                    .px(px(8.))
+                    .w(px(80.))
+                    .h(px(32.))
+                    .px(px(12.))
                     .flex()
                     .items_center()
-                    .rounded(Theme::RADIUS_LG)
+                    .rounded(px(8.))
                     .border_1()
                     .border_color(t.border)
                     .child(field),
@@ -945,7 +975,7 @@ impl SettingsPane {
         t: &Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> Vec<Div> {
         let label = variant_label(variant);
         let title = if self.appearance.separate {
             format!("{label} theme")
@@ -996,7 +1026,7 @@ impl SettingsPane {
                 row.child(self.color_field(variant, "accent", window, cx))
             })
             .into_any_element();
-        div().flex().flex_col().children([
+        vec![
             settings_row_content(title, None, header, t),
             settings_row("Accent", None, accent, t),
             settings_row(
@@ -1012,7 +1042,7 @@ impl SettingsPane {
                 t,
             ),
             settings_row("Font", None, self.font_select(variant, "ui", window, cx), t),
-        ])
+        ]
     }
 
     fn advanced_card(
@@ -1360,7 +1390,7 @@ impl SettingsPane {
         let mut visual = vec![card(vec![settings_row("Mode", None, mode, t)], &self.layer)];
         for variant in self.variants(t) {
             let rows = self.visual_card(variant, t, window, cx);
-            visual.push(card(vec![rows], &self.layer));
+            visual.push(card(rows, &self.layer));
         }
 
         let open = self.appearance.advanced;
@@ -1375,10 +1405,11 @@ impl SettingsPane {
             .gap(px(4.))
             .child(text("Advanced", 14., 21., 500., t.text_tertiary))
             .child(icon(
+                // `s ? Mn : de`: down while open, right while closed.
                 if open {
-                    "automation-chevron-up"
+                    "chevron-down"
                 } else {
-                    "automation-chevron-down"
+                    "chevron-right"
                 },
                 16.,
                 t.text_tertiary,
@@ -1407,7 +1438,7 @@ impl SettingsPane {
                 vec![
                     settings_row(
                         "UI font size",
-                        Some("Adjust the base size used for the Codex UI"),
+                        Some("Adjust the base size used for ChatGPT"),
                         sans,
                         t,
                     ),
@@ -1495,7 +1526,7 @@ impl SettingsPane {
                 ));
                 rows.push(settings_row(
                     "Font smoothing",
-                    Some("Use macOS font smoothing for UI text"),
+                    Some("Use native macOS font anti-aliasing"),
                     self.toggle(SMOOTHING, true, t, window, cx),
                     t,
                 ));

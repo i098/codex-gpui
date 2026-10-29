@@ -124,6 +124,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("background_terminal_tab", background_terminal_tab),
     ("parity_terminal", || parity_flow("terminal", open_terminal)),
     ("appearance_theme_control", appearance_theme_control),
+    ("appearance_capture", appearance_capture),
     ("settings_select_menu", settings_select_menu),
     ("settings_language_menu", settings_language_menu),
     ("parity_sidebar", || {
@@ -1079,6 +1080,27 @@ fn appearance_theme_control() -> Result<String> {
         fx.click((x, 258.))?;
         let got = fx.cx.update(|cx| cx.global::<Theme>().appearance);
         ensure!(got == want, "{label}: theme {got:?}");
+    }
+    Ok(String::new())
+}
+
+fn appearance_capture() -> Result<String> {
+    let out = std::env::var("CGX_APPEARANCE_OUT").unwrap_or_else(|_| "/tmp".into());
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-,")?;
+    fx.click(fx.at("settings", "Appearance")?)?;
+    fx.advance(std::time::Duration::from_millis(500))?;
+    fx.reference_shot()?.save(format!("{out}/top.png"))?;
+    fx.scroll((700., 500.), -3000.)?;
+    fx.advance(std::time::Duration::from_millis(500))?;
+    fx.reference_shot()?.save(format!("{out}/bottom.png"))?;
+    if let Ok(at) = std::env::var("CGX_ADVANCED_AT") {
+        let (x, y) = at.split_once(',').unwrap();
+        fx.click((x.parse()?, y.parse()?))?;
+        fx.advance(std::time::Duration::from_millis(500))?;
+        fx.scroll((700., 500.), -3000.)?;
+        fx.advance(std::time::Duration::from_millis(500))?;
+        fx.reference_shot()?.save(format!("{out}/advanced.png"))?;
     }
     Ok(String::new())
 }
