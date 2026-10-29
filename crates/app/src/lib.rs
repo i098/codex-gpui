@@ -606,6 +606,7 @@ impl Root {
                 Err(error) => eprintln!("codex-gpui: cannot load host settings: {error:#}"),
             }
         }
+        host_settings::apply(cx);
         features::install_shortcuts(cx);
         let this = cx.weak_entity();
         usage::install(this.clone(), cx);
@@ -761,8 +762,12 @@ impl Root {
             this.save(window, cx);
         })
         .detach();
-        cx.observe_window_appearance(window, |this, window, cx| this.apply_theme(window, cx))
-            .detach();
+        cx.observe_window_appearance(window, |this, window, cx| {
+            this.apply_theme(window, cx);
+            // The `*-system` dock icons follow the system appearance.
+            host_settings::apply(cx);
+        })
+        .detach();
         cx.observe_window_activation(window, |this, window, cx| {
             let active = window.is_window_active();
             if qa::ENABLED {
@@ -5684,6 +5689,9 @@ impl Root {
                 self.toast(Toast::danger(message), cx);
             } else {
                 self.sync_terminal(cx);
+                if matches!(key, "reduced-motion-preference" | "dock-icon-preference") {
+                    host_settings::apply(cx);
+                }
                 self.git_setting_saved(key, cx);
                 let message = match key {
                     "git-branch-prefix" => Some("Saved branch prefix".to_owned()),

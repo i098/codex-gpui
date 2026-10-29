@@ -21,6 +21,41 @@ struct State {
     path: Option<PathBuf>,
 }
 
+/// Applies the host preferences the app itself enforces.
+///
+/// `reduced-motion-preference`: `on` stills decorative motion; `system` and `off` leave it on,
+/// as the host reads no OS preference. `dock-icon-preference` (macOS): `codex-system` and
+/// `space-system` follow the system appearance, `app-default` restores the bundle icon.
+/// Without a stored value the app keeps its state.
+pub(crate) fn apply(cx: &mut gpui::App) {
+    let Some(values) = cx
+        .try_global::<Settings>()
+        .map(|settings| settings.read_all().clone())
+    else {
+        return;
+    };
+    if let Some(motion) = values.get("reduced-motion-preference") {
+        cx.set_reduce_motion(motion == "on");
+    }
+    if cfg!(target_os = "macos")
+        && let Some(dock) = values.get("dock-icon-preference").and_then(Value::as_str)
+    {
+        let dark = matches!(
+            cx.window_appearance(),
+            gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark
+        );
+        let name = match (dock, dark) {
+            ("codex-system", true) => Some("dock/codex-dark.png"),
+            ("codex-system", false) => Some("dock/codex-light.png"),
+            ("space-system", true) => Some("dock/space-dark.png"),
+            ("space-system", false) => Some("dock/space-light.png"),
+            _ => None,
+        };
+        let png = name.and_then(theme::Assets::get);
+        cx.set_dock_icon(png.as_ref().map(|file| file.data.as_ref()));
+    }
+}
+
 impl Global for Settings {}
 
 impl Settings {

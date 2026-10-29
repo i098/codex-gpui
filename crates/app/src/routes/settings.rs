@@ -97,6 +97,39 @@ pub(super) fn page(root: &mut Root, window: &mut Window, cx: &mut Context<Root>)
         }
     })
     .detach();
+    cx.subscribe(
+        &page,
+        |this, page, e: &settings::HostSettingsChanged, cx| {
+            let pairs = e
+                .0
+                .iter()
+                .map(|(path, value)| (path.strip_prefix("host.").unwrap_or(path), value.clone()));
+            let result = match cx.try_global::<host_settings::Settings>() {
+                Some(_) => cx
+                    .global_mut::<host_settings::Settings>()
+                    .write_batch(pairs),
+                None => Err(anyhow::anyhow!("host settings could not be loaded")),
+            };
+            match result {
+                Ok(()) => {
+                    this.sync_terminal(cx);
+                    host_settings::apply(cx);
+                }
+                Err(error) => {
+                    eprintln!("codex-gpui: settings.write: {error:#}");
+                    this.toast(Toast::danger("Couldn't save your changes. Try again"), cx);
+                }
+            }
+            let mut values = cx
+                .try_global::<host_settings::Settings>()
+                .map(|settings| Value::Object(settings.read_all().clone()))
+                .unwrap_or(Value::Null);
+            values["appearance-theme"] = json!(this.state.theme);
+            values["confirm-before-close"] = json!(this.state.confirm_before_close);
+            page.update(cx, |page, cx| page.refresh_host(values, cx));
+        },
+    )
+    .detach();
     let editor = page.read(cx).personalization.clone();
     cx.subscribe_in(
         &editor,

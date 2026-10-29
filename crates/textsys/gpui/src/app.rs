@@ -2898,6 +2898,11 @@ impl App {
         self.platform.set_dock_menu(menus, &self.keymap.borrow())
     }
 
+    /// Replaces the app's dock icon with a PNG, or restores the bundle icon with `None`.
+    pub fn set_dock_icon(&self, png: Option<&[u8]>) {
+        self.platform.set_dock_icon(png)
+    }
+
     /// Performs the action associated with the given dock menu item, only used on Windows for now.
     pub fn perform_dock_menu_action(&self, action: usize) {
         self.platform.perform_dock_menu_action(action);

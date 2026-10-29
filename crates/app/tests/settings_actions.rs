@@ -198,6 +198,123 @@ fn settings_search_and_theme_work_from_the_keyboard() -> Result<()> {
     Ok(())
 }
 
+fn host_value(fx: &Fx, key: &str) -> Value {
+    fx.read(|_, cx| {
+        cx.global::<app::host_settings::Settings>()
+            .read_all()
+            .get(key)
+            .cloned()
+            .unwrap_or(Value::Null)
+    })
+}
+
+/// Copy theme, Import theme (a Dracula share string saves its theme and code theme together),
+/// the Advanced rows, and Reset to default, all from the keyboard.
+#[test]
+fn appearance_theme_share_advanced_rows_and_reset() -> Result<()> {
+    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
+    // Blur listeners see focus paths only in an active window.
+    fx.cx
+        .update_window(fx.window, |_, window, _| window.activate_window())?;
+    fx.keys("cmd-,")?;
+    fx.click((200., 118.))?;
+    fx.type_text("Appearance")?;
+    press(&mut fx, "tab enter")?;
+    // Mode's three segments, Import, then Copy.
+    press(&mut fx, "tab tab tab tab tab tab enter")?;
+    let copied = fx
+        .cx
+        .update(|cx| cx.read_from_clipboard())
+        .and_then(|item| item.text());
+    let copied = copied.context("theme share string")?;
+    let share: Value = serde_json::from_str(
+        copied
+            .strip_prefix("codex-theme-v1:")
+            .context("share prefix")?,
+    )?;
+    ensure!(
+        share["variant"] == "dark" && share["codeThemeId"] == "codex",
+        "{share}"
+    );
+    ensure!(share["theme"]["surface"] == "#181818", "{share}");
+    fx.wait("copied toast", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|t| t.as_ref() == "Dark theme copied")
+        })
+    })?;
+
+    let dracula = json!({
+        "codeThemeId": "dracula",
+        "variant": "dark",
+        "theme": {
+            "accent": "#ff79c6", "contrast": 60, "fonts": {"code": null, "ui": null},
+            "ink": "#f8f8f2", "opaqueWindows": false, "surface": "#282a36",
+            "semanticColors": {"diffAdded": "#50fa7b", "diffRemoved": "#ff5555", "skill": "#ff79c6"},
+            "accentSource": "custom"
+        }
+    });
+    press(&mut fx, "shift-tab enter")?;
+    fx.type_text("codex-theme-v1:{\"variant\":\"light\"}")?;
+    press(&mut fx, "enter")?;
+    fx.wait("import error", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|t| t.as_ref() == "Couldn’t import Dark theme")
+        })
+    })?;
+    press(&mut fx, "cmd-a")?;
+    fx.type_text(&format!("codex-theme-v1:{dracula}"))?;
+    press(&mut fx, "enter")?;
+    fx.wait("imported theme", |fx| {
+        host_value(fx, "appearanceDarkCodeThemeId") == "dracula"
+    })?;
+    ensure!(host_value(&fx, "appearanceDarkChromeTheme")["surface"] == "#282a36");
+
+    // Advanced: UI font size accepts 11-16 and restores anything else.
+    // Keys dispatch against the last frame, and blur commits run when a frame draws.
+    let frame = |fx: &mut Fx| fx.advance(std::time::Duration::from_millis(16));
+    frame(&mut fx)?;
+    // Closing the dialog refocuses Import; Dracula's custom accent adds a hex field.
+    let advanced = "tab ".repeat(8);
+    press(&mut fx, &format!("{advanced}enter"))?;
+    frame(&mut fx)?;
+    // Tab out of a size field commits it, like blur in the original.
+    press(&mut fx, "tab cmd-a")?;
+    fx.type_text("15")?;
+    press(&mut fx, "tab")?;
+    frame(&mut fx)?;
+    fx.wait("UI font size", |fx| host_value(fx, "sansFontSize") == 15)?;
+    press(&mut fx, "shift-tab cmd-a")?;
+    fx.type_text("40")?;
+    press(&mut fx, "tab")?;
+    frame(&mut fx)?;
+    ensure!(
+        host_value(&fx, "sansFontSize") == 15,
+        "out-of-range size saved"
+    );
+    // From Code font size: Reduce motion's `System`, then `On`.
+    press(&mut fx, "tab tab enter")?;
+    fx.wait("reduced motion", |fx| {
+        host_value(fx, "reduced-motion-preference") == "on"
+    })?;
+    ensure!(
+        fx.cx.update(|cx| cx.reduce_motion()),
+        "reduced motion not applied"
+    );
+    frame(&mut fx)?;
+
+    // Reset restores the Advanced defaults and keeps the imported preset.
+    press(&mut fx, "shift-tab shift-tab shift-tab shift-tab enter")?;
+    fx.wait("reset", |fx| host_value(fx, "sansFontSize") == 14)?;
+    ensure!(host_value(&fx, "reduced-motion-preference") == "system");
+    ensure!(!fx.cx.update(|cx| cx.reduce_motion()));
+    ensure!(host_value(&fx, "appearanceDarkCodeThemeId") == "dracula");
+    Ok(())
+}
+
 #[test]
 fn a_failed_setting_write_keeps_the_saved_value_and_shows_an_error() -> Result<()> {
     let mut lines = script(None, |_| {})?;
