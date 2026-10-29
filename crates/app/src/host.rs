@@ -1361,6 +1361,11 @@ impl LocalHost {
             .filter(|v| !v.is_null())
             .map(|v| v.as_str().context("invalid inbox threadId"))
             .transpose()?;
+        let automation = params
+            .get("automationId")
+            .filter(|v| !v.is_null())
+            .map(|v| v.as_str().context("invalid inbox automationId"))
+            .transpose()?;
         let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_ONLY)? else {
             return Ok(
                 json!({"items": [], "unreadRunCounts": {"total": 0, "automationIds": [], "unreadRuns": []}}),
@@ -1376,8 +1381,9 @@ impl LocalHost {
              WHERE a.account_id IS NULL AND a.user_id IS NULL AND a.installation_id IS NULL
              AND r.status IN ('IN_PROGRESS', 'PENDING_REVIEW', 'ACCEPTED', 'ARCHIVED')
              AND (?1 IS NULL OR r.thread_id = ?1)
+             AND (?3 IS NULL OR r.automation_id = ?3)
              ORDER BY r.status = 'IN_PROGRESS' DESC, r.status = 'PENDING_REVIEW' DESC, r.created_at DESC LIMIT ?2")?;
-        let items = query.query_map(params![thread, limit], |r| Ok(json!({
+        let items = query.query_map(params![thread, limit, automation], |r| Ok(json!({
             "id": r.get::<_, String>(0)?, "threadId": r.get::<_, String>(0)?,
             "automationId": r.get::<_, String>(1)?, "automationName": r.get::<_, Option<String>>(2)?,
             "title": r.get::<_, Option<String>>(3)?, "description": r.get::<_, Option<String>>(4)?,
@@ -1799,6 +1805,42 @@ impl Host for LocalHost {
                 json!({"item": item})
             }
             "inbox-items" => self.inbox(&params)?,
+            "inbox-automation-runs-mark-all-read" => {
+                let id = params["automationId"]
+                    .as_str()
+                    .context("missing automationId")?;
+                let changed = if let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? {
+                    db.execute(
+                        "UPDATE automation_runs SET read_at = ?1 WHERE automation_id = ?2
+                         AND read_at IS NULL AND status IN ('PENDING_REVIEW', 'ACCEPTED')
+                         AND automation_id IN (SELECT id FROM automations WHERE account_id IS NULL
+                         AND user_id IS NULL AND installation_id IS NULL)",
+                        params![chrono::Utc::now().timestamp_millis(), id],
+                    )?
+                } else {
+                    0
+                };
+                json!({"changed": changed})
+            }
+            "automation-run-archive" => {
+                let automation = params["automationId"]
+                    .as_str()
+                    .context("missing automationId")?;
+                let thread = params["threadId"].as_str().context("missing threadId")?;
+                let db = self
+                    .database(OpenFlags::SQLITE_OPEN_READ_WRITE)?
+                    .context("missing run store")?;
+                let changed = db.execute(
+                    "UPDATE automation_runs SET status = 'ARCHIVED', updated_at = ?1
+                     WHERE automation_id = ?2 AND thread_id = ?3
+                     AND status IN ('PENDING_REVIEW', 'ACCEPTED')
+                     AND automation_id IN (SELECT id FROM automations WHERE account_id IS NULL
+                     AND user_id IS NULL AND installation_id IS NULL)",
+                    params![chrono::Utc::now().timestamp_millis(), automation, thread],
+                )?;
+                ensure!(changed == 1, "Run is not an eligible local run");
+                json!({})
+            }
             "apply-patch" => git::apply_cloud_patch(&params)?,
             "local-environments" => environments::list(Path::new(
                 params["workspaceRoot"]

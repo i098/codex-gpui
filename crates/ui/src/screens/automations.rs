@@ -30,6 +30,7 @@ use std::{
 use theme::{ActiveTheme as _, Theme};
 
 pub mod editor;
+pub mod history;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum CreationMode {
@@ -234,9 +235,9 @@ fn rule_part<'a>(rrule: &'a str, key: &str) -> Option<&'a str> {
     })
 }
 
-fn cadence(rrule: &str) -> &'static str {
+fn cadence(rrule: &str) -> SharedString {
     match rule_part(rrule, "FREQ") {
-        Some("MINUTELY" | "HOURLY") => "Interval",
+        Some("MINUTELY" | "HOURLY") => return schedule_summary(rrule).into(),
         Some("DAILY") => "Daily",
         Some("WEEKLY") if rule_part(rrule, "BYDAY") == Some("MO,TU,WE,TH,FR") => "Weekdays",
         Some("WEEKLY") => "Weekly",
@@ -244,6 +245,7 @@ fn cadence(rrule: &str) -> &'static str {
         Some("YEARLY") => "Yearly",
         _ => "Custom",
     }
+    .into()
 }
 
 pub fn schedule_summary(rrule: &str) -> String {
@@ -258,7 +260,7 @@ pub fn schedule_summary(rrule: &str) -> String {
     let hour = rule_part(rrule, "BYHOUR").and_then(|h| h.parse::<u32>().ok());
     let minute = rule_part(rrule, "BYMINUTE").and_then(|m| m.parse::<u32>().ok());
     let (Some(hour), Some(minute)) = (hour, minute) else {
-        return cadence(rrule).to_owned();
+        return cadence(rrule).to_string();
     };
     let time = format!(
         "{}:{minute:02} {}",
@@ -282,7 +284,7 @@ fn interval_summary(minutes: u64) -> String {
 }
 
 /// The weekday of a single-day weekly rule, else its cadence.
-fn day_label(rrule: &str) -> &'static str {
+fn day_label(rrule: &str) -> SharedString {
     match (rule_part(rrule, "FREQ"), rule_part(rrule, "BYDAY")) {
         (Some("WEEKLY"), Some("MO")) => "Mondays",
         (Some("WEEKLY"), Some("TU")) => "Tuesdays",
@@ -291,8 +293,9 @@ fn day_label(rrule: &str) -> &'static str {
         (Some("WEEKLY"), Some("FR")) => "Fridays",
         (Some("WEEKLY"), Some("SA")) => "Saturdays",
         (Some("WEEKLY"), Some("SU")) => "Sundays",
-        _ => cadence(rrule),
+        _ => return cadence(rrule),
     }
+    .into()
 }
 
 // The card uses the original 24 px clock, not the sidebar's 20 px asset.
@@ -510,7 +513,11 @@ fn shell_with(
     Entity<ScheduledSidebar>,
     Option<Entity<AutomationsPage>>,
 ) {
+    let history = selected
+        .as_ref()
+        .map(|(task, _)| cx.new(|_| history::History::new(task.id.clone(), utc_offset)));
     let sidebar = cx.new(|cx| ScheduledSidebar {
+        history: history.clone(),
         tasks,
         selected: selected.as_ref().map(|(task, _)| task.id.clone()),
         utc_offset,
@@ -542,6 +549,7 @@ fn shell_with(
                 task,
                 composer,
                 utc_offset,
+                history: history.expect("a selected task has a history"),
             })
             .into(),
         None => page
@@ -564,6 +572,7 @@ fn shell_with(
 /// 48 px row per task (`automation-row`): name, `Oct 17 · Weekly`, and on hover the list
 /// fill with the `Scheduled task actions` button fading in. The selected row keeps the fill.
 pub struct ScheduledSidebar {
+    pub history: Option<Entity<history::History>>,
     tasks: Vec<Task>,
     selected: Option<String>,
     utc_offset: i64,
@@ -1265,7 +1274,7 @@ impl ScheduledSidebar {
                 secondary
                     .child(text(
                         if paused {
-                            "Paused"
+                            "Paused".into()
                         } else {
                             cadence(&task.rrule)
                         },
@@ -1780,12 +1789,11 @@ impl Render for AutomationsPage {
 /// Main column of `/scheduled?automationId=<id>`: the task's thread as the original shows it
 /// before any run (date separator, the prompt as the user's message, `Your task is
 /// scheduled…` with the automation card) over the docked composer.
-/// ponytail: no scroll fades, corner clip, message hover actions or run items; add with the
-/// run-history rows.
 pub struct AutomationThread {
     task: Task,
     composer: AnyView,
     utc_offset: i64,
+    history: Entity<history::History>,
 }
 
 impl Render for AutomationThread {
@@ -1874,7 +1882,8 @@ impl Render for AutomationThread {
                                     t,
                                 )
                                 .mt(px(24.)),
-                            ),
+                            )
+                            .child(self.history.clone()),
                     )
                     // Room for the docked composer.
                     .child(div().h(px(114.))),
@@ -1906,6 +1915,21 @@ fn status_icon(paused: bool, color: gpui::Hsla) -> crate::icon::Icon {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn saved_interval_cadences_preserve_daily_and_weekly_labels() {
+        for (rule, label) in [
+            ("FREQ=HOURLY;INTERVAL=1;BYMINUTE=0", "Hourly"),
+            ("RRULE:FREQ=HOURLY;INTERVAL=3", "Every 3 hours"),
+            ("FREQ=MINUTELY;INTERVAL=1", "Every minute"),
+            ("FREQ=MINUTELY;INTERVAL=15", "Every 15 minutes"),
+            ("FREQ=DAILY;BYHOUR=9;BYMINUTE=0", "Daily"),
+            ("FREQ=WEEKLY;BYDAY=MO", "Weekly"),
+            ("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR", "Weekdays"),
+        ] {
+            assert_eq!(super::cadence(rule).as_ref(), label, "{rule}");
+        }
+    }
+
     #[test]
     fn only_the_original_event_prompt_is_event_triggered() {
         let event = "## When this happens\n> a PR opens\n>\n> in main\n\n## Perform action\n> review it\n\nTrailing";

@@ -446,6 +446,11 @@ Scheduled > New task accepts instructions, a daily or weekly repeat, and a local
 Create saves the definition through `automation-create` to `CODEX_HOME/automations/<id>/automation.toml`.
 The app reloads the task list after a successful write and retains the draft if the write fails.
 The existing host schedules these definitions; this app does not start another scheduler.
+Saved hourly and minute schedules show their interval in the task list.
+`Previous runs` shows local stored history and read state for the selected task.
+Its actions mark completed runs as read or archive them after confirmation.
+Bulk actions skip running, archived, and account-owned runs and report partial archive failures.
+Run `cargo test -p app --test scheduled_history -- --test-threads=1` on macOS to check these actions and the existing View route.
 The row menu's `Run now` sends `automation-run-now`; the host starts one `codex app-server` thread and turn per task folder.
 It runs tasks with project folders or a project target (the project's first root from `.codex-global-state.json`), in a new Git worktree for the original default environment or in the folder for the local one.
 For a project target, the host saves the new thread's local project assignment before it starts the turn.
