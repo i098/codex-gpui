@@ -373,6 +373,11 @@ impl DiffPanel {
     }
 
     pub fn set_preferences(&mut self, values: &serde_json::Map<String, serde_json::Value>) {
+        self.viewed_files = values
+            .get("review-viewed-file-v1")
+            .and_then(serde_json::Value::as_object)
+            .cloned()
+            .unwrap_or_default();
         self.rich_preview = values
             .get("diffRichPreview")
             .and_then(serde_json::Value::as_bool)

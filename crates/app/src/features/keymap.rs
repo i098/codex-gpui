@@ -210,6 +210,7 @@ fn action(id: &str) -> Option<Box<dyn Action>> {
         "logOut" => Box::new(LogOut),
         "clearAllUnreads" => Box::new(shortcuts::ClearAllUnreads),
         "nextThreadNeedingAttention" => Box::new(shortcuts::NextAttentionChat),
+        "markThreadUnread" => Box::new(shortcuts::MarkOpenChatUnread),
         "manageTasks" => Box::new(OpenScheduled),
         "openThreadInNewWindow" => Box::new(super::OpenThreadInNewWindow),
         "closeTab" => Box::new(CloseWindow),

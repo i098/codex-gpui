@@ -14,6 +14,7 @@ actions!(
         OpenInteractiveTerminal,
         ClearAllUnreads,
         NextAttentionChat,
+        MarkOpenChatUnread,
         ZoomIn,
         ZoomOut,
         ActualSize,
@@ -103,6 +104,12 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
             .map(str::to_owned);
         if let Some(next) = next {
             this.navigate(Route::Thread(next), window, cx);
+        }
+    }))
+    .on_action(cx.listener(|this, _: &MarkOpenChatUnread, _, cx| {
+        if let Route::Thread(id) = &this.state.route {
+            this.sidebar
+                .update(cx, |sidebar, cx| sidebar.toggle_thread_unread(id, cx));
         }
     }))
     .on_action(cx.listener(|this, _: &ToggleThreadPin, window, cx| {

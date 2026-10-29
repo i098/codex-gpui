@@ -244,3 +244,40 @@ fn archive_command_removes_the_selected_chat_and_returns_home() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn unread_command_and_accelerator_share_the_sidebar_state() -> Result<()> {
+    let mut fx = Fx::new()?;
+    fx.keys("cmd-2")?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.keys("cmd-shift-u")?;
+    ensure!(fx.read(|root, cx| {
+        root.sidebar()
+            .read(cx)
+            .unread
+            .iter()
+            .any(|id| id == SUBTRACT)
+    }));
+    fx.capture_evidence("CGX_ACCOUNT_EVIDENCE", "chat-unread")?;
+    command(&mut fx, "Mark as unread")?;
+    ensure!(fx.read(|root, cx| {
+        !root
+            .sidebar()
+            .read(cx)
+            .unread
+            .iter()
+            .any(|id| id == SUBTRACT)
+    }));
+    fx.keys("cmd-k")?;
+    fx.type_text("Mark as unread")?;
+    fx.keys("escape")?;
+    ensure!(fx.read(|root, cx| {
+        !root
+            .sidebar()
+            .read(cx)
+            .unread
+            .iter()
+            .any(|id| id == SUBTRACT)
+    }));
+    Ok(())
+}
