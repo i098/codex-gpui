@@ -63,14 +63,18 @@ impl Attachment {
     }
 }
 
-/// `$CODEX_HOME/attachments` (default `~/.codex`), the original's attachments root: the
-/// recording (`refs/interactions/s017.json`) holds the host's codex home.
-fn attachments_root() -> io::Result<PathBuf> {
+/// `$CODEX_HOME` (default `~/.codex`).
+pub(crate) fn codex_home() -> io::Result<PathBuf> {
     std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
-        .map(|root| root.join("attachments"))
         .ok_or_else(|| io::Error::other("CODEX_HOME and HOME are unset"))
+}
+
+/// `$CODEX_HOME/attachments`, the original's attachments root: the recording
+/// (`refs/interactions/s017.json`) holds the host's codex home.
+fn attachments_root() -> io::Result<PathBuf> {
+    codex_home().map(|root| root.join("attachments"))
 }
 
 /// The original's `pasted-text-attachments.json` under the attachments root: every pasted

@@ -115,5 +115,6 @@ All cells used the dark theme and `1280x832` CSS size.
 | Settings Configuration | 971375 | 49.345921% | FAIL |
 
 The failed cells demonstrate the nonzero gate result; they do not grant native appearance approval.
-The Configuration native frame shows its heading without the original controls.
 The tool preserves those differences rather than changing the reference or text mask.
+
+After the native Configuration page was added, the Settings Configuration cell gave 0 outside-text pixels and a 0.087290% inside-text difference: PASS.
