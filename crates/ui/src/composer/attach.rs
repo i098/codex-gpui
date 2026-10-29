@@ -74,7 +74,7 @@ impl Attachment {
 }
 
 /// `$CODEX_HOME` (default `~/.codex`).
-pub(crate) fn codex_home() -> io::Result<PathBuf> {
+fn codex_home() -> io::Result<PathBuf> {
     std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
