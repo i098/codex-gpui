@@ -33,6 +33,8 @@ pub struct Select {
     icons: Option<fn(&str, &Theme) -> Option<gpui::AnyElement>>,
     details: std::collections::HashMap<&'static str, &'static str>,
     width: f32,
+    /// A flattened submenu's title over the options after a pinned default.
+    heading: Option<&'static str>,
 }
 
 impl EventEmitter<Selected> for Select {}
@@ -84,6 +86,7 @@ impl Select {
             icons: None,
             details: std::collections::HashMap::new(),
             width: 240.,
+            heading: None,
         }
     }
 
@@ -104,6 +107,12 @@ impl Select {
 
     pub fn keep_default_visible(mut self) -> Self {
         self.default_action = true;
+        self
+    }
+
+    /// Shows the options after the pinned default under `heading`, as a flattened submenu.
+    pub fn with_heading(mut self, heading: &'static str) -> Self {
+        self.heading = Some(heading);
         self
     }
 
@@ -518,6 +527,15 @@ impl Render for Select {
                                         .child(div().flex_1().min_w_0().child(search))
                                 }))
                                 .children(default)
+                                .children(self.heading.filter(|_| !empty).map(|heading| {
+                                    div().px(px(8.)).py(px(5.)).child(text(
+                                        heading,
+                                        12.,
+                                        16.,
+                                        500.,
+                                        t.text_tertiary,
+                                    ))
+                                }))
                                 .child(
                                     div()
                                         .id("settings-select-options")

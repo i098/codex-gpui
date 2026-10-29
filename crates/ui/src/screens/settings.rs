@@ -282,6 +282,9 @@ pub mod archived_chats;
 #[path = "git_settings.rs"]
 mod git_settings;
 
+#[path = "appearance_settings.rs"]
+mod appearance_settings;
+
 #[path = "worktrees.rs"]
 pub mod worktrees;
 
@@ -505,6 +508,17 @@ impl SettingsPage {
         cx.notify();
     }
 
+    /// Stores host settings together; the app saves them in one write, so a failed save keeps
+    /// all of the previous values.
+    pub fn set_host_batch(&mut self, pairs: Vec<(&'static str, Value)>, cx: &mut Context<Self>) {
+        for (path, value) in &pairs {
+            let (store, key) = path.split_once('.').unwrap_or((path, ""));
+            self.values[store][key] = value.clone();
+        }
+        cx.emit(HostSettingsChanged(pairs));
+        cx.notify();
+    }
+
     pub fn set_cloud(&mut self, cloud: Entity<super::cloud::CloudPage>, cx: &mut Context<Self>) {
         self.cloud = Some(cloud);
         self.open_cloud_section(cx);
@@ -566,7 +580,11 @@ pub struct SettingChanged {
     pub value: Value,
 }
 
+/// Several `host.<key>` settings changed together (see [`SettingsPage::set_host_batch`]).
+pub struct HostSettingsChanged(pub Vec<(&'static str, Value)>);
+
 impl EventEmitter<SettingChanged> for SettingsPage {}
+impl EventEmitter<HostSettingsChanged> for SettingsPage {}
 impl EventEmitter<personalization::Event> for SettingsPage {}
 
 /// `--sidebar-navigation` background, opaque.
@@ -820,6 +838,7 @@ pub struct SettingsPane {
     git_fields: Vec<(&'static str, Entity<Composer>)>,
     storage: Entity<storage::StoragePage>,
     git_saved_until: std::collections::HashMap<&'static str, std::time::Instant>,
+    appearance: appearance_settings::State,
 }
 
 /// `Confirm before closing a window` options, default first.
@@ -858,6 +877,7 @@ impl SettingsPane {
             channel_selects: std::collections::HashMap::new(),
             git_fields: Vec::new(),
             git_saved_until: Default::default(),
+            appearance: Default::default(),
         }
     }
 
@@ -990,20 +1010,6 @@ impl SettingsPane {
                     }))
             }))
             .into_any_element()
-    }
-
-    /// Appearance ▸ Theme: the app applies and keeps the choice (`SetTheme`).
-    /// ponytail: the chrome theme, font size and motion rows are not here; add them with the
-    /// settings they drive.
-    fn appearance(
-        &self,
-        t: &Theme,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Vec<(&'static str, Vec<Div>)> {
-        let options = &[("light", "Light"), ("dark", "Dark"), ("system", "System")];
-        let theme = self.segmented(THEME, "system", options, t, window, cx);
-        vec![("Theme", vec![settings_row("Theme", None, theme, t)])]
     }
 
     fn general(
@@ -1361,13 +1367,15 @@ impl Render for SettingsPane {
         if section == "Git" {
             return self.render_git(&t, window, cx);
         }
+        if section == "Appearance" {
+            return self.render_appearance(&t, window, cx);
+        }
         if section == "Connections" {
             return super::connections::render(window, cx);
         }
         // Unimplemented sections retain their title-only surface.
         let groups = match section {
             "General" => self.general(&t, window, cx),
-            "Appearance" => self.appearance(&t, window, cx),
             "Notifications" => self.notifications_page(&t, window, cx),
             _ => Vec::new(),
         };

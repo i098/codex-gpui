@@ -1205,6 +1205,28 @@ impl Platform for MacPlatform {
         }
     }
 
+    fn set_dock_icon(&self, png: Option<&[u8]>) {
+        unsafe {
+            let app: id = msg_send![APP_CLASS, sharedApplication];
+            let image: id = match png {
+                Some(png) => {
+                    let data: id =
+                        msg_send![class!(NSData), dataWithBytes: png.as_ptr() length: png.len()];
+                    let image: id = msg_send![class!(NSImage), alloc];
+                    msg_send![image, initWithData: data]
+                }
+                None => nil,
+            };
+            // `nil` restores the bundle icon; an unreadable PNG leaves the current icon.
+            if png.is_none() || image != nil {
+                let _: () = msg_send![app, setApplicationIconImage: image];
+            }
+            if image != nil {
+                let _: () = msg_send![image, release];
+            }
+        }
+    }
+
     fn add_recent_document(&self, path: &Path) {
         if let Some(path_str) = path.to_str() {
             unsafe {
