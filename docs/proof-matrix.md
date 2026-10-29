@@ -49,6 +49,7 @@ It preserves the existing route1 and Root capture clocks and fixtures.
 | `settings` | `configuration` | Profile menu, Settings, Configuration | Settings shortcut, Configuration navigation item |
 | `mobile` | `get-started` | Profile menu, Help, Set up mobile | Profile menu, Set up mobile |
 | `mobile` | `continuation` | The same, then Get started; offline mode answers both MFA reads from `refs/interactions/mobile-mfa.json` | The same, then Get started; the fixture host answers both MFA reads from that recording |
+| `automations` | `empty` | Existing route1 Scheduled capture: the empty task list and the suggestion cards | Scheduled rail item on the recorded host reads |
 
 These are the executable adapters, not all 175 census surfaces.
 An unknown surface or state fails before a capture starts.
@@ -57,7 +58,7 @@ Do not substitute a static screen or a prior native screenshot for a Root frame.
 
 Both themes support the normal census sizes, `1280x832` and `1440x900`.
 Home rest also accepts `767x832` and `600x832`.
-Terminal, Configuration, and Mobile reject narrow sizes until their navigation adapters support them.
+Terminal, Configuration, Mobile, and Automations reject narrow sizes until their navigation adapters support them.
 Each frame uses the same CSS size and native device scale 2.
 The narrow sizes have no separate waiver for a failing gate.
 
