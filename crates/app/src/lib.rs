@@ -9,6 +9,7 @@ mod cloud_task;
 pub use cloud_task::parse_task_response;
 mod cloud;
 pub use cloud::{CloudTaskRequest, create_cloud_task};
+mod automation_notifications;
 pub mod computer_use_requests;
 pub mod connections;
 pub mod deep_link;
@@ -151,6 +152,14 @@ const SIDEBAR_BREAKPOINT: Pixels = px(720.);
 
 /// Fixed platform bindings and app-level commands; configurable bindings are installed by the keymap module.
 pub fn init(cx: &mut App) {
+    cx.set_app_identity(
+        if qa::ENABLED {
+            "dev.codexgpui.qa"
+        } else {
+            "dev.codexgpui.app"
+        },
+        "Codex",
+    );
     cx.bind_keys([
         KeyBinding::new("cmd-h", Hide, None),
         KeyBinding::new("alt-cmd-h", HideOthers, None),
@@ -458,6 +467,10 @@ pub struct Root {
     host: Arc<dyn host::Host>,
     activity_access: activity_access::Runtime,
     oauth: oauth::Connections,
+    inbox_load: Option<Task<()>>,
+    unread_automation_threads: HashSet<String>,
+    last_agent_messages: HashMap<String, (String, String)>,
+    _inbox_poll: Task<()>,
     project_load: Option<Task<()>>,
     destination_load: Option<Task<()>>,
     unread_destinations: Option<Arc<[SharedString]>>,
@@ -773,6 +786,19 @@ impl Root {
                 }
             }
         });
+        let _inbox_poll = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_secs(60))
+                    .await;
+                if this
+                    .update(cx, |this, cx| this.refresh_automation_unreads(cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
         let mut root = Self {
             back: Vec::new(),
             forward: Vec::new(),
@@ -849,6 +875,10 @@ impl Root {
             ),
             activity_access: activity_access::Runtime::default(),
             oauth: oauth::Connections::default(),
+            inbox_load: None,
+            unread_automation_threads: HashSet::new(),
+            last_agent_messages: HashMap::new(),
+            _inbox_poll,
             bridge,
             host_id,
             automations: None,
@@ -923,6 +953,33 @@ impl Root {
             })
             .unwrap_or(true)
         });
+        cx.on_system_notification_response(move |response, cx| {
+            let Some(id) = response
+                .tag
+                .strip_prefix("automation:")
+                .filter(|id| !id.is_empty())
+            else {
+                return;
+            };
+            for handle in cx.windows() {
+                let Some(handle) = handle.downcast::<Root>() else {
+                    continue;
+                };
+                let opened = handle
+                    .update(cx, |root, window, cx| {
+                        if root.host_id != "local" {
+                            return false;
+                        }
+                        root.navigate(Route::Thread(id.to_owned()), window, cx);
+                        window.activate_window();
+                        true
+                    })
+                    .unwrap_or(false);
+                if opened {
+                    break;
+                }
+            }
+        });
         cx.on_app_quit(|this, cx| {
             this.flush_settings(cx);
             async {}
@@ -939,6 +996,7 @@ impl Root {
         root.install_import(cx);
         root.load_projects(cx);
         windows::bind_root(window, cx);
+        root.refresh_automation_unreads(cx);
         root
     }
 
@@ -1247,6 +1305,10 @@ impl Root {
         self.suggestion_load = None;
         self.git_status_load = None;
         self.automation_updates.clear();
+        self.inbox_load = None;
+        self.unread_automation_threads.clear();
+        self.last_agent_messages.clear();
+        self.sync_automation_attention(cx);
         if let Some(sidebar) = &self.scheduled {
             for task in self.tasks() {
                 sidebar.update(cx, |sidebar, cx| sidebar.set_pending(&task.id, false, cx));
@@ -1278,6 +1340,7 @@ impl Root {
         if self.ready && !self.signed_out() {
             self.load_destinations(cx);
         }
+        self.refresh_automation_unreads(cx);
         if self.scheduled_route() {
             self.load_automations(cx);
             self.load_suggestions(cx);
@@ -2129,6 +2192,7 @@ impl Root {
     }
 
     fn load_automations(&mut self, cx: &mut Context<Self>) {
+        self.refresh_automation_unreads(cx);
         let host = self.host.clone();
         let read = cx.background_spawn(async move {
             let list = host
@@ -5863,6 +5927,35 @@ impl Root {
                 {
                     self.load_destinations(cx);
                 }
+                "turn/started" => {
+                    if let Some(id) = params["threadId"].as_str() {
+                        self.last_agent_messages.remove(id);
+                    }
+                }
+                "item/completed"
+                    if side_thread.is_none() && params["item"]["type"] == "agentMessage" =>
+                {
+                    if let (Some(id), Some(turn), Some(text)) = (
+                        params["threadId"].as_str(),
+                        params["turnId"].as_str(),
+                        params["item"]["text"].as_str(),
+                    ) {
+                        self.last_agent_messages
+                            .insert(id.to_owned(), (turn.to_owned(), text.to_owned()));
+                    }
+                }
+                "thread/archived" => {
+                    if let Some(id) = params["threadId"].as_str() {
+                        self.threads.retain(|thread| thread.id != id);
+                        self.sidebar
+                            .update(cx, |sidebar, cx| sidebar.set_threads(&self.threads, cx));
+                        self.archive_automation_run(id, cx);
+                    }
+                }
+                "thread/unarchived" => {
+                    self.refresh_threads(cx);
+                    self.refresh_automation_unreads(cx);
+                }
                 "thread/started" if params["thread"]["ephemeral"] != true => {
                     if let Ok(n) = serde_json::from_value::<ThreadStartedNotification>(params) {
                         self.add_thread(&n.thread, cx);
@@ -5893,14 +5986,7 @@ impl Root {
                         && side_thread.is_none()
                     {
                         self.sidebar.update(cx, |s, cx| s.set_unread(id, cx));
-                        let host = self.host.clone();
-                        let (id, turn) = (id.to_owned(), params["turn"].clone());
-                        cx.background_spawn(async move {
-                            if let Err(error) = host.finish_automation_run(&id, &turn) {
-                                eprintln!("codex-gpui: failed to finish automation run: {error:#}");
-                            }
-                        })
-                        .detach();
+                        self.complete_automation_run(&params, cx);
                     }
                     // Standalone elicitations and nonblocking questions wait for explicit resolution.
                     let turn = &params["turn"]["id"];

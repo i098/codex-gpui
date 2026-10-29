@@ -32,6 +32,7 @@ notify = "8"
 pollster = "0.4"
 portable-pty = "0.9"
 rrule = { path = "../../vendor/rrule", features = ["exrule"] }
+regex = "1"
 rusqlite = { version = "0.37", features = ["bundled"] }
 semver = "1"
 serde = { version = "1", features = ["derive"] }

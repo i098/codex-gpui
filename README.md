@@ -471,6 +471,10 @@ The `projectlessWorkspaceRoot` host setting overrides the root.
 The host saves projectless thread IDs, workspace-root hints, and output paths in `.codex-global-state.json`.
 Heartbeat tasks resume their existing thread with its selected model and permissions.
 The app opens that thread after a successful start, unless you navigate away while the run starts.
+Completed automation runs update the Scheduled unread dot from saved run state.
+Opening a run clears its unread mark; opening Scheduled does not.
+Desktop notifications follow the saved turn mode and task policy without moving focus.
+Run `cargo test -p app --lib automation_notifications -- --test-threads=1` on macOS for completion, duplicate, focus, and notification-click checks.
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
 The New task options menu also opens the full manual editor or a new chat with the original task setup prompt.
 The manual editor saves Name, multiline Prompt, Interval, Daily, Weekdays, Weekly, Monthly, and Custom schedules.

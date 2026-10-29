@@ -326,11 +326,11 @@ fn run_now_opens_moves_finishes_and_archives_the_run_row() -> Result<()> {
     );
     ensure!(rows[0].1 == "IN_PROGRESS" && rows[0].4.as_deref() == dir.path().to_str());
     let completed = completion(&log, thread, "completed")?;
-    ensure!(!host.finish_run("unknown-thread", &completed)?);
-    ensure!(host.finish_run(thread, &completed)?);
+    ensure!(host.finish_run("unknown-thread", &completed)?.is_none());
+    ensure!(host.finish_run(thread, &completed)? == Some(false));
     ensure!(runs(dir.path())?[0].1 == "PENDING_REVIEW" && runs(dir.path())?[0].2.is_none());
     ensure!(
-        !host.finish_run(thread, &completed)?,
+        host.finish_run(thread, &completed)?.is_none(),
         "a finished run does not finish twice"
     );
 
@@ -367,8 +367,10 @@ fn a_muted_task_reads_its_completed_run_and_keeps_a_failed_one_unread() -> Resul
     run(&host, "muted")?;
     let threads: Vec<String> = runs(dir.path())?.into_iter().map(|r| r.0).collect();
     ensure!(threads.len() == 2);
-    ensure!(host.finish_run(&threads[0], &completion(&log, &threads[0], "completed")?)?);
-    ensure!(host.finish_run(&threads[1], &completion(&log, &threads[1], "failed")?)?);
+    ensure!(
+        host.finish_run(&threads[0], &completion(&log, &threads[0], "completed")?)? == Some(true)
+    );
+    ensure!(host.finish_run(&threads[1], &completion(&log, &threads[1], "failed")?)? == Some(true));
     let rows = runs(dir.path())?;
     ensure!(
         rows[0].1 == "PENDING_REVIEW" && rows[0].2.is_some(),
@@ -936,7 +938,7 @@ fn the_default_path_has_config_permissions_run_rows_and_keeps_its_worktree() -> 
         rows[0].4.as_deref() == repo.to_str(),
         "the row names the source folder, not the worktree"
     );
-    ensure!(host.finish_run(thread, &completion(&log, thread, "completed")?)?);
+    ensure!(host.finish_run(thread, &completion(&log, thread, "completed")?)? == Some(false));
     ensure!(runs(&home)?[0].1 == "PENDING_REVIEW");
     ensure!(
         Path::new(cwd).join("a.txt").is_file(),
@@ -2317,7 +2319,9 @@ impl ArchiveRun {
     }
 
     fn finish(&self) -> Result<bool> {
-        self.host.finish_automation_run(&self.thread, &self.turn)
+        self.host
+            .finish_automation_run(&self.thread, &self.turn)
+            .map(|outcome| outcome.is_some())
     }
 
     fn archive_requests(&self) -> Result<Vec<String>> {
@@ -2421,10 +2425,14 @@ fn autoarchive_cancels_for_every_user_request_and_rejects_other_turn_completions
             run.bridge
                 .request::<_, Value>(method, json!({"threadId": run.thread})),
         )?;
-        ensure!(!run.host.finish_run(
-            &run.thread,
-            &json!({"id": "another-turn", "status": "completed"})
-        )?);
+        ensure!(
+            run.host
+                .finish_run(
+                    &run.thread,
+                    &json!({"id": "another-turn", "status": "completed"})
+                )?
+                .is_none()
+        );
         ensure!(run.row()?.1 == "IN_PROGRESS");
         ensure!(run.finish()?);
         ensure!(run.row()?.1 == "PENDING_REVIEW");
@@ -2502,7 +2510,7 @@ fn autoarchive_restores_an_inflight_archive_before_sending_the_user_request() ->
             .is_pending()
     );
     fs::write(&release, "")?;
-    ensure!(finishing.join().unwrap()?);
+    ensure!(finishing.join().unwrap()?.is_some());
     pollster::block_on(user)?;
     ensure!(run.row()?.1 == "ACCEPTED");
     ensure!(run.archive_requests()? == ["thread/archive", "thread/unarchive"]);
@@ -2603,7 +2611,7 @@ fn autoarchive_waits_for_the_start_reply_when_completion_arrives_first() -> Resu
     });
     fs::write(&release, "")?;
     ensure!(starting.join().unwrap()? == json!({"success": true}));
-    ensure!(finishing.join().unwrap()?);
+    ensure!(finishing.join().unwrap()?.is_some());
     ensure!(runs(&home)?[0].1 == "ARCHIVED");
     Ok(())
 }
@@ -2742,12 +2750,18 @@ fn unrecorded_completion_releases_only_its_matching_tracker_without_archiving() 
             rusqlite::Connection::open(home.join("sqlite/codex.db"))?
                 .execute("DELETE FROM automation_runs", [])?;
         }
-        ensure!(!host.finish_run(
-            thread,
-            &json!({"id": "another-turn", "status": "completed"})
-        )?);
+        ensure!(
+            host.finish_run(
+                thread,
+                &json!({"id": "another-turn", "status": "completed"})
+            )?
+            .is_none()
+        );
         ensure!(bridge.automation_turn(thread).is_some());
-        ensure!(!host.finish_run(thread, &completion(&log, thread, "completed")?)?);
+        ensure!(
+            host.finish_run(thread, &completion(&log, thread, "completed")?)?
+                .is_none()
+        );
         ensure!(bridge.automation_turn(thread).is_none());
         ensure!(
             !all_requests(&log)?
@@ -2778,7 +2792,9 @@ fn projectless_autoarchive_keeps_its_workspace_and_thread_metadata() -> Result<(
     let output = cwd.join("outputs/result.txt");
     fs::write(&output, "retained output")?;
     let metadata = fs::read(home.join(".codex-global-state.json"))?;
-    ensure!(host.finish_automation_run(thread, &completion(&log, thread, "completed")?)?);
+    ensure!(
+        host.finish_automation_run(thread, &completion(&log, thread, "completed")?)? == Some(false)
+    );
     let row = runs(&home)?.remove(0);
     ensure!(row.1 == "ARCHIVED" && row.4.is_none());
     ensure!(fs::read(home.join(".codex-global-state.json"))? == metadata);
@@ -2845,6 +2861,16 @@ fn heartbeat_checks_active_history_and_preserves_saved_thread_approval_policy() 
             .iter()
             .any(|r| r["method"] == "turn/start")
     );
+    Ok(())
+}
+
+#[test]
+fn completion_returns_the_stored_policy_without_an_in_memory_tracker() -> Result<()> {
+    let run = ArchiveRun::start(false, true, &[])?;
+    let tracked = run.bridge.automation_turn(&run.thread).unwrap();
+    run.bridge.release_automation_turn(&run.thread, &tracked);
+    ensure!(run.host.finish_automation_run(&run.thread, &run.turn)? == Some(true));
+    ensure!(run.row()?.2.is_some());
     Ok(())
 }
 
@@ -3121,6 +3147,97 @@ fn heartbeat_row_run_navigates_only_on_success_at_the_original_location() -> Res
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+use common::{Fx, GREETING, RAIL_HOME, RAIL_SCHEDULED};
+
+#[cfg(target_os = "macos")]
+#[test]
+fn persisted_run_unread_survives_navigation_and_clears_on_open() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    fs::create_dir(home.path().join("sqlite"))?;
+    let db = rusqlite::Connection::open(home.path().join("sqlite/codex.db"))?;
+    db.execute_batch(
+        "CREATE TABLE automations (id TEXT PRIMARY KEY, name TEXT, prompt TEXT,
+        account_id TEXT, user_id TEXT, installation_id TEXT);
+        CREATE TABLE automation_runs (thread_id TEXT PRIMARY KEY, automation_id TEXT,
+        status TEXT, read_at INTEGER, thread_title TEXT, source_cwd TEXT, inbox_title TEXT,
+        inbox_summary TEXT, created_at INTEGER, updated_at INTEGER, archived_user_message TEXT,
+        archived_assistant_message TEXT, archived_reason TEXT);
+        INSERT INTO automations (id,name,prompt) VALUES ('owned', 'Review', 'Review changes');",
+    )?;
+    db.execute(
+        "INSERT INTO automation_runs (thread_id,automation_id,status,created_at,updated_at)
+        VALUES (?,'owned','PENDING_REVIEW',1,1)",
+        [GREETING],
+    )?;
+    let host = Arc::new(LocalHost::new(home.path()));
+    let mut fx = Fx::new()?;
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+    fx.wait("persisted Scheduled unread", |fx| {
+        fx.shell(|shell| shell.scheduled_attention)
+    })?;
+    let shot = |fx: &mut Fx, name: &str| -> Result<()> {
+        if let Some(out) = std::env::var_os("CGX_NOTIFICATION_SHOTS") {
+            fs::create_dir_all(&out)?;
+            fx.shot()?
+                .save(std::path::Path::new(&out).join(format!("{name}.png")))?;
+        }
+        Ok(())
+    };
+    shot(&mut fx, "home-unread")?;
+    fx.click(RAIL_SCHEDULED)?;
+    ensure!(fx.shell(|shell| shell.scheduled_attention));
+    shot(&mut fx, "scheduled-unread")?;
+    fx.click(RAIL_HOME)?;
+    ensure!(fx.shell(|shell| shell.scheduled_attention));
+    fx.keys("cmd-1")?;
+    fx.wait_thread(GREETING)?;
+    fx.wait("automation run read", |fx| {
+        !fx.shell(|shell| shell.scheduled_attention)
+    })?;
+    ensure!(fx.route() == app::Route::Thread(GREETING.to_owned()));
+    let read_at: Option<i64> = db.query_row(
+        "SELECT read_at FROM automation_runs WHERE thread_id=?",
+        [GREETING],
+        |r| r.get(0),
+    )?;
+    ensure!(read_at.is_some());
+    shot(&mut fx, "thread-read")?;
+    let response = host.fetch(&app::host::Request::post("inbox-items", None))?;
+    ensure!(app::host::json_body(&response)?["unreadRunCounts"]["total"] == 0);
+    db.execute(
+        "UPDATE automation_runs SET status='PENDING_REVIEW', read_at=NULL WHERE thread_id=?",
+        [GREETING],
+    )?;
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+    fx.wait("unread completed run before archive", |fx| {
+        fx.shell(|shell| shell.scheduled_attention)
+    })?;
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.on_event(
+            bridge::Event::Notification {
+                method: "thread/archived".into(),
+                params: serde_json::json!({"threadId": GREETING}),
+            },
+            cx,
+        )
+    });
+    ensure!(!fx.read(|root, _| root.recents().iter().any(|id| id == GREETING)));
+    fx.wait("archived run loses Scheduled dot", |fx| {
+        !fx.shell(|shell| shell.scheduled_attention)
+    })?;
+    let archived: (String, Option<i64>) = db.query_row(
+        "SELECT status, read_at FROM automation_runs WHERE thread_id=?",
+        [GREETING],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    ensure!(archived == ("ARCHIVED".to_owned(), None));
+    shot(&mut fx, "archived-recents")?;
+    Ok(())
+}
+
 #[test]
 fn heartbeat_completion_releases_only_its_matching_turn_without_a_cron_row() -> Result<()> {
     for database in [false, true] {
@@ -3146,15 +3263,21 @@ fn heartbeat_completion_releases_only_its_matching_turn_without_a_cron_row() -> 
         heartbeat_run(&host, heartbeat_params())?;
         let tracked = bridge.automation_turn("heartbeat-thread").unwrap();
         ensure!(!tracked.auto_archive);
-        ensure!(!host.finish_run(
-            "heartbeat-thread",
-            &json!({"id": "other", "status": "completed"})
-        )?);
+        ensure!(
+            host.finish_run(
+                "heartbeat-thread",
+                &json!({"id": "other", "status": "completed"})
+            )?
+            .is_none()
+        );
         ensure!(bridge.automation_turn("heartbeat-thread").is_some());
-        ensure!(!host.finish_run(
-            "heartbeat-thread",
-            &json!({"id": "heartbeat-turn", "status": "completed"})
-        )?);
+        ensure!(
+            host.finish_run(
+                "heartbeat-thread",
+                &json!({"id": "heartbeat-turn", "status": "completed"})
+            )?
+            .is_none()
+        );
         ensure!(bridge.automation_turn("heartbeat-thread").is_none());
         ensure!(
             !all_requests(&log)?
@@ -3162,5 +3285,22 @@ fn heartbeat_completion_releases_only_its_matching_turn_without_a_cron_row() -> 
                 .any(|r| r["method"] == "thread/archive")
         );
     }
+    Ok(())
+}
+
+#[test]
+fn archiving_a_completed_run_removes_unread_without_marking_it_read() -> Result<()> {
+    let run = ArchiveRun::start(false, false, &[])?;
+    ensure!(run.host.finish_automation_run(&run.thread, &run.turn)? == Some(false));
+    run.db()?
+        .execute("UPDATE automations SET account_id='another-account'", [])?;
+    ensure!(!run.host.archive_automation_run(&run.thread)?);
+    ensure!(run.row()?.1 == "PENDING_REVIEW" && run.row()?.2.is_none());
+    run.db()?
+        .execute("UPDATE automations SET account_id=NULL", [])?;
+    ensure!(run.host.archive_automation_run(&run.thread)?);
+    ensure!(run.row()?.1 == "ARCHIVED" && run.row()?.2.is_none());
+    let inbox = json_body(&run.host.fetch(&Request::post("inbox-items", None))?)?;
+    ensure!(inbox["unreadRunCounts"]["total"] == 0);
     Ok(())
 }

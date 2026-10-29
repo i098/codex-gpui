@@ -246,7 +246,7 @@ This proves headless native behavior, not live installed-window acceptance.
 |---|---|---|---|---|---|
 | 1 | Home | click | Navigates to `/`; reselect resets Home. | `NewChat`: route Home, draft cleared, composer focused. | PASS (`rail_home_from_thread`, `rail_home_reselect_resets`) |
 | 2 | Space | click | Navigates to `/space`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
-| 3 | Scheduled | click | Navigates to `/scheduled` (Automations); unread dot. | `OpenScheduled`: `Route::Scheduled`, rail Scheduled selected. No unread dot (no automation runs). | PASS (`rail_scheduled`, `parity_automations`) |
+| 3 | Scheduled | click | Navigates to `/scheduled` (Automations); unread dot. | `OpenScheduled`: `Route::Scheduled`, rail Scheduled selected. Settled local unread runs set the dot; opening the run chat clears its read state. | PASS (`rail_scheduled`, `parity_automations`; native unread proof: `automation_run_now::persisted_run_unread_survives_navigation_and_clears_on_open`) |
 | 4 | Plugins | click | Navigates to `/plugins`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
 | 5 | Explore `…` | click | Opens the Explore menu; blue dot. | Dot shows; no menu. | NOT WIRED (outside v1 scope (no screen): the menu holds the secondary destinations) |
 | 6 | Code Review | click | Navigates to `/pull-requests`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
@@ -1030,7 +1030,16 @@ Success waits for a matching `turn/started` or `turn/completed` notification.
 It opens the existing thread with the Scheduled sidebar only if the original navigation location still matches.
 Missing, busy, loading, resume, and turn failures clear `Starting run…`, keep the location, and show the existing failure toast.
 An interval heartbeat recalculates its next run from the current run time and does not create a cron run row.
-Not yet carried over: the desktop notification and the unread dot on the rail.
+`Root` reads `inbox-items` on startup, after completion, after archive changes, and every minute.
+The global unread-run list drives the Scheduled dot on each route's shell.
+An explicit chat open marks that local run read; completion alone does not clear its dot.
+Archiving a completed run changes its local run status to `ARCHIVED`, without changing its saved read time.
+The completion result supplies the `failed_runs_only` policy used for both the saved read state and the desktop notice.
+`DONT_NOTIFY` suppresses a notice unless the failed-runs-only policy overrides it; a successful `SKIP_COMPLETION` stays quiet.
+Delivery preserves background focus; a notification click opens the exact run chat and dismisses its notice.
+The realtime headless `Root` proof keeps real Bridge I/O and checks the actual click target `owned`.
+It does not send an alert to the operating system or change account permissions.
+The native `automation_run_now::persisted_run_unread_survives_navigation_and_clears_on_open` proof checks persisted unread state, read-state clearing, and archive clearing.
 `automation_run_now` checks projectless metadata, project assignment, saved policy, early completion, user cancellation, and archive failures against a stdio peer.
 It also checks account isolation, recoverable restore writes, and retained worktrees.
 Its native window proof also checks pending state, duplicate suppression, success navigation, failure, Back/Forward, and navigation away.
