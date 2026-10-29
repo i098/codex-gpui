@@ -273,7 +273,7 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 | 6 | Search | click | Opens the command menu in chat-search mode. | `OpenCommandMenu`: the command menu over live Recents. | PASS (`command_menu_search_click`, `parity_sidebar`) |
 | 7 | `⌘K` | shortcut | Opens the command menu. | Same as shell row 14. | PASS (`command_menu_keys`) |
 | 8 | `Your dot` row | click | Opens the dot (orbit) thread. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `your-dot`) |
-| 9 | `Projects` section toggle | click | Collapses or expands; chevron rotates. | A header click collapses or expands the section; no chevron. | FAIL (no chevron: `crates/ui/src/lib.rs` `sidebar_section`; collapse checked by `sidebar_section_collapse`) |
+| 9 | `Projects` section toggle | click | Collapses or expands; chevron rotates. | A header click collapses or expands the section; the chevron shows on hover or while collapsed and turns -90° when collapsed (`crates/ui/src/screens/sidebar.rs`). | PASS (`sidebar_section_collapse`) |
 | 10 | `Recents` section toggle | click | Collapses or expands. | Same; a collapsed Recents row no longer opens. | PASS (`sidebar_section_collapse`) |
 | 11 | Thread row | click | Opens `/local/:conversationId`. | `OpenThread` → route Thread, `thread/read`, row selected. | PASS (`thread_row_opens_thread`) |
 | 12 | Thread row hover | hover | Row background; Archive / Pin actions appear. | The row reveals its actions. Buttons use the shared 150 ms hover transition. | PASS (`thread_row_hover`, `crates/app/tests/s001.rs`) |
@@ -287,7 +287,7 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 | 20 | Lists loading | loading | Activity: `Checking unread chats…`. | Shared `ListState` renders the priority loading message. | PASS (native loading-state captures in both themes and sizes) |
 | 21 | Load error | error | `Projects couldn't be loaded` + `Retry`; `Could not load chats`. | Keeps Home available after a failed initial list read; Retry restores the list. | PASS (`startup_chat_failure_keeps_home_available_and_retry_restores_chats`, `project_load_failure_retries_the_owned_state_file`) |
 | 22 | Sidebar drag-resize | resize | The recorded edge clamps to 290…520 px; dragging below 145 px collapses it. | The 16 px handle resizes the sidebar and main surface, retains the width on toggle, and saves it on release. | PASS (`crates/app/tests/s004.rs`, `refs/interactions/s004.json`) |
-| 23 | Resize | resize | Below 768 px the panel is hidden; it opens as an overlay. | Hidden at 767 and 600 px, shown at 1280 px; the user's choice is kept. `⌘B` opens it docked, not as an overlay. | FAIL (overlay: `crates/ui/src/lib.rs` `Shell`; hide/show checked by `resize_three_widths`) |
+| 23 | Resize | resize | Below 768 px the panel is hidden; it opens as an overlay. | Hidden at 767 and 600 px, shown at 1280 px; the user's choice is kept. `⌘B` below the breakpoint opens it as a shadowed overlay over the main surface, which does not move (`Shell::overlay`). | PASS (`resize_three_widths`) |
 
 The original `isPriorityFilterEnabled` requires feature `4039078146` and access status `allowed` or `loading`.
 The native provider reads that feature from Statsig and checks the current account's plan and workspace settings.
