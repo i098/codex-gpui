@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Stream reasoning summaries under `Thinking`, show context compaction progress and completion, add the composer context window indicator, and add the `Hide thinking` and `Show raw thinking` configuration switches.
 - Wire the Recents row context menu: Section (with custom sections and New section…), Fork chat, Copy deeplink, Copy as Markdown, Copy working directory, Open in new window, and Permanently delete with its `Delete task?` confirmation.
 - Prove that the rail `Code Review` item opens the Code Review page with a native flow test.
 - Keep refused follow-up messages in the queue tray with Retry, preserving their input, chat, draft and local row actions.
