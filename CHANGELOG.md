@@ -17,6 +17,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Keep file change cards after Undo and add Reapply through the host Git worker, without changing conversation history.
 - Add a background macOS check for minimize, zoom, hide, quit, and the 480×600 window minimum, with safe call-level checks for Hide Others and Show All.
 - Open the Sites page from the rail: the owned sites list from the ChatGPT backend `/websites`, with loading, error with Retry, and empty states.
+- Run `Code review` from the slash menu as the CLI's `/review`: review uncommitted changes, a base branch, or a commit with `review/start` on the open chat.
 - Stream reasoning summaries under `Thinking`, show context compaction progress and completion, add the composer context window indicator, and add the `Hide thinking` and `Show raw thinking` configuration switches.
 - Wire the Recents row context menu: Section (with custom sections and New section…), Fork chat, Copy deeplink, Copy as Markdown, Copy working directory, Open in new window, and Permanently delete with its `Delete task?` confirmation.
 - Prove that the rail `Code Review` item opens the Code Review page with a native flow test.
@@ -24,7 +25,6 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Start normal chats and forks in managed worktrees, retain the selected checkout, and fork selected turns with the server's history boundary.
 - Run explicit `!` shell commands in Full access chats after a native warning confirmation; keep sandboxed drafts disabled and separate from the terminal panel.
 - Add plan mode: `/plan-mode`, the `@` menu row and the footer `Plan` chip turn it on and off, turns send the `plan` collaboration mode, a resumed chat keeps it, and plan text and step progress show in the chat. Restore an edited queued message's place across every queue page.
-- Run `Code review` from the slash menu as the CLI's `/review`: review uncommitted changes, a base branch, or a commit with `review/start` on the open chat.
 - Show `Unable to send message` with the reason and `OK` when a composer submit waits for file uploads.
 - Draw the 2 px keyboard focus ring on the mobile setup buttons.
 - Draw the 2 px keyboard focus ring on the diff card's `Undo` and `View changes` buttons in a chat.
