@@ -888,7 +888,8 @@ The instructions tests use owned files and cover save, cancel, discard, load fai
 The coordinate-based instructions cases run on macOS because Linux uses the no-op text system.
 The remaining action and host tests also run on Linux.
 
-Existing profiles keep their saved route.
+A launch opens Home, like the original; saved window size, sidebar, theme, and preferences stay.
+An unfinished onboarding page is the only saved route that a launch keeps.
 A missing or unreadable window state starts at `SelectWorkspace`.
 Skip creates an unused `New project` folder under `~/Documents/ChatGPT`, registers it, then enters Home.
 Existing names get a numeric suffix; the host does not overwrite an existing project.
