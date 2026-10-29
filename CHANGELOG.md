@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Keep file change cards after Undo and add Reapply through the host Git worker, without changing conversation history.
+- Prove that the rail `Code Review` item opens the Code Review page with a native flow test.
 - Keep refused follow-up messages in the queue tray with Retry, preserving their input, chat, draft and local row actions.
 - Show `Unable to send message` with the reason and `OK` when a composer submit waits for file uploads.
 - Draw the 2 px keyboard focus ring on the diff card's `Undo` and `View changes` buttons in a chat.
