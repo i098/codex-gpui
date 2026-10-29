@@ -8,7 +8,7 @@ const w = Number(width), h = Number(height);
 if (surface === "sidebar" && state === "rest") {
   // The Home route shows the thread list, search and project groups.
   await capture("home", theme, w, h, output);
-} else if ((state === "rest" && ["home", "terminal", "diff"].includes(surface)) || (surface === "automations" && state === "empty")) {
+} else if ((state === "rest" && ["home", "terminal", "thread", "diff"].includes(surface)) || (surface === "automations" && state === "empty")) {
   await capture(surface, theme, w, h, output);
 } else if (surface === "composer" && ["rest", "typed"].includes(state)) {
   await capture(`composer-${state}`, theme, w, h, output);

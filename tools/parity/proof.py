@@ -21,7 +21,8 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[2]
 CELLS = {("home", "rest"), ("sidebar", "rest"), ("terminal", "rest"), ("settings", "configuration"),
          ("mobile", "get-started"), ("mobile", "continuation"), ("automations", "empty"),
-         ("composer", "rest"), ("composer", "typed"), ("diff", "rest")}
+         ("composer", "rest"), ("composer", "typed"),
+         ("thread", "rest"), ("diff", "rest")}
 PINS = {
     "index.html": "fbdbdbc3d10bc13ebb49e6175673c77fafbcbcdec90a7f7e147ad91950145a0b",
     "assets/index-44a69cb8b3cd.js": "bd10e3c9056f5dc7f6a9ce750d6cfb6a99343e20e9a206bef6d61d4b70df6dea",

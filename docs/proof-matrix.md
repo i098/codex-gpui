@@ -52,6 +52,7 @@ It preserves the existing route1 and Root capture clocks and fixtures.
 | `home` | `rest` | Existing route1 Home capture | `common::Fx` startup |
 | `sidebar` | `rest` | Existing route1 Home capture: the rail, thread list, search and project groups | `common::Fx` startup, as `home` |
 | `terminal` | `rest` | Existing route1 recorded command replay | The same recorded events and input sequence as `flows::open_terminal` |
+| `thread` | `rest` | Existing route1 `thread` capture: open Add a subtract | `common::Fx` startup, click Add a subtract, wait for the thread |
 | `settings` | `configuration` | Profile menu, Settings, Configuration | Settings shortcut, Configuration navigation item |
 | `mobile` | `get-started` | Profile menu, Help, Set up mobile | Profile menu, Set up mobile |
 | `mobile` | `continuation` | The same, then Get started; offline mode answers both MFA reads from `refs/interactions/mobile-mfa.json` | The same, then Get started; the fixture host answers both MFA reads from that recording |
@@ -177,3 +178,12 @@ The typed cell failed before the slash menu required a start-of-token `/`: the m
 | rest | light | 1280x832 | 0 | 0.098468% | PASS |
 | typed | dark | 1280x832 | 0 | 0.029248% | PASS |
 | typed | light | 1280x832 | 0 | 0.029248% | PASS |
+
+## Thread rest matrix
+
+The Thread view (Add a subtract, recorded fixture) passes in both themes with no native change.
+
+| Theme | Size | Outside text pixels | Inside text difference | Gate |
+|---|---|---:|---:|---|
+| dark | 1280x832 | 0 | 0.371979% | PASS |
+| light | 1280x832 | 0 | 0.371393% | PASS |

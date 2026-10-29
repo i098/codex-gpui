@@ -44,6 +44,11 @@ fn capture_cell() -> Result<()> {
             })?;
             "home"
         }
+        ("thread", "rest") => {
+            fx.click(fx.at("home", "Add a subtract")?)?;
+            fx.wait_thread(SUBTRACT)?;
+            "thread"
+        }
         ("composer", "rest") => {
             fx.wait("navigation destinations", |fx| {
                 fx.shell(|shell| shell.unread_destinations.is_some())
