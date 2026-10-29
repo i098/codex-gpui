@@ -49,6 +49,7 @@ It preserves the existing route1 and Root capture clocks and fixtures.
 | `settings` | `configuration` | Profile menu, Settings, Configuration | Settings shortcut, Configuration navigation item |
 | `mobile` | `get-started` | Profile menu, Help, Set up mobile | Profile menu, Set up mobile |
 | `mobile` | `continuation` | The same, then Get started; offline mode answers both MFA reads from `refs/interactions/mobile-mfa.json` | The same, then Get started; the fixture host answers both MFA reads from that recording |
+| `diff` | `rest` | Existing route1 Diff capture: subtract thread, View changes | Subtract row, `⌥⌘B`, then the file header collapse, as `parity_diff` |
 | `automations` | `empty` | Existing route1 Scheduled capture: the empty task list and the suggestion cards | Scheduled rail item on the recorded host reads |
 
 These are the executable adapters, not all 175 census surfaces.
@@ -58,7 +59,7 @@ Do not substitute a static screen or a prior native screenshot for a Root frame.
 
 Both themes support the normal census sizes, `1280x832` and `1440x900`.
 Home rest also accepts `767x832` and `600x832`.
-Terminal, Configuration, Mobile, and Automations reject narrow sizes until their navigation adapters support them.
+Terminal, Diff, Configuration, Mobile, and Automations reject narrow sizes until their navigation adapters support them.
 Each frame uses the same CSS size and native device scale 2.
 The narrow sizes have no separate waiver for a failing gate.
 
@@ -137,3 +138,12 @@ All eight Home rest cells pass at the source that added the narrow layout.
 | light | 1440x900 | 0 | 0.098468% | PASS |
 | light | 767x832 | 0 | 0.108467% | PASS |
 | light | 600x832 | 0 | 0.214410% | PASS |
+
+## Diff rest matrix
+
+The Diff cell opens the subtract thread's Changes panel and collapses the file, as the original capture shows.
+
+| Theme | Size | Outside text pixels | Inside text difference | Gate |
+|---|---|---:|---:|---|
+| dark | 1280x832 | 0 | 0.243795% | PASS |
+| light | 1280x832 | 0 | 0.175053% | PASS |
