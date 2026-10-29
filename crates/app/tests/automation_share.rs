@@ -5,13 +5,17 @@ use app::Root;
 #[test]
 fn link_is_the_originals_scheduled_url_with_the_id_encoded() -> Result<()> {
     ensure!(
-        Root::automation_link("0197-abc")
+        Root::automation_link("0197-abc", "local")
             == "https://chatgpt.com/scheduled?automationId=0197-abc&automationSource=local"
     );
-    let odd = Root::automation_link("a b&c=d/é");
+    let odd = Root::automation_link("a b&c=d/é", "local");
     ensure!(
         odd == "https://chatgpt.com/scheduled?automationId=a+b%26c%3Dd%2F%C3%A9&automationSource=local",
         "{odd}"
+    );
+    ensure!(
+        Root::automation_link("same-id", "cloud")
+            == "https://chatgpt.com/scheduled?automationId=same-id&automationSource=cloud"
     );
     Ok(())
 }

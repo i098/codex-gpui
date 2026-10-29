@@ -463,6 +463,9 @@ pub struct Root {
     picking_project: bool,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
+    automation_source: &'static str,
+    pending_automation_edit: Option<String>,
+    pending_link_connection: Option<gpui::Subscription>,
     /// The local tasks' shared previous-run history (`inbox-items`).
     automation_runs: Vec<automations::Run>,
     /// Tasks whose `automation-run-now` request has not answered.
@@ -844,6 +847,9 @@ impl Root {
             host_id,
             automations: None,
             automation_load: None,
+            automation_source: "local",
+            pending_automation_edit: None,
+            pending_link_connection: None,
             automation_runs: Vec::new(),
             running_automations: HashSet::new(),
             project_load: None,
@@ -2121,18 +2127,23 @@ impl Root {
 
     fn load_automations(&mut self, cx: &mut Context<Self>) {
         let host = self.host.clone();
+        let request = self.automation_request("list-automations", None);
+        let cloud = self.automation_source == "cloud";
         let read = cx.background_spawn(async move {
             let list = host
-                .fetch(&host::Request::post("list-automations", None))
+                .fetch(&request)
                 .and_then(|response| host::json_body(&response))
                 .map_err(|error| error.to_string());
             // shortcut: an unreadable run history lists no runs; the original's `Couldn't load
             // runs` row needs its own state when a host reports that error.
-            let runs = host
-                .fetch(&host::Request::post("inbox-items", None))
-                .and_then(|response| host::json_body(&response))
-                .map(|inbox| automations::runs(&inbox))
-                .unwrap_or_default();
+            let runs = if cloud {
+                Vec::new()
+            } else {
+                host.fetch(&host::Request::post("inbox-items", None))
+                    .and_then(|response| host::json_body(&response))
+                    .map(|inbox| automations::runs(&inbox))
+                    .unwrap_or_default()
+            };
             (list, runs)
         });
         let window = self.context_window;
@@ -2167,9 +2178,25 @@ impl Root {
                     rebuild
                 })
                 .unwrap_or(false);
-            if rebuild {
+            let edit = this
+                .update(cx, |this, _| {
+                    this.pending_automation_edit.take().filter(|id| {
+                        this.state.route == Route::Automation(id.clone())
+                            && this.automations.as_ref().is_some_and(Result::is_ok)
+                    })
+                })
+                .ok()
+                .flatten();
+            if rebuild || edit.is_some() {
                 cx.update_window(window, |_, window, cx| {
-                    this.update(cx, |this, cx| this.sync(window, cx))
+                    this.update(cx, |this, cx| {
+                        if rebuild {
+                            this.sync(window, cx);
+                        }
+                        if let Some(id) = edit {
+                            this.edit_automation(Some(id), window, cx);
+                        }
+                    })
                 })
                 .ok();
             }
@@ -2201,6 +2228,12 @@ impl Root {
             _ => return,
         };
         let body = automation_update_body(item, status);
+        let endpoint = if self.automation_source == "cloud" {
+            "automation-set-status"
+        } else {
+            "automation-update"
+        };
+        let request = self.automation_request(endpoint, Some(body));
         let id = id.to_owned();
         self.automation_load = None;
         if let Some(sidebar) = &self.scheduled {
@@ -2209,7 +2242,7 @@ impl Root {
         let host = self.host.clone();
         let expected_id = id.clone();
         let read = cx.background_spawn(async move {
-            let response = host.fetch(&host::Request::post("automation-update", Some(body)))?;
+            let response = host.fetch(&request)?;
             let response = host::json_body(&response)?;
             let item = response
                 .get("item")
@@ -2351,7 +2384,15 @@ impl Root {
         let bridge = self.bridge.clone();
         let task_id = id.clone();
         let target_id = target.clone();
+        let cloud_request = (self.automation_source == "cloud")
+            .then(|| self.automation_request("automation-run-now", Some(json!({"id": id}))));
+        let source = self.automation_source;
         let run = cx.background_spawn(async move {
+            if let Some(request) = cloud_request {
+                return host
+                    .fetch(&request)
+                    .and_then(|response| host::json_body(&response));
+            }
             let params = if let Some(thread) = target_id {
                 pollster::block_on(host::run_now::heartbeat::request_params(
                     &bridge, &task_id, &thread, settings,
@@ -2365,6 +2406,9 @@ impl Root {
         cx.spawn_in(window, async move |this, cx| {
             let result = run.await;
             this.update_in(cx, |this, window, cx| {
+                if this.automation_source != source {
+                    return;
+                }
                 this.running_automations.remove(&id);
                 this.sync_starting(cx);
                 let title = "Could not start scheduled task";
@@ -2824,6 +2868,7 @@ impl Root {
         let Some(dialog) = self.dialog.clone() else {
             return;
         };
+        self.set_automation_source("local");
         let host = self.host.clone();
         let name: String = prompt
             .lines()
@@ -2884,6 +2929,9 @@ impl Root {
     ) {
         if self.has_dialog() {
             return;
+        }
+        if item.is_none() || origin.is_some() {
+            self.set_automation_source("local");
         }
         let editor = cx.new(|cx| automations::editor::Editor::new(item.as_ref(), cx));
         editor.update(cx, |editor, cx| {
@@ -2948,9 +2996,10 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         let host = self.host.clone();
+        let request = self.automation_request(endpoint, Some(body));
+        let source = self.automation_source;
         let write = cx.background_spawn(async move {
-            let response =
-                host::json_body(&host.fetch(&host::Request::post(endpoint, Some(body)))?)?;
+            let response = host::json_body(&host.fetch(&request)?)?;
             serde_json::from_value::<automations::Task>(response["item"].clone())?;
             Ok::<_, anyhow::Error>(response["item"].clone())
         });
@@ -2958,7 +3007,9 @@ impl Root {
         cx.spawn_in(window, async move |this, cx| {
             let result = write.await;
             this.update_in(cx, |this, window, cx| {
-                if this.automation_editor.as_ref() != Some(&editor) {
+                if this.automation_source != source
+                    || this.automation_editor.as_ref() != Some(&editor)
+                {
                     return;
                 }
                 match result {
@@ -3034,13 +3085,18 @@ impl Root {
     fn delete_task(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         let host = self.host.clone();
         let params = json!({"id": id});
+        let request = self.automation_request("automation-delete", Some(params));
+        let source = self.automation_source;
         let write = cx.background_spawn(async move {
-            host.fetch(&host::Request::post("automation-delete", Some(params)))
+            host.fetch(&request)
                 .and_then(|response| host::json_body(&response))
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = write.await;
             this.update_in(cx, |this, window, cx| {
+                if this.automation_source != source {
+                    return;
+                }
                 this.dialog = None;
                 match result {
                     Ok(body) if body["success"] == true => this.task_deleted(&id, window, cx),

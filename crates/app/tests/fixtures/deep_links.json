@@ -1,0 +1,392 @@
+[
+  {
+    "url": "codex://threads/new",
+    "result": {
+      "kind": "newThread"
+    }
+  },
+  {
+    "url": "codex://new",
+    "result": null
+  },
+  {
+    "url": "codex:/settings",
+    "result": null
+  },
+  {
+    "url": "codex:settings",
+    "result": null
+  },
+  {
+    "url": "CODEX://settings",
+    "result": {
+      "kind": "settings"
+    }
+  },
+  {
+    "url": "codex://SETTINGS",
+    "result": null
+  },
+  {
+    "url": "codex://user@threads/00000000-0000-4000-8000-000000000001",
+    "result": null
+  },
+  {
+    "url": "codex://threads:80/00000000-0000-4000-8000-000000000001",
+    "result": null
+  },
+  {
+    "url": "codex://threads/00000000-0000-4000-8000-000000000001",
+    "result": {
+      "kind": "localConversation",
+      "conversationId": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  {
+    "url": "codex://threads/00000000-0000-4000-8000-000000000001/review",
+    "result": {
+      "kind": "localConversation",
+      "conversationId": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  {
+    "url": "codex://threads/00000000-0000-4000-8000-000000000001?hostId=ssh%3Adev&threadAccess=shared",
+    "result": {
+      "kind": "localConversation",
+      "conversationId": "00000000-0000-4000-8000-000000000001",
+      "hostId": "ssh:dev",
+      "threadAccess": "shared"
+    }
+  },
+  {
+    "url": "codex://threads/00000000-0000-4000-8000-000000000001?threadAccess=private",
+    "result": null
+  },
+  {
+    "url": "codex://threads/00000000-0000-4000-8000-000000000001?hostId=",
+    "result": {
+      "kind": "localConversation",
+      "conversationId": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  {
+    "url": "codex://threads/00000000-0000-4000-8000-000000000001?prompt=%20hello%20",
+    "result": {
+      "kind": "localConversation",
+      "conversationId": "00000000-0000-4000-8000-000000000001",
+      "prompt": " hello "
+    }
+  },
+  {
+    "url": "codex://threads/00000000-0000-4000-8000-000000000001?prompt=%FF",
+    "result": {
+      "kind": "localConversation",
+      "conversationId": "00000000-0000-4000-8000-000000000001",
+      "prompt": "\ufffd"
+    }
+  },
+  {
+    "url": "codex://threads/00000000-0000-4000-8000-000000000001?browserUrl=https%3A%2F%2Fexample.com",
+    "result": {
+      "kind": "localConversation",
+      "conversationId": "00000000-0000-4000-8000-000000000001",
+      "browserUrl": "https://example.com"
+    }
+  },
+  {
+    "url": "codex://threads/00000000-0000-4000-8000-000000000001?browserTabId=tab",
+    "result": null
+  },
+  {
+    "url": "codex://threads/00000000-0000-4000-8000-000000000001?browserActive=true",
+    "result": null
+  },
+  {
+    "url": "codex://threads/00000000-0000-4000-8000-000000000001?browserUrl=http%3A%2F%2Fexample.com&browserTabId=t&browserActive=true",
+    "result": {
+      "kind": "localConversation",
+      "conversationId": "00000000-0000-4000-8000-000000000001",
+      "browserUrl": "http://example.com",
+      "browserTabId": "t",
+      "browserActive": true
+    }
+  },
+  {
+    "url": "codex://threads/new?projectId=demo",
+    "result": {
+      "kind": "newThread"
+    }
+  },
+  {
+    "url": "codex://threads/new?prompt=hello&projectId=demo",
+    "result": {
+      "kind": "newThread",
+      "originUrl": null,
+      "path": null,
+      "projectId": "demo",
+      "prompt": "hello"
+    }
+  },
+  {
+    "url": "codex://threads/new?path=%2Fwork",
+    "result": {
+      "kind": "newThread",
+      "originUrl": null,
+      "path": "/work"
+    }
+  },
+  {
+    "url": "codex://threads/new?path=C%3A%5Cwork",
+    "result": {
+      "kind": "newThread",
+      "originUrl": null,
+      "path": "C:\\work"
+    }
+  },
+  {
+    "url": "codex://threads/new?path=relative",
+    "result": {
+      "kind": "newThread",
+      "originUrl": null,
+      "path": "relative"
+    }
+  },
+  {
+    "url": "codex://threads/new?originUrl=not-a-url",
+    "result": {
+      "kind": "newThread",
+      "originUrl": "not-a-url",
+      "path": null
+    }
+  },
+  {
+    "url": "codex://threads/new?mode=chat",
+    "result": {
+      "codexAppMode": "chat",
+      "kind": "newThread",
+      "originUrl": null,
+      "path": null
+    }
+  },
+  {
+    "url": "codex://threads/new?mode=agent",
+    "result": null
+  },
+  {
+    "url": "codex://threads/new?mode=code",
+    "result": null
+  },
+  {
+    "url": "codex://threads/new?mode=bad",
+    "result": null
+  },
+  {
+    "url": "codex://threads/new?mode=chat&mode=chat",
+    "result": null
+  },
+  {
+    "url": "codex://threads/new?prompt=%20",
+    "result": null
+  },
+  {
+    "url": "codex://threads/new?prompt=a+b",
+    "result": {
+      "kind": "newThread",
+      "originUrl": null,
+      "path": null,
+      "prompt": "a b"
+    }
+  },
+  {
+    "url": "codex://threads/new?prompt=a%2Bb",
+    "result": {
+      "kind": "newThread",
+      "originUrl": null,
+      "path": null,
+      "prompt": "a+b"
+    }
+  },
+  {
+    "url": "codex://new?projectId=demo",
+    "result": {
+      "kind": "newThread",
+      "originUrl": null,
+      "path": null,
+      "projectId": "demo"
+    }
+  },
+  {
+    "url": "codex://new?path=%2Fwork",
+    "result": {
+      "kind": "newThread",
+      "originUrl": null,
+      "path": "/work"
+    }
+  },
+  {
+    "url": "codex://new?prompt=hello&projectId=p%2Fq",
+    "result": {
+      "kind": "newThread",
+      "originUrl": null,
+      "path": null,
+      "projectId": "p/q",
+      "prompt": "hello"
+    }
+  },
+  {
+    "url": "codex://settings/general",
+    "result": {
+      "kind": "settings"
+    }
+  },
+  {
+    "url": "codex://settings/browser-use",
+    "result": {
+      "kind": "settings",
+      "section": "browser-use"
+    }
+  },
+  {
+    "url": "codex://settings/connections",
+    "result": {
+      "kind": "settings",
+      "section": "connections"
+    }
+  },
+  {
+    "url": "codex://settings/connections/devices",
+    "result": {
+      "kind": "settings",
+      "section": "connections/devices"
+    }
+  },
+  {
+    "url": "codex://settings/connections/ssh",
+    "result": {
+      "kind": "settings",
+      "section": "connections/ssh"
+    }
+  },
+  {
+    "url": "codex://settings/connections/ssh/add",
+    "result": {
+      "kind": "settings",
+      "section": "connections/ssh"
+    }
+  },
+  {
+    "url": "codex://settings/connections/ssh/add?name=dev",
+    "result": {
+      "kind": "settings",
+      "section": "connections/ssh/add",
+      "search": "?name=dev"
+    }
+  },
+  {
+    "url": "codex://settings/connections/ssh/add?alias=dev&projectPath=%2Fwork&enabled=true",
+    "result": {
+      "kind": "settings",
+      "section": "connections/ssh/add",
+      "search": "?name=dev&projectPath=%2Fwork&enabled=true"
+    }
+  },
+  {
+    "url": "codex://settings/connections/ssh/add?name=a&alias=b",
+    "result": {
+      "kind": "settings",
+      "section": "connections/ssh"
+    }
+  },
+  {
+    "url": "codex://settings/connections/ssh/add?name=dev&extra=1",
+    "result": {
+      "kind": "settings",
+      "section": "connections/ssh"
+    }
+  },
+  {
+    "url": "codex://automations",
+    "result": {
+      "kind": "automations"
+    }
+  },
+  {
+    "url": "codex://automations?automationId=x",
+    "result": {
+      "kind": "automations"
+    }
+  },
+  {
+    "url": "codex://automations/task",
+    "result": {
+      "kind": "automation",
+      "automationId": "task",
+      "automationSource": "cloud",
+      "edit": false
+    }
+  },
+  {
+    "url": "codex://automations/task?automationSource=local",
+    "result": {
+      "kind": "automation",
+      "automationId": "task",
+      "automationSource": "local",
+      "edit": false
+    }
+  },
+  {
+    "url": "codex://automations/task?automationSource=cloud&edit=true",
+    "result": {
+      "kind": "automation",
+      "automationId": "task",
+      "automationSource": "cloud",
+      "edit": true
+    }
+  },
+  {
+    "url": "codex://automations/task?automationSource=bad",
+    "result": null
+  },
+  {
+    "url": "codex://automations/task?edit=1",
+    "result": {
+      "kind": "automation",
+      "automationId": "task",
+      "automationSource": "cloud",
+      "edit": false
+    }
+  },
+  {
+    "url": "codex://automations/a%2Fb?edit=true",
+    "result": {
+      "kind": "automation",
+      "automationId": "a/b",
+      "automationSource": "cloud",
+      "edit": true
+    }
+  },
+  {
+    "url": "codex://automations/task/extra",
+    "result": null
+  },
+  {
+    "url": "codex://connector/oauth_callback?state=s&code=c",
+    "result": {
+      "kind": "connectorOAuthCallback",
+      "fullRedirectUrl": "codex://connector/oauth_callback?state=s&code=c",
+      "returnTo": null
+    }
+  },
+  {
+    "url": "codex://connector/oauth_callback?returnTo=%2Fsettings",
+    "result": {
+      "kind": "connectorOAuthCallback",
+      "fullRedirectUrl": "codex://connector/oauth_callback?returnTo=%2Fsettings",
+      "returnTo": "/settings"
+    }
+  },
+  {
+    "url": "codex://connector/bad?state=s",
+    "result": null
+  }
+]
