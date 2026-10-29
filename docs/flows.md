@@ -278,7 +278,7 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 | 10 | `Recents` section toggle | click | Collapses or expands. | Same; a collapsed Recents row no longer opens. | PASS (`sidebar_section_collapse`) |
 | 11 | Thread row | click | Opens `/local/:conversationId`. | `OpenThread` → route Thread, `thread/read`, row selected. | PASS (`thread_row_opens_thread`) |
 | 12 | Thread row hover | hover | Row background; Archive / Pin actions appear. | The row reveals its actions. Buttons use the shared 150 ms hover transition. | PASS (`thread_row_hover`, `crates/app/tests/s001.rs`) |
-| 13 | Thread row context menu | click | Pin, Rename, Archive, Mark as unread, Open in new window, Delete. | Archive removes the row without opening the chat. Pin and Unpin move the chat into or out of `Pinned` through `thread/section/move`, with no toast; a refused move puts the row back silently. The Unpin icon hides at rest like Pin and Archive. | FAIL (the context menu remains unwired; Archive and Unpin: `crates/app/tests/s001.rs`; Pin: `crates/app/tests/s001b.rs`) |
+| 13 | Thread row context menu | click | Pin, Rename, Archive, Mark as unread, Open in new window, Delete. | Archive removes the row without opening the chat. Pin and Unpin move the chat into or out of `Pinned` through `thread/section/move`, with no toast; a refused move puts the row back silently. The Unpin icon hides at rest like Pin and Archive. | PASS (`thread_row_menu`, `s002`; Archive and Unpin: `crates/app/tests/s001.rs`; Pin: `crates/app/tests/s001b.rs`; Share closes the menu only: the port has no shared-snapshot client) |
 | 14 | `⌘1`…`⌘9` | shortcut | Go to chat N. | Opens Recents row N; `⌘9` past the end does nothing. | PASS (`cmd_digit_goes_to_chat`) |
 | 15 | `⌘⇧[` / `⌘⇧]` | shortcut | Previous / next chat. | Previous / next Recents row. | PASS (`previous_next_chat`, `menu_bar_actions`) |
 | 16 | `⌘⇧S` / `⌘B` | shortcut | Toggle sidebar. | Toggles. | PASS (`sidebar_toggle_keys`) |
@@ -488,13 +488,14 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 | 6a | `/` then Enter on `Compact`, `Rename`, `Pin chat`, `Fork chat`, `Model`, `Reasoning`, `Work in a project` | shortcut | Runs the chat action (CP-058 to CP-063, CP-068, CP-069). | `Compact`: `thread/compact/start` (resumes the chat first), toast `Compact is disabled while a chat is in progress` while a turn runs, `Failed to compact chat` on error. `Rename`: the `Rename chat` dialog; closing it focuses the composer. `Pin chat`: `thread/section/move`, toggles. `Fork chat`, `Model`, `Reasoning`, `Work in a project`: Enter turns the token into `/id ` and opens a submenu filtered by the text after it; Backspace over the space returns to the list, Escape leaves the text, a pick removes token and query, keeps the rest of the draft, and acts (`thread/fork` in the same workspace with `Failed to fork chat` on error, `config/batchWrite`, the existing-project selection for new chats). Not wired: `Fork chat in new worktree`, the submenu's `Search` input row, the usage text on `Compact`, and the other commands. | PASS (`slash_commands`) |
 | 7 | Paste large text | click | `Pasted text.txt` chip. | Clipboard text of 5,000 UTF-16 units or more is saved as `Pasted text.txt` and shown as a chip. | PASS (`attach::tests::pasted_text_keeps_its_host_after_another_window_becomes_active`) |
 | 8 | Drag file over composer | hover | `Drop to attach`. | A file dragged over the page column shows the `Drop to attach` overlay and the drag-active card; it clears when the file leaves, and a drop attaches the files. | PASS (`s017b::file_drag_over_the_composer_matches_the_original`, macOS) |
+| 8a | Selected-host image attachment | action | CLI image input uses a path on the selected host. | Read image previews through that window's `fs/readFile`. Save pasted images with `fs/createDirectory` and `fs/writeFile` under its reported Codex home. Send host paths as `turn/start` `localImage` inputs. Other active windows cannot redirect these requests. A missing image blocks Send and keeps the draft. | PASS (`host_images`, native live app-server 0.164.0-alpha.11.1: `Red`) |
 | 9 | Attachment chip remove | click | Removes the attachment. | The chip's `×` removes that attachment only. | PASS (`attach::tests::upload_states_and_chip_remove`) |
 | 10 | Model picker | click | `Select model`, `Select effort`, Fast. | Opens; a model or effort choice writes `model` and `model_reasoning_effort` with `config/batchWrite` (the original's `writeModel`); parity: see `parity_composer`. | PASS (`model_picker_popover`, `effort_pick_writes_config`, `parity_composer`) |
 | 11 | Permissions dropdown | click | Ask / Approve for me / Full access / Custom. | Opens. | PASS (`permissions_popover`) |
 | 12 | Submit while running | click | Stop; with text Queue or Steer. | Stop interrupts the active turn. Queue adds a server-owned submission; Steer sends input into the active turn. | PASS (`s023`, `s023b`) |
 | 13 | Stop | click | `turn/interrupt`. | Sends the active thread and turn IDs; completion removes Stop. Errors show `Failed to stop chat`. | PASS (`s023::stop_interrupts_only_the_active_turn`) |
 | 14 | Queued message row | click | Steer, Edit, Delete, Retry. | Steer sends the selected submission once. Delete removes it; Cmd+Z restores its text, identity, order, and chat location. The `…` menu (`Queued message actions`) holds `Edit message`, `Open in side chat` and `Turn off queueing` / `Turn on queueing`. `Edit message` sends `thread/queue/delete`, then moves the exact text and local images back to the composer (a draft already there stays below it; remote images, audio, skills and mentions wait in the app and go out with the next send). Sending queues it again (`thread/queue/add`) and `thread/queue/reorder` puts it before the row that followed it, else after the one before it. If the server already took the submission, only the tray refreshes. `Open in side chat` sends `thread/queue/delete`, then `thread/fork` (`ephemeral`, `excludeTurns`, the original's side-conversation developer instructions) and `thread/inject_items` (the boundary message), and starts the fork's first turn with the queued input (`turn/start`, `turnTrigger: queued_side_chat`, same `clientUserMessageId`). The fork opens as a selected side panel tab, titled with the message, with its own transcript and focused composer; the chat and its draft stay. Each conversation takes only its own thread's notifications, queue, approvals and `Stop`; a side chat's Delete has no Cmd+Z undo. Closing the tab interrupts a running side turn and sends `thread/unsubscribe` for the fork only. A failed fork, injection or first turn closes the tab, queues the message again in its old place (`thread/queue/add`, `thread/queue/reorder`) and toasts `Failed to open side chat`. The item is hidden for a chat archived in this session. The queueing item writes `desktop.followUpQueueMode`, so the next submit queues or steers; a refused write toasts `Couldn’t save your changes. Try again` and keeps the label of the behavior that applies. A refused follow-up stays in its chat's tray with Retry. Retry preserves the exact input and client message ID, leaves the current draft alone, and uses the current queueing mode or starts a new turn if the old turn ended. Local failed rows support Edit, Delete, undo and side chat without deleting a server row. | PASS (`s023b::failed_follow_up_retries_without_changing_the_draft`, `s023b::failed_follow_up_retries_as_a_new_turn_after_completion`, `s023b::failed_follow_up_delete_undo_and_edit_stay_local`; CP-113/114 in `s023b`; CP-115 and retry input preservation in `queue_options`) |
-| 15 | Submit blocked | error | `Unable to send message`. | A submit while a paste saves opens `Unable to send message` with the reason (`Files uploading…`) and one `OK` button, and keeps the draft. `OK` or Escape closes it and focuses the composer. The dialog stays open if the upload ends first. | PASS (`composer::tests::submit_blocked_by_uploads_shows_unable_to_send_message`) |
+| 15 | Submit blocked | error | `Unable to send message`. | A pending or failed upload opens `Unable to send message` with its reason and one `OK` button, and keeps the draft. `OK` or Escape closes it and focuses the composer. The dialog stays open if the upload ends first. | PASS (`composer::tests::submit_blocked_by_uploads_shows_unable_to_send_message`) |
 | 16 | Upload in progress | loading | `Files uploading…`. | The line shows above the editor while a paste saves; a submit opens the row 15 dialog. | PASS (`attach::tests::upload_states_and_chip_remove`) |
 | 17 | Upload failure | error | `Unable to upload file`. | The line shows when a paste fails to save; the next paste clears it. | PASS (`attach::tests::upload_states_and_chip_remove`) |
 | 18 | Button hover | hover | Ghost hover; tooltip after a delay. | Hover fill. The `+` tooltip includes the `@` hint and matches its original bounds. | PARTIAL (`+`: `s018::add_tooltip_replay`; other composer tooltips remain absent) |
@@ -1637,6 +1638,13 @@ A failed undo retains its entry for another attempt.
 Clear all unreads uses a confirmation dialog and saves the optional confirmation preference.
 
 The interactive terminal keeps its real PTY process when the bottom panel hides.
+Chat drafts that begin with `!` run through `thread/shellCommand` after a native warning confirmation.
+This method runs outside the sandbox, so only Full access chats enable it.
+Other permission modes show the reason and keep the draft.
+Home, cloud-task, and message-edit composers keep `!` as ordinary text.
+Cancel keeps the draft; an RPC failure restores it.
+Shell output and exit status use the existing command-execution transcript, not the native PTY panel.
+The `chat_shell` flow covers permission denial, cancellation, shell syntax, and RPC failure.
 UI zoom keeps layout, painting, pointer input, and IME bounds in the same coordinate system.
 The zoom banner waits two seconds and remains visible while the pointer is over it.
 Reopening a saved window restores its zoom.
@@ -1646,3 +1654,29 @@ Original-versus-native visual approval remains separate from the Linux functiona
 Native checks cover reset confirmation, number/link menus, and modifier-only capture in `keyboard_shortcuts`.
 The `project_picker` scenario checks folder selection, cancellation, and the directory used by new chats.
 The `shortcut_actions` checks cover attention navigation, undo/redo, unread confirmation, and live terminal retention.
+
+## Feedback, transcript export, and recap (S13)
+
+`/feedback` opens a native form without sending anything.
+`Send feedback` calls `feedback/upload`; `Save ZIP` calls `feedback/save`.
+Both use the connected app-server and the current thread ID, when available.
+Diagnostic logs require explicit selection.
+Saving requires an unused absolute `.zip` path on the app-server host, not the client host.
+A server refusal keeps the form and its input.
+Cancel closes the form during a pending request without canceling the server request.
+Late responses do not close a newer form or move keyboard focus.
+
+`/export` reads the complete thread with `thread/read` and `includeTurns: true`.
+The native save picker selects a local Markdown file.
+The export preserves messages, attachments, activity items, and errors.
+It refuses to overwrite an existing file.
+`/recap` starts a normal `turn/start` on the current thread after any required resume.
+It keeps the existing history, model permissions, and composer draft.
+It refuses to run while another turn is active and does not call compaction.
+The recap prompt asks the model not to use tools; the existing permissions remain in force.
+
+`crates/app/tests/feedback.rs` covers the native actions, consent, server paths, and file safety.
+Live protocol evidence uses Codex CLI `0.164.0-alpha.11.1`.
+The synthetic conversation retained both turns after the recap.
+The real server accepted `feedback/save` and `feedback/upload` with logs excluded.
+

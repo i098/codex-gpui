@@ -399,6 +399,8 @@ pub struct Root {
     recent_chats: Vec<String>,
     shortcut_state: features::shortcuts::ShortcutState,
     new_chat_section: Option<String>,
+    /// The row whose menu's `New section…` opened the section dialog: it moves into the new section.
+    new_section_thread: Option<String>,
     threads_loaded: bool,
     /// `thread/list` cursor of the page after `threads`, while the sidebar's end asks for it.
     next_cursor: Option<String>,
@@ -463,6 +465,7 @@ pub struct Root {
     command_menu: Option<Entity<CommandMenu>>,
     popout: Option<hotkey::Popout>,
     dialog: Option<Entity<Dialog>>,
+    feedback: Option<Entity<features::feedback::Feedback>>,
     diff_confirmation: Option<Entity<ui::confirmation::Confirmation>>,
     automation_editor: Option<Entity<automations::editor::Editor>>,
     new_project: Option<Entity<ui::screens::new_project::Dialog>>,
@@ -699,6 +702,9 @@ impl Root {
                         }
                     }
                     ui::composer::SlashCommand::Compact => this.compact(window, cx),
+                    ui::composer::SlashCommand::Feedback => this.open_feedback(window, cx),
+                    ui::composer::SlashCommand::Export => this.export_transcript(window, cx),
+                    ui::composer::SlashCommand::Recap => this.recap(window, cx),
                     ui::composer::SlashCommand::Fork => this.fork_chat(0, window, cx),
                     ui::composer::SlashCommand::Rename => {
                         if let Route::Thread(id) = this.state.route.clone() {
@@ -835,6 +841,7 @@ impl Root {
             recent_chats: Vec::new(),
             shortcut_state: features::shortcuts::ShortcutState::default(),
             new_chat_section: None,
+            new_section_thread: None,
             threads_loaded: false,
             next_cursor: None,
             loading_more: false,
@@ -885,6 +892,7 @@ impl Root {
             command_menu: None,
             popout: None,
             dialog: None,
+            feedback: None,
             diff_confirmation: None,
             automation_editor: None,
             new_project: None,
@@ -4135,6 +4143,10 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         self.qa_work_started = true;
+        if s.shell_command {
+            self.send_shell(side, s, window, cx);
+            return;
+        }
         let Some((view, composer)) = self.conversation(side) else {
             return;
         };
@@ -5048,6 +5060,17 @@ impl Root {
     fn fork_chat(&mut self, later: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(view) = &self.thread else { return };
         let id = view.read(cx).id().to_owned();
+        self.fork_thread(id, later, window, cx);
+    }
+
+    /// [`Self::fork_chat`] of any thread (its id): a row menu's `Fork`.
+    pub(crate) fn fork_thread(
+        &mut self,
+        id: String,
+        later: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let bridge = self.bridge.clone();
         let computer_use = computer_use_overrides(&self.config);
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
@@ -5144,24 +5167,39 @@ impl Root {
         &mut self,
         id: String,
         pinned: bool,
-        window: &mut Window,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_to_section(id, pinned.then(|| PINNED_SECTION_ID.to_owned()), cx);
+    }
+
+    /// `thread/section/move` of the thread into `section` (`None`: out of any section), the
+    /// same way as [`Self::set_pinned`].
+    pub(crate) fn move_to_section(
+        &mut self,
+        id: String,
+        section: Option<String>,
         cx: &mut Context<Self>,
     ) {
         let Some(thread) = self.threads.iter_mut().find(|thread| thread.id == id) else {
             return;
         };
-        let section = pinned.then(|| ThreadSection {
-            id: PINNED_SECTION_ID.to_owned(),
+        let new_section = section.clone().map(|id| ThreadSection { id });
+        let old_section = std::mem::replace(&mut thread.section, new_section);
+        let old_custom = self.sidebar.read(cx).thread_custom_section(&id);
+        self.sidebar.update(cx, |s, cx| {
+            s.remove_section_thread(&id, cx);
+            if let Some(section) = &section {
+                s.assign_section(&id, section, cx);
+            }
+            s.set_threads(&self.threads, cx)
         });
-        let old_section = std::mem::replace(&mut thread.section, section);
-        self.sidebar
-            .update(cx, |s, cx| s.set_threads(&self.threads, cx));
         let bridge = self.bridge.clone();
-        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
             let done = bridge
                 .request::<_, Value>(
                     "thread/section/move",
-                    json!({ "threadId": id, "sectionId": pinned.then_some(PINNED_SECTION_ID), "beforeThreadId": null }),
+                    json!({ "threadId": id, "sectionId": section, "beforeThreadId": null }),
                 )
                 .await;
             this.update(cx, |this, cx| {
@@ -5169,13 +5207,21 @@ impl Root {
                     if let Some(thread) = this.threads.iter_mut().find(|thread| thread.id == id) {
                         thread.section = old_section;
                     }
-                    this.sidebar
-                        .update(cx, |s, cx| s.set_threads(&this.threads, cx));
+                    this.sidebar.update(cx, |s, cx| {
+                        s.remove_section_thread(&id, cx);
+                        if let Some(old) = &old_custom {
+                            s.assign_section(&id, old, cx);
+                        }
+                        s.set_threads(&this.threads, cx)
+                    });
                 } else {
-                    let before = old_section.map(|section| section.id);
-                    let after = pinned.then(|| PINNED_SECTION_ID.to_owned());
-                    if before != after {
-                        this.record_app_edit(features::shortcuts::AppEdit::Section { id: id.clone(), before, after });
+                    let before = old_section.map(|section| section.id).or(old_custom);
+                    if before != section {
+                        this.record_app_edit(features::shortcuts::AppEdit::Section {
+                            id: id.clone(),
+                            before,
+                            after: section,
+                        });
                     }
                 }
             })?;
@@ -6754,6 +6800,7 @@ Do not modify files, source, git state, permissions, configuration, or workspace
 /// The handlers of a thread composer: the open chat's (`side: None`) or side chat `side`'s.
 /// Both pickers write the user's `config.toml`, like the original's `writeModel`.
 fn wire_thread_composer(composer: &mut Composer, this: WeakEntity<Root>, side: Option<usize>) {
+    composer.enable_shell_commands();
     let (model, send) = (this.clone(), this.clone());
     composer.on_model(move |m, effort, cx| {
         model
@@ -7684,6 +7731,7 @@ impl Render for Root {
             .children(self.shortcut_state.zoom_banner.clone())
             .children(self.automation_editor.clone())
             .children(self.new_project.clone())
+            .children(self.feedback.clone())
             .children(self.diff_confirmation.clone())
             .children(
                 self.archived_settings

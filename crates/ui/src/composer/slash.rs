@@ -1,5 +1,5 @@
 //! Slash completion keeps keyboard focus in the editor and preserves text outside the command token.
-//! Fast, Archive, New chat, Usage, Compact, Rename, and Pin chat use existing app handlers.
+//! Fast, Archive, New chat, Usage, Compact, Rename, Pin chat, Feedback, Export, and Recap run app handlers.
 //! Model, Reasoning, Fork chat, and Work in a project open a submenu. It replaces the token with
 //! `/id ` and filters on the text typed after it; Backspace over the space returns to the list,
 //! Escape closes it, and only a pick removes the token and its query and acts.
@@ -19,6 +19,9 @@ pub enum SlashCommand {
     Rename,
     Pin,
     Fork,
+    Feedback,
+    Export,
+    Recap,
 }
 
 impl gpui::EventEmitter<SlashCommand> for Composer {}
@@ -65,6 +68,20 @@ const COMMANDS: &[Command] = &[
         title: "Feedback",
         description: "Send feedback about this chat",
         icon: "sidebar-cmd-feedback",
+        requires_empty: false,
+    },
+    Command {
+        id: "export",
+        title: "Export",
+        description: "Export this conversation as Markdown",
+        icon: "sidebar-cmd-create-page",
+        requires_empty: false,
+    },
+    Command {
+        id: "recap",
+        title: "Recap",
+        description: "Summarize this conversation",
+        icon: "thread-summary",
         requires_empty: false,
     },
     Command {
@@ -526,6 +543,9 @@ impl Composer {
             "compact" => SlashCommand::Compact,
             "rename" => SlashCommand::Rename,
             "pin" => SlashCommand::Pin,
+            "feedback" => SlashCommand::Feedback,
+            "export" => SlashCommand::Export,
+            "recap" => SlashCommand::Recap,
             "model" | "reasoning" | "fork" | "project" => {
                 self.open_sub(command.id, cx);
                 return;
