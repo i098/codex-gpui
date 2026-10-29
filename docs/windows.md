@@ -82,6 +82,8 @@ No page painting code changes in this slice.
 The separate page owners still owe their original-versus-native appearance checks.
 
 Run `CODEX_GPUI_QA=1 cargo build -p app --example native_lifecycle` on macOS for App shell rows 10–12.
+This check creates visible native windows; do not run it on an occupied desktop.
+Use an isolated GUI session and set `CGX_NATIVE_LIFECYCLE_ISOLATED=1` to acknowledge this requirement.
 Set `CODEX_BIN` to the real Codex CLI, not a replay fixture.
 Run the example with an owned `--qa-smoke-profile /tmp/cgx-qa-smoke-<owned-name>` directory.
 Run it again with `CGX_LIFECYCLE_MENUS=1` to check the Minimize, Hide, and Quit menu entries instead of their shortcuts.

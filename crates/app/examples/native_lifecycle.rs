@@ -174,6 +174,10 @@ mod native {
             eprintln!("{info}");
             std::process::exit(101);
         }));
+        ensure!(
+            std::env::var("CGX_NATIVE_LIFECYCLE_ISOLATED").is_ok_and(|value| value == "1"),
+            "native_lifecycle creates visible windows; use only an isolated GUI session and set CGX_NATIVE_LIFECYCLE_ISOLATED=1"
+        );
         ensure!(app::qa::ENABLED, "compile with CODEX_GPUI_QA=1");
         std::env::var_os("CODEX_BIN").context("set CODEX_BIN to the real codex executable")?;
         app::qa::prepare()?;
