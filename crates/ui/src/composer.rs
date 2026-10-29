@@ -110,6 +110,8 @@ actions!(
     ]
 );
 
+mod context_usage;
+pub use context_usage::ContextUsage;
 mod attach;
 pub(crate) use attach::codex_home;
 pub mod computer_use;
@@ -775,6 +777,8 @@ pub struct Composer {
     secret: bool,
     request_parent: Option<(gpui::WeakEntity<Composer>, Rc<RequestIdentity>, usize)>,
     running: bool,
+    /// The open chat's context window use, while `Show context window usage` is on.
+    context_usage: Option<ContextUsage>,
     /// Escape while a turn runs arms the stop for 2 s (the Stop button reads `Esc`); a second
     /// Escape in that window interrupts the turn. The task clears the arm.
     stop_armed: Option<Task<()>>,
@@ -898,6 +902,7 @@ impl Composer {
             secret: false,
             request_parent: None,
             running: false,
+            context_usage: None,
             stop_armed: None,
             queue_mode: false,
             queued: Vec::new(),

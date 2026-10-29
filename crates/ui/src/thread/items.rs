@@ -464,13 +464,17 @@ pub(super) enum Activity<'a> {
     /// A command still running, by its command line.
     Running(&'a str),
     Mcp(&'a ThreadItem),
-    /// A completed reasoning item whose duration was seen live: `Thought for 3s`, its summary
-    /// under it while open (keyed `reasoning-<id>`).
+    /// A reasoning item seen live: `Thought for 3s` once completed, its summary under it while
+    /// open (keyed `reasoning-<id>`); `Thinking` while it streams, with the streamed text
+    /// under it.
     Reasoning {
         key: String,
         label: String,
         text: String,
+        live: bool,
     },
+    /// A `contextCompaction` item: `Compacting context`, `Context compacted`, …
+    Compaction(&'static str),
     /// Consecutive finished commands and file changes behind one summary
     /// (`agent-activity-group`, keyed by its first item): `Edited a file, read files, ran
     /// commands`.
@@ -523,9 +527,16 @@ impl Activity<'_> {
             Activity::Markdown(_, text) => vec![(*text).to_owned()],
             Activity::Running(command) => vec![(*command).to_owned()],
             Activity::Mcp(item) => vec![mcp_label(item)],
-            Activity::Reasoning { key, label, text } => std::iter::once(label.clone())
-                .chain(open.contains(key).then(|| text.clone()))
+            Activity::Reasoning {
+                key,
+                label,
+                text,
+                live,
+            } => std::iter::once(label.clone())
+                .chain((*live || open.contains(key)).then(|| text.clone()))
+                .filter(|s| !s.is_empty())
                 .collect(),
+            Activity::Compaction(label) => vec![(*label).to_owned()],
             Activity::Group {
                 key, summary, rows, ..
             } => std::iter::once(summary.clone())
@@ -543,7 +554,9 @@ impl Activity<'_> {
 pub(super) fn activities<'a>(
     items: &'a [ThreadItem],
     running: bool,
-    thought: &HashMap<String, i64>,
+    view: &ThreadView,
+    visibility: super::ReasoningVisibility,
+    now: Instant,
 ) -> Vec<Activity<'a>> {
     let mut out: Vec<Activity<'a>> = Vec::new();
     let mut group: Vec<&'a ThreadItem> = Vec::new();
@@ -562,19 +575,31 @@ pub(super) fn activities<'a>(
                 id,
                 summary,
                 content,
-            } => {
-                let Some(secs) = thought.get(id) else {
+            } if !visibility.hide => {
+                let text = visibility.text(summary, content);
+                let (label, text, live) = if view.thinking(id) {
+                    let body = super::context::without_heading(&text).to_owned();
+                    ("Thinking".to_owned(), body, true)
+                } else if let Some(secs) = view.reasoning_secs.get(id)
+                    && !text.is_empty()
+                {
+                    (format!("Thought for {}", duration(*secs)), text, false)
+                } else {
                     continue;
                 };
-                let text = if summary.is_empty() { content } else { summary }.join("\n\n");
-                if !text.is_empty() {
-                    flush(&mut out, &mut group);
-                    out.push(Activity::Reasoning {
-                        key: format!("reasoning-{id}"),
-                        label: format!("Thought for {}", duration(*secs)),
-                        text,
-                    });
-                }
+                flush(&mut out, &mut group);
+                out.push(Activity::Reasoning {
+                    key: format!("reasoning-{id}"),
+                    label,
+                    text,
+                    live,
+                });
+            }
+            ThreadItem::ContextCompaction { id } => {
+                flush(&mut out, &mut group);
+                out.push(Activity::Compaction(
+                    view.compaction_label(id, running, now),
+                ));
             }
             ThreadItem::McpToolCall { .. } if automation_item(item).is_some() => {}
             ThreadItem::McpToolCall { .. } => {
@@ -794,7 +819,14 @@ pub(super) fn activity(
             }))
     };
     let mut col = div().flex().flex_col().gap(px(16.));
-    for entry in activities(items, running, &view.reasoning_secs) {
+    let now = cx.background_executor().now();
+    for entry in activities(
+        items,
+        running,
+        view,
+        super::ReasoningVisibility::get(cx),
+        now,
+    ) {
         col = col.child(match entry {
             Activity::Markdown(id, text) => {
                 let segments = fades.get(id).map(Vec::as_slice).unwrap_or_default();
@@ -803,7 +835,25 @@ pub(super) fn activity(
             Activity::Running(command) => {
                 row("thread-terminal", plain(label(command.to_owned(), text60)))
             }
-            Activity::Reasoning { key, label: words, text } => {
+            Activity::Reasoning {
+                key: _,
+                label: words,
+                text,
+                live: true,
+            } => div()
+                .w_full()
+                .flex()
+                .flex_col()
+                .items_start()
+                .gap(px(4.))
+                .child(row("thread-summary", plain(label(words, text60))))
+                .when(!text.is_empty(), |d| d.child(text60_block(text, t))),
+            Activity::Reasoning {
+                key,
+                label: words,
+                text,
+                ..
+            } => {
                 let is_open = open.contains(&key);
                 div()
                     .w_full()
@@ -819,6 +869,10 @@ pub(super) fn activity(
                     ))
                     .when(is_open, |d| d.child(text60_block(text, t)))
             }
+            Activity::Compaction(words) => row(
+                "thread-compaction",
+                plain(label(words.to_owned(), text60)),
+            ),
             Activity::Mcp(item) => {
                 let ThreadItem::McpToolCall {
                     id,
