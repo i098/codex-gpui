@@ -445,6 +445,7 @@ impl Composer {
                     .min_w_0()
                     .justify_end()
                     .overflow_hidden()
+                    .children(self.context_donut(t))
                     .child(model_button),
             )
             .children(self.hotkey_controls.clone())

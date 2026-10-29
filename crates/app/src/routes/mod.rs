@@ -325,6 +325,11 @@ impl Root {
                 }
             }
             Route::Onboarding(_) => self.focus.clone(),
+            Route::Mobile => self
+                .mobile_page
+                .as_ref()
+                .and_then(|page| page.read(cx).focus())
+                .unwrap_or_else(|| self.focus.clone()),
             _ if self.page.is_some() => self.focus.clone(),
             Route::Thread(_) => self.focus.clone(),
             _ => self.home.read(cx).composer.focus_handle(cx),

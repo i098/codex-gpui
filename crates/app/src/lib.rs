@@ -12,6 +12,7 @@ pub use cloud::{CloudTaskRequest, create_cloud_task};
 mod automation_notifications;
 pub mod computer_use_requests;
 pub mod connections;
+mod context_status;
 pub mod deep_link;
 mod destinations;
 pub mod dictation;
@@ -102,8 +103,8 @@ use ui::screens::sidebar::{
 use ui::screens::signin::Login;
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
-    Clock, EditMessage, ForkThread, GitAction, History, OpenAutomationCard, RetryHistory,
-    RevertTurn, ThreadPressed, ThreadView, UsageLimitNotice,
+    Clock, EditMessage, ForkThread, GitAction, History, OpenAutomationCard, ReasoningVisibility,
+    RetryHistory, RevertTurn, ThreadPressed, ThreadView, UsageLimitNotice,
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
@@ -1178,7 +1179,7 @@ impl Root {
                     });
                 }
                 this.config = config.config;
-                this.refresh_enter_behavior(cx);
+                this.refresh_config_globals(cx);
                 this.config["host"]["confirm-before-close"] =
                     serde_json::to_value(this.state.confirm_before_close)
                         .expect("close preference");
@@ -4127,6 +4128,7 @@ impl Root {
         )
         .detach();
         self.thread = Some(view);
+        self.sync_context_usage(cx);
         self.show_approval(cx);
         hotkey::thread_shown(self, window, cx);
         self.refresh_git_actions(cx);
@@ -5117,8 +5119,10 @@ impl Root {
     /// `/compact`: `thread/compact/start` on the open chat, resumed first when this app-server
     /// has not loaded it. A running turn refuses it; a failed request shows `Failed to compact chat`.
     fn compact(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = &self.thread else { return };
-        let view = view.read(cx);
+        let Some(entity) = self.thread.clone() else {
+            return;
+        };
+        let view = entity.read(cx);
         let id = view.id().to_owned();
         let running = view
             .turns()
@@ -5133,6 +5137,8 @@ impl Root {
         }
         let resume = !self.loaded.contains(&id);
         let bridge = self.bridge.clone();
+        // `item/started` can precede the response, so the mark goes first.
+        entity.update(cx, |view, _| view.expect_manual_compaction());
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let started = async {
                 resume_if(resume, &bridge, &this, &id, cx).await?;
@@ -5143,6 +5149,7 @@ impl Root {
             }
             .await;
             if started.is_err() {
+                entity.update(cx, |view, _| view.forget_manual_compaction());
                 this.update(cx, |this, cx| {
                     this.toast(Toast::danger("Failed to compact chat"), cx)
                 })?;
@@ -5558,7 +5565,7 @@ impl Root {
                 });
                 if let Ok(Some(config)) = result {
                     this.config = config;
-                    this.refresh_enter_behavior(cx);
+                    this.refresh_config_globals(cx);
                 }
                 if success {
                     this.load_computer_use(cx);
@@ -5879,6 +5886,9 @@ impl Root {
                 self.toast(Toast::danger(message), cx);
             } else {
                 self.sync_terminal(cx);
+                if key == context_status::SETTING {
+                    self.sync_context_usage(cx);
+                }
                 if matches!(key, "reduced-motion-preference" | "dock-icon-preference") {
                     host_settings::apply(cx);
                 }
@@ -5975,18 +5985,24 @@ impl Root {
             }
             this.update(cx, |this, cx| {
                 apply(&mut this.config);
-                this.refresh_enter_behavior(cx);
+                this.refresh_config_globals(cx);
             })
         });
         log_err(task, cx);
     }
 
-    fn refresh_enter_behavior(&self, cx: &mut Context<Self>) {
+    /// The globals read from the kept config: Enter behavior and the local thinking display.
+    fn refresh_config_globals(&self, cx: &mut Context<Self>) {
         cx.set_global(ui::composer::EnterBehavior::from_setting(
             self.config["desktop"]["composerEnterBehavior"]
                 .as_str()
                 .unwrap_or("enter"),
         ));
+        let visibility = ReasoningVisibility::from_config(&self.config);
+        if ReasoningVisibility::get(cx) != visibility {
+            cx.set_global(visibility);
+            cx.refresh_windows();
+        }
     }
 
     /// Settles only the request whose card produced the answer.
@@ -6204,6 +6220,10 @@ impl Root {
         // Each side chat takes its own thread's notifications (`ThreadView::apply`).
         for chat in &self.side_chats {
             chat.view.update(cx, |view, cx| view.apply(&event, cx));
+        }
+        if matches!(&event, Event::Notification { method, .. } if method == "thread/tokenUsage/updated")
+        {
+            self.sync_context_usage(cx);
         }
         if turn_edge {
             let side = self

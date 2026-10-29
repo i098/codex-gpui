@@ -67,7 +67,10 @@ pub fn shell(cx: &mut App) -> (Entity<Shell>, Entity<MobileSetupPage>) {
             .detach();
         cx.observe_global::<super::computer_use_native::NativeSettingsState>(|_, cx| cx.notify())
             .detach();
-        MobileSetupPage::default()
+        MobileSetupPage {
+            focus: Some(cx.focus_handle()),
+            ..Default::default()
+        }
     });
     let shell = cx.new(|_| {
         let mut shell = Shell::new(sidebar, page.clone().into());
@@ -123,7 +126,9 @@ pub struct MobileSetupPage {
     qr: Option<(String, Arc<qrcodegen::QrCode>)>,
     dialog_mode: bool,
     computer_device: bool,
-    dialog_focus: Option<gpui::FocusHandle>,
+    /// The page root's focus: the route gives it keys, so Tab reaches the shell's handler.
+    /// In dialog mode it is a tab stop that traps Tab inside the dialog.
+    focus: Option<gpui::FocusHandle>,
 }
 
 impl MobileSetupPage {
@@ -137,7 +142,7 @@ impl MobileSetupPage {
         Self {
             dialog_mode: true,
             step: SetupStep::Waiting,
-            dialog_focus: Some(cx.focus_handle().tab_stop(true)),
+            focus: Some(cx.focus_handle().tab_stop(true)),
             ..Default::default()
         }
     }
@@ -148,15 +153,15 @@ impl MobileSetupPage {
         page
     }
 
-    pub(super) fn dialog_focus(&self) -> Option<gpui::FocusHandle> {
-        self.dialog_focus.clone()
+    pub fn focus(&self) -> Option<gpui::FocusHandle> {
+        self.focus.clone()
     }
 
     fn trap_tab(&self, event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         if event.keystroke.key != "tab" {
             return;
         }
-        let Some(root) = &self.dialog_focus else {
+        let Some(root) = &self.focus else {
             return;
         };
         if event.keystroke.modifiers.shift {
@@ -621,6 +626,17 @@ impl Render for MobileSetupPage {
             .cloned()
             .unwrap_or_default();
         let qr = self.pairing_qr(&state);
+        // `focus-visible:ring-2 ring-offset-0` on every step button.
+        let rings = [
+            "allow-host",
+            "get-started",
+            "later",
+            "finish-setup",
+            "manage-connections",
+            "refresh-pairing",
+            "continue-on-chatgpt",
+        ]
+        .map(|id| (id, crate::focus::handle(id, 0, window, cx)));
         let t = cx.theme();
         let step = if self.dialog_mode && state.pairing_connected {
             SetupStep::Connected
@@ -651,13 +667,15 @@ impl Render for MobileSetupPage {
         let button = |id: &'static str, label: &'static str| -> Stateful<Div> {
             let secondary = id == "later";
             let foreground = if secondary { t.text } else { button_fg };
-            div()
+            let (_, focus) = rings
+                .iter()
+                .find(|(key, _)| *key == id)
+                .expect("ring for button");
+            let control = div()
                 .id(id)
                 .role(gpui::Role::Button)
                 .aria_label(label)
                 .aria_disabled(disabled)
-                .focusable()
-                .tab_index(0)
                 .h(px(36.))
                 .relative()
                 .flex()
@@ -700,7 +718,8 @@ impl Render for MobileSetupPage {
                     )
                 })
                 .child(text(label, 14., 18., 430., foreground))
-                .when(disabled, |b| b.opacity(0.4))
+                .when(disabled, |b| b.opacity(0.4));
+            crate::focus::shadow_ring(control, focus, Theme::RADIUS_FULL, px(2.), cx)
         };
         let (heading, description) = match step {
             SetupStep::AllowHost | SetupStep::AllowError | SetupStep::Enabling => (
@@ -903,9 +922,7 @@ impl Render for MobileSetupPage {
                 .overflow_y_scroll()
                 .flex()
                 .flex_col()
-                .when_some(self.dialog_focus.as_ref(), |page, focus| {
-                    page.track_focus(focus)
-                })
+                .when_some(self.focus.as_ref(), |page, focus| page.track_focus(focus))
                 .capture_key_down(
                     cx.listener(|this, event, window, cx| this.trap_tab(event, window, cx)),
                 )
@@ -950,6 +967,8 @@ impl Render for MobileSetupPage {
                         .child(column),
                 );
         }
+        // `hidden lg:block`: the artwork shows only in a viewport of 1024 px or more.
+        let artwork_shown = step != SetupStep::Ready && window.viewport_size().width >= px(1024.);
         let page = div()
             .size_full()
             .relative()
@@ -969,7 +988,7 @@ impl Render for MobileSetupPage {
                         .child(column),
                 ),
             )
-            .when(step != SetupStep::Ready, |page| {
+            .when(artwork_shown, |page| {
                 page.child(div().flex_1().min_w_0().p(px(12.)).child(artwork(
                     self.artwork.clone(),
                     t.surface,
@@ -979,6 +998,7 @@ impl Render for MobileSetupPage {
         // The `Set up Remote` toolbar overlays the page (`ps-2` toolbar, `pl-2` title).
         div()
             .id("mobile-page")
+            .when_some(self.focus.as_ref(), |page, focus| page.track_focus(focus))
             .size_full()
             .relative()
             .child(page)
