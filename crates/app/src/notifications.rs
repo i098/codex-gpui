@@ -447,7 +447,7 @@ impl Root {
         .detach();
     }
 
-    /// `Xe`/`Ze`: shows the change at once, then `PATCH`es it; a failure restores the page.
+    /// `Xe`/`Ze`: shows the change at once, then `PATCH`es it; a failure undoes that option.
     fn set_notification_channel(
         &mut self,
         category: String,
@@ -458,23 +458,11 @@ impl Root {
         let Some(identity) = self.host.identity() else {
             return;
         };
-        let Load::Ready(before) = cx.global::<State>().channels.clone() else {
+        if !set_channel(cx, &category, &channel, enabled) {
             return;
-        };
-        let mut after = (*before).clone();
-        for setting in after["settings"].as_array_mut().into_iter().flatten() {
-            if setting["category"] != category.as_str() {
-                continue;
-            }
-            for option in setting["options"].as_array_mut().into_iter().flatten() {
-                if option["channel"] == channel.as_str() {
-                    option["enabled"] = enabled.into();
-                }
-            }
         }
-        update(cx, |state| state.channels = Load::Ready(Arc::new(after)));
         let host = self.host.clone();
-        let body = json!({ "updates": { category: { channel: enabled } } });
+        let body = json!({ "updates": { &category: { &channel: enabled } } });
         let task = cx.background_executor().spawn(async move {
             usage::http(
                 host.as_ref(),
@@ -489,7 +477,8 @@ impl Root {
                 return;
             }
             this.update(cx, |this, cx| {
-                update(cx, |state| state.channels = Load::Ready(before));
+                // Only this option: another update may have changed the rest since.
+                set_channel(cx, &category, &channel, !enabled);
                 this.toast(
                     Toast::danger("Failed to update ChatGPT notification settings"),
                     cx,
@@ -499,6 +488,26 @@ impl Root {
         })
         .detach();
     }
+}
+
+/// Sets one channel of the loaded settings; `false` when none are loaded.
+fn set_channel(cx: &mut App, category: &str, channel: &str, enabled: bool) -> bool {
+    let Load::Ready(settings) = &cx.global::<State>().channels else {
+        return false;
+    };
+    let mut settings = (**settings).clone();
+    for setting in settings["settings"].as_array_mut().into_iter().flatten() {
+        if setting["category"] != category {
+            continue;
+        }
+        for option in setting["options"].as_array_mut().into_iter().flatten() {
+            if option["channel"] == channel {
+                option["enabled"] = enabled.into();
+            }
+        }
+    }
+    update(cx, |state| state.channels = Load::Ready(Arc::new(settings)));
+    true
 }
 
 #[cfg(test)]
