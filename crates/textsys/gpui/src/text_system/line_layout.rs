@@ -271,6 +271,125 @@ impl LineLayout {
 
         boundaries
     }
+
+    /// CSS `text-wrap: pretty` as Blink's `ScoreLineBreaker` applies it (Minikin's penalties):
+    /// when the `greedy` breaks of a paragraph of at most four lines leave a short single-word
+    /// last line, the breaks with the lowest total of squared slack, line penalties and an
+    /// orphan penalty on the last break, if they keep the line count. `None` keeps `greedy`.
+    /// Blink works in device px at zoom 2, which scales every term alike.
+    pub(crate) fn pretty_wrap_boundaries(
+        &self,
+        text: &str,
+        wrap_width: Pixels,
+        greedy: &[WrapBoundary],
+    ) -> Option<SmallVec<[WrapBoundary; 1]>> {
+        // shortcut: Blink also optimizes the last four lines of longer paragraphs; add that
+        // when a reference needs it.
+        if greedy.is_empty() || greedy.len() >= 4 {
+            return None;
+        }
+        struct Candidate {
+            boundary: WrapBoundary,
+            no_break: f32,
+            if_break: f32,
+            penalty: f32,
+        }
+        let glyphs: Vec<(WrapBoundary, char, f32)> = self
+            .runs
+            .iter()
+            .enumerate()
+            .flat_map(|(run_ix, run)| {
+                run.glyphs.iter().enumerate().map(move |(glyph_ix, glyph)| {
+                    let ch = text[glyph.index..].chars().next().unwrap();
+                    (WrapBoundary { run_ix, glyph_ix }, ch, glyph.position.x.0)
+                })
+            })
+            .collect();
+        let start = WrapBoundary {
+            run_ix: 0,
+            glyph_ix: 0,
+        };
+        let mut candidates = vec![Candidate {
+            boundary: start,
+            no_break: 0.,
+            if_break: 0.,
+            penalty: 0.,
+        }];
+        // The break opportunities of `compute_wrap_boundaries`, less the one before `?`:
+        // Blink never breaks there (UAX #14 LB13), so `computer?` is one last-line word.
+        let (mut seen_text, mut prev_ch, mut text_end) = (false, '\0', 0.);
+        for (ix, &(boundary, ch, x)) in glyphs.iter().enumerate() {
+            if ch == '\n' {
+                continue;
+            }
+            let opportunity = if LineWrapper::is_word_char(ch) || ch == '?' {
+                prev_ch == ' '
+            } else {
+                ch != ' '
+            };
+            if opportunity && seen_text {
+                candidates.push(Candidate {
+                    boundary,
+                    no_break: x,
+                    if_break: text_end,
+                    penalty: 0.,
+                });
+            }
+            if ch != ' ' {
+                seen_text = true;
+                text_end = glyphs.get(ix + 1).map_or(self.width.0, |next| next.2);
+            }
+            prev_ch = ch;
+        }
+        candidates.push(Candidate {
+            boundary: start,
+            no_break: self.width.0,
+            if_break: text_end,
+            penalty: 0.,
+        });
+        let end = candidates.len() - 1;
+        let last_break = *greedy.last()?;
+        let last_start = candidates[1..end]
+            .iter()
+            .position(|candidate| candidate.boundary == last_break)?
+            + 1;
+        let width = wrap_width.0;
+        if last_start != end - 1
+            || candidates[end].if_break - candidates[last_start].no_break >= width / 3.
+            || candidates.len() < 5
+        {
+            return None;
+        }
+        candidates[end - 1].penalty += 10_000.;
+        let line_penalty = width * self.font_size.0 * 4.;
+        // (score, previous break) per candidate.
+        let mut scores = vec![(0f32, 0usize)];
+        for e in 1..candidates.len() {
+            let (mut best, mut best_prev) = (f32::MAX, 0);
+            for (s, &(start_score, _)) in scores.iter().enumerate() {
+                let delta = candidates[s].no_break - (candidates[e].if_break - width);
+                let line = if delta < 0. {
+                    1e12
+                } else if e == end {
+                    4. * candidates[s].penalty
+                } else {
+                    delta * delta
+                };
+                if start_score + line <= best {
+                    best = start_score + line;
+                    best_prev = s;
+                }
+            }
+            scores.push((best + candidates[e].penalty + line_penalty, best_prev));
+        }
+        let mut boundaries = SmallVec::new();
+        let mut ix = scores[end].1;
+        while ix > 0 {
+            boundaries.insert(0, candidates[ix].boundary);
+            ix = scores[ix].1;
+        }
+        (boundaries.len() == greedy.len()).then_some(boundaries)
+    }
 }
 
 /// A line of text that has been wrapped to fit a given width
@@ -1227,5 +1346,27 @@ mod tests {
 
         let positions = glyph_x_positions(&layout);
         assert_eq!(positions, vec![0.5, 0.5]);
+    }
+
+    #[test]
+    fn pretty_wrap_moves_a_word_onto_a_short_last_line() {
+        let text = "aaaa bbbb cccc dd?";
+        let mut layout = make_layout(
+            (0..text.len())
+                .map(|i| glyph_at(i as f32 * 10., i))
+                .collect(),
+        );
+        layout.width = px(180.);
+        let at = |glyph_ix| WrapBoundary {
+            run_ix: 0,
+            glyph_ix,
+        };
+        // Greedy leaves `dd?` alone; `?` is no break opportunity, so `cccc` joins it.
+        assert_eq!(
+            layout
+                .pretty_wrap_boundaries(text, px(150.), &[at(15)])
+                .as_deref(),
+            Some(&[at(10)][..])
+        );
     }
 }

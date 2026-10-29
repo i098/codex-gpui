@@ -47,15 +47,17 @@ It preserves the existing route1 and Root capture clocks and fixtures.
 | `home` | `rest` | Existing route1 Home capture | `common::Fx` startup |
 | `terminal` | `rest` | Existing route1 recorded command replay | The same recorded events and input sequence as `flows::open_terminal` |
 | `settings` | `configuration` | Profile menu, Settings, Configuration | Settings shortcut, Configuration navigation item |
+| `mobile` | `get-started` | Profile menu, Help, Set up mobile | Profile menu, Set up mobile |
+| `mobile` | `continuation` | The same, then Get started; offline mode answers both MFA reads from `refs/interactions/mobile-mfa.json` | The same, then Get started; the fixture host answers both MFA reads from that recording |
 
-These are the initial executable adapters, not all 175 census surfaces.
+These are the executable adapters, not all 175 census surfaces.
 An unknown surface or state fails before a capture starts.
 Add matching original and Root state adapters before running another census cell.
 Do not substitute a static screen or a prior native screenshot for a Root frame.
 
 Both themes support the normal census sizes, `1280x832` and `1440x900`.
 Home rest also accepts `767x832` and `600x832`.
-Terminal and Configuration reject narrow sizes until their navigation adapters support them.
+Terminal, Configuration, and Mobile reject narrow sizes until their navigation adapters support them.
 Each frame uses the same CSS size and native device scale 2.
 The narrow sizes have no separate waiver for a failing gate.
 

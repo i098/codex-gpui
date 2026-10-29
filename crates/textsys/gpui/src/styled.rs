@@ -77,6 +77,13 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets `text-wrap: pretty`, Blink's score-based breaks for a short last line.
+    /// [Docs](https://tailwindcss.com/docs/text-wrap#pretty)
+    fn text_wrap_pretty(mut self) -> Self {
+        self.text_style().text_wrap_pretty = Some(true);
+        self
+    }
+
     /// Sets the whitespace of the element to `nowrap`.
     /// [Docs](https://tailwindcss.com/docs/whitespace#nowrap)
     fn whitespace_nowrap(mut self) -> Self {
