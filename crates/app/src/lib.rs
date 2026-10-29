@@ -5507,7 +5507,9 @@ impl Root {
                 self.toast(Toast::danger(message), cx);
             } else {
                 self.sync_terminal(cx);
-                host_settings::apply(cx);
+                if matches!(key, "reduced-motion-preference" | "dock-icon-preference") {
+                    host_settings::apply(cx);
+                }
                 self.git_setting_saved(key, cx);
                 let message = match key {
                     "git-branch-prefix" => Some("Saved branch prefix".to_owned()),

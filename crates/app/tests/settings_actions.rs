@@ -281,9 +281,8 @@ fn appearance_theme_share_advanced_rows_and_reset() -> Result<()> {
     let advanced = "tab ".repeat(8);
     press(&mut fx, &format!("{advanced}enter"))?;
     frame(&mut fx)?;
-    // Reset to default shows (the Dracula theme differs from its preset); tab past it.
     // Tab out of a size field commits it, like blur in the original.
-    press(&mut fx, "tab tab cmd-a")?;
+    press(&mut fx, "tab cmd-a")?;
     fx.type_text("15")?;
     press(&mut fx, "tab")?;
     frame(&mut fx)?;

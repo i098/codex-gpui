@@ -194,8 +194,11 @@ pub(crate) fn chrome_theme(stored: &Value, variant: &str) -> Value {
     let semantic = &base["semanticColors"];
     let mut theme = json!({
         "accent": color("accent"),
-        "contrast": stored["contrast"].as_f64().filter(|c| !c.is_nan())
-            .map_or_else(|| base["contrast"].clone(), |c| c.round().clamp(0., 100.).into()),
+        // An integer, as share strings and the defaults store it: `60.0 != 60` in JSON.
+        "contrast": stored["contrast"].as_f64().filter(|c| !c.is_nan()).map_or_else(
+            || base["contrast"].clone(),
+            |c| json!(c.round().clamp(0., 100.) as u64),
+        ),
         "fonts": fonts,
         "ink": color("ink"),
         "opaqueWindows": stored["opaqueWindows"].as_bool().unwrap_or(false),
@@ -1606,7 +1609,7 @@ mod tests {
     fn share_string_round_trips_and_checks_variant_and_preset() {
         let theme = patched(
             &chrome_theme(&Value::Null, "dark"),
-            json!({"accent": "#ABCDEF", "contrast": 70}),
+            json!({"accent": "#abcdef", "contrast": 70}),
         );
         let share = share_string("dracula", &theme, "dark");
         let (id, parsed) = parse_share(&format!("  {share} "), "dark").unwrap();
