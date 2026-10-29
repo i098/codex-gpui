@@ -28,6 +28,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Restore `View` > `Toggle Bottom Panel` and `View` > `Open Terminal` in the macOS menu bar, in the original order.
 
 ### Fixed
+- Keep context-only commands out of the live Keyboard shortcuts dialog while retaining them in Settings.
 - Show saved hourly and minute intervals in scheduled task rows without changing daily or weekly labels.
 - Raster a shown Code Review pull request in the page's tile grid, as the original does, so its status glyph and the main panel's corners match the original, and paint the author avatar's white fill as its box background.
 - Paint the Code Review tabs, search toolbar and pull request list in the original's composited layers, so their icon and pill edges match the original pixel for pixel.

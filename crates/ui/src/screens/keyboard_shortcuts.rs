@@ -420,6 +420,12 @@ pub fn key_label(accelerator: &str) -> String {
 /// Commands whose original handler exists only on the Home composer
 /// (`backgroundSubmit.enabled` needs `kind === "home"`).
 const HOME_ONLY: &[&str] = &["composer.submitInBackground"];
+const DIALOG_HIDDEN: &[&str] = &[
+    "temporaryChat",
+    "openReviewTab",
+    "undoAppAction",
+    "redoAppAction",
+];
 
 pub type Shortcut = (&'static str, &'static Command, Vec<String>);
 
@@ -441,6 +447,7 @@ pub fn active_shortcuts(cx: &App) -> Vec<Shortcut> {
         for command in COMMANDS.iter().filter(|c| {
             c.section == section
                 && state.active_commands.contains(c.id)
+                && !DIALOG_HIDDEN.contains(&c.id)
                 && (state.home || !HOME_ONLY.contains(&c.id))
         }) {
             let keys: Vec<_> = state.preferences.keys(command).map(key_label).collect();
