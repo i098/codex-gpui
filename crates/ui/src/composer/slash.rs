@@ -488,10 +488,10 @@ impl Composer {
             return (&item.title, &item.description, item.icon);
         }
         if let Some(command) = COMMANDS.get(index) {
-            let description = if command.id == "reasoning" {
-                effort_label(self.displayed_effort())
-            } else {
-                command.description
+            let description = match command.id {
+                "reasoning" => effort_label(self.displayed_effort()),
+                "plan-mode" if self.plan => "Turn plan mode off",
+                _ => command.description,
             };
             (command.title, description, command.icon)
         } else {
@@ -548,6 +548,11 @@ impl Composer {
             "recap" => SlashCommand::Recap,
             "model" | "reasoning" | "fork" | "project" => {
                 self.open_sub(command.id, cx);
+                return;
+            }
+            "plan-mode" => {
+                self.finish_command(window, cx);
+                self.toggle_plan(cx);
                 return;
             }
             _ => return,
