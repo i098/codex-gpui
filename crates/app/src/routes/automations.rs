@@ -233,6 +233,7 @@ impl Root {
                     );
                 }
                 this.load_history(page, cx);
+                this.refresh_automation_unreads(cx);
             })
             .ok();
         })

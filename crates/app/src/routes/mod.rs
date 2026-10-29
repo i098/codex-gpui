@@ -128,12 +128,15 @@ impl Root {
         }
     }
 
-    pub(crate) fn select_route(&self, cx: &mut Context<Self>) {
+    pub(crate) fn select_route(&mut self, cx: &mut Context<Self>) {
         let id = match &self.state.route {
-            Route::Thread(id) => Some(id.as_str()),
+            Route::Thread(id) => Some(id.clone()),
             _ => None,
         };
-        self.sidebar.update(cx, |s, cx| s.select(id, cx));
+        self.sidebar.update(cx, |s, cx| s.select(id.as_deref(), cx));
+        if let Some(id) = id {
+            self.read_automation_run(&id, cx);
+        }
     }
 
     /// Shows the route (loading its thread if needed), pushes history into the shell and
@@ -222,6 +225,7 @@ impl Root {
                 shell.security_available = access.gate_enabled && access.plugin_available;
             });
         }
+        self.sync_automation_attention(cx);
         let thread_id = match &self.state.route {
             Route::Thread(id) => Some(id.clone()),
             _ => None,

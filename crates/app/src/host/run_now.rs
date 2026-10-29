@@ -592,7 +592,7 @@ impl LocalHost {
     }
 
     /// Finish the initial automation turn before the notification policy reads the run.
-    pub fn finish_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {
+    pub fn finish_run(&self, thread_id: &str, turn: &Value) -> Result<Option<bool>> {
         let tracked = self
             .bridge
             .as_ref()
@@ -604,7 +604,7 @@ impl LocalHost {
                 tracked.mark_completed();
                 bridge.release_automation_turn(thread_id, tracked);
             }
-            Ok(false)
+            Ok(None)
         };
         let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? else {
             return finish_unrecorded();
@@ -624,10 +624,10 @@ impl LocalHost {
         if let Some(tracked) = &tracked
             && !pollster::block_on(tracked.matches_turn(turn["id"].as_str().unwrap_or_default()))
         {
-            return Ok(false);
+            return Ok(None);
         }
         if status == "PENDING_REVIEW" && tracked.is_none() {
-            return Ok(false);
+            return Ok(None);
         }
         let tasks = self.automations()?;
         let task = tasks["items"]
@@ -649,7 +649,7 @@ impl LocalHost {
         )? > 0;
         if let (Some(bridge), Some(tracked)) = (&self.bridge, tracked) {
             if !changed || !tracked.mark_completed() {
-                return Ok(false);
+                return Ok(None);
             }
             let heartbeat = tasks["items"]
                 .as_array()
@@ -677,7 +677,7 @@ impl LocalHost {
                 bridge.release_automation_turn(thread_id, &tracked);
             }
         }
-        Ok(changed)
+        Ok(changed.then_some(muted))
     }
 
     fn mark_run_archived(db: &rusqlite::Connection, thread_id: &str) -> Result<()> {

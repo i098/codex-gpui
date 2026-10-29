@@ -9,6 +9,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ### Added
 - Add saved, revision-scoped Mark as viewed controls for Branch diffs.
 - Route native Codex links with thread host and access state, project selection, SSH setup, source-specific task editing, and window-owned OAuth callbacks.
+- Notify completed automation runs and show the Scheduled unread dot from saved run state.
 - Add working Notifications settings: system permission, turn mode, alert switches, sound with import and preview, and ChatGPT channels.
 - Show the crash page with Try again when the app-server cannot start, and keep unsent composer drafts when Try again restarts it.
 - Show scheduled previous runs with saved read state, mark-all-as-read, and confirmed bulk archive with partial-failure reporting.
