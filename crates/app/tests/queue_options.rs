@@ -227,6 +227,60 @@ fn edit_and_resubmit(retry: bool) -> Result<()> {
     Ok(())
 }
 
+/// The queue restore reads every `thread/queue/list` page before it reorders: a reorder of
+/// the first page alone would drop the rows of the later pages.
+#[test]
+fn edit_restores_the_place_in_a_queue_of_several_pages() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    let first = submission("a", json!([text("first")]));
+    let second = submission("b", json!([text("second")]));
+    let third = submission("c", json!([text("third")]));
+    let again = submission("b2", json!([text("second")]));
+    let page = |rows: &[&Value], cursor: Option<&str>, next: Option<&str>| {
+        let mut page = exchange(
+            "thread/queue/list",
+            json!({ "data": rows, "nextCursor": next }),
+        );
+        page[0]["msg"]["params"] = json!({ "threadId": SUBTRACT, "cursor": cursor });
+        page
+    };
+
+    let mut lines = script(None, queue_mode)?;
+    lines.extend(exchange("thread/resume", json!({})));
+    lines.extend(list(&[&first, &second, &third]));
+    lines.extend(exchange("thread/queue/delete", json!({ "deleted": true })));
+    lines.extend(list(&[&first, &third]));
+    lines.extend(exchange(
+        "thread/queue/add",
+        json!({ "queuedSubmission": again }),
+    ));
+    lines.extend(page(&[&first], None, Some("page-2")));
+    lines.extend(page(&[&third, &again], Some("page-2"), None));
+    lines.extend(exchange("thread/queue/reorder", json!({})));
+    lines.extend(list(&[&first, &again, &third]));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    open_running(&mut fx)?;
+    fx.wait("three rows", |fx| {
+        queued(fx) == ["first", "second", "third"]
+    })?;
+    fx.click(actions_button(3, 1))?;
+    fx.keys("down enter")?;
+    fx.wait("draft in the composer", |fx| {
+        fx.composer_text().is_ok_and(|text| text == "second")
+    })?;
+    fx.keys("enter")?;
+    fx.wait("reordered", |fx| {
+        sent(fx, "thread/queue/reorder").is_ok_and(|r| r.len() == 1)
+    })?;
+    assert_eq!(
+        sent(&mut fx, "thread/queue/reorder")?[0]["params"],
+        json!({ "threadId": SUBTRACT, "queuedSubmissionIds": ["a", "b2", "c"] })
+    );
+    Ok(())
+}
+
 #[test]
 fn edit_keeps_the_current_draft_and_a_submission_the_server_already_took() -> Result<()> {
     if !cfg!(target_os = "macos") {

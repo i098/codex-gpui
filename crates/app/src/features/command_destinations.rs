@@ -217,7 +217,7 @@ impl Root {
         }
     }
 
-    fn open_thread_window(&mut self, thread_id: String, cx: &mut Context<Self>) {
+    pub(super) fn open_thread_window(&mut self, thread_id: String, cx: &mut Context<Self>) {
         let mut state = self.state.clone();
         state.route = Route::Thread(thread_id);
         state.path = None;

@@ -368,6 +368,31 @@ pub struct PinThread(pub String, pub bool);
 #[action(namespace = sidebar, no_json)]
 pub struct RenameThread(pub String);
 
+/// A row menu item the app runs on the thread (its id): `Section`, `Fork`, `Copy`,
+/// `Open in new window` and `Permanently delete`.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = sidebar, no_json)]
+pub struct ThreadMenuAction {
+    pub thread: String,
+    pub command: ThreadCommand,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ThreadCommand {
+    /// `thread/section/move` into this custom section, or out of its own one (`None`).
+    MoveToSection(Option<String>),
+    /// `New section…`: the section dialog, then the move into the new section.
+    NewSection,
+    /// `Fork chat`.
+    Fork,
+    CopyDeeplink,
+    CopyMarkdown,
+    CopyWorkingDirectory,
+    OpenInNewWindow,
+    /// `Permanently delete`: `Delete task?`, then `thread/delete`.
+    Delete,
+}
+
 fn is_pinned(t: &Thread) -> bool {
     t.section
         .as_ref()
