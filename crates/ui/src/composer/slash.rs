@@ -314,6 +314,7 @@ impl Composer {
             self.field_autoscroll = self.plain_field == Some(true);
             return;
         }
+        self.field_autoscroll = self.field_scroll.is_some();
         let cursor = self.cursor();
         if let Some(id) = self.slash.sub.as_ref().map(|sub| sub.id) {
             let start = self.slash.range.start;

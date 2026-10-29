@@ -479,10 +479,10 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Composer in thread | entry | `Work with Codex` (idle) or `Working…`. | Docked thread composer, focused on open; `Working…` not checked. | PASS (`shift_enter_newline`, `parity_thread`) |
-| 2 | Type text | focus | Editor grows to a max height, then scrolls. | Lines add; height growth not measured. | FAIL (no flow checks the max height) |
+| 2 | Type text | focus | Editor grows to a max height, then scrolls. | The card's editor grows with its lines up to 25% of the window height (`max-h-[min(25dvh,…)]`), then scrolls and keeps the caret in view. | PASS (`composer::tests::editor_grows_to_a_quarter_of_the_window_then_scrolls`) |
 | 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Reads `desktop.composerEnterBehavior` at startup and after successful writes. `cmdAlways` requires Command+Enter; `cmdIfMultiline` requires it for multiline drafts. Shift+Enter inserts a line break. | PASS (`submit_enter_starts_thread`, `send_shortcut_controls_enter_without_changing_shift_enter`) |
 | 4 | Shift+Enter | shortcut | New line. | New line in the Home and thread composers. | PASS (`shift_enter_newline`) |
-| 5 | `@` | shortcut | Mention list. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
+| 5 | `@` | shortcut | Mention list. | `@` opens the list; typing searches the workspace files with `fuzzyFileSearch`; Enter inserts a chip. | PASS (`s019::mention_list_replay`, `s020::mention_keys_chips_and_prompt_replay`) |
 | 6 | `/` | shortcut | Slash command menu. | Matches the recorded menu, filtering, selected row, editor focus, arrows, Escape, Enter, and Tab. | PASS (`s021::slash_menu_keyboard_replay`) |
 | 6a | `/` then Enter on `Compact`, `Rename`, `Pin chat`, `Fork chat`, `Model`, `Reasoning`, `Work in a project` | shortcut | Runs the chat action (CP-058 to CP-063, CP-068, CP-069). | `Compact`: `thread/compact/start` (resumes the chat first), toast `Compact is disabled while a chat is in progress` while a turn runs, `Failed to compact chat` on error. `Rename`: the `Rename chat` dialog; closing it focuses the composer. `Pin chat`: `thread/section/move`, toggles. `Fork chat`, `Model`, `Reasoning`, `Work in a project`: Enter turns the token into `/id ` and opens a submenu filtered by the text after it; Backspace over the space returns to the list, Escape leaves the text, a pick removes token and query, keeps the rest of the draft, and acts (`thread/fork` in the same workspace with `Failed to fork chat` on error, `config/batchWrite`, the existing-project selection for new chats). Not wired: `Fork chat in new worktree`, the submenu's `Search` input row, the usage text on `Compact`, and the other commands. | PASS (`slash_commands`) |
 | 7 | Paste large text | click | `Pasted text.txt` chip. | Paste inserts the text. | NOT WIRED (`crates/ui/src/composer.rs` `paste`) |
@@ -497,8 +497,8 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 | 16 | Upload in progress | loading | `Files uploading…`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 17 | Upload failure | error | `Unable to upload file`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
 | 18 | Button hover | hover | Ghost hover; tooltip after a delay. | Hover fill. The `+` tooltip includes the `@` hint and matches its original bounds. | PARTIAL (`+`: `s018::add_tooltip_replay`; other composer tooltips remain absent) |
-| 19 | Focus ring | focus ring | Send button ring. | — | NOT WIRED (`crates/ui/src/composer.rs`: no `focus_visible` ring) |
-| 20 | Resize | resize | Below 40rem the editor and footer stack. | Only the 475 px compact footer. | FAIL (`crates/ui/src/composer.rs`) |
+| 19 | Focus ring | focus ring | Send button ring. | `send` has a tab stop and a 2 px `focus_visible` ring in the text color (`composer/footer.rs`); no native test drives keyboard focus onto it. | WIRED (`composer/footer.rs`, `send`) |
+| 20 | Resize | resize | Below 40rem the editor and footer stack. | The editor sits above the footer at every width, and the footer collapses by its container width (440, 300 and 509 px). `refs/composer` has 1280 and 1440 px only, so no narrow layout is recorded and none is invented. | BOUNDARY (`crates/ui/src/composer/footer.rs`; `refs/composer` has no narrow capture) |
 | 21 | `+` Add menu | click | Opens the mention list without inserting `@`; Escape keeps the draft. | Reuses the S019 query state; keys skip disabled actions, and a second click closes the list. | PASS (`s018::add_menu_replay`) |
 
 Queued side chats restore the fork response's model, effort, and permission settings without changing the primary composer.
