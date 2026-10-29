@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Wire the Recents row context menu: Section (with custom sections and New section…), Fork chat, Copy deeplink, Copy as Markdown, Copy working directory, Open in new window, and Permanently delete with its `Delete task?` confirmation.
 - Show `Unable to send message` with the reason and `OK` when a composer submit waits for file uploads.
 - Draw the 2 px keyboard focus ring on the diff card's `Undo` and `View changes` buttons in a chat.
 - Add the Configuration settings page: the `config.toml` approval policy, sandbox, network access, web search, output detail, and reasoning summary controls, the available reasoning efforts, the Codex dependencies switch, and Open config.toml.
