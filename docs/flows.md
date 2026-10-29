@@ -1071,6 +1071,19 @@ The completion result supplies the `failed_runs_only` policy used for both the s
 Delivery preserves background focus; a notification click opens the exact run chat and dismisses its notice.
 The realtime headless `Root` proof keeps real Bridge I/O and checks the actual click target `owned`.
 It does not send an alert to the operating system or change account permissions.
+
+Ordinary chats use the same native notification API for successful `turn/completed` events.
+Completion follows `notifications-turn-mode`: `off`, `unfocused` (default), or `always`.
+Command, file, and permission approval requests follow `notifications-permissions-enabled`.
+`item/tool/requestUserInput` and supported `mcpServer/elicitation/request` forms follow `notifications-questions-enabled`.
+Approval and question alerts require an inactive window; duplicate pending request IDs do not send another alert.
+Delivery rechecks macOS permission and uses the saved `notifications-sound` without activating a window.
+A notification click opens its host and thread and removes the delivered notice.
+Automation runs retain their saved notification policy and do not also send an ordinary completion alert.
+`cargo test -p app --test chat_notifications` checks focus, preferences, duplicate requests, and click navigation on the headless native platform.
+Live protocol proof uses codex-cli `0.164.0-alpha.11.1`: `thread/start` and `turn/start` produce `turn/completed`, `item/commandExecution/requestApproval`, and `item/tool/requestUserInput`.
+Visible Notification Center captures are not part of this proof; the Mac remains in the background.
+
 The native `automation_run_now::persisted_run_unread_survives_navigation_and_clears_on_open` proof checks persisted unread state, read-state clearing, and archive clearing.
 `automation_run_now` checks projectless metadata, project assignment, saved policy, early completion, user cancellation, and archive failures against a stdio peer.
 It also checks account isolation, recoverable restore writes, and retained worktrees.
