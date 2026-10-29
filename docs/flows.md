@@ -430,6 +430,12 @@ Comment owners call `finish_dictation` and wait for `Completion::Succeeded` befo
 | 18 | Usage limit | error | Usage limit banner. | `usageLimitExceeded` shows the divider and the advice for the plan reported by `account/read`. Unknown plans use the retry-later fallback. Source details remain available, and completion retains terminal errors. | PASS (`thread_recovery`: account-plan advice and source-error retention) |
 | 19 | Focus ring on cards | focus ring | 2 px ring (`focus-visible:ring-2 ring-offset-0`) on the diff card's `Undo` and `View changes`. | Both buttons are tab stops and draw the shared 2 px `#3a83f7` ring only under keyboard focus; a pointer move keeps it. No original capture of the focused card exists, so its pixels are not compared. | PASS (`thread_card_focus_ring`; no pixel reference) |
 | 20 | Resize | resize | The side panel yields width before the chat column. | `panel_width` keeps 320 px for the chat; no flow checks the 3 widths with the panel open. | FAIL (no flow; `crates/ui/src/diff.rs` `panel_width` assumes the sidebar open) |
+| 21 | Desktop notifications | event | Alert on completion, approval, or questions while unfocused. | `turn/completed` follows the saved completion mode. Supported approval and question requests follow their alert switches and require an inactive window. Delivery rechecks macOS permission, uses the saved sound, and keeps focus unchanged. A click opens the exact host and thread. Automation policy remains separate. | PASS (`chat_notifications`, five notification unit tests, and live app-server proof; no visible OS capture) |
+
+The live headless `Root` proof used codex-cli `0.164.0-alpha.11.1` with `gpt-6.1-sol`.
+`thread/start` and `turn/start` produced completion, command approval, and user-input notifications through the real app-server.
+All three alerts retained the inactive window; the regression also checks disabled preferences, duplicate requests, and click navigation.
+Visible Notification Center captures were skipped to keep the Mac in the background.
 
 TH-123/124/125 add permission, user-input, standard MCP elicitation, and supported dynamic-tool forms to the existing request queue.
 The request editor retains drafts by thread and request while switching chats or recovering from a failed cancellation.
@@ -1071,19 +1077,6 @@ The completion result supplies the `failed_runs_only` policy used for both the s
 Delivery preserves background focus; a notification click opens the exact run chat and dismisses its notice.
 The realtime headless `Root` proof keeps real Bridge I/O and checks the actual click target `owned`.
 It does not send an alert to the operating system or change account permissions.
-
-Ordinary chats use the same native notification API for successful `turn/completed` events.
-Completion follows `notifications-turn-mode`: `off`, `unfocused` (default), or `always`.
-Command, file, and permission approval requests follow `notifications-permissions-enabled`.
-`item/tool/requestUserInput` and supported `mcpServer/elicitation/request` forms follow `notifications-questions-enabled`.
-Approval and question alerts require an inactive window; duplicate pending request IDs do not send another alert.
-Delivery rechecks macOS permission and uses the saved `notifications-sound` without activating a window.
-A notification click opens its host and thread and removes the delivered notice.
-Automation runs retain their saved notification policy and do not also send an ordinary completion alert.
-`cargo test -p app --test chat_notifications` checks focus, preferences, duplicate requests, and click navigation on the headless native platform.
-Live protocol proof uses codex-cli `0.164.0-alpha.11.1`: `thread/start` and `turn/start` produce `turn/completed`, `item/commandExecution/requestApproval`, and `item/tool/requestUserInput`.
-Visible Notification Center captures are not part of this proof; the Mac remains in the background.
-
 The native `automation_run_now::persisted_run_unread_survives_navigation_and_clears_on_open` proof checks persisted unread state, read-state clearing, and archive clearing.
 `automation_run_now` checks projectless metadata, project assignment, saved policy, early completion, user cancellation, and archive failures against a stdio peer.
 It also checks account isolation, recoverable restore writes, and retained worktrees.
