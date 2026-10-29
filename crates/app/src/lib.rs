@@ -111,8 +111,8 @@ use ui::workspace::WorkspaceLayout;
 use ui::{
     Copy, Cut, GoBack, GoForward, LogOut, NewChat, OpenBackgroundTerminal, OpenChangesPanel,
     OpenCommandMenu, OpenMobileSetup, OpenScheduled, OpenSettings, Paste, Redo, SelectAll,
-    SetTheme, Shell, ShowKeyboardShortcuts, StartVoiceChat, ToggleActivity, ToggleChangesPanel,
-    ToggleSidebar, Undo,
+    SetTheme, Shell, ShowKeyboardShortcuts, StartVoiceChat, SwitchMode1, SwitchMode2, SwitchMode3,
+    ToggleActivity, ToggleChangesPanel, ToggleSidebar, Undo,
 };
 
 actions!(
@@ -834,6 +834,7 @@ impl Root {
             home: cx.new(|_| HomeMain {
                 composer: home_composer,
                 project: state.project_root.as_deref().map(project_name),
+                location: Default::default(),
                 beacon: false,
             }),
             thread_composer,
@@ -1254,6 +1255,11 @@ impl Root {
         self.mobile_page.as_ref()
     }
 
+    /// The Home route's main panel.
+    pub fn home(&self) -> &Entity<HomeMain> {
+        &self.home
+    }
+
     /// The Home sidebar of the chat routes.
     pub fn sidebar(&self) -> &Entity<HomeSidebar> {
         &self.sidebar
@@ -1293,11 +1299,6 @@ impl Root {
     /// The `⌘K` command menu, while open.
     pub fn command_menu(&self) -> Option<&Entity<CommandMenu>> {
         self.command_menu.as_ref()
-    }
-
-    /// The Home main panel.
-    pub fn home(&self) -> Entity<HomeMain> {
-        self.home.clone()
     }
 
     /// The composer of the route: Home's, or the one docked under the open thread.
@@ -1482,6 +1483,11 @@ impl Root {
             .ok();
         })
         .detach();
+    }
+
+    fn switch_mode(&mut self, mode: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar
+            .update(cx, |s, cx| s.set_mode(mode, window, cx));
     }
 
     fn toggle_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -7473,6 +7479,15 @@ impl Render for Root {
                     this.shell.update(cx, |shell, cx| shell.toggle_sidebar(cx))
                 }))
             })
+            .on_action(
+                cx.listener(|this, _: &SwitchMode1, window, cx| this.switch_mode(0, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &SwitchMode2, window, cx| this.switch_mode(2, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &SwitchMode3, window, cx| this.switch_mode(1, window, cx)),
+            )
             .on_action(cx.listener(|this, _: &ToggleActivity, window, cx| {
                 this.toggle_activity(window, cx);
             }))

@@ -30,7 +30,9 @@ use theme::{ActiveTheme as _, Appearance, Theme};
 #[path = "sidebar/menu.rs"]
 mod menu;
 use menu::ThreadMenu;
+mod mode;
 mod priority;
+pub use mode::{DEFAULT_MODE, MODES};
 pub use priority::{ActivityOpened, ArchiveActivity};
 
 pub mod sections;
@@ -302,6 +304,9 @@ pub struct HomeSidebar {
     activity_scheduled_ids: HashSet<String>,
     pub activity_sources_state: ListState,
     activity_menu: Option<priority::OptionsMenu>,
+    /// Index into `MODES`.
+    mode: usize,
+    mode_menu: Option<mode::ModeMenu>,
     activity_button: Bounds<Pixels>,
     worktree_tip: bool,
     worktree_tip_epoch: u64,
@@ -400,6 +405,8 @@ impl HomeSidebar {
             activity_scheduled_ids: HashSet::new(),
             activity_sources_state: ListState::Ready,
             activity_menu: None,
+            mode: DEFAULT_MODE,
+            mode_menu: None,
             activity_button: Bounds::default(),
             worktree_tip: false,
             worktree_tip_epoch: 0,
@@ -1268,6 +1275,7 @@ impl Render for HomeSidebar {
                 !self.unread.is_empty(),
                 self.activity_clock.is_some(),
                 self.activity_available,
+                self.mode_switch(window, cx),
                 cx,
             ))
             .child(
