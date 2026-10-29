@@ -27,9 +27,8 @@ pub(super) enum Content {
 pub(super) struct Attachment {
     pub path: PathBuf,
     content: Content,
-    /// Written under `$CODEX_HOME/attachments`: pasted text through the app-server's `fs/*`
-    /// like the original ([`save_text`]), a pasted image by this process ([`persist`]). Both
-    /// go with the chip. A picked or dropped file stays where the user keeps it.
+    /// Pasted content belongs to the chip. Connected composers save it on their app-server;
+    /// offline image pastes use [`persist`]. Picked and dropped files remain user-owned.
     persisted: bool,
 }
 
@@ -48,18 +47,29 @@ impl Attachment {
 
     /// A dropped or picked file: an image shows its thumbnail (its bytes stay where they
     /// are), anything else its chip.
-    fn dropped(path: PathBuf) -> Self {
+    async fn dropped(path: PathBuf, bridge: Option<Arc<Bridge>>) -> Result<Self> {
         let format = path.extension().and_then(|e| e.to_str()).and_then(|e| {
             gpui::ImageFormat::from_mime_type(&format!("image/{}", e.to_ascii_lowercase()))
         });
-        match format.and_then(|f| Some((f, fs::read(&path).ok()?))) {
-            Some((format, bytes)) => Self {
-                path,
-                content: Content::Image(Arc::new(gpui::Image::from_bytes(format, bytes))),
-                persisted: false,
-            },
-            None => Self::file(path),
-        }
+        let Some(format) = format else {
+            return Ok(Self::file(path));
+        };
+        let bytes = match bridge {
+            Some(bridge) => {
+                let result = request(&bridge, "fs/readFile", json!({ "path": path })).await?;
+                BASE64.decode(
+                    result["dataBase64"]
+                        .as_str()
+                        .context("missing image data")?,
+                )?
+            }
+            None => fs::read(&path)?,
+        };
+        Ok(Self {
+            path,
+            content: Content::Image(Arc::new(gpui::Image::from_bytes(format, bytes))),
+            persisted: false,
+        })
     }
 }
 
@@ -232,6 +242,34 @@ fn persist(image: Arc<gpui::Image>) -> io::Result<Attachment> {
     })
 }
 
+async fn persist_on_host(bridge: Arc<Bridge>, image: Arc<gpui::Image>) -> Result<Attachment> {
+    let home = bridge
+        .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
+        .await?
+        .codex_home;
+    let directory = PathBuf::from(home)
+        .join("attachments")
+        .join(uuid::Uuid::new_v4().to_string());
+    request(
+        &bridge,
+        "fs/createDirectory",
+        json!({ "path": directory, "recursive": true }),
+    )
+    .await?;
+    let path = directory.join(format!("image.{}", image.format.extension()));
+    request(
+        &bridge,
+        "fs/writeFile",
+        json!({ "path": path, "dataBase64": BASE64.encode(&image.bytes) }),
+    )
+    .await?;
+    Ok(Attachment {
+        path,
+        content: Content::Image(image),
+        persisted: true,
+    })
+}
+
 impl Composer {
     pub fn attachment_generation(&self) -> u64 {
         self.attachment_generation
@@ -248,9 +286,7 @@ impl Composer {
     }
 
     pub(super) fn save_paste(&mut self, content: Content, cx: &mut Context<Self>) {
-        self.pending_attachments += 1;
-        self.attachment_error = None;
-        let generation = self.attachment_generation;
+        let bridge = self.bridge.clone();
         let (detail, save): (_, Task<Result<Attachment>>) = match content {
             Content::Text(text) => (
                 "large pasted text",
@@ -261,13 +297,31 @@ impl Composer {
             ),
             Content::Image(image) => (
                 "image",
-                cx.background_executor()
-                    .spawn(async move { persist(image).map_err(Into::into) }),
+                match bridge {
+                    Some(bridge) => cx
+                        .foreground_executor()
+                        .spawn(persist_on_host(bridge, image)),
+                    None => cx
+                        .background_executor()
+                        .spawn(async move { persist(image).map_err(Into::into) }),
+                },
             ),
             Content::File | Content::ContextFile => {
                 unreachable!("only clipboard contents are persisted")
             }
         };
+        self.queue_attachment(detail, save, cx);
+    }
+
+    fn queue_attachment(
+        &mut self,
+        detail: &'static str,
+        save: Task<Result<Attachment>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_attachments += 1;
+        self.attachment_error = None;
+        let generation = self.attachment_generation;
         cx.spawn(async move |this, cx| {
             let result = save.await;
             let _ = this.update(cx, |this, cx| {
@@ -303,9 +357,7 @@ impl Composer {
                     if generation != this.attachment_generation {
                         return;
                     }
-                    this.attachments
-                        .extend(paths.into_iter().map(Attachment::file));
-                    cx.notify();
+                    this.drop_files(&paths, cx);
                 })
                 .ok();
             }
@@ -316,8 +368,14 @@ impl Composer {
     /// Files dropped on the composer's drop target (CP-030): each becomes an attachment at
     /// its own path.
     pub fn drop_files(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
-        self.attachments
-            .extend(paths.iter().cloned().map(Attachment::dropped));
+        for path in paths {
+            let bridge = self.bridge.clone();
+            let path = path.clone();
+            let save = cx
+                .foreground_executor()
+                .spawn(Attachment::dropped(path, bridge));
+            self.queue_attachment("image", save, cx);
+        }
         self.set_drag_active(false, cx);
         cx.notify();
     }
@@ -340,14 +398,13 @@ impl Composer {
 
     fn remove_attachment(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.attachments.len() {
-            self.attachments.remove(index);
-            cx.notify();
+            self.remove_paste(index, cx);
         }
     }
 
     /// The status line above the editor: `Files uploading…` while a paste saves, else the
     /// upload failure (`composer.submit.waitForFileUploads`, `composer.fileAttachment.uploadError`).
-    pub(super) fn upload_status(&self) -> Option<&'static str> {
+    pub fn upload_status(&self) -> Option<&'static str> {
         if self.pending_attachments > 0 {
             Some("Files uploading…")
         } else {
@@ -666,14 +723,30 @@ impl Composer {
             }
             (Content::Image(_), true) => {
                 let path = attachment.path.clone();
-                cx.background_executor()
-                    .spawn(async move {
-                        let _ = fs::remove_file(&path);
-                        if let Some(parent) = path.parent() {
-                            let _ = fs::remove_dir(parent);
-                        }
-                    })
-                    .detach();
+                if let Some(bridge) = self.bridge.clone() {
+                    cx.foreground_executor()
+                        .spawn(async move {
+                            if let Err(error) = request(
+                                &bridge,
+                                "fs/remove",
+                                json!({ "path": path, "force": true }),
+                            )
+                            .await
+                            {
+                                eprintln!("codex-gpui: pasted image not removed: {error:#}");
+                            }
+                        })
+                        .detach();
+                } else {
+                    cx.background_executor()
+                        .spawn(async move {
+                            let _ = fs::remove_file(&path);
+                            if let Some(parent) = path.parent() {
+                                let _ = fs::remove_dir(parent);
+                            }
+                        })
+                        .detach();
+                }
             }
             _ => {}
         }

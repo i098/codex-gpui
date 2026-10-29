@@ -5,7 +5,7 @@
 //! an unread one [INFERENCE: only a plain row was recorded].
 //! Custom section Options uses AppKit's native menu on macOS.
 use super::*;
-use gpui::{Anchor, FocusHandle, KeyDownEvent, Point, Role, anchored, deferred};
+use gpui::{Anchor, ElementId, FocusHandle, KeyDownEvent, Point, Role, anchored, deferred};
 
 #[cfg(target_os = "macos")]
 #[path = "menu/native.rs"]
@@ -61,6 +61,49 @@ impl Item {
         .map(|(_, g)| g)
         .collect::<String>();
         Some(glyphs + key)
+    }
+}
+
+/// A drawn row: one of the static items, or a custom section in `Section`'s submenu (the
+/// original's `move-to-custom-section:{id}` checkbox, checked for the row's own section).
+#[derive(Clone)]
+enum Row {
+    Item(&'static Item),
+    Section {
+        id: SharedString,
+        name: SharedString,
+        checked: bool,
+    },
+}
+
+const SECTION_PREFIX: &str = "move-to-custom-section:";
+
+/// `custom-section-separator`: between the custom sections and `New section…`.
+const SECTION_SEPARATOR: Item = Item {
+    id: "custom-section-separator",
+    label: "",
+    accelerator: None,
+    icon: None,
+    submenu: &[],
+};
+
+impl Row {
+    fn id(&self) -> SharedString {
+        match self {
+            Row::Item(item) => item.id.into(),
+            Row::Section { id, .. } => format!("{SECTION_PREFIX}{id}").into(),
+        }
+    }
+
+    fn item(&self) -> Option<&'static Item> {
+        match self {
+            Row::Item(item) => Some(item),
+            Row::Section { .. } => None,
+        }
+    }
+
+    fn is_separator(&self) -> bool {
+        self.item().is_some_and(Item::is_separator)
     }
 }
 
@@ -356,7 +399,11 @@ impl HomeSidebar {
             });
         }
     }
-    fn label(&self, item: &Item) -> &'static str {
+    fn label(&self, row: &Row) -> SharedString {
+        let item = match row {
+            Row::Item(item) => item,
+            Row::Section { name, .. } => return name.clone(),
+        };
         let thread = self.menu.as_ref().map(|m| m.thread.as_str());
         match item.id {
             "pin-thread" if thread.is_some_and(|t| self.pinned.contains(t)) => "Unpin",
@@ -365,6 +412,34 @@ impl HomeSidebar {
             }
             _ => item.label,
         }
+        .into()
+    }
+
+    /// `parent`'s submenu; `Section` lists the custom sections above `New section…`.
+    fn submenu(&self, parent: &'static Item) -> Vec<Row> {
+        if parent.id != "move-to-custom-section" {
+            return parent.submenu.iter().map(Row::Item).collect();
+        }
+        let thread = self.menu.as_ref().map(|m| m.thread.as_str());
+        let mut rows: Vec<Row> = self
+            .sections
+            .iter()
+            .map(|section| Row::Section {
+                id: section
+                    .id
+                    .strip_prefix("custom:")
+                    .unwrap_or(&section.id)
+                    .to_owned()
+                    .into(),
+                name: section.title.clone(),
+                checked: thread.is_some_and(|t| section.thread_ids.iter().any(|id| id == t)),
+            })
+            .collect();
+        if !rows.is_empty() {
+            rows.push(Row::Item(&SECTION_SEPARATOR));
+        }
+        rows.extend(parent.submenu.iter().map(Row::Item));
+        rows
     }
 
     /// The open menu in the recorded `nativeContextMenu.items` shape (without icons);
@@ -374,7 +449,7 @@ impl HomeSidebar {
         Some(
             self.menu_items()
                 .iter()
-                .map(|item| self.entry(item))
+                .map(|item| self.entry(&Row::Item(item)))
                 .collect(),
         )
     }
@@ -383,16 +458,29 @@ impl HomeSidebar {
         self.native_menu_snapshot.as_ref()
     }
 
-    fn entry(&self, item: &Item) -> serde_json::Value {
-        let mut v = serde_json::json!({ "id": item.id, "label": self.label(item), "enabled": self.item_enabled(item.id) });
-        if item.is_separator() {
-            v["type"] = "separator".into();
-        }
-        if let Some(keys) = item.accelerator {
-            v["accelerator"] = keys.into();
-        }
-        if !item.submenu.is_empty() {
-            v["submenu"] = item.submenu.iter().map(|sub| self.entry(sub)).collect();
+    fn entry(&self, row: &Row) -> serde_json::Value {
+        let id = row.id();
+        let mut v = serde_json::json!({ "id": id.as_ref(), "label": self.label(row).as_ref(), "enabled": self.item_enabled(&id) });
+        match row {
+            Row::Section { checked, .. } => {
+                v["type"] = "checkbox".into();
+                v["checked"] = (*checked).into();
+            }
+            Row::Item(item) => {
+                if item.is_separator() {
+                    v["type"] = "separator".into();
+                }
+                if let Some(keys) = item.accelerator {
+                    v["accelerator"] = keys.into();
+                }
+                if !item.submenu.is_empty() {
+                    v["submenu"] = self
+                        .submenu(item)
+                        .iter()
+                        .map(|sub| self.entry(sub))
+                        .collect();
+                }
+            }
         }
         v
     }
@@ -438,23 +526,30 @@ impl HomeSidebar {
         let items = self.menu_items();
         let enabled: [bool; ITEMS.len()] =
             std::array::from_fn(|i| items.get(i).is_some_and(|item| self.item_enabled(item.id)));
+        let submenu = self
+            .menu
+            .as_ref()
+            .and_then(|menu| menu.active)
+            .map(|i| self.submenu(&items[i]))
+            .unwrap_or_default();
         let Some(menu) = &mut self.menu else { return };
         let key = event.keystroke.key.as_str();
-        let submenu = menu.active.map(|i| items[i].submenu).unwrap_or(&[]);
         match (key, menu.sub) {
             ("escape" | "left", Some(_)) => menu.sub = None,
             ("escape", None) => {
                 self.close_menu(window, cx);
             }
             ("right", None) if !submenu.is_empty() => menu.sub = Some(Some(0)),
-            ("enter" | "space", Some(Some(i))) => self.activate(submenu[i].id, window, cx),
+            ("enter" | "space", Some(Some(i))) => self.activate(&submenu[i].id(), window, cx),
             ("enter" | "space", None) => {
                 if let Some(i) = menu.active {
                     self.activate(items[i].id, window, cx);
                 }
             }
             ("down" | "up" | "home" | "end", Some(sub)) if !submenu.is_empty() => {
-                menu.sub = Some(Some(step(key, sub, submenu.len(), |_| true)));
+                menu.sub = Some(Some(step(key, sub, submenu.len(), |i| {
+                    !submenu[i].is_separator()
+                })));
             }
             ("down" | "up" | "home" | "end", None) => {
                 menu.active = Some(step(key, menu.active, items.len(), |i| {
@@ -469,10 +564,11 @@ impl HomeSidebar {
     }
 
     /// Runs item `id` and closes the menu. `Rename`, `Pin`/`Unpin` and `Archive` dispatch the
-    /// row's actions; `Mark as unread` toggles the row's dot.
-    /// ponytail: Section, Fork, Share, Copy, Open in new window and Permanently delete only
-    /// close the menu (their requests are not recorded); wire them with their slices.
-    fn activate(&mut self, id: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+    /// row's actions; `Mark as unread` toggles the row's dot; `Section`, `Fork`, `Copy`,
+    /// `Open in new window` and `Permanently delete` dispatch a [`ThreadMenuAction`].
+    /// shortcut: `Share` only closes the menu; the original uploads a shared snapshot through
+    /// the ChatGPT backend, which this port has no client for yet.
+    fn activate(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         if !self.item_enabled(id) {
             return;
         }
@@ -493,16 +589,37 @@ impl HomeSidebar {
             return;
         }
         let thread = menu.thread;
-        match id {
-            "rename-thread" => window.dispatch_action(Box::new(RenameThread(thread)), cx),
+        let command = match id {
+            "rename-thread" => {
+                return window.dispatch_action(Box::new(RenameThread(thread)), cx);
+            }
             "pin-thread" => {
                 let pin = !self.pinned.contains(&thread);
-                window.dispatch_action(Box::new(PinThread(thread, pin)), cx)
+                return window.dispatch_action(Box::new(PinThread(thread, pin)), cx);
             }
-            "archive-thread" => window.dispatch_action(Box::new(ArchiveThread(thread)), cx),
-            "mark-thread-unread" => self.toggle_thread_unread(&thread, cx),
-            _ => {}
-        }
+            "archive-thread" => {
+                return window.dispatch_action(Box::new(ArchiveThread(thread)), cx);
+            }
+            "mark-thread-unread" => return self.toggle_thread_unread(&thread, cx),
+            "new-custom-section" => ThreadCommand::NewSection,
+            "fork-into-local" => ThreadCommand::Fork,
+            "copy-deeplink" => ThreadCommand::CopyDeeplink,
+            "copy-conversation-markdown" => ThreadCommand::CopyMarkdown,
+            "copy-working-directory" => ThreadCommand::CopyWorkingDirectory,
+            "open-in-new-window" => ThreadCommand::OpenInNewWindow,
+            "delete-thread" => ThreadCommand::Delete,
+            _ => {
+                let Some(section) = id.strip_prefix(SECTION_PREFIX) else {
+                    return;
+                };
+                // The checked section takes the chat back out (the original's `f0`).
+                let inside = self
+                    .section(section)
+                    .is_some_and(|s| s.thread_ids.contains(&thread));
+                ThreadCommand::MoveToSection((!inside).then(|| section.to_owned()))
+            }
+        };
+        window.dispatch_action(Box::new(ThreadMenuAction { thread, command }), cx);
     }
 
     pub fn toggle_thread_unread(&mut self, thread: &str, cx: &mut Context<Self>) {
@@ -516,15 +633,15 @@ impl HomeSidebar {
 
     fn menu_rows(
         &self,
-        items: &'static [Item],
+        rows: Vec<Row>,
         active: Option<usize>,
         on_hover: fn(&mut Self, usize, &mut Context<Self>),
         cx: &Context<Self>,
     ) -> Div {
         let t = cx.theme();
         let hover = t.menu_item_hover;
-        let rows = items.iter().enumerate().map(|(index, item)| {
-            if item.is_separator() {
+        let rows = rows.into_iter().enumerate().map(|(index, row)| {
+            if row.is_separator() {
                 return div()
                     .h(px(SEPARATOR))
                     .flex()
@@ -532,12 +649,16 @@ impl HomeSidebar {
                     .child(div().h(px(1.)).w_full().bg(t.border))
                     .into_any_element();
             }
+            let id = row.id();
+            let enabled = self.item_enabled(&id);
+            let item = row.item();
+            let checked = matches!(row, Row::Section { checked: true, .. });
             div()
-                .id((item.id, index))
-                .aria_disabled(!self.item_enabled(item.id))
-                .opacity(if self.item_enabled(item.id) { 1. } else { 0.4 })
+                .id(ElementId::NamedInteger(id.clone(), index as u64))
+                .aria_disabled(!enabled)
+                .opacity(if enabled { 1. } else { 0.4 })
                 .role(Role::MenuItem)
-                .aria_label(self.label(item))
+                .aria_label(self.label(&row))
                 .when(active == Some(index), |d| {
                     d.aria_active_descendant().bg(hover)
                 })
@@ -548,47 +669,52 @@ impl HomeSidebar {
                 .items_center()
                 .gap(px(6.))
                 .cursor_pointer()
-                .on_hover(cx.listener(move |this, hovered, _, cx| {
-                    if *hovered && this.item_enabled(item.id) {
-                        on_hover(this, index, cx);
-                    }
-                }))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(
-                    cx.listener(move |this, _, window, cx| this.activate(item.id, window, cx)),
-                )
-                .when_some(item.icon, |d, icon| {
-                    let color = t.text;
-                    d.child(
-                        div().size(px(16.)).flex_none().child(
-                            gpui::canvas(
-                                |_, _, _| {},
-                                move |bounds, (), window, cx| {
-                                    if !shapes::paint_icon(
-                                        icon, item.id, bounds, false, color, None, window, cx,
-                                    ) {
-                                        window
-                                            .paint_svg(
-                                                bounds,
-                                                item.id.into(),
-                                                Some(icon),
-                                                gpui::TransformationMatrix::default(),
-                                                color,
-                                                cx,
-                                            )
-                                            .ok();
-                                    }
-                                },
-                            )
-                            .size(px(16.)),
-                        ),
-                    )
+                .on_hover({
+                    let id = id.clone();
+                    cx.listener(move |this, hovered, _, cx| {
+                        if *hovered && this.item_enabled(&id) {
+                            on_hover(this, index, cx);
+                        }
+                    })
                 })
-                .child(text(self.label(item), 13., 18.5714, 430., t.text).flex_1())
-                .when_some(item.keys(), |d, keys| {
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _, window, cx| this.activate(&id, window, cx)))
+                .when_some(
+                    item.and_then(|item| item.icon.map(|icon| (item.id, icon))),
+                    |d, (key, icon)| {
+                        let color = t.text;
+                        d.child(
+                            div().size(px(16.)).flex_none().child(
+                                gpui::canvas(
+                                    |_, _, _| {},
+                                    move |bounds, (), window, cx| {
+                                        if !shapes::paint_icon(
+                                            icon, key, bounds, false, color, None, window, cx,
+                                        ) {
+                                            window
+                                                .paint_svg(
+                                                    bounds,
+                                                    key.into(),
+                                                    Some(icon),
+                                                    gpui::TransformationMatrix::default(),
+                                                    color,
+                                                    cx,
+                                                )
+                                                .ok();
+                                        }
+                                    },
+                                )
+                                .size(px(16.)),
+                            ),
+                        )
+                    },
+                )
+                .child(text(self.label(&row), 13., 18.5714, 430., t.text).flex_1())
+                .when_some(item.and_then(Item::keys), |d, keys| {
                     d.child(text(keys, 12., 16., 430., t.text_tertiary))
                 })
-                .when(!item.submenu.is_empty(), |d| {
+                .when(checked, |d| d.child(icon("menu-check", 16., t.text)))
+                .when(item.is_some_and(|item| !item.submenu.is_empty()), |d| {
                     d.child(icon("thread-chevron-right", 16., t.text_tertiary))
                 })
                 .into_any_element()
@@ -602,7 +728,7 @@ impl HomeSidebar {
         let menu = self.menu.as_ref().expect("open thread menu");
         let popup = self
             .menu_rows(
-                self.menu_items(),
+                self.menu_items().iter().map(Row::Item).collect(),
                 menu.active,
                 |this, index, cx| {
                     if let Some(menu) = &mut this.menu {
@@ -637,7 +763,7 @@ impl HomeSidebar {
                 .snap_to_window_with_margin(px(8.))
                 .child(
                     self.menu_rows(
-                        ITEMS[parent].submenu,
+                        self.submenu(&ITEMS[parent]),
                         sub,
                         |this, index, cx| {
                             if let Some(menu) = &mut this.menu {

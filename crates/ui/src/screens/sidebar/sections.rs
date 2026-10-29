@@ -46,6 +46,15 @@ impl HomeSidebar {
             .collect()
     }
 
+    /// The custom section (its id without `custom:`) the thread sits in, if any.
+    pub fn thread_custom_section(&self, thread: &str) -> Option<String> {
+        self.sections
+            .iter()
+            .find(|s| s.thread_ids.iter().any(|id| id == thread))
+            .and_then(|s| s.id.strip_prefix("custom:"))
+            .map(str::to_owned)
+    }
+
     pub fn update_section(&mut self, id: &str, name: &str, cx: &mut Context<Self>) {
         if let Some(section) = self.section_mut(id) {
             section.title = name.to_owned().into();

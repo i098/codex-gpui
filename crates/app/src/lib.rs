@@ -399,6 +399,8 @@ pub struct Root {
     recent_chats: Vec<String>,
     shortcut_state: features::shortcuts::ShortcutState,
     new_chat_section: Option<String>,
+    /// The row whose menu's `New section…` opened the section dialog: it moves into the new section.
+    new_section_thread: Option<String>,
     threads_loaded: bool,
     /// `thread/list` cursor of the page after `threads`, while the sidebar's end asks for it.
     next_cursor: Option<String>,
@@ -841,6 +843,7 @@ impl Root {
             recent_chats: Vec::new(),
             shortcut_state: features::shortcuts::ShortcutState::default(),
             new_chat_section: None,
+            new_section_thread: None,
             threads_loaded: false,
             next_cursor: None,
             loading_more: false,
@@ -5071,6 +5074,17 @@ impl Root {
         }
         let Some(view) = &self.thread else { return };
         let id = view.read(cx).id().to_owned();
+        self.fork_thread(id, later, window, cx);
+    }
+
+    /// [`Self::fork_chat`] of any thread (its id): a row menu's `Fork`.
+    pub(crate) fn fork_thread(
+        &mut self,
+        id: String,
+        later: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let bridge = self.bridge.clone();
         let computer_use = computer_use_overrides(&self.config);
         let host = self.host.clone();
@@ -5203,24 +5217,39 @@ impl Root {
         &mut self,
         id: String,
         pinned: bool,
-        window: &mut Window,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.move_to_section(id, pinned.then(|| PINNED_SECTION_ID.to_owned()), cx);
+    }
+
+    /// `thread/section/move` of the thread into `section` (`None`: out of any section), the
+    /// same way as [`Self::set_pinned`].
+    pub(crate) fn move_to_section(
+        &mut self,
+        id: String,
+        section: Option<String>,
         cx: &mut Context<Self>,
     ) {
         let Some(thread) = self.threads.iter_mut().find(|thread| thread.id == id) else {
             return;
         };
-        let section = pinned.then(|| ThreadSection {
-            id: PINNED_SECTION_ID.to_owned(),
+        let new_section = section.clone().map(|id| ThreadSection { id });
+        let old_section = std::mem::replace(&mut thread.section, new_section);
+        let old_custom = self.sidebar.read(cx).thread_custom_section(&id);
+        self.sidebar.update(cx, |s, cx| {
+            s.remove_section_thread(&id, cx);
+            if let Some(section) = &section {
+                s.assign_section(&id, section, cx);
+            }
+            s.set_threads(&self.threads, cx)
         });
-        let old_section = std::mem::replace(&mut thread.section, section);
-        self.sidebar
-            .update(cx, |s, cx| s.set_threads(&self.threads, cx));
         let bridge = self.bridge.clone();
-        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
             let done = bridge
                 .request::<_, Value>(
                     "thread/section/move",
-                    json!({ "threadId": id, "sectionId": pinned.then_some(PINNED_SECTION_ID), "beforeThreadId": null }),
+                    json!({ "threadId": id, "sectionId": section, "beforeThreadId": null }),
                 )
                 .await;
             this.update(cx, |this, cx| {
@@ -5228,13 +5257,21 @@ impl Root {
                     if let Some(thread) = this.threads.iter_mut().find(|thread| thread.id == id) {
                         thread.section = old_section;
                     }
-                    this.sidebar
-                        .update(cx, |s, cx| s.set_threads(&this.threads, cx));
+                    this.sidebar.update(cx, |s, cx| {
+                        s.remove_section_thread(&id, cx);
+                        if let Some(old) = &old_custom {
+                            s.assign_section(&id, old, cx);
+                        }
+                        s.set_threads(&this.threads, cx)
+                    });
                 } else {
-                    let before = old_section.map(|section| section.id);
-                    let after = pinned.then(|| PINNED_SECTION_ID.to_owned());
-                    if before != after {
-                        this.record_app_edit(features::shortcuts::AppEdit::Section { id: id.clone(), before, after });
+                    let before = old_section.map(|section| section.id).or(old_custom);
+                    if before != section {
+                        this.record_app_edit(features::shortcuts::AppEdit::Section {
+                            id: id.clone(),
+                            before,
+                            after: section,
+                        });
                     }
                 }
             })?;
@@ -6843,18 +6880,8 @@ async fn restore_place(
     added: &str,
     edit: &QueueEdit,
 ) -> Result<()> {
-    let list: ThreadQueueListResponse = bridge
-        .request(
-            "thread/queue/list",
-            json!({ "threadId": thread_id, "cursor": null }),
-        )
-        .await?;
-    // ponytail: a reorder of a partial page would drop the rest; queues of one page only.
-    if list.next_cursor.is_some() {
-        return Ok(());
-    }
-    let mut ids: Vec<_> = list
-        .data
+    let mut ids: Vec<_> = read_queue(bridge, thread_id)
+        .await?
         .into_iter()
         .map(|row| row.id)
         .filter(|id| id != added)
@@ -6896,7 +6923,8 @@ fn user_input(s: &Submission) -> Vec<Value> {
     input
 }
 
-/// `turn/start` with the prompt, attachments, model, effort and Fast mode.
+/// `turn/start` with the prompt, attachments, model, effort, Fast mode and collaboration mode.
+/// The server keeps a turn's mode for later turns, so every turn names `plan` or `default`.
 async fn turn_start(
     bridge: &Bridge,
     thread_id: &str,
@@ -6916,6 +6944,12 @@ async fn turn_start(
     apply_permissions(&mut params, s.permission);
     if s.fast {
         params["serviceTier"] = "priority".into();
+    }
+    if let Some(model) = model(s) {
+        params["collaborationMode"] = json!({
+            "mode": if s.plan { "plan" } else { "default" },
+            "settings": { "model": model, "reasoning_effort": s.effort, "developer_instructions": null },
+        });
     }
     bridge.request::<_, Value>("turn/start", params).await?;
     Ok(())

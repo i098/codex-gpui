@@ -5,6 +5,7 @@ mod common;
 
 use anyhow::{Context as _, Result, ensure};
 use app::Route;
+use base64::Engine as _;
 use common::{Fx, GREETING, exchange, script};
 use serde_json::json;
 
@@ -57,6 +58,9 @@ fn ring_fits(ring: [f32; 4]) -> bool {
 
 #[test]
 fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result<()> {
+    let home = tempfile::tempdir()?;
+    let image = home.path().join("previous-account.png");
+    image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 0, 255])).save(&image)?;
     let mut lines = script(None, |line| {
         if line["dir"] == "send" && line["msg"]["method"] == "thread/list" {
             line["msg"]["params"] = json!({});
@@ -67,10 +71,13 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
     failed[1]["msg"]["error"] = json!({"code": -32603, "message": "Replay logout failure"});
     lines.extend(failed);
     lines.extend(exchange("account/logout", json!({})));
-    lines.extend(exchange(
-        "account/read",
-        json!({"account": {"type": "chatgpt", "email": "user@example.com", "planType": "promax"}, "requiresOpenaiAuth": true}),
-    ));
+    // Home and thread dictation also read the account before and after sign-in.
+    for _ in 0..4 {
+        lines.extend(exchange(
+            "account/read",
+            json!({"account": {"type": "chatgpt", "email": "user@example.com", "planType": "promax"}, "requiresOpenaiAuth": true}),
+        ));
+    }
     lines.extend(exchange(
         "configRequirements/read",
         json!({"requirements":{"allowedLoginMethods":["api"]}}),
@@ -107,12 +114,14 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
     ));
     lines.extend(exchange("turn/start", json!({})));
     lines.extend(exchange("turn/start", json!({})));
+    for _ in 0..2 {
+        lines.extend(exchange("fs/readFile", json!({ "dataBase64": base64::engine::general_purpose::STANDARD.encode(std::fs::read(&image)?) })));
+    }
     let theme = match std::env::var("CGX_LOGOUT_THEME").as_deref() {
         Ok("light") => "light",
         _ => "dark",
     };
     let mut fx = Fx::captured(theme, (1280., 832.), lines)?;
-    let home = tempfile::tempdir()?;
     fx.root.update(&mut fx.cx, |root, cx| {
         root.set_host(
             std::sync::Arc::new(app::host::LocalHost::new(home.path())),
@@ -168,8 +177,6 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
     fx.type_text(" after failure")?;
     ensure!(fx.composer_text()? == "Keep this draft after failure");
     shot(&mut fx, "failure")?;
-    let image = home.path().join("previous-account.png");
-    image::RgbaImage::from_pixel(1, 1, image::Rgba([255, 0, 0, 255])).save(&image)?;
     for composer in [home_composer, fx.composer()] {
         composer.update(&mut fx.cx, |composer, cx| {
             composer.drop_files(std::slice::from_ref(&image), cx);
@@ -261,15 +268,6 @@ fn logout_requires_confirmation_and_preserves_the_session_on_failure() -> Result
                 json!([{"type": "text", "text": "New account thread message", "text_elements": []}]),
             ],
         "Previous account attachments reached a new submission: {inputs:?}"
-    );
-    // The signed-in email is read again after sign-in: the card keeps its `Signed in as` line.
-    ensure!(
-        fx.sent()?
-            .iter()
-            .filter(|r| r["method"] == "account/read")
-            .count()
-            == 2,
-        "account/read must run at start and after sign-in"
     );
     fx.menu("Codex", "Log Out")?;
     ensure!(

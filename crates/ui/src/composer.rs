@@ -486,6 +486,8 @@ pub struct Submission {
     pub permission: Permission,
     /// Fast mode (bolt toggle in the model picker).
     pub fast: bool,
+    /// Plan mode (`collaborationMode.mode` `plan`).
+    pub plan: bool,
     /// `composer.submitInBackground`: create the chat and start its turn without opening it.
     pub background: bool,
 }
@@ -768,6 +770,8 @@ pub struct Composer {
     effort: Option<String>,
     default_selection: (usize, Option<String>),
     fast: bool,
+    /// Plan mode: the next turns run in the `plan` collaboration mode.
+    plan: bool,
     permission: Permission,
     menu: Option<Menu>,
     slash: slash::Slash,
@@ -897,6 +901,7 @@ impl Composer {
             effort: Some("medium".into()),
             default_selection: (0, Some("medium".into())),
             fast: false,
+            plan: false,
             permission: Permission::Custom,
             menu: None,
             slash: slash::Slash::default(),
@@ -1814,7 +1819,7 @@ impl Composer {
         if self.edit_pending || (!self.running && self.current_model().is_none()) {
             return;
         }
-        if self.pending_attachments > 0 {
+        if self.upload_status().is_some() {
             self.show_submit_blocked(window, cx);
             return;
         }
@@ -1902,6 +1907,7 @@ impl Composer {
             effort: self.effort.clone(),
             permission: self.permission,
             fast: self.fast,
+            plan: self.plan,
             background,
         }
     }
@@ -2229,7 +2235,7 @@ impl Composer {
 
     pub fn run_settings(&self) -> (Value, Permission) {
         (
-            json!({"mode": "default", "settings": {
+            json!({"mode": if self.plan { "plan" } else { "default" }, "settings": {
                 "model": self.current_model().map_or("", |m| m.id.as_str()),
                 "reasoning_effort": self.effort, "developer_instructions": null,
             }}),
@@ -2251,6 +2257,7 @@ impl Composer {
                 .as_str()
                 .map(str::to_owned);
         }
+        self.plan = mode["mode"] == "plan";
         self.permission = permission;
         cx.notify();
     }
@@ -2267,6 +2274,16 @@ impl Composer {
 
     pub fn fast_mode(&self) -> bool {
         self.fast
+    }
+
+    pub fn plan_mode(&self) -> bool {
+        self.plan
+    }
+
+    /// `Plan mode` (slash command, `@` row) and the footer's `Plan` chip turn it on and off.
+    pub fn toggle_plan(&mut self, cx: &mut Context<Self>) {
+        self.plan = !self.plan;
+        cx.notify();
     }
 }
 
@@ -3285,7 +3302,18 @@ mod tests {
         assert!(sent.borrow().is_empty());
         app.update(|cx| {
             window
-                .update(cx, |composer, _, _| composer.pending_attachments = 0)
+                .update(cx, |composer, _, _| {
+                    composer.pending_attachments = 0;
+                    composer.attachment_error = Some("Unable to upload file");
+                })
+                .unwrap();
+        });
+        assert_eq!(press(&mut app, "enter"), (Some(true), false, "hi".into()));
+        assert!(sent.borrow().is_empty());
+        assert_eq!(press(&mut app, "escape"), (None, true, "hi".into()));
+        app.update(|cx| {
+            window
+                .update(cx, |composer, _, _| composer.attachment_error = None)
                 .unwrap();
         });
         assert_eq!(press(&mut app, "enter"), (None, true, String::new()));
