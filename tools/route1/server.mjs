@@ -330,13 +330,16 @@ const keyOf = (x) =>
 // flushes) an empty 200. ChatGPT-host thread catalog pages (the owner's chats) answer an empty
 // last page.
 const POST_READ_URL = /statsig\/bootstrap|ab\.chatgpt\.com\/v1\/initialize|has_installations/;
-const PRIVATE_URL = /payment|subscriptions|checkout|gift-credits|referrals|\/spaces|\/pins\b|gizmos|amphora\/notifications|\/tbo\b|conversation|files\/library|\/websites|mfa_info/;
+const PRIVATE_URL = /payment|subscriptions|checkout|gift-credits|referrals|\/spaces|\/pins\b|gizmos|amphora\/notifications|\/tbo\b|conversation|files\/library|\/websites/;
+// Mobile setup's MFA status: the scrubbed recording that the native replay host also serves.
+const MFA_INFO = () => JSON.parse(fs.readFileSync(path.join(HERE, "../../refs/interactions/mobile-mfa.json"), "utf8")).exchanges.find((e) => e.request.request.url === "/accounts/mfa_info").response;
 const jsonResponse = (status, body) => ({ value: { response: { __response: { status, statusText: "", headers: [["content-type", "application/json"]], body } } } });
 function privateAnswer(svc, method, args) {
   if (svc === "localThreadCatalog" && method === "readPage" && args[0]?.hostId?.startsWith("chatgpt:")) return { value: { entries: [], nextCursor: null }, fn: false, calls: [] };
   if (svc !== "httpFetch" || method !== "fetch") return;
   const { url = "", method: verb = "GET" } = args[1] ?? {};
   const get = verb.toUpperCase() === "GET";
+  if (get && url.endsWith("/accounts/mfa_info")) return MFA_INFO();
   if (PRIVATE_URL.test(url) || (!get && !POST_READ_URL.test(url))) return jsonResponse(get ? 404 : 200, "{}");
 }
 async function callService(s, { svc, method, args }) {

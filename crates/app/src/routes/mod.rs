@@ -195,9 +195,7 @@ impl Root {
             Route::Scheduled => Some(automations::scheduled(self, cx)),
             Route::Automation(id) => Some(automations::automation(self, id, window, cx)),
             Route::Archive => Some(archive::page(self, cx)),
-            Route::Thread(_) if self.sidebar_automation.is_some() => {
-                Some(automations::thread(self, cx))
-            }
+            Route::Thread(_) if self.scheduled_thread() => Some(automations::thread(self, cx)),
             Route::Mobile => Some(mobile::page(self, cx)),
             Route::PullRequests(selected) => Some(self.pull_requests_shell(selected, window, cx)),
             Route::Security => Some(crate::security::shell(self, window, cx)),
@@ -252,7 +250,7 @@ impl Root {
             (Some(id), None) => self.load_thread(id.clone(), window, cx).into(),
             (None, _) => self.home.clone().into(),
         };
-        let shell = if self.sidebar_automation.is_some() {
+        let shell = if self.scheduled_thread() {
             self.page.clone().unwrap_or_else(|| self.shell.clone())
         } else {
             self.shell.clone()
@@ -262,7 +260,7 @@ impl Root {
             Route::Home | Route::Thread(_) | Route::Remote { .. } | Route::CloudSetup { .. }
         );
         shell.update(cx, |shell, cx| {
-            shell.selected_rail = if self.sidebar_automation.is_some() {
+            shell.selected_rail = if self.scheduled_thread() {
                 Some("scheduled")
             } else {
                 home.then_some("home")

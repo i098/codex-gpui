@@ -19,7 +19,8 @@ import tempfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
-CELLS = {("home", "rest"), ("terminal", "rest"), ("settings", "configuration")}
+CELLS = {("home", "rest"), ("terminal", "rest"), ("settings", "configuration"),
+         ("mobile", "get-started"), ("mobile", "continuation")}
 PINS = {
     "index.html": "fbdbdbc3d10bc13ebb49e6175673c77fafbcbcdec90a7f7e147ad91950145a0b",
     "assets/index-44a69cb8b3cd.js": "bd10e3c9056f5dc7f6a9ce750d6cfb6a99343e20e9a206bef6d61d4b70df6dea",
@@ -164,6 +165,7 @@ def original_through_tunnel(args, ssh):
         local = Path(temporary)
         shutil.copytree(ROOT / "tools/route1", local / "tools/route1")
         (local / "fixtures").symlink_to(ROOT / "fixtures", target_is_directory=True)
+        (local / "refs").symlink_to(ROOT / "refs", target_is_directory=True)
         (local / "tools/capture").symlink_to(ROOT / "tools/capture", target_is_directory=True)
         (local / "bin").mkdir()
         shim = local / "bin/ssh"

@@ -1016,6 +1016,18 @@ pub struct ActivityFixtureHost(pub app::host::LocalHost);
 
 impl app::host::Host for ActivityFixtureHost {
     fn fetch(&self, request: &app::host::Request) -> Result<Value> {
+        // Mobile setup's MFA reads, from the recording the original fixture server also serves.
+        static MFA: std::sync::LazyLock<app::host::ReplayHost> = std::sync::LazyLock::new(|| {
+            app::host::ReplayHost::from_recording(include_str!(
+                "../../../../refs/interactions/mobile-mfa.json"
+            ))
+            .expect("MFA recording")
+        });
+        if matches!(request, app::host::Request::Http(http)
+            if http["url"] == "/wham/remote/control/mfa_requirement" || http["url"] == "/accounts/mfa_info")
+        {
+            return app::host::Host::fetch(&*MFA, request);
+        }
         if matches!(request, app::host::Request::Http(http) if http["url"] == "/wham/statsig/bootstrap")
         {
             static POLICY: std::sync::LazyLock<Value> = std::sync::LazyLock::new(|| {

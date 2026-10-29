@@ -63,11 +63,8 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
         );
     }))
     .on_action(
-        cx.listener(|this, _: &automations::StartSuggestedTask, _, cx| {
-            this.toast(
-                Toast::danger("Starting suggested tasks isn’t supported in this version"),
-                cx,
-            )
+        cx.listener(|this, action: &automations::StartSuggestedTask, window, cx| {
+            this.start_suggested_task(action.0, window, cx);
         }),
     )
 }
@@ -145,6 +142,62 @@ pub(super) fn thread(root: &mut Root, cx: &mut Context<Root>) -> Entity<Shell> {
 }
 
 impl Root {
+    pub(crate) fn scheduled_thread(&self) -> bool {
+        self.sidebar_automation.is_some()
+            || matches!(&self.state.route, Route::Thread(id) if self.suggested_threads.contains(id))
+    }
+
+    pub(crate) fn start_suggested_task(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(page) = self.suggestions.clone() else {
+            return;
+        };
+        let Some(mut suggestion) = page.update(cx, |page, cx| page.begin_start(index, cx)) else {
+            return;
+        };
+        suggestion["cwd"] = json!(self.state.project_root.as_ref().unwrap_or(&self.cwd));
+        let source = self.host.clone();
+        let host = source.clone();
+        let epoch = self.navigation_epoch;
+        let start = cx.background_spawn(async move {
+            let reply = host.fetch(&host::Request::post(
+                "start-suggested-task",
+                Some(suggestion),
+            ))?;
+            let mut body = host::json_body(&reply)?;
+            serde_json::from_value::<Thread>(body["thread"].take()).map_err(anyhow::Error::from)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = start.await;
+            this.update_in(cx, |this, window, cx| {
+                page.update(cx, |page, cx| page.finish_start(cx));
+                if !Arc::ptr_eq(&this.host, &source) || this.navigation_epoch != epoch {
+                    return;
+                }
+                match result {
+                    Ok(thread) => {
+                        this.suggested_threads.insert(thread.id.clone());
+                        this.automation_threads.insert(thread.id.clone());
+                        this.loaded.insert(thread.id.clone());
+                        this.add_thread(&thread, cx);
+                        this.listen_to_app_tools(window, cx);
+                        this.navigate(Route::Thread(thread.id), window, cx);
+                    }
+                    Err(error) => {
+                        eprintln!("codex-gpui: suggested task start failed: {error:#}");
+                        this.toast(Toast::danger("Couldn’t start this suggested task"), cx);
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn load_history(&self, page: Entity<History>, cx: &mut Context<Self>) {
         if self.automation_source == "cloud" {
             page.update(cx, |page, cx| {

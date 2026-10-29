@@ -6,6 +6,7 @@ use common::{Fx, ROOT, SUBTRACT};
 use image::RgbaImage;
 use serde_json::Value;
 use std::{env, fmt::Write as _, fs, path::Path};
+use ui::screens::mobile::{GetStarted, SetupStep};
 
 #[test]
 #[ignore = "run through tools/parity/proof.py on macOS"]
@@ -27,19 +28,39 @@ fn capture_cell() -> Result<()> {
     fx.wait("navigation destinations", |fx| {
         fx.shell(|shell| shell.unread_destinations.is_some())
     })?;
-    match (surface.as_str(), state.as_str()) {
-        ("home", "rest") => ensure!(fx.route() == Route::Home),
-        ("terminal", "rest") => open_terminal(&mut fx)?,
+    let screen = match (surface.as_str(), state.as_str()) {
+        ("home", "rest") => {
+            ensure!(fx.route() == Route::Home);
+            "home"
+        }
+        ("terminal", "rest") => {
+            open_terminal(&mut fx)?;
+            "terminal"
+        }
         ("settings", "configuration") => {
             fx.keys("cmd-,")?;
             fx.click(fx.at("settings", "Configuration")?)?;
             ensure!(fx.route() == Route::Settings);
+            "settings"
+        }
+        ("mobile", "get-started") => {
+            open_mobile(&mut fx)?;
+            ensure!(mobile_step(&fx) == SetupStep::Initial);
+            "mobile"
+        }
+        ("mobile", "continuation") => {
+            open_mobile(&mut fx)?;
+            // `common::ActivityFixtureHost` answers both MFA reads, as the original's server.
+            fx.action(Box::new(GetStarted))?;
+            fx.cx.run_until_parked();
+            ensure!(mobile_step(&fx) == SetupStep::AllowHost);
+            "mobile-continuation"
         }
         _ => anyhow::bail!("no native recipe for {surface}/{state}"),
-    }
+    };
     fx.cx.run_until_parked();
     let native = fx.reference_shot()?;
-    let mut metrics = parity::diff_ref(&output.join("refs"), output, &surface, theme, &native)?;
+    let mut metrics = parity::diff_ref(&output.join("refs"), output, screen, theme, &native)?;
     fs::rename(output.join(&metrics.ref_png), output.join("original.png"))?;
     fs::rename(output.join(&metrics.port_png), output.join("native.png"))?;
     fs::rename(output.join(&metrics.diff_png), output.join("diff.png"))?;
@@ -85,6 +106,18 @@ fn capture_cell() -> Result<()> {
     fs::write(output.join("differences.md"), report)?;
     ensure!(metrics.pass, "strict pixel gate failed; see differences.md");
     Ok(())
+}
+
+/// Profile menu ▸ Help ▸ `Set up mobile`, as `flows::open_mobile` clicks it.
+fn open_mobile(fx: &mut Fx) -> Result<()> {
+    fx.click((26., fx.size.1 - 26.))?;
+    fx.click((118., fx.size.1 - 100.))?;
+    ensure!(fx.route() == Route::Mobile, "route {:?}", fx.route());
+    Ok(())
+}
+
+fn mobile_step(fx: &Fx) -> SetupStep {
+    fx.read(|root, cx| root.mobile_page().unwrap().read(cx).step())
 }
 
 fn open_terminal(fx: &mut Fx) -> Result<()> {

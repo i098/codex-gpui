@@ -582,6 +582,7 @@ impl Personalization {
         focus::ring(
             super::select(
                 "Local",
+                430.,
                 Some(icon("memory-computer", 16., t.text).into_any_element()),
                 false,
                 self.host_menu,

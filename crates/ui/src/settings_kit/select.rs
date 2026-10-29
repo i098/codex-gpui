@@ -33,6 +33,8 @@ pub struct Select {
     icons: Option<fn(&str, &Theme) -> Option<gpui::AnyElement>>,
     details: std::collections::HashMap<&'static str, &'static str>,
     width: f32,
+    /// The trigger label's font weight.
+    weight: f32,
     /// A flattened submenu's title over the options after a pinned default.
     heading: Option<&'static str>,
 }
@@ -86,6 +88,7 @@ impl Select {
             icons: None,
             details: std::collections::HashMap::new(),
             width: 240.,
+            weight: 430.,
             heading: None,
         }
     }
@@ -102,6 +105,11 @@ impl Select {
 
     pub fn with_width(mut self, width: f32) -> Self {
         self.width = width;
+        self
+    }
+
+    pub fn with_label_weight(mut self, weight: f32) -> Self {
+        self.weight = weight;
         self
     }
 
@@ -438,6 +446,7 @@ impl Render for Select {
         let leading = self.icons.and_then(|icon| icon(&self.value, &t));
         let control = crate::screens::settings::select(
             label,
+            self.weight,
             leading,
             self.loading || self.disabled,
             self.open,

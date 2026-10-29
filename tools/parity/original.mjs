@@ -7,6 +7,10 @@ const [surface, state, theme, width, height, output] = process.argv.slice(2);
 const w = Number(width), h = Number(height);
 if (state === "rest" && ["home", "terminal"].includes(surface)) {
   await capture(surface, theme, w, h, output);
+} else if (surface === "mobile" && state === "get-started") {
+  await capture("mobile", theme, w, h, output);
+} else if (surface === "mobile" && state === "continuation") {
+  await capture("mobile-continuation", theme, w, h, output);
 } else if (surface === "settings" && state === "configuration") {
   await configuration();
 } else {

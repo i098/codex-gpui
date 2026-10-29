@@ -490,6 +490,7 @@ pub struct Root {
     running_automations: HashSet<String>,
     automation_updates: HashMap<String, Task<()>>,
     suggestion_load: Option<Task<()>>,
+    suggested_threads: HashSet<String>,
     /// The Scheduled routes' sidebar, fed the host's list when the read completes.
     scheduled: Option<Entity<automations::ScheduledSidebar>>,
     /// The Scheduled empty page: its suggestion cards start guided conversations.
@@ -906,6 +907,7 @@ impl Root {
             picking_project: false,
             automation_updates: HashMap::new(),
             suggestion_load: None,
+            suggested_threads: HashSet::new(),
             scheduled: None,
             suggestions: None,
             cwd,
@@ -1346,6 +1348,7 @@ impl Root {
         self.refresh_activity_access(cx);
         hotkey::policy::refresh(self, cx);
         self.automation_threads.clear();
+        self.suggested_threads.clear();
         self.automation_card_results.clear();
         self.app_tool_events = None;
         self.bind_context_files(cx);
@@ -3565,6 +3568,7 @@ impl Root {
                         this.automations = None;
                         this.scheduled = None;
                         this.suggestions = None;
+                        this.suggested_threads.clear();
                         this.back.clear();
                         this.forward.clear();
                         this.navigation_epoch += 1;
@@ -5731,8 +5735,13 @@ impl Root {
             return;
         }
         let value = e.value.clone();
-        let apply = move |config: &mut Value| config[store][key] = value;
-        if !matches!(store, "desktop" | "features") {
+        let apply = move |config: &mut Value| match key {
+            "" => config[store] = value,
+            _ => config[store][key] = value,
+        };
+        // `desktop`/`features` keys and the Configuration page's top-level `config.toml` keys
+        // persist; other stores are session-only.
+        if !matches!(store, "desktop" | "features" | "sandbox_workspace_write") && !key.is_empty() {
             return apply(&mut self.config);
         }
         let params = json!({
@@ -7313,9 +7322,7 @@ impl Render for Root {
             content
         } else {
             match (&self.page, &self.split) {
-                (_, Some(split)) if self.sidebar_automation.is_some() => {
-                    split.clone().into_any_element()
-                }
+                (_, Some(split)) if self.scheduled_thread() => split.clone().into_any_element(),
                 (Some(page), _) => page.clone().into_any_element(),
                 (None, Some(split)) => split.clone().into_any_element(),
                 (None, None) => self.shell.clone().into_any_element(),
@@ -7417,14 +7424,11 @@ impl Render for Root {
             .on_action(cx.listener(|this, _: &automations::NewTask, window, cx| {
                 this.open_dialog(DialogKind::ScheduleTask, window, cx)
             }))
-            .on_action(
-                cx.listener(|this, _: &automations::StartSuggestedTask, _, cx| {
-                    this.toast(
-                        Toast::danger("Starting suggested tasks isn’t supported in this version"),
-                        cx,
-                    )
-                }),
-            )
+            .on_action(cx.listener(
+                |this, action: &automations::StartSuggestedTask, window, cx| {
+                    this.start_suggested_task(action.0, window, cx);
+                },
+            ))
             .on_action(cx.listener(|this, _: &OpenMobileSetup, window, cx| {
                 this.navigate(Route::Mobile, window, cx)
             }))

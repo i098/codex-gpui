@@ -285,6 +285,9 @@ mod git_settings;
 #[path = "appearance_settings.rs"]
 mod appearance_settings;
 
+#[path = "configuration_settings.rs"]
+mod configuration_settings;
+
 #[path = "worktrees.rs"]
 pub mod worktrees;
 
@@ -484,9 +487,12 @@ impl SettingsPage {
         self.toaster = Some(toaster);
     }
 
+    /// `store.key`, or a top-level `config.toml` key such as `approval_policy`.
     fn get(&self, path: &str) -> &Value {
-        let (store, key) = path.split_once('.').unwrap_or((path, ""));
-        &self.values[store][key]
+        match path.split_once('.') {
+            Some((store, key)) => &self.values[store][key],
+            None => &self.values[path],
+        }
     }
 
     fn flag(&self, path: &str, default: bool) -> bool {
@@ -501,9 +507,11 @@ impl SettingsPage {
     pub fn set(&mut self, path: &'static str, value: Value, cx: &mut Context<Self>) {
         self.pending_instructions
             .retain(|change| change.path != path);
-        let (store, key) = path.split_once('.').unwrap_or((path, ""));
         // `IndexMut` makes a missing store an object on its first key.
-        self.values[store][key] = value.clone();
+        match path.split_once('.') {
+            Some((store, key)) => self.values[store][key] = value.clone(),
+            None => self.values[path] = value.clone(),
+        }
         cx.emit(SettingChanged { path, value });
         cx.notify();
     }
@@ -839,6 +847,8 @@ pub struct SettingsPane {
     storage: Entity<storage::StoragePage>,
     git_saved_until: std::collections::HashMap<&'static str, std::time::Instant>,
     appearance: appearance_settings::State,
+    /// `Available reasoning efforts` on the Configuration page.
+    efforts: Option<Entity<crate::settings_kit::MultiSelect>>,
 }
 
 /// `Confirm before closing a window` options, default first.
@@ -878,6 +888,7 @@ impl SettingsPane {
             git_fields: Vec::new(),
             git_saved_until: Default::default(),
             appearance: Default::default(),
+            efforts: None,
         }
     }
 
@@ -892,7 +903,20 @@ impl SettingsPane {
         present: fn(crate::settings_kit::Select) -> crate::settings_kit::Select,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let current = self.page.read(cx).choice(key, options[0].0).to_owned();
+        self.select_menu_or(key, options, options[0].0, search, present, cx)
+    }
+
+    /// [`Self::select_menu`] whose unset value shows `default` instead of the first option.
+    fn select_menu_or(
+        &mut self,
+        key: &'static str,
+        options: &'static [(&'static str, &'static str)],
+        default: &str,
+        search: Option<&'static str>,
+        present: fn(crate::settings_kit::Select) -> crate::settings_kit::Select,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let current = self.page.read(cx).choice(key, default).to_owned();
         let page = self.page.clone();
         let select = self.selects.entry(key).or_insert_with(|| {
             let choices = options
@@ -1102,6 +1126,7 @@ impl SettingsPane {
                         Some("Where files and folders open by default"),
                         select(
                             "Zed",
+                            430.,
                             Some(app_icon(over(t.primary_soft_alpha, t.background_panel))),
                             false,
                             false,
@@ -1192,7 +1217,7 @@ impl SettingsPane {
                         Some(
                             "Choose how quickly ChatGPT runs across chats, subagents, and compaction",
                         ),
-                        select("Standard", None, false, false, t).into_any_element(),
+                        select("Standard", 430., None, false, false, t).into_any_element(),
                     ),
                     row(
                         "Suggested prompts",
@@ -1366,6 +1391,9 @@ impl Render for SettingsPane {
         }
         if section == "Git" {
             return self.render_git(&t, window, cx);
+        }
+        if section == "Configuration" {
+            return self.render_configuration(&t, window, cx);
         }
         if section == "Appearance" {
             return self.render_appearance(&t, window, cx);
@@ -1723,9 +1751,10 @@ pub(crate) fn button(
         .child(on_card(12.5, Squircle, fill, border))
         .child(text(label, 13., 18., 430., t.text))
 }
-/// Dropdown trigger: value (with an optional leading app icon) and a chevron.
+/// Dropdown trigger: value (with an optional leading app icon) at `weight`, and a chevron.
 pub(crate) fn select(
     label: impl Into<SharedString>,
+    weight: f32,
     leading: Option<AnyElement>,
     disabled: bool,
     open: bool,
@@ -1756,7 +1785,7 @@ pub(crate) fn select(
                 .items_center()
                 .gap(px(6.))
                 .children(leading)
-                .child(text(label, 13., 18., 430., t.text)),
+                .child(text(label, 13., 18., weight, t.text)),
         )
         .child(icon("chevron-down", 14., t.text_tertiary))
 }
@@ -1844,6 +1873,38 @@ mod tests {
             settings.update(cx, |settings, cx| settings.select_section("General", cx));
             assert_eq!(settings.read(cx).section, "General");
             assert!(settings.read(cx).subtree.is_none());
+        });
+    }
+
+    #[test]
+    fn top_level_config_keys_read_and_write_without_a_store() {
+        let mut app = gpui::HeadlessAppContext::with_asset_source(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+        );
+        app.update(|cx| {
+            let integrations = cx.new(|_| super::integrations::State::default());
+            let (_, settings) = super::shell(
+                &json!({"approval_policy": "never", "desktop": {"x": 1}}),
+                &json!({}),
+                Some("Configuration"),
+                integrations,
+                cx,
+            );
+            assert_eq!(
+                settings.read(cx).choice("approval_policy", "on-request"),
+                "never"
+            );
+            assert_eq!(
+                settings.read(cx).choice("sandbox_mode", "read-only"),
+                "read-only"
+            );
+            settings.update(cx, |settings, cx| {
+                settings.set("approval_policy", json!("on-request"), cx)
+            });
+            let page = settings.read(cx);
+            assert_eq!(page.choice("approval_policy", "never"), "on-request");
+            assert_eq!(page.values["desktop"]["x"], 1);
         });
     }
 

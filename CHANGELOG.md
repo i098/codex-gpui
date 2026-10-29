@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Add the Configuration settings page: the `config.toml` approval policy, sandbox, network access, web search, output detail, and reasoning summary controls, the available reasoning efforts, the Codex dependencies switch, and Open config.toml.
 - Add the advanced Appearance settings: theme presets, colors, contrast, fonts, translucent sidebar, theme import and copy, separate light and dark modes, font sizes, diff markers, reduced motion, pointer cursors, font smoothing, the macOS Dock icon, and Reset to default.
 - Add optional keyboard-accessible documentation links to confirmation dialogs without accepting or cancelling the pending action.
 - Add saved, revision-scoped Mark as viewed controls for Branch diffs.
@@ -34,6 +35,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Fixed
 - Match Home at narrow windows: icon-only utility chips, the full-width composer, no titlebar New chat, and the 40 px light composer shadow below 640 px.
+- Match the original Mobile setup allow-host step: the `Set up Remote` header, balanced heading and description lines (`text-wrap: pretty`), and the Allow button width.
+- Start a guided native conversation from a scheduled-task suggestion, keep the Scheduled sidebar, and report start failures without creating a task.
 - Keep context-only commands out of the live Keyboard shortcuts dialog while retaining them in Settings.
 - Show Login when the account read fails, and keep Coding Home available when access-inputs fails.
 - Share Mark as unread state between the chat command, its shortcut, and the sidebar menu.
