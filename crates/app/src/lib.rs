@@ -736,6 +736,7 @@ impl Root {
         let shell = cx.new(|_| {
             let mut shell = Shell::new(sidebar.clone().into(), main);
             shell.sidebar_open = sidebar_open;
+            shell.overlay = !wide;
             shell.sidebar_width = px(if state.sidebar_width.is_finite() {
                 state.sidebar_width.clamp(290., 520.)
             } else {
@@ -2712,8 +2713,8 @@ impl Root {
         }
     }
 
-    /// Below [`SIDEBAR_BREAKPOINT`] the sidebar hides; wider again it shows as the user
-    /// left it.
+    /// Below [`SIDEBAR_BREAKPOINT`] the sidebar hides and opens as an overlay; wider again it
+    /// docks as the user left it.
     fn fit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let narrow = window.viewport_size().width <= SIDE_PANEL_BREAKPOINT;
         if narrow && self.layout_before_narrow.is_none() {
@@ -2735,6 +2736,7 @@ impl Root {
             let open = wide && self.state.sidebar_open;
             self.shell.update(cx, |shell, cx| {
                 shell.sidebar_open = open;
+                shell.overlay = !wide;
                 cx.notify();
             });
         }

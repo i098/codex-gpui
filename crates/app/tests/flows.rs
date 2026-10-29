@@ -291,8 +291,18 @@ fn resize_three_widths() -> Result<String> {
         fx.click(RAIL_HOME)?;
         ensure!(fx.composer_text()?.is_empty(), "{w} px: rail Home missed");
         // The sidebar still opens on demand below the breakpoint.
+        let before = fx.shot()?;
         fx.keys("cmd-b")?;
         ensure!(fx.sidebar_open() != wide, "{w} px: cmd-b did not toggle");
+        // Below the breakpoint the panel floats: the main surface keeps its place.
+        ensure!(fx.shell(|s| s.overlay) != wide, "{w} px: overlay flag");
+        if !wide {
+            let n = changed(&before, &fx.shot()?, [452., 44., 148., 784.]);
+            ensure!(
+                n == 0,
+                "{w} px: the overlay moved the main surface ({n} px)"
+            );
+        }
     }
     Ok(String::new())
 }
