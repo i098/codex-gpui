@@ -5,7 +5,10 @@ import { openPage } from "../route1/chrome.mjs";
 
 const [surface, state, theme, width, height, output] = process.argv.slice(2);
 const w = Number(width), h = Number(height);
-if ((state === "rest" && ["home", "terminal", "diff"].includes(surface)) || (surface === "automations" && state === "empty")) {
+if (surface === "sidebar" && state === "rest") {
+  // The Home route shows the thread list, search and project groups.
+  await capture("home", theme, w, h, output);
+} else if ((state === "rest" && ["home", "terminal", "diff"].includes(surface)) || (surface === "automations" && state === "empty")) {
   await capture(surface, theme, w, h, output);
 } else if (surface === "mobile" && state === "get-started") {
   await capture("mobile", theme, w, h, output);

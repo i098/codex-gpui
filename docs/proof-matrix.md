@@ -10,6 +10,11 @@ python3 tools/parity/proof.py home rest \
   --warm-target /tmp/cgx-mac/target/content-typing \
   --out /sdc-disk/tmp/cgx/my-proof/home-dark
 
+python3 tools/parity/proof.py sidebar rest \
+  --theme dark --size 1280x832 \
+  --warm-target /tmp/cgx-mac/target/content-typing \
+  --out /sdc-disk/tmp/cgx/my-proof/sidebar-dark
+
 python3 tools/parity/proof.py terminal rest \
   --theme dark --size 1280x832 \
   --warm-target /tmp/cgx-mac/target/content-typing \
@@ -45,6 +50,7 @@ It preserves the existing route1 and Root capture clocks and fixtures.
 | Surface | State | Original path | Native path |
 |---|---|---|---|
 | `home` | `rest` | Existing route1 Home capture | `common::Fx` startup |
+| `sidebar` | `rest` | Existing route1 Home capture: the rail, thread list, search and project groups | `common::Fx` startup, as `home` |
 | `terminal` | `rest` | Existing route1 recorded command replay | The same recorded events and input sequence as `flows::open_terminal` |
 | `settings` | `configuration` | Profile menu, Settings, Configuration | Settings shortcut, Configuration navigation item |
 | `mobile` | `get-started` | Profile menu, Help, Set up mobile | Profile menu, Set up mobile |
@@ -147,3 +153,13 @@ The Diff cell opens the subtract thread's Changes panel and collapses the file, 
 |---|---|---:|---:|---|
 | dark | 1280x832 | 0 | 0.243795% | PASS |
 | light | 1280x832 | 0 | 0.175053% | PASS |
+
+## Sidebar rest matrix
+
+The Sidebar rest cell shows the sidebar with its thread list, search and project groups on the Home route.
+Both cells pass at the source that added the cell, with no native change.
+
+| Theme | Size | Outside text pixels | Inside text difference | Gate |
+|---|---|---:|---:|---|
+| dark | 1280x832 | 0 | 0.118360% | PASS |
+| light | 1280x832 | 0 | 0.098468% | PASS |

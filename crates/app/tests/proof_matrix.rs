@@ -35,7 +35,7 @@ fn capture_cell() -> Result<()> {
     // A host fixture's storage must outlive the capture.
     let home = tempfile::tempdir()?;
     let screen = match (surface.as_str(), state.as_str()) {
-        ("home", "rest") => {
+        ("home" | "sidebar", "rest") => {
             ensure!(fx.route() == Route::Home);
             // The rail's Explore marker follows an asynchronous catalog read; the original
             // captures it. Hosts that never serve the catalog (Automations) skip this wait.

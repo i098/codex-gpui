@@ -19,7 +19,7 @@ import tempfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
-CELLS = {("home", "rest"), ("terminal", "rest"), ("settings", "configuration"),
+CELLS = {("home", "rest"), ("sidebar", "rest"), ("terminal", "rest"), ("settings", "configuration"),
          ("mobile", "get-started"), ("mobile", "continuation"), ("automations", "empty"),
          ("diff", "rest")}
 PINS = {
