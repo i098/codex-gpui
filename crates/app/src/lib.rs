@@ -4140,6 +4140,10 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         self.qa_work_started = true;
+        if s.shell_command {
+            self.send_shell(side, s, window, cx);
+            return;
+        }
         let Some((view, composer)) = self.conversation(side) else {
             return;
         };
@@ -6759,6 +6763,7 @@ Do not modify files, source, git state, permissions, configuration, or workspace
 /// The handlers of a thread composer: the open chat's (`side: None`) or side chat `side`'s.
 /// Both pickers write the user's `config.toml`, like the original's `writeModel`.
 fn wire_thread_composer(composer: &mut Composer, this: WeakEntity<Root>, side: Option<usize>) {
+    composer.enable_shell_commands();
     let (model, send) = (this.clone(), this.clone());
     composer.on_model(move |m, effort, cx| {
         model
