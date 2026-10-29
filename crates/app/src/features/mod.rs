@@ -18,6 +18,7 @@ mod copy_directory;
 pub(crate) mod feedback;
 mod keymap;
 pub(crate) mod shortcuts;
+mod thread_menu;
 mod workspace;
 pub(crate) use command_destinations::OpenThreadInNewWindow;
 
@@ -35,7 +36,10 @@ pub(crate) fn actions(root: Div, owner: &Root, cx: &mut Context<Root>) -> Div {
     workspace::actions(
         shortcuts::actions(
             copy_directory::actions(
-                command_destinations::actions(crate::windows::actions(root, cx), cx),
+                thread_menu::actions(
+                    command_destinations::actions(crate::windows::actions(root, cx), cx),
+                    cx,
+                ),
                 cx,
             ),
             owner,
