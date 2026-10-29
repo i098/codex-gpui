@@ -426,6 +426,9 @@ const DIALOG_HIDDEN: &[&str] = &[
     "undoAppAction",
     "redoAppAction",
     "markThreadUnread",
+    "switchToMode1",
+    "switchToMode2",
+    "switchToMode3",
 ];
 
 pub type Shortcut = (&'static str, &'static Command, Vec<String>);
