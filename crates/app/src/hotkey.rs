@@ -434,12 +434,13 @@ fn launch(target: Target, cx: &mut App) {
 }
 
 pub fn open(owner: WindowHandle<Root>, target: Target, cx: &mut App) -> Result<WindowHandle<Root>> {
-    let (mut state, cwd, host, bridge) = owner.update(cx, |root, _, _| {
+    let (mut state, cwd, host, bridge, host_id) = owner.update(cx, |root, _, _| {
         (
             root.state.clone(),
             root.cwd.clone(),
             root.host.clone(),
             root.bridge.clone(),
+            root.host_id.clone(),
         )
     })?;
     state.route = match &target {
@@ -471,7 +472,8 @@ pub fn open(owner: WindowHandle<Root>, target: Target, cx: &mut App) -> Result<W
     let events = bridge.subscribe_async();
     let handle = windows::open(spec, cx, |window, cx| {
         cx.new(|cx| {
-            let mut root = Root::with_connection(state, bridge, events, cwd, window, cx);
+            let mut root =
+                Root::with_host_connection(state, bridge, events, cwd, host_id, window, cx);
             root.host = host;
             attach(&mut root, owner, target, window, cx);
             root
@@ -1294,7 +1296,7 @@ mod tests {
         let events = bridge.subscribe_async();
         let popup = app.open_window(gpui::size(px(470.), px(290.)), |window, cx| {
             cx.new(|cx| {
-                let mut root = Root::with_connection(
+                let mut root = Root::with_host_connection(
                     crate::State {
                         theme: crate::ThemeSetting::Dark,
                         ..Default::default()
@@ -1302,6 +1304,7 @@ mod tests {
                     bridge,
                     events,
                     source,
+                    "local".into(),
                     window,
                     cx,
                 );

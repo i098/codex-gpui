@@ -224,6 +224,86 @@ pub trait Host: Send + Sync {
     }
 }
 
+pub(crate) fn thread_host(
+    host_id: &str,
+    bridge: Arc<Bridge>,
+    settings: Option<crate::host_settings::Settings>,
+) -> Arc<dyn Host> {
+    let cloud = CloudHost::from_env(app_server_credentials(bridge.clone()))
+        .with_bridge(bridge)
+        .with_settings(settings);
+    if host_id == "local" {
+        Arc::new(cloud)
+    } else {
+        Arc::new(RemoteThreadHost(cloud))
+    }
+}
+
+struct RemoteThreadHost(CloudHost);
+
+impl Host for RemoteThreadHost {
+    fn fetch(&self, request: &Request) -> Result<Value> {
+        match request {
+            Request::Http(_) => self.0.fetch(request),
+            Request::Fetch { .. } => {
+                bail!("Local desktop services are unavailable for a remote thread")
+            }
+        }
+    }
+
+    fn stream(
+        &self,
+        request: &Request,
+        cancelled: &std::sync::atomic::AtomicBool,
+        on_event: &mut dyn FnMut(Value) -> bool,
+    ) -> Result<()> {
+        ensure!(
+            matches!(request, Request::Http(_)),
+            "Local desktop services are unavailable for a remote thread"
+        );
+        self.0.stream(request, cancelled, on_event)
+    }
+
+    fn identity(&self) -> Option<Identity> {
+        self.0.identity()
+    }
+
+    fn invalidate_identity(&self) {
+        self.0.invalidate_identity();
+    }
+
+    fn supports_cloud_search(&self) -> bool {
+        self.0.supports_cloud_search()
+    }
+}
+
+#[cfg(test)]
+mod remote_thread_tests {
+    use super::*;
+
+    #[test]
+    fn remote_thread_never_reads_or_changes_local_automation_storage() {
+        let home = tempfile::tempdir().unwrap();
+        let host = RemoteThreadHost(CloudHost::new(
+            LocalHost::new(home.path()),
+            Box::new(|_| Ok(None)),
+            "http://127.0.0.1",
+        ));
+        for endpoint in [
+            "list-automations",
+            "automation-create",
+            "automation-update",
+            "automation-delete",
+        ] {
+            let error = host
+                .fetch(&Request::post(endpoint, Some(json!({"id": "same-id"}))))
+                .unwrap_err();
+            assert!(error.to_string().contains("remote thread"));
+        }
+        assert!(!home.path().join("automations").exists());
+    }
+}
+
 /// A worktree root with a pending archive (`electron-managed-worktree-archives`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingArchive {

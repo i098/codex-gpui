@@ -6,7 +6,6 @@
 //! `cargo test -p app --test s019` replays the original's list, requests and colors;
 //! `--test s020` its keys, chips and the prompt sent.
 use super::*;
-use crate::screens::settings::AppServer;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -126,11 +125,14 @@ fn degree(label: &str, query: &str) -> u8 {
 
 /// Sends `requests` to the app-server in order, like the original awaits each; failures are
 /// logged. Foreground tasks start in spawn order, so later calls keep the order too.
-fn request(requests: Vec<(&'static str, Value)>, cx: &App) {
-    let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
+fn request(
+    bridge: Option<std::sync::Arc<bridge::Bridge>>,
+    requests: Vec<(&'static str, Value)>,
+    cx: &App,
+) {
+    let Some(bridge) = bridge else {
         return;
     };
-    let bridge = bridge.clone();
     cx.foreground_executor()
         .spawn(async move {
             for (method, params) in requests {
@@ -239,7 +241,7 @@ impl Composer {
             "fuzzyFileSearch/sessionUpdate",
             json!({ "sessionId": session, "query": query }),
         ));
-        request(requests, cx);
+        request(self.bridge.clone(), requests, cx);
     }
 
     /// `sessionStop` when the token closes.
@@ -250,6 +252,7 @@ impl Composer {
         search.searching = false;
         if let Some(session) = search.session.take() {
             request(
+                self.bridge.clone(),
                 vec![(
                     "fuzzyFileSearch/sessionStop",
                     json!({ "sessionId": session }),

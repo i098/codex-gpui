@@ -271,6 +271,7 @@ impl IntoElement for UsageBar {
 }
 
 pub struct StoragePage {
+    bridge: Option<Arc<bridge::Bridge>>,
     settings: Entity<SettingsPage>,
     usage: Option<Usage>,
     completed: usize,
@@ -311,6 +312,7 @@ impl StoragePage {
         .detach();
         Self {
             settings,
+            bridge: cx.try_global::<AppServer>().map(|server| server.0.clone()),
             usage: None,
             completed: 0,
             started: false,
@@ -349,12 +351,11 @@ impl StoragePage {
         self.scanning = true;
         self.completed = 0;
         self.error = false;
-        let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
+        let Some(bridge) = self.bridge.clone() else {
             self.scanning = false;
             self.error = true;
             return;
         };
-        let bridge = bridge.clone();
         let (sender, receiver) = async_channel::unbounded();
         cx.background_spawn(async move {
             let supported = storage::supports_cleanup(&bridge).await;
@@ -439,10 +440,9 @@ impl StoragePage {
         if cx.global::<CleanupState>().deleting {
             return;
         }
-        let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
+        let Some(bridge) = self.bridge.clone() else {
             return;
         };
-        let bridge = bridge.clone();
         self.loading_review = true;
         self.review_error = false;
         self.return_focus = window.focused(cx);
@@ -517,13 +517,12 @@ impl StoragePage {
     }
 
     fn delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
+        let Some(bridge) = self.bridge.clone() else {
             return;
         };
         let (Some(review), Some(usage)) = (self.review.take(), self.usage.clone()) else {
             return;
         };
-        let bridge = bridge.clone();
         if cx.global::<CleanupState>().deleting {
             return;
         }

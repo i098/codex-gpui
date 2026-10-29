@@ -69,6 +69,12 @@ Settings > Connections uses the same discovery for its SSH chooser.
 
 Run `cargo test -p app --lib --test host ssh_discovery` for the parser and host-service checks.
 
+`Root::on_host` binds a window to an existing host connection.
+Thread reads, changes, and events use that connection, with separate thread caches for each window.
+Child widgets keep their connection when another window becomes active.
+Remote windows reject local desktop storage requests.
+Run `cargo test -p app --test thread_hosts` for the two-host native check.
+
 ## Terminals
 
 Open a chat, then choose **View > Open Terminal**.

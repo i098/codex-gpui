@@ -1,5 +1,4 @@
 use super::*;
-use crate::screens::settings::AppServer;
 use anyhow::{Context as _, Result, anyhow};
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use bridge::Bridge;
@@ -87,7 +86,7 @@ struct Registry {
 }
 
 const REGISTRY_FILE: &str = "pasted-text-attachments.json";
-static REGISTRY: Mutex<Option<Registry>> = Mutex::new(None);
+static REGISTRIES: Mutex<Vec<(std::sync::Weak<Bridge>, Registry)>> = Mutex::new(Vec::new());
 
 async fn request(bridge: &Bridge, method: &str, params: Value) -> Result<Value> {
     bridge
@@ -96,8 +95,13 @@ async fn request(bridge: &Bridge, method: &str, params: Value) -> Result<Value> 
         .context(method.to_owned())
 }
 
-async fn load_registry(bridge: &Bridge, root: &Path) {
-    if REGISTRY.lock().is_some() {
+async fn load_registry(bridge: &Arc<Bridge>, root: &Path) {
+    let connection = Arc::downgrade(bridge);
+    if REGISTRIES
+        .lock()
+        .iter()
+        .any(|(key, _)| key.ptr_eq(&connection))
+    {
         return;
     }
     // ponytail: every read error counts as a missing registry; the original only ENOENT.
@@ -111,18 +115,28 @@ async fn load_registry(bridge: &Bridge, root: &Path) {
     .and_then(|v| BASE64.decode(v["dataBase64"].as_str()?).ok())
     .and_then(|bytes| serde_json::from_slice(&bytes).ok())
     .unwrap_or_default();
-    REGISTRY.lock().get_or_insert(registry);
+    let mut registries = REGISTRIES.lock();
+    registries.retain(|(key, _)| key.strong_count() != 0);
+    if !registries.iter().any(|(key, _)| key.ptr_eq(&connection)) {
+        registries.push((connection, registry));
+    }
 }
 
 /// Applies `edit` and writes the whole registry, like the original's `writeState`.
 async fn write_registry(
-    bridge: &Bridge,
+    bridge: &Arc<Bridge>,
     root: &Path,
     edit: impl FnOnce(&mut Registry),
 ) -> Result<()> {
+    load_registry(bridge, root).await;
+    let connection = Arc::downgrade(bridge);
     let json = {
-        let mut guard = REGISTRY.lock();
-        let registry = guard.get_or_insert_default();
+        let mut registries = REGISTRIES.lock();
+        let registry = &mut registries
+            .iter_mut()
+            .find(|(key, _)| key.ptr_eq(&connection))
+            .context("attachment registry is unavailable")?
+            .1;
         edit(registry);
         serde_json::to_string(registry)?
     };
@@ -236,11 +250,8 @@ impl Composer {
         let (error_message, save): (_, Task<Result<Attachment>>) = match content {
             Content::Text(text) => (
                 "Large pasted text could not be attached",
-                match cx.try_global::<AppServer>() {
-                    Some(AppServer(bridge)) => {
-                        let bridge = bridge.clone();
-                        cx.foreground_executor().spawn(save_text(bridge, text))
-                    }
+                match self.bridge.clone() {
+                    Some(bridge) => cx.foreground_executor().spawn(save_text(bridge, text)),
                     None => Task::ready(Err(anyhow!("no app-server"))),
                 },
             ),
@@ -622,8 +633,8 @@ impl Composer {
         let attachment = self.attachments.remove(i);
         match (&attachment.content, attachment.persisted) {
             (Content::Text(_), true) => {
-                if let Some(AppServer(bridge)) = cx.try_global::<AppServer>() {
-                    let (bridge, path) = (bridge.clone(), attachment.path.clone());
+                if let Some(bridge) = self.bridge.clone() {
+                    let path = attachment.path.clone();
                     cx.foreground_executor()
                         .spawn(async move {
                             if let Err(error) = remove_text(bridge, path).await {
@@ -836,5 +847,73 @@ mod tests {
                 [Path::new("/work/main.rs"), Path::new("/work/attached.rs")]
             );
         });
+    }
+
+    #[test]
+    fn pasted_text_keeps_its_host_after_another_window_becomes_active() {
+        let recording = tempfile::NamedTempFile::new().unwrap();
+        let rows = [
+            (
+                "fs/readFile",
+                json!({"dataBase64": BASE64.encode(r#"{"attachmentPaths":["remote-only"],"pendingRemovalPaths":[]}"#)}),
+            ),
+            ("fs/createDirectory", json!({})),
+            ("fs/writeFile", json!({})),
+            ("fs/writeFile", json!({})),
+        ];
+        let mut lines = String::new();
+        for (index, (method, result)) in rows.into_iter().enumerate() {
+            lines.push_str(&format!(
+                "{}\n",
+                json!({"dir":"send","msg":{"id":index,"method":method,"params":{}}})
+            ));
+            lines.push_str(&format!(
+                "{}\n",
+                json!({"dir":"recv","msg":{"id":index,"result":result}})
+            ));
+        }
+        std::fs::write(recording.path(), lines).unwrap();
+        let (bridge, _) = Bridge::replay(recording.path()).unwrap();
+        let bridge = Arc::new(bridge);
+        let unrelated = tempfile::NamedTempFile::new().unwrap();
+        let (other, _) = Bridge::replay(unrelated.path()).unwrap();
+        let mut cx = gpui::HeadlessAppContext::new(textsys::text_system());
+        cx.update(|cx| cx.set_global(crate::screens::settings::AppServer(bridge.clone())));
+        let composer = cx.new(|cx| Composer::new("Work with Codex", true, cx));
+        cx.update(|cx| cx.set_global(crate::screens::settings::AppServer(Arc::new(other))));
+        composer.update(&mut cx, |composer, cx| {
+            composer.save_paste(Content::Text("remote paste".into()), cx);
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            cx.run_until_parked();
+            if composer.read_with(&cx, |composer, _| composer.pending_attachments == 0) {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "paste did not finish");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        composer.read_with(&cx, |composer, _| {
+            assert!(composer.attachment_error.is_none(), "{:?}", composer.attachment_error);
+            assert!(matches!(&composer.attachments[0].content, Content::Text(text) if text == "remote paste"));
+        });
+        let registries = REGISTRIES.lock();
+        let registry = &registries
+            .iter()
+            .find(|(key, _)| key.ptr_eq(&Arc::downgrade(&bridge)))
+            .unwrap()
+            .1;
+        assert!(
+            registry
+                .attachment_paths
+                .iter()
+                .any(|path| path == "remote-only")
+        );
+        assert!(
+            registry
+                .attachment_paths
+                .iter()
+                .any(|path| path.ends_with("Pasted text.txt"))
+        );
     }
 }

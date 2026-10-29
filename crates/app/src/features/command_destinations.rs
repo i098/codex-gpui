@@ -225,6 +225,7 @@ impl Root {
         let events = bridge.subscribe_async();
         let cwd = self.cwd.clone();
         let host = self.host.clone();
+        let host_id = self.host_id.clone();
         let approvals = self.approvals.clone();
         let clock = self.clock;
         let bounds =
@@ -233,7 +234,8 @@ impl Root {
         spec.bounds = Some(gpui::WindowBounds::Windowed(bounds));
         let result = crate::windows::open(spec, cx, |window, cx| {
             cx.new(|cx| {
-                let mut root = Root::with_connection(state, bridge, events, cwd, window, cx);
+                let mut root =
+                    Root::with_host_connection(state, bridge, events, cwd, host_id, window, cx);
                 root.set_host(host, cx);
                 root.approvals = approvals;
                 root.clock = clock;

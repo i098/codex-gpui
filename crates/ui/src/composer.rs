@@ -692,6 +692,7 @@ struct EmbeddedField {
     line_height: Pixels,
 }
 pub struct Composer {
+    bridge: Option<std::sync::Arc<bridge::Bridge>>,
     focus_handle: FocusHandle,
     placeholder: SharedString,
     /// Docked under a thread: `_ComposerLayoutRoot` paints the card and `_ComposerLayoutBody`
@@ -818,6 +819,9 @@ impl Composer {
     fn new(placeholder: &'static str, docked: bool, cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle().tab_stop(true),
+            bridge: cx
+                .try_global::<crate::screens::settings::AppServer>()
+                .map(|server| server.0.clone()),
             placeholder: placeholder.into(),
             docked,
             content: String::new(),
@@ -899,6 +903,10 @@ impl Composer {
             input_style: false,
             small_input: false,
         }
+    }
+
+    pub fn bind_connection(&mut self, bridge: std::sync::Arc<bridge::Bridge>) {
+        self.bridge = Some(bridge);
     }
 
     pub fn set_hotkey_home(
