@@ -520,6 +520,7 @@ pub struct Root {
     automation_card_results: HashMap<(String, String), Value>,
     queue_load: Option<Task<()>>,
     queue_pending: bool,
+    fork_pending: bool,
     deleted_queued: Vec<DeletedQueuedMessage>,
     failed_queued: Vec<FailedQueuedMessage>,
     /// A successful steer must never be sent again when its queue deletion fails.
@@ -699,7 +700,8 @@ impl Root {
                         }
                     }
                     ui::composer::SlashCommand::Compact => this.compact(window, cx),
-                    ui::composer::SlashCommand::Fork => this.fork_chat(0, window, cx),
+                    ui::composer::SlashCommand::Fork => this.fork_chat(None, None, window, cx),
+                    ui::composer::SlashCommand::ForkWorktree => this.fork_worktree(window, cx),
                     ui::composer::SlashCommand::Rename => {
                         if let Route::Thread(id) = this.state.route.clone() {
                             this.open_rename(id, true, window, cx);
@@ -936,6 +938,7 @@ impl Root {
             automation_card_results: HashMap::new(),
             queue_load: None,
             queue_pending: false,
+            fork_pending: false,
             deleted_queued: Vec::new(),
             failed_queued: Vec::new(),
             steered_queued: HashSet::new(),
@@ -1026,6 +1029,7 @@ impl Root {
         root.connect(window, cx);
         root.install_import(cx);
         root.load_projects(cx);
+        hotkey::refresh_home(&mut root, cx);
         windows::bind_root(window, cx);
         root.refresh_automation_unreads(cx);
         root
@@ -1364,6 +1368,7 @@ impl Root {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
         self.host = host;
+        hotkey::refresh_home(self, cx);
         self.refresh_activity_access(cx);
         hotkey::policy::refresh(self, cx);
         self.automation_threads.clear();
@@ -1703,6 +1708,7 @@ impl Root {
             cx.notify();
         });
         self.state.project_root = Some(root);
+        hotkey::refresh_home(self, cx);
         self.navigate(Route::Home, window, cx);
         self.save(window, cx);
     }
@@ -5027,44 +5033,88 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// `Fork chat from here` under `turn_id`: `thread/fork`, then `thread/rollback` of the
-    /// later turns, and opens the new chat.
+    /// Forks through the selected turn; the server keeps the source transcript unchanged.
     fn fork(&mut self, turn_id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = &self.thread else { return };
-        let Some(later) = view
-            .read(cx)
-            .turns()
-            .iter()
-            .rev()
-            .position(|t| t.id == turn_id)
-        else {
-            return;
-        };
-        self.fork_chat(later, window, cx);
+        self.fork_chat(Some(turn_id.to_owned()), None, window, cx);
     }
 
-    /// `thread/fork` of the open chat in its workspace, `thread/rollback` of its last `later`
-    /// turns, then opens the new chat; a refusal shows `Failed to fork chat`.
-    fn fork_chat(&mut self, later: usize, window: &mut Window, cx: &mut Context<Self>) {
+    fn fork_worktree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(view) = &self.thread else { return };
+        let options = ui::screens::hotkey::Options {
+            root: Some(view.read(cx).cwd().to_owned()),
+            branch: Some("HEAD".into()),
+            mode: ui::screens::hotkey::Mode::Worktree,
+            ..Default::default()
+        };
+        self.fork_chat(None, Some(options), window, cx);
+    }
+
+    /// Forks the open chat, optionally into a prepared checkout or through a selected turn.
+    fn fork_chat(
+        &mut self,
+        last_turn: Option<String>,
+        options: Option<ui::screens::hotkey::Options>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.fork_pending {
+            return;
+        }
         let Some(view) = &self.thread else { return };
         let id = view.read(cx).id().to_owned();
         let bridge = self.bridge.clone();
         let computer_use = computer_use_overrides(&self.config);
+        let host = self.host.clone();
+        self.fork_pending = true;
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let forked = async {
+                let prepared = if let Some(options) = options {
+                    Some(
+                        cx.background_executor()
+                            .spawn(async move { hotkey::prepare_start(host, options, "") })
+                            .await?,
+                    )
+                } else {
+                    None
+                };
                 let mut params = json!({ "threadId": id });
+                if let Some(last_turn) = last_turn {
+                    params["lastTurnId"] = json!(last_turn);
+                }
                 if let Some(config) = computer_use {
                     params["config"] = config;
                 }
+                if let Some(prepared) = &prepared {
+                    prepared.apply(&mut params);
+                }
                 // Both answer `{ thread }`, like `thread/read`.
-                let mut read: ThreadReadResponse = bridge.request("thread/fork", params).await?;
-                if later > 0 {
-                    let params = json!({ "threadId": read.thread.id, "numTurns": later });
-                    read = bridge.request("thread/rollback", params).await?;
+                let read: ThreadReadResponse = match bridge.request("thread/fork", params).await {
+                    Ok(read) => read,
+                    Err(error) => {
+                        if let Some(prepared) = prepared {
+                            let cleanup = cx
+                                .background_executor()
+                                .spawn(async move { prepared.discard() })
+                                .await;
+                            if let Err(cleanup) = cleanup {
+                                return Err(
+                                    error.context(format!("Worktree cleanup failed: {cleanup:#}"))
+                                );
+                            }
+                        }
+                        return Err(error);
+                    }
+                };
+                if let Some(prepared) = prepared {
+                    let id = read.thread.id.clone();
+                    cx.background_executor()
+                        .spawn(async move { prepared.record(&id) })
+                        .await?;
                 }
                 Ok::<_, anyhow::Error>(read)
             }
             .await;
+            this.update(cx, |this, _| this.fork_pending = false)?;
             match forked {
                 Ok(read) => this.update_in(cx, |this, window, cx| {
                     this.loaded.insert(read.thread.id.clone());

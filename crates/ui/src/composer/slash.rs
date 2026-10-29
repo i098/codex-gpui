@@ -19,6 +19,7 @@ pub enum SlashCommand {
     Rename,
     Pin,
     Fork,
+    ForkWorktree,
 }
 
 impl gpui::EventEmitter<SlashCommand> for Composer {}
@@ -256,6 +257,7 @@ enum SubAction {
     Model(usize),
     Effort(String),
     Fork,
+    ForkWorktree,
     Project(String),
 }
 
@@ -586,12 +588,20 @@ impl Composer {
                     action: SubAction::Effort(effort.clone()),
                 })
                 .collect(),
-            "fork" => vec![SubItem {
-                title: "Fork chat".into(),
-                description: "Fork this chat in the current workspace".into(),
-                icon: "thread-fork",
-                action: SubAction::Fork,
-            }],
+            "fork" => vec![
+                SubItem {
+                    title: "Fork chat".into(),
+                    description: "Fork this chat in the current workspace".into(),
+                    icon: "thread-fork",
+                    action: SubAction::Fork,
+                },
+                SubItem {
+                    title: "Fork into new worktree".into(),
+                    description: "Fork this chat in an isolated checkout".into(),
+                    icon: "thread-fork",
+                    action: SubAction::ForkWorktree,
+                },
+            ],
             _ => self
                 .slash
                 .projects
@@ -666,6 +676,7 @@ impl Composer {
                 self.picked(cx);
             }
             SubAction::Fork => cx.emit(SlashCommand::Fork),
+            SubAction::ForkWorktree => cx.emit(SlashCommand::ForkWorktree),
             SubAction::Project(root) => {
                 window.dispatch_action(Box::new(SelectProject(root)), cx);
             }

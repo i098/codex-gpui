@@ -584,6 +584,13 @@ impl Root {
             {
                 Ok(started) => started.thread,
                 Err(error) => {
+                    if let Some(prepared) = prepared {
+                        let cleanup = cx.background_executor().spawn(async move { prepared.discard() }).await;
+                        if let Err(cleanup) = cleanup {
+                            this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
+                            return Err(error.context(format!("Worktree cleanup failed: {cleanup:#}")));
+                        }
+                    }
                     // The draft, its attachments and the chosen project stay as they were.
                     this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
                     return Err(error);
