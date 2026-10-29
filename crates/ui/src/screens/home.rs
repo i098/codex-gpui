@@ -37,6 +37,10 @@ pub struct HomeMain {
     pub composer: Entity<Composer>,
     pub project: Option<SharedString>,
     pub location: LocationMenu,
+    /// The announcement slot's `Try ChatGPT Voice` beacon is shown. BOUNDARY: the original
+    /// shows it when `/beacons/home` offers it; the port has no such feed yet, so it starts
+    /// hidden (flows.md Home rows 5 and 6) and dismissal lasts for the session only.
+    pub beacon: bool,
 }
 
 impl HomeMain {
@@ -45,7 +49,85 @@ impl HomeMain {
             composer: fixture_composer(window, cx, Composer::home),
             project: None,
             location: LocationMenu::default(),
+            beacon: false,
         }
+    }
+}
+
+impl HomeMain {
+    pub fn set_beacon(&mut self, visible: bool, cx: &mut Context<Self>) {
+        self.beacon = visible;
+        cx.notify();
+    }
+
+    /// `aside` 736×74: copy on the left, `Start Voice` and the dismiss `×` on the right.
+    fn beacon(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let start_focus = focus::handle("home-beacon-start", 0, window, cx);
+        let close_focus = focus::handle("home-beacon-dismiss", 0, window, cx);
+        let hover = t.ghost_hover;
+        div()
+            .h(px(74.))
+            .mb(px(8.))
+            .px(px(16.))
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .rounded(px(16.))
+            .border_1()
+            .border_color(t.border)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(text("Try ChatGPT Voice", 14., 20., 500., t.text))
+                    .child(text(
+                        "Orchestrate tasks, connect tools, and explore code",
+                        13.,
+                        18.,
+                        400.,
+                        t.text_tertiary,
+                    )),
+            )
+            .child(
+                focus::ring(
+                    div().id("home-beacon-start"),
+                    &start_focus,
+                    Theme::RADIUS_FULL,
+                    px(2.),
+                    cx,
+                )
+                .role(gpui::Role::Button)
+                .aria_label("Start Voice")
+                .h(px(28.))
+                .px(px(12.))
+                .flex()
+                .items_center()
+                .rounded_full()
+                .bg(t.composer_primary)
+                .child(text("Start Voice", 13., 18., 400., t.text_composer_primary))
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(crate::StartVoiceChat), cx)
+                }),
+            )
+            .child(
+                focus::ring(
+                    div().id("home-beacon-dismiss"),
+                    &close_focus,
+                    Theme::RADIUS_FULL,
+                    px(2.),
+                    cx,
+                )
+                .role(gpui::Role::Button)
+                .aria_label("Dismiss ChatGPT beacon banner")
+                .size(px(28.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .hover(move |s| s.bg(hover))
+                .child(icon("close", 16., t.text_tertiary))
+                .on_click(cx.listener(|this, _, _, cx| this.set_beacon(false, cx))),
+            )
     }
 }
 
@@ -413,6 +495,9 @@ impl Render for HomeMain {
             .flex()
             .flex_col()
             .child(div().h(px(8.)))
+            .when(self.beacon, |column| {
+                column.child(self.beacon(&t, window, cx))
+            })
             .child(utility_bar(
                 &cx.entity(),
                 &self.location,

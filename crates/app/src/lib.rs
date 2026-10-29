@@ -111,8 +111,8 @@ use ui::workspace::WorkspaceLayout;
 use ui::{
     Copy, Cut, GoBack, GoForward, LogOut, NewChat, OpenBackgroundTerminal, OpenChangesPanel,
     OpenCommandMenu, OpenMobileSetup, OpenScheduled, OpenSettings, Paste, Redo, SelectAll,
-    SetTheme, Shell, ShowKeyboardShortcuts, SwitchMode1, SwitchMode2, SwitchMode3, ToggleActivity,
-    ToggleChangesPanel, ToggleSidebar, Undo,
+    SetTheme, Shell, ShowKeyboardShortcuts, StartVoiceChat, SwitchMode1, SwitchMode2, SwitchMode3,
+    ToggleActivity, ToggleChangesPanel, ToggleSidebar, Undo,
 };
 
 actions!(
@@ -736,6 +736,7 @@ impl Root {
         let shell = cx.new(|_| {
             let mut shell = Shell::new(sidebar.clone().into(), main);
             shell.sidebar_open = sidebar_open;
+            shell.overlay = !wide;
             shell.sidebar_width = px(if state.sidebar_width.is_finite() {
                 state.sidebar_width.clamp(290., 520.)
             } else {
@@ -834,6 +835,7 @@ impl Root {
                 composer: home_composer,
                 project: state.project_root.as_deref().map(project_name),
                 location: Default::default(),
+                beacon: false,
             }),
             thread_composer,
             queue_edit: None,
@@ -1298,6 +1300,7 @@ impl Root {
     pub fn command_menu(&self) -> Option<&Entity<CommandMenu>> {
         self.command_menu.as_ref()
     }
+
 
     /// The composer of the route: Home's, or the one docked under the open thread.
     pub fn composer(&self, cx: &App) -> Entity<Composer> {
@@ -2723,8 +2726,8 @@ impl Root {
         }
     }
 
-    /// Below [`SIDEBAR_BREAKPOINT`] the sidebar hides; wider again it shows as the user
-    /// left it.
+    /// Below [`SIDEBAR_BREAKPOINT`] the sidebar hides and opens as an overlay; wider again it
+    /// docks as the user left it.
     fn fit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let narrow = window.viewport_size().width <= SIDE_PANEL_BREAKPOINT;
         if narrow && self.layout_before_narrow.is_none() {
@@ -2746,6 +2749,7 @@ impl Root {
             let open = wide && self.state.sidebar_open;
             self.shell.update(cx, |shell, cx| {
                 shell.sidebar_open = open;
+                shell.overlay = !wide;
                 cx.notify();
             });
         }
@@ -7497,6 +7501,11 @@ impl Render for Root {
                 if this.sidebar.read(cx).projects_state != ListState::Loading {
                     this.load_projects(cx);
                 }
+            }))
+            // BOUNDARY: realtime voice (`thread/realtime/*` audio) has no native backend yet;
+            // the request is answered with a visible notice (flows.md Home rows 5 and 14).
+            .on_action(cx.listener(|this, _: &StartVoiceChat, _, cx| {
+                this.toast(Toast::info("Realtime voice chat isn't available yet"), cx);
             }))
             .on_action(cx.listener(|this, _: &ShowKeyboardShortcuts, window, cx| {
                 if this

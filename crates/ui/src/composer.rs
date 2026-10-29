@@ -816,17 +816,24 @@ pub struct Composer {
 impl Composer {
     /// Home composer: placeholder `Do anything`.
     pub fn home(_: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::new("Do anything", false, cx)
+        Self::with_editor_scroll(Self::new("Do anything", false, cx))
     }
 
     /// Thread composer, docked at the bottom of a thread: placeholder `Work with Codex`.
     pub fn thread(_: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::new("Work with Codex", true, cx)
+        Self::with_editor_scroll(Self::new("Work with Codex", true, cx))
     }
 
     /// Composer under a scheduled task's thread: placeholder `Reply about this task…`.
     pub fn automation(_: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::new("Reply about this task…", true, cx)
+        Self::with_editor_scroll(Self::new("Reply about this task…", true, cx))
+    }
+
+    /// Gives the card's editor the scroll handle that keeps the caret visible once it
+    /// reaches its maximum height.
+    fn with_editor_scroll(mut self) -> Self {
+        self.field_scroll = Some(ScrollHandle::new());
+        self
     }
 
     fn new(placeholder: &'static str, docked: bool, cx: &mut Context<Self>) -> Self {
@@ -2863,13 +2870,20 @@ impl Render for Composer {
                             && (self.hotkey_controls.is_none() || !self.attachments.is_empty()),
                         |d| d.child(self.attachments_row(&t, cx)),
                     )
-                    .when_some(self.attachment_error, |d, error| {
+                    .when_some(self.upload_status(), |d, error| {
                         d.child(label(error, t.text))
                     })
                     .child(
                         self.editor(cx)
                             .when(self.hotkey_controls.is_some(), |d| d.px_0().min_h(px(48.)))
-                            .when(editing, |d| d.pt(px(12.)).pb_0().min_h(px(52.))),
+                            .when(editing, |d| d.pt(px(12.)).pb_0().min_h(px(52.)))
+                            // The original's `max-h-[min(25dvh,…)] overflow-y-auto`.
+                            .id("composer-editor")
+                            .max_h(window.viewport_size().height / 4.)
+                            .overflow_y_scroll()
+                            .when_some(self.field_scroll.as_ref(), |d, scroll| {
+                                d.track_scroll(scroll)
+                            }),
                     )
                     .child(if editing {
                         let cancel = self.on_cancel_edit.clone().expect("edit callback");
@@ -3098,6 +3112,50 @@ mod tests {
                     .unwrap();
             });
         }
+    }
+
+    #[test]
+    fn editor_grows_to_a_quarter_of_the_window_then_scrolls() {
+        use gpui::{AppContext as _, HeadlessAppContext};
+        use std::sync::Arc;
+        let mut app = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        app.update(|cx| {
+            cx.set_global(Theme::dark());
+            theme::load_fonts(cx);
+        });
+        let window = app
+            .open_window(size(px(600.), px(400.)), |window, cx| {
+                cx.new(|cx| Composer::home(window, cx))
+            })
+            .unwrap();
+        let mut measure = |lines: usize| {
+            app.update(|cx| {
+                window
+                    .update(cx, |c, _, cx| c.set_text(&"line\n".repeat(lines - 1), cx))
+                    .unwrap();
+            });
+            app.run_until_parked();
+            app.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+            app.update(|cx| {
+                window
+                    .update(cx, |c, _, _| {
+                        let scroll = c.field_scroll.as_ref().unwrap();
+                        (scroll.bounds().size.height, scroll.max_offset().y)
+                    })
+                    .unwrap()
+            })
+        };
+        let (one, one_scroll) = measure(1);
+        let (three, three_scroll) = measure(3);
+        let (many, many_scroll) = measure(40);
+        assert!(three > one && one_scroll == px(0.) && three_scroll == px(0.));
+        assert_eq!(many, px(100.), "25% of the 400 px window");
+        assert!(many_scroll > px(0.));
     }
 
     #[test]

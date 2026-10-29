@@ -36,14 +36,15 @@ This table preserves the earlier audit totals; section 14.7 records the later Se
 | 14.1 Left rail | 12 | 4 | 1 | 7 |
 | 14.2 Sidebar | 23 | 12 | 4 | 7 |
 | 14.3 Home | 21 | 10 | 3 | 8 |
-| 14.4 Thread view | 20 | 11 | 2 | 7 |
+| 14.4 Thread view | 20 | 15 | 2 | 3 |
 | 14.5 Composer | 20 | 6 | 5 | 9 |
 | 14.6 Diff view | 20 | 14 | 5 | 1 |
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 10 | 0 | 0 |
+| 15.3 Mobile setup | 10 | 7 | 2 | 1 |
 | 15.3 Mobile setup | 10 | 3 | 2 | 5 |
-| **All** | **192** | **92** | **35** | **65** |
+| **All** | **192** | **96** | **35** | **61** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -188,7 +189,7 @@ The repair is tracked in [the Sidebar issue](https://github.com/i098/codex-gpui/
 | 12 | Window minimum size | resize | `getPrimaryMinimumSize()` 480x600. | `window_min_size` in `main.rs`. | FAIL (no headless check: the test window does not apply a minimum size) |
 | 13 | Live window resize across 768 px | resize | The sidebar hides below 768 px and comes back above it. | `Root::fit` on `observe_window_bounds`: live resizes to 767, 1280, 600 and 1440 px hide and show the sidebar; a sidebar the user closed stays closed. | PASS (`resize_live`, `resize_three_widths`) |
 | 14 | `⌘K`, `⌘⇧P` | shortcut | Command menu. | `CommandMenu` over live Recents, focused; Escape or a click outside closes it; Enter or a click runs the row (chat, `New chat`, `Manage scheduled tasks`, settings pages). | PASS (`command_menu_keys`, `command_menu_settings_page`) |
-| 15 | `⌘F` | shortcut | Find in chat. | — | NOT WIRED (`crates/ui/src/thread.rs`: no find bar) |
+| 15 | `⌘F` | shortcut | Find in chat. | `FindInThread` opens the thread find bar (`Thread::open_find`) in the split layout; in the full layout the Changes panel takes it. | PASS (`shortcut_chat_actions::pin_rename_and_find_shortcuts_act_on_the_open_chat`, `workspace_layout`) |
 | 16 | `⌥⌘B` | shortcut | Toggle Changes panel. | The thread route's side panel (`ui::screens::diff::panel::with_side_tabs`) shows the last turn's diff in a `Changes` tab beside the other open tabs; the tab's close button closes it. | PASS (`changes_panel_keys`) |
 | 17 | `⌘J` | shortcut | Toggle bottom panel. | Opens or hides a real PTY terminal without discarding its process or buffer. | PASS (`shortcut_actions`; native) |
 | 18 | `⌘⇧N`, `⌘⌥O` | shortcut | Temporary chat, standalone chat. | Temporary chats use ephemeral app-server threads. Standalone chats allocate and record a projectless workspace. | PASS (`shortcut_chat_modes`; Linux) |
@@ -248,13 +249,13 @@ This proves headless native behavior, not live installed-window acceptance.
 | 2 | Space | click | Navigates to `/space`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
 | 3 | Scheduled | click | Navigates to `/scheduled` (Automations); unread dot. | `OpenScheduled`: `Route::Scheduled`, rail Scheduled selected. Settled local unread runs set the dot; opening the run chat clears its read state. | PASS (`rail_scheduled`, `parity_automations`; native unread proof: `automation_run_now::persisted_run_unread_survives_navigation_and_clears_on_open`) |
 | 4 | Plugins | click | Navigates to `/plugins`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
-| 5 | Explore `…` | click | Opens the Explore menu; blue dot. | Dot shows; no menu. | NOT WIRED (outside v1 scope (no screen): the menu holds the secondary destinations) |
+| 5 | Explore `…` | click | Opens the Explore menu; blue dot. | Dot shows. A click opens a menu right of the rail item with the destinations the port has (`Security` when available, else `No more destinations`); a second click or a click outside closes it. | PASS (`rail_explore_menu`); `Customize sidebar` and MCP destinations: BOUNDARY (no sidebar-customization store; Explore row 5) |
 | 6 | Code Review | click | Navigates to `/pull-requests`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
 | 7 | Sites | click | Navigates to `/sites`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
 | 8 | Profile avatar | click | Opens the profile menu. | Menu above the avatar: `Settings`, `Log out`, `Help` ▸ `Set up mobile`; a click outside or on the avatar closes it. | PASS (`profile_menu_settings`, `profile_menu_dismiss`, `profile_menu_mobile`; logout: `account_logout`) |
 | 9 | Rail item hover | hover | Tooltip on the right side with label and shortcut. | Hover fill shows (4716 px repainted); a tooltip with the item's label opens 200 ms after the pointer enters (at once when another was open), 2 px right of the item; `Explore` and the avatar have none; it closes on leave, press or Escape. | PASS (`rail_hover_fill`; tooltip: `crates/app/tests/f1a.rs` against `refs/interactions/f1a.json`) |
 | 10 | Drag a rail item | click | Reorders pinned items. | — | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`) |
-| 11 | Focus ring | focus ring | 2 px ring on the 36×36 button. | No tab stops. | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`: no focus handles or `focus_visible` ring) |
+| 11 | Focus ring | focus ring | 2 px ring on the 36×36 button. | Every rail item and the avatar have a tab stop and draw the shared 2 px keyboard ring (`focus::ring` in `Shell::rail`). | PASS (`crates/ui/src/focus.rs` ring; `rail_focus_ring`) |
 | 12 | Resize | resize | At 1280, 767 and 600 px the rail stays 52 px. | The rail stays and rail Home answers at all 3 widths. | PASS (`resize_three_widths`) |
 
 Home reselect clears the draft and keeps the current focus only when the main view is `HomeMain`.
@@ -273,7 +274,7 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 | 6 | Search | click | Opens the command menu in chat-search mode. | `OpenCommandMenu`: the command menu over live Recents. | PASS (`command_menu_search_click`, `parity_sidebar`) |
 | 7 | `⌘K` | shortcut | Opens the command menu. | Same as shell row 14. | PASS (`command_menu_keys`) |
 | 8 | `Your dot` row | click | Opens the dot (orbit) thread. | No handler. | NOT WIRED (`crates/ui/src/lib.rs` `home_sidebar_header`, `your-dot`) |
-| 9 | `Projects` section toggle | click | Collapses or expands; chevron rotates. | A header click collapses or expands the section; no chevron. | FAIL (no chevron: `crates/ui/src/lib.rs` `sidebar_section`; collapse checked by `sidebar_section_collapse`) |
+| 9 | `Projects` section toggle | click | Collapses or expands; chevron rotates. | A header click collapses or expands the section; the chevron shows on hover or while collapsed and turns -90° when collapsed (`crates/ui/src/screens/sidebar.rs`). | PASS (`sidebar_section_collapse`) |
 | 10 | `Recents` section toggle | click | Collapses or expands. | Same; a collapsed Recents row no longer opens. | PASS (`sidebar_section_collapse`) |
 | 11 | Thread row | click | Opens `/local/:conversationId`. | `OpenThread` → route Thread, `thread/read`, row selected. | PASS (`thread_row_opens_thread`) |
 | 12 | Thread row hover | hover | Row background; Archive / Pin actions appear. | The row reveals its actions. Buttons use the shared 150 ms hover transition. | PASS (`thread_row_hover`, `crates/app/tests/s001.rs`) |
@@ -287,7 +288,7 @@ Thread-to-Home navigation keeps the Home composer focus set by `Root::new_chat`.
 | 20 | Lists loading | loading | Activity: `Checking unread chats…`. | Shared `ListState` renders the priority loading message. | PASS (native loading-state captures in both themes and sizes) |
 | 21 | Load error | error | `Projects couldn't be loaded` + `Retry`; `Could not load chats`. | Keeps Home available after a failed initial list read; Retry restores the list. | PASS (`startup_chat_failure_keeps_home_available_and_retry_restores_chats`, `project_load_failure_retries_the_owned_state_file`) |
 | 22 | Sidebar drag-resize | resize | The recorded edge clamps to 290…520 px; dragging below 145 px collapses it. | The 16 px handle resizes the sidebar and main surface, retains the width on toggle, and saves it on release. | PASS (`crates/app/tests/s004.rs`, `refs/interactions/s004.json`) |
-| 23 | Resize | resize | Below 768 px the panel is hidden; it opens as an overlay. | Hidden at 767 and 600 px, shown at 1280 px; the user's choice is kept. `⌘B` opens it docked, not as an overlay. | FAIL (overlay: `crates/ui/src/lib.rs` `Shell`; hide/show checked by `resize_three_widths`) |
+| 23 | Resize | resize | Below 768 px the panel is hidden; it opens as an overlay. | Hidden at 767 and 600 px, shown at 1280 px; the user's choice is kept. `⌘B` below the breakpoint opens it as a shadowed overlay over the main surface, which does not move (`Shell::overlay`). | PASS (`resize_three_widths`) |
 
 The original `isPriorityFilterEnabled` requires feature `4039078146` and access status `allowed` or `loading`.
 The native provider reads that feature from Statsig and checks the current account's plan and workspace settings.
@@ -365,8 +366,8 @@ New chat adds a Back entry even when Home is already open.
 | 2 | `New chat` row | click | Navigates to `/` and clears the draft. | Same. | PASS (`new_chat_row`) |
 | 3 | `⌘N` / `⌘⇧O` | shortcut | New chat on Home, composer focused. | Same. | PASS (`cmd_n_new_chat`) |
 | 4 | Hero project selector | click | Opens the project menu. | Shows the selected folder and opens the native folder picker. | Native local-folder flow; no project dropdown. |
-| 5 | Beacon `Start Voice` | click | Starts a realtime voice chat. | No beacon. | NOT WIRED (`crates/ui/src/screens/home.rs`) |
-| 6 | Beacon dismiss `×` | click | Hides the banner. | No beacon. | NOT WIRED (`crates/ui/src/screens/home.rs`) |
+| 5 | Beacon `Start Voice` | click | Starts a realtime voice chat. | `HomeMain::beacon` draws `Try ChatGPT Voice` with `Start Voice`; the button raises `StartVoiceChat`, which shows a notice. | PASS (`home_beacon`); the `/beacons/home` feed that turns the beacon on and the realtime audio session: BOUNDARY (Home row 5) |
+| 6 | Beacon dismiss `×` | click | Hides the banner. | Hides the banner for the session; persistence needs the `/beacons/home` feed. | PASS (`home_beacon`); persistence BOUNDARY (Home row 6) |
 | 7 | `Choose project` | click | Project dropdown. | Opens the native folder picker and selects a local project for new chats. | Native local-folder flow (`project_picker`); no project dropdown. |
 | 8 | `Work in` / `This computer` | click | Location menu. | The chip opens a menu above it: `This computer` (checked) and `New worktree`, `Remote`, `Cloud` listed disabled; Enter or Space on the chip toggles it, Escape, a pick, or a click elsewhere closes it. Choosing another location is not wired. | PASS (`work_in_menu_toggles_and_dismisses`; the original popup cannot be captured) |
 | 9 | Editor `Do anything` | focus | Caret shows. | Click focuses the editor. | PASS (`editor_click_focuses`) |
@@ -374,7 +375,7 @@ New chat adds a Back entry even when Home is already open.
 | 11 | `Custom` permissions | click | Permissions dropdown. | Opens; Escape closes. | PASS (`permissions_popover`) |
 | 12 | Model picker | click | Model and effort menu. | Opens; Escape closes. | PASS (`model_picker_popover`) |
 | 13 | `Dictate` | click | Starts dictation. | Uses native macOS capture and authenticated `/transcribe`; inserts at the initiating Composer selection. | WIRED; controlled-input proof passes. Live microphone acceptance remains open. |
-| 14 | `Start new voice chat` | click | Starts realtime voice. | With an empty draft the button calls `submit`, which does nothing. | NOT WIRED (`crates/ui/src/composer.rs`, `send`) |
+| 14 | `Start new voice chat` | click | Starts realtime voice. | With an empty draft the button is labelled `Start new voice chat` and raises `StartVoiceChat`, which shows a notice; no turn starts. | PASS (`voice_button_notice`); realtime audio session: BOUNDARY (Home row 14) |
 | 15 | Submit with Enter | shortcut | `thread/start`, `turn/start`, navigates to the thread. | Same; the turn streams in; the draft clears; also by clicking Send. | PASS (`submit_enter_starts_thread`, `submit_click_send`) |
 | 16 | Hover on every button | hover | Ghost background fades in. | Hover fill on composer buttons (checked on `Dictate`). | PASS (`composer_button_hover`) |
 | 17 | Tab through controls | focus ring | 2 px ring. | `Choose project` and `This computer` have tab stops; the native capture proves focus traversal, not menu activation. | NOT WIRED (remaining composer controls) |
@@ -414,16 +415,16 @@ Comment owners call `finish_dictation` and wait for `Completion::Succeeded` befo
 | 3 | History failure | error | `Couldn't load messages` + `Retry`. | The squircle warning shares its opaque footer's compositor layer above the original fade. Its Retry tooltip and accessibility label retain the source error. Retry reads the same thread again. Late responses cannot replace another route. | PASS (`thread_recovery`: button-bound retry and route change; complete 123984-pixel warning comparison: zero differences) |
 | 4 | Turn render failure | error | `This turn couldn't render`. | A failed turn leaves other turns visible. Try again rebuilds that turn from current data. Its tooltip and accessibility label retain the source error. The squircle card and Retry fill use the original viewport layer; Retry keeps its hover behavior and border-box size. | PASS (`thread_recovery`: Linux render failure and retry without a graphics adapter; original-context component: zero differences over 233208 pixels, hover and restoration checked without a Mac panic) |
 | 5 | Streaming agent message | loading | Text grows by deltas; new segments fade over 700 ms; `Working` shimmer. | New glyphs use the recorded adaptive fade. Later deltas do not restart older glyphs. Reduced motion shows the end state immediately. Shimmer belongs to S5. | PASS (`submit_enter_starts_thread`, `stream_fade`) |
-| 6 | Reasoning item | click | Toggles `Thought for {elapsed}`. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
-| 7 | Command card | click | Expands output; copy buttons. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
+| 6 | Reasoning item | click | Toggles `Thought for {elapsed}`. | A reasoning item seen starting and completing in the open thread shows a `Thought for {elapsed}` row; a click shows its summary under it. The protocol carries no item duration, so a loaded history item has no row, as in the original recording (`refs/interactions/s014.json`). | PASS (`live_reasoning_gets_a_toggleable_thought_row`; `s014` keeps history reasoning hidden) |
+| 7 | Command card | click | Expands output; copy buttons. | The `Ran` row opens the `Shell` card with output and exit footer. The card header has `Copy command` and `Copy output` buttons that write the clipboard. | PASS (card expansion: `grouped_activity_matches_the_original`; copy buttons: `crates/ui/src/thread/items.rs` `copy_control`, no recorded pixel reference) |
 | 8 | File change card | click | `View changes` opens Changes; `Undo` / `Reapply`. | `View changes` opens the Changes side panel; `Undo` sends `thread/revert` (`beforeTurnId`, after `thread/resume` if needed) and shows the reverted thread. No `Reapply`. | FAIL (`Reapply`: the original re-applies through the host git worker; `Undo` checked by `undo_reverts_turn`, `View changes` by `view_changes_opens_panel`) |
 | 9 | Collapsed turn `Worked for {time}` | click | Expands hidden items. | A click shows the turn's work above the answer (agent messages, `Ran commands`) and turns the chevron down; a second click folds it. | PASS (`worked_for_expands`) |
-| 10 | User message hover | hover | Copy and Edit appear. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
+| 10 | User message hover | hover | Copy and Edit appear. | Copy message and Edit message appear on hover or focus without moving the transcript; Copy writes the message and shows a checkmark for 1500 ms. | PASS (`s005`, `s006`) |
 | 11 | Assistant message hover | hover | Copy, Fork chat from here. | Shown under the last turn, on hover under earlier turns. `Copy` puts the answer on the clipboard; `Fork chat from here` sends `thread/fork` (then `thread/rollback` of the later turns) and opens the fork at the top of Recents. `Read aloud` and `Rate response` have no handler. | PASS (`copy_response`, `fork_chat`, `earlier_turn_actions_hover`) |
-| 12 | `Scroll to bottom` | click | Jumps to the newest turn. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
-| 13 | `⌘F` | shortcut | Find bar. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
+| 12 | `Scroll to bottom` | click | Jumps to the newest turn. | A 32 px round button floats above the composer band while the transcript is scrolled up; a click scrolls to the end and the button hides. No original recording exists, so its pixels are not compared. | PASS (behavior only; no pixel reference) |
+| 13 | `⌘F` | shortcut | Find bar. | The bar opens on `cmd-f` with the query selected; Enter, Shift+Enter, `⌘G` and `⌘⇧G` step matches; Escape closes it. | PASS (`shortcut_chat_actions::pin_rename_and_find_shortcuts_act_on_the_open_chat`, `s028`) |
 | 14 | `⌘⇧A` | shortcut | Archives the chat. | `ArchiveChat`: `thread/archive`, the row leaves Recents, the route goes to Home. | PASS (`archive_chat`) |
-| 15 | `⌘⌥R` | shortcut | Rename dialog. | — | NOT WIRED (`crates/ui`: no rename dialog) |
+| 15 | `⌘⌥R` | shortcut | Rename dialog. | `RenameOpenChat` opens the `Rename chat` dialog (`Dialog::rename`) for the open chat. | PASS (`shortcut_chat_actions::pin_rename_and_find_shortcuts_act_on_the_open_chat`) |
 | 16 | Approval card | click | Approve, Allow similar, Allow all edits, Deny. | `Root::on_event` keeps each pending request by its request id and thread. The open thread shows its oldest request. Command, file-change, permission, user-input, standard MCP elicitation, and supported dynamic-tool forms use this queue. Responses retain the displayed card's identity. Explicit resolution removes requests without answering them. Turn completion removes only turn-bound requests. | PASS (`approval_queue.rs`: command/file-change queue order, withdrawal, thread isolation and turn end; non-command release gates remain open below) |
 | 17 | Stream error | error | `Reconnecting {progress}`. | Thread-bound notices show reconnect progress or busy status for `serverOverloaded` and HTTP 429 stream disconnects. Each digit uses the original character width and a separate layer. The suffix keeps its fractional position. Progress updates replace the current retry count. Later activity and completion retain source notices with their turn. | PASS (`thread_recovery`: thread and turn isolation, progress, busy status, retained notices, and zero pixel differences in both counter regions) |
 | 18 | Usage limit | error | Usage limit banner. | `usageLimitExceeded` shows the divider and the advice for the plan reported by `account/read`. Unknown plans use the retry-later fallback. Source details remain available, and completion retains terminal errors. | PASS (`thread_recovery`: account-plan advice and source-error retention) |
@@ -479,26 +480,26 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Composer in thread | entry | `Work with Codex` (idle) or `Working…`. | Docked thread composer, focused on open; `Working…` not checked. | PASS (`shift_enter_newline`, `parity_thread`) |
-| 2 | Type text | focus | Editor grows to a max height, then scrolls. | Lines add; height growth not measured. | FAIL (no flow checks the max height) |
+| 2 | Type text | focus | Editor grows to a max height, then scrolls. | The card's editor grows with its lines up to 25% of the window height (`max-h-[min(25dvh,…)]`), then scrolls and keeps the caret in view. | PASS (`composer::tests::editor_grows_to_a_quarter_of_the_window_then_scrolls`) |
 | 3 | Enter | shortcut | Sends; `⌘ + Enter` modes per setting. | Reads `desktop.composerEnterBehavior` at startup and after successful writes. `cmdAlways` requires Command+Enter; `cmdIfMultiline` requires it for multiline drafts. Shift+Enter inserts a line break. | PASS (`submit_enter_starts_thread`, `send_shortcut_controls_enter_without_changing_shift_enter`) |
 | 4 | Shift+Enter | shortcut | New line. | New line in the Home and thread composers. | PASS (`shift_enter_newline`) |
-| 5 | `@` | shortcut | Mention list. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
+| 5 | `@` | shortcut | Mention list. | `@` opens the list; typing searches the workspace files with `fuzzyFileSearch`; Enter inserts a chip. | PASS (`s019::mention_list_replay`, `s020::mention_keys_chips_and_prompt_replay`) |
 | 6 | `/` | shortcut | Slash command menu. | Matches the recorded menu, filtering, selected row, editor focus, arrows, Escape, Enter, and Tab. | PASS (`s021::slash_menu_keyboard_replay`) |
 | 6a | `/` then Enter on `Compact`, `Rename`, `Pin chat`, `Fork chat`, `Model`, `Reasoning`, `Work in a project` | shortcut | Runs the chat action (CP-058 to CP-063, CP-068, CP-069). | `Compact`: `thread/compact/start` (resumes the chat first), toast `Compact is disabled while a chat is in progress` while a turn runs, `Failed to compact chat` on error. `Rename`: the `Rename chat` dialog; closing it focuses the composer. `Pin chat`: `thread/section/move`, toggles. `Fork chat`, `Model`, `Reasoning`, `Work in a project`: Enter turns the token into `/id ` and opens a submenu filtered by the text after it; Backspace over the space returns to the list, Escape leaves the text, a pick removes token and query, keeps the rest of the draft, and acts (`thread/fork` in the same workspace with `Failed to fork chat` on error, `config/batchWrite`, the existing-project selection for new chats). Not wired: `Fork chat in new worktree`, the submenu's `Search` input row, the usage text on `Compact`, and the other commands. | PASS (`slash_commands`) |
-| 7 | Paste large text | click | `Pasted text.txt` chip. | Paste inserts the text. | NOT WIRED (`crates/ui/src/composer.rs` `paste`) |
+| 7 | Paste large text | click | `Pasted text.txt` chip. | Clipboard text of 5,000 UTF-16 units or more is saved as `Pasted text.txt` and shown as a chip. | PASS (`attach::tests::pasted_text_keeps_its_host_after_another_window_becomes_active`) |
 | 8 | Drag file over composer | hover | `Drop to attach`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
-| 9 | Attachment chip remove | click | Removes the attachment. | Handler exists (`remove-attachment`). | FAIL (no flow: attachments come only from the system file picker, which the headless window does not answer) |
+| 9 | Attachment chip remove | click | Removes the attachment. | The chip's `×` removes that attachment only. | PASS (`attach::tests::upload_states_and_chip_remove`) |
 | 10 | Model picker | click | `Select model`, `Select effort`, Fast. | Opens; a model or effort choice writes `model` and `model_reasoning_effort` with `config/batchWrite` (the original's `writeModel`); parity: see `parity_composer`. | PASS (`model_picker_popover`, `effort_pick_writes_config`, `parity_composer`) |
 | 11 | Permissions dropdown | click | Ask / Approve for me / Full access / Custom. | Opens. | PASS (`permissions_popover`) |
 | 12 | Submit while running | click | Stop; with text Queue or Steer. | Stop interrupts the active turn. Queue adds a server-owned submission; Steer sends input into the active turn. | PASS (`s023`, `s023b`) |
 | 13 | Stop | click | `turn/interrupt`. | Sends the active thread and turn IDs; completion removes Stop. Errors show `Failed to stop chat`. | PASS (`s023::stop_interrupts_only_the_active_turn`) |
 | 14 | Queued message row | click | Steer, Edit, Delete, Retry. | Steer sends the selected submission once. Delete removes it; Cmd+Z restores its text, identity, order, and chat location. The `…` menu (`Queued message actions`) holds `Edit message`, `Open in side chat` and `Turn off queueing` / `Turn on queueing`. `Edit message` sends `thread/queue/delete`, then moves the exact text and local images back to the composer (a draft already there stays below it; remote images, audio, skills and mentions wait in the app and go out with the next send). Sending queues it again (`thread/queue/add`) and `thread/queue/reorder` puts it before the row that followed it, else after the one before it. If the server already took the submission, only the tray refreshes. `Open in side chat` sends `thread/queue/delete`, then `thread/fork` (`ephemeral`, `excludeTurns`, the original's side-conversation developer instructions) and `thread/inject_items` (the boundary message), and starts the fork's first turn with the queued input (`turn/start`, `turnTrigger: queued_side_chat`, same `clientUserMessageId`). The fork opens as a selected side panel tab, titled with the message, with its own transcript and focused composer; the chat and its draft stay. Each conversation takes only its own thread's notifications, queue, approvals and `Stop`; a side chat's Delete has no Cmd+Z undo. Closing the tab interrupts a running side turn and sends `thread/unsubscribe` for the fork only. A failed fork, injection or first turn closes the tab, queues the message again in its old place (`thread/queue/add`, `thread/queue/reorder`) and toasts `Failed to open side chat`. The item is hidden for a chat archived in this session. The queueing item writes `desktop.followUpQueueMode`, so the next submit queues or steers; a refused write toasts `Couldn’t save your changes. Try again` and keeps the label of the behavior that applies. Retry remains outside this slice. | PARTIAL (CP-113/114 pass in `s023b`; CP-115 Edit, `Open in side chat` and queueing pass in `queue_options`; Retry remains open) |
 | 15 | Submit blocked | error | `Unable to send message`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
-| 16 | Upload in progress | loading | `Files uploading…`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
-| 17 | Upload failure | error | `Unable to upload file`. | — | NOT WIRED (`crates/ui/src/composer.rs`) |
+| 16 | Upload in progress | loading | `Files uploading…`. | The line shows above the editor while a paste saves; Send stays blocked. The `Unable to send message` dialog is not wired (row 15). | PASS (`attach::tests::upload_states_and_chip_remove`) |
+| 17 | Upload failure | error | `Unable to upload file`. | The line shows when a paste fails to save; the next paste clears it. | PASS (`attach::tests::upload_states_and_chip_remove`) |
 | 18 | Button hover | hover | Ghost hover; tooltip after a delay. | Hover fill. The `+` tooltip includes the `@` hint and matches its original bounds. | PARTIAL (`+`: `s018::add_tooltip_replay`; other composer tooltips remain absent) |
-| 19 | Focus ring | focus ring | Send button ring. | — | NOT WIRED (`crates/ui/src/composer.rs`: no `focus_visible` ring) |
-| 20 | Resize | resize | Below 40rem the editor and footer stack. | Only the 475 px compact footer. | FAIL (`crates/ui/src/composer.rs`) |
+| 19 | Focus ring | focus ring | Send button ring. | `send` has a tab stop and a 2 px `focus_visible` ring in the text color (`composer/footer.rs`); no native test drives keyboard focus onto it. | WIRED (`composer/footer.rs`, `send`) |
+| 20 | Resize | resize | Below 40rem the editor and footer stack. | The editor sits above the footer at every width, and the footer collapses by its container width (440, 300 and 509 px). `refs/composer` has 1280 and 1440 px only, so no narrow layout is recorded and none is invented. | BOUNDARY (`crates/ui/src/composer/footer.rs`; `refs/composer` has no narrow capture) |
 | 21 | `+` Add menu | click | Opens the mention list without inserting `@`; Escape keeps the draft. | Reuses the S019 query state; keys skip disabled actions, and a second click closes the list. | PASS (`s018::add_menu_replay`) |
 
 Queued side chats restore the fork response's model, effort, and permission settings without changing the primary composer.
@@ -855,7 +856,7 @@ The unmanaged-policy fallback uses the already loaded configuration instead of r
 | 17 | Sign-in requirements loading | loading | `Loading sign-in requirements…`. | The app gates methods on managed requirements; failed or empty policies cannot start authentication. | PASS (`a_policy_with_no_login_methods_never_starts_authentication`, S034b) |
 | 18 | Welcome `/welcome` | entry | The owned original override renders an empty body. | No welcome screen is invented for this state. | BOUNDARY (owned original capture; instruction004) |
 | 19 | Select workspace | click | Pick a folder or Skip. | A new profile opens workspace selection. Picker cancel stays there; selection or a successful Skip enters Home. | PASS (`workspace_picker_cancel_stays_then_selection_enters_home`, `workspace_skip_creates_a_distinct_project_before_entering_home`) |
-| 20 | Resize | resize | [INFERENCE] The nav collapses on narrow widths. | The settings nav stays at all widths. | FAIL (`crates/app/src/lib.rs` `fit` covers the main shell only; the original behavior is an inference) |
+| 20 | Resize | resize | No narrow-width capture exists, and row 6 records `canCollapse:false` for the Settings route. | The settings nav stays at all widths; no collapse is invented. | BOUNDARY (`settings-page-50e3fab957b6.js`; `refs/settings` has 1280 and 1440 px only) |
 
 ### Personal instructions and workspace storage
 
@@ -1191,11 +1192,11 @@ They do not replace original-versus-native appearance approval or the strict pix
 |---|---|---|---|---|---|
 | 1 | Profile menu → Help → `Set up mobile` | entry | `/codex-mobile`. | `Route::Mobile`: sidebar closed, no rail item selected. | PASS (`profile_menu_mobile`, `parity_mobile`) |
 | 2 | Initial step | click | `Get started` reads `/wham/remote/control/mfa_requirement`, then on `required` `/accounts/mfa_info`; `Later` (dialog only). | `GetStarted`: loading button; `required` with `mfa_enabled_v2` off opens the MFA step, otherwise the allow-host step; a failed read or a body without the expected field shows `Couldn’t check security requirements. Try again`. | PASS (`mobile_get_started_follows_the_recorded_mfa_status`) |
-| 3 | Allow host step | click | `Allow`: `remoteControl/enable`. | Step view; `Allow` is disabled with `Remote control can’t be turned on from this app yet`. | NOT WIRED (`crates/app/src/lib.rs`: no `remoteControl/enable`) |
-| 4 | MFA required | error | `Turn on Multi-Factor Authentication`, `Continue on chatgpt.com`. | Step view; the button opens `chatgpt.com/#settings/Security`. | FAIL (no flow reaches it: the recorded account has MFA on, and no MFA-off response is recorded) |
-| 5 | Waiting / pairing step | loading | QR code, pairing code. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
-| 6 | Pairing unavailable | error | `Pairing code unavailable`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
-| 7 | Connected step | click | Toggles, `Done`, `Manage connections`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
+| 3 | Allow host step | click | `Allow`: `remoteControl/enable`. | `Allow` sends `remoteControl/enable` (loading step while it runs), waits for `connected`, then starts pairing. | PASS (`allow_enables_remote_control_and_a_claimed_code_connects` in `mobile_pairing`) |
+| 4 | MFA required | error | `Turn on Multi-Factor Authentication`, `Continue on chatgpt.com`. | Step view; the button opens `chatgpt.com/#settings/Security`. | BOUNDARY (the recorded account has MFA on, and no MFA-off response is recorded, so no fixture reaches it) |
+| 5 | Waiting / pairing step | loading | QR code, pairing code. | Waiting step after `Allow`: `remoteControl/pairing/start` fills the QR code and manual code; `pairing/status` is polled each second. | PASS (same flow) |
+| 6 | Pairing unavailable | error | `Pairing code unavailable`. | A failed `pairing/start` keeps the waiting step and shows `Pairing code unavailable: <error>` with `Refresh pairing code`. | PASS (`a_failed_pairing_start_keeps_the_waiting_step_with_its_error` in `mobile_pairing`) |
+| 7 | Connected step | click | Toggles, `Done`, `Manage connections`. | A claimed code with a new client opens `You’re connected` with the toggles, `Done` (back to Home) and `Manage connections` (Settings > Connections). | PASS (same flow as row 3; toggle clicks and `Manage connections` are not driven) |
 | 8 | Button hover | hover | Ghost/solid hover. | `Get started` hover fill (55250 px repainted). | PASS (`mobile_button_hover`) |
 | 9 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
 | 10 | Resize | resize | Content stays centered. | — | FAIL (no flow checks the 3 widths on this route) |
@@ -1206,8 +1207,7 @@ A row above that names a `crates/ui` owner needs that change first. The changes 
 
 1. `crates/ui/src/thread.rs`: click handlers on the reasoning and command cards, `Reapply`, the user message's hover actions, a find bar, and loading and error views.
 2. `crates/ui/src/diff.rs`: the Changes header controls (source selector, file tree, layout, wrap, refresh), empty, loading and error states.
-3. `crates/ui/src/screens/mobile.rs`: the pairing and connected steps (`remoteControl/*`).
-4. Focus-visible rings on the shared buttons (`icon_button`, `pill`, rail items), and tooltips on the composer and sidebar row buttons.
+3. Focus-visible rings on the shared buttons (`icon_button`, `pill`, rail items), and tooltips on the composer and sidebar row buttons.
 
 ## S016: Thread header
 

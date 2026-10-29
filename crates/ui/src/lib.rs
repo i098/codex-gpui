@@ -61,6 +61,8 @@ actions!(
         OpenPullRequests,
         OpenPlugins,
         OpenSecurity,
+        /// Home beacon `Start Voice` and the composer's `Start new voice chat`.
+        StartVoiceChat,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
         OpenMobileSetup,
         /// `⌥⌘B`: show or hide the Changes side panel.
@@ -178,6 +180,8 @@ pub const RAIL_DESTINATIONS: &[RailDestination] = &[
 
 pub struct Shell {
     pub sidebar_open: bool,
+    /// Below the sidebar breakpoint the panel floats over the main surface instead of docking.
+    pub overlay: bool,
     /// The toggle's spring: its start and the progress it left from
     /// ([`Shell::sidebar_progress`]). `None` when set without motion.
     sidebar_motion: Option<(Instant, f32)>,
@@ -228,6 +232,9 @@ pub struct Shell {
     /// Pointer over the avatar: its own click toggles the menu, so a press there must not
     /// also close it as a click outside.
     avatar_hovered: bool,
+    /// The Explore `…` menu is open.
+    pub explore_menu: bool,
+    explore_hovered: bool,
     sidebar: AnyView,
     main: AnyView,
     main_content_inline_inset: Pixels,
@@ -300,6 +307,7 @@ impl Shell {
     pub fn new(sidebar: AnyView, main: AnyView) -> Self {
         Self {
             sidebar_open: true,
+            overlay: false,
             sidebar_motion: None,
             sidebar_width: Theme::SIDEBAR_WIDTH,
             sidebar_drag_offset: None,
@@ -322,6 +330,8 @@ impl Shell {
             scheduled_attention: false,
             profile_menu: false,
             avatar_hovered: false,
+            explore_menu: false,
+            explore_hovered: false,
             sidebar,
             main,
             main_content_inline_inset: px(0.),
@@ -348,7 +358,7 @@ impl Shell {
     }
 
     pub fn main_width(&self, window: &Window, cx: &App) -> Pixels {
-        let progress = self.sidebar_progress(cx.background_executor().now());
+        let progress = self.layout_progress(cx.background_executor().now());
         let left = RAIL_WIDTH + (self.sidebar_width - RAIL_WIDTH) * progress;
         let border = if progress > 0.1 {
             MAIN_HAIRLINE
@@ -365,6 +375,15 @@ impl Shell {
         self.sidebar_open = !self.sidebar_open;
         self.sidebar_motion = (!motion::reduced(cx)).then_some((now, from));
         cx.notify();
+    }
+
+    /// How far the sidebar pushes the main surface: an overlay pushes nothing.
+    fn layout_progress(&self, now: Instant) -> f32 {
+        if self.overlay {
+            0.
+        } else {
+            self.sidebar_progress(now)
+        }
     }
 
     /// How far the sidebar is open at `now`, 0 to 1: the toggle's `MO-01` spring
@@ -1031,6 +1050,12 @@ impl Shell {
             under
         };
         let scale = window.scale_factor();
+        let explore_hover =
+            cx.listener(|this, hovered: &bool, _, _| this.explore_hovered = *hovered);
+        let explore_click = cx.listener(|this, _: &ClickEvent, _, cx| {
+            this.explore_menu ^= true;
+            cx.notify();
+        });
         let mut item = |name: &'static str| {
             let on = selected == Some(name);
             let fg = if on { t.text } else { t.text_tertiary };
@@ -1142,9 +1167,8 @@ impl Shell {
                     // dot at `scale-50`.
                     .child(
                         item("explore")
-                            .when(self.security_available, |item| {
-                                item.on_click(dispatch::<OpenSecurity>)
-                            })
+                            .on_hover(explore_hover)
+                            .on_click(explore_click)
                             .when(
                                 self.unread_destinations
                                     .as_ref()
@@ -1234,6 +1258,49 @@ impl Shell {
                     selected: false,
                 }),
             )
+    }
+
+    /// The Explore `…` menu (`sidebarCustomization.moreMenu`), right of the rail item: the
+    /// secondary destinations the port has. `Customize sidebar` and MCP destinations need the
+    /// sidebar-customization store, which the port lacks.
+    fn explore_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let hover = t.menu_item_hover;
+        div()
+            .absolute()
+            .left(RAIL_WIDTH)
+            .top(Theme::TITLEBAR_HEIGHT + px(180.))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                if !this.explore_hovered {
+                    this.explore_menu = false;
+                    cx.notify();
+                }
+            }))
+            .child(composer::popover(t, 220., |d| {
+                if self.security_available {
+                    d.child(
+                        div()
+                            .id("explore-security")
+                            .px(px(8.))
+                            .py(px(6.))
+                            .rounded(px(12.))
+                            .hover(move |s| s.bg(hover))
+                            .child(text("Security", 14., 20., 430., t.text))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.explore_menu = false;
+                                cx.notify();
+                                window.dispatch_action(Box::new(OpenSecurity), cx);
+                            })),
+                    )
+                } else {
+                    d.child(div().px(px(8.)).py(px(6.)).child(text(
+                        "No more destinations",
+                        14.,
+                        20.,
+                        400.,
+                        t.text_tertiary,
+                    )))
+                }
+            }))
     }
 
     /// Profile avatar menu (`codex.profileDropdown.*`) above the avatar: `Settings`, then the
@@ -1735,14 +1802,15 @@ impl Render for Shell {
         let progress = self.sidebar_progress(now);
         // The original keeps the page-sidebar shape (`data-app-shell-page-sidebar`) above 0.1
         // of progress; its hairline fades out over 0.2 to 0.05 while closing.
-        let open = progress > 0.1;
-        let main_left = RAIL_WIDTH + (self.sidebar_width - RAIL_WIDTH) * progress;
+        let docked = self.layout_progress(now);
+        let open = docked > 0.1;
+        let main_left = RAIL_WIDTH + (self.sidebar_width - RAIL_WIDTH) * docked;
         let scale = window.scale_factor();
         let hairline_width = px((f32::from(MAIN_HAIRLINE) * scale).floor().max(1.) / scale);
-        let hairline_alpha = if self.sidebar_open {
+        let hairline_alpha = if self.sidebar_open && !self.overlay {
             1.
         } else {
-            ((progress - 0.05) / 0.15).clamp(0., 1.)
+            ((docked - 0.05) / 0.15).clamp(0., 1.)
         };
         let composited = self.main_composited;
         let main_layer = composited && self.main_layer;
@@ -1985,6 +2053,27 @@ impl Render for Shell {
         )
         .absolute()
         .size_full();
+        let sidebar = (progress > 0.).then(|| {
+            let panel = div()
+                .absolute()
+                .left_0()
+                .top(Theme::TITLEBAR_HEIGHT)
+                .bottom(PAGE_INSET)
+                .w(self.sidebar_width)
+                .snap_origin()
+                .child(self.sidebar_panel(&t, progress));
+            // An overlay floats over the main surface, so it casts a shadow.
+            if self.overlay {
+                panel.shadow_lg()
+            } else {
+                panel
+            }
+        });
+        let (sidebar_below, sidebar_above) = if self.overlay {
+            (None, sidebar)
+        } else {
+            (sidebar, None)
+        };
         // The rail and titlebar do not overlap the panels, so they paint after the frame.
         div()
             .size_full()
@@ -1996,20 +2085,10 @@ impl Render for Shell {
             .child(page)
             // `#app-shell-sidebar`, around the rail too, is `[contain:layout_paint]`: its
             // content drops a fractional (zoomed) top.
-            .when(progress > 0., |d| {
-                d.child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .top(Theme::TITLEBAR_HEIGHT)
-                        .bottom(PAGE_INSET)
-                        .w(self.sidebar_width)
-                        .snap_origin()
-                        .child(self.sidebar_panel(&t, progress)),
-                )
-            })
+            .children(sidebar_below)
             .child(self.main_panel(main_left, open, &main_focus, window, &t, hairline_width, cx))
             .when(composited || fills > 1 || viz_any, |d| d.child(corners))
+            .children(sidebar_above)
             .when(self.sidebar_open, |d| {
                 d.child(
                     div()
@@ -2060,6 +2139,7 @@ impl Render for Shell {
             .child(self.titlebar(&t, window, cx))
             .child(skip_link)
             .when(self.profile_menu, |d| d.child(self.profile_menu(&t, cx)))
+            .when(self.explore_menu, |d| d.child(self.explore_menu(&t, cx)))
     }
 }
 
