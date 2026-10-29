@@ -111,8 +111,8 @@ use ui::workspace::WorkspaceLayout;
 use ui::{
     Copy, Cut, GoBack, GoForward, LogOut, NewChat, OpenBackgroundTerminal, OpenChangesPanel,
     OpenCommandMenu, OpenMobileSetup, OpenScheduled, OpenSettings, Paste, Redo, SelectAll,
-    SetTheme, Shell, ShowKeyboardShortcuts, ToggleActivity, ToggleChangesPanel, ToggleSidebar,
-    Undo,
+    SetTheme, Shell, ShowKeyboardShortcuts, StartVoiceChat, SwitchMode1, SwitchMode2, SwitchMode3,
+    ToggleActivity, ToggleChangesPanel, ToggleSidebar, Undo,
 };
 
 actions!(
@@ -834,6 +834,8 @@ impl Root {
             home: cx.new(|_| HomeMain {
                 composer: home_composer,
                 project: state.project_root.as_deref().map(project_name),
+                location: Default::default(),
+                beacon: false,
             }),
             thread_composer,
             queue_edit: None,
@@ -1253,6 +1255,11 @@ impl Root {
         self.mobile_page.as_ref()
     }
 
+    /// The Home route's main panel.
+    pub fn home(&self) -> &Entity<HomeMain> {
+        &self.home
+    }
+
     /// The Home sidebar of the chat routes.
     pub fn sidebar(&self) -> &Entity<HomeSidebar> {
         &self.sidebar
@@ -1476,6 +1483,11 @@ impl Root {
             .ok();
         })
         .detach();
+    }
+
+    fn switch_mode(&mut self, mode: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar
+            .update(cx, |s, cx| s.set_mode(mode, window, cx));
     }
 
     fn toggle_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -7467,6 +7479,15 @@ impl Render for Root {
                     this.shell.update(cx, |shell, cx| shell.toggle_sidebar(cx))
                 }))
             })
+            .on_action(
+                cx.listener(|this, _: &SwitchMode1, window, cx| this.switch_mode(0, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &SwitchMode2, window, cx| this.switch_mode(2, window, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &SwitchMode3, window, cx| this.switch_mode(1, window, cx)),
+            )
             .on_action(cx.listener(|this, _: &ToggleActivity, window, cx| {
                 this.toggle_activity(window, cx);
             }))
@@ -7479,6 +7500,11 @@ impl Render for Root {
                 if this.sidebar.read(cx).projects_state != ListState::Loading {
                     this.load_projects(cx);
                 }
+            }))
+            // BOUNDARY: realtime voice (`thread/realtime/*` audio) has no native backend yet;
+            // the request is answered with a visible notice (flows.md Home rows 5 and 14).
+            .on_action(cx.listener(|this, _: &StartVoiceChat, _, cx| {
+                this.toast(Toast::info("Realtime voice chat isn't available yet"), cx);
             }))
             .on_action(cx.listener(|this, _: &ShowKeyboardShortcuts, window, cx| {
                 if this

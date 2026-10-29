@@ -6,10 +6,10 @@ use crate::composer::{Composer, label, pill};
 use crate::{Shell, focus, icon::icon, rounded_clip, text};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyView, AnyWindowHandle, App, AppContext as _, Context, Corners, Div, Entity, Global, Hsla,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement, Pixels, Render,
-    ScrollHandle, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window, actions,
-    div, px, relative,
+    AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Corners, Div, Entity, Global,
+    Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels,
+    Render, ScrollHandle, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window,
+    actions, anchored, canvas, deferred, div, point, px, relative,
 };
 use theme::{ActiveTheme as _, Theme};
 
@@ -26,9 +26,21 @@ impl Global for FinishedScrollAnimation {}
 
 actions!(home, [OpenFolder]);
 
+/// `Work in` menu state: whether it is open, and where its chip was last laid out.
+#[derive(Default)]
+pub struct LocationMenu {
+    pub open: bool,
+    bounds: Bounds<Pixels>,
+}
+
 pub struct HomeMain {
     pub composer: Entity<Composer>,
     pub project: Option<SharedString>,
+    pub location: LocationMenu,
+    /// The announcement slot's `Try ChatGPT Voice` beacon is shown. BOUNDARY: the original
+    /// shows it when `/beacons/home` offers it; the port has no such feed yet, so it starts
+    /// hidden (flows.md Home rows 5 and 6) and dismissal lasts for the session only.
+    pub beacon: bool,
 }
 
 impl HomeMain {
@@ -36,7 +48,86 @@ impl HomeMain {
         Self {
             composer: fixture_composer(window, cx, Composer::home),
             project: None,
+            location: LocationMenu::default(),
+            beacon: false,
         }
+    }
+}
+
+impl HomeMain {
+    pub fn set_beacon(&mut self, visible: bool, cx: &mut Context<Self>) {
+        self.beacon = visible;
+        cx.notify();
+    }
+
+    /// `aside` 736×74: copy on the left, `Start Voice` and the dismiss `×` on the right.
+    fn beacon(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let start_focus = focus::handle("home-beacon-start", 0, window, cx);
+        let close_focus = focus::handle("home-beacon-dismiss", 0, window, cx);
+        let hover = t.ghost_hover;
+        div()
+            .h(px(74.))
+            .mb(px(8.))
+            .px(px(16.))
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .rounded(px(16.))
+            .border_1()
+            .border_color(t.border)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(text("Try ChatGPT Voice", 14., 20., 500., t.text))
+                    .child(text(
+                        "Orchestrate tasks, connect tools, and explore code",
+                        13.,
+                        18.,
+                        400.,
+                        t.text_tertiary,
+                    )),
+            )
+            .child(
+                focus::ring(
+                    div().id("home-beacon-start"),
+                    &start_focus,
+                    Theme::RADIUS_FULL,
+                    px(2.),
+                    cx,
+                )
+                .role(gpui::Role::Button)
+                .aria_label("Start Voice")
+                .h(px(28.))
+                .px(px(12.))
+                .flex()
+                .items_center()
+                .rounded_full()
+                .bg(t.composer_primary)
+                .child(text("Start Voice", 13., 18., 400., t.text_composer_primary))
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(Box::new(crate::StartVoiceChat), cx)
+                }),
+            )
+            .child(
+                focus::ring(
+                    div().id("home-beacon-dismiss"),
+                    &close_focus,
+                    Theme::RADIUS_FULL,
+                    px(2.),
+                    cx,
+                )
+                .role(gpui::Role::Button)
+                .aria_label("Dismiss ChatGPT beacon banner")
+                .size(px(28.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_full()
+                .hover(move |s| s.bg(hover))
+                .child(icon("close", 16., t.text_tertiary))
+                .on_click(cx.listener(|this, _, _, cx| this.set_beacon(false, cx))),
+            )
     }
 }
 
@@ -109,6 +200,94 @@ fn chip(
     )
 }
 
+/// Opens or closes the `Work in` menu: `None` toggles.
+fn set_location(owner: &Entity<HomeMain>, open: Option<bool>, cx: &mut App) {
+    owner.update(cx, |main, cx| {
+        main.location.open = open.unwrap_or(!main.location.open);
+        cx.notify();
+    });
+}
+
+/// `Work in` menu (`composer.newTask.thisComputer`): `This computer` is the only location the
+/// port runs; the others are listed disabled, in the original's order.
+fn location_menu(
+    owner: &Entity<HomeMain>,
+    location: &LocationMenu,
+    t: &Theme,
+    window: &Window,
+) -> Option<gpui::AnyElement> {
+    if !location.open {
+        return None;
+    }
+    let trigger = location.bounds;
+    let rows = [
+        ("This computer", true),
+        ("New worktree", false),
+        ("Remote", false),
+        ("Cloud", false),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, (label, enabled))| {
+        let owner = owner.clone();
+        div()
+            .id(("work-in-option", i))
+            .role(gpui::Role::MenuItemRadio)
+            .aria_label(label)
+            .aria_disabled(!enabled)
+            .px(px(8.))
+            .py(px(6.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .rounded(px(12.))
+            .opacity(if enabled { 1. } else { 0.5 })
+            .when(enabled, |d| {
+                let hover = t.menu_item_hover;
+                d.hover(move |s| s.bg(hover))
+            })
+            .child(div().flex_1().child(text(label, 14., 20., 430., t.text)))
+            .child(
+                div()
+                    .size(px(16.))
+                    .children((i == 0).then(|| icon("menu-check", 16., t.text))),
+            )
+            .when(enabled, |d| {
+                d.on_click(move |_, _, cx| set_location(&owner, Some(false), cx))
+            })
+    });
+    let dismiss = owner.clone();
+    let popup = crate::composer::popover(t, 260., |d| d.children(rows))
+        .id("work-in-menu")
+        .role(gpui::Role::Menu)
+        .aria_label("Work in")
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+    // Opens upward from the chip: the bar sits at the bottom of the window. A full-window
+    // backdrop under the popup closes it on a click anywhere else, the chip included.
+    Some(
+        deferred(
+            anchored().position(point(px(0.), px(0.))).child(
+                div()
+                    .w(window.viewport_size().width)
+                    .h(window.viewport_size().height)
+                    .occlude()
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        set_location(&dismiss, Some(false), cx)
+                    })
+                    .child(
+                        anchored()
+                            .position(point(trigger.left(), trigger.top() - px(4.)))
+                            .anchor(gpui::Anchor::BottomLeft)
+                            .snap_to_window_with_margin(px(8.))
+                            .child(popup),
+                    ),
+            ),
+        )
+        .with_priority(4)
+        .into_any_element(),
+    )
+}
+
 fn scroll_fades(offset: Pixels, maximum: Pixels) -> (Pixels, Pixels) {
     if maximum <= px(0.) {
         return (px(0.), px(0.));
@@ -124,6 +303,8 @@ fn scroll_fades(offset: Pixels, maximum: Pixels) -> (Pixels, Pixels) {
 /// `Composer utility bar` (`_rail_1hrlq` attached above the composer): project and
 /// environment.
 fn utility_bar(
+    owner: &Entity<HomeMain>,
+    location: &LocationMenu,
     project: Option<SharedString>,
     compact: bool,
     t: &Theme,
@@ -148,6 +329,7 @@ fn utility_bar(
         })
         .read(cx)
         .clone();
+    let location_menu = location_menu(owner, location, t, window);
     let finished = cx
         .try_global::<FinishedScrollAnimation>()
         .is_some_and(|state| state.0 == window.window_handle());
@@ -201,16 +383,59 @@ fn utility_bar(
                                     )
                                     .focus_handle(&project_focus.read(cx).handle),
                                 )
-                                .child(chip(
-                                    "work-in",
-                                    "laptop",
-                                    "This computer".into(),
-                                    t.text,
-                                    compact,
-                                    t,
-                                    &work_focus,
-                                    cx,
-                                )),
+                                .child({
+                                    let toggle = {
+                                        let owner = owner.clone();
+                                        move |cx: &mut App| set_location(&owner, None, cx)
+                                    };
+                                    let close = {
+                                        let owner = owner.clone();
+                                        move |cx: &mut App| set_location(&owner, Some(false), cx)
+                                    };
+                                    chip(
+                                        "work-in",
+                                        "laptop",
+                                        "This computer".into(),
+                                        t.text,
+                                        compact,
+                                        t,
+                                        &work_focus,
+                                        cx,
+                                    )
+                                    .role(gpui::Role::Button)
+                                    .aria_label("Work in")
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .on_click({
+                                        let toggle = toggle.clone();
+                                        let focus = work_focus.read(cx).handle.clone();
+                                        move |_, window, cx| {
+                                            window.focus(&focus, cx);
+                                            toggle(cx)
+                                        }
+                                    })
+                                    .on_key_down(move |event, _, cx| {
+                                        match event.keystroke.key.as_str() {
+                                            "enter" | "space" => toggle(cx),
+                                            "escape" => close(cx),
+                                            _ => return,
+                                        }
+                                        cx.stop_propagation();
+                                    })
+                                    .child({
+                                        let owner = owner.clone();
+                                        canvas(
+                                            move |b, _, cx| {
+                                                owner.update(cx, |main, _| main.location.bounds = b)
+                                            },
+                                            |_, (), _, _| {},
+                                        )
+                                        .absolute()
+                                        .size_full()
+                                    })
+                                    .children(location_menu)
+                                }),
                         )
                         .child(shapes::x_fade_with(move || {
                             if finished {
@@ -270,7 +495,12 @@ impl Render for HomeMain {
             .flex()
             .flex_col()
             .child(div().h(px(8.)))
+            .when(self.beacon, |column| {
+                column.child(self.beacon(&t, window, cx))
+            })
             .child(utility_bar(
+                &cx.entity(),
+                &self.location,
                 self.project.clone(),
                 self.composer.read(cx).utility_compact(),
                 &t,

@@ -172,7 +172,7 @@ pub struct ThreadView {
     /// A turn's `Undo`, `View changes`, copy and fork focus handles. They belong to the view,
     /// not to its place in the element tree: the view moves when a side panel opens, and a
     /// pressed control must keep its focus across that.
-    turn_focus: RefCell<HashMap<String, gpui::FocusHandle>>,
+    turn_focus: RefCell<HashMap<String, gpui::Entity<crate::focus::ControlFocus>>>,
     mcp_images: items::McpImages,
     /// Open disclosures: turns whose `Worked for` is expanded, by turn id, and activity groups
     /// whose rows show, by the id of their first item.
@@ -1756,21 +1756,21 @@ impl ThreadView {
             chrono::DateTime::from_timestamp(at + self.clock.utc_offset, 0)
                 .map(|at| at.format("%A %-I:%M %p").to_string())
         });
-        let button_focus = |name: &str| {
+        let mut button_focus = |name: &str| {
             self.turn_focus
                 .borrow_mut()
                 .entry(format!("{}-{name}", turn.id))
-                .or_insert_with(|| cx.focus_handle().tab_stop(true).tab_index(0))
+                .or_insert_with(|| {
+                    cx.new(|cx| {
+                        crate::focus::ControlFocus::new(
+                            cx.focus_handle().tab_stop(true).tab_index(0),
+                        )
+                    })
+                })
                 .clone()
         };
-        let focus = TurnFocus::new(
-            self.thread_id.clone(),
-            button_focus("undo"),
-            button_focus("view"),
-            button_focus("copy"),
-            button_focus("fork"),
-            window,
-        );
+        let [undo, view, copy, fork] = ["undo", "view", "copy", "fork"].map(&mut button_focus);
+        let focus = TurnFocus::new(self.thread_id.clone(), undo, view, copy, fork, window, cx);
         let user = turn.items.iter().find_map(|i| match i {
             ThreadItem::UserMessage { id, content } => Some((id, user_text(content))),
             _ => None,
@@ -1824,7 +1824,7 @@ impl ThreadView {
                     )
                     .child(text("Asking question", 14., 20., 430., t.text_tertiary)),
             );
-            if let Some(card) = diff_card(&turn.id, &turn.items, &focus, window, t) {
+            if let Some(card) = diff_card(&turn.id, &turn.items, &focus, window, t, cx) {
                 col = col.child(div().mt(px(16.)).pb(px(8.)).child(card));
             }
             return col;
@@ -1934,7 +1934,7 @@ impl ThreadView {
                 self.find_paint(item).as_ref(),
                 self.fades(item),
             ));
-            if let Some(card) = diff_card(&turn.id, &turn.items, &focus, window, t) {
+            if let Some(card) = diff_card(&turn.id, &turn.items, &focus, window, t, cx) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
             }
             return col.when(!self.embedded, |col| {

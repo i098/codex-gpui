@@ -42,6 +42,12 @@ actions!(
         /// Show or hide the sidebar panel.
         ToggleSidebar,
         ToggleActivity,
+        /// `switchToMode1`, `⌃1`: ChatGPT mode.
+        SwitchMode1,
+        /// `switchToMode2`, `⌃2`: Work mode (the recorded command table).
+        SwitchMode2,
+        /// `switchToMode3`, `⌃3`: Codex mode.
+        SwitchMode3,
         /// Go to Home with an empty composer.
         NewChat,
         GoBack,
@@ -55,6 +61,8 @@ actions!(
         OpenPullRequests,
         OpenPlugins,
         OpenSecurity,
+        /// Home beacon `Start Voice` and the composer's `Start new voice chat`.
+        StartVoiceChat,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
         OpenMobileSetup,
         /// `⌥⌘B`: show or hide the Changes side panel.
@@ -170,6 +178,53 @@ pub const RAIL_DESTINATIONS: &[RailDestination] = &[
     },
 ];
 
+/// The pinned destinations' rail order, as indices into [`RAIL_DESTINATIONS`].
+// shortcut: session-only; persist it with the account's sidebar customization
+// (`sidebar-customization-snapshots-v2` `order`) once the port writes that state.
+#[derive(Clone, Copy)]
+struct RailOrder([usize; RAIL_DESTINATIONS.len()]);
+
+impl gpui::Global for RailOrder {}
+
+impl RailOrder {
+    fn get(cx: &App) -> Self {
+        cx.try_global()
+            .copied()
+            .unwrap_or(Self(std::array::from_fn(|i| i)))
+    }
+
+    /// `from` takes `to`'s place and the items between shift, as the original's `arrayMove`
+    /// on drop.
+    fn moved(mut self, from: usize, to: usize) -> Self {
+        let at = |id| self.0.iter().position(|&i| i == id).expect("a permutation");
+        let (from, to) = (at(from), at(to));
+        if from < to {
+            self.0[from..=to].rotate_left(1);
+        } else {
+            self.0[to..=from].rotate_right(1);
+        }
+        self
+    }
+}
+
+/// A dragged pinned rail destination (its [`RAIL_DESTINATIONS`] index); it also draws the
+/// item under the pointer.
+struct RailDrag(usize);
+
+impl Render for RailDrag {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme();
+        div()
+            .size(px(36.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(RADIUS_RAIL)
+            .bg(t.ghost_hover)
+            .child(icon::icon(RAIL_DESTINATIONS[self.0].icon, 20., t.text))
+    }
+}
+
 pub struct Shell {
     pub sidebar_open: bool,
     /// Below the sidebar breakpoint the panel floats over the main surface instead of docking.
@@ -224,6 +279,9 @@ pub struct Shell {
     /// Pointer over the avatar: its own click toggles the menu, so a press there must not
     /// also close it as a click outside.
     avatar_hovered: bool,
+    /// The Explore `…` menu is open.
+    pub explore_menu: bool,
+    explore_hovered: bool,
     sidebar: AnyView,
     main: AnyView,
     main_content_inline_inset: Pixels,
@@ -319,6 +377,8 @@ impl Shell {
             scheduled_attention: false,
             profile_menu: false,
             avatar_hovered: false,
+            explore_menu: false,
+            explore_hovered: false,
             sidebar,
             main,
             main_content_inline_inset: px(0.),
@@ -712,7 +772,17 @@ impl Render for EmptySidebar {
             .size_full()
             .flex()
             .flex_col()
-            .child(home_sidebar_header(false, false, true, cx))
+            .child(home_sidebar_header(
+                false,
+                false,
+                true,
+                ModeSwitch {
+                    current: "Codex",
+                    on_click: Box::new(|_, _, _| {}),
+                    menu: None,
+                },
+                cx,
+            ))
             .child(
                 div()
                     .flex_1()
@@ -768,9 +838,25 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
     cx.new(|_| Shell::new(sidebar, main)).into()
 }
 
+/// Click handler for the Home mode switch.
+pub type ModeSwitchClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
+/// The `Codex ⌄` trigger's current mode, click handler and open menu.
+pub struct ModeSwitch {
+    pub current: &'static str,
+    pub on_click: ModeSwitchClick,
+    pub menu: Option<AnyElement>,
+}
+
 /// Top of the Home sidebar: `Codex ⌄` mode switch, activity bell and search, then the
 /// `New chat` and `Your dot` rows. With `unread` chats the bell carries the blue dot.
-pub fn home_sidebar_header(unread: bool, activity: bool, available: bool, cx: &App) -> Div {
+pub fn home_sidebar_header(
+    unread: bool,
+    activity: bool,
+    available: bool,
+    mode: ModeSwitch,
+    cx: &App,
+) -> Div {
     let t = cx.theme();
     // The Oklab round-trip leaves blue above one; retain it for Skia's float layer blend.
     let activity_background = gpui::Rgba {
@@ -843,6 +929,11 @@ pub fn home_sidebar_header(unread: bool, activity: bool, available: bool, cx: &A
                 .child(
                     div()
                         .id("mode-switch")
+                        .role(gpui::Role::Button)
+                        .aria_label(format!("Switch mode, current mode: {}", mode.current))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(mode.on_click)
+                        .relative()
                         .tab_index(0)
                         .focus_visible(keyboard_ring(true))
                         .h(px(32.))
@@ -860,7 +951,8 @@ pub fn home_sidebar_header(unread: bool, activity: bool, available: bool, cx: &A
                         .child(
                             icon::icon("chevron-down-medium", 14., t.text_tertiary)
                                 .own_layer(Some(mode_switch)),
-                        ),
+                        )
+                        .children(mode.menu),
                 )
                 .child(div().flex_1())
                 .when(available, |d| {
@@ -967,7 +1059,10 @@ pub fn home_sidebar_header(unread: bool, activity: bool, available: bool, cx: &A
                             .own_layer(Some(overlap))
                             .into_any_element(),
                         "Your dot",
-                    ),
+                    )
+                    // The original navigates in-app to its `/dots/home` route; the port has no
+                    // dot screen, so it opens the same ChatGPT page, like dot search results.
+                    .on_click(|_, _, cx| cx.open_url("https://chatgpt.com/dots/home")),
                 )),
         )
 }
@@ -1005,6 +1100,14 @@ impl Shell {
             under
         };
         let scale = window.scale_factor();
+        let rail_order = RailOrder::get(cx);
+        let shell = cx.entity().downgrade();
+        let explore_hover =
+            cx.listener(|this, hovered: &bool, _, _| this.explore_hovered = *hovered);
+        let explore_click = cx.listener(|this, _: &ClickEvent, _, cx| {
+            this.explore_menu ^= true;
+            cx.notify();
+        });
         let mut item = |name: &'static str| {
             let on = selected == Some(name);
             let fg = if on { t.text } else { t.text_tertiary };
@@ -1116,9 +1219,8 @@ impl Shell {
                     // dot at `scale-50`.
                     .child(
                         item("explore")
-                            .when(self.security_available, |item| {
-                                item.on_click(dispatch::<OpenSecurity>)
-                            })
+                            .on_hover(explore_hover)
+                            .on_click(explore_click)
                             .when(
                                 self.unread_destinations
                                     .as_ref()
@@ -1168,11 +1270,21 @@ impl Shell {
                             .h(px(scale.floor().max(1.) / scale))
                             .bg(t.border),
                     )
-                    .children(RAIL_DESTINATIONS.iter().map(|destination| {
+                    // The pinned destinations reorder by drag (`sidebarElectron.rail.reorder`).
+                    .children(rail_order.0.map(|index| {
+                        let destination = &RAIL_DESTINATIONS[index];
+                        let shell = shell.clone();
                         rail_tip(
                             item(destination.icon)
                                 .when(destination.id == "builtin:pull-requests", |item| {
                                     item.on_click(dispatch::<OpenPullRequests>)
+                                })
+                                .on_drag(RailDrag(index), |drag, _, _, cx| {
+                                    cx.new(|_| RailDrag(drag.0))
+                                })
+                                .on_drop(move |drag: &RailDrag, _, cx| {
+                                    cx.set_global(RailOrder::get(cx).moved(drag.0, index));
+                                    shell.update(cx, |_, cx| cx.notify()).ok();
                                 }),
                             destination.label,
                         )
@@ -1208,6 +1320,49 @@ impl Shell {
                     selected: false,
                 }),
             )
+    }
+
+    /// The Explore `…` menu (`sidebarCustomization.moreMenu`), right of the rail item: the
+    /// secondary destinations the port has. `Customize sidebar` and MCP destinations need the
+    /// sidebar-customization store, which the port lacks.
+    fn explore_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let hover = t.menu_item_hover;
+        div()
+            .absolute()
+            .left(RAIL_WIDTH)
+            .top(Theme::TITLEBAR_HEIGHT + px(180.))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                if !this.explore_hovered {
+                    this.explore_menu = false;
+                    cx.notify();
+                }
+            }))
+            .child(composer::popover(t, 220., |d| {
+                if self.security_available {
+                    d.child(
+                        div()
+                            .id("explore-security")
+                            .px(px(8.))
+                            .py(px(6.))
+                            .rounded(px(12.))
+                            .hover(move |s| s.bg(hover))
+                            .child(text("Security", 14., 20., 430., t.text))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.explore_menu = false;
+                                cx.notify();
+                                window.dispatch_action(Box::new(OpenSecurity), cx);
+                            })),
+                    )
+                } else {
+                    d.child(div().px(px(8.)).py(px(6.)).child(text(
+                        "No more destinations",
+                        14.,
+                        20.,
+                        400.,
+                        t.text_tertiary,
+                    )))
+                }
+            }))
     }
 
     /// Profile avatar menu (`codex.profileDropdown.*`) above the avatar: `Settings`, then the
@@ -2046,6 +2201,7 @@ impl Render for Shell {
             .child(self.titlebar(&t, window, cx))
             .child(skip_link)
             .when(self.profile_menu, |d| d.child(self.profile_menu(&t, cx)))
+            .when(self.explore_menu, |d| d.child(self.explore_menu(&t, cx)))
     }
 }
 
@@ -2086,5 +2242,14 @@ mod tests {
         // refs/home/dark@1280x832.png: titlebar and rail 36, sidebar 29.
         assert_eq!(red(layout_color(&t)), 36);
         assert_eq!(red(over(t.sidebar_background, layout_color(&t))), 29);
+    }
+
+    #[test]
+    fn rail_order_moves_the_dragged_item_to_the_drop_target() {
+        let start = RailOrder([0, 1]);
+        assert_eq!(start.moved(0, 1).0, [1, 0]);
+        assert_eq!(start.moved(1, 0).0, [1, 0]);
+        assert_eq!(start.moved(1, 0).moved(0, 1).0, [0, 1]);
+        assert_eq!(start.moved(1, 1).0, [0, 1]);
     }
 }

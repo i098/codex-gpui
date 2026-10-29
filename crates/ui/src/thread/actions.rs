@@ -390,8 +390,9 @@ pub struct ThreadPressed(pub String);
 #[derive(Clone)]
 pub(super) struct TurnFocus {
     pub thread_id: String,
-    pub undo: FocusHandle,
-    pub view: FocusHandle,
+    /// The diff card's buttons, which draw the shared keyboard ring.
+    pub undo: Entity<crate::focus::ControlFocus>,
+    pub view: Entity<crate::focus::ControlFocus>,
     pub copy: FocusHandle,
     pub fork: FocusHandle,
     /// One of them has focus.
@@ -401,14 +402,18 @@ pub(super) struct TurnFocus {
 impl TurnFocus {
     pub(super) fn new(
         thread_id: String,
-        undo: FocusHandle,
-        view: FocusHandle,
-        copy: FocusHandle,
-        fork: FocusHandle,
+        undo: Entity<crate::focus::ControlFocus>,
+        view: Entity<crate::focus::ControlFocus>,
+        copy: Entity<crate::focus::ControlFocus>,
+        fork: Entity<crate::focus::ControlFocus>,
         window: &Window,
+        cx: &App,
     ) -> Self {
-        let engaged = [&undo, &view, &copy, &fork]
-            .iter()
+        let [copy, fork] = [copy, fork].map(|focus| focus.read(cx).handle.clone());
+        let engaged = [&undo, &view]
+            .map(|focus| &focus.read(cx).handle)
+            .into_iter()
+            .chain([&copy, &fork])
             .any(|handle| handle.is_focused(window));
         Self {
             thread_id,

@@ -28,6 +28,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("rail_thread_family", rail_thread_family),
     ("rail_home_reselect_resets", rail_home_reselect_resets),
     ("rail_hover_fill", rail_hover_fill),
+    ("rail_drag_reorders_pinned", rail_drag_reorders_pinned),
     ("resize_three_widths", resize_three_widths),
     ("sidebar_toggle_keys", sidebar_toggle_keys),
     ("sidebar_toggle_titlebar", sidebar_toggle_titlebar),
@@ -37,6 +38,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("previous_next_chat", previous_next_chat),
     ("new_chat_row", new_chat_row),
     ("new_chat_same_route_history", new_chat_same_route_history),
+    ("your_dot_row", your_dot_row),
     ("sidebar_empty_lists", sidebar_empty_lists),
     ("cmd_n_new_chat", cmd_n_new_chat),
     ("editor_click_focuses", editor_click_focuses),
@@ -102,6 +104,10 @@ const FLOWS: &[(&str, Flow)] = &[
     ("parity_automations", || {
         parity_flow("automations", open_recorded_automations)
     }),
+    ("rail_explore_menu", rail_explore_menu),
+    ("voice_button_notice", voice_button_notice),
+    ("home_beacon", home_beacon),
+    ("rail_focus_ring", rail_focus_ring),
     ("profile_menu_settings", profile_menu_settings),
     ("profile_menu_dismiss", profile_menu_dismiss),
     ("profile_menu_mobile", profile_menu_mobile),
@@ -113,6 +119,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("sidebar_section_collapse", sidebar_section_collapse),
     ("changes_panel_keys", changes_panel_keys),
     ("view_changes_opens_panel", view_changes_opens_panel),
+    ("thread_card_focus_ring", thread_card_focus_ring),
     ("diff_file_header_toggle", diff_file_header_toggle),
     ("parity_diff", || {
         parity_flow("diff", |fx| {
@@ -280,6 +287,49 @@ fn rail_hover_fill() -> Result<String> {
     Ok(format!("{n} px"))
 }
 
+/// Dragging pinned `Code Review` onto `Sites` swaps them, without opening Code Review; a drag
+/// back restores the order.
+fn rail_drag_reorders_pinned() -> Result<String> {
+    // refs/home/dark@1280x832.spec.json: the two pinned items below the divider.
+    const CODE_REVIEW: (f32, f32) = (26., 299.);
+    const SITES: (f32, f32) = (26., 343.);
+    // The window is 2x: a 36 px item is 72 device px.
+    let crop = |shot: &RgbaImage, (x, y): (f32, f32)| {
+        let (x, y) = (((x - 18.) * 2.) as u32, ((y - 18.) * 2.) as u32);
+        image::imageops::crop_imm(shot, x, y, 72, 72).to_image()
+    };
+    let rest = |fx: &mut Fx| -> Result<RgbaImage> {
+        fx.hover((640., 22.))?;
+        fx.advance(ui::motion::BASIC)?;
+        fx.shot()
+    };
+    let mut fx = Fx::new()?;
+    let before = rest(&mut fx)?;
+    fx.capture_evidence("CGX_RAIL_DRAG_EVIDENCE", "before-rail")?;
+    ensure!(
+        crop(&before, CODE_REVIEW) != crop(&before, SITES),
+        "the pinned items look alike"
+    );
+    fx.drag(CODE_REVIEW, SITES, 8)?;
+    let after = rest(&mut fx)?;
+    fx.capture_evidence("CGX_RAIL_DRAG_EVIDENCE", "after-rail")?;
+    ensure!(
+        fx.route() == Route::Home,
+        "the drag opened {:?}",
+        fx.route()
+    );
+    ensure!(
+        crop(&after, SITES) == crop(&before, CODE_REVIEW)
+            && crop(&after, CODE_REVIEW) == crop(&before, SITES),
+        "the pinned items did not swap"
+    );
+    fx.drag(CODE_REVIEW, SITES, 8)?;
+    let back = rest(&mut fx)?;
+    let n = changed(&before, &back, [8., 281., 36., 80.]);
+    ensure!(n == 0, "a drag back did not restore the order ({n} px)");
+    Ok(String::new())
+}
+
 /// 1280 (reference), 767 (below the 768 px sidebar breakpoint), 600 (below 40rem).
 fn resize_three_widths() -> Result<String> {
     for w in [1280., 767., 600.] {
@@ -394,6 +444,17 @@ fn new_chat_row() -> Result<String> {
     ensure!(fx.route() == Route::Home);
     ensure!(fx.composer_focused()?);
     ensure!(fx.composer_text()?.is_empty());
+    Ok(String::new())
+}
+
+fn your_dot_row() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.click(fx.at("home", "Your dot")?)?;
+    ensure!(
+        fx.cx.take_opened_url().as_deref() == Some("https://chatgpt.com/dots/home"),
+        "Your dot did not open the dot home page"
+    );
+    ensure!(fx.route() == Route::Home, "route {:?}", fx.route());
     Ok(String::new())
 }
 
@@ -762,6 +823,99 @@ fn rail_scheduled() -> Result<String> {
     Ok(String::new())
 }
 
+/// The rail's Explore `…` item.
+const RAIL_EXPLORE: (f32, f32) = (26., 246.);
+
+fn rail_explore_menu() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.capture_evidence("CGX_BEACON_EVIDENCE", "before-rail")?;
+    fx.click(RAIL_EXPLORE)?;
+    ensure!(
+        fx.shell(|s| s.explore_menu),
+        "Explore did not open its menu"
+    );
+    fx.capture_evidence("CGX_BEACON_EVIDENCE", "after-explore-menu")?;
+    fx.click(RAIL_EXPLORE)?;
+    ensure!(fx.shell(|s| !s.explore_menu), "a second click left it open");
+    fx.click(RAIL_EXPLORE)?;
+    fx.click((800., 400.))?;
+    ensure!(
+        fx.shell(|s| !s.explore_menu),
+        "a click outside left it open"
+    );
+    ensure!(fx.route() == Route::Home);
+    Ok(String::new())
+}
+
+/// With an empty draft the send button is `Start new voice chat`: it starts no turn and
+/// answers with the BOUNDARY notice (no realtime backend).
+fn voice_button_notice() -> Result<String> {
+    let mut fx = Fx::new()?;
+    let at = fx.at("home", "Start new voice chat")?;
+    fx.click(at)?;
+    ensure!(fx.route() == Route::Home, "route {:?}", fx.route());
+    ensure!(
+        fx.read(|root, cx| root.toasts(cx).iter().any(|t| t.contains("voice chat"))),
+        "no voice notice"
+    );
+    Ok(String::new())
+}
+
+/// Tab reaches every rail item and the avatar, each drawing a ring around its 36 px button.
+fn rail_focus_ring() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.hover((640., 22.))?;
+    let before = fx.shot()?;
+    let items: Vec<_> = [
+        RAIL_HOME,
+        RAIL_SPACE,
+        RAIL_SCHEDULED,
+        (26., 202.),
+        RAIL_EXPLORE,
+    ]
+    .into_iter()
+    .collect();
+    let mut seen = vec![false; items.len()];
+    for _ in 0..60 {
+        fx.keys("tab")?;
+        let now = fx.shot()?;
+        for (i, (x, y)) in items.iter().enumerate() {
+            // The 2 px ring lies outside the 36 px button: sample its 4 px band.
+            let band = [x - 22., y - 22., 44., 4.];
+            seen[i] |= changed(&before, &now, band) >= 20;
+        }
+    }
+    ensure!(
+        seen.iter().all(|s| *s),
+        "rail items without a ring: {seen:?}"
+    );
+    Ok(String::new())
+}
+
+/// Beacon `Start Voice` raises the voice request; `×` hides the banner.
+fn home_beacon() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.capture_evidence("CGX_BEACON_EVIDENCE", "before-home")?;
+    let home = fx.read(|root, _| root.home().clone());
+    fx.cx
+        .update(|cx| home.update(cx, |home, cx| home.set_beacon(true, cx)));
+    fx.cx.run_until_parked();
+    fx.capture_evidence("CGX_BEACON_EVIDENCE", "after-beacon")?;
+    let (x, y) = fx.at("home", "Choose project")?;
+    // The buttons sit 550 and 622 px right of `Choose project`, one slot above it.
+    fx.click((x + 550., y - 61.))?;
+    ensure!(
+        fx.read(|root, cx| !root.toasts(cx).is_empty()),
+        "Start Voice raised no request"
+    );
+    fx.click((x + 622., y - 61.))?;
+    ensure!(
+        !fx.cx.update(|cx| home.read(cx).beacon),
+        "× left the beacon open"
+    );
+    Ok(String::new())
+}
+
 /// The profile avatar, at the rail's bottom.
 fn avatar(fx: &Fx) -> (f32, f32) {
     (26., fx.size.1 - 26.)
@@ -968,6 +1122,61 @@ fn view_changes_opens_panel() -> Result<String> {
     fx.click(fx.at("thread", "View changes")?)?;
     ensure!(side(&fx) == Some(SidePanel::Changes), "{:?}", side(&fx));
     Ok(String::new())
+}
+
+/// Shift-Tab from the composer reaches the diff card's `View changes`, then `Undo`; each
+/// draws the 2 px `#3a83f7` ring only while it has keyboard focus.
+fn thread_card_focus_ring() -> Result<String> {
+    // The original's button boxes (refs/thread spec nodes 310 and 312), plus the 2 px ring.
+    const UNDO: [f32; 4] = [982.95, 334.8, 72.71, 32.];
+    const VIEW: [f32; 4] = [1059.66, 334.8, 106.59, 32.];
+    let ring = |shot: &RgbaImage, [x, y, w, h]: [f32; 4]| {
+        let (x1, y1) = (((x + w) * 2.) as u32, ((y + h) * 2.) as u32);
+        ((y * 2.) as u32..y1)
+            .flat_map(|py| ((x * 2.) as u32..x1).map(move |px| (px, py)))
+            .filter(|&(px, py)| {
+                let p = shot.get_pixel(px, py);
+                [0x3a, 0x83, 0xf7]
+                    .iter()
+                    .zip(p.0)
+                    .all(|(want, got)| (*want - got as i32).abs() <= 8)
+            })
+            .count()
+    };
+    let mut fx = Fx::new()?;
+    open_subtract(&mut fx)?;
+    fx.focus_composer()?;
+    let rest = fx.shot()?;
+    ensure!(
+        ring(&rest, UNDO) + ring(&rest, VIEW) == 0,
+        "a ring shows without focus"
+    );
+    let mut reached = Vec::new();
+    for step in 1..=40 {
+        fx.keys("shift-tab")?;
+        let shot = fx.shot()?;
+        let (undo, view) = (ring(&shot, UNDO), ring(&shot, VIEW));
+        ensure!(undo == 0 || view == 0, "both card buttons ringed");
+        if let Some((name, n)) = [("View changes", view), ("Undo", undo)]
+            .into_iter()
+            .find(|(_, n)| *n > 300)
+        {
+            fx.capture_evidence("CGX_CARD_FOCUS_EVIDENCE", &format!("{step}-{name}"))?;
+            reached.push((name, step, n));
+            if reached.len() == 2 {
+                break;
+            }
+        }
+    }
+    let order: Vec<_> = reached.iter().map(|(name, ..)| *name).collect();
+    ensure!(
+        order == ["View changes", "Undo"],
+        "Shift-Tab reached {reached:?}"
+    );
+    fx.hover((640., 22.))?;
+    let moved = ring(&fx.shot()?, UNDO);
+    ensure!(moved > 300, "a pointer move cleared the ring ({moved} px)");
+    Ok(format!("{reached:?}"))
 }
 
 fn diff_file_header_toggle() -> Result<String> {
