@@ -29,6 +29,7 @@ impl Root {
             || self.diff_confirmation.is_some()
             || self.automation_editor.is_some()
             || self.new_project.is_some()
+            || self.feedback.is_some()
     }
 
     pub fn diff_comment_confirmation(&self) -> Option<&Entity<Confirmation>> {

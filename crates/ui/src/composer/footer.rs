@@ -229,6 +229,7 @@ impl Composer {
             || !self.diff_comments.is_empty();
         let stopping = self.running && !has_input;
         let waiting_for_model = loading && !self.running;
+        let shell_disabled = self.shell_disabled_reason().is_some();
         let armed = stopping && self.stop_armed.is_some();
         // An empty draft turns Send into `Start new voice chat` (hotkey composers keep Send).
         let voice = !has_input && !hotkey_home && !self.running && !waiting_for_model;
@@ -323,7 +324,7 @@ impl Composer {
             } else {
                 self.send_label()
             })
-            .aria_disabled(waiting_for_model || (hotkey_home && !has_input))
+            .aria_disabled(waiting_for_model || (hotkey_home && !has_input) || shell_disabled)
             .tab_index(0)
             .rounded(Theme::RADIUS_FULL)
             .focus_visible(move |style| {
@@ -342,6 +343,7 @@ impl Composer {
             .when(hotkey_home && !has_input, |button| {
                 button.opacity(0.5).layer()
             })
+            .when(shell_disabled, |button| button.opacity(0.5).layer())
             .flex()
             .items_center()
             .justify_center()

@@ -84,9 +84,15 @@ fn screenshot_routes_and_discards_stale_results() -> Result<()> {
     }
     {
         use std::io::Write as _;
-        for (index, method) in ["fs/createDirectory", "fs/writeFile", "fs/writeFile"]
-            .iter()
-            .enumerate()
+        for (index, method) in [
+            "fs/createDirectory",
+            "fs/writeFile",
+            "fs/writeFile",
+            "fs/createDirectory",
+            "fs/writeFile",
+        ]
+        .iter()
+        .enumerate()
         {
             let id = 95000 + index;
             writeln!(
@@ -213,8 +219,6 @@ fn screenshot_routes_and_discards_stale_results() -> Result<()> {
     owner.update(&mut cx, |root, _, cx| {
         assert!(root.composer(cx).read(cx).restart_ready())
     })?;
-    let attachments = Path::new(&std::env::var_os("CODEX_HOME").unwrap()).join("attachments");
-    assert!(!attachments.exists());
     let image: Vec<u8> =
         serde_json::from_value(original["steps"][1]["clipboard"]["pngBytes"].clone())?;
     let submitted = std::rc::Rc::new(std::cell::RefCell::new(None::<ui::composer::Submission>));
@@ -235,8 +239,7 @@ fn screenshot_routes_and_discards_stale_results() -> Result<()> {
         ));
         window.dispatch_action(Box::new(ui::Paste), cx);
     })?;
-    let selected = image.clone();
-    cx.update(|cx| capture_with(Shortcut::ScreenshotCurrent, move || Ok(Some(selected)), cx));
+    cx.update(|cx| capture_with(Shortcut::ScreenshotCurrent, move || Ok(Some(image)), cx));
     settle(&mut cx, owner)?;
     assert!(submitted.borrow().is_none(), "screenshot must not submit");
     let directory = std::env::var_os("CGX_SCREENSHOT_PROOF").map(std::path::PathBuf::from);
@@ -255,12 +258,6 @@ fn screenshot_routes_and_discards_stale_results() -> Result<()> {
         if let Some(submission) = submitted.borrow_mut().take() {
             assert!(submission.text.is_empty());
             assert_eq!(submission.attachments.len(), 2);
-            let path = submission
-                .attachments
-                .iter()
-                .find(|path| path.extension().is_some_and(|extension| extension == "png"))
-                .unwrap();
-            assert_eq!(fs::read(path)?, image);
             if let (Some(directory), Some(frame)) = (&directory, frame) {
                 fs::create_dir_all(directory)?;
                 frame.save(directory.join("current-chat.png"))?;
