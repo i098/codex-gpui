@@ -1540,25 +1540,32 @@ impl Shell {
                     Side::Bottom,
                 ))
             })
-            // Closed, the titlebar also carries New chat after Show sidebar.
-            .when(self.chat_chrome && !self.sidebar_open, |d| {
-                d.child(tooltip(
-                    icon_button(
-                        "titlebar-new-chat",
-                        icon::icon("sidebar-cmd-new-chat", 16., t.text_tertiary).own_layer(None),
-                        t,
-                    )
-                    .role(gpui::Role::Button)
-                    .aria_label("New chat")
-                    .absolute()
-                    .left(nav_left + px(102.))
-                    .top(px(8.))
-                    .on_click(dispatch::<NewChat>),
-                    "New chat",
-                    Some("⌘N"),
-                    Side::Bottom,
-                ))
-            })
+            // Closed, the titlebar also carries New chat after Show sidebar, except on Home,
+            // which already is a new chat.
+            .when(
+                self.chat_chrome
+                    && !self.sidebar_open
+                    && self.main.entity_type() != std::any::TypeId::of::<screens::home::HomeMain>(),
+                |d| {
+                    d.child(tooltip(
+                        icon_button(
+                            "titlebar-new-chat",
+                            icon::icon("sidebar-cmd-new-chat", 16., t.text_tertiary)
+                                .own_layer(None),
+                            t,
+                        )
+                        .role(gpui::Role::Button)
+                        .aria_label("New chat")
+                        .absolute()
+                        .left(nav_left + px(102.))
+                        .top(px(8.))
+                        .on_click(dispatch::<NewChat>),
+                        "New chat",
+                        Some("⌘N"),
+                        Side::Bottom,
+                    ))
+                },
+            )
             .when(self.new_tab, |d| {
                 d.child(
                     focus::ring(div().id("new-tab"), &new_tab_focus, px(8.), px(2.), cx)

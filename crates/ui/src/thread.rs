@@ -2193,7 +2193,7 @@ impl Render for ThreadView {
         // corners (`Shell::main_clips_right`), in a deferred draw. cc draws a band tile that
         // holds only the fill (no ink of the composer card, which is centered) as a color quad.
         // ponytail: the bottom corner's px all in the band's last tile (510 px stride).
-        let card_ink = crate::composer::card_decoration(&t)
+        let card_ink = crate::composer::card_decoration(&t, false)
             .shadows
             .iter()
             .filter(|s| !s.inset)

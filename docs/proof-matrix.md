@@ -121,3 +121,19 @@ The failed cells demonstrate the nonzero gate result; they do not grant native a
 The tool preserves those differences rather than changing the reference or text mask.
 
 After the native Configuration page was added, the Settings Configuration cell gave 0 outside-text pixels and a 0.087290% inside-text difference: PASS.
+
+## Home rest matrix
+
+Each Home capture waits for the navigation destinations, so the rail's Explore marker matches.
+All eight Home rest cells pass at the source that added the narrow layout.
+
+| Theme | Size | Outside text pixels | Inside text difference | Gate |
+|---|---|---:|---:|---|
+| dark | 1280x832 | 0 | 0.118360% | PASS |
+| dark | 1440x900 | 0 | 0.118360% | PASS |
+| dark | 767x832 | 0 | 0.125113% | PASS |
+| dark | 600x832 | 0 | 0.247315% | PASS |
+| light | 1280x832 | 0 | 0.098468% | PASS |
+| light | 1440x900 | 0 | 0.098468% | PASS |
+| light | 767x832 | 0 | 0.108467% | PASS |
+| light | 600x832 | 0 | 0.214410% | PASS |

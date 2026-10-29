@@ -37,6 +37,11 @@ fn capture_cell() -> Result<()> {
     let screen = match (surface.as_str(), state.as_str()) {
         ("home", "rest") => {
             ensure!(fx.route() == Route::Home);
+            // The rail's Explore marker follows an asynchronous catalog read; the original
+            // captures it. Hosts that never serve the catalog (Automations) skip this wait.
+            fx.wait("navigation destinations", |fx| {
+                fx.shell(|shell| shell.unread_destinations.is_some())
+            })?;
             "home"
         }
         ("terminal", "rest") => {
