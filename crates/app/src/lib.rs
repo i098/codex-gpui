@@ -436,6 +436,7 @@ pub struct Root {
     cloud: Option<cloud_task::Session>,
     pull_requests_page: Option<Entity<ui::screens::pull_requests::Page>>,
     plugins_page: Option<Entity<ui::screens::plugins::Page>>,
+    sites_page: Option<Entity<ui::screens::sites::Page>>,
     cloud_modal: Option<Entity<ui::screens::cloud::CloudModal>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
@@ -859,6 +860,7 @@ impl Root {
             cloud: None,
             pull_requests_page: None,
             plugins_page: None,
+            sites_page: None,
             cloud_modal: None,
             settings_section: None,
             settings_page: None,
@@ -1255,6 +1257,10 @@ impl Root {
         self.mobile_page.as_ref()
     }
 
+    pub fn sites_page(&self) -> Option<&Entity<ui::screens::sites::Page>> {
+        self.sites_page.as_ref()
+    }
+
     /// The Home route's main panel.
     pub fn home(&self) -> &Entity<HomeMain> {
         &self.home
@@ -1384,6 +1390,9 @@ impl Root {
         self.refresh_git_actions(cx);
         if self.settings_page.is_some() {
             self.load_settings_integrations(cx);
+        }
+        if let Some(page) = self.sites_page.clone() {
+            self.load_sites(page, cx);
         }
         cx.notify();
     }
