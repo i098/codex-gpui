@@ -178,6 +178,8 @@ pub struct ThreadView {
     compacting: HashMap<String, Instant>,
     manual_compactions: usize,
     manual_compacted: HashSet<String>,
+    /// The latest `turn/plan/updated` steps of each turn: `(step, status)`.
+    todo_plans: HashMap<String, Vec<(String, String)>>,
     /// A turn's `Undo`, `View changes`, copy and fork focus handles. They belong to the view,
     /// not to its place in the element tree: the view moves when a side panel opens, and a
     /// pressed control must keep its focus across that.
@@ -659,6 +661,7 @@ impl ThreadView {
             compacting: HashMap::new(),
             manual_compactions: 0,
             manual_compacted: HashSet::new(),
+            todo_plans: HashMap::new(),
             turn_focus: RefCell::default(),
             mcp_images: RefCell::default(),
             expanded: HashSet::new(),
@@ -1673,6 +1676,31 @@ impl ThreadView {
                 };
                 progress.push(params.clone());
             }
+            "item/plan/delta" => {
+                let (Some(item_id), Some(delta)) =
+                    (params["itemId"].as_str(), params["delta"].as_str())
+                else {
+                    return;
+                };
+                if let Some(ThreadItem::Plan { text, .. }) = self.item_mut(item_id) {
+                    text.push_str(delta);
+                }
+            }
+            "turn/plan/updated" => {
+                let (Some(turn_id), Some(plan)) =
+                    (params["turnId"].as_str(), params["plan"].as_array())
+                else {
+                    return;
+                };
+                let steps = plan
+                    .iter()
+                    .map(|s| {
+                        let field = |key: &str| s[key].as_str().unwrap_or_default().to_owned();
+                        (field("step"), field("status"))
+                    })
+                    .collect();
+                self.todo_plans.insert(turn_id.to_owned(), steps);
+            }
             "item/agentMessage/delta" | "item/commandExecution/outputDelta" => {
                 let Ok(n) = serde_json::from_value::<AgentMessageDeltaNotification>(params.clone())
                 else {
@@ -1993,6 +2021,16 @@ impl ThreadView {
                     t.text_tertiary,
                 )))
             })
+            .when_some(
+                self.todo_plans
+                    .get(&turn.id)
+                    .filter(|_| running)
+                    .and_then(|p| step_label(p)),
+                |col, label| {
+                    let label = text(label, 14., 21., 400., t.text_secondary);
+                    col.child(div().mt(px(16.)).child(crate::composer::tabular(label)))
+                },
+            )
             .child(self.automation_cards(&turn.items, window, t, cx))
     }
 
@@ -2547,16 +2585,27 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
 }
 
 /// A finished turn's items before its final answer, and that answer as `(item id, text)`:
-/// the work its `Worked for` disclosure hides. A running turn is all work.
+/// the work its `Worked for` disclosure hides. A plan-mode turn's answer is its final plan. A
+/// running turn is all work.
 fn work(turn: &Turn) -> (&[ThreadItem], Option<(&str, &str)>) {
     match turn.items.last() {
-        Some(ThreadItem::AgentMessage { id, text, .. })
+        Some(ThreadItem::AgentMessage { id, text, .. } | ThreadItem::Plan { id, text, .. })
             if turn.status != TurnStatus::InProgress =>
         {
             (&turn.items[..turn.items.len() - 1], Some((id, text)))
         }
         _ => (&turn.items, None),
     }
+}
+
+/// `codex.todoPlan.pillProgress` (`Step 2 / 4`): the first step in progress, else the first
+/// pending one, else the last.
+fn step_label(plan: &[(String, String)]) -> Option<String> {
+    let at = |status: &str| plan.iter().position(|(_, s)| s == status);
+    let index = at("inProgress")
+        .or_else(|| at("pending"))
+        .unwrap_or(plan.len().checked_sub(1)?);
+    Some(format!("Step {} / {}", index + 1, plan.len()))
 }
 
 /// Uses the server's parsed command when it reports one, otherwise removes the shell wrapper.

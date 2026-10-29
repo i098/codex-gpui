@@ -488,6 +488,8 @@ pub struct Submission {
     pub permission: Permission,
     /// Fast mode (bolt toggle in the model picker).
     pub fast: bool,
+    /// Plan mode (`collaborationMode.mode` `plan`).
+    pub plan: bool,
     /// `composer.submitInBackground`: create the chat and start its turn without opening it.
     pub background: bool,
 }
@@ -770,6 +772,8 @@ pub struct Composer {
     effort: Option<String>,
     default_selection: (usize, Option<String>),
     fast: bool,
+    /// Plan mode: the next turns run in the `plan` collaboration mode.
+    plan: bool,
     permission: Permission,
     menu: Option<Menu>,
     slash: slash::Slash,
@@ -901,6 +905,7 @@ impl Composer {
             effort: Some("medium".into()),
             default_selection: (0, Some("medium".into())),
             fast: false,
+            plan: false,
             permission: Permission::Custom,
             menu: None,
             slash: slash::Slash::default(),
@@ -1907,6 +1912,7 @@ impl Composer {
             effort: self.effort.clone(),
             permission: self.permission,
             fast: self.fast,
+            plan: self.plan,
             background,
         }
     }
@@ -2234,7 +2240,7 @@ impl Composer {
 
     pub fn run_settings(&self) -> (Value, Permission) {
         (
-            json!({"mode": "default", "settings": {
+            json!({"mode": if self.plan { "plan" } else { "default" }, "settings": {
                 "model": self.current_model().map_or("", |m| m.id.as_str()),
                 "reasoning_effort": self.effort, "developer_instructions": null,
             }}),
@@ -2256,6 +2262,7 @@ impl Composer {
                 .as_str()
                 .map(str::to_owned);
         }
+        self.plan = mode["mode"] == "plan";
         self.permission = permission;
         cx.notify();
     }
@@ -2272,6 +2279,16 @@ impl Composer {
 
     pub fn fast_mode(&self) -> bool {
         self.fast
+    }
+
+    pub fn plan_mode(&self) -> bool {
+        self.plan
+    }
+
+    /// `Plan mode` (slash command, `@` row) and the footer's `Plan` chip turn it on and off.
+    pub fn toggle_plan(&mut self, cx: &mut Context<Self>) {
+        self.plan = !self.plan;
+        cx.notify();
     }
 }
 

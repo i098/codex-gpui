@@ -6850,18 +6850,8 @@ async fn restore_place(
     added: &str,
     edit: &QueueEdit,
 ) -> Result<()> {
-    let list: ThreadQueueListResponse = bridge
-        .request(
-            "thread/queue/list",
-            json!({ "threadId": thread_id, "cursor": null }),
-        )
-        .await?;
-    // ponytail: a reorder of a partial page would drop the rest; queues of one page only.
-    if list.next_cursor.is_some() {
-        return Ok(());
-    }
-    let mut ids: Vec<_> = list
-        .data
+    let mut ids: Vec<_> = read_queue(bridge, thread_id)
+        .await?
         .into_iter()
         .map(|row| row.id)
         .filter(|id| id != added)
@@ -6903,7 +6893,8 @@ fn user_input(s: &Submission) -> Vec<Value> {
     input
 }
 
-/// `turn/start` with the prompt, attachments, model, effort and Fast mode.
+/// `turn/start` with the prompt, attachments, model, effort, Fast mode and collaboration mode.
+/// The server keeps a turn's mode for later turns, so every turn names `plan` or `default`.
 async fn turn_start(
     bridge: &Bridge,
     thread_id: &str,
@@ -6923,6 +6914,12 @@ async fn turn_start(
     apply_permissions(&mut params, s.permission);
     if s.fast {
         params["serviceTier"] = "priority".into();
+    }
+    if let Some(model) = model(s) {
+        params["collaborationMode"] = json!({
+            "mode": if s.plan { "plan" } else { "default" },
+            "settings": { "model": model, "reasoning_effort": s.effort, "developer_instructions": null },
+        });
     }
     bridge.request::<_, Value>("turn/start", params).await?;
     Ok(())

@@ -609,7 +609,9 @@ pub(super) fn activities<'a>(
             ThreadItem::CommandExecution { .. } | ThreadItem::FileChange { .. } => {
                 group.push(item);
             }
-            ThreadItem::AgentMessage { id, text, .. } if !text.is_empty() => {
+            ThreadItem::AgentMessage { id, text, .. } | ThreadItem::Plan { id, text, .. }
+                if !text.is_empty() =>
+            {
                 flush(&mut out, &mut group);
                 out.push(Activity::Markdown(id, text));
             }

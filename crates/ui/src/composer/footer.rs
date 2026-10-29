@@ -315,7 +315,46 @@ impl Composer {
                     .when(self.menu == Some(Menu::Permissions), |d| {
                         d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
                     }),
-            );
+            )
+            .when(self.plan, |d| {
+                // `composer.planModeIndicator`: a divider, then a chip whose click turns plan
+                // mode off; hovering swaps its icon for the close icon.
+                d.child(div().h(px(16.)).w(px(1.)).bg(t.border.opacity(0.7)))
+                    .child(crate::tooltip::tooltip(
+                        pill("plan-mode", t)
+                            .group("plan-mode")
+                            .role(gpui::Role::Button)
+                            .aria_label("Plan")
+                            .tab_index(0)
+                            .focus_visible(crate::focus::trigger_focus)
+                            .px(px(6.))
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .group_hover("plan-mode", |s| s.hidden())
+                                    .child(footer_icon(
+                                        "settings-personalization",
+                                        t.text_tertiary,
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .hidden()
+                                    .group_hover("plan-mode", |s| s.block())
+                                    .child(footer_icon("close", t.text_tertiary)),
+                            )
+                            .when(self.footer_width > SM_WIDTH, |d| {
+                                d.child(
+                                    text("Plan", 13., 18., 400., t.text_tertiary)
+                                        .when(self.docked, |d| d.top_layer()),
+                                )
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_plan(cx))),
+                        "Create a plan",
+                        None,
+                        crate::tooltip::Side::Top,
+                    ))
+            });
         let send = div()
             .id("send")
             .role(gpui::Role::Button)
