@@ -772,10 +772,13 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
     cx.new(|_| Shell::new(sidebar, main)).into()
 }
 
+/// Click handler for the Home mode switch.
+pub type ModeSwitchClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
 /// The `Codex ⌄` trigger's current mode, click handler and open menu.
 pub struct ModeSwitch {
     pub current: &'static str,
-    pub on_click: Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>,
+    pub on_click: ModeSwitchClick,
     pub menu: Option<AnyElement>,
 }
 
