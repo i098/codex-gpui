@@ -354,9 +354,7 @@ fn secure_handshake_starts_tls_and_returns_an_error_without_panicking() {
     let endpoint = format!("wss://{}/", listener.local_addr().unwrap());
     let server = thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
-        socket
-            .set_read_timeout(Some(Duration::from_secs(3)))
-            .unwrap();
+        socket.set_read_timeout(Some(HANDSHAKE_TIMEOUT)).unwrap();
         let mut header = [0; 5];
         socket.read_exact(&mut header).unwrap();
         assert_eq!(header[0], 22);
