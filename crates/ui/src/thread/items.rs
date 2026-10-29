@@ -454,6 +454,13 @@ pub(super) enum Activity<'a> {
     /// A command still running, by its command line.
     Running(&'a str),
     Mcp(&'a ThreadItem),
+    /// A completed reasoning item whose duration was seen live: `Thought for 3s`, its summary
+    /// under it while open (keyed `reasoning-<id>`).
+    Reasoning {
+        key: String,
+        label: String,
+        text: String,
+    },
     /// Consecutive finished commands and file changes behind one summary
     /// (`agent-activity-group`, keyed by its first item): `Edited a file, read files, ran
     /// commands`.
@@ -506,6 +513,9 @@ impl Activity<'_> {
             Activity::Markdown(_, text) => vec![(*text).to_owned()],
             Activity::Running(command) => vec![(*command).to_owned()],
             Activity::Mcp(item) => vec![mcp_label(item)],
+            Activity::Reasoning { key, label, text } => std::iter::once(label.clone())
+                .chain(open.contains(key).then(|| text.clone()))
+                .collect(),
             Activity::Group {
                 key, summary, rows, ..
             } => std::iter::once(summary.clone())
@@ -520,7 +530,11 @@ impl Activity<'_> {
 }
 
 /// The activity entries of a turn's `items`. A running turn names its running commands.
-pub(super) fn activities<'a>(items: &'a [ThreadItem], running: bool) -> Vec<Activity<'a>> {
+pub(super) fn activities<'a>(
+    items: &'a [ThreadItem],
+    running: bool,
+    thought: &HashMap<String, i64>,
+) -> Vec<Activity<'a>> {
     let mut out: Vec<Activity<'a>> = Vec::new();
     let mut group: Vec<&'a ThreadItem> = Vec::new();
     let flush = |out: &mut Vec<Activity<'a>>, group: &mut Vec<&'a ThreadItem>| {
@@ -533,6 +547,24 @@ pub(super) fn activities<'a>(items: &'a [ThreadItem], running: bool) -> Vec<Acti
             } if running && status == "inProgress" => {
                 flush(&mut out, &mut group);
                 out.push(Activity::Running(command));
+            }
+            ThreadItem::Reasoning {
+                id,
+                summary,
+                content,
+            } => {
+                let Some(secs) = thought.get(id) else {
+                    continue;
+                };
+                let text = if summary.is_empty() { content } else { summary }.join("\n\n");
+                if !text.is_empty() {
+                    flush(&mut out, &mut group);
+                    out.push(Activity::Reasoning {
+                        key: format!("reasoning-{id}"),
+                        label: format!("Thought for {}", duration(*secs)),
+                        text,
+                    });
+                }
             }
             ThreadItem::McpToolCall { .. } if automation_item(item).is_some() => {}
             ThreadItem::McpToolCall { .. } => {
@@ -752,7 +784,7 @@ pub(super) fn activity(
             }))
     };
     let mut col = div().flex().flex_col().gap(px(16.));
-    for entry in activities(items, running) {
+    for entry in activities(items, running, &view.reasoning_secs) {
         col = col.child(match entry {
             Activity::Markdown(id, text) => {
                 let segments = fades.get(id).map(Vec::as_slice).unwrap_or_default();
@@ -760,6 +792,22 @@ pub(super) fn activity(
             }
             Activity::Running(command) => {
                 row("thread-terminal", plain(label(command.to_owned(), text60)))
+            }
+            Activity::Reasoning { key, label: words, text } => {
+                let is_open = open.contains(&key);
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap(px(4.))
+                    .child(disclosure(
+                        key,
+                        "thread-summary",
+                        label(words, text60),
+                        is_open,
+                    ))
+                    .when(is_open, |d| d.child(text60_block(text, t)))
             }
             Activity::Mcp(item) => {
                 let ThreadItem::McpToolCall {
@@ -935,6 +983,12 @@ pub(super) fn activity(
     col
 }
 
+fn text60_block(body: String, t: &Theme) -> Div {
+    div()
+        .w_full()
+        .child(text(body, 14., 21., 430., t.text_alpha_60))
+}
+
 fn mcp_output(id: String, language: &'static str, value: &str, t: &Theme) -> Div {
     let color = t.text_alpha_60.opacity(5. / 6.);
     div()
@@ -1027,13 +1081,33 @@ fn shell_card(shell: &Shell, t: &Theme) -> Div {
             .border_1()
             .border_color(t.border_strong)
             .bg(t.ghost_hover)
-            .child(div().h(px(27.)).px(px(8.)).py(px(4.)).child(text(
-                "Shell",
-                13.,
-                18.571_428,
-                430.,
-                description,
-            )))
+            .child(
+                div()
+                    .h(px(27.))
+                    .px(px(8.))
+                    .py(px(4.))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(text("Shell", 13., 18.571_428, 430., description))
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(2.))
+                            .child(copy_control(
+                                format!("{}-copy-command", shell.key),
+                                "Copy command",
+                                &shell.command,
+                                t,
+                            ))
+                            .child(copy_control(
+                                format!("{}-copy-output", shell.key),
+                                "Copy output",
+                                &shell.output,
+                                t,
+                            )),
+                    ),
+            )
             .child(
                 div()
                     .pt(px(8.))
@@ -1060,6 +1134,31 @@ fn shell_card(shell: &Shell, t: &Theme) -> Div {
                     ))),
             )
             .child(footer),
+    )
+}
+
+/// A 20 px copy button of the shell card header: puts `body` on the clipboard.
+fn copy_control(id: String, label: &'static str, body: &str, t: &Theme) -> impl IntoElement {
+    let body = body.to_owned();
+    tooltip(
+        div()
+            .id(SharedString::from(id))
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .size(px(20.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(Theme::RADIUS_MD)
+            .hover(|s| s.bg(t.ghost_hover))
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(body.clone()))
+            })
+            .child(icon("thread-copy", 14., t.text_tertiary)),
+        label,
+        None,
+        Side::Bottom,
     )
 }
 

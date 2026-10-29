@@ -163,6 +163,11 @@ pub struct ThreadView {
     embedded: bool,
     _tick: Option<Task<()>>,
     running_since: HashMap<String, Instant>,
+    /// Reasoning items seen starting, and the seconds each took once completed. The protocol
+    /// carries no per-item duration; a loaded history has none, and the original draws no
+    /// header for such an item.
+    reasoning_since: HashMap<String, Instant>,
+    reasoning_secs: HashMap<String, i64>,
     stream_fades: HashMap<String, Vec<StreamSegment>>,
     /// A turn's `Undo`, `View changes`, copy and fork focus handles. They belong to the view,
     /// not to its place in the element tree: the view moves when a side panel opens, and a
@@ -638,6 +643,8 @@ impl ThreadView {
             embedded: false,
             _tick: None,
             running_since: HashMap::new(),
+            reasoning_since: HashMap::new(),
+            reasoning_secs: HashMap::new(),
             stream_fades: HashMap::new(),
             turn_focus: RefCell::default(),
             mcp_images: RefCell::default(),
@@ -735,10 +742,14 @@ impl ThreadView {
         let turn = self.turns.iter().find(|t| t.id == turn_id)?;
         let (work, _) = work(turn);
         Some(
-            items::activities(work, turn.status == TurnStatus::InProgress)
-                .iter()
-                .flat_map(|a| a.labels(&self.expanded))
-                .collect(),
+            items::activities(
+                work,
+                turn.status == TurnStatus::InProgress,
+                &self.reasoning_secs,
+            )
+            .iter()
+            .flat_map(|a| a.labels(&self.expanded))
+            .collect(),
         )
     }
 
@@ -1559,6 +1570,16 @@ impl ThreadView {
                 };
                 cache_automation_result(&mut n.item);
                 let id = item_id(&n.item).map(str::to_owned);
+                if let (ThreadItem::Reasoning { id, .. }, now) =
+                    (&n.item, cx.background_executor().now())
+                {
+                    if method == "item/started" {
+                        self.reasoning_since.insert(id.clone(), now);
+                    } else if let Some(start) = self.reasoning_since.remove(id) {
+                        let secs = now.saturating_duration_since(start).as_secs();
+                        self.reasoning_secs.insert(id.clone(), secs as i64);
+                    }
+                }
                 if let Some(id) = &id {
                     self.mcp_images.borrow_mut().remove(id);
                 }
@@ -2004,6 +2025,45 @@ impl ThreadView {
         column
     }
 
+    /// The `Scroll to bottom` button: floats centred over the composer band's top edge while the
+    /// transcript is scrolled up, and jumps to the newest turn.
+    fn scroll_to_bottom(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let scroll = self.scroll.clone();
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom(px(114. + 8.))
+            .flex()
+            .justify_center()
+            .child(tooltip(
+                div()
+                    .id("scroll-to-bottom")
+                    .role(gpui::Role::Button)
+                    .aria_label("Scroll to bottom")
+                    .size(px(32.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(999.))
+                    .border_1()
+                    .border_color(t.border_strong)
+                    .bg(t.surface)
+                    .hover(|s| s.bg(t.ghost_hover))
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        let mut offset = scroll.offset();
+                        offset.y = -scroll.max_offset().y;
+                        scroll.set_offset(offset);
+                        cx.notify();
+                    }))
+                    .child(icon("chevron-down", 16., t.text)),
+                "Scroll to bottom",
+                None,
+                Side::Top,
+            ))
+    }
+
     /// `Yesterday 9:54 PM` above a turn's user message.
     fn timestamp(&self, at: i64, window: &Window, t: &Theme) -> Div {
         let (day, time) = day_and_time(at, self.clock.now(), self.clock.utc_offset);
@@ -2377,6 +2437,10 @@ impl Render for ThreadView {
                     .child(top_fade),
             )
             .when(self.clip_right, |d| d.child(gpui::deferred(corners)))
+            .when(
+                self.scroll.max_offset().y > px(0.) && !following_bottom,
+                |d| d.child(self.scroll_to_bottom(&t, cx)),
+            )
             // A portal in the original: its shadow spills over the titlebar and the sidebar.
             .when(self.summary_open, |d| {
                 d.child(gpui::deferred(self.summary(window, &t, cx)))
@@ -2812,6 +2876,55 @@ mod tests {
             assert!(matches!(&view.turns[0].items[0],
                 ThreadItem::CommandExecution { status, exit_code: Some(17), aggregated_output: Some(output), .. }
                     if status == "failed" && output == "actual output\n"));
+        });
+    }
+
+    #[gpui::test]
+    fn live_reasoning_gets_a_toggleable_thought_row(cx: &mut gpui::TestAppContext) {
+        let thread: Thread = serde_json::from_value(serde_json::json!({
+            "id": "thinking", "preview": "", "modelProvider": "test", "cwd": "/tmp",
+            "createdAt": 0, "updatedAt": 0, "status": {"type": "idle"},
+            "turns": [{"id": "turn", "items": [
+                {"type": "reasoning", "id": "old", "summary": ["history"], "content": []}
+            ], "status": "inProgress"}]
+        }))
+        .unwrap();
+        let composer = cx.new(|_| gpui::EmptyView).into();
+        let view = cx.new(|_| {
+            ThreadView::new(
+                thread,
+                Clock {
+                    utc_offset: 0,
+                    pinned_now: Some(0),
+                    elapsed_since: None,
+                },
+                composer,
+            )
+        });
+        let item = serde_json::json!({
+            "type": "reasoning", "id": "live", "summary": ["Check the sum"], "content": []
+        });
+        view.update(cx, |view, cx| {
+            for method in ["item/started", "item/completed"] {
+                view.apply(
+                    &Event::Notification {
+                        method: method.into(),
+                        params: serde_json::json!({
+                            "threadId": "thinking", "turnId": "turn", "item": item,
+                        }),
+                    },
+                    cx,
+                );
+            }
+        });
+        view.update(cx, |view, _| {
+            // A loaded-history item has no seen duration and stays hidden.
+            assert_eq!(view.activity_labels("turn").unwrap(), ["Thought for 0s"]);
+            view.expanded.insert("reasoning-live".into());
+            assert_eq!(
+                view.activity_labels("turn").unwrap(),
+                ["Thought for 0s", "Check the sum"]
+            );
         });
     }
 
