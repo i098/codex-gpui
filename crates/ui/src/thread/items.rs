@@ -388,21 +388,36 @@ pub(super) fn diff_card(
                             .gap(px(8.))
                             .child({
                                 let turn_id = turn_id.to_owned();
-                                button("Undo", "undo-turn", &focus.undo, None)
-                                    .child(icon("thread-undo", 14., t.text))
-                                    .on_click({
-                                        let thread_id = focus.thread_id.clone();
-                                        move |_, window, cx| {
-                                            window.dispatch_action(
-                                                Box::new(ThreadPressed(thread_id.clone())),
-                                                cx,
-                                            );
-                                            window.dispatch_action(
-                                                Box::new(RevertTurn(turn_id.clone())),
-                                                cx,
-                                            )
+                                let action = PatchTurn {
+                                    thread_id: focus.thread_id.clone(),
+                                    turn_id,
+                                };
+                                let pending = focus.patch_pending;
+                                button(
+                                    if focus.reverted { "Reapply" } else { "Undo" },
+                                    "undo-turn",
+                                    &focus.undo,
+                                    None,
+                                )
+                                .child(if focus.reverted {
+                                    icon("thread-undo", 14., t.text).flip_x()
+                                } else {
+                                    icon("thread-undo", 14., t.text)
+                                })
+                                .when(pending, |button| button.opacity(0.5))
+                                .on_click({
+                                    let thread_id = focus.thread_id.clone();
+                                    move |_, window, cx| {
+                                        if pending {
+                                            return;
                                         }
-                                    })
+                                        window.dispatch_action(
+                                            Box::new(ThreadPressed(thread_id.clone())),
+                                            cx,
+                                        );
+                                        window.dispatch_action(Box::new(action.clone()), cx)
+                                    }
+                                })
                             })
                             // Blink's background bleed avoidance paints the fill and the
                             // translucent border into one transparency layer (shapes' clip

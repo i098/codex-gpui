@@ -1462,20 +1462,104 @@ fn earlier_turn_actions_hover() -> Result<String> {
     Ok(format!("{n} px"))
 }
 
-/// The card's `Undo`: `thread/resume`, then `thread/revert` before the turn; the view shows
-/// the reverted thread.
+/// Undo and Reapply use the host Git worker without deleting the turn or changing the index.
 fn undo_reverts_turn() -> Result<String> {
-    let thread = recorded_thread(SUBTRACT)?;
-    let mut reverted = thread.clone();
-    reverted["turns"] = json!([]);
+    use std::{fs, process::Command, sync::Arc};
+    let repo = tempfile::tempdir()?;
+    let root = repo.path();
+    let git = |args: &[&str]| -> Result<()> {
+        let output = Command::new("git").current_dir(root).args(args).output()?;
+        ensure!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    };
+    git(&["init", "-q"])?;
+    fs::create_dir(root.join("src"))?;
+    let before = "def add(a, b):\n    return a + b\n";
+    let after = format!("{before}\n\ndef subtract(a, b):\n    return a - b\n");
+    fs::write(root.join("src/math.py"), before)?;
+    fs::write(root.join("keep.txt"), "base\n")?;
+    git(&["add", "."])?;
+    git(&[
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "base",
+    ])?;
+    fs::write(root.join("src/math.py"), &after)?;
+    fs::write(root.join("keep.txt"), "unrelated\n")?;
+    let index = fs::read(root.join(".git/index"))?;
     let mut lines = script(None, |_| {})?;
-    lines.extend(exchange("thread/resume", json!({ "thread": thread })));
-    lines.extend(exchange("thread/revert", json!({ "thread": reverted })));
+    for line in &mut lines {
+        let Some(thread) = line.pointer_mut("/msg/result/thread") else {
+            continue;
+        };
+        if thread["id"] != SUBTRACT {
+            continue;
+        }
+        thread["cwd"] = json!(root);
+        for item in thread["turns"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .flat_map(|turn| turn["items"].as_array_mut().unwrap())
+        {
+            if let Some(changes) = item["changes"].as_array_mut() {
+                for change in changes {
+                    change["path"] = json!(root.join("src/math.py"));
+                }
+            }
+        }
+    }
     let mut fx = Fx::scripted(lines)?;
+    let host = Arc::new(app::host::LocalHost::new(root.join(".git/profile")));
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
     open_subtract(&mut fx)?;
-    fx.click(fx.at("thread", "Undo")?)?;
-    fx.wait("thread/revert", |fx| {
-        fx.read(|r, cx| r.thread().is_some_and(|v| v.read(cx).turns().is_empty()))
+    let at = fx.at("thread", "Undo")?;
+    fx.click(at)?;
+    fx.wait("file undo", |_| {
+        fs::read_to_string(root.join("src/math.py")).is_ok_and(|text| text == before)
+    })?;
+    ensure!(
+        fx.read(|r, cx| r.thread().is_some_and(|v| !v.read(cx).turns().is_empty())),
+        "Undo removed the turn"
+    );
+    fx.wait("undo result", |fx| {
+        fx.read(|r, cx| r.toasts(cx).iter().any(|text| text == "Changes reverted"))
+    })?;
+    fx.click(at)?;
+    fx.wait("file reapply", |_| {
+        fs::read_to_string(root.join("src/math.py")).is_ok_and(|text| text == after)
+    })?;
+    fx.wait("reapply result", |fx| {
+        fx.read(|r, cx| r.toasts(cx).iter().any(|text| text == "Changes reapplied"))
+    })?;
+    ensure!(
+        fs::read(root.join(".git/index"))? == index,
+        "the real index changed"
+    );
+    ensure!(fs::read_to_string(root.join("keep.txt"))? == "unrelated\n");
+    fs::write(root.join("src/math.py"), "local edit\n")?;
+    fx.click(at)?;
+    fx.wait("failed undo", |fx| {
+        fx.read(|r, cx| {
+            r.toasts(cx)
+                .iter()
+                .any(|text| text == "Failed to revert changes")
+        })
+    })?;
+    ensure!(fs::read_to_string(root.join("src/math.py"))? == "local edit\n");
+    fs::write(root.join("src/math.py"), &after)?;
+    fx.click(at)?;
+    fx.wait("retry undo", |_| {
+        fs::read_to_string(root.join("src/math.py")).is_ok_and(|text| text == before)
     })?;
     ensure!(fx.route() == Route::Thread(SUBTRACT.into()));
     Ok(String::new())
