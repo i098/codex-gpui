@@ -503,6 +503,9 @@ The headless S010 replay has no AppKit view; it checks the missing-handle path w
 | 20 | Resize | resize | Below 40rem the editor and footer stack. | The editor sits above the footer at every width, and the footer collapses by its container width (440, 300 and 509 px). `refs/composer` has 1280 and 1440 px only, so no narrow layout is recorded and none is invented. | BOUNDARY (`crates/ui/src/composer/footer.rs`; `refs/composer` has no narrow capture) |
 | 21 | `+` Add menu | click | Opens the mention list without inserting `@`; Escape keeps the draft. | Reuses the S019 query state; keys skip disabled actions, and a second click closes the list. | PASS (`s018::add_menu_replay`) |
 
+The `host_images` replay waits for attachment completion before it sends or retries.
+Its proxy records requests before replies finish; advancing the test clock does not wait for those replies.
+
 Queued side chats restore the fork response's model, effort, and permission settings without changing the primary composer.
 Their tab shows activity while a turn runs.
 Turns without a server start time measure elapsed time from their first notification without adding a message timestamp.

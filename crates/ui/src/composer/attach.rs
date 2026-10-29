@@ -404,7 +404,7 @@ impl Composer {
 
     /// The status line above the editor: `Files uploading…` while a paste saves, else the
     /// upload failure (`composer.submit.waitForFileUploads`, `composer.fileAttachment.uploadError`).
-    pub(super) fn upload_status(&self) -> Option<&'static str> {
+    pub fn upload_status(&self) -> Option<&'static str> {
         if self.pending_attachments > 0 {
             Some("Files uploading…")
         } else {
