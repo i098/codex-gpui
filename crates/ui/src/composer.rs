@@ -1814,7 +1814,7 @@ impl Composer {
         if self.edit_pending || (!self.running && self.current_model().is_none()) {
             return;
         }
-        if self.pending_attachments > 0 {
+        if self.upload_status().is_some() {
             self.show_submit_blocked(window, cx);
             return;
         }
@@ -3285,7 +3285,18 @@ mod tests {
         assert!(sent.borrow().is_empty());
         app.update(|cx| {
             window
-                .update(cx, |composer, _, _| composer.pending_attachments = 0)
+                .update(cx, |composer, _, _| {
+                    composer.pending_attachments = 0;
+                    composer.attachment_error = Some("Unable to upload file");
+                })
+                .unwrap();
+        });
+        assert_eq!(press(&mut app, "enter"), (Some(true), false, "hi".into()));
+        assert!(sent.borrow().is_empty());
+        assert_eq!(press(&mut app, "escape"), (None, true, "hi".into()));
+        app.update(|cx| {
+            window
+                .update(cx, |composer, _, _| composer.attachment_error = None)
                 .unwrap();
         });
         assert_eq!(press(&mut app, "enter"), (None, true, String::new()));
