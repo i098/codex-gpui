@@ -158,6 +158,18 @@ impl HeadlessAppContext {
         self.platform.did_prompt_for_paths()
     }
 
+    /// Returns the pending alert's title and detail without opening an OS window.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn pending_prompt(&self) -> Option<(String, String)> {
+        self.platform.pending_prompt()
+    }
+
+    /// Answers a pending alert by its button label; panics if the alert or label is absent.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn simulate_prompt_answer(&self, button: &str) {
+        self.platform.simulate_prompt_answer(button);
+    }
+
     /// Answers the platform's Open dialog without showing an OS window.
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_path_prompt_response(
