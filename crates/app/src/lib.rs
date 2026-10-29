@@ -5874,6 +5874,7 @@ impl Root {
 
     /// Crash page "Try again": a fresh app-server connection. [`Root::with_connection`]
     /// rebuilds every screen; the window-level observers it registers re-run idempotently.
+    /// The Home and thread composers keep their unsent drafts.
     fn restart(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.crashed = false;
         cx.notify();
@@ -5884,7 +5885,18 @@ impl Root {
             this.update_in(cx, |root, window, cx| match restarted {
                 Ok((bridge, events)) => {
                     let cwd = root.cwd.clone();
+                    let composers = |root: &Root, cx: &App| {
+                        [
+                            root.home.read(cx).composer.clone(),
+                            root.thread_composer.clone(),
+                        ]
+                    };
+                    let drafts = composers(root, cx)
+                        .map(|composer| composer.update(cx, |composer, _| composer.take_draft()));
                     *root = Root::with_connection(state, bridge, events, cwd, window, cx);
+                    for (composer, draft) in composers(root, cx).into_iter().zip(drafts) {
+                        composer.update(cx, |composer, cx| composer.put_draft(draft, cx));
+                    }
                     cx.notify();
                 }
                 Err(error) => {

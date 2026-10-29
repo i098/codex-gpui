@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Show the crash page with Try again when the app-server cannot start, and keep unsent composer drafts when Try again restarts it.
 - Add the native `File` > `New Project…` form with a name, marker, ordered source folders, and a device picker.
 - A contributing guide, issue and pull request templates, a security policy, and this changelog.
 - Add one workspace version, a version bump script, and a tag release workflow that publishes the macOS arm64 zip.
