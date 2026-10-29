@@ -57,10 +57,12 @@ actions!(
         NewTask,
         /// `Try again` under `Scheduled tasks could not be loaded`: reads the list again.
         RetryAutomations,
-        /// A suggested-task card was clicked (unsupported; see S035b).
-        StartSuggestedTask,
     ]
 );
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct StartSuggestedTask(pub usize);
 
 /// A previous run under the selected task: opens the run's chat beside the task list.
 #[derive(Clone, PartialEq, Action)]
@@ -403,6 +405,12 @@ pub struct Suggestion {
     description: SharedString,
     emoji: SharedString,
     icon_url: Option<String>,
+    #[serde(default)]
+    user_message: String,
+    #[serde(default)]
+    system_hint: Option<String>,
+    #[serde(default)]
+    locked: Option<Value>,
 }
 
 /// The recorded answer of the first `tools/route1/oracle.json` entry whose key contains
@@ -432,34 +440,42 @@ fn landing_examples() -> Vec<Suggestion> {
             "🥗",
             "Weekly meal plan",
             "Plan meals for the week and make a grocery list.",
+            "Help me set up a weekly meal plan with a grocery list. Ask about my dietary preferences, household size, and when I’d like to receive it before scheduling.",
         ),
         (
             "💰",
             "Weekly finances update",
             "Review my recent spending, and anything that needs attention.",
+            "Help me set up a weekly review of my recent spending, recurring charges, and anything that needs attention. Ask which financial information I want to use and what day and time works for me before scheduling.",
         ),
         (
             "😴",
             "Sleep coaching",
             "Track my sleep quality and help me improve my habits.",
+            "Help me set up a regular sleep check-in. Ask about my sleep goals, the information I’m comfortable sharing, and when I’d like to check in before scheduling.",
         ),
         (
             "🛩",
             "Find flights for a trip",
             "Find the best deal on flights for an upcoming trip.",
+            "Help me set up a flight price watch for an upcoming trip. Ask where I’m flying from and to, my dates, budget, and how often to check. Notify me when there’s a good match.",
         ),
         (
             "✉️",
             "Email monitor",
             "Scan my emails and let me know anything that needs my attention.",
+            "Help me set up an email monitor that flags messages needing my attention. Ask which inbox or senders to watch, what counts as important, and how often to check before scheduling. Help me connect email if needed.",
         ),
     ]
     .into_iter()
-    .map(|(emoji, title, description)| Suggestion {
+    .map(|(emoji, title, description, prompt)| Suggestion {
         title: title.into(),
         description: description.into(),
         emoji: emoji.into(),
         icon_url: None,
+        user_message: prompt.into(),
+        system_hint: None,
+        locked: None,
     })
     .collect()
 }
@@ -555,6 +571,7 @@ fn shell_with(
         None => page
             .insert(cx.new(|_| AutomationsPage {
                 cards: cards(server),
+                starting: None,
             }))
             .clone()
             .into(),
@@ -1602,9 +1619,30 @@ impl Render for ScheduledSidebar {
 /// Main column of the empty page: hero and the suggested-task grid.
 pub struct AutomationsPage {
     cards: Vec<Suggestion>,
+    starting: Option<usize>,
 }
 
 impl AutomationsPage {
+    pub fn begin_start(&mut self, index: usize, cx: &mut Context<Self>) -> Option<Value> {
+        if self.starting.is_some() {
+            return None;
+        }
+        let suggestion = self.cards.get(index)?;
+        let request = serde_json::json!({
+            "user_message": suggestion.user_message,
+            "system_hint": suggestion.system_hint,
+            "locked": suggestion.locked,
+        });
+        self.starting = Some(index);
+        cx.notify();
+        Some(request)
+    }
+
+    pub fn finish_start(&mut self, cx: &mut Context<Self>) {
+        self.starting = None;
+        cx.notify();
+    }
+
     pub fn set_suggestions(&mut self, server: Vec<Suggestion>, cx: &mut Context<Self>) {
         self.cards = cards(server);
         cx.notify();
@@ -1663,7 +1701,11 @@ impl AutomationsPage {
                 ..Default::default()
             }))
             .hover(move |st| st.bg(hover_bg))
-            .on_click(crate::dispatch::<StartSuggestedTask>)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if this.starting.is_none() {
+                    window.dispatch_action(Box::new(StartSuggestedTask(i)), cx);
+                }
+            }))
             .child(
                 div()
                     .size(px(24.))
@@ -1671,7 +1713,11 @@ impl AutomationsPage {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .child(glyph),
+                    .child(if self.starting == Some(i) {
+                        icon("sidebar-cmd-spinner", 20., t.text).into_any_element()
+                    } else {
+                        glyph
+                    }),
             )
             .child(
                 div()
@@ -1686,10 +1732,20 @@ impl AutomationsPage {
                             .truncate(),
                     )
                     .child(
-                        text(s.description.clone(), 14., 20., 400., t.text_tertiary)
-                            .whitespace_normal()
-                            .line_clamp(2)
-                            .text_ellipsis(),
+                        text(
+                            if self.starting == Some(i) {
+                                "Starting…".into()
+                            } else {
+                                s.description.clone()
+                            },
+                            14.,
+                            20.,
+                            400.,
+                            t.text_tertiary,
+                        )
+                        .whitespace_normal()
+                        .line_clamp(2)
+                        .text_ellipsis(),
                     ),
             )
     }

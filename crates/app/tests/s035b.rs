@@ -1,8 +1,5 @@
-//! S035b `autos-landing`: AM-036 (a suggestion card click), against `refs/interactions/s035b.json`
-//! (the original on the route1 Linux stack). The original's start reads the TPP models through
-//! the desktop host; the oracle answers that read with the host's 499. A live run showed that
-//! a successful start next needs an Apple DeviceCheck token, which this host cannot make, so
-//! this release answers the click with an unsupported message and sends no request.
+//! AM-036 starts a native guided conversation through the desktop host.
+//! The original HTTP 499 recording remains a failure, not success evidence.
 
 use anyhow::{Context as _, Result};
 use app::host::Host;
@@ -62,7 +59,7 @@ mod common;
 
 #[cfg(target_os = "macos")]
 #[test]
-fn suggestion_click_says_unsupported_and_sends_nothing() -> Result<()> {
+fn suggestion_start_failure_keeps_the_cards_and_route() -> Result<()> {
     use anyhow::ensure;
     use app::Route;
     use app::host::{Identity, ReplayHost, Request};
@@ -73,7 +70,7 @@ fn suggestion_click_says_unsupported_and_sends_nothing() -> Result<()> {
     use std::{sync::Arc, time::Duration};
 
     const RECORDING: &str = include_str!("../../../refs/interactions/s035b.json");
-    const TOAST: &str = "Starting suggested tasks isn’t supported in this version";
+    const TOAST: &str = "Couldn’t start this suggested task";
 
     /// The replay host, recording every request the app sends.
     struct Recorder {
@@ -162,7 +159,10 @@ fn suggestion_click_says_unsupported_and_sends_nothing() -> Result<()> {
     let toasts = fx.read(|root, cx| root.toasts(cx));
     ensure!(toasts == [TOAST], "toasts {toasts:?}");
     let sent = host.sent.lock();
-    ensure!(sent.is_empty(), "the click sent {sent:?}");
+    ensure!(
+        matches!(sent.as_slice(), [Request::Fetch { url, .. }] if url == "vscode://codex/start-suggested-task"),
+        "the click sent {sent:?}"
+    );
     drop(sent);
     ensure!(fx.route() == Route::Scheduled, "route {:?}", fx.route());
     fx.advance(Duration::from_millis(300))?;
@@ -174,8 +174,104 @@ fn suggestion_click_says_unsupported_and_sends_nothing() -> Result<()> {
             "card {card:?} stays enabled"
         );
     }
-    println!(
-        "s035b: click shows `{TOAST}`, sends no request, keeps the route and every card enabled"
-    );
+    println!("s035b: refused start shows `{TOAST}` and keeps the route and every card enabled");
+    Ok(())
+}
+
+#[cfg(unix)]
+fn suggestion_server_script(refuse_turn: bool) -> String {
+    use serde_json::json;
+    let methods = if refuse_turn {
+        vec!["model/list", "thread/start", "turn/start", "thread/archive"]
+    } else {
+        vec!["model/list", "thread/start", "turn/start"]
+    };
+    let mut script = String::new();
+    for (index, method) in methods.into_iter().enumerate() {
+        let result = match method {
+            "model/list" => json!({"data": [{
+                "id": "test", "model": "gpt-6.1-sol", "displayName": "Test",
+                "description": "", "hidden": false, "isDefault": true,
+                "defaultReasoningEffort": "low", "supportedReasoningEfforts": []
+            }]}),
+            "thread/start" => json!({"thread": {"id": "suggested-thread"}}),
+            "turn/start" => json!({"turn": {
+                "id": "suggested-turn", "items": [], "status": "inProgress"
+            }}),
+            _ => json!({}),
+        };
+        let reply = if refuse_turn && method == "turn/start" {
+            json!({"id": index + 1, "error": {"code": -32000, "message": "refused"}})
+        } else {
+            json!({"id": index + 1, "result": result})
+        };
+        script.push_str(&format!(
+            "IFS= read -r request || exit 1\nprintf '%s\\n' \"$request\" >> \"$1\"\nprintf '%s\\n' '{reply}'\n"
+        ));
+    }
+    script
+}
+
+#[cfg(unix)]
+#[test]
+fn native_suggestion_starts_the_selected_prompt_and_cleans_up_a_refused_turn() -> Result<()> {
+    use app::host::{LocalHost, Request, json_body};
+    use bridge::Bridge;
+    use serde_json::{Value, json};
+    use std::sync::Arc;
+
+    for refuse_turn in [false, true] {
+        let home = tempfile::tempdir()?;
+        let log = home.path().join("requests.jsonl");
+        let mut command = std::process::Command::new("sh");
+        command
+            .args([
+                "-c",
+                &suggestion_server_script(refuse_turn),
+                "suggested-task",
+            ])
+            .arg(&log);
+        let (bridge, _) = Bridge::spawn(command)?;
+        let host = LocalHost::new(home.path()).with_bridge(Arc::new(bridge));
+        for suggestion in [
+            json!({"cwd": home.path(), "user_message": "   "}),
+            json!({"cwd": home.path(), "user_message": "Plan", "locked": {"is_locked": true}}),
+        ] {
+            assert!(
+                host.fetch(&Request::post("start-suggested-task", Some(suggestion)))
+                    .is_err()
+            );
+        }
+        let request = Request::post(
+            "start-suggested-task",
+            Some(json!({
+                "cwd": home.path(), "user_message": "Help me plan meals.", "title": "Meals"
+            })),
+        );
+        let result = host.fetch(&request);
+        if refuse_turn {
+            assert!(result.unwrap_err().to_string().contains("refused"));
+        } else {
+            assert_eq!(json_body(&result?)?["thread"]["id"], "suggested-thread");
+        }
+        let requests = std::fs::read_to_string(log)?
+            .lines()
+            .map(serde_json::from_str::<Value>)
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        assert_eq!(requests[0]["method"], "model/list");
+        assert_eq!(requests[1]["method"], "thread/start");
+        assert_eq!(requests[2]["method"], "turn/start");
+        if refuse_turn {
+            assert_eq!(requests[3]["method"], "thread/archive");
+        }
+        assert_eq!(requests[1]["params"]["model"], "gpt-6.1-sol");
+        assert_eq!(requests[1]["params"]["sandbox"], "read-only");
+        assert_eq!(requests[2]["params"]["threadId"], "suggested-thread");
+        assert_eq!(
+            requests[2]["params"]["input"][0]["text"],
+            "Help me plan meals."
+        );
+        assert!(!home.path().join("automations").exists());
+    }
     Ok(())
 }
