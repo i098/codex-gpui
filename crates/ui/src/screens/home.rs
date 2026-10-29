@@ -65,11 +65,14 @@ fn open_folder_key(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
 
 /// `Choose project` / `This computer` chip of the utility bar. The pill is `overflow: hidden`:
 /// Skia draws its icon under that AA clip (its padding box; light has no fitted images).
+/// `compact` hides the label, as the original's `collapse` attribute does.
+#[allow(clippy::too_many_arguments)]
 fn chip(
     id: &'static str,
     glyph: &str,
     s: SharedString,
     fg: Hsla,
+    compact: bool,
     t: &Theme,
     focus: &Entity<focus::ControlFocus>,
     cx: &App,
@@ -101,7 +104,7 @@ fn chip(
                     .px(px(8.))
                     .gap(px(6.))
                     .child(icon(glyph, 16., fg).runtime())
-                    .child(label(s, fg)),
+                    .when(!compact, |d| d.child(label(s, fg))),
             )),
     )
 }
@@ -120,7 +123,13 @@ fn scroll_fades(offset: Pixels, maximum: Pixels) -> (Pixels, Pixels) {
 
 /// `Composer utility bar` (`_rail_1hrlq` attached above the composer): project and
 /// environment.
-fn utility_bar(project: Option<SharedString>, t: &Theme, window: &mut Window, cx: &mut App) -> Div {
+fn utility_bar(
+    project: Option<SharedString>,
+    compact: bool,
+    t: &Theme,
+    window: &mut Window,
+    cx: &mut App,
+) -> Div {
     let project_focus = focus::handle("choose-project", 0, window, cx);
     let work_focus = focus::handle("work-in", 0, window, cx);
     let scroll = window
@@ -181,6 +190,7 @@ fn utility_bar(project: Option<SharedString>, t: &Theme, window: &mut Window, cx
                                             "folder",
                                             project.unwrap_or_else(|| "Choose project".into()),
                                             t.text_tertiary,
+                                            compact,
                                             t,
                                             &project_focus,
                                             cx,
@@ -196,6 +206,7 @@ fn utility_bar(project: Option<SharedString>, t: &Theme, window: &mut Window, cx
                                     "laptop",
                                     "This computer".into(),
                                     t.text,
+                                    compact,
                                     t,
                                     &work_focus,
                                     cx,
@@ -259,7 +270,13 @@ impl Render for HomeMain {
             .flex()
             .flex_col()
             .child(div().h(px(8.)))
-            .child(utility_bar(self.project.clone(), &t, window, cx))
+            .child(utility_bar(
+                self.project.clone(),
+                self.composer.read(cx).utility_compact(),
+                &t,
+                window,
+                cx,
+            ))
             .child(self.composer.clone());
         // The page column under the `home-mode-toggle` row is the file drop target.
         let page = div()
@@ -267,7 +284,6 @@ impl Render for HomeMain {
             .min_h_0()
             .flex()
             .flex_col()
-            .px(px(10.))
             .pt(px(24.))
             .child(
                 div()

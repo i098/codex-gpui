@@ -33,6 +33,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Restore `View` > `Toggle Bottom Panel` and `View` > `Open Terminal` in the macOS menu bar, in the original order.
 
 ### Fixed
+- Match Home at narrow windows: icon-only utility chips, the full-width composer, no titlebar New chat, and the 40 px light composer shadow below 640 px.
 - Keep context-only commands out of the live Keyboard shortcuts dialog while retaining them in Settings.
 - Show Login when the account read fails, and keep Coding Home available when access-inputs fails.
 - Share Mark as unread state between the chat command, its shortcut, and the sidebar menu.

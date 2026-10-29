@@ -370,7 +370,7 @@ impl Composer {
             .flex_col()
             .gap(px(8.))
             .relative()
-            .child(shapes::decoration(card_decoration(t)))
+            .child(shapes::decoration(card_decoration(t, false)))
             .child(text(a.title.clone(), 14., 20., 500., t.text))
             .when_some(a.detail.clone(), |d, detail| {
                 d.child(

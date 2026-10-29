@@ -23,6 +23,10 @@ fn capture_cell() -> Result<()> {
     let output = env::var("CGX_PROOF_OUT")?;
     let output = Path::new(&output);
     let mut fx = Fx::with(theme, (width as f32, height as f32), None, |_| {})?;
+    // The rail's Explore marker follows an asynchronous catalog read; the original captures it.
+    fx.wait("navigation destinations", |fx| {
+        fx.shell(|shell| shell.unread_destinations.is_some())
+    })?;
     match (surface.as_str(), state.as_str()) {
         ("home", "rest") => ensure!(fx.route() == Route::Home),
         ("terminal", "rest") => open_terminal(&mut fx)?,

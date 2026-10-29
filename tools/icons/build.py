@@ -53,6 +53,11 @@ RUNTIME = {"chevron-down-small", "composer-model", "diff-file-python", "diff-jum
 # circle): its uncovered pixels count as background. Elsewhere such a variation is a layer
 # effect (a fade mask) that a plain blend does not reproduce, so those uses are skipped.
 UNEVEN_BG = {"composer-arrow-up"}
+# shortcut: the docked thread composer paints its footer icons at runtime in its own layer, but
+# its refs/diff and refs/terminal uses still fit position variants. Only Home's page composer
+# reads them, and at 767 px wide it needs the default image there. After a rebuild, delete
+# plus@32x32/*@741_*.png and permissions@32x32/*@809_*.png and their check.json cases; upgrade
+# when read_uses can tell docked composer uses apart.
 
 _spec = importlib.util.spec_from_file_location("icons", ROOT / "tools/extract/icons.py")
 icons = importlib.util.module_from_spec(_spec)

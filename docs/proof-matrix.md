@@ -117,3 +117,19 @@ All cells used the dark theme and `1280x832` CSS size.
 The failed cells demonstrate the nonzero gate result; they do not grant native appearance approval.
 The Configuration native frame shows its heading without the original controls.
 The tool preserves those differences rather than changing the reference or text mask.
+
+## Home rest matrix
+
+Every capture waits for the navigation destinations, so the rail's Explore marker matches.
+All eight Home rest cells pass at the source that added the narrow layout.
+
+| Theme | Size | Outside text pixels | Inside text difference | Gate |
+|---|---|---:|---:|---|
+| dark | 1280x832 | 0 | 0.118360% | PASS |
+| dark | 1440x900 | 0 | 0.118360% | PASS |
+| dark | 767x832 | 0 | 0.125113% | PASS |
+| dark | 600x832 | 0 | 0.247315% | PASS |
+| light | 1280x832 | 0 | 0.098468% | PASS |
+| light | 1440x900 | 0 | 0.098468% | PASS |
+| light | 767x832 | 0 | 0.108467% | PASS |
+| light | 600x832 | 0 | 0.214410% | PASS |

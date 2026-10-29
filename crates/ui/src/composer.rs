@@ -229,6 +229,10 @@ const REQUEST_FORM_CONTEXT: &str = "ComposerRequestForm";
 /// its `collapse=sm` labels (permissions) and its `collapse=xs` labels (model and effort).
 const SM_WIDTH: f32 = 440.;
 const XS_WIDTH: f32 = 300.;
+/// Card width at or below which the Home utility bar hides its chip labels: its own
+/// `composer-footer` container (the card less 26 px rail inset and 8 px padding) reaches
+/// Electron's 475 px `collapse=sm|xs` limit.
+const UTILITY_WIDTH: f32 = 509.;
 const FONT_SIZE: Pixels = px(14.);
 const LINE_HEIGHT: Pixels = px(20.);
 /// Smallest content height the textarea grip resizes to: the original's `min-h-24` (96 px)
@@ -1556,6 +1560,11 @@ impl Composer {
         &self.placeholder
     }
 
+    /// Whether the Home utility bar above this card hides its chip labels.
+    pub fn utility_compact(&self) -> bool {
+        self.footer_width <= UTILITY_WIDTH
+    }
+
     pub(crate) fn set_placeholder(
         &mut self,
         placeholder: impl Into<SharedString>,
@@ -2228,15 +2237,22 @@ fn deco(radius: f32, fill: Hsla, shadows: Vec<shapes::Shadow>) -> shapes::Decora
     }
 }
 
-/// `_ComposerLayoutBody`: 22 px radius, composer surface, `--elevation-composer-*`.
-pub(crate) fn card_decoration(t: &Theme) -> shapes::Decoration {
+/// `_ComposerLayoutBody`: 22 px radius, composer surface, `--elevation-composer-*`. Below a
+/// 640 px (`40rem`) viewport (`narrow`), the light shadow's outer blur halves to 40 px.
+pub(crate) fn card_decoration(t: &Theme, narrow: bool) -> shapes::Decoration {
     let black = |a: u32| -> Hsla { gpui::rgba(a).into() };
     let shadows = match t.appearance {
         Appearance::Dark => vec![shadow(t.composer_inset_highlight, 0., 1., 0., true)],
         Appearance::Light => vec![
             shadow(black(0x0000000a), 0., 0., 1., false),
             shadow(black(0x0000000a), 2., 8., 0., false),
-            shadow(black(0x00000006), 4., 80., 8., false),
+            shadow(
+                black(0x00000006),
+                4.,
+                if narrow { 40. } else { 80. },
+                8.,
+                false,
+            ),
         ],
     };
     deco(22., t.composer_surface, shadows)
@@ -2371,6 +2387,7 @@ impl Render for Composer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let editing = self.on_cancel_edit.is_some();
         let t = cx.theme().clone();
+        let narrow = window.viewport_size().width < px(640.);
         if self.request_focus_pending {
             self.request_focus_pending = false;
             self.focus_request_field(window, cx);
@@ -2828,10 +2845,10 @@ impl Render for Composer {
                     // `[data-composer-drag-active]`: `surface-elevated-secondary` at 50%.
                     shapes::Decoration {
                         fill: Some(t.surface_elevated_secondary.opacity(0.5)),
-                        ..card_decoration(&t)
+                        ..card_decoration(&t, narrow)
                     }
                 } else {
-                    card_decoration(&t)
+                    card_decoration(&t, narrow)
                 }))
             })
             // See `docked`: the docked body is a transparent cc layer over the card.

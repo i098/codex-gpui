@@ -1197,7 +1197,7 @@ impl gpui::Element for Editor {
             } else {
                 24.
             };
-        let collapse = |w: f32| (w <= SM_WIDTH, w <= XS_WIDTH);
+        let collapse = |w: f32| (w <= SM_WIDTH, w <= XS_WIDTH, w <= UTILITY_WIDTH);
         let changed = self.0.update(cx, |c, _| {
             c.lines = lines;
             let mut bounds = text_bounds;
