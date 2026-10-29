@@ -1637,6 +1637,13 @@ A failed undo retains its entry for another attempt.
 Clear all unreads uses a confirmation dialog and saves the optional confirmation preference.
 
 The interactive terminal keeps its real PTY process when the bottom panel hides.
+Chat drafts that begin with `!` run through `thread/shellCommand` after a native warning confirmation.
+This method runs outside the sandbox, so only Full access chats enable it.
+Other permission modes show the reason and keep the draft.
+Home, cloud-task, and message-edit composers keep `!` as ordinary text.
+Cancel keeps the draft; an RPC failure restores it.
+Shell output and exit status use the existing command-execution transcript, not the native PTY panel.
+The `chat_shell` flow covers permission denial, cancellation, shell syntax, and RPC failure.
 UI zoom keeps layout, painting, pointer input, and IME bounds in the same coordinate system.
 The zoom banner waits two seconds and remains visible while the pointer is over it.
 Reopening a saved window restores its zoom.
