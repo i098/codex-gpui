@@ -961,7 +961,13 @@ impl Root {
             let account = if acp {
                 None
             } else {
-                Some(bridge.account_read().await?)
+                match bridge.account_read().await {
+                    Ok(account) => Some(account),
+                    Err(error) => {
+                        eprintln!("codex-gpui: cannot read account: {error:#}");
+                        None
+                    }
+                }
             };
             let threads = bridge.thread_list().await;
             let (mut catalog, config, skills) = if acp {
@@ -1000,7 +1006,11 @@ impl Root {
             this.update_in(cx, |this, window, cx| {
                 this._update_policy = updater::poll_policy(bridge.clone(), cx);
                 this.set_account(account.as_ref(), cx);
-                if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
+                if !acp
+                    && account
+                        .as_ref()
+                        .is_none_or(|a| a.account.is_none() && a.requires_openai_auth)
+                {
                     cx.set_global(AppServer(this.bridge.clone()));
                     this.login = Some(this.new_login(window, cx));
                 }
@@ -1636,7 +1646,8 @@ impl Root {
             | DiffRequest::LoadPreview(_)
             | DiffRequest::CommentsChanged(_)
             | DiffRequest::DismissModelComment(_)
-            | DiffRequest::Preference(_, _) => return,
+            | DiffRequest::Preference(_, _)
+            | DiffRequest::ViewedFile { .. } => return,
         };
         let creating = endpoint == "git-init-repo";
         if let Some(review) = panel.read(cx).review_params().as_object() {
@@ -3514,6 +3525,9 @@ impl Root {
                 }
                 "Undo last action" => window.dispatch_action(Box::new(Undo), cx),
                 "Redo last action" => window.dispatch_action(Box::new(Redo), cx),
+                "Mark as unread" => {
+                    window.dispatch_action(Box::new(features::shortcuts::MarkOpenChatUnread), cx)
+                }
                 "Clear all unreads" => {
                     window.dispatch_action(Box::new(features::shortcuts::ClearAllUnreads), cx)
                 }
@@ -3842,6 +3856,13 @@ impl Root {
                 DiffRequest::CommentsChanged(comments) => this.change_diff_comments(comments, cx),
                 DiffRequest::DismissModelComment(key) => {
                     this.confirm_diff_comment(panel.clone(), key.clone(), window, cx)
+                }
+                DiffRequest::ViewedFile { key, revision } => {
+                    if let Err(error) =
+                        diff_content::save_viewed_file(panel, key.clone(), revision.clone(), cx)
+                    {
+                        this.toast(Toast::danger(error.to_string()), cx);
+                    }
                 }
                 DiffRequest::Preference(key, value) => this.write_setting(
                     &SettingChanged {
