@@ -747,9 +747,9 @@ impl ThreadView {
                 turn.status == TurnStatus::InProgress,
                 &self.reasoning_secs,
             )
-                .iter()
-                .flat_map(|a| a.labels(&self.expanded))
-                .collect(),
+            .iter()
+            .flat_map(|a| a.labels(&self.expanded))
+            .collect(),
         )
     }
 
@@ -2036,34 +2036,32 @@ impl ThreadView {
             .bottom(px(114. + 8.))
             .flex()
             .justify_center()
-            .child(
-                tooltip(
-                    div()
-                        .id("scroll-to-bottom")
-                        .role(gpui::Role::Button)
-                        .aria_label("Scroll to bottom")
-                        .size(px(32.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .rounded(px(999.))
-                        .border_1()
-                        .border_color(t.border_strong)
-                        .bg(t.surface)
-                        .hover(|s| s.bg(t.ghost_hover))
-                        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            let mut offset = scroll.offset();
-                            offset.y = -scroll.max_offset().y;
-                            scroll.set_offset(offset);
-                            cx.notify();
-                        }))
-                        .child(icon("chevron-down", 16., t.text)),
-                    "Scroll to bottom",
-                    None,
-                    Side::Top,
-                ),
-            )
+            .child(tooltip(
+                div()
+                    .id("scroll-to-bottom")
+                    .role(gpui::Role::Button)
+                    .aria_label("Scroll to bottom")
+                    .size(px(32.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(999.))
+                    .border_1()
+                    .border_color(t.border_strong)
+                    .bg(t.surface)
+                    .hover(|s| s.bg(t.ghost_hover))
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        let mut offset = scroll.offset();
+                        offset.y = -scroll.max_offset().y;
+                        scroll.set_offset(offset);
+                        cx.notify();
+                    }))
+                    .child(icon("chevron-down", 16., t.text)),
+                "Scroll to bottom",
+                None,
+                Side::Top,
+            ))
     }
 
     /// `Yesterday 9:54 PM` above a turn's user message.
@@ -2439,9 +2437,10 @@ impl Render for ThreadView {
                     .child(top_fade),
             )
             .when(self.clip_right, |d| d.child(gpui::deferred(corners)))
-            .when(self.scroll.max_offset().y > px(0.) && !following_bottom, |d| {
-                d.child(self.scroll_to_bottom(&t, cx))
-            })
+            .when(
+                self.scroll.max_offset().y > px(0.) && !following_bottom,
+                |d| d.child(self.scroll_to_bottom(&t, cx)),
+            )
             // A portal in the original: its shadow spills over the titlebar and the sidebar.
             .when(self.summary_open, |d| {
                 d.child(gpui::deferred(self.summary(window, &t, cx)))
@@ -2894,7 +2893,11 @@ mod tests {
         let view = cx.new(|_| {
             ThreadView::new(
                 thread,
-                Clock { utc_offset: 0, pinned_now: Some(0), elapsed_since: None },
+                Clock {
+                    utc_offset: 0,
+                    pinned_now: Some(0),
+                    elapsed_since: None,
+                },
                 composer,
             )
         });
