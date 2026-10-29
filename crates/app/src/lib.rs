@@ -462,6 +462,8 @@ pub struct Root {
     picking_project: bool,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
+    /// The local tasks' shared previous-run history (`inbox-items`).
+    automation_runs: Vec<automations::Run>,
     /// Tasks whose `automation-run-now` request has not answered.
     running_automations: HashSet<String>,
     automation_updates: HashMap<String, Task<()>>,
@@ -802,6 +804,7 @@ impl Root {
             bridge,
             automations: None,
             automation_load: None,
+            automation_runs: Vec::new(),
             running_automations: HashSet::new(),
             project_load: None,
             destination_load: None,
@@ -2066,30 +2069,78 @@ impl Root {
         matches!(self.state.route, Route::Scheduled | Route::Automation(_))
     }
 
+    /// The Scheduled list's load state for a sidebar built now: no answer yet is `Loading`.
+    pub(crate) fn automation_list_state(&self) -> ListState {
+        match &self.automations {
+            None => ListState::Loading,
+            Some(Err(_)) => ListState::Failed,
+            Some(Ok(_)) => ListState::Ready,
+        }
+    }
+
     fn load_automations(&mut self, cx: &mut Context<Self>) {
         let host = self.host.clone();
         let read = cx.background_spawn(async move {
-            host.fetch(&host::Request::post("list-automations", None))
+            let list = host
+                .fetch(&host::Request::post("list-automations", None))
                 .and_then(|response| host::json_body(&response))
-                .map_err(|error| error.to_string())
+                .map_err(|error| error.to_string());
+            // shortcut: an unreadable run history lists no runs; the original's `Couldn't load
+            // runs` row needs its own state when a host reports that error.
+            let runs = host
+                .fetch(&host::Request::post("inbox-items", None))
+                .and_then(|response| host::json_body(&response))
+                .map(|inbox| automations::runs(&inbox))
+                .unwrap_or_default();
+            (list, runs)
         });
+        let window = self.context_window;
         self.automation_load = Some(cx.spawn(async move |this, cx| {
-            let result = read.await;
-            this.update(cx, |this, cx| {
-                if result.is_err() && this.scheduled_route() {
-                    this.toast(Toast::danger("Failed to load automations"), cx);
-                }
-                let tasks = result
-                    .as_ref()
-                    .map_or_else(|_| Vec::new(), automations::tasks);
-                if let Some(sidebar) = &this.scheduled {
-                    sidebar.update(cx, |sidebar, cx| sidebar.set_tasks(tasks, cx));
-                }
-                this.automations = Some(result);
-                cx.notify();
-            })
-            .ok();
+            let (result, runs) = read.await;
+            let rebuild = this
+                .update(cx, |this, cx| {
+                    let tasks = result
+                        .as_ref()
+                        .map_or_else(|_| Vec::new(), automations::tasks);
+                    let state = if result.is_ok() {
+                        ListState::Ready
+                    } else {
+                        ListState::Failed
+                    };
+                    let run = this.sidebar_run();
+                    let mut rebuild = false;
+                    if let Some(sidebar) = &this.scheduled {
+                        sidebar.update(cx, |sidebar, cx| {
+                            // A cold deep link built its page before the task was known.
+                            rebuild = matches!(&this.state.route, Route::Automation(id)
+                                if sidebar.selected() != Some(id.as_str())
+                                    && tasks.iter().any(|task| &task.id == id));
+                            sidebar.set_tasks(tasks, cx);
+                            sidebar.set_load(state, cx);
+                            sidebar.set_runs(runs.clone(), run, cx);
+                        });
+                    }
+                    this.automations = Some(result);
+                    this.automation_runs = runs;
+                    cx.notify();
+                    rebuild
+                })
+                .unwrap_or(false);
+            if rebuild {
+                cx.update_window(window, |_, window, cx| {
+                    this.update(cx, |this, cx| this.sync(window, cx))
+                })
+                .ok();
+            }
         }));
+    }
+
+    /// The run whose chat the Scheduled list shows (a thread opened from a run row).
+    fn sidebar_run(&self) -> Option<String> {
+        match &self.state.route {
+            Route::Thread(id) if self.sidebar_automation.is_some() => Some(id.clone()),
+            _ => None,
+        }
     }
 
     fn toggle_automation(&mut self, id: &str, cx: &mut Context<Self>) {

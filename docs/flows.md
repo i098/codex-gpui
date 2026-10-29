@@ -1112,20 +1112,20 @@ A profile without the original database saves the definition without creating a 
 | # | Item | Kind | Original | Port | Status |
 |---|---|---|---|---|---|
 | 1 | Rail `Scheduled` | entry | Automations page, `ScheduledSidebar`. | `Route::Scheduled` with `ScheduledSidebar` and the page. | PASS (`rail_scheduled`, `parity_automations`) |
-| 2 | Deep link `/scheduled?automationId=…` | entry | Page with the task selected. | `codex://scheduled?automationId=…` parses to `Route::Automation` and opens the task's page (`crates/app/src/deep_link.rs`). | PASS (`deep_link::settings_automations_and_launch_links_route`) |
+| 2 | Deep link `/scheduled?automationId=…` | entry | Page with the task selected. | `codex://scheduled?automationId=…` parses to `Route::Automation`; a cold start rebuilds the page when `list-automations` answers, so the task is selected. | PASS (`deep_link::settings_automations_and_launch_links_route`, `scheduled_list::cold_link_selects_its_task_and_its_runs_open_their_chat`) |
 | 3 | `New task` | click | Create flow. | The recorded compact schedule dialog saves through `automation-create` and retains the draft on a write error. | PASS (`task_create`, `s036`) |
 | 4 | `Create` menu | click | Create with Codex / ChatGPT / manually. | The sidebar split control opens both chat actions with the original setup prompt, or the full manual editor. | PASS (`task_create::editor`) |
-| 5 | Search | focus | Filters; `No matching tasks`. | Dispatches `SearchTasks`; no handler. | NOT WIRED (no host: `list-automations`) |
-| 6 | Status filter | click | All / Active / Paused. | — | NOT WIRED (no host: `list-automations`) |
+| 5 | Search | focus | Filters; `No matching tasks`. | `Search scheduled tasks` opens a field under the header; the name filter is case-insensitive, `No matching tasks` shows when nothing matches, and Escape closes the field. | PASS (`scheduled_list::search_and_filter_narrow_the_list`) |
+| 6 | Status filter | click | `Filter by`: Active / Paused / Completed; a single inactive choice renames `Upcoming`. | The same checkbox menu with arrow, Home, End, Enter and Escape keys; a selected paused task stays listed. | PASS (`scheduled_list`) |
 | 7 | Task row | click | Detail panel. | Selects the task and opens its thread. | PASS (`s037::task_row_hover_and_click_match_original`) |
 | 8 | Row actions | click | Edit, Run now, Pause, Share, Delete. | Edit opens the stored definition in the full editor; Run now and Pause / Resume retain their existing host paths; Share copies the task link. Delete has a separate owner. | PARTIAL (`task_create::editor`, `automation_run_now`, `s037`, `automation_share`) |
 | 9 | Editor fields | focus | Name, Prompt, schedule. | Editable Name and multiline Prompt, six schedule modes, custom frequencies, time presets, and day fields persist through the existing host. | PASS (`task_create::editor`, `host`) |
-| 10 | Previous runs | click | Run chat, mark read, archive. | — | NOT WIRED (no host: `inbox-items`, `automation-run-archive`) |
+| 10 | Previous runs | click | Run chat, mark read, archive. | The selected cron task lists its `inbox-items` runs (three, then `Show older`); a run opens its chat with the task kept in the list. Mark read and archive have a separate owner. | PARTIAL (`scheduled_list::cold_link_selects_its_task_and_its_runs_open_their_chat`) |
 | 11 | Row hover | hover | Row highlight. | The recorded row fill and actions match; the status icon changes to Pause on hover or keyboard focus. | PASS (`s037::task_row_hover_and_click_match_original`; suggestion hover: `s035::suggestion_hover_matches_original`) |
-| 12 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/automations.rs`) |
+| 12 | Focus ring | focus ring | 2 px ring. | Task rows, search and filter buttons draw the shared keyboard ring. | PASS (`crates/ui/src/screens/automations.rs`) |
 | 13 | No tasks | empty | `No scheduled tasks`, suggestions. | `No scheduled tasks`, server suggestions and distinct landing examples, up to six cards. | PASS (`rail_scheduled`, `parity_automations`, `host::scheduled_suggestions_follow_late_reads_and_host_replacement`) |
-| 14 | Loading | loading | `Loading scheduled tasks…`. | — | NOT WIRED (no host: `list-automations`) |
-| 15 | Error | error | `Scheduled tasks could not be loaded`. | — | NOT WIRED (no host: `list-automations`) |
+| 14 | Loading | loading | `Loading scheduled tasks…`. | Shown until the first `list-automations` answer. | PASS (`scheduled_list`) |
+| 15 | Error | error | `Scheduled tasks could not be loaded`. | Shown with `Try again`, which reads the list again. | PASS (`scheduled_list::unreadable_list_fails_and_try_again_loads_it`) |
 | 16 | Resize | resize | List and detail share the main column. | No list or detail panel. | FAIL (no task list without the host) |
 
 ## 15.2 Background terminal
