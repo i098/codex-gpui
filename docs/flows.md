@@ -248,13 +248,13 @@ This proves headless native behavior, not live installed-window acceptance.
 | 2 | Space | click | Navigates to `/space`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
 | 3 | Scheduled | click | Navigates to `/scheduled` (Automations); unread dot. | `OpenScheduled`: `Route::Scheduled`, rail Scheduled selected. Settled local unread runs set the dot; opening the run chat clears its read state. | PASS (`rail_scheduled`, `parity_automations`; native unread proof: `automation_run_now::persisted_run_unread_survives_navigation_and_clears_on_open`) |
 | 4 | Plugins | click | Navigates to `/plugins`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
-| 5 | Explore `…` | click | Opens the Explore menu; blue dot. | Dot shows; no menu. | NOT WIRED (outside v1 scope (no screen): the menu holds the secondary destinations) |
+| 5 | Explore `…` | click | Opens the Explore menu; blue dot. | Dot shows. A click opens a menu right of the rail item with the destinations the port has (`Security` when available, else `No more destinations`); a second click or a click outside closes it. | PASS (`rail_explore_menu`); `Customize sidebar` and MCP destinations: BOUNDARY (no sidebar-customization store; Explore row 5) |
 | 6 | Code Review | click | Navigates to `/pull-requests`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
 | 7 | Sites | click | Navigates to `/sites`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
 | 8 | Profile avatar | click | Opens the profile menu. | Menu above the avatar: `Settings`, `Log out`, `Help` ▸ `Set up mobile`; a click outside or on the avatar closes it. | PASS (`profile_menu_settings`, `profile_menu_dismiss`, `profile_menu_mobile`; logout: `account_logout`) |
 | 9 | Rail item hover | hover | Tooltip on the right side with label and shortcut. | Hover fill shows (4716 px repainted); a tooltip with the item's label opens 200 ms after the pointer enters (at once when another was open), 2 px right of the item; `Explore` and the avatar have none; it closes on leave, press or Escape. | PASS (`rail_hover_fill`; tooltip: `crates/app/tests/f1a.rs` against `refs/interactions/f1a.json`) |
 | 10 | Drag a rail item | click | Reorders pinned items. | — | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`) |
-| 11 | Focus ring | focus ring | 2 px ring on the 36×36 button. | No tab stops. | NOT WIRED (`crates/ui/src/lib.rs` `Shell::rail`: no focus handles or `focus_visible` ring) |
+| 11 | Focus ring | focus ring | 2 px ring on the 36×36 button. | Every rail item and the avatar have a tab stop and draw the shared 2 px keyboard ring (`focus::ring` in `Shell::rail`). | PASS (`crates/ui/src/focus.rs` ring; `rail_focus_ring`) |
 | 12 | Resize | resize | At 1280, 767 and 600 px the rail stays 52 px. | The rail stays and rail Home answers at all 3 widths. | PASS (`resize_three_widths`) |
 
 Home reselect clears the draft and keeps the current focus only when the main view is `HomeMain`.
@@ -365,8 +365,8 @@ New chat adds a Back entry even when Home is already open.
 | 2 | `New chat` row | click | Navigates to `/` and clears the draft. | Same. | PASS (`new_chat_row`) |
 | 3 | `⌘N` / `⌘⇧O` | shortcut | New chat on Home, composer focused. | Same. | PASS (`cmd_n_new_chat`) |
 | 4 | Hero project selector | click | Opens the project menu. | Shows the selected folder and opens the native folder picker. | Native local-folder flow; no project dropdown. |
-| 5 | Beacon `Start Voice` | click | Starts a realtime voice chat. | No beacon. | NOT WIRED (`crates/ui/src/screens/home.rs`) |
-| 6 | Beacon dismiss `×` | click | Hides the banner. | No beacon. | NOT WIRED (`crates/ui/src/screens/home.rs`) |
+| 5 | Beacon `Start Voice` | click | Starts a realtime voice chat. | `HomeMain::beacon` draws `Try ChatGPT Voice` with `Start Voice`; the button raises `StartVoiceChat`, which shows a notice. | PASS (`home_beacon`); the `/beacons/home` feed that turns the beacon on and the realtime audio session: BOUNDARY (Home row 5) |
+| 6 | Beacon dismiss `×` | click | Hides the banner. | Hides the banner for the session; persistence needs the `/beacons/home` feed. | PASS (`home_beacon`); persistence BOUNDARY (Home row 6) |
 | 7 | `Choose project` | click | Project dropdown. | Opens the native folder picker and selects a local project for new chats. | Native local-folder flow (`project_picker`); no project dropdown. |
 | 8 | `Work in` / `This computer` | click | Location menu. | Chip has no handler. | NOT WIRED (`crates/ui/src/screens/home.rs` `utility_bar`) |
 | 9 | Editor `Do anything` | focus | Caret shows. | Click focuses the editor. | PASS (`editor_click_focuses`) |
@@ -374,7 +374,7 @@ New chat adds a Back entry even when Home is already open.
 | 11 | `Custom` permissions | click | Permissions dropdown. | Opens; Escape closes. | PASS (`permissions_popover`) |
 | 12 | Model picker | click | Model and effort menu. | Opens; Escape closes. | PASS (`model_picker_popover`) |
 | 13 | `Dictate` | click | Starts dictation. | Uses native macOS capture and authenticated `/transcribe`; inserts at the initiating Composer selection. | WIRED; controlled-input proof passes. Live microphone acceptance remains open. |
-| 14 | `Start new voice chat` | click | Starts realtime voice. | With an empty draft the button calls `submit`, which does nothing. | NOT WIRED (`crates/ui/src/composer.rs`, `send`) |
+| 14 | `Start new voice chat` | click | Starts realtime voice. | With an empty draft the button is labelled `Start new voice chat` and raises `StartVoiceChat`, which shows a notice; no turn starts. | PASS (`voice_button_notice`); realtime audio session: BOUNDARY (Home row 14) |
 | 15 | Submit with Enter | shortcut | `thread/start`, `turn/start`, navigates to the thread. | Same; the turn streams in; the draft clears; also by clicking Send. | PASS (`submit_enter_starts_thread`, `submit_click_send`) |
 | 16 | Hover on every button | hover | Ghost background fades in. | Hover fill on composer buttons (checked on `Dictate`). | PASS (`composer_button_hover`) |
 | 17 | Tab through controls | focus ring | 2 px ring. | `Choose project` and `This computer` have tab stops; the native capture proves focus traversal, not menu activation. | NOT WIRED (remaining composer controls) |
