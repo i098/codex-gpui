@@ -172,7 +172,7 @@ pub struct ThreadView {
     /// A turn's `Undo`, `View changes`, copy and fork focus handles. They belong to the view,
     /// not to its place in the element tree: the view moves when a side panel opens, and a
     /// pressed control must keep its focus across that.
-    turn_focus: RefCell<HashMap<String, Entity<crate::focus::ControlFocus>>>,
+    turn_focus: RefCell<HashMap<String, gpui::Entity<crate::focus::ControlFocus>>>,
     mcp_images: items::McpImages,
     /// Open disclosures: turns whose `Worked for` is expanded, by turn id, and activity groups
     /// whose rows show, by the id of their first item.

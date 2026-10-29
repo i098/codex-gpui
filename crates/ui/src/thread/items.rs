@@ -274,7 +274,7 @@ pub(super) fn diff_card(
     // `focus-visible:ring-2 ring-offset-0` on the `rounded-button-toolbar` (12.5 px) button.
     let button = |label: &'static str,
                   id: &'static str,
-                  focus: &Entity<crate::focus::ControlFocus>,
+                  focus: &gpui::Entity<crate::focus::ControlFocus>,
                   decoration: Option<gpui::AnyElement>| {
         crate::focus::shadow_ring(
             div()
