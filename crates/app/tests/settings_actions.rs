@@ -3,6 +3,7 @@ mod common;
 use anyhow::{Context as _, Result, ensure};
 use common::*;
 use serde_json::{Value, json};
+use std::sync::Arc;
 use theme::ActiveTheme as _;
 
 #[test]
@@ -1337,5 +1338,159 @@ fn quit_from_a_clean_window_protects_another_windows_draft() -> Result<()> {
         std::fs::read_to_string(home.path().join("AGENTS.md"))?,
         "Saved instructions."
     );
+    Ok(())
+}
+
+/// Serves the ChatGPT account check, notification channels and contact methods.
+struct ChannelHost {
+    structure: &'static str,
+    fail_patch: std::sync::atomic::AtomicBool,
+    account_checks: std::sync::atomic::AtomicUsize,
+    patches: std::sync::Mutex<Vec<Value>>,
+}
+
+impl app::host::Host for ChannelHost {
+    fn fetch(&self, request: &app::host::Request) -> Result<Value> {
+        let app::host::Request::Http(http) = request else {
+            anyhow::bail!("unexpected request");
+        };
+        let body = match (http["method"].as_str(), http["url"].as_str()) {
+            (Some("GET"), Some("/accounts/check/v4-2023-04-27")) => {
+                self.account_checks
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                json!({
+                    "accounts": { "acct": { "account": { "structure": self.structure } } }
+                })
+            }
+            (Some("GET"), Some("/notifications/settings")) => json!({ "settings": [{
+                "category": "tasks", "name": "Tasks", "description": "Task updates",
+                "options": [
+                    { "channel": "push", "name": "Push", "enabled": true },
+                    { "channel": "email", "name": "Email", "enabled": false },
+                ],
+            }] }),
+            (Some("GET"), Some("/me")) => json!({ "email": "me@example.com" }),
+            (Some("PATCH"), Some("/notifications/settings")) => {
+                self.patches.lock().unwrap().push(serde_json::from_str(
+                    http["body"].as_str().unwrap_or("null"),
+                )?);
+                if self.fail_patch.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Ok(json!({ "status": 500, "body": "{}" }));
+                }
+                json!({})
+            }
+            _ => anyhow::bail!("unexpected request {http}"),
+        };
+        Ok(json!({ "status": 200, "body": body.to_string() }))
+    }
+
+    fn identity(&self) -> Option<app::host::Identity> {
+        Some(app::host::Identity {
+            account_id: "acct".into(),
+            user_id: "user".into(),
+            device_id: "device".into(),
+        })
+    }
+}
+
+fn notification_state(fx: &Fx) -> ui::screens::settings::notifications::State {
+    fx.read(|_, cx| {
+        cx.try_global::<ui::screens::settings::notifications::State>()
+            .cloned()
+            .unwrap_or_default()
+    })
+}
+
+fn channel_enabled(fx: &Fx, channel: &str) -> Option<bool> {
+    let ui::screens::computer_use::Load::Ready(settings) = notification_state(fx).channels else {
+        return None;
+    };
+    settings["settings"][0]["options"]
+        .as_array()?
+        .iter()
+        .find(|option| option["channel"] == channel)?["enabled"]
+        .as_bool()
+}
+
+fn notification_fixture(structure: &'static str) -> Result<(Fx, Arc<ChannelHost>)> {
+    let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
+    let host = Arc::new(ChannelHost {
+        structure,
+        fail_patch: false.into(),
+        account_checks: 0.into(),
+        patches: Default::default(),
+    });
+    let root = fx.root.clone();
+    let shared: Arc<dyn app::host::Host> = host.clone();
+    fx.cx
+        .update(|cx| root.update(cx, |root, cx| root.set_host(shared, cx)));
+    // Opening the page starts the account check.
+    fx.keys("cmd-,")?;
+    fx.click((200., 118.))?;
+    fx.type_text("Notifications")?;
+    press(&mut fx, "tab enter")?;
+    Ok((fx, host))
+}
+
+#[test]
+fn chatgpt_channels_load_for_a_personal_account_and_roll_back_a_failed_update() -> Result<()> {
+    use ui::screens::computer_use::Load;
+    use ui::screens::settings::notifications::{Account, Action, dispatch};
+    let (mut fx, host) = notification_fixture("personal")?;
+    fx.wait("ChatGPT notification channels", |fx| {
+        let state = notification_state(fx);
+        state.account == Account::Personal
+            && matches!(state.channels, Load::Ready(_))
+            && matches!(state.contacts, Load::Ready(_))
+    })?;
+    evidence(&mut fx, "notifications-chatgpt")?;
+    let set = |enabled| Action::SetChannel {
+        category: "tasks".into(),
+        channel: "email".into(),
+        enabled,
+    };
+    fx.cx.update(|cx| dispatch(set(true), cx));
+    assert_eq!(channel_enabled(&fx, "email"), Some(true));
+    fx.wait("channel update sent", |_| {
+        host.patches.lock().unwrap().len() == 1
+    })?;
+    assert_eq!(
+        host.patches.lock().unwrap()[0],
+        json!({ "updates": { "tasks": { "email": true } } })
+    );
+
+    host.fail_patch
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    fx.cx.update(|cx| dispatch(set(false), cx));
+    fx.wait("failed channel update toast", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|title| title.as_ref() == "Failed to update ChatGPT notification settings")
+        })
+    })?;
+    assert_eq!(channel_enabled(&fx, "email"), Some(true));
+    assert_eq!(channel_enabled(&fx, "push"), Some(true));
+    Ok(())
+}
+
+#[test]
+fn a_workspace_account_hides_the_chatgpt_notification_group() -> Result<()> {
+    use ui::screens::settings::notifications::Account;
+    let (mut fx, host) = notification_fixture("workspace")?;
+    fx.wait("account gate", |fx| {
+        let state = notification_state(fx);
+        state.account == Account::Hidden
+            && !state.fetching
+            && host
+                .account_checks
+                .load(std::sync::atomic::Ordering::SeqCst)
+                > 0
+    })?;
+    assert!(matches!(
+        notification_state(&fx).channels,
+        ui::screens::computer_use::Load::Loading
+    ));
+    assert!(host.patches.lock().unwrap().is_empty());
     Ok(())
 }
