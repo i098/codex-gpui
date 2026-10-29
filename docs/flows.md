@@ -36,14 +36,14 @@ This table preserves the earlier audit totals; section 14.7 records the later Se
 | 14.1 Left rail | 12 | 4 | 1 | 7 |
 | 14.2 Sidebar | 23 | 12 | 4 | 7 |
 | 14.3 Home | 21 | 10 | 3 | 8 |
-| 14.4 Thread view | 20 | 11 | 2 | 7 |
+| 14.4 Thread view | 20 | 15 | 2 | 3 |
 | 14.5 Composer | 20 | 6 | 5 | 9 |
 | 14.6 Diff view | 20 | 14 | 5 | 1 |
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 10 | 0 | 0 |
 | 15.3 Mobile setup | 10 | 3 | 2 | 5 |
-| **All** | **192** | **92** | **35** | **65** |
+| **All** | **192** | **96** | **35** | **61** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -414,13 +414,13 @@ Comment owners call `finish_dictation` and wait for `Completion::Succeeded` befo
 | 3 | History failure | error | `Couldn't load messages` + `Retry`. | The squircle warning shares its opaque footer's compositor layer above the original fade. Its Retry tooltip and accessibility label retain the source error. Retry reads the same thread again. Late responses cannot replace another route. | PASS (`thread_recovery`: button-bound retry and route change; complete 123984-pixel warning comparison: zero differences) |
 | 4 | Turn render failure | error | `This turn couldn't render`. | A failed turn leaves other turns visible. Try again rebuilds that turn from current data. Its tooltip and accessibility label retain the source error. The squircle card and Retry fill use the original viewport layer; Retry keeps its hover behavior and border-box size. | PASS (`thread_recovery`: Linux render failure and retry without a graphics adapter; original-context component: zero differences over 233208 pixels, hover and restoration checked without a Mac panic) |
 | 5 | Streaming agent message | loading | Text grows by deltas; new segments fade over 700 ms; `Working` shimmer. | New glyphs use the recorded adaptive fade. Later deltas do not restart older glyphs. Reduced motion shows the end state immediately. Shimmer belongs to S5. | PASS (`submit_enter_starts_thread`, `stream_fade`) |
-| 6 | Reasoning item | click | Toggles `Thought for {elapsed}`. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
-| 7 | Command card | click | Expands output; copy buttons. | No handler. | NOT WIRED (`crates/ui/src/thread.rs`) |
+| 6 | Reasoning item | click | Toggles `Thought for {elapsed}`. | A reasoning item seen starting and completing in the open thread shows a `Thought for {elapsed}` row; a click shows its summary under it. The protocol carries no item duration, so a loaded history item has no row, as in the original recording (`refs/interactions/s014.json`). | PASS (`live_reasoning_gets_a_toggleable_thought_row`; `s014` keeps history reasoning hidden) |
+| 7 | Command card | click | Expands output; copy buttons. | The `Ran` row opens the `Shell` card with output and exit footer. The card header has `Copy command` and `Copy output` buttons that write the clipboard. | PASS (card expansion: `grouped_activity_matches_the_original`; copy buttons: `crates/ui/src/thread/items.rs` `copy_control`, no recorded pixel reference) |
 | 8 | File change card | click | `View changes` opens Changes; `Undo` / `Reapply`. | `View changes` opens the Changes side panel; `Undo` sends `thread/revert` (`beforeTurnId`, after `thread/resume` if needed) and shows the reverted thread. No `Reapply`. | FAIL (`Reapply`: the original re-applies through the host git worker; `Undo` checked by `undo_reverts_turn`, `View changes` by `view_changes_opens_panel`) |
 | 9 | Collapsed turn `Worked for {time}` | click | Expands hidden items. | A click shows the turn's work above the answer (agent messages, `Ran commands`) and turns the chevron down; a second click folds it. | PASS (`worked_for_expands`) |
-| 10 | User message hover | hover | Copy and Edit appear. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
+| 10 | User message hover | hover | Copy and Edit appear. | Copy message and Edit message appear on hover or focus without moving the transcript; Copy writes the message and shows a checkmark for 1500 ms. | PASS (`s005`, `s006`) |
 | 11 | Assistant message hover | hover | Copy, Fork chat from here. | Shown under the last turn, on hover under earlier turns. `Copy` puts the answer on the clipboard; `Fork chat from here` sends `thread/fork` (then `thread/rollback` of the later turns) and opens the fork at the top of Recents. `Read aloud` and `Rate response` have no handler. | PASS (`copy_response`, `fork_chat`, `earlier_turn_actions_hover`) |
-| 12 | `Scroll to bottom` | click | Jumps to the newest turn. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
+| 12 | `Scroll to bottom` | click | Jumps to the newest turn. | A 32 px round button floats above the composer band while the transcript is scrolled up; a click scrolls to the end and the button hides. No original recording exists, so its pixels are not compared. | PASS (behavior only; no pixel reference) |
 | 13 | `⌘F` | shortcut | Find bar. | — | NOT WIRED (`crates/ui/src/thread.rs`) |
 | 14 | `⌘⇧A` | shortcut | Archives the chat. | `ArchiveChat`: `thread/archive`, the row leaves Recents, the route goes to Home. | PASS (`archive_chat`) |
 | 15 | `⌘⌥R` | shortcut | Rename dialog. | — | NOT WIRED (`crates/ui`: no rename dialog) |
