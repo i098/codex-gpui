@@ -251,16 +251,16 @@ impl Composer {
         self.pending_attachments += 1;
         self.attachment_error = None;
         let generation = self.attachment_generation;
-        let (error_message, save): (_, Task<Result<Attachment>>) = match content {
+        let (detail, save): (_, Task<Result<Attachment>>) = match content {
             Content::Text(text) => (
-                "Large pasted text could not be attached",
+                "large pasted text",
                 match self.bridge.clone() {
                     Some(bridge) => cx.foreground_executor().spawn(save_text(bridge, text)),
                     None => Task::ready(Err(anyhow!("no app-server"))),
                 },
             ),
             Content::Image(image) => (
-                "Image could not be attached",
+                "image",
                 cx.background_executor()
                     .spawn(async move { persist(image).map_err(Into::into) }),
             ),
@@ -278,8 +278,8 @@ impl Composer {
                 match result {
                     Ok(attachment) => this.attachments.push(attachment),
                     Err(error) => {
-                        eprintln!("codex-gpui: {error_message}: {error}");
-                        this.attachment_error = Some(error_message);
+                        eprintln!("codex-gpui: {detail} could not be attached: {error}");
+                        this.attachment_error = Some("Unable to upload file");
                     }
                 }
                 cx.notify();
@@ -336,6 +336,23 @@ impl Composer {
             persisted: false,
         });
         cx.notify();
+    }
+
+    fn remove_attachment(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.attachments.len() {
+            self.attachments.remove(index);
+            cx.notify();
+        }
+    }
+
+    /// The status line above the editor: `Files uploading…` while a paste saves, else the
+    /// upload failure (`composer.submit.waitForFileUploads`, `composer.fileAttachment.uploadError`).
+    pub(super) fn upload_status(&self) -> Option<&'static str> {
+        if self.pending_attachments > 0 {
+            Some("Files uploading…")
+        } else {
+            self.attachment_error
+        }
     }
 
     pub(super) fn attachments_row(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
@@ -430,8 +447,7 @@ impl Composer {
                                     .justify_center()
                                     .child(icon("close", 12., t.text_tertiary))
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.attachments.remove(i);
-                                        cx.notify();
+                                        this.remove_attachment(i, cx)
                                     })),
                             )
                             .into_any_element()
@@ -919,5 +935,30 @@ mod tests {
                 .iter()
                 .any(|path| path.ends_with("Pasted text.txt"))
         );
+    }
+
+    #[test]
+    fn upload_states_and_chip_remove() {
+        let mut cx = gpui::HeadlessAppContext::new(textsys::text_system());
+        let composer = cx.new(|cx| Composer::new("Work with Codex", true, cx));
+        composer.update(&mut cx, |composer, cx| {
+            composer.save_paste(Content::Text("x".repeat(6000)), cx);
+            assert_eq!(composer.upload_status(), Some("Files uploading…"));
+        });
+        cx.run_until_parked();
+        composer.update(&mut cx, |composer, cx| {
+            // No app-server: the save fails.
+            assert_eq!(composer.upload_status(), Some("Unable to upload file"));
+            composer
+                .attachments
+                .push(Attachment::file("/work/a.rs".into()));
+            composer
+                .attachments
+                .push(Attachment::file("/work/b.rs".into()));
+            composer.remove_attachment(0, cx);
+            composer.remove_attachment(5, cx);
+            assert_eq!(composer.attachments.len(), 1);
+            assert_eq!(composer.attachments[0].path, Path::new("/work/b.rs"));
+        });
     }
 }

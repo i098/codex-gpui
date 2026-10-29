@@ -2863,7 +2863,7 @@ impl Render for Composer {
                             && (self.hotkey_controls.is_none() || !self.attachments.is_empty()),
                         |d| d.child(self.attachments_row(&t, cx)),
                     )
-                    .when_some(self.attachment_error, |d, error| {
+                    .when_some(self.upload_status(), |d, error| {
                         d.child(label(error, t.text))
                     })
                     .child(

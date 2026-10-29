@@ -172,6 +172,8 @@ pub const RAIL_DESTINATIONS: &[RailDestination] = &[
 
 pub struct Shell {
     pub sidebar_open: bool,
+    /// Below the sidebar breakpoint the panel floats over the main surface instead of docking.
+    pub overlay: bool,
     /// The toggle's spring: its start and the progress it left from
     /// ([`Shell::sidebar_progress`]). `None` when set without motion.
     sidebar_motion: Option<(Instant, f32)>,
@@ -294,6 +296,7 @@ impl Shell {
     pub fn new(sidebar: AnyView, main: AnyView) -> Self {
         Self {
             sidebar_open: true,
+            overlay: false,
             sidebar_motion: None,
             sidebar_width: Theme::SIDEBAR_WIDTH,
             sidebar_drag_offset: None,
@@ -342,7 +345,7 @@ impl Shell {
     }
 
     pub fn main_width(&self, window: &Window, cx: &App) -> Pixels {
-        let progress = self.sidebar_progress(cx.background_executor().now());
+        let progress = self.layout_progress(cx.background_executor().now());
         let left = RAIL_WIDTH + (self.sidebar_width - RAIL_WIDTH) * progress;
         let border = if progress > 0.1 {
             MAIN_HAIRLINE
@@ -359,6 +362,15 @@ impl Shell {
         self.sidebar_open = !self.sidebar_open;
         self.sidebar_motion = (!motion::reduced(cx)).then_some((now, from));
         cx.notify();
+    }
+
+    /// How far the sidebar pushes the main surface: an overlay pushes nothing.
+    fn layout_progress(&self, now: Instant) -> f32 {
+        if self.overlay {
+            0.
+        } else {
+            self.sidebar_progress(now)
+        }
     }
 
     /// How far the sidebar is open at `now`, 0 to 1: the toggle's `MO-01` spring
@@ -1697,14 +1709,15 @@ impl Render for Shell {
         let progress = self.sidebar_progress(now);
         // The original keeps the page-sidebar shape (`data-app-shell-page-sidebar`) above 0.1
         // of progress; its hairline fades out over 0.2 to 0.05 while closing.
-        let open = progress > 0.1;
-        let main_left = RAIL_WIDTH + (self.sidebar_width - RAIL_WIDTH) * progress;
+        let docked = self.layout_progress(now);
+        let open = docked > 0.1;
+        let main_left = RAIL_WIDTH + (self.sidebar_width - RAIL_WIDTH) * docked;
         let scale = window.scale_factor();
         let hairline_width = px((f32::from(MAIN_HAIRLINE) * scale).floor().max(1.) / scale);
-        let hairline_alpha = if self.sidebar_open {
+        let hairline_alpha = if self.sidebar_open && !self.overlay {
             1.
         } else {
-            ((progress - 0.05) / 0.15).clamp(0., 1.)
+            ((docked - 0.05) / 0.15).clamp(0., 1.)
         };
         let composited = self.main_composited;
         let main_layer = composited && self.main_layer;
@@ -1947,6 +1960,27 @@ impl Render for Shell {
         )
         .absolute()
         .size_full();
+        let sidebar = (progress > 0.).then(|| {
+            let panel = div()
+                .absolute()
+                .left_0()
+                .top(Theme::TITLEBAR_HEIGHT)
+                .bottom(PAGE_INSET)
+                .w(self.sidebar_width)
+                .snap_origin()
+                .child(self.sidebar_panel(&t, progress));
+            // An overlay floats over the main surface, so it casts a shadow.
+            if self.overlay {
+                panel.shadow_lg()
+            } else {
+                panel
+            }
+        });
+        let (sidebar_below, sidebar_above) = if self.overlay {
+            (None, sidebar)
+        } else {
+            (sidebar, None)
+        };
         // The rail and titlebar do not overlap the panels, so they paint after the frame.
         div()
             .size_full()
@@ -1958,20 +1992,10 @@ impl Render for Shell {
             .child(page)
             // `#app-shell-sidebar`, around the rail too, is `[contain:layout_paint]`: its
             // content drops a fractional (zoomed) top.
-            .when(progress > 0., |d| {
-                d.child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .top(Theme::TITLEBAR_HEIGHT)
-                        .bottom(PAGE_INSET)
-                        .w(self.sidebar_width)
-                        .snap_origin()
-                        .child(self.sidebar_panel(&t, progress)),
-                )
-            })
+            .children(sidebar_below)
             .child(self.main_panel(main_left, open, &main_focus, window, &t, hairline_width, cx))
             .when(composited || fills > 1 || viz_any, |d| d.child(corners))
+            .children(sidebar_above)
             .when(self.sidebar_open, |d| {
                 d.child(
                     div()
