@@ -86,6 +86,17 @@ fn capture_cell() -> Result<()> {
             ensure!(mobile_step(&fx) == SetupStep::AllowHost);
             "mobile-continuation"
         }
+        ("diff", "rest") => {
+            fx.click(fx.at("home", "Add a subtract")?)?;
+            fx.wait_thread(SUBTRACT)?;
+            fx.keys("alt-cmd-b")?;
+            ensure!(fx.read(|root, _| root.side_panel()) == Some(SidePanel::Changes));
+            // The original's header row is collapsed; the file header sits at the panel's top.
+            let panel_left =
+                width as f32 - 4. - 664.17f32.min((width as f32 - 344.5 - 320.).max(320.));
+            fx.click((panel_left + 100., 111.))?;
+            "diff"
+        }
         ("automations", "empty") => {
             let host = RecordedScheduled {
                 replay: app::host::ReplayHost::from_recording(include_str!(
