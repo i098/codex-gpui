@@ -19,9 +19,9 @@ fn titles(fx: &Fx) -> Vec<&'static str> {
 }
 
 fn capture(fx: &mut Fx, name: &str) -> Result<()> {
-    let image = fx.shot()?;
     if let Some(directory) = std::env::var_os("CGX_SHORTCUT_PROOF") {
         std::fs::create_dir_all(&directory)?;
+        let image = fx.shot()?;
         image.save(std::path::PathBuf::from(directory).join(format!("{name}.png")))?;
     }
     Ok(())
