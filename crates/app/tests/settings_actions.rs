@@ -1345,6 +1345,7 @@ fn quit_from_a_clean_window_protects_another_windows_draft() -> Result<()> {
 struct ChannelHost {
     structure: &'static str,
     fail_patch: std::sync::atomic::AtomicBool,
+    account_checks: std::sync::atomic::AtomicUsize,
     patches: std::sync::Mutex<Vec<Value>>,
 }
 
@@ -1354,9 +1355,13 @@ impl app::host::Host for ChannelHost {
             anyhow::bail!("unexpected request");
         };
         let body = match (http["method"].as_str(), http["url"].as_str()) {
-            (Some("GET"), Some("/accounts/check/v4-2023-04-27")) => json!({
-                "accounts": { "acct": { "account": { "structure": self.structure } } }
-            }),
+            (Some("GET"), Some("/accounts/check/v4-2023-04-27")) => {
+                self.account_checks
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                json!({
+                    "accounts": { "acct": { "account": { "structure": self.structure } } }
+                })
+            }
             (Some("GET"), Some("/notifications/settings")) => json!({ "settings": [{
                 "category": "tasks", "name": "Tasks", "description": "Task updates",
                 "options": [
@@ -1408,18 +1413,22 @@ fn channel_enabled(fx: &Fx, channel: &str) -> Option<bool> {
 }
 
 fn notification_fixture(structure: &'static str) -> Result<(Fx, Arc<ChannelHost>)> {
-    use ui::screens::settings::notifications::{Action, dispatch};
     let mut fx = Fx::captured("dark", (1280., 832.), script(None, |_| {})?)?;
     let host = Arc::new(ChannelHost {
         structure,
         fail_patch: false.into(),
+        account_checks: 0.into(),
         patches: Default::default(),
     });
     let root = fx.root.clone();
     let shared: Arc<dyn app::host::Host> = host.clone();
     fx.cx
         .update(|cx| root.update(cx, |root, cx| root.set_host(shared, cx)));
-    fx.cx.update(|cx| dispatch(Action::RefreshAccount, cx));
+    // Opening the page starts the account check.
+    fx.keys("cmd-,")?;
+    fx.click((200., 118.))?;
+    fx.type_text("Notifications")?;
+    press(&mut fx, "tab enter")?;
     Ok((fx, host))
 }
 
@@ -1434,6 +1443,7 @@ fn chatgpt_channels_load_for_a_personal_account_and_roll_back_a_failed_update() 
             && matches!(state.channels, Load::Ready(_))
             && matches!(state.contacts, Load::Ready(_))
     })?;
+    evidence(&mut fx, "notifications-chatgpt")?;
     let set = |enabled| Action::SetChannel {
         category: "tasks".into(),
         channel: "email".into(),
@@ -1470,7 +1480,12 @@ fn a_workspace_account_hides_the_chatgpt_notification_group() -> Result<()> {
     let (mut fx, host) = notification_fixture("workspace")?;
     fx.wait("account gate", |fx| {
         let state = notification_state(fx);
-        state.account == Account::Hidden && !state.fetching
+        state.account == Account::Hidden
+            && !state.fetching
+            && host
+                .account_checks
+                .load(std::sync::atomic::Ordering::SeqCst)
+                > 0
     })?;
     assert!(matches!(
         notification_state(&fx).channels,
