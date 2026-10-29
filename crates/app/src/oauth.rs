@@ -59,6 +59,9 @@ impl Connections {
 }
 
 impl Root {
+    pub(crate) fn owns_oauth_state(&self, state: &str) -> bool {
+        self.oauth.pending.contains_key(state)
+    }
     pub(crate) fn invalidate_oauth(&mut self, cx: &mut Context<Self>) {
         self.oauth.latest.clear();
         self.oauth.leave_page();
