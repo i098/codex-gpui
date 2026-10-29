@@ -111,8 +111,8 @@ use ui::workspace::WorkspaceLayout;
 use ui::{
     Copy, Cut, GoBack, GoForward, LogOut, NewChat, OpenBackgroundTerminal, OpenChangesPanel,
     OpenCommandMenu, OpenMobileSetup, OpenScheduled, OpenSettings, Paste, Redo, SelectAll,
-    SetTheme, Shell, ShowKeyboardShortcuts, ToggleActivity, ToggleChangesPanel, ToggleSidebar,
-    Undo,
+    SetTheme, Shell, ShowKeyboardShortcuts, StartVoiceChat, ToggleActivity, ToggleChangesPanel,
+    ToggleSidebar, Undo,
 };
 
 actions!(
@@ -834,6 +834,7 @@ impl Root {
             home: cx.new(|_| HomeMain {
                 composer: home_composer,
                 project: state.project_root.as_deref().map(project_name),
+                beacon: false,
             }),
             thread_composer,
             queue_edit: None,
@@ -1292,6 +1293,11 @@ impl Root {
     /// The `⌘K` command menu, while open.
     pub fn command_menu(&self) -> Option<&Entity<CommandMenu>> {
         self.command_menu.as_ref()
+    }
+
+    /// The Home main panel.
+    pub fn home(&self) -> Entity<HomeMain> {
+        self.home.clone()
     }
 
     /// The composer of the route: Home's, or the one docked under the open thread.
@@ -7479,6 +7485,11 @@ impl Render for Root {
                 if this.sidebar.read(cx).projects_state != ListState::Loading {
                     this.load_projects(cx);
                 }
+            }))
+            // BOUNDARY: realtime voice (`thread/realtime/*` audio) has no native backend yet;
+            // the request is answered with a visible notice (flows.md Home rows 5 and 14).
+            .on_action(cx.listener(|this, _: &StartVoiceChat, _, cx| {
+                this.toast(Toast::info("Realtime voice chat isn't available yet"), cx);
             }))
             .on_action(cx.listener(|this, _: &ShowKeyboardShortcuts, window, cx| {
                 if this

@@ -103,6 +103,10 @@ const FLOWS: &[(&str, Flow)] = &[
     ("parity_automations", || {
         parity_flow("automations", open_recorded_automations)
     }),
+    ("rail_explore_menu", rail_explore_menu),
+    ("voice_button_notice", voice_button_notice),
+    ("home_beacon", home_beacon),
+    ("rail_focus_ring", rail_focus_ring),
     ("profile_menu_settings", profile_menu_settings),
     ("profile_menu_dismiss", profile_menu_dismiss),
     ("profile_menu_mobile", profile_menu_mobile),
@@ -803,6 +807,99 @@ fn rail_scheduled() -> Result<String> {
     ensure!(fx.shell(|s| s.selected_rail == Some("scheduled") && s.can_go_back && !s.new_tab));
     fx.click(BACK)?;
     ensure!(fx.route() == Route::Home, "Back: {:?}", fx.route());
+    Ok(String::new())
+}
+
+/// The rail's Explore `…` item.
+const RAIL_EXPLORE: (f32, f32) = (26., 246.);
+
+fn rail_explore_menu() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.capture_evidence("CGX_BEACON_EVIDENCE", "before-rail")?;
+    fx.click(RAIL_EXPLORE)?;
+    ensure!(
+        fx.shell(|s| s.explore_menu),
+        "Explore did not open its menu"
+    );
+    fx.capture_evidence("CGX_BEACON_EVIDENCE", "after-explore-menu")?;
+    fx.click(RAIL_EXPLORE)?;
+    ensure!(fx.shell(|s| !s.explore_menu), "a second click left it open");
+    fx.click(RAIL_EXPLORE)?;
+    fx.click((800., 400.))?;
+    ensure!(
+        fx.shell(|s| !s.explore_menu),
+        "a click outside left it open"
+    );
+    ensure!(fx.route() == Route::Home);
+    Ok(String::new())
+}
+
+/// With an empty draft the send button is `Start new voice chat`: it starts no turn and
+/// answers with the BOUNDARY notice (no realtime backend).
+fn voice_button_notice() -> Result<String> {
+    let mut fx = Fx::new()?;
+    let at = fx.at("home", "Start new voice chat")?;
+    fx.click(at)?;
+    ensure!(fx.route() == Route::Home, "route {:?}", fx.route());
+    ensure!(
+        fx.read(|root, cx| root.toasts(cx).iter().any(|t| t.contains("voice chat"))),
+        "no voice notice"
+    );
+    Ok(String::new())
+}
+
+/// Tab reaches every rail item and the avatar, each drawing a ring around its 36 px button.
+fn rail_focus_ring() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.hover((640., 22.))?;
+    let before = fx.shot()?;
+    let items: Vec<_> = [
+        RAIL_HOME,
+        RAIL_SPACE,
+        RAIL_SCHEDULED,
+        (26., 202.),
+        RAIL_EXPLORE,
+    ]
+    .into_iter()
+    .collect();
+    let mut seen = vec![false; items.len()];
+    for _ in 0..60 {
+        fx.keys("tab")?;
+        let now = fx.shot()?;
+        for (i, (x, y)) in items.iter().enumerate() {
+            // The 2 px ring lies outside the 36 px button: sample its 4 px band.
+            let band = [x - 22., y - 22., 44., 4.];
+            seen[i] |= changed(&before, &now, band) >= 20;
+        }
+    }
+    ensure!(
+        seen.iter().all(|s| *s),
+        "rail items without a ring: {seen:?}"
+    );
+    Ok(String::new())
+}
+
+/// Beacon `Start Voice` raises the voice request; `×` hides the banner.
+fn home_beacon() -> Result<String> {
+    let mut fx = Fx::new()?;
+    fx.capture_evidence("CGX_BEACON_EVIDENCE", "before-home")?;
+    let home = fx.read(|root, _| root.home());
+    fx.cx
+        .update(|cx| home.update(cx, |home, cx| home.set_beacon(true, cx)));
+    fx.cx.run_until_parked();
+    fx.capture_evidence("CGX_BEACON_EVIDENCE", "after-beacon")?;
+    let (x, y) = fx.at("home", "Choose project")?;
+    // The buttons sit 550 and 622 px right of `Choose project`, one slot above it.
+    fx.click((x + 550., y - 61.))?;
+    ensure!(
+        fx.read(|root, cx| !root.toasts(cx).is_empty()),
+        "Start Voice raised no request"
+    );
+    fx.click((x + 622., y - 61.))?;
+    ensure!(
+        !fx.cx.update(|cx| home.read(cx).beacon),
+        "× left the beacon open"
+    );
     Ok(String::new())
 }
 
