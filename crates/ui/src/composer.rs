@@ -112,6 +112,7 @@ actions!(
 
 mod attach;
 pub(crate) use attach::codex_home;
+mod chat_shell;
 pub mod computer_use;
 pub mod dictation;
 mod diff_comments;
@@ -471,10 +472,12 @@ impl Permission {
     }
 }
 
-/// What the composer sends: the app turns it into `thread/start` + `turn/start`.
+/// What the composer sends: model input or a confirmed shell command.
 #[derive(Clone, Debug)]
 pub struct Submission {
     pub text: String,
+    /// Set only after the user confirms the shell command.
+    pub shell_command: bool,
     pub attachments: Vec<PathBuf>,
     /// File references added as context, not image uploads.
     pub context_files: Vec<PathBuf>,
@@ -729,6 +732,7 @@ pub struct Composer {
     /// Docked under a thread: `_ComposerLayoutRoot` paints the card and `_ComposerLayoutBody`
     /// (the content) is a `will-change: opacity` layer. On Home the body paints the card.
     docked: bool,
+    shell_commands: bool,
     content: String,
     /// Mention chips in `content`, in order.
     mentions: Vec<mention::Mention>,
@@ -864,6 +868,7 @@ impl Composer {
                 .map(|server| server.0.clone()),
             placeholder: placeholder.into(),
             docked,
+            shell_commands: false,
             content: String::new(),
             mentions: Vec::new(),
             selected_range: 0..0,
@@ -1799,6 +1804,9 @@ impl Composer {
     }
 
     fn send_draft(&mut self, background: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.blocked.is_some() {
+            return;
+        }
         if self.slash.open {
             self.activate_slash(window, cx);
             return;
@@ -1806,7 +1814,7 @@ impl Composer {
         if self.edit_pending || (!self.running && self.current_model().is_none()) {
             return;
         }
-        if self.pending_attachments > 0 {
+        if self.upload_status().is_some() {
             self.show_submit_blocked(window, cx);
             return;
         }
@@ -1816,6 +1824,14 @@ impl Composer {
         {
             return;
         }
+        if self.shell_commands && self.content.starts_with('!') {
+            self.confirm_shell(window, cx);
+            return;
+        }
+        self.finish_send_draft(background, window, cx);
+    }
+
+    fn finish_send_draft(&mut self, background: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_dictation(cx);
         let submission = self.take_submission(background);
         if self.on_cancel_edit.is_some() {
@@ -1868,6 +1884,7 @@ impl Composer {
             }
         }
         Submission {
+            shell_command: self.shell_commands && self.content.starts_with('!'),
             text: if self.mentions.is_empty()
                 && self.on_cancel_edit.is_none()
                 && self.diff_comments.is_empty()
@@ -3090,6 +3107,9 @@ impl Render for Composer {
                         )
                     })),
             )
+            .when_some(self.shell_disabled_reason(), |d, reason| {
+                d.child(text(reason, 12., 16., 400., t.text))
+            })
             .when_some(self.dictation_error.clone(), |d, error| {
                 d.child(text(error, 12., 16., 400., t.text))
             })
@@ -3156,6 +3176,7 @@ mod tests {
             .unwrap();
         for (setting, draft, key, sends) in [
             ("enter", "one", "enter", true),
+            ("enter", "!ordinary prompt", "enter", true),
             ("enter", "one\ntwo", "cmd-enter", true),
             ("cmdIfMultiline", "one", "enter", true),
             ("cmdIfMultiline", "one\ntwo", "enter", false),
@@ -3264,7 +3285,18 @@ mod tests {
         assert!(sent.borrow().is_empty());
         app.update(|cx| {
             window
-                .update(cx, |composer, _, _| composer.pending_attachments = 0)
+                .update(cx, |composer, _, _| {
+                    composer.pending_attachments = 0;
+                    composer.attachment_error = Some("Unable to upload file");
+                })
+                .unwrap();
+        });
+        assert_eq!(press(&mut app, "enter"), (Some(true), false, "hi".into()));
+        assert!(sent.borrow().is_empty());
+        assert_eq!(press(&mut app, "escape"), (None, true, "hi".into()));
+        app.update(|cx| {
+            window
+                .update(cx, |composer, _, _| composer.attachment_error = None)
                 .unwrap();
         });
         assert_eq!(press(&mut app, "enter"), (None, true, String::new()));

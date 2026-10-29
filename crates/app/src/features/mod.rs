@@ -15,6 +15,7 @@ use gpui::{App, Context, Div};
 
 mod command_destinations;
 mod copy_directory;
+pub(crate) mod feedback;
 mod keymap;
 pub(crate) mod shortcuts;
 mod workspace;
