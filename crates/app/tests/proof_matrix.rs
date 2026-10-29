@@ -1,8 +1,8 @@
 mod common;
 
-use anyhow::{Result, ensure};
-use app::{Route, SidePanel};
-use common::{Fx, ROOT, SUBTRACT};
+use anyhow::{Context as _, Result, ensure};
+use app::{Route, SidePanel, host::Host as _};
+use common::{Fx, RAIL_SCHEDULED, ROOT, SUBTRACT};
 use image::RgbaImage;
 use serde_json::Value;
 use std::{env, fmt::Write as _, fs, path::Path};
@@ -23,7 +23,17 @@ fn capture_cell() -> Result<()> {
     let height: u32 = env::var("CGX_PROOF_HEIGHT")?.parse()?;
     let output = env::var("CGX_PROOF_OUT")?;
     let output = Path::new(&output);
-    let mut fx = Fx::with(theme, (width as f32, height as f32), None, |_| {})?;
+    let mut lines = common::script(None, |_| {})?;
+    if surface == "automations" {
+        // Installing the recorded Scheduled host reads the account and MCP catalog again.
+        for method in ["account/read", "mcpServerStatus/list"] {
+            let result = recorded_result(&lines, method)?;
+            lines.extend(common::exchange(method, result));
+        }
+    }
+    let mut fx = Fx::open(theme, (width as f32, height as f32), lines)?;
+    // A host fixture's storage must outlive the capture.
+    let home = tempfile::tempdir()?;
     let screen = match (surface.as_str(), state.as_str()) {
         ("home", "rest") => {
             ensure!(fx.route() == Route::Home);
@@ -51,6 +61,23 @@ fn capture_cell() -> Result<()> {
             fx.cx.run_until_parked();
             ensure!(mobile_step(&fx) == SetupStep::AllowHost);
             "mobile-continuation"
+        }
+        ("automations", "empty") => {
+            let host = RecordedScheduled {
+                replay: app::host::ReplayHost::from_recording(include_str!(
+                    "../../../refs/interactions/host.json"
+                ))?,
+                local: common::ActivityFixtureHost(
+                    app::host::LocalHost::new(home.path())
+                        .with_settings(Some(common::recorded_host_settings()?)),
+                ),
+            };
+            fx.root.update(&mut fx.cx, |root, cx| {
+                root.set_host(std::sync::Arc::new(host), cx)
+            });
+            fx.click(RAIL_SCHEDULED)?;
+            ensure!(fx.route() == Route::Scheduled);
+            "automations"
         }
         _ => anyhow::bail!("no native recipe for {surface}/{state}"),
     };
@@ -114,6 +141,45 @@ fn open_mobile(fx: &mut Fx) -> Result<()> {
 
 fn mobile_step(fx: &Fx) -> SetupStep {
     fx.read(|root, cx| root.mobile_page().unwrap().read(cx).step())
+}
+
+/// The recorded reply to the first `method` request of the replay script.
+fn recorded_result(lines: &[Value], method: &str) -> Result<Value> {
+    let id = lines
+        .iter()
+        .find(|line| line["dir"] == "send" && line["msg"]["method"] == method)
+        .with_context(|| format!("no recorded {method}"))?["msg"]["id"]
+        .clone();
+    lines
+        .iter()
+        .find(|line| {
+            line["dir"] == "recv" && line["msg"]["id"] == id && line["msg"]["result"].is_object()
+        })
+        .map(|line| line["msg"]["result"].clone())
+        .with_context(|| format!("no recorded {method} reply"))
+}
+
+/// The original's recorded Scheduled reads (no tasks, suggestion cards), with the fixture host
+/// answering the unrecorded startup reads such as navigation destinations.
+struct RecordedScheduled {
+    replay: app::host::ReplayHost,
+    local: common::ActivityFixtureHost,
+}
+
+impl app::host::Host for RecordedScheduled {
+    fn fetch(&self, request: &app::host::Request) -> Result<Value> {
+        self.replay
+            .fetch(request)
+            .or_else(|_| self.local.fetch(request))
+    }
+
+    fn identity(&self) -> Option<app::host::Identity> {
+        self.replay.identity()
+    }
+
+    fn projects(&self) -> Result<Vec<ui::screens::sidebar::Project>> {
+        self.local.projects()
+    }
 }
 
 fn open_terminal(fx: &mut Fx) -> Result<()> {
