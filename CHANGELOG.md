@@ -37,6 +37,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Restore `View` > `Toggle Bottom Panel` and `View` > `Open Terminal` in the macOS menu bar, in the original order.
 
 ### Fixed
+- Correct the Home `+` Add files and more row in `docs/flows.md`: the button opens the original Add menu; four of its actions are not wired.
 - Match Home at narrow windows: icon-only utility chips, the full-width composer, no titlebar New chat, and the 40 px light composer shadow below 640 px.
 - Match the original Mobile setup allow-host step: the `Set up Remote` header, balanced heading and description lines (`text-wrap: pretty`), and the Allow button width.
 - Start a guided native conversation from a scheduled-task suggestion, keep the Scheduled sidebar, and report start failures without creating a task.
