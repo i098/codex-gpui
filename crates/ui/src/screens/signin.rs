@@ -477,6 +477,7 @@ enum Style {
 }
 
 pub struct Login {
+    bridge: Option<std::sync::Arc<bridge::Bridge>>,
     stage: Stage,
     policy: Policy,
     policy_generation: u64,
@@ -509,6 +510,7 @@ impl Login {
         });
         cx.observe(&api_key, |_, _, cx| cx.notify()).detach();
         let mut this = Self {
+            bridge: cx.try_global::<AppServer>().map(|server| server.0.clone()),
             stage: Stage::Welcome,
             policy: Policy::Loading,
             policy_generation: 0,
@@ -572,11 +574,10 @@ impl Login {
         self.policy = Policy::Loading;
         self.policy_generation += 1;
         let generation = self.policy_generation;
-        let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
+        let Some(bridge) = self.bridge.clone() else {
             self.policy = Policy::Error;
             return;
         };
-        let bridge = bridge.clone();
         cx.spawn(async move |this, cx| {
             let supports_access_keys = bridge
                 .initialize("codex-gpui", env!("CARGO_PKG_VERSION"))
@@ -652,10 +653,9 @@ impl Login {
         if self.pending || !self.policy.permits_chatgpt() {
             return;
         }
-        let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
+        let Some(bridge) = self.bridge.clone() else {
             return;
         };
-        let bridge = bridge.clone();
         self.pending = true;
         self.login_url = None;
         self.restart_blocked = true;
@@ -667,7 +667,7 @@ impl Login {
             this.update(cx, |this, cx| {
                 if this.attempt != attempt {
                     if let Ok(value) = result && let Some(id) = value["loginId"].as_str() {
-                        cancel(id.to_owned(), cx);
+                        cancel(bridge.clone(), id.to_owned(), cx);
                     }
                     return;
                 }
@@ -696,10 +696,9 @@ impl Login {
             return;
         }
         let params = json!({"type": "apiKey", "apiKey": key});
-        let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
+        let Some(bridge) = self.bridge.clone() else {
             return;
         };
-        let bridge = bridge.clone();
         self.pending = true;
         self.error = None;
         self.restart_blocked = true;
@@ -776,8 +775,10 @@ impl Login {
                 self.attempt += 1;
                 self.pending = false;
                 self.login_url = None;
-                if let Some(id) = self.login_id.take() {
-                    cancel(id, cx);
+                if let Some(id) = self.login_id.take()
+                    && let Some(bridge) = self.bridge.clone()
+                {
+                    cancel(bridge, id, cx);
                 }
             }
             Command::CopyLink => {
@@ -894,11 +895,7 @@ fn underline(text: SharedString) -> impl IntoElement {
     .inset_0()
 }
 
-fn cancel(id: String, cx: &App) {
-    let Some(AppServer(bridge)) = cx.try_global::<AppServer>() else {
-        return;
-    };
-    let bridge = bridge.clone();
+fn cancel(bridge: std::sync::Arc<bridge::Bridge>, id: String, cx: &App) {
     cx.background_executor()
         .spawn(async move {
             if let Err(error) = bridge
