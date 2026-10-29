@@ -778,6 +778,7 @@ impl Render for EmptySidebar {
                 true,
                 ModeSwitch {
                     current: "Codex",
+                    wordmark: ("codex-wordmark", 53.225983),
                     on_click: Box::new(|_, _, _| {}),
                     menu: None,
                 },
@@ -844,6 +845,8 @@ pub type ModeSwitchClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 /// The `Codex ⌄` trigger's current mode, click handler and open menu.
 pub struct ModeSwitch {
     pub current: &'static str,
+    /// The `h-[1em] w-auto` svg's name and viewBox width (its height is 18).
+    pub wordmark: (&'static str, f32),
     pub on_click: ModeSwitchClick,
     pub menu: Option<AnyElement>,
 }
@@ -943,10 +946,15 @@ pub fn home_sidebar_header(
                         .gap(px(6.))
                         .rounded(RADIUS_BUTTON_XL)
                         .child(
-                            icon::icon_sized("codex-wordmark", 53.22, 18., t.text_default_nav)
-                                // `h-[1em] w-auto` on the svg's viewBox (53.225983 x 18).
-                                .auto_width(53.225983 / 18.)
-                                .own_layer(Some(mode_switch)),
+                            icon::icon_sized(
+                                mode.wordmark.0,
+                                mode.wordmark.1,
+                                18.,
+                                t.text_default_nav,
+                            )
+                            // `h-[1em] w-auto` on the svg's viewBox (width x 18).
+                            .auto_width(mode.wordmark.1 / 18.)
+                            .own_layer(Some(mode_switch)),
                         )
                         .child(
                             icon::icon("chevron-down-medium", 14., t.text_tertiary)

@@ -47,7 +47,10 @@ impl HomeSidebar {
         if mode >= MODES.len() {
             return;
         }
-        self.mode = mode;
+        if self.mode != mode {
+            self.mode = mode;
+            cx.emit(super::ModeChanged(mode));
+        }
         self.close_mode_menu(window, cx);
     }
 
@@ -77,6 +80,12 @@ impl HomeSidebar {
     pub(super) fn mode_switch(&self, window: &Window, cx: &mut Context<Self>) -> ModeSwitch {
         ModeSwitch {
             current: MODES[self.mode].0,
+            // The original's `Dns`: the Codex wordmark in Codex, else the ChatGPT one.
+            wordmark: if self.chatgpt_surface() {
+                ("chatgpt-wordmark", 77.129955)
+            } else {
+                ("codex-wordmark", 53.225983)
+            },
             on_click: Box::new(cx.listener(|s, _, window, cx| s.open_mode_menu(window, cx))),
             menu: self
                 .mode_menu

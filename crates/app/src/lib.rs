@@ -5,6 +5,7 @@
 
 mod activity_access;
 mod archived_chats;
+mod chatgpt_chats;
 mod cloud_task;
 pub use cloud_task::parse_task_response;
 mod cloud;
@@ -95,9 +96,9 @@ use ui::screens::settings::personalization::WritingPreference;
 use ui::screens::settings::{self, AppServer, SettingChanged, workspace};
 use ui::screens::sidebar::{
     ActivityOpened, ArchiveActivity, ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent,
-    HomeSidebar, ListState, LoadMore, OpenThread, PINNED_SECTION_ID, PinThread, RenameThread,
-    RetryActivity, RetryProjects, RetryThreads, SEARCH_LIMIT, SearchHit, SearchRequest,
-    SelectProject, title as thread_title,
+    HomeSidebar, ListState, LoadMore, ModeChanged, OpenThread, PINNED_SECTION_ID, PinThread,
+    RenameThread, RetryActivity, RetryProjects, RetryThreads, SEARCH_LIMIT, SearchHit,
+    SearchRequest, SelectProject, title as thread_title,
 };
 use ui::screens::signin::Login;
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
@@ -729,6 +730,12 @@ impl Root {
         cx.subscribe_in(&sidebar, window, |this, _, _: &ActivityOpened, _, cx| {
             this.load_activity_threads(cx)
         })
+        .detach();
+        cx.subscribe_in(
+            &sidebar,
+            window,
+            |this, _, mode: &ModeChanged, window, cx| this.mode_changed(mode.0, window, cx),
+        )
         .detach();
         let main = cx.new(|_| ui::EmptyMain).into();
         let wide = window.viewport_size().width * window.ui_scale() >= SIDEBAR_BREAKPOINT;
@@ -1488,6 +1495,41 @@ impl Root {
     fn switch_mode(&mut self, mode: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar
             .update(cx, |s, cx| s.set_mode(mode, window, cx));
+    }
+
+    /// A mode's surface: its Home headline, and the ChatGPT rows in Recents for ChatGPT and Work.
+    fn mode_changed(&mut self, mode: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.home.update(cx, |home, cx| home.set_mode(mode, cx));
+        if self.sidebar.read(cx).chatgpt_surface() {
+            self.load_chatgpt_chats(window, cx);
+        }
+        if self.state.route != Route::Home {
+            self.navigate(Route::Home, window, cx);
+        }
+    }
+
+    /// The first page of the account's ChatGPT conversations, like the original's
+    /// `chatgpt-conversations` query; a failure is logged and keeps the shown rows.
+    fn load_chatgpt_chats(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let host = self.host.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let chats = cx
+                .background_spawn(async move {
+                    let identity = host
+                        .identity()
+                        .context("No authenticated workspace is available")?;
+                    host.fetch(&chatgpt_chats::request(&identity))
+                        .and_then(|response| host::json_body(&response))
+                        .and_then(chatgpt_chats::chats)
+                })
+                .await
+                .context("ChatGPT conversations")?;
+            this.update(cx, |this, cx| {
+                this.sidebar
+                    .update(cx, |s, cx| s.set_chatgpt_chats(chats, cx))
+            })
+        });
+        log_err(task, cx);
     }
 
     fn toggle_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
