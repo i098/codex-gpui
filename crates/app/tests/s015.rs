@@ -95,7 +95,7 @@ fn command_row_expands_the_shell_card() -> Result<()> {
             r.thread()
                 .unwrap()
                 .read(cx)
-                .activity_labels("01a13de9-70bc-7de1-8ae6-bf46ce20cb99")
+                .activity_labels("01a13de9-70bc-7de1-8ae6-bf46ce20cb99", cx)
                 .unwrap()
         })
     };

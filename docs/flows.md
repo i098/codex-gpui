@@ -42,9 +42,8 @@ This table preserves the earlier audit totals; section 14.7 records the later Se
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 10 | 0 | 0 |
-| 15.3 Mobile setup | 10 | 7 | 2 | 1 |
-| 15.3 Mobile setup | 10 | 3 | 2 | 5 |
-| **All** | **192** | **96** | **35** | **61** |
+| 15.3 Mobile setup | 10 | 10 | 0 | 0 |
+| **All** | **192** | **99** | **33** | **60** |
 
 Before round 5 (F2Flows): 57 PASS, 33 FAIL, 102 NOT WIRED. Before round 4 (F1Flows): 42 PASS, 25 FAIL, 125 NOT WIRED.
 
@@ -416,6 +415,7 @@ Comment owners call `finish_dictation` and wait for `Completion::Succeeded` befo
 | 4 | Turn render failure | error | `This turn couldn't render`. | A failed turn leaves other turns visible. Try again rebuilds that turn from current data. Its tooltip and accessibility label retain the source error. The squircle card and Retry fill use the original viewport layer; Retry keeps its hover behavior and border-box size. | PASS (`thread_recovery`: Linux render failure and retry without a graphics adapter; original-context component: zero differences over 233208 pixels, hover and restoration checked without a Mac panic) |
 | 5 | Streaming agent message | loading | Text grows by deltas; new segments fade over 700 ms; `Working` shimmer. | New glyphs use the recorded adaptive fade. Later deltas do not restart older glyphs. Reduced motion shows the end state immediately. Shimmer belongs to S5. | PASS (`submit_enter_starts_thread`, `stream_fade`) |
 | 6 | Reasoning item | click | Toggles `Thought for {elapsed}`. | A reasoning item seen starting and completing in the open thread shows a `Thought for {elapsed}` row; a click shows its summary under it. The protocol carries no item duration, so a loaded history item has no row, as in the original recording (`refs/interactions/s014.json`). | PASS (`live_reasoning_gets_a_toggleable_thought_row`; `s014` keeps history reasoning hidden) |
+| 6b | Streaming reasoning, context status and compaction | loading | `Thinking` with the streamed summary; `Compacting context`, `Context compacted`, `Context automatically compacted`, `Compaction interrupted`; the context window donut and its tooltip. | `item/reasoning/summaryPartAdded`, `summaryTextDelta` and `textDelta` grow the live item under `Thinking` (heading stripped) until `Thought for {elapsed}`. Configuration `Hide thinking` (`hide_agent_reasoning`) hides reasoning rows; `Show raw thinking` (`show_raw_agent_reasoning`) shows raw content first. `contextCompaction` items show progress, then the completed or interrupted label; `/compact` marks the next one manual. `thread/tokenUsage/updated` (`last.totalTokens` of `modelContextWindow`) feeds the composer donut while `Show context window usage` is on. | PASS (`context_status_reasoning_stream_and_compaction`; live 0.164 app-server proof in the PR) |
 | 7 | Command card | click | Expands output; copy buttons. | The `Ran` row opens the `Shell` card with output and exit footer. The card header has `Copy command` and `Copy output` buttons that write the clipboard. | PASS (card expansion: `grouped_activity_matches_the_original`; copy buttons: `crates/ui/src/thread/items.rs` `copy_control`, no recorded pixel reference) |
 | 8 | File change card | click | `View changes` opens Changes; `Undo` / `Reapply`. | `View changes` opens the Changes side panel; `Undo` sends `thread/revert` (`beforeTurnId`, after `thread/resume` if needed) and shows the reverted thread. No `Reapply`. | FAIL (`Reapply`: the original re-applies through the host git worker; `Undo` checked by `undo_reverts_turn`, `View changes` by `view_changes_opens_panel`) |
 | 9 | Collapsed turn `Worked for {time}` | click | Expands hidden items. | A click shows the turn's work above the answer (agent messages, `Ran commands`) and turns the chevron down; a second click folds it. | PASS (`worked_for_expands`) |
@@ -1209,8 +1209,8 @@ They do not replace original-versus-native appearance approval or the strict pix
 | 6 | Pairing unavailable | error | `Pairing code unavailable`. | A failed `pairing/start` keeps the waiting step and shows `Pairing code unavailable: <error>` with `Refresh pairing code`. | PASS (`a_failed_pairing_start_keeps_the_waiting_step_with_its_error` in `mobile_pairing`) |
 | 7 | Connected step | click | Toggles, `Done`, `Manage connections`. | A claimed code with a new client opens `You’re connected` with the toggles, `Done` (back to Home) and `Manage connections` (Settings > Connections). | PASS (same flow as row 3; toggle clicks and `Manage connections` are not driven) |
 | 8 | Button hover | hover | Ghost/solid hover. | `Get started` hover fill (55250 px repainted). | PASS (`mobile_button_hover`) |
-| 9 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
-| 10 | Resize | resize | Content stays centered. | — | FAIL (no flow checks the 3 widths on this route) |
+| 9 | Focus ring | focus ring | 2 px ring (`focus-visible:ring-2 ring-offset-0`). | Every step button (`Get started`, `Later`, `Allow`, `Refresh pairing code`, `Continue on chatgpt.com`, `Done`, `Manage connections`) is a tab stop and draws the shared 2 px `#3a83f7` ring only under keyboard focus; a pointer press clears it. The connected step's switches have no ring yet. | PASS (`mobile_focus_ring`; no original capture of the focused button) |
+| 10 | Resize | resize | Content stays centered; the artwork shows only at 1024 px and wider (`hidden lg:block`). | At 1280 px the column centers in its half beside the artwork; at 767 and 600 px the artwork is hidden and the column centers in the whole main surface. | PASS (`mobile_resize_three_widths`) |
 
 ## Changes needed outside crates/app
 
@@ -1682,4 +1682,3 @@ The recap prompt asks the model not to use tools; the existing permissions remai
 Live protocol evidence uses Codex CLI `0.164.0-alpha.11.1`.
 The synthetic conversation retained both turns after the recap.
 The real server accepted `feedback/save` and `feedback/upload` with logs excluded.
-
