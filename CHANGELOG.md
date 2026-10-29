@@ -11,6 +11,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Prove that the rail `Code Review` item opens the Code Review page with a native flow test.
 - Keep refused follow-up messages in the queue tray with Retry, preserving their input, chat, draft and local row actions.
 - Run explicit `!` shell commands in Full access chats after a native warning confirmation; keep sandboxed drafts disabled and separate from the terminal panel.
+- Add plan mode: `/plan-mode`, the `@` menu row and the footer `Plan` chip turn it on and off, turns send the `plan` collaboration mode, a resumed chat keeps it, and plan text and step progress show in the chat. Restore an edited queued message's place across every queue page.
 - Show `Unable to send message` with the reason and `OK` when a composer submit waits for file uploads.
 - Draw the 2 px keyboard focus ring on the diff card's `Undo` and `View changes` buttons in a chat.
 - Add the Configuration settings page: the `config.toml` approval policy, sandbox, network access, web search, output detail, and reasoning summary controls, the available reasoning efforts, the Codex dependencies switch, and Open config.toml.
