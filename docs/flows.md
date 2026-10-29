@@ -248,9 +248,9 @@ This proves headless native behavior, not live installed-window acceptance.
 | 1 | Home | click | Navigates to `/`; reselect resets Home. | `NewChat`: route Home, draft cleared, composer focused. | PASS (`rail_home_from_thread`, `rail_home_reselect_resets`) |
 | 2 | Space | click | Navigates to `/space`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
 | 3 | Scheduled | click | Navigates to `/scheduled` (Automations); unread dot. | `OpenScheduled`: `Route::Scheduled`, rail Scheduled selected. Settled local unread runs set the dot; opening the run chat clears its read state. | PASS (`rail_scheduled`, `parity_automations`; native unread proof: `automation_run_now::persisted_run_unread_survives_navigation_and_clears_on_open`) |
-| 4 | Plugins | click | Navigates to `/plugins`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
+| 4 | Plugins | click | Navigates to `/plugins`. | `OpenPlugins`: `Route::Plugins("/plugins")`, rail Plugins selected, the directory from `plugin/list`; a plugin opens `/plugins/:id` with `plugin/read`; Install and Uninstall send `plugin/install` and `plugin/uninstall` with the original's remote params (`remotePluginId`) and reload the catalog. | PASS (`plugins_rail::rail_plugins_lists_reads_installs_and_uninstalls`; live: the same requests against a signed-in macOS `codex app-server` 0.164.0-alpha.11.1) |
 | 5 | Explore `…` | click | Opens the Explore menu; blue dot. | Dot shows. A click opens a menu right of the rail item with the destinations the port has (`Security` when available, else `No more destinations`); a second click or a click outside closes it. | PASS (`rail_explore_menu`); `Customize sidebar` and MCP destinations: BOUNDARY (no sidebar-customization store; Explore row 5) |
-| 6 | Code Review | click | Navigates to `/pull-requests`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
+| 6 | Code Review | click | Navigates to `/pull-requests`. | `OpenPullRequests`: `Route::PullRequests(None)` with the Code Review page; no rail item is selected, as in `refs/pull-requests/open-all`; Back returns Home. The page reads GitHub through the original's `vscode://codex/gh-cli-status`, `gh-current-user`, `gh-pr-search`, `gh-pr-detail`, `gh-pr-patch` and `gh-pr-media` handlers, which run `gh` through app-server `process/spawn`. | PASS (`pull_requests::rail_code_review_opens_the_page_and_back_returns_home`; page states: the other `crates/app/tests/pull_requests.rs` tests) |
 | 7 | Sites | click | Navigates to `/sites`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
 | 8 | Profile avatar | click | Opens the profile menu. | Menu above the avatar: `Settings`, `Log out`, `Help` ▸ `Set up mobile`; a click outside or on the avatar closes it. | PASS (`profile_menu_settings`, `profile_menu_dismiss`, `profile_menu_mobile`; logout: `account_logout`) |
 | 9 | Rail item hover | hover | Tooltip on the right side with label and shortcut. | Hover fill shows (4716 px repainted); a tooltip with the item's label opens 200 ms after the pointer enters (at once when another was open), 2 px right of the item; `Explore` and the avatar have none; it closes on leave, press or Escape. | PASS (`rail_hover_fill`; tooltip: `crates/app/tests/f1a.rs` against `refs/interactions/f1a.json`) |
@@ -1638,6 +1638,13 @@ A failed undo retains its entry for another attempt.
 Clear all unreads uses a confirmation dialog and saves the optional confirmation preference.
 
 The interactive terminal keeps its real PTY process when the bottom panel hides.
+Chat drafts that begin with `!` run through `thread/shellCommand` after a native warning confirmation.
+This method runs outside the sandbox, so only Full access chats enable it.
+Other permission modes show the reason and keep the draft.
+Home, cloud-task, and message-edit composers keep `!` as ordinary text.
+Cancel keeps the draft; an RPC failure restores it.
+Shell output and exit status use the existing command-execution transcript, not the native PTY panel.
+The `chat_shell` flow covers permission denial, cancellation, shell syntax, and RPC failure.
 UI zoom keeps layout, painting, pointer input, and IME bounds in the same coordinate system.
 The zoom banner waits two seconds and remains visible while the pointer is over it.
 Reopening a saved window restores its zoom.
@@ -1647,3 +1654,29 @@ Original-versus-native visual approval remains separate from the Linux functiona
 Native checks cover reset confirmation, number/link menus, and modifier-only capture in `keyboard_shortcuts`.
 The `project_picker` scenario checks folder selection, cancellation, and the directory used by new chats.
 The `shortcut_actions` checks cover attention navigation, undo/redo, unread confirmation, and live terminal retention.
+
+## Feedback, transcript export, and recap (S13)
+
+`/feedback` opens a native form without sending anything.
+`Send feedback` calls `feedback/upload`; `Save ZIP` calls `feedback/save`.
+Both use the connected app-server and the current thread ID, when available.
+Diagnostic logs require explicit selection.
+Saving requires an unused absolute `.zip` path on the app-server host, not the client host.
+A server refusal keeps the form and its input.
+Cancel closes the form during a pending request without canceling the server request.
+Late responses do not close a newer form or move keyboard focus.
+
+`/export` reads the complete thread with `thread/read` and `includeTurns: true`.
+The native save picker selects a local Markdown file.
+The export preserves messages, attachments, activity items, and errors.
+It refuses to overwrite an existing file.
+`/recap` starts a normal `turn/start` on the current thread after any required resume.
+It keeps the existing history, model permissions, and composer draft.
+It refuses to run while another turn is active and does not call compaction.
+The recap prompt asks the model not to use tools; the existing permissions remain in force.
+
+`crates/app/tests/feedback.rs` covers the native actions, consent, server paths, and file safety.
+Live protocol evidence uses Codex CLI `0.164.0-alpha.11.1`.
+The synthetic conversation retained both turns after the recap.
+The real server accepted `feedback/save` and `feedback/upload` with logs excluded.
+

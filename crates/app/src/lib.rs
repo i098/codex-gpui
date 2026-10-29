@@ -463,6 +463,7 @@ pub struct Root {
     command_menu: Option<Entity<CommandMenu>>,
     popout: Option<hotkey::Popout>,
     dialog: Option<Entity<Dialog>>,
+    feedback: Option<Entity<features::feedback::Feedback>>,
     diff_confirmation: Option<Entity<ui::confirmation::Confirmation>>,
     automation_editor: Option<Entity<automations::editor::Editor>>,
     new_project: Option<Entity<ui::screens::new_project::Dialog>>,
@@ -702,6 +703,9 @@ impl Root {
                     ui::composer::SlashCommand::Compact => this.compact(window, cx),
                     ui::composer::SlashCommand::Fork => this.fork_chat(None, None, window, cx),
                     ui::composer::SlashCommand::ForkWorktree => this.fork_worktree(window, cx),
+                    ui::composer::SlashCommand::Feedback => this.open_feedback(window, cx),
+                    ui::composer::SlashCommand::Export => this.export_transcript(window, cx),
+                    ui::composer::SlashCommand::Recap => this.recap(window, cx),
                     ui::composer::SlashCommand::Rename => {
                         if let Route::Thread(id) = this.state.route.clone() {
                             this.open_rename(id, true, window, cx);
@@ -887,6 +891,7 @@ impl Root {
             command_menu: None,
             popout: None,
             dialog: None,
+            feedback: None,
             diff_confirmation: None,
             automation_editor: None,
             new_project: None,
@@ -4141,6 +4146,10 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         self.qa_work_started = true;
+        if s.shell_command {
+            self.send_shell(side, s, window, cx);
+            return;
+        }
         let Some((view, composer)) = self.conversation(side) else {
             return;
         };
@@ -6804,6 +6813,7 @@ Do not modify files, source, git state, permissions, configuration, or workspace
 /// The handlers of a thread composer: the open chat's (`side: None`) or side chat `side`'s.
 /// Both pickers write the user's `config.toml`, like the original's `writeModel`.
 fn wire_thread_composer(composer: &mut Composer, this: WeakEntity<Root>, side: Option<usize>) {
+    composer.enable_shell_commands();
     let (model, send) = (this.clone(), this.clone());
     composer.on_model(move |m, effort, cx| {
         model
@@ -7734,6 +7744,7 @@ impl Render for Root {
             .children(self.shortcut_state.zoom_banner.clone())
             .children(self.automation_editor.clone())
             .children(self.new_project.clone())
+            .children(self.feedback.clone())
             .children(self.diff_confirmation.clone())
             .children(
                 self.archived_settings
