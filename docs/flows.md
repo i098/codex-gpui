@@ -42,6 +42,7 @@ This table preserves the earlier audit totals; section 14.7 records the later Se
 | 14.7 Settings, login and onboarding | 20 | 7 | 8 | 5 |
 | 15.1 Automations | 16 | 2 | 2 | 12 |
 | 15.2 Background terminal | 10 | 10 | 0 | 0 |
+| 15.3 Mobile setup | 10 | 7 | 2 | 1 |
 | 15.3 Mobile setup | 10 | 3 | 2 | 5 |
 | **All** | **192** | **96** | **35** | **61** |
 
@@ -1191,11 +1192,11 @@ They do not replace original-versus-native appearance approval or the strict pix
 |---|---|---|---|---|---|
 | 1 | Profile menu → Help → `Set up mobile` | entry | `/codex-mobile`. | `Route::Mobile`: sidebar closed, no rail item selected. | PASS (`profile_menu_mobile`, `parity_mobile`) |
 | 2 | Initial step | click | `Get started` reads `/wham/remote/control/mfa_requirement`, then on `required` `/accounts/mfa_info`; `Later` (dialog only). | `GetStarted`: loading button; `required` with `mfa_enabled_v2` off opens the MFA step, otherwise the allow-host step; a failed read or a body without the expected field shows `Couldn’t check security requirements. Try again`. | PASS (`mobile_get_started_follows_the_recorded_mfa_status`) |
-| 3 | Allow host step | click | `Allow`: `remoteControl/enable`. | Step view; `Allow` is disabled with `Remote control can’t be turned on from this app yet`. | NOT WIRED (`crates/app/src/lib.rs`: no `remoteControl/enable`) |
+| 3 | Allow host step | click | `Allow`: `remoteControl/enable`. | `Allow` sends `remoteControl/enable` (loading step while it runs), waits for `connected`, then starts pairing. | PASS (`allow_enables_remote_control_and_a_claimed_code_connects` in `mobile_pairing`) |
 | 4 | MFA required | error | `Turn on Multi-Factor Authentication`, `Continue on chatgpt.com`. | Step view; the button opens `chatgpt.com/#settings/Security`. | BOUNDARY (the recorded account has MFA on, and no MFA-off response is recorded, so no fixture reaches it) |
-| 5 | Waiting / pairing step | loading | QR code, pairing code. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
-| 6 | Pairing unavailable | error | `Pairing code unavailable`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
-| 7 | Connected step | click | Toggles, `Done`, `Manage connections`. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
+| 5 | Waiting / pairing step | loading | QR code, pairing code. | Waiting step after `Allow`: `remoteControl/pairing/start` fills the QR code and manual code; `pairing/status` is polled each second. | PASS (same flow) |
+| 6 | Pairing unavailable | error | `Pairing code unavailable`. | A failed `pairing/start` keeps the waiting step and shows `Pairing code unavailable: <error>` with `Refresh pairing code`. | PASS (`a_failed_pairing_start_keeps_the_waiting_step_with_its_error` in `mobile_pairing`) |
+| 7 | Connected step | click | Toggles, `Done`, `Manage connections`. | A claimed code with a new client opens `You’re connected` with the toggles, `Done` (back to Home) and `Manage connections` (Settings > Connections). | PASS (same flow as row 3; toggle clicks and `Manage connections` are not driven) |
 | 8 | Button hover | hover | Ghost/solid hover. | `Get started` hover fill (55250 px repainted). | PASS (`mobile_button_hover`) |
 | 9 | Focus ring | focus ring | 2 px ring. | — | NOT WIRED (`crates/ui/src/screens/mobile.rs`) |
 | 10 | Resize | resize | Content stays centered. | — | FAIL (no flow checks the 3 widths on this route) |
@@ -1206,8 +1207,7 @@ A row above that names a `crates/ui` owner needs that change first. The changes 
 
 1. `crates/ui/src/thread.rs`: click handlers on the reasoning and command cards, `Reapply`, the user message's hover actions, a find bar, and loading and error views.
 2. `crates/ui/src/diff.rs`: the Changes header controls (source selector, file tree, layout, wrap, refresh), empty, loading and error states.
-3. `crates/ui/src/screens/mobile.rs`: the pairing and connected steps (`remoteControl/*`).
-4. Focus-visible rings on the shared buttons (`icon_button`, `pill`, rail items), and tooltips on the composer and sidebar row buttons.
+3. Focus-visible rings on the shared buttons (`icon_button`, `pill`, rail items), and tooltips on the composer and sidebar row buttons.
 
 ## S016: Thread header
 
