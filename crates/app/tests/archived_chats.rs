@@ -23,11 +23,21 @@ fn fixture() -> Result<Fx> {
 fn fixture_with_host(host: Option<Arc<dyn app::host::Host>>) -> Result<Fx> {
     #[cfg(target_os = "macos")]
     common::install_panic_hook();
-    let mut fx = Fx::captured(
-        "dark",
-        (1280., 832.),
-        common::script(Some("sessions/archived-chats.jsonl"), |_| {})?,
-    )?;
+    let mut script = common::script(Some("sessions/archived-chats.jsonl"), |line| {
+        let message = &mut line["msg"];
+        if message["method"] == "thread/list" && message["params"]["archived"] == false {
+            message["params"] = serde_json::json!({});
+        }
+    })?;
+    // The unarchive event refreshes active chats, separately from the archived inventory.
+    script.extend(common::exchange(
+        "thread/list",
+        serde_json::json!({
+            "data": [common::recorded_thread(common::SUBTRACT)?],
+            "nextCursor": null,
+        }),
+    ));
+    let mut fx = Fx::captured("dark", (1280., 832.), script)?;
     if let Some(host) = host {
         fx.root
             .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
