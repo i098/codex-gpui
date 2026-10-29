@@ -23,6 +23,7 @@ pub struct Confirmation {
     return_focus: Option<FocusHandle>,
     completed: bool,
     opt_out: Option<(SharedString, bool, FocusHandle)>,
+    documentation: Option<(SharedString, SharedString, FocusHandle)>,
     error: Option<SharedString>,
 }
 
@@ -56,6 +57,7 @@ impl Confirmation {
             return_focus,
             completed: false,
             opt_out: None,
+            documentation: None,
             error: None,
         }
     }
@@ -72,6 +74,16 @@ impl Confirmation {
 
     pub fn with_opt_out(mut self, label: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
         self.opt_out = Some((label.into(), false, cx.focus_handle()));
+        self
+    }
+
+    pub fn with_documentation(
+        mut self,
+        label: impl Into<SharedString>,
+        url: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        self.documentation = Some((label.into(), url.into(), cx.focus_handle()));
         self
     }
 
@@ -115,20 +127,22 @@ impl Confirmation {
         match key.key.as_str() {
             "escape" => self.finish(Outcome::Cancel, window, cx),
             "tab" if !key.modifiers.platform && !key.modifiers.control && !key.modifiers.alt => {
-                let count = 2 + usize::from(self.opt_out.is_some());
-                let current = self
-                    .controls
-                    .iter()
+                let controls = || {
+                    self.controls
+                        .iter()
+                        .chain(self.opt_out.iter().map(|(_, _, focus)| focus))
+                        .chain(self.documentation.iter().map(|(_, _, focus)| focus))
+                };
+                let count = controls().count();
+                let current = controls()
                     .position(|focus| focus.is_focused(window))
-                    .unwrap_or(2);
+                    .unwrap_or(count - 1);
                 let next = if key.modifiers.shift {
                     (current + count - 1) % count
                 } else {
                     (current + 1) % count
                 };
-                if next < 2 {
-                    self.controls[next].focus(window, cx);
-                } else if let Some((_, _, focus)) = &self.opt_out {
+                if let Some(focus) = controls().nth(next) {
                     focus.focus(window, cx);
                 }
                 cx.notify();
@@ -136,6 +150,15 @@ impl Confirmation {
             "enter" | "space"
                 if !key.modifiers.platform && !key.modifiers.control && !key.modifiers.alt =>
             {
+                if let Some((_, url, focus)) = &self.documentation
+                    && focus.is_focused(window)
+                {
+                    if !event.is_held {
+                        cx.open_url(url);
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
                 if let Some((_, checked, focus)) = &mut self.opt_out
                     && focus.is_focused(window)
                 {
@@ -201,6 +224,34 @@ impl Render for Confirmation {
                         *checked = !*checked;
                         focus.focus(window, cx);
                         cx.notify();
+                    }
+                }))
+        });
+        let documentation = self.documentation.as_ref().map(|(label, _, focus)| {
+            div()
+                .id("confirmation-documentation")
+                .role(gpui::Role::Link)
+                .aria_label(label.clone())
+                .track_focus(focus)
+                .relative()
+                .rounded(px(4.))
+                .cursor_pointer()
+                .when(
+                    focus.is_focused(window) && window.last_input_was_keyboard(),
+                    |link| {
+                        link.child(shapes::decoration(shapes::Decoration {
+                            radius: Corners::all(px(4.)),
+                            corner: shapes::Corner::Round,
+                            border: Some((px(2.), t.focus_ring)),
+                            ..Default::default()
+                        }))
+                    },
+                )
+                .child(text(label.clone(), 14., 21., 430., t.text).underline())
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if let Some((_, url, focus)) = &this.documentation {
+                        focus.focus(window, cx);
+                        cx.open_url(url);
                     }
                 }))
         });
@@ -378,6 +429,7 @@ impl Render for Confirmation {
                                     .clone()
                                     .map(|error| text(error, 13., 18., 430., t.text_error)),
                             )
+                            .children(documentation)
                             .children(checkbox)
                             .child(
                                 div()

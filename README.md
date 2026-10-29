@@ -366,6 +366,10 @@ Capture tests require separate, owned `HOME` and `CODEX_HOME` directories.
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
+Use `.with_documentation(label, url, cx)` to add a link that opens without confirming or cancelling the action.
+Tab and Shift-Tab cycle through the buttons, optional checkbox, and documentation link.
+Enter or Space opens the focused link; Escape cancels and returns focus to the previous control.
+Run `cargo run -p ui --example settings_kit -- dark confirmation-link /tmp/confirmation-link.png` for a native focus-ring capture.
 Use `Composer::settings_field` for text and `.monospace_field()` for scripts and commands.
 Textareas scroll inside a fixed initial height, resize to a 78-pixel minimum content height, and keep the caret visible after resizing.
 Use `Toast` for existing information, error, and success messages.

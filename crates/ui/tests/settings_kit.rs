@@ -1,8 +1,8 @@
 // Interaction checks use no GPU renderer; the example owns pixel captures.
 use gpui::{
     AnyWindowHandle, AppContext as _, Context, Focusable, HeadlessAppContext, IntoElement,
-    KeyUpEvent, Keystroke, MouseButton, MouseDownEvent, PlatformInput, Render, Window, point, px,
-    size,
+    KeyDownEvent, KeyUpEvent, Keystroke, MouseButton, MouseDownEvent, PlatformInput, Render,
+    Window, point, px, size,
 };
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use ui::settings_kit::{Choice, MultiSelect, Select, Selected};
@@ -145,6 +145,108 @@ fn destructive_confirmation_defaults_to_cancel_and_returns_focus() {
         assert!(return_focus.is_focused(window));
     })
     .unwrap();
+}
+
+#[test]
+fn confirmation_documentation_keeps_the_action_pending_and_traps_focus() {
+    use ui::confirmation::{Confirmation, Outcome};
+
+    for opt_out in [false, true] {
+        let mut cx = context();
+        let outcomes = Rc::new(RefCell::new(Vec::new()));
+        let received = outcomes.clone();
+        let previous = cx.update(|cx| cx.focus_handle());
+        let return_focus = previous.clone();
+        let window = cx
+            .open_window(size(px(600.), px(500.)), |window, cx| {
+                previous.focus(window, cx);
+                let dialog = cx.new(|cx| {
+                    let dialog = Confirmation::new(
+                        "Discard changes?",
+                        "Your changes will be lost.",
+                        "Discard",
+                        window,
+                        cx,
+                    )
+                    .with_documentation(
+                        "Read documentation",
+                        "https://example.com/docs",
+                        cx,
+                    );
+                    if opt_out {
+                        dialog.with_opt_out("Do not ask again", cx)
+                    } else {
+                        dialog
+                    }
+                });
+                cx.subscribe(&dialog, move |_, outcome: &Outcome, _| {
+                    received.borrow_mut().push(*outcome);
+                })
+                .detach();
+                dialog
+            })
+            .unwrap();
+        cx.run_until_parked();
+        press(&mut cx, window.into(), "shift-tab");
+        for key in ["enter", "space"] {
+            press(&mut cx, window.into(), key);
+            assert_eq!(
+                cx.take_opened_url().as_deref(),
+                Some("https://example.com/docs")
+            );
+            assert!(outcomes.borrow().is_empty());
+            cx.update_window(window.into(), |_, window, cx| {
+                window.dispatch_event(
+                    PlatformInput::KeyDown(KeyDownEvent {
+                        keystroke: Keystroke::parse(key).unwrap(),
+                        is_held: true,
+                        prefer_character_input: false,
+                    }),
+                    cx,
+                );
+            })
+            .unwrap();
+            cx.run_until_parked();
+            assert!(cx.take_opened_url().is_none());
+            assert!(outcomes.borrow().is_empty());
+        }
+        press(&mut cx, window.into(), "tab");
+        cx.update_window(window.into(), |view, window, cx| {
+            assert!(
+                view.downcast::<Confirmation>()
+                    .unwrap()
+                    .focus_handle(cx)
+                    .is_focused(window)
+            );
+        })
+        .unwrap();
+        if opt_out {
+            for key in ["tab", "tab", "space"] {
+                press(&mut cx, window.into(), key);
+            }
+            cx.update_window(window.into(), |view, _, cx| {
+                assert!(
+                    view.downcast::<Confirmation>()
+                        .unwrap()
+                        .read(cx)
+                        .opt_out_checked()
+                );
+            })
+            .unwrap();
+            assert!(cx.take_opened_url().is_none());
+            assert!(outcomes.borrow().is_empty());
+            press(&mut cx, window.into(), "escape");
+            assert_eq!(*outcomes.borrow(), [Outcome::Cancel]);
+        } else {
+            press(&mut cx, window.into(), "tab");
+            press(&mut cx, window.into(), "enter");
+            assert_eq!(*outcomes.borrow(), [Outcome::Confirm]);
+        }
+        cx.update_window(window.into(), |_, window, _| {
+            assert!(return_focus.is_focused(window));
+        })
+        .unwrap();
+    }
 }
 
 struct TestLink;
