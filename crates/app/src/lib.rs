@@ -5731,8 +5731,13 @@ impl Root {
             return;
         }
         let value = e.value.clone();
-        let apply = move |config: &mut Value| config[store][key] = value;
-        if !matches!(store, "desktop" | "features") {
+        let apply = move |config: &mut Value| match key {
+            "" => config[store] = value,
+            _ => config[store][key] = value,
+        };
+        // `desktop`/`features` keys and the Configuration page's top-level `config.toml` keys
+        // persist; other stores are session-only.
+        if !matches!(store, "desktop" | "features" | "sandbox_workspace_write") && !key.is_empty() {
             return apply(&mut self.config);
         }
         let params = json!({

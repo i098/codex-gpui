@@ -811,7 +811,7 @@ impl Environments {
                     cx.notify();
                 }))
         });
-        select(labels[current], None, false, false, t)
+        select(labels[current], 430., None, false, false, t)
             .id(SharedString::from(format!(
                 "action-menu-{}",
                 match menu {

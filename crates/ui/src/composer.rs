@@ -111,6 +111,7 @@ actions!(
 );
 
 mod attach;
+pub(crate) use attach::codex_home;
 pub mod computer_use;
 pub mod dictation;
 mod diff_comments;
