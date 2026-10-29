@@ -2385,6 +2385,43 @@ impl Root {
         self.automation_updates.insert(update_key, update);
     }
 
+    /// Refreshes ambient suggestions only when a known app list gains its first connection.
+    pub fn first_app_connected(
+        &self,
+        previous_apps: Option<&[Value]>,
+        next_apps: &[Value],
+        cx: &mut Context<Self>,
+    ) {
+        let connected = |app: &Value| app["isAccessible"] == true && app["isEnabled"] == true;
+        if previous_apps.is_none_or(|apps| apps.iter().any(connected))
+            || !next_apps.iter().any(connected)
+        {
+            return;
+        }
+        let host = self.host.clone();
+        let host_id = self.host_id.clone();
+        cx.background_spawn(async move {
+            for domain in [None, Some("science")] {
+                let request = host::Request::post(
+                    "ambient-suggestions-refresh",
+                    Some(json!({
+                        "domain": domain,
+                        "hostId": host_id,
+                        "projectRoot": "~",
+                        "mode": "first-plugin-connect",
+                    })),
+                );
+                if let Err(error) = host
+                    .fetch(&request)
+                    .and_then(|value| host::json_body(&value))
+                {
+                    eprintln!("codex-gpui: failed to refresh ambient suggestions: {error:#}");
+                }
+            }
+        })
+        .detach();
+    }
+
     fn load_suggestions(&mut self, cx: &mut Context<Self>) {
         let Some(page) = self.suggestions.clone() else {
             return;

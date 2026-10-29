@@ -671,6 +671,11 @@ Home, Thread, Settings, Automations, Mobile, and Archive each own their action r
 `routes/mod.rs` keeps the route enum, family registration, navigation history, and shared shell updates.
 `app::Route` and its saved values stay unchanged.
 Shared RPC handlers and state remain on `Root` in `lib.rs`.
+`Root::first_app_connected` lets app-list refresh callers pass the previous list and the new list.
+It refreshes default and science ambient suggestions only when a known list gains its first enabled, accessible app.
+The host requests run off the UI thread; a failed request does not stop the other domain.
+The plugins slice owns the caller; this hook does not change the plugins page.
+Run `cargo test -p app --test first_app_connected -- --test-threads=1` on macOS for the native hook checks.
 
 Opening an unloaded chat reads its history and resumes the thread before showing it.
 The composer restores that thread's returned model, reasoning effort, and permissions instead of using startup defaults.
