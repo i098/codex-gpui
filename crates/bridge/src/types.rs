@@ -331,6 +331,9 @@ pub struct CommandApprovalRequest {
     pub command: Option<String>,
     pub cwd: Option<String>,
     pub reason: Option<String>,
+    #[serde(default)]
+    pub kind: String,
+    pub available_decisions: Option<Vec<Value>>,
 }
 
 /// `item/fileChange/requestApproval`

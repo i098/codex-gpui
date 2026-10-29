@@ -16,6 +16,7 @@ pub enum SlashCommand {
     NewChat,
     Usage,
     Compact,
+    Approve,
     Rename,
     Pin,
     Fork,
@@ -32,6 +33,13 @@ struct Command {
 }
 
 const COMMANDS: &[Command] = &[
+    Command {
+        id: "approve",
+        title: "Approve",
+        description: "Allow one retry of the last denied action",
+        icon: "check",
+        requires_empty: true,
+    },
     Command {
         id: "archive",
         title: "Archive",
@@ -524,6 +532,7 @@ impl Composer {
             "new" => SlashCommand::NewChat,
             "usage" => SlashCommand::Usage,
             "compact" => SlashCommand::Compact,
+            "approve" => SlashCommand::Approve,
             "rename" => SlashCommand::Rename,
             "pin" => SlashCommand::Pin,
             "model" | "reasoning" | "fork" | "project" => {

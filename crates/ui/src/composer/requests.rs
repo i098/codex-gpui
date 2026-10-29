@@ -59,6 +59,7 @@ impl Approval {
                         detail: Some(url.to_owned()),
                         reason: params["serverName"].as_str().map(str::to_owned),
                         scoped_label: "".into(),
+                        decisions: None,
                         permissions: None,
                         identity: Rc::new(RequestIdentity {
                             id,
@@ -145,6 +146,7 @@ impl Approval {
             detail: None,
             reason: params["serverName"].as_str().map(str::to_owned),
             scoped_label: "".into(),
+            decisions: None,
             permissions: None,
             identity: Rc::new(RequestIdentity {
                 id,

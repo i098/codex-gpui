@@ -574,7 +574,7 @@ impl Root {
             if mode == features::shortcuts::NewChatMode::Temporary {
                 params["ephemeral"] = json!(true);
             }
-            apply_permissions(&mut params, s.permission);
+            apply_permissions(&mut params, &s.permission);
             if let Some(config) = computer_use {
                 params["config"] = config;
             }

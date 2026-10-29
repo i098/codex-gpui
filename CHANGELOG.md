@@ -7,6 +7,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Add named permission profiles, per-category approval settings, writable folder selection, automatic review notices, and `/approve` for one denied retry.
+- Restrict human-only approval cards to the server's offered one-time decisions.
 - Keep refused follow-up messages in the queue tray with Retry, preserving their input, chat, draft and local row actions.
 - Show `Unable to send message` with the reason and `OK` when a composer submit waits for file uploads.
 - Draw the 2 px keyboard focus ring on the diff card's `Undo` and `View changes` buttons in a chat.

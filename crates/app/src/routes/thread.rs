@@ -73,7 +73,12 @@ fn run_settings(response: &Value, collaboration_mode: Value) -> Result<RendererS
         && policy["writableRoots"]
             .as_array()
             .is_some_and(Vec::is_empty);
-    let permission = if sandbox == "workspace-write" && !standard_workspace {
+    let permission = if let Some(profile) = response["activePermissionProfile"]["id"]
+        .as_str()
+        .filter(|profile| !profile.starts_with(':'))
+    {
+        Permission::Named(profile.to_owned().into())
+    } else if sandbox == "workspace-write" && !standard_workspace {
         Permission::Custom
     } else {
         Permission::from_config(&json!({
@@ -243,6 +248,18 @@ mod tests {
         assert_eq!(state.permission, Permission::Ask);
         assert_eq!(state.collaboration_mode["settings"]["model"], "gpt-6.1-sol");
         assert!(state.collaboration_mode["settings"]["reasoning_effort"].is_null());
+    }
+
+    #[test]
+    fn resumed_named_profile_preserves_its_identity() {
+        let mut response = response();
+        response["activePermissionProfile"] = json!({"id": "research", "extends": ":read-only"});
+        response["sandbox"]["writableRoots"] = json!(["/extra"]);
+        response["approvalPolicy"] = json!({"granular": {"rules": false}});
+        assert_eq!(
+            resumed_settings(response, "thread-a").unwrap().permission,
+            Permission::Named("research".into()),
+        );
     }
 
     #[test]

@@ -133,6 +133,7 @@ impl Approval {
             detail: None,
             reason,
             scoped_label: "Always allow".into(),
+            decisions: None,
             permissions: None,
             form: None,
             computer_use: Some(request),

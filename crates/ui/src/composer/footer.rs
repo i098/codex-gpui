@@ -298,7 +298,7 @@ impl Composer {
                             .when(self.footer_width > SM_WIDTH, |d| {
                                 d.child(
                                     text(
-                                        self.permission.short_label(),
+                                        self.permission.short_label().to_owned(),
                                         13.,
                                         18.,
                                         400.,

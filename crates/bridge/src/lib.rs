@@ -426,7 +426,7 @@ impl Bridge {
         }
         let params = json!({
             "clientInfo": { "name": client_name, "title": null, "version": version },
-            "capabilities": { "experimentalApi": true, "requestAttestation": false },
+            "capabilities": { "experimentalApi": true, "requestAttestation": false, "requiredHumanApproval": true },
         });
         let response: InitializeResponse = self.request("initialize", params).await?;
         self.notify("initialized", ())?;
