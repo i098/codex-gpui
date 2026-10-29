@@ -144,7 +144,7 @@ fn load_history(result: Result<Option<BalanceHistory>>) -> Load<Option<Arc<Balan
     }
 }
 
-fn http(
+pub(crate) fn http(
     host: &dyn Host,
     identity: &Identity,
     method: &str,

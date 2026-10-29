@@ -28,6 +28,7 @@ pub mod host_settings;
 pub mod hotkey;
 pub mod native_menus;
 mod new_project;
+mod notifications;
 pub mod oauth;
 pub mod onboarding;
 mod personalization;
@@ -549,6 +550,7 @@ impl Root {
         features::install_shortcuts(cx);
         let this = cx.weak_entity();
         usage::install(this.clone(), cx);
+        notifications::install(this.clone(), cx);
         settings_git::init(this.clone(), cx);
         let computer_use = this.clone();
         cx.set_global(ComputerUseState {
@@ -707,6 +709,13 @@ impl Root {
             }
             if active {
                 this.sync_native_menus(window, cx);
+                // `refetchOnWindowFocus: always`: System Settings may have changed it.
+                if this.settings_page.is_some() {
+                    this.notifications_action(
+                        ui::screens::settings::notifications::Action::RefreshPermission,
+                        cx,
+                    );
+                }
             }
             if active && this.ready && !this.signed_out() {
                 this.load_destinations(cx);
@@ -5390,6 +5399,10 @@ impl Root {
                     "git-commit-instructions"
                     | "git-pr-instructions"
                     | "git-pr-watch-instructions" => "Failed to save instructions",
+                    "notifications-sound" => "Couldn't change the notification sound. Try again",
+                    key if key.starts_with("notifications-") => {
+                        "Could not save notification preference"
+                    }
                     _ => "Couldn't save your changes. Try again",
                 };
                 self.toast(Toast::danger(message), cx);

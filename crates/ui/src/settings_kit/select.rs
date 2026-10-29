@@ -25,6 +25,7 @@ pub struct Select {
     highlighted: Option<usize>,
     default_action: bool,
     loading: bool,
+    disabled: bool,
     error: Option<SharedString>,
     query: String,
     search_labels: Vec<String>,
@@ -76,6 +77,7 @@ impl Select {
             highlighted: None,
             default_action: false,
             loading: false,
+            disabled: false,
             error: None,
             query: String::new(),
             has_aliases: false,
@@ -111,6 +113,10 @@ impl Select {
             .map_or("", |choice| choice.value.as_ref())
     }
 
+    pub fn choices(&self) -> &[Choice] {
+        &self.choices
+    }
+
     fn activate_focused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let focused = self.items.iter().position(|item| item.is_focused(window));
         if let Some(index) = self.highlighted.or(focused).or_else(|| self.first_match()) {
@@ -144,6 +150,15 @@ impl Select {
         self.loading = loading;
         self.error = None;
         cx.notify();
+    }
+
+    /// A disabled select keeps its value but ignores pointer and keyboard input.
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut Context<Self>) {
+        if self.disabled != disabled {
+            self.disabled = disabled;
+            self.open &= !disabled;
+            cx.notify();
+        }
     }
 
     pub fn set_error(&mut self, error: impl Into<SharedString>, cx: &mut Context<Self>) {
@@ -196,7 +211,7 @@ impl Select {
         let Some(choice) = self.choices.get(index) else {
             return;
         };
-        if self.loading || choice.disabled {
+        if self.loading || self.disabled || choice.disabled {
             return;
         }
         self.value = choice.value.clone();
@@ -250,6 +265,9 @@ impl Select {
             return;
         }
         if !self.open {
+            if self.disabled {
+                return;
+            }
             if matches!(key.key.as_str(), "enter" | "space" | "up" | "down") {
                 self.open(true, window, cx);
             } else {
@@ -409,26 +427,36 @@ impl Render for Select {
             .map(|choice| choice.label.clone())
             .unwrap_or_else(|| self.value.clone());
         let leading = self.icons.and_then(|icon| icon(&self.value, &t));
-        let control = crate::screens::settings::select(label, leading, self.loading, self.open, &t)
-            .id("settings-select-trigger")
-            .role(gpui::Role::ComboBox)
-            .aria_expanded(self.open)
-            .track_focus(&self.trigger)
-            .rounded(px(12.5))
-            .focus_visible(crate::focus::trigger_focus)
-            .capture_key_down(cx.listener(Self::key))
-            .on_click(cx.listener(|this, _, window, cx| {
-                if this.open {
-                    this.close(window, cx);
-                } else {
-                    this.open(false, window, cx);
-                }
-            }))
-            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-                if this.open && !this.menu_hovered {
-                    this.close(window, cx);
-                }
-            }));
+        let control = crate::screens::settings::select(
+            label,
+            leading,
+            self.loading || self.disabled,
+            self.open,
+            &t,
+        )
+        .id("settings-select-trigger")
+        .role(gpui::Role::ComboBox)
+        .aria_expanded(self.open)
+        .aria_disabled(self.disabled)
+        .track_focus(&self.trigger)
+        .rounded(px(12.5))
+        .focus_visible(crate::focus::trigger_focus)
+        .capture_key_down(cx.listener(Self::key))
+        .on_click(cx.listener(|this, _, window, cx| {
+            if this.disabled {
+                return;
+            }
+            if this.open {
+                this.close(window, cx);
+            } else {
+                this.open(false, window, cx);
+            }
+        }))
+        .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+            if this.open && !this.menu_hovered {
+                this.close(window, cx);
+            }
+        }));
         if !self.open {
             return control;
         }
