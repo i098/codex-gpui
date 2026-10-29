@@ -105,6 +105,20 @@ fn remote_thread_reads_writes_and_events_stay_on_its_connection() -> Result<()> 
         local.read(|root, cx| format!("{:?}", root.thread().unwrap().read(cx).turns())),
         local_turns
     );
+    let windows = local.cx.update(|cx| cx.windows().len());
+    local.cx.update(|cx| {
+        app::deep_link::open(
+            &format!("codex://threads/{GREETING}?hostId=ssh%3Atest-host"),
+            cx,
+        );
+        app::deep_link::open("codex://settings", cx);
+    });
+    local.wait("local settings link", |fx| fx.route() == Route::Settings)?;
+    assert_eq!(local.cx.update(|cx| cx.windows().len()), windows);
+    assert_eq!(
+        remote.read_with(&local.cx, |root, _| root.route().clone()),
+        Route::Thread(GREETING.into())
+    );
     Ok(())
 }
 

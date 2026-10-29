@@ -195,6 +195,7 @@ pub struct Bridge {
     acp: bool,
     cloud_account_id: Option<String>,
     automation_turns: Mutex<HashMap<String, Arc<AutomationTurn>>>,
+    shared_threads: Mutex<std::collections::HashSet<String>>,
     subscribers: Subscribers,
 }
 
@@ -313,6 +314,7 @@ impl Bridge {
             acp,
             cloud_account_id: None,
             automation_turns: Mutex::new(HashMap::new()),
+            shared_threads: Mutex::new(std::collections::HashSet::new()),
             subscribers: sink.subscribers,
         }
     }
@@ -343,6 +345,16 @@ impl Bridge {
         rx
     }
 
+    /// Keeps subsequent requests on the thread's selected access mode.
+    pub fn set_thread_access(&self, id: &str, shared: bool) {
+        let mut threads = self.shared_threads.lock();
+        if shared {
+            threads.insert(id.to_owned());
+        } else {
+            threads.remove(id);
+        }
+    }
+
     pub async fn request<P: Serialize, R: DeserializeOwned>(
         &self,
         method: &str,
@@ -367,6 +379,12 @@ impl Bridge {
         method: &str,
         mut msg: Value,
     ) -> Result<R> {
+        let shared = msg["params"]["threadId"]
+            .as_str()
+            .is_some_and(|id| self.shared_threads.lock().contains(id));
+        if shared {
+            msg["params"]["threadAccess"] = Value::String("shared".into());
+        }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         msg["id"] = id.into();
         let (tx, rx) = async_channel::bounded(1);
