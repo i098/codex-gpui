@@ -246,6 +246,7 @@ pub(super) fn diff_card(
     focus: &TurnFocus,
     window: &Window,
     t: &Theme,
+    cx: &App,
 ) -> Option<Div> {
     let changes: Vec<_> = items
         .iter()
@@ -270,16 +271,27 @@ pub(super) fn diff_card(
     let card_bg = tones.card;
     // A 1 px border box (`px-2 border`): the padding stands in for the border, which the
     // decoration paints under the label.
-    let button = |label: &'static str, decoration: Option<gpui::AnyElement>| {
-        div()
-            .relative()
-            .h(px(28.))
-            .flex()
-            .items_center()
-            .gap(px(4.))
-            .px(px(9.))
-            .children(decoration)
-            .child(measured(window, label, 13., 18., 430., t.text, None))
+    // `focus-visible:ring-2 ring-offset-0` on the `rounded-button-toolbar` (12.5 px) button.
+    let button = |label: &'static str,
+                  id: &'static str,
+                  focus: &gpui::Entity<crate::focus::ControlFocus>,
+                  decoration: Option<gpui::AnyElement>| {
+        crate::focus::shadow_ring(
+            div()
+                .id(id)
+                .relative()
+                .h(px(28.))
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .px(px(9.))
+                .children(decoration)
+                .child(measured(window, label, 13., 18., 430., t.text, None)),
+            focus,
+            Theme::RADIUS_LG,
+            px(2.),
+            cx,
+        )
     };
     let engaged = focus.engaged;
     let card_group = SharedString::from(format!("diff-card-{turn_id}"));
@@ -376,10 +388,8 @@ pub(super) fn diff_card(
                             .gap(px(8.))
                             .child({
                                 let turn_id = turn_id.to_owned();
-                                button("Undo", None)
+                                button("Undo", "undo-turn", &focus.undo, None)
                                     .child(icon("thread-undo", 14., t.text))
-                                    .id("undo-turn")
-                                    .track_focus(&focus.undo)
                                     .on_click({
                                         let thread_id = focus.thread_id.clone();
                                         move |_, window, cx| {
@@ -400,6 +410,8 @@ pub(super) fn diff_card(
                             .child(
                                 button(
                                     "View changes",
+                                    "view-changes",
+                                    &focus.view,
                                     Some(
                                         div()
                                             .absolute()
@@ -414,8 +426,6 @@ pub(super) fn diff_card(
                                             .into_any_element(),
                                     ),
                                 )
-                                .id("view-changes")
-                                .track_focus(&focus.view)
                                 .on_click({
                                     let thread_id = focus.thread_id.clone();
                                     move |_, window, cx| {
