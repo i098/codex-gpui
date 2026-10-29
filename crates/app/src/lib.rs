@@ -449,6 +449,8 @@ pub struct Root {
     archived_settings: Option<Entity<ArchivedSettings>>,
     /// The Mobile route's setup page.
     mobile_page: Option<Entity<mobile::MobileSetupPage>>,
+    /// The Space route's list page.
+    space_page: Option<Entity<ui::screens::space::SpacePage>>,
     cloud: Option<cloud_task::Session>,
     pull_requests_page: Option<Entity<ui::screens::pull_requests::Page>>,
     plugins_page: Option<Entity<ui::screens::plugins::Page>>,
@@ -896,6 +898,7 @@ impl Root {
             archive_page: None,
             archived_settings: None,
             mobile_page: None,
+            space_page: None,
             cloud: None,
             pull_requests_page: None,
             plugins_page: None,
@@ -1317,6 +1320,10 @@ impl Root {
 
     pub fn sites_page(&self) -> Option<&Entity<ui::screens::sites::Page>> {
         self.sites_page.as_ref()
+    }
+
+    pub fn space_page(&self) -> Option<&Entity<ui::screens::space::SpacePage>> {
+        self.space_page.as_ref()
     }
 
     /// The Home route's main panel.

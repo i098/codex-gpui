@@ -435,6 +435,7 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
                     format!("cloud-environments/{config_id}/setup")
                 }
                 Route::Scheduled => "scheduled".to_owned(),
+                Route::Space => "space".to_owned(),
                 Route::Automation(id) => format!("scheduled?automationId={id}"),
                 Route::Mobile => "mobile".to_owned(),
                 Route::Security => "security".to_owned(),
