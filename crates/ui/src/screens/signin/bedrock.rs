@@ -146,10 +146,9 @@ impl Login {
     }
 
     fn discover_bedrock(&mut self, cx: &mut Context<Self>) {
-        let Some(super::AppServer(bridge)) = cx.try_global::<super::AppServer>() else {
+        let Some(bridge) = self.bridge.clone() else {
             return;
         };
-        let bridge = bridge.clone();
         self.attempt += 1;
         let attempt = self.attempt;
         cx.spawn(async move |this, cx| {
@@ -253,10 +252,9 @@ impl Login {
             return;
         };
         let region = params["region"].as_str().unwrap_or_default().to_owned();
-        let Some(super::AppServer(bridge)) = cx.try_global::<super::AppServer>() else {
+        let Some(bridge) = self.bridge.clone() else {
             return;
         };
-        let bridge = bridge.clone();
         self.pending = true;
         self.error = None;
         self.restart_blocked = true;

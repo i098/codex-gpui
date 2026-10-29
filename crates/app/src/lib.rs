@@ -454,6 +454,7 @@ pub struct Root {
     chatgpt_account: bool,
     usage_limit_notice: UsageLimitNotice,
     bridge: Arc<Bridge>,
+    host_id: String,
     host: Arc<dyn host::Host>,
     activity_access: activity_access::Runtime,
     oauth: oauth::Connections,
@@ -463,6 +464,8 @@ pub struct Root {
     picking_project: bool,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
+    /// The local tasks' shared previous-run history (`inbox-items`).
+    automation_runs: Vec<automations::Run>,
     /// Tasks whose `automation-run-now` request has not answered.
     running_automations: HashSet<String>,
     automation_updates: HashMap<String, Task<()>>,
@@ -522,14 +525,50 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        Self::with_connection(state, Arc::new(bridge), events, cwd, window, cx)
+        Self::with_host_connection(
+            state,
+            Arc::new(bridge),
+            events,
+            cwd,
+            "local".into(),
+            window,
+            cx,
+        )
     }
 
-    fn with_connection(
+    /// Binds this window's requests, events, and thread caches to one connected host.
+    /// Remote windows reject local desktop storage calls. Child widgets retain this connection
+    /// across window activation changes.
+    pub fn on_host(
+        mut state: State,
+        host_id: String,
+        bridge: Arc<Bridge>,
+        cwd: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<Self> {
+        ensure!(!host_id.trim().is_empty(), "missing thread host");
+        ensure!(!bridge.is_closed(), "thread host is disconnected");
+        if host_id != "local" {
+            state.path = None;
+            state.project_root = None;
+        }
+        let events = bridge.subscribe_async();
+        Ok(Self::with_host_connection(
+            state, bridge, events, cwd, host_id, window, cx,
+        ))
+    }
+
+    pub fn host_id(&self) -> &str {
+        &self.host_id
+    }
+
+    fn with_host_connection(
         mut state: State,
         bridge: Arc<Bridge>,
         events: Receiver<Event>,
         cwd: String,
+        host_id: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -574,6 +613,7 @@ impl Root {
         };
         let home_composer = cx.new(|cx| {
             let mut composer = Composer::home(window, cx);
+            composer.bind_connection(bridge.clone());
             if let Some(root) = &state.project_root {
                 composer.set_search_roots(vec![root.clone()], cx);
             }
@@ -587,6 +627,7 @@ impl Root {
         });
         let thread_composer = cx.new(|cx| {
             let mut composer = Composer::thread(window, cx);
+            composer.bind_connection(bridge.clone());
             wire_thread_composer(&mut composer, this.clone(), None);
             composer
         });
@@ -801,16 +842,18 @@ impl Root {
             account_email: None,
             chatgpt_account: false,
             usage_limit_notice: UsageLimitNotice::RetryLater,
-            host: Arc::new(
-                host::CloudHost::from_env(host::app_server_credentials(bridge.clone()))
-                    .with_bridge(bridge.clone())
-                    .with_settings(cx.try_global::<host_settings::Settings>().cloned()),
+            host: host::thread_host(
+                &host_id,
+                bridge.clone(),
+                cx.try_global::<host_settings::Settings>().cloned(),
             ),
             activity_access: activity_access::Runtime::default(),
             oauth: oauth::Connections::default(),
             bridge,
+            host_id,
             automations: None,
             automation_load: None,
+            automation_runs: Vec::new(),
             running_automations: HashSet::new(),
             project_load: None,
             destination_load: None,
@@ -958,6 +1001,7 @@ impl Root {
                 this._update_policy = updater::poll_policy(bridge.clone(), cx);
                 this.set_account(account.as_ref(), cx);
                 if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
+                    cx.set_global(AppServer(this.bridge.clone()));
                     this.login = Some(this.new_login(window, cx));
                 }
                 match threads {
@@ -2075,30 +2119,78 @@ impl Root {
         matches!(self.state.route, Route::Scheduled | Route::Automation(_))
     }
 
+    /// The Scheduled list's load state for a sidebar built now: no answer yet is `Loading`.
+    pub(crate) fn automation_list_state(&self) -> ListState {
+        match &self.automations {
+            None => ListState::Loading,
+            Some(Err(_)) => ListState::Failed,
+            Some(Ok(_)) => ListState::Ready,
+        }
+    }
+
     fn load_automations(&mut self, cx: &mut Context<Self>) {
         let host = self.host.clone();
         let read = cx.background_spawn(async move {
-            host.fetch(&host::Request::post("list-automations", None))
+            let list = host
+                .fetch(&host::Request::post("list-automations", None))
                 .and_then(|response| host::json_body(&response))
-                .map_err(|error| error.to_string())
+                .map_err(|error| error.to_string());
+            // shortcut: an unreadable run history lists no runs; the original's `Couldn't load
+            // runs` row needs its own state when a host reports that error.
+            let runs = host
+                .fetch(&host::Request::post("inbox-items", None))
+                .and_then(|response| host::json_body(&response))
+                .map(|inbox| automations::runs(&inbox))
+                .unwrap_or_default();
+            (list, runs)
         });
+        let window = self.context_window;
         self.automation_load = Some(cx.spawn(async move |this, cx| {
-            let result = read.await;
-            this.update(cx, |this, cx| {
-                if result.is_err() && this.scheduled_route() {
-                    this.toast(Toast::danger("Failed to load automations"), cx);
-                }
-                let tasks = result
-                    .as_ref()
-                    .map_or_else(|_| Vec::new(), automations::tasks);
-                if let Some(sidebar) = &this.scheduled {
-                    sidebar.update(cx, |sidebar, cx| sidebar.set_tasks(tasks, cx));
-                }
-                this.automations = Some(result);
-                cx.notify();
-            })
-            .ok();
+            let (result, runs) = read.await;
+            let rebuild = this
+                .update(cx, |this, cx| {
+                    let tasks = result
+                        .as_ref()
+                        .map_or_else(|_| Vec::new(), automations::tasks);
+                    let state = if result.is_ok() {
+                        ListState::Ready
+                    } else {
+                        ListState::Failed
+                    };
+                    let run = this.sidebar_run();
+                    let mut rebuild = false;
+                    if let Some(sidebar) = &this.scheduled {
+                        sidebar.update(cx, |sidebar, cx| {
+                            // A cold deep link built its page before the task was known.
+                            rebuild = matches!(&this.state.route, Route::Automation(id)
+                                if sidebar.selected() != Some(id.as_str())
+                                    && tasks.iter().any(|task| &task.id == id));
+                            sidebar.set_tasks(tasks, cx);
+                            sidebar.set_load(state, cx);
+                            sidebar.set_runs(runs.clone(), run, cx);
+                        });
+                    }
+                    this.automations = Some(result);
+                    this.automation_runs = runs;
+                    cx.notify();
+                    rebuild
+                })
+                .unwrap_or(false);
+            if rebuild {
+                cx.update_window(window, |_, window, cx| {
+                    this.update(cx, |this, cx| this.sync(window, cx))
+                })
+                .ok();
+            }
         }));
+    }
+
+    /// The run whose chat the Scheduled list shows (a thread opened from a run row).
+    fn sidebar_run(&self) -> Option<String> {
+        match &self.state.route {
+            Route::Thread(id) if self.sidebar_automation.is_some() => Some(id.clone()),
+            _ => None,
+        }
     }
 
     fn toggle_automation(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -3254,6 +3346,7 @@ impl Root {
                 this.logout_pending = false;
                 match result {
                     Ok(_) => {
+                        cx.set_global(AppServer(this.bridge.clone()));
                         this.login = Some(this.new_login(window, cx));
                         this.set_account(None, cx);
                         hotkey::policy::clear(cx);
@@ -4388,6 +4481,7 @@ impl Root {
         let this = cx.weak_entity();
         let composer = cx.new(|cx| {
             let mut composer = Composer::thread(window, cx);
+            composer.bind_connection(self.bridge.clone());
             composer.set_models(&self.models, &self.config, cx);
             composer.restore_run_settings(&settings.collaboration_mode, settings.permission, cx);
             composer.set_slash_skills(&self.skills, cx);
@@ -5887,17 +5981,41 @@ impl Root {
 
     /// Crash page "Try again": a fresh app-server connection. [`Root::with_connection`]
     /// rebuilds every screen; the window-level observers it registers re-run idempotently.
+    /// The Home and thread composers keep their unsent drafts.
     fn restart(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.crashed = false;
         cx.notify();
         let cwd = PathBuf::from(self.cwd.clone());
         let state = self.state.clone();
+        let host_id = self.host_id.clone();
+        let remote = (host_id != "local").then(|| connections::bridge(&host_id, cx));
         cx.spawn_in(window, async move |this, cx| {
-            let restarted = windows::connect(&cwd).map(|bridge| (Arc::new(bridge.0), bridge.1));
+            let restarted = match remote {
+                None => windows::connect(&cwd).map(|(bridge, events)| (Arc::new(bridge), events)),
+                Some(Some(bridge)) => {
+                    let events = bridge.subscribe_async();
+                    Ok((bridge, events))
+                }
+                Some(None) => Err(anyhow::anyhow!(
+                    "Reconnect the host in Settings > Connections"
+                )),
+            };
             this.update_in(cx, |root, window, cx| match restarted {
                 Ok((bridge, events)) => {
                     let cwd = root.cwd.clone();
-                    *root = Root::with_connection(state, bridge, events, cwd, window, cx);
+                    let composers = |root: &Root, cx: &App| {
+                        [
+                            root.home.read(cx).composer.clone(),
+                            root.thread_composer.clone(),
+                        ]
+                    };
+                    let drafts = composers(root, cx)
+                        .map(|composer| composer.update(cx, |composer, _| composer.take_draft()));
+                    *root =
+                        Root::with_host_connection(state, bridge, events, cwd, host_id, window, cx);
+                    for (composer, draft) in composers(root, cx).into_iter().zip(drafts) {
+                        composer.update(cx, |composer, cx| composer.put_draft(draft, cx));
+                    }
                     cx.notify();
                 }
                 Err(error) => {

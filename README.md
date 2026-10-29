@@ -69,6 +69,12 @@ Settings > Connections uses the same discovery for its SSH chooser.
 
 Run `cargo test -p app --lib --test host ssh_discovery` for the parser and host-service checks.
 
+`Root::on_host` binds a window to an existing host connection.
+Thread reads, changes, and events use that connection, with separate thread caches for each window.
+Child widgets keep their connection when another window becomes active.
+Remote windows reject local desktop storage requests.
+Run `cargo test -p app --test thread_hosts` for the two-host native check.
+
 ## Terminals
 
 Open a chat, then choose **View > Open Terminal**.
@@ -440,6 +446,11 @@ Scheduled > New task accepts instructions, a daily or weekly repeat, and a local
 Create saves the definition through `automation-create` to `CODEX_HOME/automations/<id>/automation.toml`.
 The app reloads the task list after a successful write and retains the draft if the write fails.
 The existing host schedules these definitions; this app does not start another scheduler.
+Saved hourly and minute schedules show their interval in the task list.
+`Previous runs` shows local stored history and read state for the selected task.
+Its actions mark completed runs as read or archive them after confirmation.
+Bulk actions skip running, archived, and account-owned runs and report partial archive failures.
+Run `cargo test -p app --test scheduled_history -- --test-threads=1` on macOS to check these actions and the existing View route.
 The row menu's `Run now` sends `automation-run-now`; the host starts one `codex app-server` thread and turn per task folder.
 It runs tasks with project folders or a project target (the project's first root from `.codex-global-state.json`), in a new Git worktree for the original default environment or in the folder for the local one.
 For a project target, the host saves the new thread's local project assignment before it starts the turn.
@@ -480,6 +491,13 @@ The editor saves those choices atomically through `automation-create` or `automa
 Run `cargo test -p app --test task_create editor:: -- --test-threads=1` on macOS for the native editor, schedule, and Create menu checks.
 Run `cargo test -p app --test automation_run_now` for the `Run now` requests over a stdio app-server stub.
 Use `-- --include-ignored` on macOS to check the installed adapter.
+
+Cloud automation storage uses `cloud-list-automations`, `cloud-read-automation`, and the `cloud-automation-*` mutation endpoints.
+These endpoints use the signed-in account's original `/automations` and `/automation` APIs.
+Mutation requests carry the loaded task's `expectedIdentity`; account changes reject the write.
+Cloud edits keep schedule, timezone, notification, and model fields that the editor does not change.
+Local endpoints reject `automationSource: "cloud"` instead of reading or changing a matching local task.
+Run `cargo test -p app --test host cloud_automation_` for source isolation and account-change checks.
 
 ### Legacy Codex Cloud threads
 

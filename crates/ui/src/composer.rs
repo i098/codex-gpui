@@ -691,7 +691,16 @@ struct EmbeddedField {
     font_size: Pixels,
     line_height: Pixels,
 }
+/// A composer's unsent input, carried to its replacement ([`Composer::take_draft`]).
+pub struct Draft {
+    content: String,
+    mentions: Vec<mention::Mention>,
+    attachments: Vec<attach::Attachment>,
+    diff_comments: Vec<crate::screens::diff::panel::comments::Comment>,
+}
+
 pub struct Composer {
+    bridge: Option<std::sync::Arc<bridge::Bridge>>,
     focus_handle: FocusHandle,
     placeholder: SharedString,
     /// Docked under a thread: `_ComposerLayoutRoot` paints the card and `_ComposerLayoutBody`
@@ -818,6 +827,9 @@ impl Composer {
     fn new(placeholder: &'static str, docked: bool, cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle().tab_stop(true),
+            bridge: cx
+                .try_global::<crate::screens::settings::AppServer>()
+                .map(|server| server.0.clone()),
             placeholder: placeholder.into(),
             docked,
             content: String::new(),
@@ -899,6 +911,10 @@ impl Composer {
             input_style: false,
             small_input: false,
         }
+    }
+
+    pub fn bind_connection(&mut self, bridge: std::sync::Arc<bridge::Bridge>) {
+        self.bridge = Some(bridge);
     }
 
     pub fn set_hotkey_home(
@@ -1597,6 +1613,26 @@ impl Composer {
         self.set_queued(Vec::new(), cx);
         self.set_running(false, cx);
         self.set_approval(None, cx);
+    }
+
+    /// Takes the unsent input (text, mention chips, attachments, diff comments) out of a
+    /// composer about to be replaced, as when the app-server restarts.
+    pub fn take_draft(&mut self) -> Draft {
+        Draft {
+            content: std::mem::take(&mut self.content),
+            mentions: std::mem::take(&mut self.mentions),
+            attachments: std::mem::take(&mut self.attachments),
+            diff_comments: std::mem::take(&mut self.diff_comments),
+        }
+    }
+
+    /// Puts a [`Composer::take_draft`] input into this composer.
+    pub fn put_draft(&mut self, draft: Draft, cx: &mut Context<Self>) {
+        self.set_text(&draft.content, cx);
+        self.mentions = draft.mentions;
+        self.attachments = draft.attachments;
+        self.diff_comments = draft.diff_comments;
+        cx.emit(DiffCommentsChanged(self.diff_comments.clone()));
     }
 
     pub fn restore_text(&mut self, text: &str, cx: &mut Context<Self>) {

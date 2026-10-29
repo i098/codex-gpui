@@ -46,6 +46,7 @@ use url::Url;
 mod app_tools;
 pub use app_tools::{AppToolEvents, AppTools, ToolEvent};
 mod automation_schedule;
+pub mod automation_source;
 pub mod computer_use;
 pub mod computer_use_native;
 pub mod connections;
@@ -221,6 +222,86 @@ pub trait Host: Send + Sync {
     /// without a ChatGPT sign-in. Call this off the UI thread.
     fn pending_worktree_archives(&self, _thread_id: &str) -> Result<Vec<PendingArchive>> {
         Ok(Vec::new())
+    }
+}
+
+pub(crate) fn thread_host(
+    host_id: &str,
+    bridge: Arc<Bridge>,
+    settings: Option<crate::host_settings::Settings>,
+) -> Arc<dyn Host> {
+    let cloud = CloudHost::from_env(app_server_credentials(bridge.clone()))
+        .with_bridge(bridge)
+        .with_settings(settings);
+    if host_id == "local" {
+        Arc::new(cloud)
+    } else {
+        Arc::new(RemoteThreadHost(cloud))
+    }
+}
+
+struct RemoteThreadHost(CloudHost);
+
+impl Host for RemoteThreadHost {
+    fn fetch(&self, request: &Request) -> Result<Value> {
+        match request {
+            Request::Http(_) => self.0.fetch(request),
+            Request::Fetch { .. } => {
+                bail!("Local desktop services are unavailable for a remote thread")
+            }
+        }
+    }
+
+    fn stream(
+        &self,
+        request: &Request,
+        cancelled: &std::sync::atomic::AtomicBool,
+        on_event: &mut dyn FnMut(Value) -> bool,
+    ) -> Result<()> {
+        ensure!(
+            matches!(request, Request::Http(_)),
+            "Local desktop services are unavailable for a remote thread"
+        );
+        self.0.stream(request, cancelled, on_event)
+    }
+
+    fn identity(&self) -> Option<Identity> {
+        self.0.identity()
+    }
+
+    fn invalidate_identity(&self) {
+        self.0.invalidate_identity();
+    }
+
+    fn supports_cloud_search(&self) -> bool {
+        self.0.supports_cloud_search()
+    }
+}
+
+#[cfg(test)]
+mod remote_thread_tests {
+    use super::*;
+
+    #[test]
+    fn remote_thread_never_reads_or_changes_local_automation_storage() {
+        let home = tempfile::tempdir().unwrap();
+        let host = RemoteThreadHost(CloudHost::new(
+            LocalHost::new(home.path()),
+            Box::new(|_| Ok(None)),
+            "http://127.0.0.1",
+        ));
+        for endpoint in [
+            "list-automations",
+            "automation-create",
+            "automation-update",
+            "automation-delete",
+        ] {
+            let error = host
+                .fetch(&Request::post(endpoint, Some(json!({"id": "same-id"}))))
+                .unwrap_err();
+            assert!(error.to_string().contains("remote thread"));
+        }
+        assert!(!home.path().join("automations").exists());
     }
 }
 
@@ -1281,6 +1362,11 @@ impl LocalHost {
             .filter(|v| !v.is_null())
             .map(|v| v.as_str().context("invalid inbox threadId"))
             .transpose()?;
+        let automation = params
+            .get("automationId")
+            .filter(|v| !v.is_null())
+            .map(|v| v.as_str().context("invalid inbox automationId"))
+            .transpose()?;
         let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_ONLY)? else {
             return Ok(
                 json!({"items": [], "unreadRunCounts": {"total": 0, "automationIds": [], "unreadRuns": []}}),
@@ -1296,8 +1382,9 @@ impl LocalHost {
              WHERE a.account_id IS NULL AND a.user_id IS NULL AND a.installation_id IS NULL
              AND r.status IN ('IN_PROGRESS', 'PENDING_REVIEW', 'ACCEPTED', 'ARCHIVED')
              AND (?1 IS NULL OR r.thread_id = ?1)
+             AND (?3 IS NULL OR r.automation_id = ?3)
              ORDER BY r.status = 'IN_PROGRESS' DESC, r.status = 'PENDING_REVIEW' DESC, r.created_at DESC LIMIT ?2")?;
-        let items = query.query_map(params![thread, limit], |r| Ok(json!({
+        let items = query.query_map(params![thread, limit, automation], |r| Ok(json!({
             "id": r.get::<_, String>(0)?, "threadId": r.get::<_, String>(0)?,
             "automationId": r.get::<_, String>(1)?, "automationName": r.get::<_, Option<String>>(2)?,
             "title": r.get::<_, Option<String>>(3)?, "description": r.get::<_, Option<String>>(4)?,
@@ -1675,6 +1762,10 @@ impl Host for LocalHost {
         };
         ensure!(params.is_object(), "host parameters must be an object");
         ensure!(
+            automation_source::Source::from_params(&params)? == automation_source::Source::Local,
+            "cloud automation storage is unavailable through LocalHost"
+        );
+        ensure!(
             params.get("hostId").is_none_or(|id| id == "local"),
             "remote host is unsupported by LocalHost"
         );
@@ -1719,6 +1810,42 @@ impl Host for LocalHost {
                 json!({"item": item})
             }
             "inbox-items" => self.inbox(&params)?,
+            "inbox-automation-runs-mark-all-read" => {
+                let id = params["automationId"]
+                    .as_str()
+                    .context("missing automationId")?;
+                let changed = if let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? {
+                    db.execute(
+                        "UPDATE automation_runs SET read_at = ?1 WHERE automation_id = ?2
+                         AND read_at IS NULL AND status IN ('PENDING_REVIEW', 'ACCEPTED')
+                         AND automation_id IN (SELECT id FROM automations WHERE account_id IS NULL
+                         AND user_id IS NULL AND installation_id IS NULL)",
+                        params![chrono::Utc::now().timestamp_millis(), id],
+                    )?
+                } else {
+                    0
+                };
+                json!({"changed": changed})
+            }
+            "automation-run-archive" => {
+                let automation = params["automationId"]
+                    .as_str()
+                    .context("missing automationId")?;
+                let thread = params["threadId"].as_str().context("missing threadId")?;
+                let db = self
+                    .database(OpenFlags::SQLITE_OPEN_READ_WRITE)?
+                    .context("missing run store")?;
+                let changed = db.execute(
+                    "UPDATE automation_runs SET status = 'ARCHIVED', updated_at = ?1
+                     WHERE automation_id = ?2 AND thread_id = ?3
+                     AND status IN ('PENDING_REVIEW', 'ACCEPTED')
+                     AND automation_id IN (SELECT id FROM automations WHERE account_id IS NULL
+                     AND user_id IS NULL AND installation_id IS NULL)",
+                    params![chrono::Utc::now().timestamp_millis(), automation, thread],
+                )?;
+                ensure!(changed == 1, "Run is not an eligible local run");
+                json!({})
+            }
             "apply-patch" => git::apply_cloud_patch(&params)?,
             "local-environments" => environments::list(Path::new(
                 params["workspaceRoot"]
@@ -2257,6 +2384,20 @@ impl Host for CloudHost {
     fn fetch(&self, request: &Request) -> Result<Value> {
         match request {
             Request::Http(http) => self.http(http),
+            Request::Fetch { method, url, body } if url.starts_with("vscode://codex/cloud-") => {
+                ensure!(method == "POST", "unsupported host method: {method}");
+                let params: Value = serde_json::from_str(body)?;
+                ensure!(params.is_object(), "host parameters must be an object");
+                let endpoint = url.strip_prefix("vscode://codex/cloud-").unwrap();
+                let body = automation_source::fetch(self, endpoint, &params)?;
+                Ok(json!({
+                    "type": "fetch-response",
+                    "responseType": "success",
+                    "status": 200,
+                    "headers": {"content-type": "application/json"},
+                    "bodyJsonString": body.to_string()
+                }))
+            }
             Request::Fetch { .. } => self.local.fetch(request),
         }
     }

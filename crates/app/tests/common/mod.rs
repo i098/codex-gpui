@@ -158,7 +158,15 @@ impl Fx {
 
     /// The app on an app-server that exits at once: the crash page (SH-145).
     pub fn crashed() -> Result<Self> {
-        let (bridge, events) = Bridge::spawn(Command::new("false"))?;
+        Self::crashed_on(Bridge::spawn(Command::new("false"))?)
+    }
+
+    /// The app on an app-server that could not start: the crash page as well.
+    pub fn unstarted() -> Result<Self> {
+        Self::crashed_on(Bridge::failed())
+    }
+
+    fn crashed_on((bridge, events): (Bridge, async_channel::Receiver<Event>)) -> Result<Self> {
         Self::boot(
             "dark",
             (1280., 832.),

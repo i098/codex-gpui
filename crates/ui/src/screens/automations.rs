@@ -3,8 +3,11 @@
 //! Host data (`list-automations`, `/suggested_automations`) comes from the recorded answers
 //! in `tools/route1/oracle.json`.
 
+use super::{settings::on_card, sidebar::ListState};
 use crate::{
-    Shell, focus,
+    Shell,
+    composer::Composer,
+    focus,
     icon::icon,
     icon_button,
     motion::ButtonVisual,
@@ -12,10 +15,10 @@ use crate::{
     tooltip::{Side, tooltip},
 };
 use gpui::{
-    Action, Anchor, AnyView, App, AppContext as _, ClickEvent, Context, Corners, Div, Entity,
-    FocusHandle, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render,
-    Role, SharedString, Stateful, StatefulInteractiveElement, Styled, Window, actions, anchored,
-    canvas, deferred, div, img, prelude::FluentBuilder as _, px,
+    Action, Anchor, AnyElement, AnyView, App, AppContext as _, ClickEvent, Context, Corners, Div,
+    Entity, FocusHandle, Focusable as _, InteractiveElement, IntoElement, KeyDownEvent,
+    MouseButton, ParentElement, Render, Role, SharedString, Stateful, StatefulInteractiveElement,
+    Styled, Window, actions, anchored, canvas, deferred, div, img, prelude::FluentBuilder as _, px,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -27,6 +30,7 @@ use std::{
 use theme::{ActiveTheme as _, Theme};
 
 pub mod editor;
+pub mod history;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum CreationMode {
@@ -51,14 +55,20 @@ actions!(
     [
         /// Sidebar `New task`: opens the create flow.
         NewTask,
-        /// Sidebar `Search scheduled tasks`.
-        SearchTasks,
-        /// Sidebar `Filter tasks` (ownership `Personal` / `Team`).
-        FilterTasks,
+        /// `Try again` under `Scheduled tasks could not be loaded`: reads the list again.
+        RetryAutomations,
         /// A suggested-task card was clicked (unsupported; see S035b).
         StartSuggestedTask,
     ]
 );
+
+/// A previous run under the selected task: opens the run's chat beside the task list.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = automations, no_json)]
+pub struct OpenAutomationRun {
+    pub automation_id: String,
+    pub thread_id: String,
+}
 
 /// A sidebar task row was clicked: `/scheduled?automationId=<id>`.
 #[derive(Clone, PartialEq, Action)]
@@ -102,12 +112,70 @@ pub struct Task {
     pub name: SharedString,
     pub prompt: SharedString,
     pub status: String,
+    /// `cron` or `heartbeat`; only a cron task lists its previous runs under its row.
+    #[serde(default)]
+    pub kind: String,
     #[serde(default)]
     pub rrule: String,
     /// Unix ms.
     #[serde(default)]
     pub created_at: i64,
     pub next_run_at: Option<i64>,
+}
+
+/// One `inbox-items` run: the shared previous-run history of the local tasks.
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Run {
+    pub thread_id: String,
+    pub automation_id: String,
+    pub title: Option<SharedString>,
+    pub status: String,
+    pub created_at: i64,
+}
+
+/// The runs of an `inbox-items` body that parse.
+pub fn runs(inbox: &Value) -> Vec<Run> {
+    inbox["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| serde_json::from_value(item.clone()).ok())
+        .collect()
+}
+
+/// `Filter by` choices, in the original's order.
+const STATUSES: [&str; 3] = ["Active", "Paused", "Completed"];
+const SEARCH_LABEL: &str = "Search scheduled tasks";
+
+/// The tasks the list shows: a status choice keeps the task (local tasks are active or
+/// paused), and so does a paused task that is selected while any status is chosen; the
+/// name contains the trimmed, lowercased query.
+fn visible<'a>(
+    tasks: &'a [Task],
+    statuses: [bool; 3],
+    query: &str,
+    selected: Option<&str>,
+) -> Vec<&'a Task> {
+    let query = query.trim().to_lowercase();
+    tasks
+        .iter()
+        .filter(|task| {
+            let paused = task.status == "PAUSED";
+            let kept = statuses[usize::from(paused)]
+                || (paused && statuses.contains(&true) && selected == Some(task.id.as_str()));
+            kept && task.name.to_lowercase().contains(&query)
+        })
+        .collect()
+}
+
+/// The list heading: `Upcoming`, or the one chosen inactive status.
+fn heading(statuses: [bool; 3]) -> &'static str {
+    match statuses {
+        [false, true, false] => "Paused",
+        [false, false, true] => "Completed",
+        _ => "Upcoming",
+    }
 }
 
 /// The items of a `list-automations` body that parse; others are skipped like the original's
@@ -167,9 +235,9 @@ fn rule_part<'a>(rrule: &'a str, key: &str) -> Option<&'a str> {
     })
 }
 
-fn cadence(rrule: &str) -> &'static str {
+fn cadence(rrule: &str) -> SharedString {
     match rule_part(rrule, "FREQ") {
-        Some("MINUTELY" | "HOURLY") => "Interval",
+        Some("MINUTELY" | "HOURLY") => return schedule_summary(rrule).into(),
         Some("DAILY") => "Daily",
         Some("WEEKLY") if rule_part(rrule, "BYDAY") == Some("MO,TU,WE,TH,FR") => "Weekdays",
         Some("WEEKLY") => "Weekly",
@@ -177,6 +245,7 @@ fn cadence(rrule: &str) -> &'static str {
         Some("YEARLY") => "Yearly",
         _ => "Custom",
     }
+    .into()
 }
 
 pub fn schedule_summary(rrule: &str) -> String {
@@ -191,7 +260,7 @@ pub fn schedule_summary(rrule: &str) -> String {
     let hour = rule_part(rrule, "BYHOUR").and_then(|h| h.parse::<u32>().ok());
     let minute = rule_part(rrule, "BYMINUTE").and_then(|m| m.parse::<u32>().ok());
     let (Some(hour), Some(minute)) = (hour, minute) else {
-        return cadence(rrule).to_owned();
+        return cadence(rrule).to_string();
     };
     let time = format!(
         "{}:{minute:02} {}",
@@ -215,7 +284,7 @@ fn interval_summary(minutes: u64) -> String {
 }
 
 /// The weekday of a single-day weekly rule, else its cadence.
-fn day_label(rrule: &str) -> &'static str {
+fn day_label(rrule: &str) -> SharedString {
     match (rule_part(rrule, "FREQ"), rule_part(rrule, "BYDAY")) {
         (Some("WEEKLY"), Some("MO")) => "Mondays",
         (Some("WEEKLY"), Some("TU")) => "Tuesdays",
@@ -224,8 +293,9 @@ fn day_label(rrule: &str) -> &'static str {
         (Some("WEEKLY"), Some("FR")) => "Fridays",
         (Some("WEEKLY"), Some("SA")) => "Saturdays",
         (Some("WEEKLY"), Some("SU")) => "Sundays",
-        _ => cadence(rrule),
+        _ => return cadence(rrule),
     }
+    .into()
 }
 
 // The card uses the original 24 px clock, not the sidebar's 20 px asset.
@@ -443,7 +513,11 @@ fn shell_with(
     Entity<ScheduledSidebar>,
     Option<Entity<AutomationsPage>>,
 ) {
+    let history = selected
+        .as_ref()
+        .map(|(task, _)| cx.new(|_| history::History::new(task.id.clone(), utc_offset)));
     let sidebar = cx.new(|cx| ScheduledSidebar {
+        history: history.clone(),
         tasks,
         selected: selected.as_ref().map(|(task, _)| task.id.clone()),
         utc_offset,
@@ -456,6 +530,17 @@ fn shell_with(
         return_focus: None,
         create_menu: cx.new(editor::CreateMenu::new),
         buttons: HashMap::new(),
+        load: ListState::Ready,
+        runs: Vec::new(),
+        selected_run: None,
+        collapsed: false,
+        shown_runs: 3,
+        search: None,
+        statuses: [true; 3],
+        filter_open: false,
+        filter_item: None,
+        filter_focus: cx.focus_handle(),
+        header_buttons: [None, None],
     });
     let mut page = None;
     let main: AnyView = match selected {
@@ -464,6 +549,7 @@ fn shell_with(
                 task,
                 composer,
                 utc_offset,
+                history: history.expect("a selected task has a history"),
             })
             .into(),
         None => page
@@ -486,6 +572,7 @@ fn shell_with(
 /// 48 px row per task (`automation-row`): name, `Oct 17 · Weekly`, and on hover the list
 /// fill with the `Scheduled task actions` button fading in. The selected row keeps the fill.
 pub struct ScheduledSidebar {
+    pub history: Option<Entity<history::History>>,
     tasks: Vec<Task>,
     selected: Option<String>,
     utc_offset: i64,
@@ -505,6 +592,26 @@ pub struct ScheduledSidebar {
     /// The `Scheduled task actions` button each opened menu came from: focus returns there
     /// after a dialog from the menu closes.
     buttons: HashMap<String, FocusHandle>,
+    /// The `list-automations` read: `Loading` before its first answer, `Failed` on an error.
+    load: ListState,
+    /// The shared previous-run history (`inbox-items`).
+    runs: Vec<Run>,
+    /// The run whose chat the main column shows.
+    selected_run: Option<String>,
+    /// The selected task's runs are folded away (a click on its row toggles them).
+    collapsed: bool,
+    /// How many runs the selected task lists: 3, and `Show older` adds 3.
+    shown_runs: usize,
+    /// The open `Search scheduled tasks` field.
+    search: Option<Entity<Composer>>,
+    /// The `Filter by` choices, in [`STATUSES`] order.
+    statuses: [bool; 3],
+    filter_open: bool,
+    /// The keyboard-active `Filter by` item once an arrow key moved it.
+    filter_item: Option<usize>,
+    filter_focus: FocusHandle,
+    /// The search and filter buttons' focus, kept from render: focus returns there.
+    header_buttons: [Option<FocusHandle>; 2],
 }
 
 /// The original's trash icon (`settings.automations.delete`), 16 px.
@@ -528,6 +635,193 @@ impl ScheduledSidebar {
     pub fn set_starting(&mut self, starting: HashSet<String>, cx: &mut Context<Self>) {
         self.starting = starting;
         cx.notify();
+    }
+
+    /// The list's load state: `Loading scheduled tasks…`, the error row, or the tasks.
+    pub fn load_state(&self) -> ListState {
+        self.load
+    }
+
+    pub fn set_load(&mut self, load: ListState, cx: &mut Context<Self>) {
+        self.load = load;
+        cx.notify();
+    }
+
+    /// The shared run history and the run whose chat is open.
+    pub fn set_runs(&mut self, runs: Vec<Run>, selected: Option<String>, cx: &mut Context<Self>) {
+        self.runs = runs;
+        self.selected_run = selected;
+        cx.notify();
+    }
+
+    /// The task the list selects (`?automationId=`).
+    pub fn selected(&self) -> Option<&str> {
+        self.selected.as_deref()
+    }
+
+    /// The ids of the rows the list shows, in order.
+    pub fn visible_ids(&self, cx: &App) -> Vec<String> {
+        let query = self.search.as_ref().map_or("", |s| s.read(cx).field_text());
+        visible(&self.tasks, self.statuses, query, self.selected.as_deref())
+            .into_iter()
+            .map(|task| task.id.clone())
+            .collect()
+    }
+
+    /// The selected cron task's runs, newest first, without archived runs.
+    fn task_runs(&self, task: &Task) -> Vec<&Run> {
+        let mut runs: Vec<_> = self
+            .runs
+            .iter()
+            .filter(|run| run.automation_id == task.id && run.status != "ARCHIVED")
+            .collect();
+        runs.sort_by_key(|run| std::cmp::Reverse(run.created_at));
+        runs
+    }
+
+    /// Keeps the search field and `Filter by` choices of the list this one replaces.
+    pub fn keep_view(&mut self, previous: &Entity<Self>, cx: &mut Context<Self>) {
+        let previous = previous.read(cx);
+        (self.statuses, self.search) = (previous.statuses, previous.search.clone());
+        if let Some(field) = &self.search {
+            cx.observe(field, |_, _, cx| cx.notify()).detach();
+        }
+    }
+
+    fn toggle_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.search.take().is_none() {
+            let field =
+                cx.new(|cx| Composer::embedded_field(SEARCH_LABEL, "", px(14.), px(20.), cx));
+            cx.observe(&field, |_, _, cx| cx.notify()).detach();
+            field.focus_handle(cx).focus(window, cx);
+            self.search = Some(field);
+        }
+        cx.notify();
+    }
+
+    /// Escape in the field closes it and returns focus to the search button.
+    fn search_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.keystroke.key == "escape" {
+            self.search = None;
+            if let Some(button) = &self.header_buttons[0] {
+                window.focus(button, cx);
+            }
+            cx.stop_propagation();
+            cx.notify();
+        }
+    }
+
+    fn toggle_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter_open = !self.filter_open;
+        self.filter_item = None;
+        if self.filter_open {
+            window.focus(&self.filter_focus, cx);
+        } else {
+            self.close_filter(window, cx);
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn close_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.filter_open = false;
+        self.filter_item = None;
+        if let Some(button) = &self.header_buttons[1] {
+            window.focus(button, cx);
+        }
+        cx.notify();
+    }
+
+    /// A `Filter by` checkbox: flips the status and closes the menu.
+    fn pick_status(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.statuses[i] = !self.statuses[i];
+        self.close_filter(window, cx);
+        cx.stop_propagation();
+    }
+
+    fn filter_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let last = STATUSES.len() - 1;
+        match event.keystroke.key.as_str() {
+            "escape" => self.close_filter(window, cx),
+            "enter" | "space" => {
+                if let Some(i) = self.filter_item {
+                    self.pick_status(i, window, cx);
+                }
+            }
+            "up" | "down" | "home" | "end" => {
+                self.filter_item = Some(match (event.keystroke.key.as_str(), self.filter_item) {
+                    ("home", _) | ("down", None) => 0,
+                    ("end", _) | (_, None) => last,
+                    ("down", Some(i)) => (i + 1) % STATUSES.len(),
+                    (_, Some(i)) => (i + last) % STATUSES.len(),
+                });
+                cx.notify();
+            }
+            _ => return,
+        }
+        cx.stop_propagation();
+    }
+
+    /// `Filter by` and the three status checkboxes, under the filter button.
+    fn filter_popup(&self, t: &Theme, cx: &Context<Self>) -> impl IntoElement + use<> {
+        let hover = t.menu_item_hover;
+        let items: Vec<_> = STATUSES
+            .iter()
+            .enumerate()
+            .map(|(i, label)| {
+                div()
+                    .id(("task-status", i))
+                    .role(Role::MenuItemCheckBox)
+                    .aria_label(*label)
+                    .aria_toggled(if self.statuses[i] {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .h(px(28.5625))
+                    .px(px(8.))
+                    .rounded(px(15.))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .when(self.filter_item == Some(i), |d| d.bg(hover))
+                    .hover(move |s| s.bg(hover))
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| this.pick_status(i, window, cx)),
+                    )
+                    .child(text(*label, 13., 18.5714, 430., t.text))
+                    .when(self.statuses[i], |d| {
+                        d.child(icon("menu-check", 16., t.text).opacity(0.75))
+                    })
+            })
+            .collect();
+        let menu = div()
+            .id("task-filter-menu")
+            .occlude()
+            .role(Role::Menu)
+            .aria_label("Filter tasks")
+            .track_focus(&self.filter_focus)
+            .on_key_down(cx.listener(Self::filter_key))
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| this.close_filter(window, cx)))
+            .child(crate::composer::popover(t, 220., |menu| {
+                menu.child(div().px(px(8.)).py(px(6.)).child(text(
+                    "Filter by",
+                    12.,
+                    16.,
+                    400.,
+                    t.text_tertiary,
+                )))
+                .children(items)
+            }));
+        deferred(
+            div().absolute().top(px(30.)).left_0().child(
+                anchored()
+                    .anchor(Anchor::TopLeft)
+                    .snap_to_window_with_margin(px(7.))
+                    .child(menu),
+            ),
+        )
+        .with_priority(1)
     }
 
     /// The task's run is starting.
@@ -940,9 +1234,12 @@ impl ScheduledSidebar {
                 ))
                 .child(text("·", 12., 16., 430., t.text_tertiary).mx(px(4.)));
         }
-        div()
+        let row_focus = focus::handle(group.clone(), 0, window, cx);
+        let row = div()
             .id(group.clone())
             .group(group.clone())
+            .role(Role::Button)
+            .aria_label(task.name.clone())
             .relative()
             .h(px(48.))
             .pt(px(5.))
@@ -951,15 +1248,23 @@ impl ScheduledSidebar {
             .flex()
             .flex_col()
             .gap(px(2.))
-            .child(if self.selected.as_deref() == Some(&task.id) {
-                fill
-            } else {
-                fill.opacity(0.)
-                    .group_hover(group.clone(), |s| s.opacity(1.))
-            })
-            .on_click(move |_, window, cx| {
-                window.dispatch_action(Box::new(OpenAutomation { id: id.clone() }), cx)
-            })
+            .child(
+                if self.selected.as_deref() == Some(&task.id) && self.selected_run.is_none() {
+                    fill
+                } else {
+                    fill.opacity(0.)
+                        .group_hover(group.clone(), |s| s.opacity(1.))
+                },
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                // A click on the shown task folds or unfolds its runs, as the original does.
+                if this.selected.as_deref() == Some(id.as_str()) && this.selected_run.is_none() {
+                    this.collapsed = !this.collapsed;
+                    cx.notify();
+                } else {
+                    window.dispatch_action(Box::new(OpenAutomation { id: id.clone() }), cx)
+                }
+            }))
             .child(
                 text(task.name.clone(), 14., 20., 430., t.text_default_nav)
                     .overflow_hidden()
@@ -969,7 +1274,7 @@ impl ScheduledSidebar {
                 secondary
                     .child(text(
                         if paused {
-                            "Paused"
+                            "Paused".into()
                         } else {
                             cadence(&task.rrule)
                         },
@@ -998,7 +1303,104 @@ impl ScheduledSidebar {
                     .group_hover(group.clone(), |s| s.opacity(1.))
                     .child(tooltip(status, label, None, Side::Top))
                     .child(menu),
-            )
+            );
+        focus::ring(row, &row_focus, px(12.5), px(0.), cx)
+    }
+
+    /// The selected cron task's previous runs under its row, then `Show older` while more
+    /// remain; `No runs yet` when it has none.
+    fn run_rows(&self, task: &Task, t: &Theme, cx: &Context<Self>) -> Vec<AnyElement> {
+        if self.selected.as_deref() != Some(task.id.as_str())
+            || self.collapsed
+            || task.kind != "cron"
+        {
+            return Vec::new();
+        }
+        let runs = self.task_runs(task);
+        if runs.is_empty() {
+            return vec![
+                div()
+                    .h(px(30.))
+                    .pl(px(24.))
+                    .flex()
+                    .items_center()
+                    .child(text("No runs yet", 13., 18.5714, 430., t.text_tertiary))
+                    .into_any_element(),
+            ];
+        }
+        let more = runs.len() > self.shown_runs;
+        let mut rows: Vec<AnyElement> = runs
+            .into_iter()
+            .take(self.shown_runs)
+            .map(|run| {
+                let selected = self.selected_run.as_deref() == Some(run.thread_id.as_str());
+                let group = SharedString::from(format!("task-run-{}", run.thread_id));
+                let action = OpenAutomationRun {
+                    automation_id: run.automation_id.clone(),
+                    thread_id: run.thread_id.clone(),
+                };
+                let fill = fill(px(12.5), t.ghost_hover);
+                div()
+                    .id(group.clone())
+                    .group(group.clone())
+                    .role(Role::Link)
+                    .relative()
+                    .h(px(30.))
+                    .pl(px(24.))
+                    .pr(px(8.))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(if selected {
+                        fill
+                    } else {
+                        fill.opacity(0.).group_hover(group, |s| s.opacity(1.))
+                    })
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(Box::new(action.clone()), cx)
+                    })
+                    .child(
+                        div().flex_1().min_w_0().overflow_hidden().child(
+                            text(
+                                run.title.clone().unwrap_or_else(|| task.name.clone()),
+                                14.,
+                                20.,
+                                430.,
+                                t.text_default_nav,
+                            )
+                            .text_ellipsis(),
+                        ),
+                    )
+                    .child(text(
+                        day_time(run.created_at, self.utc_offset).0,
+                        12.,
+                        16.,
+                        430.,
+                        t.text_tertiary,
+                    ))
+                    .into_any_element()
+            })
+            .collect();
+        if more {
+            rows.push(
+                div()
+                    .id("show-older-runs")
+                    .role(Role::Button)
+                    .h(px(30.))
+                    .pl(px(24.))
+                    .flex()
+                    .items_center()
+                    .rounded(px(12.5))
+                    .hover(|s| s.bg(t.ghost_hover))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.shown_runs += 3;
+                        cx.notify();
+                    }))
+                    .child(text("Show older", 13., 18.5714, 430., t.text_tertiary))
+                    .into_any_element(),
+            );
+        }
+        rows
     }
 }
 
@@ -1006,11 +1408,61 @@ impl Render for ScheduledSidebar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let hover_bg = t.list_hover;
-        let rows: Vec<_> = self
-            .tasks
-            .iter()
-            .map(|task| self.row(task, &t, window, cx))
-            .collect();
+        let search_focus = focus::handle("search-tasks", 0, window, cx);
+        let filter_focus = focus::handle("filter-tasks", 0, window, cx);
+        self.header_buttons = [
+            Some(search_focus.read(cx).handle.clone()),
+            Some(filter_focus.read(cx).handle.clone()),
+        ];
+        let query = self
+            .search
+            .as_ref()
+            .map_or(String::new(), |s| s.read(cx).field_text().to_owned());
+        let shown: Vec<Task> =
+            visible(&self.tasks, self.statuses, &query, self.selected.as_deref())
+                .into_iter()
+                .cloned()
+                .collect();
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for task in &shown {
+            rows.push(self.row(task, &t, window, cx).into_any_element());
+            rows.extend(self.run_rows(task, &t, cx));
+        }
+        let notice = match self.load {
+            ListState::Loading => Some("Loading scheduled tasks…"),
+            ListState::Failed => Some("Scheduled tasks could not be loaded"),
+            ListState::Ready if self.tasks.is_empty() => Some("No scheduled tasks"),
+            ListState::Ready if shown.is_empty() => Some("No matching tasks"),
+            ListState::Ready => None,
+        };
+        let search = focus::ring(
+            icon_button("search-tasks", icon("search", 16., t.text_tertiary), &t)
+                .role(Role::Button)
+                .aria_label(SEARCH_LABEL)
+                .aria_expanded(self.search.is_some())
+                .on_click(cx.listener(|this, _, window, cx| this.toggle_search(window, cx))),
+            &search_focus,
+            px(9.375),
+            px(2.),
+            cx,
+        );
+        let filter = focus::ring(
+            icon_button(
+                "filter-tasks",
+                icon("automations-filter", 16., t.text_tertiary),
+                &t,
+            )
+            .role(Role::Button)
+            .aria_label("Filter tasks")
+            .aria_expanded(self.filter_open)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_filter(window, cx))),
+            &filter_focus,
+            px(9.375),
+            px(2.),
+            cx,
+        );
+        let filter_menu = self.filter_open.then(|| self.filter_popup(&t, cx));
         div()
             .size_full()
             .flex()
@@ -1033,15 +1485,30 @@ impl Render for ScheduledSidebar {
                                 600.,
                                 t.text_default_nav,
                             )))
-                            .child(
-                                icon_button(
-                                    "search-tasks",
-                                    icon("search", 16., t.text_tertiary),
-                                    &t,
-                                )
-                                .on_click(crate::dispatch::<SearchTasks>),
-                            ),
+                            .child(tooltip(search, "Search", None, Side::Top)),
                     )
+                    .when_some(self.search.clone(), |d, field| {
+                        d.child(
+                            div()
+                                .id("scheduled-sidebar-search")
+                                .mb(px(8.))
+                                .h(px(32.))
+                                .px(px(11.))
+                                .relative()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(on_card(
+                                    9999.,
+                                    shapes::Corner::Round,
+                                    t.surface_elevated_secondary,
+                                    Some(t.border_strong),
+                                ))
+                                .capture_key_down(cx.listener(Self::search_key))
+                                .child(icon("shortcut-search", 16., t.text_secondary))
+                                .child(div().flex_1().min_w_0().child(field)),
+                        )
+                    })
                     .child(
                         div()
                             .id("new-task")
@@ -1080,24 +1547,50 @@ impl Render for ScheduledSidebar {
                             .justify_between()
                             .pl(px(8.))
                             .pr(px(6.))
-                            .child(text("Upcoming", 14., 21., 500., t.text_tertiary))
+                            .child(text(
+                                heading(self.statuses),
+                                14.,
+                                21.,
+                                500.,
+                                t.text_tertiary,
+                            ))
                             .child(
-                                icon_button(
-                                    "filter-tasks",
-                                    icon("automations-filter", 16., t.text_tertiary),
-                                    &t,
-                                )
-                                .on_click(crate::dispatch::<FilterTasks>),
+                                div()
+                                    .relative()
+                                    .child(tooltip(filter, "Filter", None, Side::Top))
+                                    .children(filter_menu),
                             ),
                     )
-                    .when(rows.is_empty(), |d| {
-                        d.child(div().mt(px(1.)).px(px(8.)).py(px(4.)).child(text(
-                            "No scheduled tasks",
-                            13.,
-                            18.571_428,
-                            430.,
-                            t.text_tertiary,
-                        )))
+                    .when_some(notice, |d, notice| {
+                        d.child(
+                            div()
+                                .mt(px(1.))
+                                .px(px(8.))
+                                .py(px(4.))
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(text(notice, 13., 18.571_428, 430., t.text_tertiary))
+                                .when(self.load == ListState::Failed, |d| {
+                                    d.child(
+                                        div()
+                                            .id("retry-automations")
+                                            .role(Role::Button)
+                                            .px(px(8.))
+                                            .py(px(2.))
+                                            .rounded(px(6.))
+                                            .bg(t.ghost_hover)
+                                            .on_click(crate::dispatch::<RetryAutomations>)
+                                            .child(text(
+                                                "Try again",
+                                                12.,
+                                                18.,
+                                                430.,
+                                                t.text_default_nav,
+                                            )),
+                                    )
+                                }),
+                        )
                     })
                     .when(!rows.is_empty(), |d| {
                         d.child(div().flex().flex_col().gap(px(1.)).children(rows))
@@ -1296,12 +1789,11 @@ impl Render for AutomationsPage {
 /// Main column of `/scheduled?automationId=<id>`: the task's thread as the original shows it
 /// before any run (date separator, the prompt as the user's message, `Your task is
 /// scheduled…` with the automation card) over the docked composer.
-/// ponytail: no scroll fades, corner clip, message hover actions or run items; add with the
-/// run-history rows.
 pub struct AutomationThread {
     task: Task,
     composer: AnyView,
     utc_offset: i64,
+    history: Entity<history::History>,
 }
 
 impl Render for AutomationThread {
@@ -1390,7 +1882,8 @@ impl Render for AutomationThread {
                                     t,
                                 )
                                 .mt(px(24.)),
-                            ),
+                            )
+                            .child(self.history.clone()),
                     )
                     // Room for the docked composer.
                     .child(div().h(px(114.))),
@@ -1422,6 +1915,21 @@ fn status_icon(paused: bool, color: gpui::Hsla) -> crate::icon::Icon {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn saved_interval_cadences_preserve_daily_and_weekly_labels() {
+        for (rule, label) in [
+            ("FREQ=HOURLY;INTERVAL=1;BYMINUTE=0", "Hourly"),
+            ("RRULE:FREQ=HOURLY;INTERVAL=3", "Every 3 hours"),
+            ("FREQ=MINUTELY;INTERVAL=1", "Every minute"),
+            ("FREQ=MINUTELY;INTERVAL=15", "Every 15 minutes"),
+            ("FREQ=DAILY;BYHOUR=9;BYMINUTE=0", "Daily"),
+            ("FREQ=WEEKLY;BYDAY=MO", "Weekly"),
+            ("FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR", "Weekdays"),
+        ] {
+            assert_eq!(super::cadence(rule).as_ref(), label, "{rule}");
+        }
+    }
+
     #[test]
     fn only_the_original_event_prompt_is_event_triggered() {
         let event = "## When this happens\n> a PR opens\n>\n> in main\n\n## Perform action\n> review it\n\nTrailing";

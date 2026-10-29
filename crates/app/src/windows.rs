@@ -488,7 +488,11 @@ fn open_primary_with_presentation(
         };
         cx.set_global(settings);
     }
-    let (bridge, events) = connect(Path::new(&cwd))?;
+    // An app-server that cannot start shows the crash page, whose Try again respawns it.
+    let (bridge, events) = connect(Path::new(&cwd)).unwrap_or_else(|error| {
+        eprintln!("codex-gpui: cannot start the app-server: {error:#}");
+        Bridge::failed()
+    });
     let mut spec = Spec::new(
         Kind::Primary,
         if qa::ENABLED {

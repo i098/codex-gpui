@@ -133,15 +133,18 @@ pub async fn archived_threads(
 }
 
 pub struct ArchivedChats {
+    bridge: std::sync::Arc<bridge::Bridge>,
     pub threads: Option<anyhow::Result<Vec<Thread>>>,
     _load: gpui::Task<()>,
 }
 
 impl ArchivedChats {
     fn new(cx: &mut Context<Self>) -> Self {
+        let bridge = cx.global::<crate::screens::settings::AppServer>().0.clone();
         Self {
             threads: None,
-            _load: Self::load(cx),
+            _load: Self::load(bridge.clone(), cx),
+            bridge,
         }
     }
 
@@ -150,13 +153,12 @@ impl ArchivedChats {
             threads.retain(|thread| thread.id != id);
         } else if self.threads.is_none() {
             // A pending read can still contain the restored chat.
-            self._load = Self::load(cx);
+            self._load = Self::load(self.bridge.clone(), cx);
         }
         cx.notify();
     }
 
-    fn load(cx: &mut Context<Self>) -> gpui::Task<()> {
-        let bridge = cx.global::<crate::screens::settings::AppServer>().0.clone();
+    fn load(bridge: std::sync::Arc<bridge::Bridge>, cx: &mut Context<Self>) -> gpui::Task<()> {
         cx.spawn(async move |this, cx| {
             let threads = archived_threads(&bridge, 100).await;
             this.update(cx, |this, cx| {
