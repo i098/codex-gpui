@@ -362,6 +362,15 @@ struct DeletedQueuedMessage {
     submission: QueuedSubmission,
     previous: Option<String>,
     next: Option<String>,
+    failed: Option<FailedQueuedMessage>,
+}
+
+#[derive(Clone)]
+struct FailedQueuedMessage {
+    thread_id: String,
+    submission: QueuedSubmission,
+    settings: Submission,
+    place: Option<QueueEdit>,
 }
 
 enum SettingsLeave {
@@ -513,6 +522,7 @@ pub struct Root {
     queue_load: Option<Task<()>>,
     queue_pending: bool,
     deleted_queued: Vec<DeletedQueuedMessage>,
+    failed_queued: Vec<FailedQueuedMessage>,
     /// A successful steer must never be sent again when its queue deletion fails.
     steered_queued: HashSet<(String, String)>,
     /// Server approval requests waiting for a decision, oldest first. The thread composer
@@ -928,6 +938,7 @@ impl Root {
             queue_load: None,
             queue_pending: false,
             deleted_queued: Vec::new(),
+            failed_queued: Vec::new(),
             steered_queued: HashSet::new(),
             approvals: Vec::new(),
             interrupting: HashSet::new(),
@@ -3963,6 +3974,7 @@ impl Root {
         self.thread_composer.update(cx, |c, cx| {
             c.set_running(running, cx);
             c.set_queued(Vec::new(), cx);
+            c.set_failed_queued(Vec::new(), cx);
             c.set_queue_pending(self.queue_pending, cx);
             c.set_search_roots(vec![thread.cwd.clone()], cx);
             c.set_side_chat(side_chat);
@@ -4114,11 +4126,12 @@ impl Root {
     /// decides: `Queue` adds the message to the app-server's queue (`thread/queue/add`,
     /// drained by the server when the turn ends), `Steer` sends it into the turn
     /// (`turn/steer`). A queued draft taken back by `Edit message` returns to its place in the
-    /// queue. A refusal shows `Error submitting message` and puts the draft back.
+    /// queue. A refused follow-up stays in the tray with Retry.
     fn send(
         &mut self,
         side: Option<usize>,
         s: Submission,
+        retry: Option<FailedQueuedMessage>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -4137,30 +4150,58 @@ impl Root {
             .find(|turn| turn.status == TurnStatus::InProgress)
             .map(|turn| turn.id.clone());
         let queue = self.config["desktop"]["followUpQueueMode"] == "queue";
-        let edit = self
-            .queue_edit(side)
-            .and_then(|edit| edit.take_if(|edit| edit.thread_id == id));
+        let retrying = retry.is_some();
+        let message = retry.unwrap_or_else(|| {
+            let place = self
+                .queue_edit(side)
+                .and_then(|edit| edit.take_if(|edit| edit.thread_id == id));
+            let mut input = user_input(&s);
+            input.extend(place.iter().flat_map(|edit| edit.extra.clone()));
+            let client_id = uuid_v4();
+            FailedQueuedMessage {
+                thread_id: id.clone(),
+                submission: QueuedSubmission {
+                    id: client_id.clone(),
+                    client_user_message_id: client_id,
+                    input,
+                },
+                settings: s,
+                place,
+            }
+        });
+        if retrying {
+            self.begin_queue_action(cx);
+        }
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let result = async {
                 resume_if(resume, &bridge, &this, &id, cx).await?;
-                let mut input = user_input(&s);
-                input.extend(edit.iter().flat_map(|edit| edit.extra.clone()));
+                let input = &message.submission.input;
                 let Some(turn_id) = running.as_ref() else {
-                    return turn_start(&bridge, &id, &s, input).await;
+                    return turn_start(
+                        &bridge,
+                        &id,
+                        &message.settings,
+                        input.clone(),
+                        Some(&message.submission.client_user_message_id),
+                    )
+                    .await;
                 };
                 let (method, params) = if queue {
                     let params = json!({
-                        "threadId": id, "input": input, "clientUserMessageId": uuid_v4(),
+                        "threadId": id, "input": input,
+                        "clientUserMessageId": message.submission.client_user_message_id,
                     });
                     ("thread/queue/add", params)
                 } else {
-                    let params =
-                        json!({ "threadId": id, "input": input, "expectedTurnId": turn_id });
+                    let params = json!({
+                        "threadId": id, "input": input, "expectedTurnId": turn_id,
+                        "clientUserMessageId": message.submission.client_user_message_id,
+                    });
                     ("turn/steer", params)
                 };
                 let result = bridge.request::<_, Value>(method, params).await;
                 if queue
-                    && let (Ok(added), Some(edit)) = (&result, &edit)
+                    && let (Ok(added), Some(edit)) = (&result, &message.place)
                     && let Some(added) = added["queuedSubmission"]["id"].as_str()
                     && let Err(error) = restore_place(&bridge, &id, added, edit).await
                 {
@@ -4169,18 +4210,34 @@ impl Root {
                 result.map(drop)
             }
             .await;
-            this.update(cx, |this, cx| match &result {
-                Ok(_) if queue && running.is_some() => this.list_queue(id, cx),
-                Ok(_) => {}
-                Err(_) => {
-                    if let Some(slot) = this.queue_edit(side) {
-                        *slot = edit;
+            this.update(cx, |this, cx| {
+                match &result {
+                    Ok(_) => {
+                        this.remove_failed_queued(&id, &message.submission.id, cx);
+                        if queue && running.is_some() {
+                            this.list_queue(id.clone(), cx);
+                        }
                     }
-                    composer.update(cx, |c, cx| {
-                        c.restore_text(&s.text, cx);
-                        c.drop_files(&s.attachments, cx);
-                    });
-                    this.toast(Toast::danger("Error submitting message"), cx);
+                    Err(_) => {
+                        if running.is_some() || retrying {
+                            if !retrying {
+                                this.failed_queued.push(message);
+                            }
+                            this.refresh_failed_queued(&id, cx);
+                        } else {
+                            if let Some(slot) = this.queue_edit(side) {
+                                *slot = message.place;
+                            }
+                            composer.update(cx, |c, cx| {
+                                c.restore_text(&message.settings.text, cx);
+                                c.drop_files(&message.settings.attachments, cx);
+                            });
+                        }
+                        this.toast(Toast::danger("Error submitting message"), cx);
+                    }
+                }
+                if retrying {
+                    this.finish_queue_action(cx);
                 }
             })?;
             result
@@ -4188,9 +4245,36 @@ impl Root {
         log_err(task, cx);
     }
 
+    fn failed_row(&self, thread_id: &str, id: &str) -> Option<&FailedQueuedMessage> {
+        self.failed_queued
+            .iter()
+            .find(|row| row.thread_id == thread_id && row.submission.id == id)
+    }
+
+    fn refresh_failed_queued(&self, thread_id: &str, cx: &mut Context<Self>) {
+        if let Some(side) = self.owner(thread_id, cx)
+            && let Some((_, composer)) = self.conversation(side)
+        {
+            let rows = self
+                .failed_queued
+                .iter()
+                .filter(|row| row.thread_id == thread_id)
+                .map(|row| row.submission.clone())
+                .collect();
+            composer.update(cx, |c, cx| c.set_failed_queued(rows, cx));
+        }
+    }
+
+    fn remove_failed_queued(&mut self, thread_id: &str, id: &str, cx: &mut Context<Self>) {
+        self.failed_queued
+            .retain(|row| row.thread_id != thread_id || row.submission.id != id);
+        self.refresh_failed_queued(thread_id, cx);
+    }
+
     /// `thread/queue/list` of thread `id` into its composer: a side chat's at once, the open
     /// chat's when no queue action runs.
     fn list_queue(&mut self, id: String, cx: &mut Context<Self>) {
+        self.refresh_failed_queued(&id, cx);
         if let Some(Some(key)) = self.owner(&id, cx)
             && let Some((_, composer)) = self.conversation(Some(key))
         {
@@ -4233,6 +4317,15 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         match action {
+            QueueAction::Retry(id) => {
+                if !self.queue_pending
+                    && let Some((view, _)) = self.conversation(side)
+                    && let Some(message) = self.failed_row(view.read(cx).id(), id).cloned()
+                {
+                    self.send(side, message.settings.clone(), Some(message), window, cx);
+                }
+                return;
+            }
             QueueAction::Edit(id) => return self.edit_queued(side, id.clone(), window, cx),
             QueueAction::SideChat(id) => return self.open_side_chat(id.clone(), window, cx),
             QueueAction::Queueing(queue) => return self.set_queueing(*queue, cx),
@@ -4258,6 +4351,7 @@ impl Root {
         let deleted = DeletedQueuedMessage {
             thread_id: thread_id.clone(),
             submission: rows[at].submission.clone(),
+            failed: self.failed_row(&thread_id, id).cloned(),
             previous: at
                 .checked_sub(1)
                 .map(|i| rows[i].submission.client_user_message_id.clone()),
@@ -4265,6 +4359,13 @@ impl Root {
                 .get(at + 1)
                 .map(|row| row.submission.client_user_message_id.clone()),
         };
+        if deleted.failed.is_some() {
+            self.remove_failed_queued(&thread_id, id, cx);
+            if side.is_none() {
+                self.deleted_queued.push(deleted);
+            }
+            return;
+        }
         let steer = matches!(action, QueueAction::Steer(_));
         let turn_id = view
             .read(cx)
@@ -4381,6 +4482,22 @@ impl Root {
         }
         self.begin_queue_action(cx);
         self.navigate(Route::Thread(deleted.thread_id.clone()), window, cx);
+        if let Some(failed) = deleted.failed {
+            let neighbour = |id: &Option<String>| {
+                self.failed_queued
+                    .iter()
+                    .position(|row| id.as_ref() == Some(&row.submission.client_user_message_id))
+            };
+            let index = neighbour(&deleted.next)
+                .or_else(|| neighbour(&deleted.previous).map(|index| index + 1))
+                .unwrap_or(self.failed_queued.len());
+            self.failed_queued.insert(index, failed);
+            self.deleted_queued.pop();
+            self.refresh_failed_queued(&deleted.thread_id, cx);
+            self.toast(Toast::info("Queued message restored"), cx);
+            self.finish_queue_action(cx);
+            return;
+        }
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             let result = restore_queued(&bridge, &deleted).await;
@@ -4424,16 +4541,15 @@ impl Root {
         }
         place.extra = extra;
         let thread_id = place.thread_id.clone();
+        let failed = self.failed_row(&thread_id, &id).is_some();
         self.begin_queue_action(cx);
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let params = json!({ "threadId": thread_id, "queuedSubmissionId": id });
-            let result = bridge
-                .request::<_, Value>("thread/queue/delete", params)
-                .await;
+            let result = take_queued(&bridge, &thread_id, &id, failed).await;
             this.update_in(cx, |this, window, cx| {
                 match &result {
-                    Ok(taken) if taken["deleted"] == true => {
+                    Ok(true) => {
+                        this.remove_failed_queued(&thread_id, &id, cx);
                         if let Some(slot) = this.queue_edit(side) {
                             *slot = Some(place);
                         }
@@ -4570,6 +4686,7 @@ impl Root {
             return;
         };
         let source = place.thread_id.clone();
+        let failed = self.failed_row(&source, &id).is_some();
         self.begin_queue_action(cx);
         let (text, ..) = split_input(&submission.input);
         let title: SharedString = match text.split_whitespace().collect::<Vec<_>>().join(" ") {
@@ -4579,11 +4696,8 @@ impl Root {
         };
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
-            let params = json!({ "threadId": source, "queuedSubmissionId": id });
-            let taken = bridge
-                .request::<_, Value>("thread/queue/delete", params)
-                .await;
-            if !matches!(&taken, Ok(taken) if taken["deleted"] == true) {
+            let taken = take_queued(&bridge, &source, &id, failed).await;
+            if !matches!(&taken, Ok(true)) {
                 this.update(cx, |this, cx| {
                     if taken.is_err() {
                         this.toast(Toast::danger(SIDE_CHAT_FAILED), cx);
@@ -4643,7 +4757,7 @@ impl Root {
                     started.map(drop)
                 }
             };
-            if result.is_err() {
+            if result.is_err() && !failed {
                 let restored = async {
                     let params = json!({
                         "threadId": source,
@@ -4664,6 +4778,8 @@ impl Root {
             this.update(cx, |this, cx| {
                 if result.is_err() {
                     this.toast(Toast::danger(SIDE_CHAT_FAILED), cx);
+                } else if failed {
+                    this.remove_failed_queued(&source, &id, cx);
                 }
                 this.finish_queue_action(cx);
             })?;
@@ -4738,6 +4854,7 @@ impl Root {
             .find(|turn| turn.status == TurnStatus::InProgress)
             .map(|turn| turn.id.clone());
         self.loaded.remove(&id);
+        self.failed_queued.retain(|row| row.thread_id != id);
         let bridge = self.bridge.clone();
         let task = cx.spawn(async move |_, _| -> Result<()> {
             if let Some(turn) = running
@@ -6580,6 +6697,7 @@ fn split_input(input: &[Value]) -> (String, Vec<PathBuf>, Vec<Value>) {
 
 /// A queued draft taken back by `Edit message`: where it stood in the queue, and the input
 /// the composer cannot show.
+#[derive(Clone)]
 struct QueueEdit {
     thread_id: String,
     previous: Option<String>,
@@ -6644,7 +6762,7 @@ fn wire_thread_composer(composer: &mut Composer, this: WeakEntity<Root>, side: O
             .ok();
     });
     composer.on_submit(move |s, window, cx| {
-        send.update(cx, |this, cx| this.send(side, s.clone(), window, cx))
+        send.update(cx, |this, cx| this.send(side, s.clone(), None, window, cx))
             .ok();
     });
     composer.on_approval(move |id, thread, response, _, cx| {
@@ -6725,6 +6843,7 @@ async fn turn_start(
     thread_id: &str,
     s: &Submission,
     input: Vec<Value>,
+    client_user_message_id: Option<&str>,
 ) -> Result<()> {
     let mut params = json!({
         "threadId": thread_id,
@@ -6732,12 +6851,28 @@ async fn turn_start(
         "model": model(s),
         "effort": s.effort,
     });
+    if let Some(id) = client_user_message_id {
+        params["clientUserMessageId"] = id.into();
+    }
     apply_permissions(&mut params, s.permission);
     if s.fast {
         params["serviceTier"] = "priority".into();
     }
     bridge.request::<_, Value>("turn/start", params).await?;
     Ok(())
+}
+
+async fn take_queued(bridge: &Bridge, thread_id: &str, id: &str, local: bool) -> Result<bool> {
+    if local {
+        return Ok(true);
+    }
+    bridge
+        .request::<_, Value>(
+            "thread/queue/delete",
+            json!({ "threadId": thread_id, "queuedSubmissionId": id }),
+        )
+        .await
+        .map(|response| response["deleted"] == true)
 }
 
 async fn read_queue(bridge: &Bridge, thread_id: &str) -> Result<Vec<QueuedSubmission>> {
@@ -7354,13 +7489,16 @@ impl Render for Root {
             .font_family(ui::SANS)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::type_anywhere))
-            .on_action(cx.listener(|this, _: &Undo, window, cx| {
+            .capture_action(cx.listener(|this, _: &Undo, window, cx| {
                 if this.deleted_queued.is_empty() {
-                    if !this.undo_app_edit(true, window, cx) {
-                        cx.propagate();
-                    }
+                    cx.propagate();
                 } else {
                     this.undo_queued(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &Undo, window, cx| {
+                if !this.undo_app_edit(true, window, cx) {
+                    cx.propagate();
                 }
             }))
             .on_action(cx.listener(|this, _: &Redo, window, cx| {
