@@ -8,6 +8,10 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Add the advanced Appearance settings: theme presets, colors, contrast, fonts, translucent sidebar, theme import and copy, separate light and dark modes, font sizes, diff markers, reduced motion, pointer cursors, font smoothing, the macOS Dock icon, and Reset to default.
+- Add optional keyboard-accessible documentation links to confirmation dialogs without accepting or cancelling the pending action.
+- Add saved, revision-scoped Mark as viewed controls for Branch diffs.
+- Route native Codex links with thread host and access state, project selection, SSH setup, source-specific task editing, and window-owned OAuth callbacks.
+- Notify completed automation runs and show the Scheduled unread dot from saved run state.
 - Add working Notifications settings: system permission, turn mode, alert switches, sound with import and preview, and ChatGPT channels.
 - Show the crash page with Try again when the app-server cannot start, and keep unsent composer drafts when Try again restarts it.
 - Show scheduled previous runs with saved read state, mark-all-as-read, and confirmed bulk archive with partial-failure reporting.
@@ -29,6 +33,10 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Restore `View` > `Toggle Bottom Panel` and `View` > `Open Terminal` in the macOS menu bar, in the original order.
 
 ### Fixed
+- Keep context-only commands out of the live Keyboard shortcuts dialog while retaining them in Settings.
+- Show Login when the account read fails, and keep Coding Home available when access-inputs fails.
+- Share Mark as unread state between the chat command, its shortcut, and the sidebar menu.
+- Open Home on launch, as the original does, instead of the last saved page; window size, sidebar, theme and an unfinished onboarding page stay.
 - Show saved hourly and minute intervals in scheduled task rows without changing daily or weekly labels.
 - Raster a shown Code Review pull request in the page's tile grid, as the original does, so its status glyph and the main panel's corners match the original, and paint the author avatar's white fill as its box background.
 - Paint the Code Review tabs, search toolbar and pull request list in the original's composited layers, so their icon and pill edges match the original pixel for pixel.

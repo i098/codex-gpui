@@ -206,8 +206,16 @@ pub trait Host: Send + Sync {
         bail!("Mobile setup persistence is unsupported by this host")
     }
 
-    /// Finish the initial automation turn and settle its automatic archive before reading the inbox.
-    fn finish_automation_run(&self, _thread_id: &str, _turn: &Value) -> Result<bool> {
+    /// Settles completion and returns its failed-runs-only policy, or `None` if no run finished.
+    fn finish_automation_run(&self, _thread_id: &str, _turn: &Value) -> Result<Option<bool>> {
+        Ok(None)
+    }
+
+    fn mark_automation_run_read(&self, _thread_id: &str) -> Result<bool> {
+        Ok(false)
+    }
+
+    fn archive_automation_run(&self, _thread_id: &str) -> Result<bool> {
         Ok(false)
     }
 
@@ -1556,8 +1564,33 @@ impl Host for LocalHost {
         diff_repositories::discover(&self.home, thread, cwd)
     }
 
-    fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {
+    fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<Option<bool>> {
         self.finish_run(thread_id, turn)
+    }
+
+    fn mark_automation_run_read(&self, thread_id: &str) -> Result<bool> {
+        self.mark_inbox_read(thread_id, Some(chrono::Utc::now().timestamp_millis()))
+    }
+
+    fn archive_automation_run(&self, thread_id: &str) -> Result<bool> {
+        if self
+            .bridge
+            .as_ref()
+            .and_then(|bridge| bridge.automation_turn(thread_id))
+            .is_some_and(|run| run.auto_archive)
+        {
+            return Ok(false);
+        }
+        let Some(db) = self.database(OpenFlags::SQLITE_OPEN_READ_WRITE)? else {
+            return Ok(false);
+        };
+        Ok(db.execute(
+            "UPDATE automation_runs SET status = 'ARCHIVED', updated_at = ?,
+             archived_reason = COALESCE(archived_reason, 'auto') WHERE thread_id = ?
+             AND status IN ('PENDING_REVIEW', 'ACCEPTED') AND automation_id IN
+             (SELECT id FROM automations WHERE account_id IS NULL AND user_id IS NULL AND installation_id IS NULL)",
+            params![chrono::Utc::now().timestamp_millis(), thread_id],
+        )? > 0)
     }
 
     fn add_project(&self, root: &Path) -> Result<String> {
@@ -2377,8 +2410,16 @@ impl Host for CloudHost {
         self.local.create_project(name, roots, appearance, threads)
     }
 
-    fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<bool> {
+    fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<Option<bool>> {
         self.local.finish_run(thread_id, turn)
+    }
+
+    fn mark_automation_run_read(&self, thread_id: &str) -> Result<bool> {
+        self.local.mark_automation_run_read(thread_id)
+    }
+
+    fn archive_automation_run(&self, thread_id: &str) -> Result<bool> {
+        self.local.archive_automation_run(thread_id)
     }
 
     fn fetch(&self, request: &Request) -> Result<Value> {

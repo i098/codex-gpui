@@ -216,6 +216,7 @@ pub struct Shell {
     /// Unseen, unpinned MCP destinations; `None` while their source is unavailable.
     pub unread_destinations: Option<Arc<[SharedString]>>,
     pub security_available: bool,
+    pub scheduled_attention: bool,
     /// The profile avatar's menu is open.
     pub profile_menu: bool,
     /// Pointer over the avatar: its own click toggles the menu, so a press there must not
@@ -312,6 +313,7 @@ impl Shell {
             attention: false,
             unread_destinations: None,
             security_available: false,
+            scheduled_attention: false,
             profile_menu: false,
             avatar_hovered: false,
             sidebar,
@@ -1088,7 +1090,9 @@ impl Shell {
                     ))
                     .child(rail_tip(item("space"), "Space"))
                     .child(rail_tip(
-                        item("scheduled").on_click(dispatch::<OpenScheduled>),
+                        item("scheduled")
+                            .when(self.scheduled_attention, |d| d.child(dot(6.)))
+                            .on_click(dispatch::<OpenScheduled>),
                         "Scheduled",
                     ))
                     .child(rail_tip(

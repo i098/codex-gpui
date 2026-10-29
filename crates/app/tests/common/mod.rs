@@ -1113,8 +1113,16 @@ impl app::host::Host for ActivityFixtureHost {
         self.0.review_repositories(thread, cwd)
     }
 
-    fn finish_automation_run(&self, thread: &str, turn: &Value) -> Result<bool> {
+    fn finish_automation_run(&self, thread: &str, turn: &Value) -> Result<Option<bool>> {
         self.0.finish_automation_run(thread, turn)
+    }
+
+    fn mark_automation_run_read(&self, thread: &str) -> Result<bool> {
+        self.0.mark_automation_run_read(thread)
+    }
+
+    fn archive_automation_run(&self, thread: &str) -> Result<bool> {
+        self.0.archive_automation_run(thread)
     }
 
     fn add_project(&self, root: &Path) -> Result<String> {

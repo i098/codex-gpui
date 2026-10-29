@@ -9,6 +9,7 @@ mod cloud_task;
 pub use cloud_task::parse_task_response;
 mod cloud;
 pub use cloud::{CloudTaskRequest, create_cloud_task};
+mod automation_notifications;
 pub mod computer_use_requests;
 pub mod connections;
 pub mod deep_link;
@@ -151,6 +152,14 @@ const SIDEBAR_BREAKPOINT: Pixels = px(720.);
 
 /// Fixed platform bindings and app-level commands; configurable bindings are installed by the keymap module.
 pub fn init(cx: &mut App) {
+    cx.set_app_identity(
+        if qa::ENABLED {
+            "dev.codexgpui.qa"
+        } else {
+            "dev.codexgpui.app"
+        },
+        "Codex",
+    );
     cx.bind_keys([
         KeyBinding::new("cmd-h", Hide, None),
         KeyBinding::new("alt-cmd-h", HideOthers, None),
@@ -257,16 +266,20 @@ impl Default for State {
 
 impl State {
     /// `~/Library/Application Support/codex-gpui/state.json`, saved back on every change.
+    /// Like the original, a launch opens Home; only an unfinished onboarding page is kept.
     pub fn load() -> Self {
         let path = PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
             .join("Library/Application Support/codex-gpui/state.json");
-        let state: Self = fs::read(&path)
+        let mut state: Self = fs::read(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_else(|| Self {
                 route: Route::SelectWorkspace,
                 ..Self::default()
             });
+        if !matches!(state.route, Route::SelectWorkspace | Route::Onboarding(_)) {
+            state.route = Route::Home;
+        }
         Self {
             path: Some(path),
             ..state
@@ -458,12 +471,19 @@ pub struct Root {
     host: Arc<dyn host::Host>,
     activity_access: activity_access::Runtime,
     oauth: oauth::Connections,
+    inbox_load: Option<Task<()>>,
+    unread_automation_threads: HashSet<String>,
+    last_agent_messages: HashMap<String, (String, String)>,
+    _inbox_poll: Task<()>,
     project_load: Option<Task<()>>,
     destination_load: Option<Task<()>>,
     unread_destinations: Option<Arc<[SharedString]>>,
     picking_project: bool,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
+    automation_source: &'static str,
+    pending_automation_edit: Option<String>,
+    pending_link_connection: Option<gpui::Subscription>,
     /// The local tasks' shared previous-run history (`inbox-items`).
     automation_runs: Vec<automations::Run>,
     /// Tasks whose `automation-run-now` request has not answered.
@@ -778,6 +798,19 @@ impl Root {
                 }
             }
         });
+        let _inbox_poll = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_secs(60))
+                    .await;
+                if this
+                    .update(cx, |this, cx| this.refresh_automation_unreads(cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
         let mut root = Self {
             back: Vec::new(),
             forward: Vec::new(),
@@ -854,10 +887,17 @@ impl Root {
             ),
             activity_access: activity_access::Runtime::default(),
             oauth: oauth::Connections::default(),
+            inbox_load: None,
+            unread_automation_threads: HashSet::new(),
+            last_agent_messages: HashMap::new(),
+            _inbox_poll,
             bridge,
             host_id,
             automations: None,
             automation_load: None,
+            automation_source: "local",
+            pending_automation_edit: None,
+            pending_link_connection: None,
             automation_runs: Vec::new(),
             running_automations: HashSet::new(),
             project_load: None,
@@ -928,6 +968,33 @@ impl Root {
             })
             .unwrap_or(true)
         });
+        cx.on_system_notification_response(move |response, cx| {
+            let Some(id) = response
+                .tag
+                .strip_prefix("automation:")
+                .filter(|id| !id.is_empty())
+            else {
+                return;
+            };
+            for handle in cx.windows() {
+                let Some(handle) = handle.downcast::<Root>() else {
+                    continue;
+                };
+                let opened = handle
+                    .update(cx, |root, window, cx| {
+                        if root.host_id != "local" {
+                            return false;
+                        }
+                        root.navigate(Route::Thread(id.to_owned()), window, cx);
+                        window.activate_window();
+                        true
+                    })
+                    .unwrap_or(false);
+                if opened {
+                    break;
+                }
+            }
+        });
         cx.on_app_quit(|this, cx| {
             this.flush_settings(cx);
             async {}
@@ -944,6 +1011,7 @@ impl Root {
         root.install_import(cx);
         root.load_projects(cx);
         windows::bind_root(window, cx);
+        root.refresh_automation_unreads(cx);
         root
     }
 
@@ -966,7 +1034,13 @@ impl Root {
             let account = if acp {
                 None
             } else {
-                Some(bridge.account_read().await?)
+                match bridge.account_read().await {
+                    Ok(account) => Some(account),
+                    Err(error) => {
+                        eprintln!("codex-gpui: cannot read account: {error:#}");
+                        None
+                    }
+                }
             };
             let threads = bridge.thread_list().await;
             let (mut catalog, config, skills) = if acp {
@@ -1005,7 +1079,11 @@ impl Root {
             this.update_in(cx, |this, window, cx| {
                 this._update_policy = updater::poll_policy(bridge.clone(), cx);
                 this.set_account(account.as_ref(), cx);
-                if account.is_some_and(|a| a.account.is_none() && a.requires_openai_auth) {
+                if !acp
+                    && account
+                        .as_ref()
+                        .is_none_or(|a| a.account.is_none() && a.requires_openai_auth)
+                {
                     cx.set_global(AppServer(this.bridge.clone()));
                     this.login = Some(this.new_login(window, cx));
                 }
@@ -1252,6 +1330,10 @@ impl Root {
         self.suggestion_load = None;
         self.git_status_load = None;
         self.automation_updates.clear();
+        self.inbox_load = None;
+        self.unread_automation_threads.clear();
+        self.last_agent_messages.clear();
+        self.sync_automation_attention(cx);
         if let Some(sidebar) = &self.scheduled {
             for task in self.tasks() {
                 sidebar.update(cx, |sidebar, cx| sidebar.set_pending(&task.id, false, cx));
@@ -1283,6 +1365,7 @@ impl Root {
         if self.ready && !self.signed_out() {
             self.load_destinations(cx);
         }
+        self.refresh_automation_unreads(cx);
         if self.scheduled_route() {
             self.load_automations(cx);
             self.load_suggestions(cx);
@@ -1641,7 +1724,8 @@ impl Root {
             | DiffRequest::LoadPreview(_)
             | DiffRequest::CommentsChanged(_)
             | DiffRequest::DismissModelComment(_)
-            | DiffRequest::Preference(_, _) => return,
+            | DiffRequest::Preference(_, _)
+            | DiffRequest::ViewedFile { .. } => return,
         };
         let creating = endpoint == "git-init-repo";
         if let Some(review) = panel.read(cx).review_params().as_object() {
@@ -2134,19 +2218,25 @@ impl Root {
     }
 
     fn load_automations(&mut self, cx: &mut Context<Self>) {
+        self.refresh_automation_unreads(cx);
         let host = self.host.clone();
+        let request = self.automation_request("list-automations", None);
+        let cloud = self.automation_source == "cloud";
         let read = cx.background_spawn(async move {
             let list = host
-                .fetch(&host::Request::post("list-automations", None))
+                .fetch(&request)
                 .and_then(|response| host::json_body(&response))
                 .map_err(|error| error.to_string());
             // shortcut: an unreadable run history lists no runs; the original's `Couldn't load
             // runs` row needs its own state when a host reports that error.
-            let runs = host
-                .fetch(&host::Request::post("inbox-items", None))
-                .and_then(|response| host::json_body(&response))
-                .map(|inbox| automations::runs(&inbox))
-                .unwrap_or_default();
+            let runs = if cloud {
+                Vec::new()
+            } else {
+                host.fetch(&host::Request::post("inbox-items", None))
+                    .and_then(|response| host::json_body(&response))
+                    .map(|inbox| automations::runs(&inbox))
+                    .unwrap_or_default()
+            };
             (list, runs)
         });
         let window = self.context_window;
@@ -2181,9 +2271,25 @@ impl Root {
                     rebuild
                 })
                 .unwrap_or(false);
-            if rebuild {
+            let edit = this
+                .update(cx, |this, _| {
+                    this.pending_automation_edit.take().filter(|id| {
+                        this.state.route == Route::Automation(id.clone())
+                            && this.automations.as_ref().is_some_and(Result::is_ok)
+                    })
+                })
+                .ok()
+                .flatten();
+            if rebuild || edit.is_some() {
                 cx.update_window(window, |_, window, cx| {
-                    this.update(cx, |this, cx| this.sync(window, cx))
+                    this.update(cx, |this, cx| {
+                        if rebuild {
+                            this.sync(window, cx);
+                        }
+                        if let Some(id) = edit {
+                            this.edit_automation(Some(id), window, cx);
+                        }
+                    })
                 })
                 .ok();
             }
@@ -2215,6 +2321,12 @@ impl Root {
             _ => return,
         };
         let body = automation_update_body(item, status);
+        let endpoint = if self.automation_source == "cloud" {
+            "automation-set-status"
+        } else {
+            "automation-update"
+        };
+        let request = self.automation_request(endpoint, Some(body));
         let id = id.to_owned();
         self.automation_load = None;
         if let Some(sidebar) = &self.scheduled {
@@ -2223,7 +2335,7 @@ impl Root {
         let host = self.host.clone();
         let expected_id = id.clone();
         let read = cx.background_spawn(async move {
-            let response = host.fetch(&host::Request::post("automation-update", Some(body)))?;
+            let response = host.fetch(&request)?;
             let response = host::json_body(&response)?;
             let item = response
                 .get("item")
@@ -2276,6 +2388,43 @@ impl Root {
             .ok();
         });
         self.automation_updates.insert(update_key, update);
+    }
+
+    /// Refreshes ambient suggestions only when a known app list gains its first connection.
+    pub fn first_app_connected(
+        &self,
+        previous_apps: Option<&[Value]>,
+        next_apps: &[Value],
+        cx: &mut Context<Self>,
+    ) {
+        let connected = |app: &Value| app["isAccessible"] == true && app["isEnabled"] == true;
+        if previous_apps.is_none_or(|apps| apps.iter().any(connected))
+            || !next_apps.iter().any(connected)
+        {
+            return;
+        }
+        let host = self.host.clone();
+        let host_id = self.host_id.clone();
+        cx.background_spawn(async move {
+            for domain in [None, Some("science")] {
+                let request = host::Request::post(
+                    "ambient-suggestions-refresh",
+                    Some(json!({
+                        "domain": domain,
+                        "hostId": host_id,
+                        "projectRoot": "~",
+                        "mode": "first-plugin-connect",
+                    })),
+                );
+                if let Err(error) = host
+                    .fetch(&request)
+                    .and_then(|value| host::json_body(&value))
+                {
+                    eprintln!("codex-gpui: failed to refresh ambient suggestions: {error:#}");
+                }
+            }
+        })
+        .detach();
     }
 
     fn load_suggestions(&mut self, cx: &mut Context<Self>) {
@@ -2365,7 +2514,15 @@ impl Root {
         let bridge = self.bridge.clone();
         let task_id = id.clone();
         let target_id = target.clone();
+        let cloud_request = (self.automation_source == "cloud")
+            .then(|| self.automation_request("automation-run-now", Some(json!({"id": id}))));
+        let source = self.automation_source;
         let run = cx.background_spawn(async move {
+            if let Some(request) = cloud_request {
+                return host
+                    .fetch(&request)
+                    .and_then(|response| host::json_body(&response));
+            }
             let params = if let Some(thread) = target_id {
                 pollster::block_on(host::run_now::heartbeat::request_params(
                     &bridge, &task_id, &thread, settings,
@@ -2379,6 +2536,9 @@ impl Root {
         cx.spawn_in(window, async move |this, cx| {
             let result = run.await;
             this.update_in(cx, |this, window, cx| {
+                if this.automation_source != source {
+                    return;
+                }
                 this.running_automations.remove(&id);
                 this.sync_starting(cx);
                 let title = "Could not start scheduled task";
@@ -2838,6 +2998,7 @@ impl Root {
         let Some(dialog) = self.dialog.clone() else {
             return;
         };
+        self.set_automation_source("local");
         let host = self.host.clone();
         let name: String = prompt
             .lines()
@@ -2898,6 +3059,9 @@ impl Root {
     ) {
         if self.has_dialog() {
             return;
+        }
+        if item.is_none() || origin.is_some() {
+            self.set_automation_source("local");
         }
         let editor = cx.new(|cx| automations::editor::Editor::new(item.as_ref(), cx));
         editor.update(cx, |editor, cx| {
@@ -2962,9 +3126,10 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         let host = self.host.clone();
+        let request = self.automation_request(endpoint, Some(body));
+        let source = self.automation_source;
         let write = cx.background_spawn(async move {
-            let response =
-                host::json_body(&host.fetch(&host::Request::post(endpoint, Some(body)))?)?;
+            let response = host::json_body(&host.fetch(&request)?)?;
             serde_json::from_value::<automations::Task>(response["item"].clone())?;
             Ok::<_, anyhow::Error>(response["item"].clone())
         });
@@ -2972,7 +3137,9 @@ impl Root {
         cx.spawn_in(window, async move |this, cx| {
             let result = write.await;
             this.update_in(cx, |this, window, cx| {
-                if this.automation_editor.as_ref() != Some(&editor) {
+                if this.automation_source != source
+                    || this.automation_editor.as_ref() != Some(&editor)
+                {
                     return;
                 }
                 match result {
@@ -3048,13 +3215,18 @@ impl Root {
     fn delete_task(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         let host = self.host.clone();
         let params = json!({"id": id});
+        let request = self.automation_request("automation-delete", Some(params));
+        let source = self.automation_source;
         let write = cx.background_spawn(async move {
-            host.fetch(&host::Request::post("automation-delete", Some(params)))
+            host.fetch(&request)
                 .and_then(|response| host::json_body(&response))
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = write.await;
             this.update_in(cx, |this, window, cx| {
+                if this.automation_source != source {
+                    return;
+                }
                 this.dialog = None;
                 match result {
                     Ok(body) if body["success"] == true => this.task_deleted(&id, window, cx),
@@ -3519,6 +3691,9 @@ impl Root {
                 }
                 "Undo last action" => window.dispatch_action(Box::new(Undo), cx),
                 "Redo last action" => window.dispatch_action(Box::new(Redo), cx),
+                "Mark as unread" => {
+                    window.dispatch_action(Box::new(features::shortcuts::MarkOpenChatUnread), cx)
+                }
                 "Clear all unreads" => {
                     window.dispatch_action(Box::new(features::shortcuts::ClearAllUnreads), cx)
                 }
@@ -3847,6 +4022,13 @@ impl Root {
                 DiffRequest::CommentsChanged(comments) => this.change_diff_comments(comments, cx),
                 DiffRequest::DismissModelComment(key) => {
                     this.confirm_diff_comment(panel.clone(), key.clone(), window, cx)
+                }
+                DiffRequest::ViewedFile { key, revision } => {
+                    if let Err(error) =
+                        diff_content::save_viewed_file(panel, key.clone(), revision.clone(), cx)
+                    {
+                        this.toast(Toast::danger(error.to_string()), cx);
+                    }
                 }
                 DiffRequest::Preference(key, value) => this.write_setting(
                     &SettingChanged {
@@ -5871,6 +6053,35 @@ impl Root {
                 {
                     self.load_destinations(cx);
                 }
+                "turn/started" => {
+                    if let Some(id) = params["threadId"].as_str() {
+                        self.last_agent_messages.remove(id);
+                    }
+                }
+                "item/completed"
+                    if side_thread.is_none() && params["item"]["type"] == "agentMessage" =>
+                {
+                    if let (Some(id), Some(turn), Some(text)) = (
+                        params["threadId"].as_str(),
+                        params["turnId"].as_str(),
+                        params["item"]["text"].as_str(),
+                    ) {
+                        self.last_agent_messages
+                            .insert(id.to_owned(), (turn.to_owned(), text.to_owned()));
+                    }
+                }
+                "thread/archived" => {
+                    if let Some(id) = params["threadId"].as_str() {
+                        self.threads.retain(|thread| thread.id != id);
+                        self.sidebar
+                            .update(cx, |sidebar, cx| sidebar.set_threads(&self.threads, cx));
+                        self.archive_automation_run(id, cx);
+                    }
+                }
+                "thread/unarchived" => {
+                    self.refresh_threads(cx);
+                    self.refresh_automation_unreads(cx);
+                }
                 "thread/started" if params["thread"]["ephemeral"] != true => {
                     if let Ok(n) = serde_json::from_value::<ThreadStartedNotification>(params) {
                         self.add_thread(&n.thread, cx);
@@ -5901,14 +6112,7 @@ impl Root {
                         && side_thread.is_none()
                     {
                         self.sidebar.update(cx, |s, cx| s.set_unread(id, cx));
-                        let host = self.host.clone();
-                        let (id, turn) = (id.to_owned(), params["turn"].clone());
-                        cx.background_spawn(async move {
-                            if let Err(error) = host.finish_automation_run(&id, &turn) {
-                                eprintln!("codex-gpui: failed to finish automation run: {error:#}");
-                            }
-                        })
-                        .detach();
+                        self.complete_automation_run(&params, cx);
                     }
                     // Standalone elicitations and nonblocking questions wait for explicit resolution.
                     let turn = &params["turn"]["id"];

@@ -152,6 +152,28 @@ impl HeadlessAppContext {
         self.platform.opened_url.borrow_mut().take()
     }
 
+    /// Returns the system notifications recorded by this headless platform.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn shown_system_notifications(&self) -> Vec<crate::SystemNotification> {
+        self.platform.shown_system_notifications()
+    }
+
+    /// Returns the system notifications that remain delivered.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn delivered_system_notifications(&self) -> Vec<crate::SystemNotification> {
+        self.platform.delivered_system_notifications()
+    }
+
+    /// Activates a recorded notification without contacting the operating system.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn simulate_system_notification_response(
+        &self,
+        response: crate::SystemNotificationResponse,
+    ) {
+        self.platform
+            .simulate_system_notification_response(response);
+    }
+
     /// Returns whether the platform has an unanswered Open dialog.
     #[cfg(any(test, feature = "test-support"))]
     pub fn did_prompt_for_paths(&self) -> bool {

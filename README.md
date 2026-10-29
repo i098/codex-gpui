@@ -366,6 +366,10 @@ Capture tests require separate, owned `HOME` and `CODEX_HOME` directories.
 `ui::settings_kit` provides a multi-select control and an external-link row for Settings pages.
 The multi-select emits `SelectionChanged`; the caller saves the value and can restore it with `set_checked` if saving fails.
 `ui::confirmation::Confirmation` emits one confirm or cancel result and returns focus to the previous control.
+Use `.with_documentation(label, url, cx)` to add a link that opens without confirming or cancelling the action.
+Tab and Shift-Tab cycle through the buttons, optional checkbox, and documentation link.
+Enter or Space opens the focused link; Escape cancels and returns focus to the previous control.
+Run `cargo run -p ui --example settings_kit -- dark confirmation-link /tmp/confirmation-link.png` for a native focus-ring capture.
 Use `Composer::settings_field` for text and `.monospace_field()` for scripts and commands.
 Textareas scroll inside a fixed initial height, resize to a 78-pixel minimum content height, and keep the caret visible after resizing.
 Use `Toast` for existing information, error, and success messages.
@@ -471,6 +475,10 @@ The `projectlessWorkspaceRoot` host setting overrides the root.
 The host saves projectless thread IDs, workspace-root hints, and output paths in `.codex-global-state.json`.
 Heartbeat tasks resume their existing thread with its selected model and permissions.
 The app opens that thread after a successful start, unless you navigate away while the run starts.
+Completed automation runs update the Scheduled unread dot from saved run state.
+Opening a run clears its unread mark; opening Scheduled does not.
+Desktop notifications follow the saved turn mode and task policy without moving focus.
+Run `cargo test -p app --lib automation_notifications -- --test-threads=1` on macOS for completion, duplicate, focus, and notification-click checks.
 Run `cargo test -p app --test task_create -- --test-threads=1` on macOS for the native creation and reload proof.
 The New task options menu also opens the full manual editor or a new chat with the original task setup prompt.
 The manual editor saves Name, multiline Prompt, Interval, Daily, Weekdays, Weekly, Monthly, and Custom schedules.
@@ -667,6 +675,11 @@ Home, Thread, Settings, Automations, Mobile, and Archive each own their action r
 `routes/mod.rs` keeps the route enum, family registration, navigation history, and shared shell updates.
 `app::Route` and its saved values stay unchanged.
 Shared RPC handlers and state remain on `Root` in `lib.rs`.
+`Root::first_app_connected` lets app-list refresh callers pass the previous list and the new list.
+It refreshes default and science ambient suggestions only when a known list gains its first enabled, accessible app.
+The host requests run off the UI thread; a failed request does not stop the other domain.
+The plugins slice owns the caller; this hook does not change the plugins page.
+Run `cargo test -p app --test first_app_connected -- --test-threads=1` on macOS for the native hook checks.
 
 Opening an unloaded chat reads its history and resumes the thread before showing it.
 The composer restores that thread's returned model, reasoning effort, and permissions instead of using startup defaults.
@@ -981,3 +994,24 @@ tools/mac.sh -l cgx-command-dispatch 'cargo test -p app --test command_dispatch 
 The `⌘/` dialog searches command IDs, titles and descriptions with the same matching rules as the Settings page.
 `⇧⌘C` and `⌥⇧⌘C` copy the open chat's newest attached worktree root (else its working directory); a failed attachment refresh copies nothing. `⇧⌘F` and `⇧⌘B` follow the editable keymap.
 The Keyboard shortcuts page search controls use their recorded SVG variants; the Settings sidebar keeps its own keyboard glyph.
+
+## Native links
+
+The app handles `codex://` and `codex-dev://` links from launch arguments and native URL events.
+Thread links keep `hostId` and `threadAccess=shared` on the selected connection.
+A private link to the same thread clears shared access.
+New-chat links accept `prompt`, `projectId`, `path`, and `originUrl`.
+Project selection uses a saved project first, then an existing folder, then a saved repository with a matching origin.
+The prompt fills and focuses the composer without sending it.
+
+`codex://settings/connections/<tab>` opens the Computer, Devices, or SSH tab.
+An SSH `add` link accepts `name` or `alias`, `projectPath`, and `enabled=true`.
+The app checks a remote project folder through the connected host before selecting it.
+`codex://automations/<id>` uses cloud storage unless `automationSource=local` selects local storage.
+Add `edit=true` to open the selected task's editor.
+Local and cloud tasks can have the same ID without sharing their stored data.
+The Scheduled button and new tasks use local storage.
+`codex://connector/oauth_callback` returns to the window that owns the pending OAuth state.
+Excluded product links do not open a native page.
+
+Run `cargo test -p app --lib deep_link` and `cargo test -p app --test deep_link --test thread_hosts --test oauth --test automation_share`.

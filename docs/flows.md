@@ -246,7 +246,7 @@ This proves headless native behavior, not live installed-window acceptance.
 |---|---|---|---|---|---|
 | 1 | Home | click | Navigates to `/`; reselect resets Home. | `NewChat`: route Home, draft cleared, composer focused. | PASS (`rail_home_from_thread`, `rail_home_reselect_resets`) |
 | 2 | Space | click | Navigates to `/space`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
-| 3 | Scheduled | click | Navigates to `/scheduled` (Automations); unread dot. | `OpenScheduled`: `Route::Scheduled`, rail Scheduled selected. No unread dot (no automation runs). | PASS (`rail_scheduled`, `parity_automations`) |
+| 3 | Scheduled | click | Navigates to `/scheduled` (Automations); unread dot. | `OpenScheduled`: `Route::Scheduled`, rail Scheduled selected. Settled local unread runs set the dot; opening the run chat clears its read state. | PASS (`rail_scheduled`, `parity_automations`; native unread proof: `automation_run_now::persisted_run_unread_survives_navigation_and_clears_on_open`) |
 | 4 | Plugins | click | Navigates to `/plugins`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
 | 5 | Explore `…` | click | Opens the Explore menu; blue dot. | Dot shows; no menu. | NOT WIRED (outside v1 scope (no screen): the menu holds the secondary destinations) |
 | 6 | Code Review | click | Navigates to `/pull-requests`. | No handler. | NOT WIRED (outside v1 scope (no screen)) |
@@ -380,7 +380,7 @@ New chat adds a Back entry even when Home is already open.
 | 17 | Tab through controls | focus ring | 2 px ring. | `Choose project` and `This computer` have tab stops; the native capture proves focus traversal, not menu activation. | NOT WIRED (remaining composer controls) |
 | 18 | No projects / no chats | empty | `No projects`, `No chats`, `What should we build?`. | Same with an empty `thread/list`. | PASS (`sidebar_empty_lists`) |
 | 19 | Model list loading | loading | `Loading model…`. | Empty `model/list` shows `Loading model…` (the pill repaints). | PASS (`model_list_loading`) |
-| 20 | Account load failure | error | `We couldn’t load your account`, `Reload`, `Sign out`. | An `account/read` error stops `Root::connect`; the window stays empty. | FAIL (`crates/app/src/lib.rs` `connect`; no error page in `crates/ui`) |
+| 20 | Account load failure | error | An `account/read` error shows Login. A separate `accessInputs` error keeps Coding Home available. | Use the existing Login view for account failures. Keep Home and its composer available for access-inputs failures. | PASS (`account_availability`: 2 native tests; original Login pixel comparison) |
 | 21 | Resize | resize | Below 768 px the sidebar is an overlay; below 40rem the composer stacks. | Sidebar hides (row 14.2/23); composer does not stack. | FAIL (`crates/ui/src/composer.rs`: only the 475 px compact footer) |
 
 The shared entry point is `Composer::dictate(window, cx)`.
@@ -716,7 +716,7 @@ Whole-window pixel parity is not claimed by those component comparisons.
 | 8 | Revert all | click | `Revert changes?` dialog. | Unstaged provides section-wide Revert all with confirmation and the saved skip preference. Uncommitted does not expose this action. | PASS (`git_revert_ui`) |
 | 9 | Split / unified toggle | click | Switch diff layout. | Unified, Split, and Auto share the existing line renderer. The narrow header exposes layout through Changes options. | PASS (`diff_controls`; split pairing regression check) |
 | 10 | Word wrap | click | Toggles wrap. | The header, Changes options, and body menu toggle the same wrap state. | PASS (`diff_controls`; `s027::diff_selection_and_context_actions_replay`) |
-| 11 | Mark as viewed | click | Branch diffs collapse and retain the reviewed revision. | Deferred until the Branch source and stable revision contract are available. | Follow-up: [issue 300](https://github.com/i098/codex-gpui/issues/300), dependent on the operations source-menu work |
+| 11 | Mark as viewed | click | Branch diffs collapse and retain the reviewed revision. | Save marks by repository, comparison, path, and file revision. Unmarking expands the file. A failed save leaves its state unchanged. | PASS (`diff_viewed`: native repository, saved state, revision change, failed save; original control pixel comparison) |
 | 12 | `⌘F` in diff | shortcut | `Search diff…`. | Focus the panel, open find, and type a query; matches highlight and update with the diff. | PASS (`s028::streamed_diff_and_find_replay`) |
 | 13 | `⌘L` | shortcut | Go to line in the file viewer. | Available files expose the line input; Enter navigates, Escape closes, and negative numbers count from the end. Unavailable files keep the input closed. | PASS (`diff_controls`; whole-line validation regression check) |
 | 14 | Line hover | hover | No background change in the recorded Last Turn state; no `data-hovered` attribute. | No background change. | PASS (`s027::diff_selection_and_context_actions_replay`; corrects DT-014) |
@@ -888,7 +888,8 @@ The instructions tests use owned files and cover save, cancel, discard, load fai
 The coordinate-based instructions cases run on macOS because Linux uses the no-op text system.
 The remaining action and host tests also run on Linux.
 
-Existing profiles keep their saved route.
+A launch opens Home, like the original; saved window size, sidebar, theme, and preferences stay.
+An unfinished onboarding page is the only saved route that a launch keeps.
 A missing or unreadable window state starts at `SelectWorkspace`.
 Skip creates an unused `New project` folder under `~/Documents/ChatGPT`, registers it, then enters Home.
 Existing names get a numeric suffix; the host does not overwrite an existing project.
@@ -1030,7 +1031,16 @@ Success waits for a matching `turn/started` or `turn/completed` notification.
 It opens the existing thread with the Scheduled sidebar only if the original navigation location still matches.
 Missing, busy, loading, resume, and turn failures clear `Starting run…`, keep the location, and show the existing failure toast.
 An interval heartbeat recalculates its next run from the current run time and does not create a cron run row.
-Not yet carried over: the desktop notification and the unread dot on the rail.
+`Root` reads `inbox-items` on startup, after completion, after archive changes, and every minute.
+The global unread-run list drives the Scheduled dot on each route's shell.
+An explicit chat open marks that local run read; completion alone does not clear its dot.
+Archiving a completed run changes its local run status to `ARCHIVED`, without changing its saved read time.
+The completion result supplies the `failed_runs_only` policy used for both the saved read state and the desktop notice.
+`DONT_NOTIFY` suppresses a notice unless the failed-runs-only policy overrides it; a successful `SKIP_COMPLETION` stays quiet.
+Delivery preserves background focus; a notification click opens the exact run chat and dismisses its notice.
+The realtime headless `Root` proof keeps real Bridge I/O and checks the actual click target `owned`.
+It does not send an alert to the operating system or change account permissions.
+The native `automation_run_now::persisted_run_unread_survives_navigation_and_clears_on_open` proof checks persisted unread state, read-state clearing, and archive clearing.
 `automation_run_now` checks projectless metadata, project assignment, saved policy, early completion, user cancellation, and archive failures against a stdio peer.
 It also checks account isolation, recoverable restore writes, and retained worktrees.
 Its native window proof also checks pending state, duplicate suppression, success navigation, failure, Back/Forward, and navigation away.

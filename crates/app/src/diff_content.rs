@@ -112,6 +112,29 @@ pub(crate) fn load_requested(
     .detach();
 }
 
+pub(crate) fn save_viewed_file(
+    panel: &Entity<DiffPanel>,
+    key: String,
+    revision: Option<String>,
+    cx: &mut App,
+) -> anyhow::Result<()> {
+    let settings = cx.global_mut::<crate::host_settings::Settings>();
+    settings.update("review-viewed-file-v1", |value| {
+        let mut viewed = value
+            .and_then(serde_json::Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        if let Some(revision) = &revision {
+            viewed.insert(key.clone(), revision.clone().into());
+        } else {
+            viewed.remove(&key);
+        }
+        Ok(viewed.into())
+    })?;
+    panel.update(cx, |panel, cx| panel.viewed_file_saved(key, revision, cx));
+    Ok(())
+}
+
 pub fn bind_standalone_diff(panel: &Entity<DiffPanel>, host: Arc<dyn Host>, cx: &mut App) {
     panel.update(cx, |panel, cx| configure(panel, cx));
     cx.subscribe(panel, move |panel, event: &DiffRequest, cx| match event {
@@ -132,6 +155,11 @@ pub fn bind_standalone_diff(panel: &Entity<DiffPanel>, host: Arc<dyn Host>, cx: 
                 }
             })
             .detach();
+        }
+        DiffRequest::ViewedFile { key, revision } => {
+            if let Err(error) = save_viewed_file(&panel, key.clone(), revision.clone(), cx) {
+                eprintln!("codex-gpui: cannot save viewed file: {error:#}");
+            }
         }
         DiffRequest::Preference(path, value) => {
             if let Some(key) = path.strip_prefix("host.")
