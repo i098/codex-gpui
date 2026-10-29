@@ -5,10 +5,11 @@
 mod common;
 
 use anyhow::{Context as _, Result, ensure};
-use common::{Fx, ROOT};
+use base64::Engine as _;
+use common::{Fx, ROOT, exchange, proxy_child, script};
 use gpui::{ExternalPaths, FileDropEvent, Focusable as _, PlatformInput, point, px};
 use image::RgbaImage;
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -17,6 +18,11 @@ use std::{
     rc::Rc,
 };
 use ui::composer::Submission;
+
+#[test]
+fn proxy() {
+    proxy_child();
+}
 
 fn bbox(v: &Value) -> [f32; 4] {
     let n = |k| v[k].as_f64().unwrap() as f32;
@@ -100,7 +106,12 @@ fn file_drag_over_the_composer_matches_the_original() -> Result<()> {
     let png: Vec<u8> = serde_json::from_value(steps[3]["files"][0]["pngBytes"].clone())?;
     fs::write(&dot, &png)?;
 
-    let mut fx = Fx::new()?;
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange(
+        "fs/readFile",
+        json!({ "dataBase64": base64::engine::general_purpose::STANDARD.encode(&png) }),
+    ));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     let composer = fx.composer();
     fx.cx.update_window(fx.window, |_, window, cx| {
         window.focus(&composer.focus_handle(cx), cx)
@@ -217,6 +228,13 @@ fn file_drag_over_the_composer_matches_the_original() -> Result<()> {
             "overlay after the drop"
         );
     }
+    fx.wait("image read on selected host", |fx| {
+        fx.sent().is_ok_and(|sent| {
+            sent.iter()
+                .any(|request| request["method"] == "fs/readFile")
+        })
+    })?;
+    fx.cx.run_until_parked();
     let attached = fx.shot()?;
     attached.save(proof.join("attached.png"))?;
     // The chips sit above the editor; the card grows upward from its bottom anchor.

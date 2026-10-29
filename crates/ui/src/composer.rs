@@ -114,6 +114,7 @@ mod context_usage;
 pub use context_usage::ContextUsage;
 mod attach;
 pub(crate) use attach::codex_home;
+mod chat_shell;
 pub mod computer_use;
 pub mod dictation;
 mod diff_comments;
@@ -473,10 +474,12 @@ impl Permission {
     }
 }
 
-/// What the composer sends: the app turns it into `thread/start` + `turn/start`.
+/// What the composer sends: model input or a confirmed shell command.
 #[derive(Clone, Debug)]
 pub struct Submission {
     pub text: String,
+    /// Set only after the user confirms the shell command.
+    pub shell_command: bool,
     pub attachments: Vec<PathBuf>,
     /// File references added as context, not image uploads.
     pub context_files: Vec<PathBuf>,
@@ -670,6 +673,7 @@ type SettingsPasteHandler = Rc<dyn Fn(&str, &mut App) -> bool>;
 #[derive(Clone)]
 pub enum QueueAction {
     Steer(String),
+    Retry(String),
     Delete(String),
     /// `Edit message`: the queued submission with this id returns to the composer.
     Edit(String),
@@ -685,7 +689,24 @@ impl gpui::EventEmitter<QueueAction> for Composer {}
 pub struct QueuedMessage {
     pub submission: QueuedSubmission,
     pub text: SharedString,
+    pub failed: bool,
     key: SharedString,
+}
+
+impl QueuedMessage {
+    fn new(submission: QueuedSubmission, failed: bool) -> Self {
+        let text = submission
+            .input
+            .iter()
+            .filter_map(|part| part["text"].as_str())
+            .collect::<String>();
+        Self {
+            key: submission.id.clone().into(),
+            submission,
+            text: text.trim_end().to_owned().into(),
+            failed,
+        }
+    }
 }
 
 const QUEUE_ACTIONS: &str = "Queued message actions";
@@ -713,6 +734,7 @@ pub struct Composer {
     /// Docked under a thread: `_ComposerLayoutRoot` paints the card and `_ComposerLayoutBody`
     /// (the content) is a `will-change: opacity` layer. On Home the body paints the card.
     docked: bool,
+    shell_commands: bool,
     content: String,
     /// Mention chips in `content`, in order.
     mentions: Vec<mention::Mention>,
@@ -850,6 +872,7 @@ impl Composer {
                 .map(|server| server.0.clone()),
             placeholder: placeholder.into(),
             docked,
+            shell_commands: false,
             content: String::new(),
             mentions: Vec::new(),
             selected_range: 0..0,
@@ -1317,21 +1340,22 @@ impl Composer {
     }
 
     pub fn set_queued(&mut self, queued: Vec<QueuedSubmission>, cx: &mut Context<Self>) {
+        let failed = self
+            .queued
+            .extract_if(.., |row| row.failed)
+            .collect::<Vec<_>>();
         self.queued = queued
             .into_iter()
-            .map(|submission| {
-                let text = submission
-                    .input
-                    .iter()
-                    .filter_map(|part| part["text"].as_str())
-                    .collect::<String>();
-                QueuedMessage {
-                    key: submission.id.clone().into(),
-                    submission,
-                    text: text.trim_end().to_owned().into(),
-                }
-            })
+            .map(|submission| QueuedMessage::new(submission, false))
+            .chain(failed)
             .collect();
+        cx.notify();
+    }
+
+    pub fn set_failed_queued(&mut self, queued: Vec<QueuedSubmission>, cx: &mut Context<Self>) {
+        self.queued.retain(|row| !row.failed);
+        self.queued
+            .extend(queued.into_iter().map(|s| QueuedMessage::new(s, true)));
         cx.notify();
     }
 
@@ -1455,6 +1479,7 @@ impl Composer {
     ) -> crate::tooltip::Tooltip {
         let kind = match &action {
             QueueAction::Steer(_) => "queued-steer",
+            QueueAction::Retry(_) => "queued-retry",
             _ => "queued-delete",
         };
         let key_action = action.clone();
@@ -1463,11 +1488,13 @@ impl Composer {
                 .id(kind)
                 .h(px(24.))
                 .min_w(px(24.))
-                .px(px(if matches!(action, QueueAction::Steer(_)) {
-                    8.
-                } else {
-                    0.
-                }))
+                .px(px(
+                    if matches!(action, QueueAction::Steer(_) | QueueAction::Retry(_)) {
+                        8.
+                    } else {
+                        0.
+                    },
+                ))
                 .border_1()
                 .border_color(gpui::transparent_black())
                 .flex_shrink_0()
@@ -1490,6 +1517,13 @@ impl Composer {
                         .gap(px(4.))
                         .child(icon("queue-steer", 14., t.text_tertiary))
                         .child(text("Steer", 13., 18., 430., t.text_tertiary))
+                        .into_any_element(),
+                    QueueAction::Retry(_) => div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(icon("diff-refresh", 14., t.text_tertiary))
+                        .child(text("Retry", 13., 18., 430., t.text_tertiary))
                         .into_any_element(),
                     _ => icon("queue-delete", 14., t.text_tertiary).into_any_element(),
                 })
@@ -1635,7 +1669,7 @@ impl Composer {
         self.context_menu = None;
         self.menu = None;
         self.set_text("", cx);
-        self.set_queued(Vec::new(), cx);
+        self.queued.clear();
         self.set_running(false, cx);
         self.set_approval(None, cx);
     }
@@ -1775,6 +1809,9 @@ impl Composer {
     }
 
     fn send_draft(&mut self, background: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.blocked.is_some() {
+            return;
+        }
         if self.slash.open {
             self.activate_slash(window, cx);
             return;
@@ -1782,7 +1819,7 @@ impl Composer {
         if self.edit_pending || (!self.running && self.current_model().is_none()) {
             return;
         }
-        if self.pending_attachments > 0 {
+        if self.upload_status().is_some() {
             self.show_submit_blocked(window, cx);
             return;
         }
@@ -1792,6 +1829,14 @@ impl Composer {
         {
             return;
         }
+        if self.shell_commands && self.content.starts_with('!') {
+            self.confirm_shell(window, cx);
+            return;
+        }
+        self.finish_send_draft(background, window, cx);
+    }
+
+    fn finish_send_draft(&mut self, background: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_dictation(cx);
         let submission = self.take_submission(background);
         if self.on_cancel_edit.is_some() {
@@ -1844,6 +1889,7 @@ impl Composer {
             }
         }
         Submission {
+            shell_command: self.shell_commands && self.content.starts_with('!'),
             text: if self.mentions.is_empty()
                 && self.on_cancel_edit.is_none()
                 && self.diff_comments.is_empty()
@@ -3011,9 +3057,17 @@ impl Render for Composer {
                                 .items_center()
                                 .gap(px(4.))
                                 .child(self.queue_button(
-                                    QueueAction::Steer(row.submission.id.clone()),
-                                    "Steer",
-                                    "Submit without interrupting the model",
+                                    if row.failed {
+                                        QueueAction::Retry(row.submission.id.clone())
+                                    } else {
+                                        QueueAction::Steer(row.submission.id.clone())
+                                    },
+                                    if row.failed { "Retry" } else { "Steer" },
+                                    if row.failed {
+                                        "Retry"
+                                    } else {
+                                        "Submit without interrupting the model"
+                                    },
                                     &t,
                                     cx,
                                 ))
@@ -3058,6 +3112,9 @@ impl Render for Composer {
                         )
                     })),
             )
+            .when_some(self.shell_disabled_reason(), |d, reason| {
+                d.child(text(reason, 12., 16., 400., t.text))
+            })
             .when_some(self.dictation_error.clone(), |d, error| {
                 d.child(text(error, 12., 16., 400., t.text))
             })
@@ -3124,6 +3181,7 @@ mod tests {
             .unwrap();
         for (setting, draft, key, sends) in [
             ("enter", "one", "enter", true),
+            ("enter", "!ordinary prompt", "enter", true),
             ("enter", "one\ntwo", "cmd-enter", true),
             ("cmdIfMultiline", "one", "enter", true),
             ("cmdIfMultiline", "one\ntwo", "enter", false),
@@ -3232,7 +3290,18 @@ mod tests {
         assert!(sent.borrow().is_empty());
         app.update(|cx| {
             window
-                .update(cx, |composer, _, _| composer.pending_attachments = 0)
+                .update(cx, |composer, _, _| {
+                    composer.pending_attachments = 0;
+                    composer.attachment_error = Some("Unable to upload file");
+                })
+                .unwrap();
+        });
+        assert_eq!(press(&mut app, "enter"), (Some(true), false, "hi".into()));
+        assert!(sent.borrow().is_empty());
+        assert_eq!(press(&mut app, "escape"), (None, true, "hi".into()));
+        app.update(|cx| {
+            window
+                .update(cx, |composer, _, _| composer.attachment_error = None)
                 .unwrap();
         });
         assert_eq!(press(&mut app, "enter"), (None, true, String::new()));

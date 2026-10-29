@@ -652,7 +652,7 @@ impl Root {
                     this.show_thread(thread, window, cx);
                 }
             })?;
-            let result = turn_start(&bridge, &id, &s, user_input(&s)).await;
+            let result = turn_start(&bridge, &id, &s, user_input(&s), None).await;
             if result.is_err() {
                 this.update(cx, |this, cx| this.restore_failed_send(&s, cx))?;
             }
