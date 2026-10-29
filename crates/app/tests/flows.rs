@@ -28,6 +28,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("rail_thread_family", rail_thread_family),
     ("rail_home_reselect_resets", rail_home_reselect_resets),
     ("rail_hover_fill", rail_hover_fill),
+    ("rail_drag_reorders_pinned", rail_drag_reorders_pinned),
     ("resize_three_widths", resize_three_widths),
     ("sidebar_toggle_keys", sidebar_toggle_keys),
     ("sidebar_toggle_titlebar", sidebar_toggle_titlebar),
@@ -282,6 +283,49 @@ fn rail_hover_fill() -> Result<String> {
     let mut fx = Fx::new()?;
     let n = assert_hover(&mut fx, RAIL_SPACE, [8., 96., 36., 36.], 100)?;
     Ok(format!("{n} px"))
+}
+
+/// Dragging pinned `Code Review` onto `Sites` swaps them, without opening Code Review; a drag
+/// back restores the order.
+fn rail_drag_reorders_pinned() -> Result<String> {
+    // refs/home/dark@1280x832.spec.json: the two pinned items below the divider.
+    const CODE_REVIEW: (f32, f32) = (26., 299.);
+    const SITES: (f32, f32) = (26., 343.);
+    // The window is 2x: a 36 px item is 72 device px.
+    let crop = |shot: &RgbaImage, (x, y): (f32, f32)| {
+        let (x, y) = (((x - 18.) * 2.) as u32, ((y - 18.) * 2.) as u32);
+        image::imageops::crop_imm(shot, x, y, 72, 72).to_image()
+    };
+    let rest = |fx: &mut Fx| -> Result<RgbaImage> {
+        fx.hover((640., 22.))?;
+        fx.advance(ui::motion::BASIC)?;
+        fx.shot()
+    };
+    let mut fx = Fx::new()?;
+    let before = rest(&mut fx)?;
+    fx.capture_evidence("CGX_RAIL_DRAG_EVIDENCE", "before-rail")?;
+    ensure!(
+        crop(&before, CODE_REVIEW) != crop(&before, SITES),
+        "the pinned items look alike"
+    );
+    fx.drag(CODE_REVIEW, SITES, 8)?;
+    let after = rest(&mut fx)?;
+    fx.capture_evidence("CGX_RAIL_DRAG_EVIDENCE", "after-rail")?;
+    ensure!(
+        fx.route() == Route::Home,
+        "the drag opened {:?}",
+        fx.route()
+    );
+    ensure!(
+        crop(&after, SITES) == crop(&before, CODE_REVIEW)
+            && crop(&after, CODE_REVIEW) == crop(&before, SITES),
+        "the pinned items did not swap"
+    );
+    fx.drag(CODE_REVIEW, SITES, 8)?;
+    let back = rest(&mut fx)?;
+    let n = changed(&before, &back, [8., 281., 36., 80.]);
+    ensure!(n == 0, "a drag back did not restore the order ({n} px)");
+    Ok(String::new())
 }
 
 /// 1280 (reference), 767 (below the 768 px sidebar breakpoint), 600 (below 40rem).

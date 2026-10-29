@@ -172,6 +172,53 @@ pub const RAIL_DESTINATIONS: &[RailDestination] = &[
     },
 ];
 
+/// The pinned destinations' rail order, as indices into [`RAIL_DESTINATIONS`].
+// shortcut: session-only; persist it with the account's sidebar customization
+// (`sidebar-customization-snapshots-v2` `order`) once the port writes that state.
+#[derive(Clone, Copy)]
+struct RailOrder([usize; RAIL_DESTINATIONS.len()]);
+
+impl gpui::Global for RailOrder {}
+
+impl RailOrder {
+    fn get(cx: &App) -> Self {
+        cx.try_global()
+            .copied()
+            .unwrap_or(Self(std::array::from_fn(|i| i)))
+    }
+
+    /// `from` takes `to`'s place and the items between shift, as the original's `arrayMove`
+    /// on drop.
+    fn moved(mut self, from: usize, to: usize) -> Self {
+        let at = |id| self.0.iter().position(|&i| i == id).expect("a permutation");
+        let (from, to) = (at(from), at(to));
+        if from < to {
+            self.0[from..=to].rotate_left(1);
+        } else {
+            self.0[to..=from].rotate_right(1);
+        }
+        self
+    }
+}
+
+/// A dragged pinned rail destination (its [`RAIL_DESTINATIONS`] index); it also draws the
+/// item under the pointer.
+struct RailDrag(usize);
+
+impl Render for RailDrag {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme();
+        div()
+            .size(px(36.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(RADIUS_RAIL)
+            .bg(t.ghost_hover)
+            .child(icon::icon(RAIL_DESTINATIONS[self.0].icon, 20., t.text))
+    }
+}
+
 pub struct Shell {
     pub sidebar_open: bool,
     /// Below the sidebar breakpoint the panel floats over the main surface instead of docking.
@@ -1012,6 +1059,8 @@ impl Shell {
             under
         };
         let scale = window.scale_factor();
+        let rail_order = RailOrder::get(cx);
+        let shell = cx.entity().downgrade();
         let explore_hover =
             cx.listener(|this, hovered: &bool, _, _| this.explore_hovered = *hovered);
         let explore_click = cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -1180,11 +1229,21 @@ impl Shell {
                             .h(px(scale.floor().max(1.) / scale))
                             .bg(t.border),
                     )
-                    .children(RAIL_DESTINATIONS.iter().map(|destination| {
+                    // The pinned destinations reorder by drag (`sidebarElectron.rail.reorder`).
+                    .children(rail_order.0.map(|index| {
+                        let destination = &RAIL_DESTINATIONS[index];
+                        let shell = shell.clone();
                         rail_tip(
                             item(destination.icon)
                                 .when(destination.id == "builtin:pull-requests", |item| {
                                     item.on_click(dispatch::<OpenPullRequests>)
+                                })
+                                .on_drag(RailDrag(index), |drag, _, _, cx| {
+                                    cx.new(|_| RailDrag(drag.0))
+                                })
+                                .on_drop(move |drag: &RailDrag, _, cx| {
+                                    cx.set_global(RailOrder::get(cx).moved(drag.0, index));
+                                    shell.update(cx, |_, cx| cx.notify()).ok();
                                 }),
                             destination.label,
                         )
@@ -2142,5 +2201,14 @@ mod tests {
         // refs/home/dark@1280x832.png: titlebar and rail 36, sidebar 29.
         assert_eq!(red(layout_color(&t)), 36);
         assert_eq!(red(over(t.sidebar_background, layout_color(&t))), 29);
+    }
+
+    #[test]
+    fn rail_order_moves_the_dragged_item_to_the_drop_target() {
+        let start = RailOrder([0, 1]);
+        assert_eq!(start.moved(0, 1).0, [1, 0]);
+        assert_eq!(start.moved(1, 0).0, [1, 0]);
+        assert_eq!(start.moved(1, 0).moved(0, 1).0, [0, 1]);
+        assert_eq!(start.moved(1, 1).0, [0, 1]);
     }
 }
