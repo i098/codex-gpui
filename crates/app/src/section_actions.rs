@@ -121,12 +121,29 @@ impl Root {
                     String::new()
                 };
                 let dialog = cx.new(|cx| Dialog::section(editing.then(|| id.clone()), name, cx));
+                self.new_section_thread = None;
                 self.show_dialog(dialog, window, cx);
             }
             SectionCommand::Remove => self.delete_section(id.clone(), cx),
             SectionCommand::MarkRead => self.mark_section_read(id.clone(), cx),
             SectionCommand::Archive => self.confirm_section_archive(id.clone(), window, cx),
         }
+    }
+
+    /// A row menu's `Section` > `New section…`: the `New section` dialog; its Save creates the
+    /// section, then moves the row into it.
+    pub(crate) fn new_section_for(
+        &mut self,
+        thread: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.dialog.is_some() {
+            return;
+        }
+        let dialog = cx.new(|cx| Dialog::section(None, String::new(), cx));
+        self.new_section_thread = Some(thread);
+        self.show_dialog(dialog, window, cx);
     }
 
     pub(crate) fn save_section(
@@ -157,9 +174,13 @@ impl Root {
                     })
             };
             this.update(cx, |this, cx| match &result {
-                Ok(id) => this
-                    .sidebar
-                    .update(cx, |s, cx| s.update_section(id, &name, cx)),
+                Ok(id) => {
+                    this.sidebar
+                        .update(cx, |s, cx| s.update_section(id, &name, cx));
+                    if let Some(thread) = this.new_section_thread.take() {
+                        this.move_to_section(thread, Some(id.clone()), cx);
+                    }
+                }
                 Err(_) => this.toast(Toast::danger("Couldn't save your changes. Try again"), cx),
             })?;
             result.map(drop)
