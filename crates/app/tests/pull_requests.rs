@@ -5,7 +5,7 @@ use app::{
     Route,
     host::{Host, ReplayHost, Request, json_body},
 };
-use common::Fx;
+use common::{BACK, Fx};
 use gpui::Focusable as _;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -89,6 +89,22 @@ impl Host for AccountHost {
             device_id: self.navigation.device_id.clone(),
         })
     }
+}
+
+/// The rail's pinned `Code Review` item opens `/pull-requests` with the Code Review page and
+/// selects no rail item, as in refs/pull-requests/open-all; Back returns Home.
+#[test]
+fn rail_code_review_opens_the_page_and_back_returns_home() -> Result<()> {
+    // refs/home/dark@1280x832.spec.json: the first pinned item below the divider.
+    const RAIL_CODE_REVIEW: (f32, f32) = (26., 299.);
+    let mut fx = Fx::new()?;
+    fx.click(RAIL_CODE_REVIEW)?;
+    assert_eq!(fx.route(), Route::PullRequests(None));
+    assert!(fx.read(|root, _| root.pull_requests_page().is_some()));
+    assert!(fx.shell(|s| s.selected_rail.is_none() && s.can_go_back));
+    fx.click(BACK)?;
+    assert_eq!(fx.route(), Route::Home);
+    Ok(())
 }
 
 #[test]

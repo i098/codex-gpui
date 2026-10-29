@@ -668,6 +668,7 @@ type SettingsPasteHandler = Rc<dyn Fn(&str, &mut App) -> bool>;
 #[derive(Clone)]
 pub enum QueueAction {
     Steer(String),
+    Retry(String),
     Delete(String),
     /// `Edit message`: the queued submission with this id returns to the composer.
     Edit(String),
@@ -683,7 +684,24 @@ impl gpui::EventEmitter<QueueAction> for Composer {}
 pub struct QueuedMessage {
     pub submission: QueuedSubmission,
     pub text: SharedString,
+    pub failed: bool,
     key: SharedString,
+}
+
+impl QueuedMessage {
+    fn new(submission: QueuedSubmission, failed: bool) -> Self {
+        let text = submission
+            .input
+            .iter()
+            .filter_map(|part| part["text"].as_str())
+            .collect::<String>();
+        Self {
+            key: submission.id.clone().into(),
+            submission,
+            text: text.trim_end().to_owned().into(),
+            failed,
+        }
+    }
 }
 
 const QUEUE_ACTIONS: &str = "Queued message actions";
@@ -1312,21 +1330,22 @@ impl Composer {
     }
 
     pub fn set_queued(&mut self, queued: Vec<QueuedSubmission>, cx: &mut Context<Self>) {
+        let failed = self
+            .queued
+            .extract_if(.., |row| row.failed)
+            .collect::<Vec<_>>();
         self.queued = queued
             .into_iter()
-            .map(|submission| {
-                let text = submission
-                    .input
-                    .iter()
-                    .filter_map(|part| part["text"].as_str())
-                    .collect::<String>();
-                QueuedMessage {
-                    key: submission.id.clone().into(),
-                    submission,
-                    text: text.trim_end().to_owned().into(),
-                }
-            })
+            .map(|submission| QueuedMessage::new(submission, false))
+            .chain(failed)
             .collect();
+        cx.notify();
+    }
+
+    pub fn set_failed_queued(&mut self, queued: Vec<QueuedSubmission>, cx: &mut Context<Self>) {
+        self.queued.retain(|row| !row.failed);
+        self.queued
+            .extend(queued.into_iter().map(|s| QueuedMessage::new(s, true)));
         cx.notify();
     }
 
@@ -1450,6 +1469,7 @@ impl Composer {
     ) -> crate::tooltip::Tooltip {
         let kind = match &action {
             QueueAction::Steer(_) => "queued-steer",
+            QueueAction::Retry(_) => "queued-retry",
             _ => "queued-delete",
         };
         let key_action = action.clone();
@@ -1458,11 +1478,13 @@ impl Composer {
                 .id(kind)
                 .h(px(24.))
                 .min_w(px(24.))
-                .px(px(if matches!(action, QueueAction::Steer(_)) {
-                    8.
-                } else {
-                    0.
-                }))
+                .px(px(
+                    if matches!(action, QueueAction::Steer(_) | QueueAction::Retry(_)) {
+                        8.
+                    } else {
+                        0.
+                    },
+                ))
                 .border_1()
                 .border_color(gpui::transparent_black())
                 .flex_shrink_0()
@@ -1485,6 +1507,13 @@ impl Composer {
                         .gap(px(4.))
                         .child(icon("queue-steer", 14., t.text_tertiary))
                         .child(text("Steer", 13., 18., 430., t.text_tertiary))
+                        .into_any_element(),
+                    QueueAction::Retry(_) => div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(icon("diff-refresh", 14., t.text_tertiary))
+                        .child(text("Retry", 13., 18., 430., t.text_tertiary))
                         .into_any_element(),
                     _ => icon("queue-delete", 14., t.text_tertiary).into_any_element(),
                 })
@@ -1630,7 +1659,7 @@ impl Composer {
         self.context_menu = None;
         self.menu = None;
         self.set_text("", cx);
-        self.set_queued(Vec::new(), cx);
+        self.queued.clear();
         self.set_running(false, cx);
         self.set_approval(None, cx);
     }
@@ -3006,9 +3035,17 @@ impl Render for Composer {
                                 .items_center()
                                 .gap(px(4.))
                                 .child(self.queue_button(
-                                    QueueAction::Steer(row.submission.id.clone()),
-                                    "Steer",
-                                    "Submit without interrupting the model",
+                                    if row.failed {
+                                        QueueAction::Retry(row.submission.id.clone())
+                                    } else {
+                                        QueueAction::Steer(row.submission.id.clone())
+                                    },
+                                    if row.failed { "Retry" } else { "Steer" },
+                                    if row.failed {
+                                        "Retry"
+                                    } else {
+                                        "Submit without interrupting the model"
+                                    },
                                     &t,
                                     cx,
                                 ))

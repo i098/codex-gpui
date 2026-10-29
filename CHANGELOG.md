@@ -7,6 +7,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Prove that the rail `Code Review` item opens the Code Review page with a native flow test.
+- Keep refused follow-up messages in the queue tray with Retry, preserving their input, chat, draft and local row actions.
 - Show `Unable to send message` with the reason and `OK` when a composer submit waits for file uploads.
 - Draw the 2 px keyboard focus ring on the diff card's `Undo` and `View changes` buttons in a chat.
 - Add the Configuration settings page: the `config.toml` approval policy, sandbox, network access, web search, output detail, and reasoning summary controls, the available reasoning efforts, the Codex dependencies switch, and Open config.toml.
@@ -38,6 +40,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Fixed
 - Read and save image attachments on the selected host, and keep the draft when an image cannot load.
+- Install, read and uninstall remote catalog plugins from the Plugins directory by their `remotePluginId`, as the original does; the plain name returned 404 and the catalog ID left the plugin installed.
 - Correct the Home `+` Add files and more row in `docs/flows.md`: the button opens the original Add menu; four of its actions are not wired.
 - Match Home at narrow windows: icon-only utility chips, the full-width composer, no titlebar New chat, and the 40 px light composer shadow below 640 px.
 - Match the original Mobile setup allow-host step: the `Set up Remote` header, balanced heading and description lines (`text-wrap: pretty`), and the Allow button width.

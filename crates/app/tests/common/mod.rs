@@ -687,6 +687,17 @@ pub fn exchange(method: &str, result: Value) -> [Value; 2] {
     ]
 }
 
+pub fn refusal(method: &str, message: &str) -> [Value; 2] {
+    let [request, _] = exchange(method, Value::Null);
+    let response = json!({
+        "dir": "recv", "msg": {
+            "id": request["msg"]["id"],
+            "error": { "code": -32000, "message": message },
+        },
+    });
+    [request, response]
+}
+
 /// readback.jsonl's `thread/read` thread `id`, with its turns.
 pub fn recorded_thread(id: &str) -> Result<Value> {
     script(None, |_| {})?
