@@ -144,6 +144,13 @@ fn search_and_filter_narrow_the_list() -> Result<()> {
     fx.click(FILTER)?;
     fx.keys("home enter")?;
     ensure!(visible(&mut fx) == ["beta"], "{:?}", visible(&mut fx));
+    // Opening a task keeps the choices: the active task stays hidden.
+    fx.action(Box::new(ui::screens::automations::OpenAutomation {
+        id: "beta".into(),
+    }))?;
+    ensure!(fx.route() == Route::Automation("beta".into()));
+    ensure!(visible(&mut fx) == ["beta"], "{:?}", visible(&mut fx));
+    fx.action(Box::new(ui::OpenScheduled))?;
     fx.click(FILTER)?;
     fx.keys("down down enter")?;
     ensure!(visible(&mut fx).is_empty());

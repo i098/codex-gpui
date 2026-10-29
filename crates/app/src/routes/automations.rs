@@ -68,7 +68,7 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     )
 }
 
-/// Hands the list's load state and run history to a newly built Scheduled sidebar.
+/// Hands the list's load state, run history, search and filters to a newly built sidebar.
 fn fill_sidebar(
     root: &mut Root,
     sidebar: Entity<automations::ScheduledSidebar>,
@@ -79,9 +79,13 @@ fn fill_sidebar(
         root.automation_runs.clone(),
         root.sidebar_run(),
     );
+    let previous = root.scheduled.clone();
     sidebar.update(cx, |sidebar, cx| {
         sidebar.set_load(state, cx);
         sidebar.set_runs(runs, run, cx);
+        if let Some(previous) = &previous {
+            sidebar.keep_view(previous, cx);
+        }
     });
     root.scheduled = Some(sidebar);
     root.sync_starting(cx);

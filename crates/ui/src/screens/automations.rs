@@ -670,6 +670,15 @@ impl ScheduledSidebar {
         runs
     }
 
+    /// Keeps the search field and `Filter by` choices of the list this one replaces.
+    pub fn keep_view(&mut self, previous: &Entity<Self>, cx: &mut Context<Self>) {
+        let previous = previous.read(cx);
+        (self.statuses, self.search) = (previous.statuses, previous.search.clone());
+        if let Some(field) = &self.search {
+            cx.observe(field, |_, _, cx| cx.notify()).detach();
+        }
+    }
+
     fn toggle_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.search.take().is_none() {
             let field =
@@ -1244,8 +1253,6 @@ impl ScheduledSidebar {
                     this.collapsed = !this.collapsed;
                     cx.notify();
                 } else {
-                    this.collapsed = false;
-                    this.shown_runs = 3;
                     window.dispatch_action(Box::new(OpenAutomation { id: id.clone() }), cx)
                 }
             }))
