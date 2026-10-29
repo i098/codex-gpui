@@ -8,7 +8,7 @@
 //! Permission presets apply to start requests. Full access requires the shared warning dialog.
 //! `cargo test -p app --test s024` replays `refs/interactions/s024.json`, including the footer focus rings.
 
-use crate::{MONO, icon::icon, text};
+use crate::{MONO, confirmation::Confirmation, icon::icon, text};
 use bridge::types::{
     ApprovalDecision, CommandApprovalRequest, FileChangeApprovalRequest, Model,
     PermissionsApprovalRequest, QueuedSubmission,
@@ -737,6 +737,8 @@ pub struct Composer {
     pending_attachments: usize,
     attachment_generation: u64,
     attachment_error: Option<&'static str>,
+    /// `Unable to send message` after a submit that uploads block.
+    blocked: Option<Entity<Confirmation>>,
     /// A file drag is over the composer's drop target (`data-composer-drag-active`).
     drag_active: bool,
     models: Vec<ModelOption>,
@@ -865,6 +867,7 @@ impl Composer {
             pending_attachments: 0,
             attachment_generation: 0,
             attachment_error: None,
+            blocked: None,
             drag_active: false,
             models: Vec::new(),
             model: 0,
@@ -1771,12 +1774,16 @@ impl Composer {
             self.activate_slash(window, cx);
             return;
         }
-        if self.edit_pending
-            || (!self.running && self.current_model().is_none())
-            || self.pending_attachments > 0
-            || (self.content.trim().is_empty()
-                && self.attachments.is_empty()
-                && self.diff_comments.is_empty())
+        if self.edit_pending || (!self.running && self.current_model().is_none()) {
+            return;
+        }
+        if self.pending_attachments > 0 {
+            self.show_submit_blocked(window, cx);
+            return;
+        }
+        if self.content.trim().is_empty()
+            && self.attachments.is_empty()
+            && self.diff_comments.is_empty()
         {
             return;
         }
@@ -1798,6 +1805,26 @@ impl Composer {
         if let Some(f) = self.on_submit.clone() {
             f(&submission, window, cx);
         }
+    }
+
+    /// The original's `onBlockedSubmit`: `Unable to send message` with the block reason and `OK`;
+    /// closing it focuses the composer.
+    fn show_submit_blocked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use gpui::AppContext as _;
+        let Some(reason) = self.upload_status() else {
+            return;
+        };
+        let blocked = cx.new(|cx| {
+            Confirmation::new("Unable to send message", reason, "OK", window, cx).notice(window, cx)
+        });
+        cx.subscribe_in(&blocked, window, |this, _, _, window, cx| {
+            this.blocked = None;
+            this.focus_handle.focus(window, cx);
+            cx.notify();
+        })
+        .detach();
+        self.blocked = Some(blocked);
+        cx.notify();
     }
 
     fn take_submission(&mut self, background: bool) -> Submission {
@@ -3009,7 +3036,23 @@ impl Render for Composer {
             .when_some(self.approval.clone(), |d, a| {
                 d.child(self.approval_card(&a, &t, cx))
             })
-            .child(div().children(tray).child(card))
+            .child(
+                div()
+                    .children(tray)
+                    .child(card)
+                    .children(self.blocked.clone().map(|dialog| {
+                        let viewport = window.viewport_size();
+                        deferred(
+                            gpui::anchored().position(point(px(0.), px(0.))).child(
+                                div()
+                                    .relative()
+                                    .w(viewport.width)
+                                    .h(viewport.height)
+                                    .child(dialog),
+                            ),
+                        )
+                    })),
+            )
             .when_some(self.dictation_error.clone(), |d, error| {
                 d.child(text(error, 12., 16., 400., t.text))
             })
@@ -3112,6 +3155,83 @@ mod tests {
                     .unwrap();
             });
         }
+    }
+
+    #[test]
+    fn submit_blocked_by_uploads_shows_unable_to_send_message() {
+        use gpui::{AppContext as _, HeadlessAppContext, Keystroke};
+        use std::{cell::RefCell, sync::Arc};
+
+        let mut app =
+            HeadlessAppContext::with_asset_source(textsys::text_system(), Arc::new(theme::Assets));
+        app.update(|cx| {
+            cx.set_global(Theme::dark());
+            theme::load_fonts(cx);
+            bind_keys(cx);
+        });
+        let sent = Rc::new(RefCell::new(Vec::new()));
+        let received = sent.clone();
+        let window = app
+            .open_window(size(px(600.), px(400.)), |window, cx| {
+                let composer = cx.new(|cx| {
+                    let mut composer = Composer::home(window, cx);
+                    composer.models.push(ModelOption {
+                        id: "gpt-6.1-sol".into(),
+                        label: "GPT-6.1 Sol".into(),
+                        efforts: vec!["medium".into()],
+                    });
+                    composer.on_submit(move |submission, _, _| {
+                        received.borrow_mut().push(submission.text.clone());
+                    });
+                    composer
+                });
+                composer.read(cx).focus_handle(cx).focus(window, cx);
+                composer
+            })
+            .unwrap();
+        let press = |app: &mut HeadlessAppContext, key: &str| {
+            app.run_until_parked();
+            app.update_window(window.into(), |_, window, cx| {
+                window.dispatch_keystroke(Keystroke::parse(key).unwrap(), cx);
+            })
+            .unwrap();
+            app.run_until_parked();
+            app.update(|cx| {
+                window
+                    .update(cx, |composer, window, cx| {
+                        let dialog = composer
+                            .blocked
+                            .as_ref()
+                            .map(|dialog| dialog.focus_handle(cx).is_focused(window));
+                        let focused = composer.focus_handle.is_focused(window);
+                        (dialog, focused, composer.content.clone())
+                    })
+                    .unwrap()
+            })
+        };
+        app.update(|cx| {
+            window
+                .update(cx, |composer, _, cx| {
+                    composer.set_text("hi", cx);
+                    composer.pending_attachments = 1;
+                })
+                .unwrap();
+        });
+        // Enter while a paste saves opens the dialog with OK focused and keeps the draft.
+        assert_eq!(press(&mut app, "enter"), (Some(true), false, "hi".into()));
+        assert!(sent.borrow().is_empty());
+        // OK closes it and returns focus to the composer.
+        assert_eq!(press(&mut app, "enter"), (None, true, "hi".into()));
+        assert_eq!(press(&mut app, "enter"), (Some(true), false, "hi".into()));
+        assert_eq!(press(&mut app, "escape"), (None, true, "hi".into()));
+        assert!(sent.borrow().is_empty());
+        app.update(|cx| {
+            window
+                .update(cx, |composer, _, _| composer.pending_attachments = 0)
+                .unwrap();
+        });
+        assert_eq!(press(&mut app, "enter"), (None, true, String::new()));
+        assert_eq!(*sent.borrow(), ["hi"]);
     }
 
     #[test]
