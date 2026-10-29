@@ -117,6 +117,7 @@ const FLOWS: &[(&str, Flow)] = &[
     ("sidebar_section_collapse", sidebar_section_collapse),
     ("changes_panel_keys", changes_panel_keys),
     ("view_changes_opens_panel", view_changes_opens_panel),
+    ("thread_card_focus_ring", thread_card_focus_ring),
     ("diff_file_header_toggle", diff_file_header_toggle),
     ("parity_diff", || {
         parity_flow("diff", |fx| {
@@ -1065,6 +1066,61 @@ fn view_changes_opens_panel() -> Result<String> {
     fx.click(fx.at("thread", "View changes")?)?;
     ensure!(side(&fx) == Some(SidePanel::Changes), "{:?}", side(&fx));
     Ok(String::new())
+}
+
+/// Shift-Tab from the composer reaches the diff card's `View changes`, then `Undo`; each
+/// draws the 2 px `#3a83f7` ring only while it has keyboard focus.
+fn thread_card_focus_ring() -> Result<String> {
+    // The original's button boxes (refs/thread spec nodes 310 and 312), plus the 2 px ring.
+    const UNDO: [f32; 4] = [982.95, 334.8, 72.71, 32.];
+    const VIEW: [f32; 4] = [1059.66, 334.8, 106.59, 32.];
+    let ring = |shot: &RgbaImage, [x, y, w, h]: [f32; 4]| {
+        let (x1, y1) = (((x + w) * 2.) as u32, ((y + h) * 2.) as u32);
+        ((y * 2.) as u32..y1)
+            .flat_map(|py| ((x * 2.) as u32..x1).map(move |px| (px, py)))
+            .filter(|&(px, py)| {
+                let p = shot.get_pixel(px, py);
+                [0x3a, 0x83, 0xf7]
+                    .iter()
+                    .zip(p.0)
+                    .all(|(want, got)| (*want as i32 - got as i32).abs() <= 8)
+            })
+            .count()
+    };
+    let mut fx = Fx::new()?;
+    open_subtract(&mut fx)?;
+    fx.focus_composer()?;
+    let rest = fx.shot()?;
+    ensure!(
+        ring(&rest, UNDO) + ring(&rest, VIEW) == 0,
+        "a ring shows without focus"
+    );
+    let mut reached = Vec::new();
+    for step in 1..=40 {
+        fx.keys("shift-tab")?;
+        let shot = fx.shot()?;
+        let (undo, view) = (ring(&shot, UNDO), ring(&shot, VIEW));
+        ensure!(undo == 0 || view == 0, "both card buttons ringed");
+        if let Some((name, n)) = [("View changes", view), ("Undo", undo)]
+            .into_iter()
+            .find(|(_, n)| *n > 300)
+        {
+            fx.capture_evidence("CGX_CARD_FOCUS_EVIDENCE", &format!("{step}-{name}"))?;
+            reached.push((name, step, n));
+            if reached.len() == 2 {
+                break;
+            }
+        }
+    }
+    let order: Vec<_> = reached.iter().map(|(name, ..)| *name).collect();
+    ensure!(
+        order == ["View changes", "Undo"],
+        "Shift-Tab reached {reached:?}"
+    );
+    fx.hover((640., 22.))?;
+    let moved = ring(&fx.shot()?, UNDO);
+    ensure!(moved > 300, "a pointer move cleared the ring ({moved} px)");
+    Ok(format!("{reached:?}"))
 }
 
 fn diff_file_header_toggle() -> Result<String> {

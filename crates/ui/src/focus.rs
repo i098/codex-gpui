@@ -26,6 +26,14 @@ pub struct ControlFocus {
 }
 
 impl ControlFocus {
+    /// A ring state for a handle its owner keeps, e.g. across moves in the element tree.
+    pub fn new(handle: FocusHandle) -> Self {
+        Self {
+            handle,
+            keyboard: Cell::new(false),
+        }
+    }
+
     fn visible(&self, window: &Window) -> bool {
         self.handle.is_focused(window) && (self.keyboard.get() || window.last_input_was_keyboard())
     }
