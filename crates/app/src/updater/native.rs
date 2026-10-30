@@ -403,7 +403,6 @@ mod tests {
             })),
             cancel: RefCell::new(Some(RcBlock::new(move || cancel_called.set(true)))),
             blocked: Cell::new(false),
-            automatic: Cell::new(true),
             expected: Cell::new(0),
             received: Cell::new(0),
             status: Cell::new(Status::Ready),
