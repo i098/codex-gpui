@@ -56,7 +56,9 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = archive::actions(root, cx);
     root = crate::pull_requests::actions(root, cx);
     root = sites::actions(root, cx);
-    root
+    root.on_action(
+        cx.listener(|this, pins: &ui::SaveRailPins, _, cx| this.save_rail_pins(pins.0.clone(), cx)),
+    )
 }
 
 impl Root {

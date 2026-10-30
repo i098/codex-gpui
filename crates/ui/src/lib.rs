@@ -180,32 +180,71 @@ pub const RAIL_DESTINATIONS: &[RailDestination] = &[
     },
 ];
 
-/// The pinned destinations' rail order, as indices into [`RAIL_DESTINATIONS`].
-// shortcut: session-only; persist it with the account's sidebar customization
-// (`sidebar-customization-snapshots-v2` `order`) once the port writes that state.
-#[derive(Clone, Copy)]
-struct RailOrder([usize; RAIL_DESTINATIONS.len()]);
+/// The pinned destinations in rail order, as indices into [`RAIL_DESTINATIONS`]; the app loads
+/// and saves them with the account's `sidebar-customization-snapshots-v2` (`order`,
+/// `pinOverrides`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct RailPins(pub Vec<usize>);
 
-impl gpui::Global for RailOrder {}
+impl gpui::Global for RailPins {}
 
-impl RailOrder {
-    fn get(cx: &App) -> Self {
-        cx.try_global()
-            .copied()
-            .unwrap_or(Self(std::array::from_fn(|i| i)))
+impl Default for RailPins {
+    fn default() -> Self {
+        Self((0..RAIL_DESTINATIONS.len()).collect())
+    }
+}
+
+impl RailPins {
+    pub fn get(cx: &App) -> Self {
+        cx.try_global().cloned().unwrap_or_default()
     }
 
     /// `from` takes `to`'s place and the items between shift, as the original's `arrayMove`
     /// on drop.
     fn moved(mut self, from: usize, to: usize) -> Self {
-        let at = |id| self.0.iter().position(|&i| i == id).expect("a permutation");
-        let (from, to) = (at(from), at(to));
-        if from < to {
-            self.0[from..=to].rotate_left(1);
-        } else {
-            self.0[to..=from].rotate_right(1);
+        if let (Some(from), Some(to)) = (
+            self.0.iter().position(|&i| i == from),
+            self.0.iter().position(|&i| i == to),
+        ) {
+            if from < to {
+                self.0[from..=to].rotate_left(1);
+            } else {
+                self.0[to..=from].rotate_right(1);
+            }
         }
         self
+    }
+
+    /// Unpins a pinned destination, or pins it at the end of the rail.
+    fn toggled(mut self, index: usize) -> Self {
+        match self.0.iter().position(|&i| i == index) {
+            Some(at) => {
+                self.0.remove(at);
+            }
+            None => self.0.push(index),
+        }
+        self
+    }
+}
+
+/// Saves the rail's pins and order with the account's sidebar customization.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = shell, no_json)]
+pub struct SaveRailPins(pub RailPins);
+
+/// Applies `pins` to every shell and asks the app to save them.
+fn set_rail_pins(pins: RailPins, window: &mut Window, cx: &mut App) {
+    cx.set_global(pins.clone());
+    window.dispatch_action(Box::new(SaveRailPins(pins)), cx);
+    window.refresh();
+}
+
+/// Opens a [`RAIL_DESTINATIONS`] entry.
+fn open_destination(index: usize, window: &mut Window, cx: &mut App) {
+    match RAIL_DESTINATIONS[index].id {
+        "builtin:pull-requests" => window.dispatch_action(Box::new(OpenPullRequests), cx),
+        "builtin:sites" => window.dispatch_action(Box::new(OpenSites), cx),
+        _ => {}
     }
 }
 
@@ -284,6 +323,8 @@ pub struct Shell {
     /// The Explore `…` menu is open.
     pub explore_menu: bool,
     explore_hovered: bool,
+    /// The Explore menu lists every destination with its pin toggle (`Customize`).
+    customizing: bool,
     sidebar: AnyView,
     main: AnyView,
     main_content_inline_inset: Pixels,
@@ -381,6 +422,7 @@ impl Shell {
             avatar_hovered: false,
             explore_menu: false,
             explore_hovered: false,
+            customizing: false,
             sidebar,
             main,
             main_content_inline_inset: px(0.),
@@ -1110,8 +1152,7 @@ impl Shell {
             under
         };
         let scale = window.scale_factor();
-        let rail_order = RailOrder::get(cx);
-        let shell = cx.entity().downgrade();
+        let rail_pins = RailPins::get(cx);
         let explore_hover =
             cx.listener(|this, hovered: &bool, _, _| this.explore_hovered = *hovered);
         let explore_click = cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -1281,23 +1322,20 @@ impl Shell {
                             .bg(t.border),
                     )
                     // The pinned destinations reorder by drag (`sidebarElectron.rail.reorder`).
-                    .children(rail_order.0.map(|index| {
+                    .children(rail_pins.0.into_iter().map(|index| {
                         let destination = &RAIL_DESTINATIONS[index];
-                        let shell = shell.clone();
                         rail_tip(
                             item(destination.icon)
-                                .when(destination.id == "builtin:pull-requests", |item| {
-                                    item.on_click(dispatch::<OpenPullRequests>)
-                                })
-                                .when(destination.id == "builtin:sites", |item| {
-                                    item.on_click(dispatch::<OpenSites>)
-                                })
+                                .on_click(move |_, window, cx| open_destination(index, window, cx))
                                 .on_drag(RailDrag(index), |drag, _, _, cx| {
                                     cx.new(|_| RailDrag(drag.0))
                                 })
-                                .on_drop(move |drag: &RailDrag, _, cx| {
-                                    cx.set_global(RailOrder::get(cx).moved(drag.0, index));
-                                    shell.update(cx, |_, cx| cx.notify()).ok();
+                                .on_drop(move |drag: &RailDrag, window, cx| {
+                                    let pins = RailPins::get(cx);
+                                    let moved = pins.clone().moved(drag.0, index);
+                                    if moved != pins {
+                                        set_rail_pins(moved, window, cx);
+                                    }
                                 }),
                             destination.label,
                         )
@@ -1336,10 +1374,115 @@ impl Shell {
     }
 
     /// The Explore `…` menu (`sidebarCustomization.moreMenu`), right of the rail item: the
-    /// secondary destinations the port has. `Customize sidebar` and MCP destinations need the
-    /// sidebar-customization store, which the port lacks.
+    /// unpinned destinations, each with `Pin to sidebar`, then `Customize`. Customizing lists
+    /// every destination with `Pin to sidebar` / `Unpin`, `Reset customization` and `Done`.
     fn explore_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let hover = t.menu_item_hover;
+        let pins = RailPins::get(cx);
+        let customizing = self.customizing;
+        let row = |id: SharedString, label: &'static str, color: Hsla| {
+            div()
+                .id(id)
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(8.))
+                .px(px(8.))
+                .py(px(6.))
+                .rounded(px(12.))
+                .hover(move |s| s.bg(hover))
+                .child(text(label, 14., 20., 430., color))
+        };
+        let pin_button = |index: usize, pinned: bool| {
+            let label = if pinned { "Unpin" } else { "Pin to sidebar" };
+            div()
+                .id(SharedString::from(format!("explore-pin-{index}")))
+                .px(px(6.))
+                .rounded(px(8.))
+                .hover(move |s| s.bg(hover))
+                .child(text(label, 13., 18., 430., t.text_secondary))
+                .on_click(move |_, window, cx| {
+                    cx.stop_propagation();
+                    set_rail_pins(RailPins::get(cx).toggled(index), window, cx);
+                })
+        };
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for (index, destination) in RAIL_DESTINATIONS.iter().enumerate() {
+            let pinned = pins.0.contains(&index);
+            if pinned && !customizing {
+                continue;
+            }
+            let id = SharedString::from(format!("explore-{}", destination.icon));
+            rows.push(
+                row(id, destination.label, t.text)
+                    .child(pin_button(index, pinned))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.explore_menu = false;
+                        this.customizing = false;
+                        cx.notify();
+                        open_destination(index, window, cx);
+                    }))
+                    .into_any_element(),
+            );
+        }
+        if self.security_available && !customizing {
+            rows.push(
+                row("explore-security".into(), "Security", t.text)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.explore_menu = false;
+                        cx.notify();
+                        window.dispatch_action(Box::new(OpenSecurity), cx);
+                    }))
+                    .into_any_element(),
+            );
+        }
+        if rows.is_empty() {
+            rows.push(
+                div()
+                    .px(px(8.))
+                    .py(px(6.))
+                    .child(text(
+                        "No more destinations",
+                        14.,
+                        20.,
+                        400.,
+                        t.text_tertiary,
+                    ))
+                    .into_any_element(),
+            );
+        }
+        let divider = div().my(px(4.)).h(px(1.)).bg(t.border);
+        let footer: Vec<AnyElement> = if customizing {
+            vec![
+                row(
+                    "explore-reset".into(),
+                    "Reset customization",
+                    t.text_secondary,
+                )
+                .on_click(|_, window, cx| {
+                    if RailPins::get(cx) != RailPins::default() {
+                        set_rail_pins(RailPins::default(), window, cx);
+                    }
+                })
+                .into_any_element(),
+                row("explore-done".into(), "Done", t.text)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.customizing = false;
+                        this.explore_menu = false;
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            ]
+        } else {
+            vec![
+                row("explore-customize".into(), "Customize", t.text)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.customizing = true;
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            ]
+        };
         div()
             .absolute()
             .left(RAIL_WIDTH)
@@ -1347,34 +1490,12 @@ impl Shell {
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 if !this.explore_hovered {
                     this.explore_menu = false;
+                    this.customizing = false;
                     cx.notify();
                 }
             }))
-            .child(composer::popover(t, 220., |d| {
-                if self.security_available {
-                    d.child(
-                        div()
-                            .id("explore-security")
-                            .px(px(8.))
-                            .py(px(6.))
-                            .rounded(px(12.))
-                            .hover(move |s| s.bg(hover))
-                            .child(text("Security", 14., 20., 430., t.text))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.explore_menu = false;
-                                cx.notify();
-                                window.dispatch_action(Box::new(OpenSecurity), cx);
-                            })),
-                    )
-                } else {
-                    d.child(div().px(px(8.)).py(px(6.)).child(text(
-                        "No more destinations",
-                        14.,
-                        20.,
-                        400.,
-                        t.text_tertiary,
-                    )))
-                }
+            .child(composer::popover(t, 240., |d| {
+                d.children(rows).child(divider).children(footer)
             }))
     }
 
@@ -2258,11 +2379,15 @@ mod tests {
     }
 
     #[test]
-    fn rail_order_moves_the_dragged_item_to_the_drop_target() {
-        let start = RailOrder([0, 1]);
-        assert_eq!(start.moved(0, 1).0, [1, 0]);
-        assert_eq!(start.moved(1, 0).0, [1, 0]);
-        assert_eq!(start.moved(1, 0).moved(0, 1).0, [0, 1]);
-        assert_eq!(start.moved(1, 1).0, [0, 1]);
+    fn rail_pins_move_and_toggle() {
+        let start = RailPins(vec![0, 1]);
+        assert_eq!(start.clone().moved(0, 1).0, [1, 0]);
+        assert_eq!(start.clone().moved(1, 0).0, [1, 0]);
+        assert_eq!(start.clone().moved(1, 0).moved(0, 1).0, [0, 1]);
+        assert_eq!(start.clone().moved(1, 1).0, [0, 1]);
+        // An unpinned drop target leaves the order alone.
+        assert_eq!(RailPins(vec![1]).moved(1, 0).0, [1]);
+        assert_eq!(start.clone().toggled(0).0, [1]);
+        assert_eq!(start.toggled(0).toggled(0).0, [1, 0]);
     }
 }

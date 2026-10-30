@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+const ATOMS: &str = "electron-persisted-atom-state";
 const CUSTOMIZATION: &str = "inline-sidebar-customization-state-by-account-id-v2";
 const SNAPSHOTS: &str = "sidebar-customization-snapshots-v2";
 const SEEN: &str = "sidebar-more-menu-seen-mcp-destination-ids-by-account-id-v1";
@@ -44,10 +45,24 @@ struct Customization {
     visibility_by_account_id: HashMap<String, HashMap<String, bool>>,
 }
 
+fn snapshot_key(scope: &Scope) -> String {
+    serde_json::to_string(&[scope.account.as_str(), scope.user.as_str()])
+        .expect("navigation identity serializes")
+}
+
+/// The account snapshot's rail `order` (destination ids), empty without one.
+fn snapshot_order(atoms: &Value, scope: Option<&Scope>) -> Vec<String> {
+    scope
+        .and_then(|scope| atoms.get(SNAPSHOTS)?.get(snapshot_key(scope))?["order"].as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(|id| id.as_str().map(str::to_owned))
+        .collect()
+}
+
 fn pin_overrides(atoms: &mut Value, scope: Option<&Scope>) -> HashMap<String, bool> {
     if let Some(scope) = scope {
-        let key = serde_json::to_string(&[scope.account.as_str(), scope.user.as_str()])
-            .expect("navigation identity serializes");
+        let key = snapshot_key(scope);
         if let Some(snapshot) = atoms
             .get_mut(SNAPSHOTS)
             .and_then(|value| value.get_mut(&key))
@@ -99,6 +114,7 @@ struct CachedServer {
 struct Persisted {
     scope: Option<Scope>,
     overrides: HashMap<String, bool>,
+    order: Vec<String>,
     seen: HashSet<String>,
     cached: Option<Vec<CachedServer>>,
 }
@@ -109,10 +125,7 @@ fn persisted(host: &dyn Host, authenticated: bool) -> Result<Persisted> {
         !authenticated || scope.is_some(),
         "authenticated navigation identity is unavailable"
     );
-    let request = Request::post(
-        "get-global-state",
-        Some(json!({"key": "electron-persisted-atom-state"})),
-    );
+    let request = Request::post("get-global-state", Some(json!({"key": ATOMS})));
     let mut body = json_body(&host.fetch(&request)?)?;
     let mut atoms = body
         .get_mut("value")
@@ -125,6 +138,7 @@ fn persisted(host: &dyn Host, authenticated: bool) -> Result<Persisted> {
     let account = scope
         .as_ref()
         .map_or("anonymous", |scope| scope.account.as_str());
+    let order = snapshot_order(&atoms, scope.as_ref());
     let overrides = pin_overrides(&mut atoms, scope.as_ref());
     let seen = match atoms
         .get_mut(SEEN)
@@ -150,9 +164,93 @@ fn persisted(host: &dyn Host, authenticated: bool) -> Result<Persisted> {
     Ok(Persisted {
         scope,
         overrides,
+        order,
         seen,
         cached,
     })
+}
+
+/// The built-in destinations the rail shows: every one not unpinned, in the saved order (any
+/// the order lacks keep their default place after it).
+fn rail_pins(overrides: &HashMap<String, bool>, order: &[String]) -> ui::RailPins {
+    let mut pins: Vec<usize> = (0..ui::RAIL_DESTINATIONS.len())
+        .filter(|&index| overrides.get(ui::RAIL_DESTINATIONS[index].id) != Some(&false))
+        .collect();
+    pins.sort_by_key(|&index| {
+        order
+            .iter()
+            .position(|id| id == ui::RAIL_DESTINATIONS[index].id)
+            .unwrap_or(usize::MAX)
+    });
+    ui::RailPins(pins)
+}
+
+/// Writes `pins` as the original does: the account's snapshot `order` and `pinOverrides`
+/// (other destinations' entries kept), or the signed-out inline visibility, which has no order.
+fn apply_rail_pins(atoms: &mut Value, scope: Option<&Scope>, pins: &ui::RailPins) {
+    let builtin = |id: &str| ui::RAIL_DESTINATIONS.iter().any(|entry| entry.id == id);
+    let Some(scope) = scope else {
+        if !atoms[CUSTOMIZATION]["visibilityByAccountId"].is_object() {
+            atoms[CUSTOMIZATION] = json!({"version": 2, "visibilityByAccountId": {}});
+        }
+        atoms[CUSTOMIZATION]["version"] = json!(2);
+        let visibility = &mut atoms[CUSTOMIZATION]["visibilityByAccountId"]["anonymous"];
+        for (index, entry) in ui::RAIL_DESTINATIONS.iter().enumerate() {
+            visibility[entry.id] = json!(pins.0.contains(&index));
+        }
+        return;
+    };
+    if !atoms[SNAPSHOTS].is_object() {
+        atoms[SNAPSHOTS] = json!({});
+    }
+    let snapshot = &mut atoms[SNAPSHOTS][snapshot_key(scope)];
+    let mut overrides = snapshot["pinOverrides"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    for (index, entry) in ui::RAIL_DESTINATIONS.iter().enumerate() {
+        if pins.0.contains(&index) {
+            overrides.remove(entry.id);
+        } else {
+            overrides.insert(entry.id.into(), json!(false));
+        }
+    }
+    let mut order: Vec<Value> = pins
+        .0
+        .iter()
+        .map(|&index| json!(ui::RAIL_DESTINATIONS[index].id))
+        .collect();
+    order.extend(
+        snapshot["order"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|id| id.as_str().is_some_and(|id| !builtin(id)))
+            .cloned(),
+    );
+    *snapshot = json!({"order": order, "pinOverrides": overrides});
+}
+
+// shortcut: read-modify-write of the whole atom object; a concurrent writer of another atom
+// between the two requests loses its change. Move the merge into the host when that matters.
+fn save_rail_pins(host: &dyn Host, pins: &ui::RailPins) -> Result<()> {
+    let scope = scope(host.identity())?;
+    let request = Request::post("get-global-state", Some(json!({"key": ATOMS})));
+    let mut atoms = json_body(&host.fetch(&request)?)?["value"].take();
+    if atoms.is_null() {
+        atoms = json!({});
+    }
+    ensure!(
+        atoms.is_object(),
+        "persisted navigation state is not an object"
+    );
+    apply_rail_pins(&mut atoms, scope.as_ref(), pins);
+    let request = Request::post(
+        "set-global-state",
+        Some(json!({"key": ATOMS, "value": atoms})),
+    );
+    host.fetch(&request)?;
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -423,6 +521,11 @@ impl Root {
         self.destination_load = Some(cx.spawn(async move |this, cx| {
             let result: Result<_> = async {
                 let persisted = read.await?;
+                let pins = rail_pins(&persisted.overrides, &persisted.order);
+                this.update(cx, |_, cx| {
+                    cx.set_global(pins);
+                    cx.notify();
+                })?;
                 let catalog = match catalog(&bridge).await {
                     Ok(catalog) => Some(catalog),
                     Err(error) if persisted.cached.is_some() => {
@@ -441,6 +544,16 @@ impl Root {
                 Err(error) => eprintln!("codex-gpui: cannot read navigation destinations: {error:#}"),
             }).ok();
         }));
+    }
+
+    pub(crate) fn save_rail_pins(&self, pins: ui::RailPins, cx: &mut Context<Self>) {
+        let host = self.host.clone();
+        cx.background_spawn(async move {
+            if let Err(error) = save_rail_pins(host.as_ref(), &pins) {
+                eprintln!("codex-gpui: cannot save the sidebar customization: {error:#}");
+            }
+        })
+        .detach();
     }
 }
 
@@ -463,6 +576,7 @@ mod tests {
         Persisted {
             scope: None,
             overrides: HashMap::new(),
+            order: Vec::new(),
             seen: HashSet::new(),
             cached: None,
         }
@@ -738,5 +852,41 @@ mod tests {
             &[SharedString::from(id)]
         );
         Ok(())
+    }
+
+    #[test]
+    fn saved_rail_pins_read_back_in_order_and_keep_other_destinations() {
+        let scope = Scope {
+            account: "account-a".into(),
+            user: "user-a".into(),
+        };
+        let mcp = "mcp:[\"mcp-global\",\"notes\",\"open\",\"global\"]";
+        let key = snapshot_key(&scope);
+        let mut atoms = json!({SNAPSHOTS: {key.clone(): {
+            "order": ["builtin:pull-requests", mcp],
+            "pinOverrides": {mcp: true},
+        }}});
+        let read = |atoms: &Value, scope: Option<&Scope>| {
+            let order = snapshot_order(atoms, scope);
+            rail_pins(&pin_overrides(&mut atoms.clone(), scope), &order)
+        };
+        // Sites moved before Code Review.
+        apply_rail_pins(&mut atoms, Some(&scope), &ui::RailPins(vec![1, 0]));
+        assert_eq!(read(&atoms, Some(&scope)).0, [1, 0]);
+        assert_eq!(atoms[SNAPSHOTS][&key]["pinOverrides"], json!({mcp: true}));
+        assert_eq!(atoms[SNAPSHOTS][&key]["order"][2], mcp);
+        // Code Review unpinned, then pinned again at the end.
+        apply_rail_pins(&mut atoms, Some(&scope), &ui::RailPins(vec![1]));
+        assert_eq!(read(&atoms, Some(&scope)).0, [1]);
+        assert_eq!(
+            atoms[SNAPSHOTS][&key]["pinOverrides"]["builtin:pull-requests"],
+            false
+        );
+        apply_rail_pins(&mut atoms, Some(&scope), &ui::RailPins(vec![1, 0]));
+        assert_eq!(read(&atoms, Some(&scope)).0, [1, 0]);
+        // Signed out: the inline visibility keeps the pins, without an order.
+        let mut anonymous = json!({});
+        apply_rail_pins(&mut anonymous, None, &ui::RailPins(vec![1]));
+        assert_eq!(read(&anonymous, None).0, [1]);
     }
 }

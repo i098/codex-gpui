@@ -1820,6 +1820,19 @@ impl Host for LocalHost {
                     .unwrap_or(Value::Null);
                 Value::Object(serde_json::Map::from_iter([("value".into(), value)]))
             }
+            "set-global-state" => {
+                let key = params["key"].as_str().context("missing global state key")?;
+                let value = params["value"].clone();
+                self.update_global_state(|state| {
+                    let state = state
+                        .as_object_mut()
+                        .context("global state is not an object")?;
+                    let changed = state.get(key) != Some(&value);
+                    state.insert(key.to_owned(), value);
+                    Ok(changed)
+                })?;
+                json!({"success": true})
+            }
             "list-automations" => self.automations()?,
             "automation-create" => self.create_automation(&params)?,
             "automation-delete" => self.delete_automation(&params)?,
