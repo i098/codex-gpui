@@ -317,6 +317,8 @@ pub struct RepositoryChanges {
     pub hide_whitespace: bool,
     #[serde(default)]
     pub not_repository: bool,
+    #[serde(default)]
+    pub generated_paths: Vec<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -361,6 +363,7 @@ pub struct DiffPanel {
     active_file: usize,
     filter: controls::TextField,
     filter_focus: Option<FocusHandle>,
+    generated: controls::GeneratedFiles,
     scroll: ScrollHandle,
     standalone: bool,
     container_width: Option<Pixels>,
@@ -524,6 +527,7 @@ impl DiffPanel {
             active_file: 0,
             filter: Default::default(),
             filter_focus: None,
+            generated: Default::default(),
             scroll: ScrollHandle::new(),
             standalone: false,
             container_width: None,
@@ -719,6 +723,7 @@ impl DiffPanel {
                 self.error = Some(error);
             }
         }
+        self.update_generated_paths();
         if self.source != DiffSource::LastTurn {
             self.show_repository();
         }
@@ -759,7 +764,7 @@ impl DiffPanel {
     fn select_source(&mut self, source: DiffSource, cx: &mut Context<Self>) {
         let previous = self.source;
         if previous == DiffSource::LastTurn && source != previous {
-            self.turn_files = std::mem::take(&mut self.files);
+            self.turn_files = self.unfiltered_files();
         }
         self.source = source;
         if source == DiffSource::LastTurn && source != previous {
@@ -927,6 +932,7 @@ impl DiffPanel {
                 .unwrap_or(self.files_expanded);
         }
         self.files = files;
+        self.hide_generated_files();
         self.refresh_jump();
         self.selection = None;
         self.selecting = false;
