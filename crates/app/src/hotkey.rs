@@ -1525,6 +1525,14 @@ mod tests {
             .popup_root
             .read_with(&popup.app, |root, _| root.threads.first().cloned())
             .context("The recorded session lists no chats")?;
+        let composer = popup
+            .popup_root
+            .read_with(&popup.app, |root, cx| root.composer(cx));
+        popup
+            .app
+            .update_window(popup.popup.into(), |_, window, cx| {
+                composer.read(cx).focus_handle(cx).focus(window, cx)
+            })?;
         type_keys(&mut popup, &["/"])?;
         let rows = slash_rows(&popup);
         anyhow::ensure!(
