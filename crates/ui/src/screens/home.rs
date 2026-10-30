@@ -316,15 +316,19 @@ fn location_menu(
         return None;
     }
     let trigger = location.bounds;
+    let worktree = location.mode == super::hotkey::Mode::Worktree;
+    // The original's rows: `Work in` label, This computer, Cloud, Remote. The port keeps
+    // its managed-worktree start under This computer while a project is selected.
+    // (index into `pick_location`, label, icon, enabled, checked)
     let rows = [
-        ("This computer", true),
-        ("New worktree", has_project),
-        ("Remote", false),
-        ("Cloud", false),
+        Some((0, "This computer", "laptop", true, !worktree)),
+        has_project.then_some((1, "New worktree", "thread-fork", true, worktree)),
+        Some((2, "Cloud", "settings-codex-cloud", false, false)),
+        Some((3, "Remote", "project-marker-globe", false, false)),
     ]
     .into_iter()
-    .enumerate()
-    .map(|(i, (label, enabled))| {
+    .flatten()
+    .map(|(i, label, glyph, enabled, checked)| {
         let owner = owner.clone();
         div()
             .id(("work-in-option", i))
@@ -332,34 +336,44 @@ fn location_menu(
             .aria_label(label)
             .aria_disabled(!enabled)
             .px(px(8.))
-            .py(px(6.))
+            .py(px(5.))
             .flex()
             .items_center()
-            .gap(px(8.))
-            .rounded(px(12.))
-            .opacity(if enabled { 1. } else { 0.5 })
+            .gap(px(6.))
+            .rounded(px(15.))
             .when(i == location.selected, |d| d.bg(t.menu_item_hover))
             .when(enabled, |d| {
                 let hover = t.menu_item_hover;
                 d.hover(move |s| s.bg(hover))
             })
-            .child(div().flex_1().child(text(label, 14., 20., 430., t.text)))
+            .child(icon(glyph, 16., t.text).opacity(0.75))
             .child(
-                div().size(px(16.)).children(
-                    (i == usize::from(location.mode == super::hotkey::Mode::Worktree))
-                        .then(|| icon("menu-check", 16., t.text)),
-                ),
+                div()
+                    .flex_1()
+                    .child(text(label, 13., 18.5714, 430., t.text)),
             )
+            .when(checked, |d| {
+                d.child(icon("archive-check", 16., t.text).opacity(0.75))
+            })
             .when(enabled, |d| {
                 d.on_click(move |_, _, cx| pick_location(&owner, i, cx))
             })
     });
     let dismiss = owner.clone();
-    let popup = crate::composer::popover(t, 260., |d| d.children(rows))
-        .id("work-in-menu")
-        .role(gpui::Role::Menu)
-        .aria_label("Work in")
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+    let popup = crate::composer::popover(t, 280., |d| {
+        d.child(div().px(px(8.)).py(px(4.)).child(text(
+            "Work in",
+            13.,
+            18.5714,
+            430.,
+            t.text_tertiary,
+        )))
+        .children(rows)
+    })
+    .id("work-in-menu")
+    .role(gpui::Role::Menu)
+    .aria_label("Work in")
+    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
     // Opens upward from the chip: the bar sits at the bottom of the window. A full-window
     // backdrop under the popup closes it on a click anywhere else, the chip included.
     Some(
@@ -374,7 +388,9 @@ fn location_menu(
                     })
                     .child(
                         anchored()
-                            .position(point(trigger.left(), trigger.top() - px(4.)))
+                            // `sideOffset` 0 plus the content's `m-px`; the popover's 16.5 px
+                            // shadow-layer inset comes off too (measured against the original).
+                            .position(point(trigger.left() + px(1.), trigger.top() - px(18.5)))
                             .anchor(gpui::Anchor::BottomLeft)
                             .snap_to_window_with_margin(px(8.))
                             .child(popup),
@@ -509,15 +525,23 @@ fn utility_bar(
                                     )
                                     .role(gpui::Role::Button)
                                     .aria_label("Work in")
+                                    // Ghost `[data-state=open]` fill, as on the composer's menus.
+                                    .when(location.open, |d| d.bg(t.ghost_hover))
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                         cx.stop_propagation()
                                     })
                                     .on_click({
                                         let toggle = toggle.clone();
                                         let focus = work_focus.read(cx).handle.clone();
+                                        let key_owner_click = owner.clone();
                                         move |_, window, cx| {
                                             window.focus(&focus, cx);
-                                            toggle(cx)
+                                            toggle(cx);
+                                            // Radix focuses the content: a pointer open
+                                            // highlights no row.
+                                            key_owner_click.update(cx, |main, _| {
+                                                main.location.selected = usize::MAX
+                                            });
                                         }
                                     })
                                     .on_key_down(move |event, _, cx| {
@@ -525,14 +549,17 @@ fn utility_bar(
                                         let menu = &key_owner.read(cx).location;
                                         match key {
                                             "enter" | "space" if menu.open => {
-                                                pick_location(&key_owner, menu.selected, cx);
+                                                if menu.selected != usize::MAX {
+                                                    pick_location(&key_owner, menu.selected, cx);
+                                                }
                                             }
                                             "enter" | "space" => toggle(cx),
                                             "escape" => set_location(&key_owner, Some(false), cx),
-                                            "up" | "down" if menu.open && has_project => {
+                                            "up" | "down" if menu.open => {
                                                 key_owner.update(cx, |main, cx| {
-                                                    main.location.selected =
-                                                        1 - main.location.selected;
+                                                    main.location.selected = usize::from(
+                                                        has_project && main.location.selected == 0,
+                                                    );
                                                     cx.notify();
                                                 });
                                             }
