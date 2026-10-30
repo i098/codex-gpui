@@ -541,7 +541,15 @@ impl Root {
         let mode = self.shortcut_state.new_chat_mode;
         let host = self.host.clone();
         let hotkey_options = hotkey::start_options(self, cx);
+        let preparing_worktree = mode != NewChatMode::Standalone
+            && hotkey_options
+                .as_ref()
+                .is_some_and(|options| options.mode == ui::screens::hotkey::Mode::Worktree);
+        if preparing_worktree {
+            self.toast(Toast::info("Creating worktree…"), cx);
+        }
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let result = async {
             let workspace = if mode == features::shortcuts::NewChatMode::Standalone {
                 let prepare = host.clone();
                 let prompt = s.text.clone();
@@ -558,7 +566,14 @@ impl Root {
                     let host = host.clone();
                     let prompt = s.text.clone();
                     match cx.background_executor().spawn(async move { hotkey::prepare_start(host, options, &prompt) }).await {
-                        Ok(prepared) => Some(prepared),
+                        Ok(prepared) => {
+                            if preparing_worktree {
+                                this.update(cx, |this, cx| {
+                                    this.toast(Toast::info("Attaching worktree…"), cx);
+                                })?;
+                            }
+                            Some(prepared)
+                        },
                         Err(error) => {
                             this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
                             return Err(error);
@@ -645,6 +660,9 @@ impl Root {
             this.update_in(cx, |this, window, cx| {
                 this.new_chat_section = None;
                 this.loaded.insert(id.clone());
+                if preparing_worktree {
+                    this.worktree_statuses.insert(id.clone(), "Checkout created");
+                }
                 if mode == features::shortcuts::NewChatMode::Temporary {
                     this.shortcut_state.ephemeral.insert(id.clone());
                 } else {
@@ -662,6 +680,17 @@ impl Root {
             let result = turn_start(&bridge, &id, &s, user_input(&s), None).await;
             if result.is_err() {
                 this.update(cx, |this, cx| this.restore_failed_send(&s, cx))?;
+            }
+            result
+            }.await;
+            if preparing_worktree {
+                this.update(cx, |this, cx| {
+                    if let Err(error) = &result
+                        && format!("{error:#}").contains("Setup script")
+                    {
+                        this.toast(Toast::danger("Checkout created; setup failed"), cx);
+                    }
+                })?;
             }
             result
         });

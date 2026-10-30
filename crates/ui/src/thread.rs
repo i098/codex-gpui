@@ -153,6 +153,7 @@ pub struct ThreadView {
     chat_actions_hovered: bool,
     git_repository: Option<Result<crate::dialog::CommitRepository, String>>,
     git_phase: Option<&'static str>,
+    worktree_status: Option<&'static str>,
     git_actions: Option<(gpui::FocusHandle, Option<usize>)>,
     git_trigger: Option<gpui::FocusHandle>,
     terminal_item: Option<String>,
@@ -340,6 +341,11 @@ impl ThreadView {
 
     pub fn set_git_phase(&mut self, phase: Option<&'static str>, cx: &mut Context<Self>) {
         self.git_phase = phase;
+        cx.notify();
+    }
+
+    pub fn set_worktree_status(&mut self, status: Option<&'static str>, cx: &mut Context<Self>) {
+        self.worktree_status = status;
         cx.notify();
     }
 
@@ -637,6 +643,7 @@ impl ThreadView {
             chat_actions_hovered: false,
             git_repository: None,
             git_phase: None,
+            worktree_status: None,
             git_actions: None,
             git_trigger: None,
             terminal_item: None,
@@ -2520,6 +2527,12 @@ impl Render for ThreadView {
                             .flex()
                             .flex_col()
                             .gap(px(12.))
+                            .when_some(self.git_phase, |d, phase| {
+                                d.child(text(phase, 14., 20., 400., t.text_secondary))
+                            })
+                            .when_some(self.worktree_status, |d, status| {
+                                d.child(text(status, 14., 20., 400., t.text))
+                            })
                             .children(turns)
                             .on_children_prepainted(measure),
                     )

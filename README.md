@@ -277,6 +277,8 @@ Branch prefix saves on blur or Enter; multiline instructions save after three id
 Save and Command-S also write pending instructions.
 The native `cargo test -p app --test git_settings -- --test-threads=1` replay checks autosave, write recovery, shutdown flush, and confirmed worktree preferences.
 PR watch preference changes update active PR heartbeat instructions; paused automations remain unchanged.
+Worktree starts show creating and attaching notices, then a thread status after creation.
+Setup failures show a separate error notice.
 Settings > Worktrees provides General and Environments tabs, root and retention preferences, live worktree rows, and row actions.
 The tabs stay accessible while the content scrolls.
 Pinned conversations prevent worktree deletion.
