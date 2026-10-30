@@ -14,7 +14,7 @@ pub(super) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
         match &action.command {
             ThreadCommand::MoveToSection(section) => this.move_to_section(id, section.clone(), cx),
             ThreadCommand::NewSection => this.new_section_for(id, window, cx),
-            ThreadCommand::Fork => this.fork_thread(id, 0, window, cx),
+            ThreadCommand::Fork => this.fork_thread(id, None, None, window, cx),
             ThreadCommand::CopyDeeplink => {
                 cx.write_to_clipboard(ClipboardItem::new_string(format!("codex://threads/{id}")));
             }

@@ -371,10 +371,17 @@ fn response_html_tag(tag: pulldown_cmark::TagEnd) -> Option<&'static str> {
 #[action(namespace = thread, no_json)]
 pub struct ForkThread(pub String);
 
-/// A file change card's `Undo`: revert the thread to before that turn (its id).
+/// Revert the conversation to before a turn.
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = thread, no_json)]
 pub struct RevertTurn(pub String);
+
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = thread, no_json)]
+pub struct PatchTurn {
+    pub thread_id: String,
+    pub turn_id: String,
+}
 
 /// A press inside the conversation of thread `id`: the original marks the open thread read.
 #[derive(Clone, PartialEq, Action)]
@@ -397,6 +404,8 @@ pub(super) struct TurnFocus {
     pub fork: FocusHandle,
     /// One of them has focus.
     pub engaged: bool,
+    pub reverted: bool,
+    pub patch_pending: bool,
 }
 
 impl TurnFocus {
@@ -422,6 +431,8 @@ impl TurnFocus {
             copy,
             fork,
             engaged,
+            reverted: false,
+            patch_pending: false,
         }
     }
 }
