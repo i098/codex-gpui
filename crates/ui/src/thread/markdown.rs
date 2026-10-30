@@ -6,7 +6,8 @@ use super::*;
 use crate::code_font;
 use crate::tooltip::{Side, tooltip};
 use gpui::{
-    AnyElement, FocusHandle, MouseButton, PathBuilder, Stateful, StyledText, canvas, point,
+    AnyElement, FocusHandle, MouseButton, PathBuilder, Stateful, StyledImage, StyledText, canvas,
+    point,
 };
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Color, FontStyle, StyleModifier, ThemeItem, ThemeSettings};
@@ -760,7 +761,7 @@ impl<'a> Markdown<'a> {
                                 || scheme.eq_ignore_ascii_case("https")
                         });
                         let python = !external && dest_url.ends_with(".py");
-                        let icon_width = if python { 19. } else { 0. };
+                        let icon_width = if python || external { 19. } else { 0. };
                         self.link_width.set(0.);
                         self.indent.set(icon_width);
                         let label = self
@@ -819,28 +820,43 @@ impl<'a> Markdown<'a> {
                                     })
                                 })
                         };
-                        let python_icon = |d: Stateful<Div>| {
-                            d.child(div().w(px(19.))).child(
-                                div().absolute().left_0().bottom(px(3.37)).child(icon(
-                                    "thread-lang-python",
-                                    16.,
-                                    tones(self.theme).mention,
-                                )),
-                            )
+                        let leading_icon = |d: Stateful<Div>| {
+                            let mention = tones(self.theme).mention;
+                            let (bottom, glyph) = if python {
+                                (
+                                    3.37,
+                                    icon("thread-lang-python", 16., mention).into_any_element(),
+                                )
+                            } else {
+                                // The original's favicon, its globe until the image loads.
+                                let globe = move || icon("project-marker-globe", 16., mention);
+                                let glyph = match favicon_url(&dest) {
+                                    Some(src) => gpui::img(src)
+                                        .size(px(16.))
+                                        .rounded(px(2.5))
+                                        .with_loading(move || globe().into_any_element())
+                                        .with_fallback(move || globe().into_any_element())
+                                        .into_any_element(),
+                                    None => globe().into_any_element(),
+                                };
+                                (2.87, glyph)
+                            };
+                            d.child(div().w(px(19.)))
+                                .child(div().absolute().left_0().bottom(px(bottom)).child(glyph))
                         };
                         if flow {
                             for (index, word) in label.into_iter().enumerate() {
                                 let mut piece =
                                     link_box(format!("file-link-{dest}-{index}")).flex_none();
-                                if index == 0 && python {
-                                    piece = python_icon(piece);
+                                if index == 0 && (python || external) {
+                                    piece = leading_icon(piece);
                                 }
                                 row.push(piece.child(word).into_any_element());
                             }
                         } else {
                             let mut piece = link_box(format!("file-link-{dest}"));
-                            if python {
-                                piece = python_icon(piece);
+                            if python || external {
+                                piece = leading_icon(piece);
                             }
                             row.push(piece.children(label).into_any_element());
                         }
@@ -1606,6 +1622,16 @@ impl RenderOnce for CodeBlock {
                     .child(body),
             )
     }
+}
+
+/// The original's favicon source for an http(s) link: Google's favicon service for its origin.
+fn favicon_url(dest: &str) -> Option<String> {
+    let url = url::Url::parse(dest).ok()?;
+    let origin = url.origin().ascii_serialization();
+    let origin: String = url::form_urlencoded::byte_serialize(origin.as_bytes()).collect();
+    Some(format!(
+        "https://t0.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&url={origin}&size=32&drop_404_icon=true"
+    ))
 }
 
 fn code_symbol(color: Hsla, checked: bool) -> impl IntoElement {
