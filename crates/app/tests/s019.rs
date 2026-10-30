@@ -256,9 +256,15 @@ fn mention_list_replay() -> Result<()> {
     );
     Ok(())
 }
+fn ignore_recorded_app_installed(line: &mut Value) {
+    if line["dir"] == "send" && line["msg"]["method"] == "app/installed" {
+        line["msg"]["method"] = "recorded/app/installed".into();
+    }
+}
+
 #[test]
 fn thread_mentions_refresh_and_list_callable_apps() -> Result<()> {
-    let mut before_lines = script(None, |_| {})?;
+    let mut before_lines = script(None, ignore_recorded_app_installed)?;
     before_lines.extend(common::exchange("app/installed", json!({"apps":[]})));
     let mut before = Fx::captured("dark", (1280., 832.), before_lines)?;
     before.keys("cmd-1")?;
@@ -270,12 +276,12 @@ fn thread_mentions_refresh_and_list_callable_apps() -> Result<()> {
             .is_some()
     })?;
     before.capture_evidence("CGX_EVIDENCE_DIR", "connector-mentions-before")?;
-    let mut lines = script(None, |_| {})?;
+    let mut lines = script(None, ignore_recorded_app_installed)?;
     lines.extend(common::exchange(
         "app/installed",
         json!({"apps":[
-            {"id":"linear","name":"Linear","callable":true,"enabled":true},
-            {"id":"disabled","name":"Disabled","callable":true,"enabled":false}
+            {"id":"linear","runtimeName":"Linear","callable":true,"enabled":true},
+            {"id":"disabled","runtimeName":"Disabled","callable":true,"enabled":false}
         ]}),
     ));
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
@@ -283,16 +289,27 @@ fn thread_mentions_refresh_and_list_callable_apps() -> Result<()> {
     fx.wait_thread(common::GREETING)?;
     fx.click(fx.at("thread", "Work with Codex")?)?;
     insert(&mut fx, "@")?;
-    fx.wait("installed connectors", |fx| {
+    let connected = fx.wait("installed connectors", |fx| {
         fx.read(|root, cx| root.composer(cx).read(cx).mention_state())
             .is_some_and(|sections| {
                 sections.iter().any(|(heading, rows)| {
-                    *heading == Some("Apps")
+                    *heading == Some("Plugins")
                         && rows.iter().any(|(row, _)| row == "Linear | Connected app")
                         && rows.iter().all(|(row, _)| !row.contains("Disabled"))
                 })
             })
-    })?;
+    });
+    if let Err(error) = connected {
+        let state = fx.read(|root, cx| root.composer(cx).read(cx).mention_state());
+        let installed_requests: Vec<_> = fx
+            .sent()?
+            .into_iter()
+            .filter(|request| request["method"] == "app/installed")
+            .collect();
+        return Err(error.context(format!(
+            "connector state: {state:?}; requests: {installed_requests:?}"
+        )));
+    }
     fx.capture_evidence("CGX_EVIDENCE_DIR", "connector-mentions-after")?;
     let request = fx
         .sent()?

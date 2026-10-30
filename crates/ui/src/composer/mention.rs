@@ -9,6 +9,15 @@ use super::*;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+fn app_name(app: &Value) -> &str {
+    app["runtimeName"]
+        .as_str()
+        .filter(|name| !name.is_empty())
+        .or_else(|| app["name"].as_str().filter(|name| !name.is_empty()))
+        .or_else(|| app["id"].as_str())
+        .unwrap_or("")
+}
+
 struct Action {
     id: &'static str,
     title: &'static str,
@@ -365,11 +374,7 @@ impl Composer {
             (&skill.title, &skill.description, "sidebar-cmd-create-page")
         } else if index < ACTIONS.len() + self.slash.skills.len() + self.installed_apps.len() {
             let app = &self.installed_apps[index - ACTIONS.len() - self.slash.skills.len()];
-            let name = app["name"]
-                .as_str()
-                .filter(|name| !name.is_empty())
-                .or_else(|| app["id"].as_str())
-                .unwrap_or("");
+            let name = app_name(app);
             (name, "Connected app", "plugins")
         } else {
             let file = &self.slash.search.files
@@ -418,10 +423,7 @@ impl Composer {
             None if index < apps_end => {
                 let app = &self.installed_apps[index - skills_end];
                 let id = app["id"].as_str().unwrap_or("");
-                let name = app["name"]
-                    .as_str()
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or(id);
+                let name = app_name(app);
                 (name.to_owned(), format!("[@{name}](app://{id})"), "plugins")
             }
             None => {
@@ -555,7 +557,7 @@ impl Composer {
                             .map(|selected| Row::Item(selected, index))
                     })
                     .collect();
-                sections.push((Some("Apps"), apps));
+                sections.push((Some("Plugins"), apps));
             }
             if !self.slash.search.roots.is_empty() {
                 sections.push((Some("Files"), vec![Row::Note("Type to search for files")]));
