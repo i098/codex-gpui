@@ -526,7 +526,7 @@ fn utility_bar(
                                     .role(gpui::Role::Button)
                                     .aria_label("Work in")
                                     // Ghost `[data-state=open]` fill, as on the composer's menus.
-                                    .when(location.open, |d| d.bg(t.ghost_hover))
+                                    .when(location.open, |d| d.bg(t.ghost_hover).rounded_full())
                                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                                         cx.stop_propagation()
                                     })
