@@ -18,8 +18,6 @@ const SKIP: isize = 0;
 const INSTALL: isize = 1;
 const DISMISS: isize = 2;
 const STAGE_INSTALLING: isize = 2;
-/// `SPUUpdateCheckUpdatesInBackground`.
-const CHECK_IN_BACKGROUND: isize = 1;
 /// Sparkle checks in the background on this interval when automatic checks are on.
 const CHECK_INTERVAL_SECONDS: f64 = 3600.;
 
@@ -34,7 +32,6 @@ struct DriverState {
     install: RefCell<Option<Installation>>,
     cancel: RefCell<Option<RcBlock<dyn Fn()>>>,
     blocked: Cell<bool>,
-    automatic: Cell<bool>,
     expected: Cell<u64>,
     received: Cell<u64>,
     status: Cell<Status>,
@@ -87,9 +84,8 @@ define_class!(
 
     impl UserDriver {
         #[unsafe(method(updater:mayPerformUpdateCheck:error:))]
-        fn may_check(&self, _: &AnyObject, check: isize, _: *mut *mut NSError) -> bool {
+        fn may_check(&self, _: &AnyObject, _: isize, _: *mut *mut NSError) -> bool {
             !self.ivars().blocked.get()
-                && (check != CHECK_IN_BACKGROUND || self.ivars().automatic.get())
         }
 
         #[unsafe(method_id(feedURLStringForUpdater:))]
@@ -264,6 +260,16 @@ impl Backend {
         }
     }
 
+    pub(super) fn automatic(&self) -> bool {
+        unsafe { msg_send![&*self.updater, automaticallyChecksForUpdates] }
+    }
+
+    pub(super) fn set_automatic(&self, on: bool) {
+        unsafe {
+            let _: () = msg_send![&*self.updater, setAutomaticallyChecksForUpdates: on];
+        }
+    }
+
     pub(super) fn install(&self) {
         self.driver.ivars().install();
     }
@@ -272,8 +278,17 @@ impl Backend {
         self.driver.ivars().set_managed(managed);
     }
 
-    /// Sets the appcast URL that Sparkle reads on its next check, and its automatic checks.
-    pub(super) fn configure(&self, automatic: bool, beta: bool, plan: &str, installation: &str) {
+    /// The original checks once in the background at start when automatic checks are on.
+    pub(super) fn check_at_start(&self) {
+        if self.automatic() {
+            unsafe {
+                let _: () = msg_send![&*self.updater, checkForUpdatesInBackground];
+            }
+        }
+    }
+
+    /// Sets the appcast URL that Sparkle reads on its next check.
+    pub(super) fn configure(&self, beta: bool, plan: &str, installation: &str) {
         let version = bundle_string("CFBundleShortVersionString")
             .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_owned());
         let os = NSProcessInfo::processInfo().operatingSystemVersion();
@@ -291,16 +306,6 @@ impl Backend {
             plan,
         );
         *self.driver.ivars().feed.borrow_mut() = feed.as_deref().map(NSString::from_str);
-        // Each Sparkle setter resets its check cycle, and every host-settings write lands here.
-        if self.driver.ivars().automatic.replace(automatic) != automatic {
-            self.set_automatic(automatic);
-        }
-    }
-
-    fn set_automatic(&self, automatic: bool) {
-        unsafe {
-            let _: () = msg_send![&*self.updater, setAutomaticallyChecksForUpdates: automatic];
-        }
     }
 }
 
@@ -314,7 +319,6 @@ fn bundle_string(key: &str) -> Option<String> {
 }
 
 pub(super) fn start(
-    automatic: bool,
     beta: bool,
     plan: &str,
     installation: &str,
@@ -345,7 +349,6 @@ pub(super) fn start(
         install: RefCell::new(None),
         cancel: RefCell::new(None),
         blocked: Cell::new(false),
-        automatic: Cell::new(automatic),
         expected: Cell::new(0),
         received: Cell::new(0),
         status: Cell::new(Status::Idle),
@@ -362,8 +365,7 @@ pub(super) fn start(
         driver,
         base: feed,
     };
-    backend.configure(automatic, beta, plan, installation);
-    backend.set_automatic(automatic);
+    backend.configure(beta, plan, installation);
     unsafe {
         let _: () = msg_send![&*backend.updater, setUpdateCheckInterval: CHECK_INTERVAL_SECONDS];
     }
@@ -376,11 +378,6 @@ pub(super) fn start(
             .map(|error| error.localizedDescription().to_string())
             .unwrap_or_else(|| "Sparkle could not start".into())
     );
-    if automatic {
-        unsafe {
-            let _: () = msg_send![&*backend.updater, checkForUpdatesInBackground];
-        }
-    }
     Ok(Some((backend, receiver)))
 }
 

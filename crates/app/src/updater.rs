@@ -7,9 +7,9 @@ use gpui::{App, Task};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
-#[cfg(target_os = "macos")]
-use ui::updater::InstallUpdate;
 use ui::updater::Updates;
+#[cfg(target_os = "macos")]
+use ui::updater::{InstallUpdate, ToggleAutomaticChecks};
 
 #[cfg(target_os = "macos")]
 mod native;
@@ -76,27 +76,23 @@ fn host_flag(cx: &App, key: &str, default: bool) -> bool {
         .unwrap_or(default)
 }
 
-/// The automatic-check and beta settings and the account plan.
+/// The beta setting and the account plan.
 #[cfg(target_os = "macos")]
-fn preferences(cx: &App) -> (bool, bool, String) {
+fn preferences(cx: &App) -> (bool, String) {
     let plan = cx
         .try_global::<Plan>()
         .map_or("unknown", |plan| plan.0.as_str());
-    (
-        host_flag(cx, "update-automatic-checks", true),
-        host_flag(cx, "update-beta", false),
-        plan.to_owned(),
-    )
+    (host_flag(cx, "update-beta", false), plan.to_owned())
 }
 
 /// Applies the current preferences to a running Sparkle updater.
 #[cfg(target_os = "macos")]
 fn apply_preferences(cx: &mut App) {
-    let (automatic, beta, plan) = preferences(cx);
+    let (beta, plan) = preferences(cx);
     if let Some(runtime) = cx.try_global::<Runtime>() {
         runtime
             .backend
-            .configure(automatic, beta, &plan, &runtime.installation);
+            .configure(beta, &plan, &runtime.installation);
     }
 }
 
@@ -202,6 +198,14 @@ pub fn init(cx: &mut App) {
                 runtime.backend.check();
             }
         });
+        cx.on_action(|_: &ToggleAutomaticChecks, cx| {
+            if let Some(runtime) = cx.try_global::<Runtime>() {
+                let on = !runtime.backend.automatic();
+                runtime.backend.set_automatic(on);
+                cx.global_mut::<Updates>().automatic = on;
+                cx.refresh_windows();
+            }
+        });
         cx.on_action(|_: &InstallUpdate, cx| {
             if !cx.global::<Updates>().managed
                 && let Some(runtime) = cx.try_global::<Runtime>()
@@ -263,10 +267,12 @@ fn configure(managed: bool, cx: &mut App) {
     }
     if !managed {
         let installation = installation_id(cx);
-        let (automatic, beta, plan) = preferences(cx);
-        match native::start(automatic, beta, &plan, &installation) {
+        let (beta, plan) = preferences(cx);
+        match native::start(beta, &plan, &installation) {
             Ok(Some((backend, events))) => {
                 cx.global_mut::<Updates>().available = true;
+                backend.check_at_start();
+                cx.global_mut::<Updates>().automatic = backend.automatic();
                 let events = cx.spawn(async move |cx| {
                     while let Ok(status) = events.recv().await {
                         cx.update(|cx| {

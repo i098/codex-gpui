@@ -40,7 +40,7 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
     let (backend, events) =
-        native::start(false, false, "unknown", "smoke")?.expect("configured native updater");
+        native::start(false, "unknown", "smoke")?.expect("configured native updater");
     backend.check();
     let deadline = Instant::now() + Duration::from_secs(90);
     let canceled_at = std::cell::Cell::new(None);
