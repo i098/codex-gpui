@@ -210,7 +210,7 @@ impl Dialog {
         cx.notify();
     }
 
-    fn browse(&mut self, path: Option<String>, cx: &mut Context<Self>) {
+    pub fn browse(&mut self, path: Option<String>, cx: &mut Context<Self>) {
         let Some(host_id) = self.host_id() else {
             return;
         };
@@ -222,7 +222,7 @@ impl Dialog {
     }
 
     /// `remoteFilePicker.add`: a remote project has one folder, so the choice replaces it.
-    fn choose(&mut self, cx: &mut Context<Self>) {
+    pub fn choose(&mut self, cx: &mut Context<Self>) {
         if let Some(browser) = self.browser.take() {
             self.sources = vec![browser.path];
         }
