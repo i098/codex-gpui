@@ -637,30 +637,45 @@ pub(super) fn activities<'a>(
     out
 }
 
-/// The summary and rows of one group. Summary parts come in the original's order (file
-/// changes, exploration, commands), the first one capitalised; the group's icon is the first
-/// part's.
+/// The summary and rows of one group. Summary parts come in the original's order (loaded
+/// tools, file changes, exploration, commands), the first one capitalised; the group's icon is
+/// the first part's.
 fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
     let key = item_id(items.first()?)?;
     let (mut files, mut reads, mut commands) = (0, 0, 0);
+    // Distinct skill definition files read (`loadedToolPaths`).
+    let mut tools = HashSet::new();
     let mut rows = Vec::with_capacity(items.len());
     for item in items {
         match item {
             ThreadItem::CommandExecution {
                 id,
                 command,
+                cwd,
                 command_actions,
                 status,
                 aggregated_output,
                 exit_code,
                 ..
             } => {
+                let skills: Vec<String> = command_actions
+                    .iter()
+                    .filter(|a| a.kind == "read")
+                    .filter_map(|a| a.path.as_deref().or(a.name.as_deref()))
+                    .map(|p| match p.starts_with('/') {
+                        true => p.to_owned(),
+                        false => format!("{cwd}/{p}"),
+                    })
+                    .filter(|p| skill_definition(p))
+                    .collect();
                 // The server's parse: all `read` / `search` / `list_files` is exploration.
                 let exploration = !command_actions.is_empty()
                     && command_actions
                         .iter()
                         .all(|a| matches!(a.kind.as_str(), "read" | "search" | "list_files"));
-                if exploration {
+                if !skills.is_empty() && skills.len() == command_actions.len() {
+                    tools.extend(skills);
+                } else if exploration {
                     reads += 1;
                 } else {
                     commands += 1;
@@ -734,6 +749,10 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
     }
     let count = |n: usize, one, many| (n > 0).then_some(if n == 1 { one } else { many });
     let parts: Vec<(&str, &'static str)> = [
+        (
+            count(tools.len(), "loaded a tool", "loaded tools"),
+            "thread-wrench",
+        ),
         (count(files, "edited a file", "edited files"), "pencil"),
         (count(reads, "read files", "read files"), "thread-read"),
         (
@@ -753,6 +772,43 @@ fn group_entry<'a>(items: &[&'a ThreadItem]) -> Option<Activity<'a>> {
         icon,
         rows,
     })
+}
+
+/// Whether `path` is a skill's `SKILL.md`, as the original's skill path parse tells it:
+/// `.codex|.agents/skills/[_import|.system/]<id>/SKILL.md`, or under `plugins/` either
+/// `[cache/<marketplace>/]<plugin>/[<version>/]…/skills/<id>/SKILL.md` or a plugin's own
+/// `SKILL.md`. Segments match case-insensitively.
+fn skill_definition(path: &str) -> bool {
+    let path = path.trim().replace('\\', "/");
+    let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let is = |i: usize, s: &str| segs.get(i).is_some_and(|x| x.eq_ignore_ascii_case(s));
+    let definition = |rest: &[&str]| matches!(rest, [f] if f.eq_ignore_ascii_case("skill.md"));
+    for i in 0..segs.len() {
+        if (is(i, ".codex") || is(i, ".agents")) && is(i + 1, "skills") {
+            let id = i + 2 + usize::from(is(i + 2, "_import") || is(i + 2, ".system"));
+            if id < segs.len() {
+                return definition(&segs[id + 1..]);
+            }
+        }
+    }
+    for n in 0..segs.len() {
+        if !is(n, "plugins") {
+            continue;
+        }
+        let cache = is(n + 1, "cache");
+        let plugin = n + if cache { 3 } else { 1 };
+        if plugin >= segs.len() {
+            continue;
+        }
+        let root = plugin + usize::from(cache);
+        match (root + 1..segs.len()).find(|&t| is(t, "skills")) {
+            Some(s) if s + 1 < segs.len() => return definition(&segs[s + 2..]),
+            Some(_) => {}
+            None if definition(segs.get(root + 1..).unwrap_or_default()) => return true,
+            None => {}
+        }
+    }
+    false
 }
 
 /// A turn's items without a final answer: agent messages, running command rows and activity
@@ -1256,4 +1312,62 @@ fn stats(added: usize, removed: usize, color: Hsla) -> [Div; 2] {
     let features = gpui::FontFeatures(Arc::new(features));
     [format!("+{added}"), format!("-{removed}")]
         .map(|s| text(s, 13., 13., 430., color).font_features(features.clone()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skill_definition_follows_the_original_parse() {
+        for path in [
+            "/Users/a/.codex/skills/operating-rules/SKILL.md",
+            "/Users/a/.codex/skills/.system/plan/skill.md",
+            "/repo/.agents/skills/lint/SKILL.md",
+            "/Users/a/.codex/plugins/cache/mkt/github/1.0/skills/review/SKILL.md",
+            "/Users/a/.codex/plugins/github/SKILL.md",
+        ] {
+            assert!(skill_definition(path), "{path}");
+        }
+        for path in [
+            "/Users/a/.codex/skills/operating-rules/scripts/run.md",
+            "/Users/a/.codex/skills/SKILL.md",
+            "/repo/skills/lint/SKILL.md",
+            "/repo/README.md",
+        ] {
+            assert!(!skill_definition(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn skill_reads_summarise_as_loaded_tools() {
+        let read = |id: &str, path: &str| -> ThreadItem {
+            serde_json::from_value(serde_json::json!({
+                "type": "commandExecution", "id": id, "command": format!("cat {path}"),
+                "cwd": "/Users/a/proj", "status": "completed", "exitCode": 0,
+                "commandActions": [{"type": "read", "command": format!("cat {path}"),
+                    "name": "SKILL.md", "path": path}],
+            }))
+            .unwrap()
+        };
+        let summary = |items: &[ThreadItem]| match group_entry(&items.iter().collect::<Vec<_>>()) {
+            Some(Activity::Group { summary, icon, .. }) => (summary, icon),
+            _ => unreachable!(),
+        };
+        let one = read("a", "/Users/a/.codex/skills/rules/SKILL.md");
+        assert_eq!(
+            summary(std::slice::from_ref(&one)),
+            ("Loaded a tool".into(), "thread-wrench")
+        );
+        let items = [
+            one.clone(),
+            read("b", "/Users/a/.codex/skills/talk/SKILL.md"),
+            one,
+            read("c", "src/main.rs"),
+        ];
+        assert_eq!(
+            summary(&items),
+            ("Loaded tools, read files".into(), "thread-wrench")
+        );
+    }
 }

@@ -1281,6 +1281,17 @@ impl SettingsPane {
                 .into_iter()
                 .chain(crate::updater::managed_row(t, cx))
                 .chain(crate::updater::automatic_row(t, cx))
+                .chain(
+                    cx.try_global::<crate::updater::Updates>()
+                        .is_some_and(|updates| updates.available && !updates.managed)
+                        .then(|| {
+                            row(
+                                "Beta updates",
+                                Some("Get early versions before they reach everyone"),
+                                self.toggle("host.update-beta", false, t, window, cx),
+                            )
+                        }),
+                )
                 .collect(),
             ),
             (
