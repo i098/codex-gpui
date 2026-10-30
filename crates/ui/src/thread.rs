@@ -2723,6 +2723,18 @@ fn day_and_time(at: i64, now: i64, utc_offset: i64) -> (String, String) {
 /// Exact layout width of a single-line run. GPUI rounds measured text boxes up to whole px;
 /// inline runs placed after one another need the fractional advances Chromium uses.
 fn width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>) -> Pixels {
+    crate::run_width(shaped_width(window, s, size, weight, family), window)
+}
+
+/// The width of a box that holds a single-line run without truncating it: the shaped width
+/// rounded up to the layout unit, as Blink sizes a `w-fit` box. [`width`] rounds to the
+/// nearest unit, so a `truncate` box of that width can cut the run's last glyphs.
+fn fit_width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>) -> Pixels {
+    let unit = window.scale_factor() * 64.;
+    px((f32::from(shaped_width(window, s, size, weight, family)) * unit).ceil() / unit)
+}
+
+fn shaped_width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>) -> Pixels {
     let family = SharedString::from(family.unwrap_or(SANS));
     let run = TextRun {
         len: s.len(),
@@ -2735,13 +2747,10 @@ fn width(window: &Window, s: &str, size: f32, weight: f32, family: Option<&str>)
         underline: None,
         strikethrough: None,
     };
-    crate::run_width(
-        window
-            .text_system()
-            .layout_line(s, px(size), &[run], None)
-            .width,
-        window,
-    )
+    window
+        .text_system()
+        .layout_line(s, px(size), &[run], None)
+        .width
 }
 
 /// Text of a known run width (see [`width`]) as one text item (`markdown::ItemPen`).

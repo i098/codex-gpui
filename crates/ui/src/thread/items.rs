@@ -827,9 +827,10 @@ pub(super) fn activity(
     let fades = &view.stream_fades;
     let images = &view.mcp_images;
     let text60 = t.text_alpha_60;
-    // Exact-width 14 px text, styled before it is boxed (see [`measured`]).
+    // Exact-width 14 px text, styled before it is boxed (see [`measured`]). The box rounds the
+    // width up, or its `truncate` cuts a run that fits (`Read math.…`).
     let label = |s: String, color: Hsla| {
-        let w = width(window, &s, 14., 430., None);
+        let w = fit_width(window, &s, 14., 430., None);
         (text(s, 14., 21., 430., color), w)
     };
     // The label is exactly as wide as its text, and shrinks with an ellipsis (`truncate`) in a
