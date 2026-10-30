@@ -35,6 +35,7 @@ fn rail_requires_a_ready_update_and_an_enabled_policy() -> Result<()> {
                 available,
                 managed,
                 status,
+                ..Default::default()
             });
             cx.refresh_windows();
         });
@@ -63,6 +64,7 @@ fn rail_requires_a_ready_update_and_an_enabled_policy() -> Result<()> {
             available: true,
             managed: false,
             status: Status::Ready,
+            ..Default::default()
         });
         cx.refresh_windows();
     });
