@@ -63,6 +63,8 @@ actions!(
         OpenSecurity,
         /// Rail `Sites` (`/sites`).
         OpenSites,
+        /// Explore ▸ `Projects` (`/projects`).
+        OpenProjects,
         /// Home beacon `Start Voice` and the composer's `Start new voice chat`.
         StartVoiceChat,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
@@ -1340,6 +1342,20 @@ impl Shell {
     /// sidebar-customization store, which the port lacks.
     fn explore_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let hover = t.menu_item_hover;
+        let item = |id: &'static str, label: &'static str, action: Box<dyn gpui::Action>| {
+            div()
+                .id(id)
+                .px(px(8.))
+                .py(px(6.))
+                .rounded(px(12.))
+                .hover(move |s| s.bg(hover))
+                .child(text(label, 14., 20., 430., t.text))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.explore_menu = false;
+                    cx.notify();
+                    window.dispatch_action(action.boxed_clone(), cx);
+                }))
+        };
         div()
             .absolute()
             .left(RAIL_WIDTH)
@@ -1351,30 +1367,10 @@ impl Shell {
                 }
             }))
             .child(composer::popover(t, 220., |d| {
-                if self.security_available {
-                    d.child(
-                        div()
-                            .id("explore-security")
-                            .px(px(8.))
-                            .py(px(6.))
-                            .rounded(px(12.))
-                            .hover(move |s| s.bg(hover))
-                            .child(text("Security", 14., 20., 430., t.text))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.explore_menu = false;
-                                cx.notify();
-                                window.dispatch_action(Box::new(OpenSecurity), cx);
-                            })),
-                    )
-                } else {
-                    d.child(div().px(px(8.)).py(px(6.)).child(text(
-                        "No more destinations",
-                        14.,
-                        20.,
-                        400.,
-                        t.text_tertiary,
-                    )))
-                }
+                d.child(item("explore-projects", "Projects", Box::new(OpenProjects)))
+                    .when(self.security_available, |d| {
+                        d.child(item("explore-security", "Security", Box::new(OpenSecurity)))
+                    })
             }))
     }
 

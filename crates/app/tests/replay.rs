@@ -444,6 +444,7 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
                 Route::Plugins(path) => path,
                 Route::Onboarding(page) => page.path().trim_start_matches('/').to_owned(),
                 Route::Sites => "sites".to_owned(),
+                Route::Projects => "projects".to_owned(),
             }
             .into(),
             "selectedRail" => fx.shell(|s| s.selected_rail).into(),

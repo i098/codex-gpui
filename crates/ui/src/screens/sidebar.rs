@@ -60,6 +60,8 @@ pub struct Project {
     pub new_chat_label: SharedString,
     /// The project's first local root path; the cwd of a chat started in it.
     pub root: Option<SharedString>,
+    /// The stored `updatedAt`, in milliseconds.
+    pub updated_at: Option<i64>,
     pub worktree: bool,
     pub missing: bool,
     pub expanded: bool,

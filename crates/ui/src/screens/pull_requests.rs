@@ -2307,8 +2307,14 @@ fn relative_age(date: &str, clock: Clock) -> String {
     let Ok(date) = chrono::DateTime::parse_from_rfc3339(date) else {
         return String::new();
     };
+    compact_age(date.timestamp(), clock)
+}
+
+/// The original's compact relative time (`wham.formattedRelativeDateTime.compact*`):
+/// `just now`, `5m`, `3h`, `2d`, `1w`, `4mo`, `1y`; `timestamp` in seconds.
+pub(crate) fn compact_age(timestamp: i64, clock: Clock) -> String {
     let now = clock.now();
-    let seconds = (now - date.timestamp()).max(0);
+    let seconds = (now - timestamp).max(0);
     if seconds < 60 {
         return "just now".into();
     }
@@ -2319,7 +2325,7 @@ fn relative_age(date: &str, clock: Clock) -> String {
         return format!("{}h", seconds / 3600);
     }
     let days = ((now + clock.utc_offset).div_euclid(86400)
-        - (date.timestamp() + clock.utc_offset).div_euclid(86400))
+        - (timestamp + clock.utc_offset).div_euclid(86400))
     .max(1);
     if days < 7 {
         format!("{days}d")

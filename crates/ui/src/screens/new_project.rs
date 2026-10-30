@@ -73,6 +73,11 @@ pub enum Outcome {
         sources: Vec<String>,
         appearance: Option<Value>,
     },
+    /// `Edit project` ▸ `Save`: the edited project's id and its new name.
+    Rename {
+        id: SharedString,
+        name: String,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -90,6 +95,8 @@ pub struct Dialog {
     remotes: Vec<SharedString>,
     saving: bool,
     focus: FocusHandle,
+    /// `Some(project id)`: the `Edit project` form, which saves only the name.
+    editing: Option<SharedString>,
 }
 
 impl EventEmitter<Outcome> for Dialog {}
@@ -103,7 +110,21 @@ impl Focusable for Dialog {
 impl Dialog {
     /// `remotes`: display names of the connected remote hosts the device menu lists.
     pub fn new(remotes: Vec<SharedString>, cx: &mut Context<Self>) -> Self {
-        let name = cx.new(|cx| Composer::dialog_field("Name", "Project name", "", cx));
+        Self::form(remotes, "", None, cx)
+    }
+
+    /// Projects index ▸ `Edit project` (`projectSetup.editLocalProject`), name prefilled.
+    pub fn edit(id: SharedString, name: &str, cx: &mut Context<Self>) -> Self {
+        Self::form(Vec::new(), name, Some(id), cx)
+    }
+
+    fn form(
+        remotes: Vec<SharedString>,
+        name: &str,
+        editing: Option<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let name = cx.new(|cx| Composer::dialog_field("Name", "Project name", name, cx));
         cx.observe(&name, |_, _, cx| cx.notify()).detach();
         Self {
             name,
@@ -113,6 +134,7 @@ impl Dialog {
             remotes,
             saving: false,
             focus: cx.focus_handle(),
+            editing,
         }
     }
 
@@ -159,10 +181,17 @@ impl Dialog {
         }
         self.saving = true;
         self.popover = None;
-        cx.emit(Outcome::Create {
-            name: self.name.read(cx).field_text().trim().to_owned(),
-            sources: self.sources.clone(),
-            appearance: self.appearance(),
+        let name = self.name.read(cx).field_text().trim().to_owned();
+        cx.emit(match &self.editing {
+            Some(id) => Outcome::Rename {
+                id: id.clone(),
+                name,
+            },
+            None => Outcome::Create {
+                name,
+                sources: self.sources.clone(),
+                appearance: self.appearance(),
+            },
         });
         cx.notify();
     }
@@ -713,6 +742,10 @@ impl Render for Dialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let viewport = window.viewport_size();
+        let (title, submit) = match self.editing {
+            Some(_) => ("Edit project", "Save"),
+            None => ("Create project", "Create project"),
+        };
         let label_row = div()
             .flex()
             .items_center()
@@ -725,17 +758,19 @@ impl Render for Dialog {
             .p(px(20.))
             .flex()
             .flex_col()
-            .child(text("Create project", 20., 28., 600., t.text))
+            .child(text(title, 20., 28., 600., t.text))
             .child(div().pt(px(12.)).child(self.name_input(window, &t, cx)))
-            .child(
-                div()
-                    .pt(px(12.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .child(label_row)
-                    .child(self.sources_box(&t, cx)),
-            )
+            .when(self.editing.is_none(), |body| {
+                body.child(
+                    div()
+                        .pt(px(12.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .child(label_row)
+                        .child(self.sources_box(&t, cx)),
+                )
+            })
             .child(
                 div()
                     .pt(px(32.))
@@ -743,7 +778,7 @@ impl Render for Dialog {
                     .justify_end()
                     .gap(px(12.))
                     .child(self.button("new-project-cancel", "Cancel", false, &t, cx))
-                    .child(self.button("new-project-create", "Create project", true, &t, cx)),
+                    .child(self.button("new-project-create", submit, true, &t, cx)),
             );
         let frame = div()
             .id("new-project-dialog")
@@ -751,7 +786,7 @@ impl Render for Dialog {
             .w(px(520.))
             .max_w(viewport.width * 0.92)
             .role(gpui::Role::Dialog)
-            .aria_label("Create project")
+            .aria_label(title)
             .track_focus(&self.focus)
             .on_mouse_down(
                 MouseButton::Left,

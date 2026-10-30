@@ -150,6 +150,7 @@ impl Host for FixtureHost {
             label: "Fixture repository".into(),
             new_chat_label: "New chat".into(),
             root: Some(self.root.to_string_lossy().into_owned().into()),
+            updated_at: None,
             worktree: false,
             missing: false,
             expanded: true,

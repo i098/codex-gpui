@@ -2,7 +2,9 @@
 
 use crate::Root;
 use bridge::types::ThreadListResponse;
-use gpui::{AppContext as _, Context, Entity, Focusable as _, PathPromptOptions, Window};
+use gpui::{
+    AppContext as _, Context, Entity, Focusable as _, PathPromptOptions, SharedString, Window,
+};
 use serde_json::json;
 use std::path::PathBuf;
 use ui::screens::{
@@ -29,6 +31,30 @@ impl Root {
             .map(|connection| connection.display_name.clone().into())
             .collect();
         let dialog = cx.new(|cx| Dialog::new(remotes, cx));
+        self.show_project_dialog(dialog, window, cx);
+    }
+
+    /// Projects index ▸ `Edit project`: the same form, saving only the name.
+    pub(crate) fn open_edit_project(
+        &mut self,
+        id: SharedString,
+        name: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.has_dialog() {
+            return;
+        }
+        let dialog = cx.new(|cx| Dialog::edit(id, &name, cx));
+        self.show_project_dialog(dialog, window, cx);
+    }
+
+    fn show_project_dialog(
+        &mut self,
+        dialog: Entity<Dialog>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         cx.subscribe_in(
             &dialog,
             window,
@@ -51,6 +77,9 @@ impl Root {
                     window,
                     cx,
                 ),
+                Outcome::Rename { id, name } => {
+                    this.rename_project(dialog.clone(), id.to_string(), name.clone(), window, cx)
+                }
             },
         )
         .detach();
@@ -143,6 +172,39 @@ impl Root {
                     eprintln!("codex-gpui: cannot create project: {error:#}");
                     dialog.update(cx, |dialog, cx| dialog.finish(cx));
                     this.toast(Toast::danger("Failed to create project"), cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn rename_project(
+        &mut self,
+        dialog: Entity<Dialog>,
+        id: String,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let host = self.host.clone();
+        let write = cx.background_spawn(async move {
+            host.rename_project(&id, &name)?;
+            host.projects()
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = write.await;
+            this.update_in(cx, |this, window, cx| match result {
+                Ok(projects) => {
+                    if this.new_project.as_ref() == Some(&dialog) {
+                        this.close_new_project(window, cx);
+                    }
+                    this.set_projects(projects, cx);
+                }
+                Err(error) => {
+                    eprintln!("codex-gpui: cannot rename project: {error:#}");
+                    dialog.update(cx, |dialog, cx| dialog.finish(cx));
+                    this.toast(Toast::danger("Failed to save project"), cx);
                 }
             })
             .ok();

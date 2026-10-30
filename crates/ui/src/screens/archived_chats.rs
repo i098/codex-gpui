@@ -1516,6 +1516,7 @@ mod tests {
             id: id.to_owned().into(),
             label: id.to_owned().into(),
             root: Some(root.to_owned().into()),
+            updated_at: None,
             new_chat_label: id.to_owned().into(),
             worktree: false,
             missing: false,

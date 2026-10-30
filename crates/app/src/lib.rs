@@ -453,6 +453,7 @@ pub struct Root {
     pull_requests_page: Option<Entity<ui::screens::pull_requests::Page>>,
     plugins_page: Option<Entity<ui::screens::plugins::Page>>,
     sites_page: Option<Entity<ui::screens::sites::Page>>,
+    projects_page: Option<Entity<ui::screens::projects::Page>>,
     cloud_modal: Option<Entity<ui::screens::cloud::CloudModal>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
@@ -900,6 +901,7 @@ impl Root {
             pull_requests_page: None,
             plugins_page: None,
             sites_page: None,
+            projects_page: None,
             cloud_modal: None,
             settings_section: None,
             settings_page: None,
@@ -1319,6 +1321,10 @@ impl Root {
         self.sites_page.as_ref()
     }
 
+    pub fn projects_page(&self) -> Option<&Entity<ui::screens::projects::Page>> {
+        self.projects_page.as_ref()
+    }
+
     /// The Home route's main panel.
     pub fn home(&self) -> &Entity<HomeMain> {
         &self.home
@@ -1499,6 +1505,13 @@ impl Root {
                     eprintln!("codex-gpui: cannot read sidebar projects: {error:#}");
                     this.sidebar
                         .update(cx, |s, cx| s.set_projects_state(ListState::Failed, cx));
+                    if let Some(page) = &this.projects_page {
+                        let load = ui::screens::projects::Load::Failed(format!("{error:#}"));
+                        page.update(cx, |page, cx| {
+                            page.load = load;
+                            cx.notify();
+                        });
+                    }
                 }
             })
             .ok();
@@ -1669,6 +1682,13 @@ impl Root {
         self.refresh_automation_editor_options(Some(&projects), cx);
         let composer = self.home.read(cx).composer.clone();
         composer.update(cx, |composer, _| composer.set_slash_projects(choices));
+        if let Some(page) = &self.projects_page {
+            let load = ui::screens::projects::Load::Ready(projects.clone());
+            page.update(cx, |page, cx| {
+                page.load = load;
+                cx.notify();
+            });
+        }
         self.sidebar
             .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx));
     }

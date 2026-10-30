@@ -168,6 +168,11 @@ pub trait Host: Send + Sync {
         bail!("creating a local project is unsupported by this host")
     }
 
+    /// Projects index ▸ `Edit project` (`updateLocal`): renames the stored project `id`.
+    fn rename_project(&self, _id: &str, _name: &str) -> Result<()> {
+        bail!("renaming a local project is unsupported by this host")
+    }
+
     fn prepare_projectless(&self, _prompt: &str) -> Result<Workspace> {
         bail!("projectless workspaces are unsupported by this host")
     }
@@ -555,6 +560,7 @@ fn project_rows(
                 format!("Start new chat in {label}").into()
             },
             root: root.map(|root| root.to_owned().into()),
+            updated_at: stored["updatedAt"].as_i64(),
             worktree,
             missing,
             expanded: state["electron-persisted-atom-state"][&expanded_key] != false,
@@ -1781,6 +1787,19 @@ impl Host for LocalHost {
         result
     }
 
+    fn rename_project(&self, id: &str, name: &str) -> Result<()> {
+        let name = name.trim();
+        ensure!(!name.is_empty(), "project name is empty");
+        self.update_global_state(|state| {
+            let project = state["local-projects"]
+                .get_mut(id)
+                .with_context(|| format!("no local project {id}"))?;
+            project["name"] = name.into();
+            project["updatedAt"] = chrono::Utc::now().timestamp_millis().into();
+            Ok(true)
+        })
+    }
+
     fn fetch(&self, request: &Request) -> Result<Value> {
         let Request::Fetch { method, url, body } = request else {
             bail!("authenticated remote HTTP is unsupported by LocalHost");
@@ -2409,6 +2428,10 @@ impl Host for CloudHost {
         threads: &[(String, String)],
     ) -> Result<String> {
         self.local.create_project(name, roots, appearance, threads)
+    }
+
+    fn rename_project(&self, id: &str, name: &str) -> Result<()> {
+        self.local.rename_project(id, name)
     }
 
     fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<Option<bool>> {
