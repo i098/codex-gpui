@@ -62,7 +62,8 @@ const FLOWS: &[(&str, Flow)] = &[
                 })?,
                 "the composer menu did not open"
             );
-            Ok(())
+            // The reference shows the menu after its 30 ms + 320 ms enter animation.
+            fx.advance(std::time::Duration::from_millis(350))
         })
     }),
     ("parity_screenshot", || {
@@ -528,6 +529,7 @@ fn popover(target: &str, region: [f32; 4]) -> Result<String> {
     fx.hover((640., 22.))?;
     let before = fx.shot()?;
     fx.click(fx.at("home", target)?)?;
+    fx.advance(std::time::Duration::from_millis(350))?;
     fx.hover((640., 22.))?;
     let open = fx.shot()?;
     let n = changed(&before, &open, region);

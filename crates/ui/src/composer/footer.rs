@@ -108,39 +108,67 @@ impl Composer {
             }))
             .on_click(cx.listener(|this, _, window, cx| this.dictate(window, cx)))
     }
-    pub(super) fn footer(&self, window: &Window, t: &Theme, cx: &mut Context<Self>) -> Div {
+    pub(super) fn footer(&self, window: &mut Window, t: &Theme, cx: &mut Context<Self>) -> Div {
         let open = matches!(self.menu, Some(Menu::Effort | Menu::Models));
         let hotkey_home = self.hotkey_controls.is_some();
         let model = self.current_model();
         let loading = model.is_none();
         let model_label = model.map_or("Loading model…".into(), |m| m.label.clone());
+        // The original keeps the open trigger at least as wide as it was at open and as its
+        // `Select effort` placeholder (`minimumContentWidth`), so picking an effort or a model
+        // does not move the trigger or the menu centered on it.
+        let closed_width = window.use_keyed_state("model-trigger-width", cx, |_, _| px(0.));
+        let placeholder = "Select effort";
+        let min_width = open.then(|| {
+            let placeholder_width = window
+                .text_system()
+                .layout_line(
+                    placeholder,
+                    px(13.),
+                    &[TextRun {
+                        len: placeholder.len(),
+                        font: gpui::font(crate::SANS),
+                        color: t.text_tertiary,
+                        ..Default::default()
+                    }],
+                    None,
+                )
+                .width;
+            (*closed_width.read(cx)).max(crate::run_width(placeholder_width, window))
+        });
         let labels = div()
             .relative()
             .flex()
             .items_center()
             .gap(px(4.))
-            .child(
-                tabular(text(model_label, 13., 18., 400., t.text))
-                    .when(self.docked, |d| d.top_layer())
-                    .when(open, |d| d.invisible()),
-            )
-            .when(model.is_some(), |d| {
-                d.child(
-                    label(
-                        effort_label(self.displayed_effort()).to_string(),
-                        t.text_tertiary,
+            .when_some(min_width, |d, w| d.min_w(w).justify_center())
+            // The simple view shows the placeholder; the advanced view the live selection.
+            .map(|d| {
+                if self.menu == Some(Menu::Effort) {
+                    d.child(text(placeholder, 13., 18., 400., t.text_tertiary))
+                } else {
+                    d.child(
+                        tabular(text(model_label, 13., 18., 400., t.text))
+                            .when(self.docked, |d| d.top_layer()),
                     )
-                    .when(open, |d| d.invisible()),
-                )
+                    .when_some(model, |d, _| {
+                        d.child(label(
+                            effort_label(self.displayed_effort()).to_string(),
+                            t.text_tertiary,
+                        ))
+                    })
+                }
             })
-            .when(open, |d| {
+            .when(!open, |d| {
                 d.child(
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .flex()
-                        .justify_center()
-                        .child(text("Select effort", 13., 18., 400., t.text_tertiary)),
+                    gpui::canvas(
+                        move |bounds, _, cx| {
+                            closed_width.update(cx, |w, _| *w = bounds.size.width)
+                        },
+                        |_, (), _, _| {},
+                    )
+                    .absolute()
+                    .size_full(),
                 )
             });
         let trigger = if loading {
@@ -218,11 +246,12 @@ impl Composer {
                         }))
                     }),
             )
-            .when(self.menu == Some(Menu::Effort), |d| {
-                d.child(self.anchored_menu(self.effort_menu(t, cx), Some(EFFORT_MENU_SLOT), cx))
-            })
-            .when(self.menu == Some(Menu::Models), |d| {
-                d.child(self.anchored_menu(self.models_menu(t, cx), Some(EFFORT_MENU_SLOT), cx))
+            .when(open, |d| {
+                d.child(self.anchored_menu(
+                    self.picker_menu(t, window, cx),
+                    Some(EFFORT_MENU_SLOT),
+                    cx,
+                ))
             });
         let has_input = !self.content.is_empty()
             || !self.attachments.is_empty()
