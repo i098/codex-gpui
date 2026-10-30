@@ -15,6 +15,111 @@ const LINEAR: &str = "linear@openai-curated";
 const LINEAR_REMOTE_ID: &str = "plugin_asdk_app_69a089a326dc8191b32a3f2553f5be2c";
 
 #[test]
+fn plugin_share_edits_access_and_unshares() -> Result<()> {
+    let skills: Value = ui::fixture::response("readback.jsonl", "skills/list", 0);
+    let remote_id = "remote-linear";
+    let mut lines = script(None, |_| {})?;
+    let send = lines
+        .iter()
+        .position(|line| line["dir"] == "send" && line["msg"]["method"] == "plugin/list")
+        .context("recorded plugin/list")?;
+    let id = lines[send]["msg"]["id"].clone();
+    let reply = send
+        + lines[send..]
+            .iter()
+            .position(|line| line["dir"] == "recv" && line["msg"]["id"] == id)
+            .context("recorded plugin/list result")?;
+    lines.remove(reply);
+    lines.remove(send);
+    lines.extend(exchange("skills/list", skills));
+    lines.extend(exchange("plugin/list", catalog(false)));
+    lines.extend(exchange(
+        "plugin/share/list",
+        json!({"data": [{
+            "remotePluginId": remote_id,
+            "discoverability": "LISTED",
+            "shareUrl": "https://example.test/plugins/linear",
+            "sharePrincipals": [
+                {"principalId":"team-1","principalType":"team","role":"reader","name":"Team One"},
+                {"principalId":"workspace-1","principalType":"workspace","role":"reader","name":"Workspace"}
+            ]
+        }]}),
+    ));
+    lines.extend(exchange(
+        "plugin/share/updateTargets",
+        json!({"principals": []}),
+    ));
+    lines.extend(exchange("plugin/share/delete", json!({})));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.click(RAIL_PLUGINS)?;
+    let page = settle(&mut fx, "plugin catalog")?;
+    fx.capture_evidence("CGX_PLUGIN_EVIDENCE_DIR", "plugin-share-before")?;
+    let plugin = linear(&fx, &page).context("recorded Linear plugin")?;
+    let mut personal = (*plugin).clone();
+    personal.marketplace_path = Some("/personal/marketplace.json".into());
+    personal.summary["source"] = json!({"type":"local","path":"/plugins/linear"});
+    personal.summary["shareContext"] = json!({"remotePluginId":remote_id});
+    let personal = Arc::new(personal);
+    fx.cx.update(|cx| {
+        page.update(cx, |page, _| {
+            page.data.personal_marketplace =
+                Some(std::path::PathBuf::from("/personal/marketplace.json"));
+        })
+    });
+
+    act(&mut fx, &page, Action::Share(personal.clone()));
+    fx.wait("share access list", |fx| {
+        fx.read(|_, cx| {
+            let page = page.read(cx);
+            !page.pending
+                && page.share_discoverability == "LISTED"
+                && page.share_targets.len() == 1
+                && page.share_targets[0]["principal_id"] == "team-1"
+        })
+    })?;
+    fx.capture_evidence("CGX_PLUGIN_EVIDENCE_DIR", "plugin-share-after")?;
+    fx.cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.share_discoverability = "UNLISTED".into();
+            page.share_targets.clear();
+            cx.notify();
+        })
+    });
+    act(&mut fx, &page, Action::UpdateShareTargets(personal.clone()));
+    fx.wait("saved share access", |fx| {
+        fx.read(|_, cx| !page.read(cx).pending)
+    })?;
+    act(&mut fx, &page, Action::DeleteShare(personal));
+    fx.wait("deleted share", |fx| {
+        fx.read(|_, cx| {
+            let page = page.read(cx);
+            !page.pending && page.share_url.is_none() && page.modal.is_none()
+        })
+    })?;
+
+    let sent = fx.sent()?;
+    let update = sent
+        .iter()
+        .find(|message| message["method"] == "plugin/share/updateTargets")
+        .context("share target update request")?;
+    ensure!(
+        update["params"]
+            == json!({
+                "remotePluginId": remote_id,
+                "discoverability": "UNLISTED",
+                "shareTargets": []
+            }),
+        "{update}"
+    );
+    ensure!(
+        sent.iter()
+            .any(|message| message["method"] == "plugin/share/delete"
+                && message["params"] == json!({"remotePluginId":remote_id})),
+        "share delete request was not sent"
+    );
+    Ok(())
+}
+#[test]
 fn proxy() {
     proxy_child();
 }
