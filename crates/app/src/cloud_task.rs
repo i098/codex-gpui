@@ -749,10 +749,10 @@ pub(crate) fn current_tasks(host: &dyn Host) -> Result<Vec<ui::screens::sidebar:
 }
 
 impl Root {
-    pub(crate) fn load_cloud_tasks(&self, cx: &mut Context<Self>) {
+    pub(crate) fn load_cloud_tasks(&mut self, cx: &mut Context<Self>) {
         let host = self.host.clone();
         let read = cx.background_spawn(async move { current_tasks(host.as_ref()) });
-        cx.spawn(async move |this, cx| match read.await {
+        self.cloud_load = Some(cx.spawn(async move |this, cx| match read.await {
             Ok(tasks) => {
                 this.update(cx, |this, cx| {
                     this.sidebar
@@ -761,8 +761,7 @@ impl Root {
                 .ok();
             }
             Err(error) => eprintln!("codex-gpui: cannot read cloud tasks: {error:#}"),
-        })
-        .detach();
+        }));
     }
 }
 

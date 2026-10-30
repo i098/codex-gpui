@@ -505,6 +505,8 @@ pub struct Root {
     last_agent_messages: HashMap<String, (String, String)>,
     _inbox_poll: Task<()>,
     project_load: Option<Task<()>>,
+    /// The sidebar `Cloud` group's `/wham/tasks/list` read; a newer read or a new host drops it.
+    cloud_load: Option<Task<()>>,
     destination_load: Option<Task<()>>,
     unread_destinations: Option<Arc<[SharedString]>>,
     picking_project: bool,
@@ -985,6 +987,7 @@ impl Root {
             automation_runs: Vec::new(),
             running_automations: HashSet::new(),
             project_load: None,
+            cloud_load: None,
             destination_load: None,
             unread_destinations: None,
             picking_project: false,
@@ -1458,6 +1461,9 @@ impl Root {
         self.automation_editor = None;
         self.new_project = None;
         self.project_load = None;
+        self.cloud_load = None;
+        self.sidebar
+            .update(cx, |s, cx| s.set_cloud_tasks(Vec::new(), cx));
         self.destination_load = None;
         self.set_unread_destinations(None, cx);
         self.suggestion_load = None;
@@ -3796,6 +3802,9 @@ impl Root {
                         this.threads_loaded = false;
                         this.automation_load = None;
                         this.project_load = None;
+                        this.cloud_load = None;
+                        this.sidebar
+                            .update(cx, |s, cx| s.set_cloud_tasks(Vec::new(), cx));
                         this.suggestion_load = None;
                         this.automations = None;
                         this.scheduled = None;
