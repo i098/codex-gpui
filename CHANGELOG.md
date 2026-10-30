@@ -58,6 +58,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Fixed
 - Fold a running turn's interim messages under `Working for` once its final answer starts, as the original does.
+- Match the original permissions menu: the `Learn more` link, row icons, the current mode's check, the orange `Full access` row, its 417 px width and position, and the open trigger fill.
 - Show reads of a skill's `SKILL.md` as `Loaded a tool` or `Loaded tools` with the wrench icon in the activity group summary, as the original does.
 - Ignore app list updates while the Plugins page is loading, so large account catalogs can finish loading.
 - Connect MCP and skill commands to the existing settings and mention actions, and refresh skill lists after changes.

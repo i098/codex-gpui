@@ -86,10 +86,10 @@ fn permissions_popover() -> Result<()> {
                 .split(',')
                 .map(|s| s.trim().parse())
                 .collect::<Result<_, _>>()?;
-            // The port keeps its existing 320 px menu. Sample the same empty area in each row.
+            // An empty spot right of each row's text, clear of the check, mid-row.
             let scale = image.width() as f32 / 1280.;
-            let x = (790. * scale) as u32;
-            let y = ([580., 628., 684., 740.][item] * scale) as u32;
+            let x = (891. * scale) as u32;
+            let y = ([621., 663., 706., 748.][item] * scale) as u32;
             let base = unhighlighted.as_ref().unwrap().get_pixel(x, y);
             let painted = image.get_pixel(x, y);
             for channel in 0..3 {

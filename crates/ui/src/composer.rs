@@ -232,6 +232,9 @@ const REQUEST_FORM_CONTEXT: &str = "ComposerRequestForm";
 /// its `collapse=sm` labels (permissions) and its `collapse=xs` labels (model and effort).
 const SM_WIDTH: f32 = 440.;
 const XS_WIDTH: f32 = 300.;
+/// The permissions menu's `Learn more` page.
+const PERMISSIONS_DOCS: &str =
+    "https://developers.openai.com/codex/concepts/sandboxing#how-you-control-it";
 /// Card width at or below which the Home utility bar hides its chip labels: its own
 /// `composer-footer` container (the card less 26 px rail inset and 8 px padding) reaches
 /// Electron's 475 px `collapse=sm|xs` limit.
@@ -496,6 +499,16 @@ impl Permission {
             Self::FullAccess => "Unrestricted access to the internet and any file on your computer",
             Self::Custom => "Uses permissions defined in config.toml",
             Self::Named(_) => "Uses the selected permission profile",
+        }
+    }
+
+    /// The menu row's leading `icon-sm`.
+    fn menu_icon(&self) -> &'static str {
+        match self {
+            Self::Ask => "hand",
+            Self::ApproveForMe => "security",
+            Self::FullAccess => "permission-full-access",
+            Self::Custom | Self::Named(_) => "permissions",
         }
     }
 }

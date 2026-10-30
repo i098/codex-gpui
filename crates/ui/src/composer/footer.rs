@@ -286,6 +286,9 @@ impl Composer {
                             .on_key_down(cx.listener(|this, event, window, cx| {
                                 this.trigger_key(Menu::Permissions, event, window, cx)
                             }))
+                            .when(self.menu == Some(Menu::Permissions), |d| {
+                                d.bg(t.ghost_hover)
+                            })
                             .px(px(6.))
                             .gap(px(4.))
                             .child(footer_icon(
