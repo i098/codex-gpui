@@ -154,6 +154,10 @@ pub struct ThreadView {
     git_repository: Option<Result<crate::dialog::CommitRepository, String>>,
     git_phase: Option<&'static str>,
     git_actions: Option<(gpui::FocusHandle, Option<usize>)>,
+    /// The open More actions menu under a turn: its turn id and focus.
+    turn_menu: Option<(String, gpui::FocusHandle)>,
+    /// The pointer is over a More actions trigger, whose click toggles the menu itself.
+    turn_menu_trigger_hovered: bool,
     git_trigger: Option<gpui::FocusHandle>,
     terminal_item: Option<String>,
     pub terminals_stopping: bool,
@@ -638,6 +642,8 @@ impl ThreadView {
             git_repository: None,
             git_phase: None,
             git_actions: None,
+            turn_menu: None,
+            turn_menu_trigger_hovered: false,
             git_trigger: None,
             terminal_item: None,
             terminals_stopping: false,
@@ -1845,8 +1851,8 @@ impl ThreadView {
                 })
                 .clone()
         };
-        let [undo, view, copy, fork] = ["undo", "view", "copy", "fork"].map(&mut button_focus);
-        let mut focus = TurnFocus::new(self.thread_id.clone(), undo, view, copy, fork, window, cx);
+        let [undo, view, copy, more] = ["undo", "view", "copy", "more"].map(&mut button_focus);
+        let mut focus = TurnFocus::new(self.thread_id.clone(), undo, view, copy, more, window, cx);
         focus.reverted = self.reverted_turns.contains(&turn.id);
         focus.patch_pending = self.patch_pending;
         let user = turn.items.iter().find_map(|i| match i {
@@ -2015,9 +2021,21 @@ impl ThreadView {
             if let Some(card) = diff_card(&turn.id, &turn.items, &focus, window, t, cx) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
             }
+            let menu = self
+                .turn_menu
+                .as_ref()
+                .filter(|(id, _)| *id == turn.id)
+                .map(|_| self.turn_menu_popup(turn.started_at, cx));
+            let id = turn.id.clone();
+            let toggle = cx.listener(move |view, _: &gpui::ClickEvent, window, cx| {
+                view.toggle_turn_menu(&id, window, cx)
+            });
+            let hover = cx.listener(|view, hovered: &bool, _, _| {
+                view.turn_menu_trigger_hovered = *hovered;
+            });
             return col.when(!self.embedded, |col| {
                 col.child(action_row(
-                    last, &group, &turn.id, answer, sent_at, &focus, t,
+                    last, &group, answer, sent_at, menu, toggle, hover, &focus, t,
                 ))
             });
         }
