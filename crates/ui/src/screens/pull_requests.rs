@@ -261,6 +261,7 @@ pub enum Event {
     AskCodex(String),
     Code,
     Media { generation: u64, url: String },
+    Link { thread: String, remove: bool },
 }
 
 pub struct Page {
@@ -293,6 +294,8 @@ pub struct Page {
     last_filters: Option<Filters>,
     controls: RefCell<HashMap<gpui::ElementId, FocusHandle>>,
     clock: Clock,
+    pub link_threads: Vec<(String, String)>,
+    links_open: bool,
 }
 
 impl EventEmitter<Event> for Page {}
@@ -391,6 +394,8 @@ impl Page {
             last_filters: None,
             controls: RefCell::new(HashMap::new()),
             clock,
+            link_threads: Vec::new(),
+            links_open: false,
         }
     }
 
@@ -2003,7 +2008,61 @@ impl Page {
             .size_full()
             .flex()
             .flex_col()
-            .child(self.detail_toolbar(value, cx));
+            .child(self.detail_toolbar(value, cx))
+            .child(
+                self.button("link-chat", "Link a chat", cx)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.links_open = !this.links_open;
+                        cx.notify();
+                    })),
+            )
+            .when(self.links_open, |pane| {
+                pane.child(
+                    div()
+                        .id("pr-chat-links")
+                        .max_h(px(220.))
+                        .overflow_y_scroll()
+                        .children(self.link_threads.iter().map(|(id, title)| {
+                            let link = id.clone();
+                            let unlink = id.clone();
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.))
+                                .child(text(title.clone(), 13., 20., 400., cx.theme().text))
+                                .child(
+                                    self.button(
+                                        SharedString::from(format!("link-{id}")),
+                                        "Link",
+                                        cx,
+                                    )
+                                    .on_click(cx.listener(
+                                        move |_, _, _, cx| {
+                                            cx.emit(Event::Link {
+                                                thread: link.clone(),
+                                                remove: false,
+                                            });
+                                        },
+                                    )),
+                                )
+                                .child(
+                                    self.button(
+                                        SharedString::from(format!("unlink-{id}")),
+                                        "Unlink",
+                                        cx,
+                                    )
+                                    .on_click(cx.listener(
+                                        move |_, _, _, cx| {
+                                            cx.emit(Event::Link {
+                                                thread: unlink.clone(),
+                                                remove: true,
+                                            });
+                                        },
+                                    )),
+                                )
+                        })),
+                )
+            });
         if self.detail_tab == DetailTab::Code {
             return match &self.code {
                 Some(Ok(panel)) => pane.child(div().flex_1().min_h_0().child(panel.clone())),

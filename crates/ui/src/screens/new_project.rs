@@ -69,6 +69,8 @@ pub enum Outcome {
     PickFolders,
     AddRemote,
     Create {
+        host_id: String,
+        project_id: Option<String>,
         name: String,
         sources: Vec<String>,
         appearance: Option<Value>,
@@ -87,7 +89,10 @@ pub struct Dialog {
     /// `(color, marker)` indices into [`COLORS`] and [`MARKERS`]; `None` keeps the folder default.
     appearance: Option<(usize, usize)>,
     popover: Option<Popover>,
-    remotes: Vec<SharedString>,
+    remotes: Vec<(String, SharedString)>,
+    host_id: String,
+    project_id: Option<String>,
+    remote_source: Entity<Composer>,
     saving: bool,
     focus: FocusHandle,
 }
@@ -102,8 +107,10 @@ impl Focusable for Dialog {
 
 impl Dialog {
     /// `remotes`: display names of the connected remote hosts the device menu lists.
-    pub fn new(remotes: Vec<SharedString>, cx: &mut Context<Self>) -> Self {
+    pub fn new(remotes: Vec<(String, SharedString)>, cx: &mut Context<Self>) -> Self {
         let name = cx.new(|cx| Composer::dialog_field("Name", "Project name", "", cx));
+        let remote_source =
+            cx.new(|cx| Composer::dialog_field("Remote folder", "/path/to/project", "", cx));
         cx.observe(&name, |_, _, cx| cx.notify()).detach();
         Self {
             name,
@@ -111,9 +118,40 @@ impl Dialog {
             appearance: None,
             popover: None,
             remotes,
+            host_id: "local".into(),
+            project_id: None,
+            remote_source,
             saving: false,
             focus: cx.focus_handle(),
         }
+    }
+
+    pub fn edit(&mut self, project: &Value, host_id: String, cx: &mut Context<Self>) {
+        self.project_id = project["id"].as_str().map(str::to_owned);
+        self.host_id = host_id;
+        self.name.update(cx, |name, cx| {
+            name.set_text(project["name"].as_str().unwrap_or_default(), cx)
+        });
+        self.sources = project["roots"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|root| root["path"].as_str().map(str::to_owned))
+            .collect();
+        self.appearance = project["metadata"]["appearance.marker"]
+            .as_str()
+            .and_then(|value| serde_json::from_str::<Value>(value).ok())
+            .and_then(|marker| {
+                Some((
+                    COLORS.iter().position(|color| {
+                        Some(color.0) == project["metadata"]["appearance.color"].as_str()
+                    })?,
+                    MARKERS
+                        .iter()
+                        .position(|icon| Some(*icon) == marker["icon"].as_str())?,
+                ))
+            });
+        cx.notify();
     }
 
     /// Appends picked folders after the existing ones, skipping duplicates (`jZr`).
@@ -160,6 +198,8 @@ impl Dialog {
         self.saving = true;
         self.popover = None;
         cx.emit(Outcome::Create {
+            host_id: self.host_id.clone(),
+            project_id: self.project_id.clone(),
             name: self.name.read(cx).field_text().trim().to_owned(),
             sources: self.sources.clone(),
             appearance: self.appearance(),
@@ -180,7 +220,16 @@ impl Dialog {
 
     fn pick(&mut self, cx: &mut Context<Self>) {
         self.popover = None;
-        cx.emit(Outcome::PickFolders);
+        if self.host_id == "local" {
+            cx.emit(Outcome::PickFolders);
+        } else {
+            let path = self.remote_source.read(cx).field_text().trim().to_owned();
+            if path.starts_with('/') {
+                self.add_sources([path], cx);
+                self.remote_source
+                    .update(cx, |field, cx| field.set_text("", cx));
+            }
+        }
         cx.notify();
     }
 
@@ -417,6 +466,10 @@ impl Dialog {
                     .child(icon("menu-check", 16., t.text))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.popover = None;
+                        if this.host_id != "local" {
+                            this.sources.clear();
+                            this.host_id = "local".into();
+                        }
                         cx.notify();
                     })),
                 )
@@ -435,18 +488,26 @@ impl Dialog {
                     t.text_disabled,
                 ));
             }
-            // shortcut: remote projects have no native store yet, so connected remotes are listed
-            // but not selectable. Upgrade when the Connections owner adds remote projects.
-            for (index, remote) in self.remotes.iter().enumerate() {
+            for (index, (host_id, remote)) in self.remotes.iter().enumerate() {
+                let host_id = host_id.clone();
                 list = list.child(
                     item(
                         "project-device-remote",
                         "settings-connections",
                         remote.clone(),
-                        t.text_disabled,
+                        t.text,
                     )
                     .id(("project-device-remote", index))
-                    .aria_disabled(true),
+                    .role(gpui::Role::MenuItem)
+                    .hover(|s| s.bg(t.menu_item_hover))
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.host_id != host_id {
+                            this.sources.clear();
+                            this.host_id = host_id.clone();
+                        }
+                        this.popover = None;
+                        cx.notify();
+                    })),
                 );
             }
             list = list.child(
@@ -482,7 +543,17 @@ impl Dialog {
                 .focusable()
                 .tab_index(0)
                 .child(text("Add a folder on", 13., 20., 430., t.text_secondary))
-                .child(text("this computer", 13., 20., 430., t.text))
+                .child(text(
+                    self.remotes
+                        .iter()
+                        .find(|(id, _)| *id == self.host_id)
+                        .map(|(_, name)| name.clone())
+                        .unwrap_or_else(|| "this computer".into()),
+                    13.,
+                    20.,
+                    430.,
+                    t.text,
+                ))
                 .child(icon("chevron-down-small", 16., t.text))
                 .on_click(cx.listener(|this, _, _, cx| this.toggle(Popover::Device, cx)))
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
@@ -516,6 +587,9 @@ impl Dialog {
                     .items_center()
                     .gap(px(12.))
                     .child(self.device_picker(t, cx))
+                    .when(self.host_id != "local", |body| {
+                        body.child(self.remote_source.clone())
+                    })
                     .child(
                         div()
                             .id("project-add-source")
@@ -713,6 +787,11 @@ impl Render for Dialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let viewport = window.viewport_size();
+        let title = if self.project_id.is_some() {
+            "Edit project"
+        } else {
+            "Create project"
+        };
         let label_row = div()
             .flex()
             .items_center()
@@ -725,7 +804,7 @@ impl Render for Dialog {
             .p(px(20.))
             .flex()
             .flex_col()
-            .child(text("Create project", 20., 28., 600., t.text))
+            .child(text(title, 20., 28., 600., t.text))
             .child(div().pt(px(12.)).child(self.name_input(window, &t, cx)))
             .child(
                 div()
@@ -734,7 +813,11 @@ impl Render for Dialog {
                     .flex_col()
                     .gap(px(8.))
                     .child(label_row)
-                    .child(self.sources_box(&t, cx)),
+                    .child(self.sources_box(&t, cx))
+                    .when(
+                        self.host_id != "local" && !self.sources.is_empty(),
+                        |body| body.child(self.remote_source.clone()),
+                    ),
             )
             .child(
                 div()
@@ -743,7 +826,17 @@ impl Render for Dialog {
                     .justify_end()
                     .gap(px(12.))
                     .child(self.button("new-project-cancel", "Cancel", false, &t, cx))
-                    .child(self.button("new-project-create", "Create project", true, &t, cx)),
+                    .child(self.button(
+                        "new-project-create",
+                        if self.project_id.is_some() {
+                            "Save"
+                        } else {
+                            "Create project"
+                        },
+                        true,
+                        &t,
+                        cx,
+                    )),
             );
         let frame = div()
             .id("new-project-dialog")
@@ -751,7 +844,7 @@ impl Render for Dialog {
             .w(px(520.))
             .max_w(viewport.width * 0.92)
             .role(gpui::Role::Dialog)
-            .aria_label("Create project")
+            .aria_label(title)
             .track_focus(&self.focus)
             .on_mouse_down(
                 MouseButton::Left,
