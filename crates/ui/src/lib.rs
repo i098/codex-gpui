@@ -951,6 +951,20 @@ pub fn home_sidebar_header(
                         .items_center()
                         .gap(px(6.))
                         .rounded(RADIUS_BUTTON_XL)
+                        // Ghost `[data-state=open]:before`: the hover fill at opacity 0.6.
+                        .when(mode.menu.is_some(), |d| {
+                            d.child(div().absolute().inset_0().child(shapes::decoration(
+                                shapes::Decoration {
+                                    radius: Corners::all(RADIUS_BUTTON_XL),
+                                    corner: shapes::Corner::Squircle,
+                                    fill: Some(Hsla {
+                                        a: t.ghost_hover.a * 0.6,
+                                        ..t.ghost_hover
+                                    }),
+                                    ..Default::default()
+                                },
+                            )))
+                        })
                         .child(
                             icon::icon_sized(
                                 mode.wordmark.0,
