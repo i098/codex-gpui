@@ -498,7 +498,9 @@ impl Root {
                             page.modal = Some(Modal::Share(published.clone()));
                             cx.notify();
                         });
-                        this.load_share_targets(page.clone(), published, cx);
+                        if copy_link {
+                            this.load_share_targets(page.clone(), published, cx);
+                        }
                     }
                     Action::Install(plugin) => {
                         let apps = plugins::array(&value, "appsNeedingAuth").to_vec();
@@ -594,7 +596,7 @@ impl Root {
         plugin: Arc<Plugin>,
         cx: &mut Context<Self>,
     ) {
-        if page.read(cx).pending {
+        if page.read(cx).pending || page.read(cx).error.is_some() {
             return;
         }
         let remote_plugin_id = match share_remote_plugin_id(&plugin) {
@@ -768,12 +770,6 @@ fn visible_share_targets(targets: &[Value]) -> Vec<Value> {
 fn share_target_params(targets: &[Value]) -> anyhow::Result<Vec<Value>> {
     targets
         .iter()
-        .filter(|target| {
-            target["principal_type"]
-                .as_str()
-                .or_else(|| target["principalType"].as_str())
-                != Some("workspace")
-        })
         .map(|target| {
             let principal_id = target
                 .get("principal_id")

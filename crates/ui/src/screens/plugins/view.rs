@@ -1137,7 +1137,9 @@ impl Page {
                         window,
                         cx,
                     ));
-                    let update = Some(("Save access", Action::UpdateShareTargets(plugin.clone()), true));
+                    let update = self.error.is_none().then(|| {
+                        ("Save access", Action::UpdateShareTargets(plugin.clone()), true)
+                    });
                     (format!("Share {}", plugin.title()), content.into_any_element(), update)
                 } else {
                     content = content.child(self.action_button("create-share-link", "Copy link",
