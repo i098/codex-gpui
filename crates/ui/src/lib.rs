@@ -61,6 +61,9 @@ actions!(
         OpenPullRequests,
         OpenPlugins,
         OpenSecurity,
+        /// Explore ▸ `Security Cloud`: the `codex_security_cloud` app's findings, repositories
+        /// and scans.
+        OpenSecurityCloud,
         /// Rail `Sites` (`/sites`).
         OpenSites,
         /// Home beacon `Start Voice` and the composer's `Start new voice chat`.
@@ -275,6 +278,8 @@ pub struct Shell {
     /// Unseen, unpinned MCP destinations; `None` while their source is unavailable.
     pub unread_destinations: Option<Arc<[SharedString]>>,
     pub security_available: bool,
+    /// The MCP catalog has the `codex_security_cloud` destination: Explore lists `Security Cloud`.
+    pub security_cloud_available: bool,
     pub scheduled_attention: bool,
     /// The profile avatar's menu is open.
     pub profile_menu: bool,
@@ -376,6 +381,7 @@ impl Shell {
             attention: false,
             unread_destinations: None,
             security_available: false,
+            security_cloud_available: false,
             scheduled_attention: false,
             profile_menu: false,
             avatar_hovered: false,
@@ -1336,8 +1342,9 @@ impl Shell {
     }
 
     /// The Explore `…` menu (`sidebarCustomization.moreMenu`), right of the rail item: the
-    /// secondary destinations the port has. `Customize sidebar` and MCP destinations need the
-    /// sidebar-customization store, which the port lacks.
+    /// secondary destinations the port has, plus the `Security Cloud` MCP destination.
+    /// `Customize sidebar` and other MCP destinations need the sidebar-customization store,
+    /// which the port lacks.
     fn explore_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let hover = t.menu_item_hover;
         div()
@@ -1351,21 +1358,36 @@ impl Shell {
                 }
             }))
             .child(composer::popover(t, 220., |d| {
-                if self.security_available {
-                    d.child(
-                        div()
-                            .id("explore-security")
-                            .px(px(8.))
-                            .py(px(6.))
-                            .rounded(px(12.))
-                            .hover(move |s| s.bg(hover))
-                            .child(text("Security", 14., 20., 430., t.text))
-                            .on_click(cx.listener(|this, _, window, cx| {
+                let item = |id: &'static str, label: &'static str| {
+                    div()
+                        .id(id)
+                        .px(px(8.))
+                        .py(px(6.))
+                        .rounded(px(12.))
+                        .hover(move |s| s.bg(hover))
+                        .child(text(label, 14., 20., 430., t.text))
+                };
+                let d = d
+                    .when(self.security_available, |d| {
+                        d.child(item("explore-security", "Security").on_click(cx.listener(
+                            |this, _, window, cx| {
                                 this.explore_menu = false;
                                 cx.notify();
                                 window.dispatch_action(Box::new(OpenSecurity), cx);
-                            })),
-                    )
+                            },
+                        )))
+                    })
+                    .when(self.security_cloud_available, |d| {
+                        d.child(item("explore-security-cloud", "Security Cloud").on_click(
+                            cx.listener(|this, _, window, cx| {
+                                this.explore_menu = false;
+                                cx.notify();
+                                window.dispatch_action(Box::new(OpenSecurityCloud), cx);
+                            }),
+                        ))
+                    });
+                if self.security_available || self.security_cloud_available {
+                    d
                 } else {
                     d.child(div().px(px(8.)).py(px(6.)).child(text(
                         "No more destinations",

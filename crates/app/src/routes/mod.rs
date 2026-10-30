@@ -6,6 +6,7 @@ mod automations;
 mod home;
 mod mobile;
 mod plugins;
+mod security_cloud;
 mod settings;
 mod sites;
 mod thread;
@@ -43,6 +44,8 @@ pub enum Route {
     Onboarding(ui::screens::onboarding::Page),
     /// Rail `Sites` (`/sites`).
     Sites,
+    /// Explore ▸ `Security Cloud`.
+    SecurityCloud,
 }
 
 pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
@@ -56,6 +59,7 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = archive::actions(root, cx);
     root = crate::pull_requests::actions(root, cx);
     root = sites::actions(root, cx);
+    root = security_cloud::actions(root, cx);
     root
 }
 
@@ -180,6 +184,7 @@ impl Root {
         self.cloud = None;
         self.plugins_page = None;
         self.sites_page = None;
+        self.security_cloud_page = None;
         self.onboarding_page = None;
         self.cloud_modal = None;
         self.page = match self.state.route.clone() {
@@ -206,6 +211,7 @@ impl Root {
             Route::Security => Some(crate::security::shell(self, window, cx)),
             Route::Plugins(path) => Some(self.plugins_shell(path, window, cx)),
             Route::Sites => Some(sites::page(self, cx)),
+            Route::SecurityCloud => Some(security_cloud::page(self, cx)),
             Route::Onboarding(page) => {
                 self.open_onboarding(page, window, cx);
                 None
@@ -225,6 +231,7 @@ impl Root {
                 shell.can_go_back = can_back;
                 shell.can_go_forward = can_forward;
                 shell.unread_destinations = self.unread_destinations.clone();
+                shell.security_cloud_available = self.security_cloud;
                 let access = self.security_access.read(cx);
                 shell.security_available = access.gate_enabled && access.plugin_available;
             });

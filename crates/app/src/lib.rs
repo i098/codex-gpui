@@ -453,6 +453,7 @@ pub struct Root {
     pull_requests_page: Option<Entity<ui::screens::pull_requests::Page>>,
     plugins_page: Option<Entity<ui::screens::plugins::Page>>,
     sites_page: Option<Entity<ui::screens::sites::Page>>,
+    security_cloud_page: Option<Entity<ui::screens::security_cloud::Page>>,
     cloud_modal: Option<Entity<ui::screens::cloud::CloudModal>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
@@ -496,6 +497,8 @@ pub struct Root {
     project_load: Option<Task<()>>,
     destination_load: Option<Task<()>>,
     unread_destinations: Option<Arc<[SharedString]>>,
+    /// The MCP catalog lists the `codex_security_cloud` destination.
+    security_cloud: bool,
     picking_project: bool,
     automations: Option<Result<Value, String>>,
     automation_load: Option<Task<()>>,
@@ -900,6 +903,7 @@ impl Root {
             pull_requests_page: None,
             plugins_page: None,
             sites_page: None,
+            security_cloud_page: None,
             cloud_modal: None,
             settings_section: None,
             settings_page: None,
@@ -949,6 +953,7 @@ impl Root {
             project_load: None,
             destination_load: None,
             unread_destinations: None,
+            security_cloud: false,
             picking_project: false,
             automation_updates: HashMap::new(),
             suggestion_load: None,
@@ -1317,6 +1322,10 @@ impl Root {
 
     pub fn sites_page(&self) -> Option<&Entity<ui::screens::sites::Page>> {
         self.sites_page.as_ref()
+    }
+
+    pub fn security_cloud_page(&self) -> Option<&Entity<ui::screens::security_cloud::Page>> {
+        self.security_cloud_page.as_ref()
     }
 
     /// The Home route's main panel.

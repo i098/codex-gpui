@@ -20,6 +20,7 @@ pub mod plugins;
 pub mod pull_requests;
 pub mod recovery;
 pub mod security;
+pub mod security_cloud;
 pub mod settings;
 pub mod sidebar;
 pub mod signin;

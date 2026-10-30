@@ -1,0 +1,18 @@
+{"dir":"send","msg":{"id":95001,"method":"thread/start","params":{"ephemeral":true,"permissions":":read-only","threadSource":"mcp_extension_host"}}}
+{"dir":"recv","msg":{"id":95001,"result":{"thread":{"id":"019a0000-0000-7000-8000-00000000c10d"}}}}
+{"dir":"send","msg":{"id":95002,"method":"mcpServer/tool/call","params":{"server":"codex_apps","tool":"codex_security_cloud.defense_factory_bootstrap","arguments":{},"threadId":"019a0000-0000-7000-8000-00000000c10d"}}}
+{"dir":"recv","msg":{"id":95002,"result":{"structuredContent":{"data":{"access":"allowed","billingEnabled":true,"githubConnectorIds":["connector_recorded"]}},"isError":false}}}
+{"dir":"send","msg":{"id":95003,"method":"mcpServer/tool/call","params":{"server":"codex_apps","tool":"codex_security_cloud.defense_factory_usage_get","arguments":{},"threadId":"019a0000-0000-7000-8000-00000000c10d"}}}
+{"dir":"recv","msg":{"id":95003,"result":{"structuredContent":{"data":{"allowance":{"eligible":true,"total_usd":"500","remaining_usd":"500"},"legacy_grace_ends_at":null,"billing_starts_at":"2026-10-01T18:53:00Z","usage_status":{"available":false,"outcome":"credits_exhausted"}}},"isError":false}}}
+{"dir":"send","msg":{"id":95004,"method":"mcpServer/tool/call","params":{"server":"codex_apps","tool":"codex_security_cloud.defense_factory_findings_list","arguments":{"parameters":{"query":{"api_version":"v2","status":"new,triaged,in_progress","sort":"sev_desc,date_desc","limit":50}}},"threadId":"019a0000-0000-7000-8000-00000000c10d"}}}
+{"dir":"recv","msg":{"id":95004,"result":{"structuredContent":{"data":{"results_pending":null,"next_cursor":null,"total":0,"offset":0,"items":[]}},"isError":false}}}
+{"dir":"send","msg":{"id":95005,"method":"mcpServer/tool/call","params":{"server":"codex_apps","tool":"codex_security_cloud.defense_factory_findings_summary","arguments":{"parameters":{"query":{"api_version":"v2","status":"new,triaged,in_progress"}}},"threadId":"019a0000-0000-7000-8000-00000000c10d"}}}
+{"dir":"recv","msg":{"id":95005,"result":{"structuredContent":{"data":{"total":0,"distribution":[]}},"isError":false}}}
+{"dir":"send","msg":{"id":95006,"method":"mcpServer/tool/call","params":{"server":"codex_apps","tool":"codex_security_cloud.defense_factory_workflow_repositories","arguments":{},"threadId":"019a0000-0000-7000-8000-00000000c10d"}}}
+{"dir":"recv","msg":{"id":95006,"result":{"structuredContent":{"data":{"items":[]}},"isError":false}}}
+{"dir":"send","msg":{"id":95007,"method":"mcpServer/tool/call","params":{"server":"codex_apps","tool":"codex_security_cloud.defense_factory_github_repositories","arguments":{"parameters":{"query":{"connector_id":"connector_recorded","page":1,"per_page":50}}},"threadId":"019a0000-0000-7000-8000-00000000c10d"}}}
+{"dir":"recv","msg":{"id":95007,"result":{"structuredContent":{"error":{"message":"GitHub could not complete the request."},"error_code":"FORBIDDEN"},"isError":true}}}
+{"dir":"send","msg":{"id":95008,"method":"mcpServer/tool/call","params":{"server":"codex_apps","tool":"codex_security_cloud.defense_factory_workflow_list","arguments":{"parameters":{"query":{"limit":50,"include_ownership":true}}},"threadId":"019a0000-0000-7000-8000-00000000c10d"}}}
+{"dir":"recv","msg":{"id":95008,"result":{"structuredContent":{"data":{"items":[],"next_cursor":null}},"isError":false}}}
+{"dir":"send","msg":{"id":95009,"method":"thread/unsubscribe","params":{"threadId":"019a0000-0000-7000-8000-00000000c10d"}}}
+{"dir":"recv","msg":{"id":95009,"result":{}}}
