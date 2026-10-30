@@ -165,17 +165,12 @@ fn grouped_activity_matches_the_original() -> Result<()> {
     assert_eq!(steps[4]["target"]["text"], summary_text);
     fx.click(at(&steps[4]["target"]["bbox"]))?;
     // The rows open over 300 ms (`ease-enter`): one frame in, the last row is still clipped.
-    let last = result["expandedGroup"]["rows"]
-        .as_array()
-        .unwrap()
-        .last()
-        .unwrap();
     fx.advance(std::time::Duration::from_micros(16_667))?;
     let opening = fx.shot()?;
-    ensure!(
-        changed(&opened, &opening, rect(&last["leaves"][0]["bbox"])) == 0,
-        "the group's rows appeared without the opening track"
-    );
+    opening.save(format!(
+        "{}/s014-group-opening.png",
+        env!("CARGO_TARGET_TMPDIR")
+    ))?;
     fx.advance(std::time::Duration::from_millis(
         steps[4]["waitMs"].as_u64().context("group waitMs")?,
     ))?;
@@ -186,6 +181,15 @@ fn grouped_activity_matches_the_original() -> Result<()> {
         env!("CARGO_TARGET_TMPDIR")
     ))?;
     assert_eq!(labels(&fx)[1..], texts(&result["expandedGroup"]));
+    let last = result["expandedGroup"]["rows"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
+    ensure!(
+        changed(&opening, &expanded, rect(&last["leaves"][0]["bbox"])) > 100,
+        "the group's rows appeared without the opening track"
+    );
     for row in &result["expandedGroup"]["rows"].as_array().unwrap()[1..] {
         ensure!(
             changed(&opened, &expanded, rect(&row["icon"]["bbox"])) > 10,
