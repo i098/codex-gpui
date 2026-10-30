@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Publish a signed Sparkle `appcast.xml` and SHA-256 checksum with each release, and add an Automatically check for updates switch to General settings.
 - Add named permission profiles, per-category approval settings, writable folder selection, automatic review notices, and `/approve` for one denied retry.
 - Restrict human-only approval cards to the server's offered one-time decisions.
 - Send browser annotations with the next turn under `# Browser comments:`, after the diff comments and with the same comment numbers as the original app.

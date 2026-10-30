@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
 #[cfg(target_os = "macos")]
-use ui::updater::InstallUpdate;
+use ui::updater::{InstallUpdate, ToggleAutomaticChecks};
 use ui::updater::Updates;
 
 #[cfg(target_os = "macos")]
@@ -96,6 +96,14 @@ pub fn init(cx: &mut App) {
                 runtime.backend.check();
             }
         });
+        cx.on_action(|_: &ToggleAutomaticChecks, cx| {
+            if let Some(runtime) = cx.try_global::<Runtime>() {
+                let on = !runtime.backend.automatic();
+                runtime.backend.set_automatic(on);
+                cx.global_mut::<Updates>().automatic = on;
+                cx.refresh_windows();
+            }
+        });
         cx.on_action(|_: &InstallUpdate, cx| {
             if !cx.global::<Updates>().managed
                 && let Some(runtime) = cx.try_global::<Runtime>()
@@ -159,6 +167,7 @@ fn configure(managed: bool, cx: &mut App) {
         match native::start() {
             Ok(Some((backend, events))) => {
                 cx.global_mut::<Updates>().available = true;
+                cx.global_mut::<Updates>().automatic = backend.automatic();
                 let events = cx.spawn(async move |cx| {
                     while let Ok(status) = events.recv().await {
                         cx.update(|cx| {
