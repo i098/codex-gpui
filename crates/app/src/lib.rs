@@ -695,7 +695,7 @@ impl Root {
                 match command {
                     ui::composer::SlashCommand::Fast => {
                         // `/fast` toggles, as the CLI's; off removes `service_tier`.
-                        let tier = if composer.read(cx).fast_mode() { json!("priority") } else { Value::Null };
+                        let tier = json!(composer.read(cx).service_tier());
                         this.write_config("config/batchWrite", json!({
                             "edits": [{"keyPath": "service_tier", "value": tier.clone(), "mergeStrategy": "upsert"}],
                             "filePath": null, "expectedVersion": null, "reloadUserConfig": true,
@@ -7061,8 +7061,8 @@ async fn turn_start(
         params["clientUserMessageId"] = id.into();
     }
     apply_permissions(&mut params, &s.permission);
-    if s.fast {
-        params["serviceTier"] = "priority".into();
+    if let Some(tier) = s.service_tier {
+        params["serviceTier"] = tier.into();
     }
     if let Some(model) = model(s) {
         params["collaborationMode"] = json!({

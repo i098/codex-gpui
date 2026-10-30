@@ -32,7 +32,11 @@ impl Composer {
                         .child(icon(name, 16., color)),
                 )
         };
-        let bolt = if self.fast { t.accent } else { t.text_tertiary };
+        let bolt = if self.speed > 0 {
+            t.accent
+        } else {
+            t.text_tertiary
+        };
         let header = div()
             .relative()
             .h(px(48.))
@@ -233,7 +237,7 @@ impl Composer {
     /// checked. Pointer movement focuses an item, as in the permissions menu.
     fn speed_menu(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
         let hover = t.menu_item_hover;
-        let current = usize::from(self.fast);
+        let current = self.speed;
         popover(t, 233., |d| {
             d.children(SPEEDS.iter().enumerate().map(|(i, &(title, description))| {
                 div()
