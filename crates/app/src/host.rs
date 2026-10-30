@@ -536,7 +536,8 @@ fn project_rows(
     };
     let managed_root = normalized_project_path(&codex_home.join("worktrees").to_string_lossy());
     let mut rows = Vec::with_capacity(projects.len());
-    let pinned = &state["electron-persisted-atom-state"]["pinned-project-ids"];
+    // The original's `na.PINNED_PROJECT_IDS`: a top-level global state key.
+    let pinned = &state["pinned-project-ids"];
     for stored in projects.values() {
         let (Some(id), Some(name), Some(roots)) = (
             stored["id"].as_str(),
@@ -1820,11 +1821,7 @@ impl Host for LocalHost {
 
     fn set_project_pinned(&self, id: &str, pinned: bool) -> Result<()> {
         self.update_global_state(|state| {
-            let atoms = &mut state["electron-persisted-atom-state"];
-            if atoms.is_null() {
-                *atoms = json!({});
-            }
-            let mut ids: Vec<Value> = atoms["pinned-project-ids"]
+            let mut ids: Vec<Value> = state["pinned-project-ids"]
                 .as_array()
                 .cloned()
                 .unwrap_or_default();
@@ -1837,7 +1834,7 @@ impl Host for LocalHost {
             } else {
                 ids.retain(|other| other != id);
             }
-            atoms["pinned-project-ids"] = ids.into();
+            state["pinned-project-ids"] = ids.into();
             Ok(true)
         })
     }
@@ -1876,11 +1873,8 @@ impl Host for LocalHost {
             if let Some(appearances) = state["project-appearances"].as_object_mut() {
                 appearances.remove(id);
             }
-            for list in [
-                "/project-order",
-                "/electron-persisted-atom-state/pinned-project-ids",
-            ] {
-                if let Some(ids) = state.pointer_mut(list).and_then(Value::as_array_mut) {
+            for list in ["project-order", "pinned-project-ids"] {
+                if let Some(ids) = state[list].as_array_mut() {
                     ids.retain(|other| other != id);
                 }
             }

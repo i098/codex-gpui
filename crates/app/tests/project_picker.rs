@@ -186,10 +186,7 @@ fn project_menu_pins_edits_and_removes_without_touching_files_or_other_projects(
     assert_eq!(ids(&host)?, ["a"]);
     let state: Value = serde_json::from_slice(&fs::read(&file)?)?;
     assert_eq!(state["project-order"], json!(["a"]));
-    assert_eq!(
-        state["electron-persisted-atom-state"]["pinned-project-ids"],
-        json!([])
-    );
+    assert_eq!(state["pinned-project-ids"], json!([]));
     assert!(state["project-appearances"]["b"].is_null());
     assert!(state["thread-project-assignments"]["moved"].is_null());
     assert_eq!(

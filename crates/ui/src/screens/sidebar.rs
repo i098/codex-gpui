@@ -66,7 +66,7 @@ pub struct Project {
     pub worktree: bool,
     pub missing: bool,
     pub expanded: bool,
-    /// In the `pinned-project-ids` atom; pinned projects list first.
+    /// In the global state's `pinned-project-ids`; pinned projects list first.
     pub pinned: bool,
 }
 

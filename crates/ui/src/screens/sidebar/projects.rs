@@ -3,7 +3,7 @@ use super::*;
 /// A project row menu item (`Tbs`); the app runs it against the host's project store.
 #[derive(Clone, Copy, PartialEq)]
 pub enum ProjectCommand {
-    /// `Pin` (`true`) or `Unpin`: the `pinned-project-ids` atom.
+    /// `Pin` (`true`) or `Unpin`: the global state's `pinned-project-ids`.
     Pin(bool),
     Edit,
     MarkRead,
