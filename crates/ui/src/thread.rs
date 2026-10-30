@@ -3450,6 +3450,7 @@ mod tests {
             kind: "unknown".into(),
             command: r"printf '\033[31mred\033[0m'".into(),
             name: None,
+            path: None,
         }];
         assert_eq!(shell_command(command, &actions), actions[0].command);
         assert_eq!(
