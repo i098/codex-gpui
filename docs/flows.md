@@ -1465,10 +1465,10 @@ The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/f
 
 `Choose project`, the selected Home title, `⌘O`, `⌥⇧⌘O`, File > Open Folder, and the `Open folder` command use GPUI's folder picker.
 The picker accepts one folder and does not change the selection or the current chat when canceled.
-The local host adds the folder to the existing `local-projects` and `project-order` records.
-It retains other projects and unrelated values in `.codex-global-state.json`.
-Selecting an existing root does not add a duplicate project.
-The sidebar uses the same host project rows as the marker flow.
+With an app-server connection, the local host imports the folder through `project/import`.
+The sidebar reads paginated `project/list` results from the window's host.
+`project/changed` and `thread/project/updated` refresh the sidebar and chats.
+Hosts without an app-server connection retain the local project store.
 
 The app saves the selected new-chat root in `state.json`.
 The Home title, project chip, and file search use that selection.
@@ -1509,13 +1509,13 @@ The original emoji and icon browser is not recorded, so the native picker is a g
 `Add` and `Add folder` open GPUI's multi-folder picker; new folders go after the current ones and duplicates are skipped.
 The first folder is primary; `Make primary` moves a folder first, and the close button removes it.
 The device menu lists this computer and connected remotes; `Add remote` opens Settings > Connections at SSH.
-Remote rows are disabled because the native app has no remote-project store yet.
-
-`Create project` asks `thread/list` for chats in the chosen folders, then calls `Host::create_project`.
-The local host first pins each such chat that has no assignment to its current single owner project.
-It then reuses a project with the same roots or adds one, saves the appearance, puts the project first in `project-order` and sets `selected-project`.
-Without folders, it makes a `name` folder (or `name 2`, …) under `~/Documents/ChatGPT`.
-A failure shows `Failed to create project`, keeps the form open with its input, and removes a folder it made.
+Choose a connected remote and enter its folder path to create a project on that host.
+The app-server handles project creation, import, updates, ordering, and removal.
+The sidebar project menu provides `Edit`, `Move up`, and `Remove`.
+Editing keeps the project on its host and retains metadata that the user did not change.
+Removing a project does not delete its files.
+Without local folders, creation makes a folder under `~/Documents/ChatGPT`.
+A failure shows the error and keeps the form open with its input.
 `crates/app/tests/project_picker.rs` checks root order, appearance, ownership pins, reuse, default folders and failure.
 `crates/ui/src/screens/new_project.rs` checks source order and the stored appearance.
 
