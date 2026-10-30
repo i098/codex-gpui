@@ -12,6 +12,8 @@ use ui::screens::plugins::{Action, Page, Plugin, Resource};
 
 const RAIL_PLUGINS: (f32, f32) = (26., 202.);
 const LINEAR: &str = "linear@openai-curated";
+/// Linear's row under the Customize sidebar's `Installed`, after the three bundled plugins.
+const INSTALLED_LINEAR: (f32, f32) = (150., 312.);
 const LINEAR_REMOTE_ID: &str = "plugin_asdk_app_69a089a326dc8191b32a3f2553f5be2c";
 
 #[test]
@@ -187,5 +189,55 @@ fn rail_plugins_lists_reads_installs_and_uninstalls() -> Result<()> {
         params("plugin/uninstall")
     );
     ensure!(params("plugin/list").len() == 4);
+    Ok(())
+}
+
+/// The Customize sidebar's `Installed` section lists the installed Linear plugin, and its row
+/// opens the plugin's detail.
+#[test]
+fn customize_installed_opens_an_installed_plugin() -> Result<()> {
+    let skills: Value = ui::fixture::response("readback.jsonl", "skills/list", 0);
+    let mut lines = script(None, |_| {})?;
+    let send = lines
+        .iter()
+        .position(|line| line["dir"] == "send" && line["msg"]["method"] == "plugin/list")
+        .context("recorded plugin/list")?;
+    let id = lines[send]["msg"]["id"].clone();
+    let reply = send
+        + lines[send..]
+            .iter()
+            .position(|line| line["dir"] == "recv" && line["msg"]["id"] == id)
+            .context("recorded plugin/list result")?;
+    lines.remove(reply);
+    lines.remove(send);
+    // Two directory loads: the rail, then the detail route.
+    for _ in 0..2 {
+        lines.extend(exchange("skills/list", skills.clone()));
+        lines.extend(exchange("plugin/list", catalog(true)));
+    }
+    lines.extend(exchange(
+        "plugin/read",
+        json!({"plugin": {"summary": {"id": LINEAR}, "skills": [], "apps": []}}),
+    ));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+
+    fx.click(RAIL_PLUGINS)?;
+    settle(&mut fx, "plugin catalog")?;
+    fx.capture_evidence("CGX_PLUGINS_SHOTS", "customize-installed")?;
+    fx.click(INSTALLED_LINEAR)?;
+    ensure!(
+        fx.route() == app::Route::Plugins(format!("/plugins/{LINEAR}")),
+        "route {:?}",
+        fx.route()
+    );
+    let detail = settle(&mut fx, "plugin detail")?;
+    ensure!(fx.read(|_, cx| {
+        detail
+            .read(cx)
+            .detail
+            .as_ref()
+            .is_some_and(|p| p.id() == LINEAR)
+    }));
+    fx.capture_evidence("CGX_PLUGINS_SHOTS", "customize-installed-detail")?;
     Ok(())
 }
