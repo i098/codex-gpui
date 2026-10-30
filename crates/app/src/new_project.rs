@@ -198,7 +198,9 @@ impl Root {
                 cx.background_spawn(async move {
                     // `label: name.trim() || basename(remotePath)`.
                     let label = if name.is_empty() {
-                        path.rsplit('/').find(|part| !part.is_empty()).unwrap_or(&path)
+                        path.rsplit('/')
+                            .find(|part| !part.is_empty())
+                            .unwrap_or(&path)
                     } else {
                         name.as_str()
                     };
@@ -254,11 +256,9 @@ fn browse_remote(
             Ok::<_, anyhow::Error>(listing(path, &response))
         }
         .await;
-        dialog
-            .update(cx, |dialog, cx| {
-                dialog.set_listing(listing.map_err(|error| format!("{error:#}")), cx)
-            })
-            .ok();
+        dialog.update(cx, |dialog, cx| {
+            dialog.set_listing(listing.map_err(|error| format!("{error:#}")), cx)
+        });
     })
     .detach();
 }
@@ -282,9 +282,7 @@ fn listing(path: String, response: &Value) -> Browser {
         .filter(|entry| entry["isDirectory"] == true)
         .filter_map(|entry| entry["fileName"].as_str().map(str::to_owned))
         .collect();
-    folders.sort_by(|a, b| {
-        (a.starts_with('.'), a.as_str()).cmp(&(b.starts_with('.'), b.as_str()))
-    });
+    folders.sort_by(|a, b| (a.starts_with('.'), a.as_str()).cmp(&(b.starts_with('.'), b.as_str())));
     Browser {
         parent: parent(&path),
         path,

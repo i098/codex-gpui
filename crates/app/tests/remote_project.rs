@@ -128,8 +128,9 @@ fn new_remote_project_browses_the_host_and_opens_there() -> Result<()> {
         fx.cx.update(|cx| cx.windows().len()) > windows
     })?;
     ensure!(fx.read(|root, _| root.new_project().is_none()));
-    let state: Value =
-        serde_json::from_slice(&std::fs::read(store.path().join(".codex-global-state.json"))?)?;
+    let state: Value = serde_json::from_slice(&std::fs::read(
+        store.path().join(".codex-global-state.json"),
+    )?)?;
     let project = &state["remote-projects"][0];
     ensure!(
         project["hostId"] == HOST

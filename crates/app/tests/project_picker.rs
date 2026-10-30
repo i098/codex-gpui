@@ -133,13 +133,19 @@ fn new_project_keeps_root_order_appearance_and_existing_thread_owners() -> Resul
 fn remote_project_is_saved_once_first_in_order() -> Result<()> {
     let profile = tempfile::tempdir()?;
     let file = profile.path().join(".codex-global-state.json");
-    fs::write(&file, serde_json::to_vec(&json!({"project-order": ["old"]}))?)?;
+    fs::write(
+        &file,
+        serde_json::to_vec(&json!({"project-order": ["old"]}))?,
+    )?;
     let host = LocalHost::new(profile.path());
     let marker = json!({"color": "blue", "marker": {"kind": "icon", "icon": "brain"}});
     host.add_remote_project("ssh:dev", "repo", "/home/me/repo", Some(marker.clone()))?;
     host.add_remote_project("ssh:dev", "Again", "/home/me/repo", None)?;
     let state: Value = serde_json::from_slice(&fs::read(&file)?)?;
-    let id = state["remote-projects"][0]["id"].as_str().unwrap().to_owned();
+    let id = state["remote-projects"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     assert_eq!(
         state["remote-projects"],
         json!([{"id": id, "hostId": "ssh:dev", "label": "repo", "remotePath": "/home/me/repo"}])

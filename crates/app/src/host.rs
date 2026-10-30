@@ -1826,7 +1826,13 @@ impl Host for LocalHost {
                 state["project-appearances"][id.as_str()] = appearance;
             }
             let mut order = vec![Value::from(id)];
-            order.extend(state["project-order"].as_array().into_iter().flatten().cloned());
+            order.extend(
+                state["project-order"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .cloned(),
+            );
             state["project-order"] = order.into();
             Ok(true)
         })

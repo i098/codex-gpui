@@ -575,8 +575,9 @@ impl Dialog {
                 .tab_index(0)
                 .child(text("Add a folder on", 13., 20., 430., t.text_secondary))
                 .child(text(
-                    self.device
-                        .map_or("this computer".into(), |index| self.remotes[index].1.clone()),
+                    self.device.map_or("this computer".into(), |index| {
+                        self.remotes[index].1.clone()
+                    }),
                     13.,
                     20.,
                     430.,
@@ -618,7 +619,11 @@ impl Dialog {
             .flex()
             .flex_col();
         if let Some(parent) = &browser.parent {
-            list = list.child(row("project-remote-parent".into(), "..".into(), parent.clone()));
+            list = list.child(row(
+                "project-remote-parent".into(),
+                "..".into(),
+                parent.clone(),
+            ));
         }
         let path = browser.path.trim_end_matches('/');
         for (index, folder) in browser.folders.iter().enumerate() {
@@ -657,7 +662,13 @@ impl Dialog {
                     .pb(px(6.))
                     .flex()
                     .flex_col()
-                    .child(text("Choose a remote folder", 12., 16., 430., t.text_tertiary))
+                    .child(text(
+                        "Choose a remote folder",
+                        12.,
+                        16.,
+                        430.,
+                        t.text_tertiary,
+                    ))
                     .child(
                         text(browser.path.clone(), 13., 20., 430., t.text)
                             .overflow_hidden()
