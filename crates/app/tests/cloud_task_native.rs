@@ -20,6 +20,7 @@ const TURN: &str = "assistant-1";
 const IMAGE: &str = "file-service://cloud-fixture-image";
 const CLONE_URL: &str = "https://github.com/i098/cgx-fixture-scratch.git";
 const PATCH: &str = "diff --git a/hello.py b/hello.py\n--- a/hello.py\n+++ b/hello.py\n@@ -1 +1 @@\n-before\n+after\n";
+const PR_URL: &str = "https://github.com/i098/cgx-fixture-scratch/pull/7";
 
 fn detail(case: &str) -> Value {
     let status = match case {
@@ -74,6 +75,8 @@ struct FixtureHost {
     root: PathBuf,
     local: LocalHost,
     image: Vec<u8>,
+    /// Bodies of `POST …/pr` requests.
+    pull_requests: std::sync::Mutex<Vec<Value>>,
     _directory: tempfile::TempDir,
 }
 
@@ -117,6 +120,7 @@ impl FixtureHost {
             root,
             local,
             image: image.into_inner(),
+            pull_requests: std::sync::Mutex::default(),
             _directory: directory,
         }))
     }
@@ -193,6 +197,20 @@ impl Host for FixtureHost {
                     return Ok(wire(
                         200,
                         json!({"logs":[{"key":{"type":"UserSetupScript"},"line":"Installing project dependencies"},{"key":{"type":"UserSetupScript"},"line":"Setup exited with code 1"}]}),
+                    ));
+                }
+                if url.ends_with(&format!("/turns/{TURN}/pr")) {
+                    let body = request["body"].as_str().context("PR body")?;
+                    self.pull_requests
+                        .lock()
+                        .unwrap()
+                        .push(serde_json::from_str(body)?);
+                    return Ok(wire(200, json!({})));
+                }
+                if url.ends_with(&format!("/turns/{TURN}")) {
+                    return Ok(wire(
+                        200,
+                        json!({"turn":{"id":TURN,"pull_request_status":"created","pull_request_data":{"url":PR_URL}}}),
                     ));
                 }
                 if url.ends_with("/turns") {
@@ -475,5 +493,24 @@ fn constructed_response_cases_use_the_original_terminal_states() -> Result<()> {
             "wrong fixture phase for {case}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn create_draft_pull_request_posts_the_turn_and_shows_its_link() -> Result<()> {
+    let (mut fx, host) = open("complete")?;
+    let cloud = page(&fx)?;
+    fx.cx
+        .update(|cx| cloud.update(cx, |page, cx| page.request_pull_request(true, cx)));
+    fx.wait("pull request link", |fx| {
+        page(fx).is_ok_and(|page| {
+            page.read_with(&fx.cx, |page, _| {
+                !page.creating_pr
+                    && page.data.as_ref().unwrap().pull_request.as_deref() == Some(PR_URL)
+            })
+        })
+    })?;
+    ensure!(*host.pull_requests.lock().unwrap() == [json!({"mode":"draft"})]);
+    capture(&mut fx, "pull-request-created")?;
     Ok(())
 }
