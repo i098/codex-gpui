@@ -8,6 +8,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Open the latest plan from Thread summary ▸ `Plan` in an editable `Plan` side panel tab that saves to `$CODEX_HOME/plans/<thread>/<plan item>/PLAN.md`.
+- Add the Recents header's `Chat sidebar options` menu: `Sort chats by` Last updated or Created and, beside ChatGPT chats, the All, Chat and Work filter. The choice is saved.
+- Add the sidebar `Cloud` group: the account's current cloud tasks from `/wham/tasks/list`, with a spinner while a task runs and the unread dot. A click opens the task.
 - Add `Toggle Git blame` to the command menu: the file viewer shows the author, commit summary, short SHA and date for the active (clicked or cited) line from the host's `git blame`.
 - Check for updates in the background every hour, send the original's appcast parameters (installation id, architecture, version, beta, macOS version and plan), and add a `Beta updates` setting.
 - Block sending images with a model whose `inputModalities` has no `image`, with the original's `Remove images or switch models to send this message`.

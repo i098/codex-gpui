@@ -250,6 +250,9 @@ pub struct State {
     pub confirm_before_close: ConfirmBeforeClose,
     pub project_root: Option<String>,
     pub zoom: f32,
+    /// The Recents header's `Sort chats by` and ChatGPT filter choices.
+    pub chat_sort: ui::screens::sidebar::ChatSort,
+    pub chat_filter: ui::screens::sidebar::ChatFilter,
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -266,6 +269,8 @@ impl Default for State {
             confirm_before_close: ConfirmBeforeClose::default(),
             project_root: None,
             zoom: 1.,
+            chat_sort: Default::default(),
+            chat_filter: Default::default(),
             path: None,
         }
     }
@@ -752,6 +757,8 @@ impl Root {
             sidebar.threads_state = ListState::Loading;
             sidebar.set_activity_archive_supported(!bridge.is_acp());
             sidebar.activity_available = false;
+            sidebar.chat_sort = state.chat_sort;
+            sidebar.chat_filter = state.chat_filter;
             sidebar
         });
         cx.subscribe_in(
@@ -774,6 +781,27 @@ impl Root {
             &sidebar,
             window,
             |this, _, mode: &ModeChanged, window, cx| this.mode_changed(mode.0, window, cx),
+        )
+        .detach();
+        cx.subscribe_in(
+            &sidebar,
+            window,
+            |this, sidebar, _: &ui::screens::sidebar::ChatOrderChanged, window, cx| {
+                let sidebar = sidebar.read(cx);
+                this.state.chat_sort = sidebar.chat_sort;
+                this.state.chat_filter = sidebar.chat_filter;
+                let threads = std::mem::take(&mut this.threads);
+                this.set_threads(&threads, cx);
+                this.save(window, cx);
+            },
+        )
+        .detach();
+        cx.subscribe_in(
+            &sidebar,
+            window,
+            |this, _, open: &ui::screens::sidebar::OpenCloudTask, window, cx| {
+                this.open_remote_task(open.0.clone(), false, window, cx)
+            },
         )
         .detach();
         let main = cx.new(|_| ui::EmptyMain).into();
@@ -1520,6 +1548,7 @@ impl Root {
     fn load_projects(&mut self, cx: &mut Context<Self>) {
         self.sidebar
             .update(cx, |s, cx| s.set_projects_state(ListState::Loading, cx));
+        self.load_cloud_tasks(cx);
         let host = self.host.clone();
         let read = cx.background_spawn(async move { host.projects() });
         self.project_load = Some(cx.spawn(async move |this, cx| {

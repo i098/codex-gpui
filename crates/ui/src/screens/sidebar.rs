@@ -31,6 +31,8 @@ use theme::{ActiveTheme as _, Appearance, Theme};
 mod menu;
 use menu::ThreadMenu;
 mod chatgpt;
+mod cloud;
+pub use cloud::{CloudTaskRow, OpenCloudTask};
 mod mode;
 mod priority;
 pub use chatgpt::{ChatGptChat, ModeChanged};
@@ -38,6 +40,8 @@ pub use mode::{DEFAULT_MODE, MODES};
 pub use priority::{ActivityOpened, ArchiveActivity};
 
 pub mod sections;
+mod sort;
+pub use sort::{ChatFilter, ChatOrderChanged, ChatSort};
 
 /// `.sidebar-item`: `--radius-lg` (12.5 px) with `corner-shape: superellipse(1.5)`.
 const RADIUS_ROW: Pixels = px(12.5);
@@ -315,8 +319,9 @@ pub struct HomeSidebar {
     worktree_tip_epoch: u64,
     worktree_tip_bounds: Bounds<Pixels>,
     selected: Option<String>,
-    /// `Projects`, `Recents` collapsed by a click on their header.
-    collapsed: [bool; 3],
+    /// `Projects`, `Recents`, `Pinned` and `Cloud` collapsed by a click on their header.
+    collapsed: [bool; 4],
+    cloud_tasks: Vec<CloudTaskRow>,
     pinned: HashSet<String>,
     sections: Vec<CustomSection>,
     grouped_rows: HashSet<usize>,
@@ -336,6 +341,11 @@ pub struct HomeSidebar {
     /// The open row context menu.
     menu: Option<ThreadMenu>,
     native_menu_snapshot: Option<serde_json::Value>,
+    /// `Sort chats by` and the ChatGPT filter, from the app's saved state.
+    pub chat_sort: ChatSort,
+    pub chat_filter: ChatFilter,
+    /// The open `Chat sidebar options` menu.
+    chat_options: Option<crate::screens::thread::view::menu::ContextMenu>,
 }
 
 /// Emitted when a Recents row is clicked, with the thread id.
@@ -441,7 +451,8 @@ impl HomeSidebar {
             worktree_tip_epoch: 0,
             worktree_tip_bounds: Bounds::default(),
             selected: selected.map(str::to_owned),
-            collapsed: [false; 3],
+            collapsed: [false; 4],
+            cloud_tasks: Vec::new(),
             pinned: pinned_ids(threads),
             sections: Vec::new(),
             grouped_rows: HashSet::new(),
@@ -458,6 +469,9 @@ impl HomeSidebar {
             scroll: ScrollHandle::new(),
             menu: None,
             native_menu_snapshot: None,
+            chat_sort: ChatSort::default(),
+            chat_filter: ChatFilter::default(),
+            chat_options: None,
         }
     }
 
@@ -719,8 +733,9 @@ impl HomeSidebar {
     }
 
     pub fn set_threads(&mut self, threads: &[Thread], cx: &mut Context<Self>) {
-        self.threads = threads
-            .iter()
+        self.threads = self
+            .sorted(threads)
+            .into_iter()
             .map(|t| (t.id.clone(), display_title(title(t)), t.updated_at))
             .collect();
         self.threads_state = ListState::Ready;
@@ -1112,11 +1127,14 @@ impl HomeSidebar {
         };
         // shortcut: ChatGPT rows follow the local ones instead of merging by update time;
         // interleave when Recents sorts both sources together.
+        let filter = self.filter_in_effect();
         div()
             .flex()
             .flex_col()
-            .child(local)
-            .child(self.chatgpt_rows(window, cx))
+            .when(filter != ChatFilter::Chats, |d| d.child(local))
+            .when(filter != ChatFilter::Work, |d| {
+                d.child(self.chatgpt_rows(window, cx))
+            })
             .into_any_element()
     }
 
@@ -1204,6 +1222,7 @@ impl Render for HomeSidebar {
                     .child(
                         div()
                             .group(key.clone())
+                            .when(i == 1, |d| d.debug_selector(|| "recents-header".into()))
                             .relative()
                             .h(px(30.))
                             .flex()
@@ -1265,6 +1284,9 @@ impl Render for HomeSidebar {
                             )
                             .when(i >= self.collapsed.len(), |d| {
                                 d.child(self.section_actions(i - self.collapsed.len(), window, cx))
+                            })
+                            .when(i == 1, |d| {
+                                d.child(self.chat_options_button(key.clone(), window, cx))
                             }),
                     )
                     .when(!collapsed, |d| d.child(div().pt(px(4.)).child(body)))
@@ -1285,6 +1307,10 @@ impl Render for HomeSidebar {
             let projects = section(0, "Projects".into(), project_rows, window, cx);
             let recents = section(1, "Recents".into(), recents, window, cx);
             let pinned = pinned.map(|rows| section(2, "Pinned".into(), rows, window, cx));
+            let cloud = (!self.cloud_tasks.is_empty()).then(|| {
+                let rows = self.cloud_rows(window, cx);
+                section(3, "Cloud".into(), rows, window, cx)
+            });
             div()
                 .flex()
                 .flex_col()
@@ -1303,6 +1329,7 @@ impl Render for HomeSidebar {
                     )
                 }))
                 .child(recents)
+                .children(cloud)
                 .into_any_element()
         };
         div()
@@ -1341,6 +1368,7 @@ impl Render for HomeSidebar {
                     .map(|_| self.menu_overlay(window, cx)),
             )
             .children(self.activity_menu_overlay(window, cx))
+            .children(self.chat_options_overlay(window, cx))
             .children(self.worktree_tip.then(|| self.worktree_tooltip_element(cx)))
     }
 }

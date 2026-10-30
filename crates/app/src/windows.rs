@@ -602,6 +602,8 @@ pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             confirm_before_close: this.state.confirm_before_close,
             project_root: this.state.project_root.clone(),
             zoom: this.state.zoom,
+            chat_sort: this.state.chat_sort,
+            chat_filter: this.state.chat_filter,
             path: this.state.path.clone(),
         };
         if let Err(error) = open_primary(state, this.cwd.clone(), cx) {
