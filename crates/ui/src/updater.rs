@@ -36,12 +36,13 @@ impl Status {
 pub struct Updates {
     pub available: bool,
     pub managed: bool,
+    pub automatic: bool,
     pub status: Status,
 }
 
 impl Global for Updates {}
 
-actions!(updater, [InstallUpdate]);
+actions!(updater, [InstallUpdate, ToggleAutomaticChecks]);
 
 fn glyph(status: Status) -> gpui::AnyElement {
     match status {
@@ -160,4 +161,19 @@ pub fn managed_row(t: &Theme, cx: &App) -> Option<Div> {
                 t,
             )
         })
+}
+
+pub fn automatic_row(t: &Theme, cx: &App) -> Option<Div> {
+    let updates = cx.try_global::<Updates>()?;
+    if !updates.available || updates.managed {
+        return None;
+    }
+    Some(crate::screens::settings::settings_row(
+        "Automatically check for updates",
+        Some("Look for a new version of Codex in the background"),
+        crate::screens::settings::switch("updates.automatic", updates.automatic, false, t)
+            .on_click(dispatch::<ToggleAutomaticChecks>)
+            .into_any_element(),
+        t,
+    ))
 }
