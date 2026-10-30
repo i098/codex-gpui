@@ -1446,7 +1446,11 @@ The icon also runs `NewChat`, so the composer is empty and focused.
 Open chats keep the `cwd` the server stored with them, and selecting a project does not change them.
 A missing folder, or a project with no root path, ignores both clicks.
 `project_picker` clicks two owned projects and a deleted one, and checks the logged `thread/start` working directories.
-The row click does not expand or collapse the folder, because the port lists no per-project chats.
+The row click does not expand or collapse the folder; it keeps the RS-069 selection.
+An expanded folder lists the loaded chats whose `cwd` equals its first root, indented 24 px under the folder label.
+It shows five chats, then `Show more`, which lists every loaded chat and asks for the next `thread/list` page.
+`Show more` also stays while `thread/list` has more pages, as in the original, and `No chats` marks a folder without any.
+A collapsed folder with an unread chat carries the chat's blue dot.
 The shared replay selects the dedicated `f1d_projects` adapter.
 
 Run `tools/mac.sh -l f1d-projects 'cargo test -p app --test f1d_projects -- --test-threads=1'`.

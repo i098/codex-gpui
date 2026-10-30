@@ -815,6 +815,10 @@ impl Root {
             }
             if active {
                 this.sync_native_menus(window, cx);
+                // The original marks the open thread read when its window gains focus.
+                if let Route::Thread(id) = &this.state.route {
+                    this.sidebar.update(cx, |s, cx| s.set_read(id, cx));
+                }
                 // `refetchOnWindowFocus: always`: System Settings may have changed it.
                 if this.settings_page.is_some() {
                     this.notifications_action(
@@ -6455,13 +6459,24 @@ impl Root {
                             .update(cx, |s, cx| s.set_running(id, active, cx));
                     }
                 }
-                // Completion can leave the selected thread unread, including a background terminal.
-                // It also finishes the thread's open automation run, like the original host.
+                // Completion leaves the thread unread unless it is open in the focused window,
+                // where the original marks it read at once. It also finishes the thread's open
+                // automation run, like the original host.
                 "turn/completed" => {
                     if let Some(id) = params["threadId"].as_str()
                         && side_thread.is_none()
                     {
-                        self.sidebar.update(cx, |s, cx| s.set_unread(id, cx));
+                        let viewing = self.state.route == Route::Thread(id.to_owned())
+                            && self
+                                .context_window
+                                .update(cx, |_, window, _| window.is_window_active())
+                                .unwrap_or(false);
+                        self.sidebar.update(cx, |s, cx| {
+                            s.set_unread(id, cx);
+                            if viewing {
+                                s.set_read(id, cx);
+                            }
+                        });
                         self.complete_automation_run(&params, cx);
                     }
                     // Standalone elicitations and nonblocking questions wait for explicit resolution.
