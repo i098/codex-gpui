@@ -1394,12 +1394,21 @@ mod tests {
     #[test]
     fn skill_name_follows_the_original_parse() {
         for (path, name) in [
-            ("/Users/a/.codex/skills/operating-rules/SKILL.md", "Operating Rules"),
+            (
+                "/Users/a/.codex/skills/operating-rules/SKILL.md",
+                "Operating Rules",
+            ),
             ("/Users/a/.codex/skills/.system/plan/skill.md", "Plan"),
-            ("/Users/a/.codex/skills/_import/pdf_tools-and-apis/SKILL.md", "PDF Tools and APIs"),
+            (
+                "/Users/a/.codex/skills/_import/pdf_tools-and-apis/SKILL.md",
+                "PDF Tools and APIs",
+            ),
             ("/repo/.agents/skills/lint/SKILL.md", "Lint"),
             (".agents/skills/to-do/SKILL.md", "To Do"),
-            ("/Users/a/.codex/plugins/cache/mkt/github/1.0/skills/gh-fix-ci/SKILL.md", "GH Fix CI"),
+            (
+                "/Users/a/.codex/plugins/cache/mkt/github/1.0/skills/gh-fix-ci/SKILL.md",
+                "GH Fix CI",
+            ),
             ("/Users/a/.codex/plugins/github/SKILL.md", "GitHub"),
         ] {
             assert_eq!(skill_name(path, "/repo").as_deref(), Some(name), "{path}");
