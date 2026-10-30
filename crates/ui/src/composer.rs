@@ -743,6 +743,14 @@ type ApprovalHandler = Rc<dyn Fn(Value, String, Value, &mut Window, &mut App)>;
 type ModelHandler = Rc<dyn Fn(&str, &str, &mut App)>;
 type SettingsPasteHandler = Rc<dyn Fn(&str, &mut App) -> bool>;
 
+pub struct LiveSettingsChange {
+    pub model: String,
+    pub effort: Option<String>,
+    pub permission: Permission,
+}
+
+type LiveSettingsHandler = Rc<dyn Fn(&str, LiveSettingsChange, &mut App)>;
+
 /// What a queued row's buttons and `Queued message actions` menu ask of the app.
 #[derive(Clone)]
 pub enum QueueAction {
@@ -895,6 +903,8 @@ pub struct Composer {
     edit_pending: bool,
     on_approval: Option<ApprovalHandler>,
     on_model: Option<ModelHandler>,
+    on_live_settings: Option<LiveSettingsHandler>,
+    thread_id: String,
     plain_field: Option<bool>,
     field_style: FieldStyle,
     hotkey_controls: Option<AnyView>,
@@ -1015,6 +1025,8 @@ impl Composer {
             edit_pending: false,
             on_approval: None,
             on_model: None,
+            on_live_settings: None,
+            thread_id: String::new(),
             plain_field: None,
             field_style: FieldStyle::Settings,
             hotkey_controls: None,
@@ -1357,6 +1369,72 @@ impl Composer {
     /// Called when the user picks a model or an effort in the picker.
     pub fn on_model(&mut self, f: impl Fn(&str, &str, &mut App) + 'static) {
         self.on_model = Some(Rc::new(f));
+    }
+
+    pub fn on_live_settings(&mut self, f: impl Fn(&str, LiveSettingsChange, &mut App) + 'static) {
+        self.on_live_settings = Some(Rc::new(f));
+    }
+
+    pub fn bind_thread(&mut self, id: &str) {
+        if self.thread_id != id {
+            self.thread_id = id.to_owned();
+        }
+    }
+
+    pub fn apply_thread_settings(&mut self, settings: &Value, cx: &mut Context<Self>) {
+        if let Some(model) = settings["model"].as_str()
+            && let Some(index) = self.models.iter().position(|option| option.id == model)
+        {
+            self.model = index;
+        }
+        if let Some(effort) = settings.get("effort") {
+            self.effort = effort.as_str().map(str::to_owned);
+        }
+        if let Some(profile) = settings["permissions"].as_str() {
+            self.permission = match profile {
+                ":workspace" if settings["approvalsReviewer"] == "guardian_subagent" => {
+                    Permission::ApproveForMe
+                }
+                ":workspace" => Permission::Ask,
+                ":danger-full-access" => Permission::FullAccess,
+                _ => Permission::Named(profile.to_owned().into()),
+            };
+        } else if let Some(sandbox) = settings.get("sandboxPolicy") {
+            let mode = match sandbox["type"].as_str() {
+                Some("dangerFullAccess") => "danger-full-access",
+                Some("workspaceWrite")
+                    if sandbox["networkAccess"] != true
+                        && sandbox["writableRoots"]
+                            .as_array()
+                            .is_none_or(Vec::is_empty) =>
+                {
+                    "workspace-write"
+                }
+                _ => "custom",
+            };
+            self.permission = Permission::from_config(&json!({
+                "approval_policy": settings["approvalPolicy"],
+                "approvals_reviewer": settings["approvalsReviewer"],
+                "sandbox_mode": mode,
+            }));
+        }
+        cx.notify();
+    }
+
+    fn settings_picked(&self, cx: &mut App) {
+        if let Some(handler) = &self.on_live_settings {
+            handler(
+                &self.thread_id,
+                LiveSettingsChange {
+                    model: self
+                        .current_model()
+                        .map_or_else(String::new, |model| model.id.clone()),
+                    effort: self.effort.clone(),
+                    permission: self.permission.clone(),
+                },
+                cx,
+            );
+        }
     }
 
     /// The approval card's request, while one shows.
@@ -1839,6 +1917,7 @@ impl Composer {
         if let (Some(f), Some(model)) = (self.on_model.clone(), self.current_model()) {
             f(&model.id, self.displayed_effort(), cx);
         }
+        self.settings_picked(cx);
     }
 
     /// Enter sends the draft only when the approval leaves the composer visible.
@@ -2280,6 +2359,7 @@ impl Composer {
                     window.dispatch_action(Box::new(RequestFullAccess), cx);
                 } else {
                     self.permission = permission;
+                    self.settings_picked(cx);
                 }
             }
             Some(Menu::Models) => {
@@ -2356,6 +2436,7 @@ impl Composer {
 
     pub fn confirm_full_access(&mut self, cx: &mut Context<Self>) {
         self.permission = Permission::FullAccess;
+        self.settings_picked(cx);
         cx.notify();
     }
 
@@ -3531,6 +3612,34 @@ mod tests {
         assert!(three > one && one_scroll == px(0.) && three_scroll == px(0.));
         assert_eq!(many, px(100.), "25% of the 400 px window");
         assert!(many_scroll > px(0.));
+    }
+
+    #[gpui::test]
+    fn server_settings_preserve_draft_and_do_not_echo(cx: &mut gpui::TestAppContext) {
+        let composer = cx.new(|cx| Composer::new("Work with Codex", true, cx));
+        composer.update(cx, |composer, cx| {
+            composer.models = ["first", "second"]
+                .map(|id| ModelOption {
+                    id: id.into(),
+                    label: id.into(),
+                    efforts: vec!["medium".into()],
+                })
+                .into();
+            composer.set_text("Keep the draft", cx);
+            composer
+                .on_live_settings(|_, _, _| panic!("Server settings must not send a new request"));
+            composer.apply_thread_settings(
+                &json!({
+                    "model": "second", "effort": null, "permissions": ":workspace",
+                    "approvalsReviewer": "guardian_subagent",
+                }),
+                cx,
+            );
+            assert_eq!(composer.current_model().unwrap().id, "second");
+            assert!(composer.effort.is_none());
+            assert_eq!(composer.permission, Permission::ApproveForMe);
+            assert_eq!(composer.content, "Keep the draft");
+        });
     }
 
     #[test]
