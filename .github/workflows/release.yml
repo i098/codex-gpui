@@ -16,6 +16,14 @@ jobs:
       SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
       SPARKLE_ED_PUBLIC_KEY: ${{ secrets.SPARKLE_ED_PUBLIC_KEY }}
       CODEX_GPUI_SIGN_IDENTITY: ${{ secrets.CODEX_GPUI_SIGN_IDENTITY }}
+      # With the Developer ID certificate (base64 .p12 and its password) the bundle is signed with the
+      # hardened runtime; with the App Store Connect API key it is also notarized and stapled.
+      MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      CODEX_GPUI_NOTARY_KEY_P8: ${{ secrets.CODEX_GPUI_NOTARY_KEY_P8 }}
+      CODEX_GPUI_NOTARY_KEY_ID: ${{ secrets.CODEX_GPUI_NOTARY_KEY_ID }}
+      CODEX_GPUI_NOTARY_ISSUER: ${{ secrets.CODEX_GPUI_NOTARY_ISSUER }}
+      CODEX_GPUI_DMG: "1"
     steps:
       - uses: actions/checkout@v4
       - name: Check the tag matches the workspace version
@@ -32,6 +40,19 @@ jobs:
           echo "CODEX_GPUI_SPARKLE_FRAMEWORK=/tmp/sparkle/Sparkle.framework" >>"$GITHUB_ENV"
           echo "CODEX_GPUI_UPDATE_PUBLIC_KEY=$SPARKLE_ED_PUBLIC_KEY" >>"$GITHUB_ENV"
           echo "CODEX_GPUI_UPDATE_FEED=https://github.com/$GITHUB_REPOSITORY/releases/latest/download/appcast.xml" >>"$GITHUB_ENV"
+      - name: Import the Developer ID certificate
+        if: ${{ env.MACOS_CERTIFICATE_P12 != '' }}
+        run: |
+          keychain=$RUNNER_TEMP/release.keychain-db
+          password=$(uuidgen)
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode >"$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          rm "$RUNNER_TEMP/certificate.p12"
       - name: Build, sign and verify the bundle
         run: bash tools/bundle.sh --assemble /tmp/codex-gpui-release normal "$GITHUB_SHA" archive
       - name: Publish the release
@@ -39,6 +60,11 @@ jobs:
           zip=codex-gpui-$VERSION-macos-arm64.zip
           mv /tmp/codex-gpui-release/bundle.zip "$zip"
           assets=("$zip")
+          if [[ -f /tmp/codex-gpui-release/bundle.dmg ]]; then
+              dmg=codex-gpui-$VERSION-macos.dmg
+              mv /tmp/codex-gpui-release/bundle.dmg "$dmg"
+              assets+=("$dmg")
+          fi
           if [[ -n $SPARKLE_ED_PRIVATE_KEY ]]; then
               python3 tools/appcast.py "$zip" --tag "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --sign-update /tmp/sparkle/bin/sign_update --out feed
               (cd feed && ln -s "../$zip" . && shasum -a 256 -c "$zip.sha256" && rm "$zip")
