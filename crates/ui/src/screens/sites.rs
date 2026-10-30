@@ -286,7 +286,6 @@ impl Page {
             meta.push("Not published".into());
         }
         div()
-            .id(SharedString::from(format!("site-detail-{}", site.id)))
             .flex()
             .flex_col()
             .gap(px(8.))
