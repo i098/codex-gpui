@@ -1180,8 +1180,7 @@ impl HomeSidebar {
             });
         thread_row(
             id,
-            label,
-            indent,
+            (label, indent),
             self.selected.as_deref() == Some(id),
             end,
             cx,
@@ -1538,8 +1537,7 @@ enum RowEnd {
 /// ([`RowEnd`]); either takes 28 px off the label and hides on hover.
 fn thread_row(
     id: &str,
-    label: SharedString,
-    indent: f32,
+    (label, indent): (SharedString, f32),
     selected: bool,
     end: Option<RowEnd>,
     cx: &App,
