@@ -22,9 +22,8 @@ fn cmd_t_opens_a_browser_tab_that_loads_the_address_and_closes_with_cmd_w() -> R
     proof(&mut fx, "before")?;
     fx.keys("cmd-t")?;
     ensure!(fx.read(|root, _| root.side_panel()) == Some(SidePanel::Browser(1)));
-    let title = |fx: &mut Fx| {
-        fx.read(|root, cx| root.active_browser_tab().map(|tab| tab.read(cx).title()))
-    };
+    let title =
+        |fx: &mut Fx| fx.read(|root, cx| root.active_browser_tab().map(|tab| tab.read(cx).title()));
     ensure!(title(&mut fx).as_deref() == Some("New tab"));
     proof(&mut fx, "new-tab")?;
     // ⌘T focused the address bar: typing goes there, Enter loads it.
@@ -34,7 +33,10 @@ fn cmd_t_opens_a_browser_tab_that_loads_the_address_and_closes_with_cmd_w() -> R
         root.active_browser_tab()
             .and_then(|tab| tab.read(cx).url().map(ToString::to_string))
     });
-    ensure!(url.as_deref() == Some("https://example.com/docs"), "{url:?}");
+    ensure!(
+        url.as_deref() == Some("https://example.com/docs"),
+        "{url:?}"
+    );
     ensure!(title(&mut fx).as_deref() == Some("example.com"));
     proof(&mut fx, "loaded")?;
     fx.keys("cmd-w")?;

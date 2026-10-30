@@ -3145,7 +3145,10 @@ impl Root {
         let blank = url.is_none();
         let tab = cx.new(|cx| BrowserTab::new(url, window, cx));
         cx.subscribe(&tab, move |this, tab, event: &BrowserEvent, cx| {
-            if !matches!(event, BrowserEvent::TitleChanged | BrowserEvent::Navigated { .. }) {
+            if !matches!(
+                event,
+                BrowserEvent::TitleChanged | BrowserEvent::Navigated { .. }
+            ) {
                 return;
             }
             let index = this.tabs.iter().position(|t| *t == SidePanel::Browser(key));

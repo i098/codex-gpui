@@ -39,7 +39,10 @@ impl WebPage {
         // SAFETY: plain property reads on the main thread, which owns the view.
         let (title, can_go_back, can_go_forward) = unsafe {
             (
-                webview.title().map(|title| title.to_string()).unwrap_or_default(),
+                webview
+                    .title()
+                    .map(|title| title.to_string())
+                    .unwrap_or_default(),
                 webview.canGoBack(),
                 webview.canGoForward(),
             )

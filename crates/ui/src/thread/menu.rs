@@ -523,8 +523,9 @@ impl ThreadView {
             "searchWithGoogle" => {
                 cx.open_url(&selection_url("https://www.google.com/search?q=", &url))
             }
-            "open-in-new-tab" => _window
-                .dispatch_action(Box::new(crate::browser::OpenBrowserTab(Some(url))), cx),
+            "open-in-new-tab" => {
+                _window.dispatch_action(Box::new(crate::browser::OpenBrowserTab(Some(url))), cx)
+            }
             // ponytail: the browser's own window is not ported; `New window` opens the system
             // browser until it is.
             "open-in-new-window" | "open-in-external-browser" => cx.open_url(&url),

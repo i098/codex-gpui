@@ -42,9 +42,13 @@ pub enum LoadState {
 /// A change of the page that its owner shows outside the tab (the strip's label).
 #[derive(Clone, Debug, PartialEq)]
 pub enum BrowserEvent {
-    LoadStarted { url: Url },
+    LoadStarted {
+        url: Url,
+    },
     /// The committed URL changed, including a same-document navigation.
-    Navigated { url: Url },
+    Navigated {
+        url: Url,
+    },
     TitleChanged,
     LoadFinished,
 }
@@ -77,8 +81,7 @@ impl BrowserTab {
         // Each message is one page change; `true` when the document finished loading.
         let (changed, changes) = async_channel::unbounded();
         let page = page::Page::new(window, changed);
-        let address =
-            cx.new(|cx| Composer::address_field("Address", ADDRESS_PLACEHOLDER, cx));
+        let address = cx.new(|cx| Composer::address_field("Address", ADDRESS_PLACEHOLDER, cx));
         cx.subscribe(&address, |tab, address, _: &SettingsFieldSubmit, cx| {
             let input = address.read(cx).field_text().to_owned();
             tab.navigate(&input, cx);
@@ -192,7 +195,12 @@ impl BrowserTab {
 
     /// Puts the committed URL in the address bar.
     fn show_url(&mut self, cx: &mut Context<Self>) {
-        let url = self.state.url.as_ref().map(Url::to_string).unwrap_or_default();
+        let url = self
+            .state
+            .url
+            .as_ref()
+            .map(Url::to_string)
+            .unwrap_or_default();
         self.address.update(cx, |field, cx| {
             if field.field_text() != url {
                 field.set_text(&url, cx);
@@ -285,7 +293,13 @@ impl Render for BrowserTab {
                         .gap(px(4.))
                         .child(icon("sidebar-cmd-browser", 24., t.text_secondary).mb(px(4.)))
                         .child(text("Start browsing", 14., 20., 500., t.text))
-                        .child(text("Enter a URL to open a page", 14., 20., 400., t.text_secondary)),
+                        .child(text(
+                            "Enter a URL to open a page",
+                            14.,
+                            20.,
+                            400.,
+                            t.text_secondary,
+                        )),
                 )
             });
         div()
@@ -312,15 +326,30 @@ mod tests {
     #[test]
     fn address_bar_text_resolves_to_a_page_or_a_search() {
         let resolved = |input: &str| address_url(input).map(String::from);
-        assert_eq!(resolved("https://openai.com/a?b"), Some("https://openai.com/a?b".into()));
-        assert_eq!(resolved("openai.com/codex"), Some("https://openai.com/codex".into()));
-        assert_eq!(resolved("localhost:3000/x"), Some("http://localhost:3000/x".into()));
-        assert_eq!(resolved("127.0.0.1:8080"), Some("http://127.0.0.1:8080/".into()));
+        assert_eq!(
+            resolved("https://openai.com/a?b"),
+            Some("https://openai.com/a?b".into())
+        );
+        assert_eq!(
+            resolved("openai.com/codex"),
+            Some("https://openai.com/codex".into())
+        );
+        assert_eq!(
+            resolved("localhost:3000/x"),
+            Some("http://localhost:3000/x".into())
+        );
+        assert_eq!(
+            resolved("127.0.0.1:8080"),
+            Some("http://127.0.0.1:8080/".into())
+        );
         assert_eq!(
             resolved("rust borrow checker"),
             Some("https://www.google.com/search?q=rust+borrow+checker".into())
         );
-        assert_eq!(resolved("codex"), Some("https://www.google.com/search?q=codex".into()));
+        assert_eq!(
+            resolved("codex"),
+            Some("https://www.google.com/search?q=codex".into())
+        );
         assert_eq!(resolved("   "), None);
     }
 }
