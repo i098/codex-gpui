@@ -582,6 +582,11 @@ impl Composer {
                 self.toggle_plan(cx);
                 return;
             }
+            "sketch" => {
+                self.finish_command(window, cx);
+                self.open_sketch(cx);
+                return;
+            }
             _ => return,
         };
         self.finish_command(window, cx);
