@@ -8,7 +8,7 @@ use gpui::{
     prelude::FluentBuilder as _, px, radians,
 };
 use std::time::Duration;
-use theme::Theme;
+use theme::{ActiveTheme as _, Theme};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Status {
@@ -181,11 +181,7 @@ pub fn automatic_row(t: &Theme, cx: &App) -> Option<Div> {
 
 /// The sidebar banner (`sidebar.updateBanner`): the new version, its download progress,
 /// `Restart to update` once staged, `Read more` for the release notes, and dismiss.
-pub fn banner<T: 'static>(
-    t: &Theme,
-    window: &mut Window,
-    cx: &mut Context<T>,
-) -> Option<gpui::AnyElement> {
+pub fn banner<T: 'static>(window: &mut Window, cx: &mut Context<T>) -> Option<gpui::AnyElement> {
     let updates = cx.try_global::<Updates>()?;
     let release = updates.release.clone()?;
     let status = updates.status;
@@ -202,6 +198,7 @@ pub fn banner<T: 'static>(
         Status::Installing => Some("Installing…".into()),
         _ => None,
     };
+    let t = &cx.theme().clone();
     let restart = focus::handle("update-banner-restart", 0, window, cx);
     let dismissed = release.clone();
     let card = div()
