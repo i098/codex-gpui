@@ -755,6 +755,10 @@ pub enum QueueAction {
     SideChat(String),
     /// `Turn off queueing` / `Turn on queueing`: the new `Follow-up behavior` is queue (`true`).
     Queueing(bool),
+    /// `Resume` on the `Queue paused because you interrupted` banner (`thread/queue/start`).
+    Resume,
+    /// `Clear queue` in the paused-queue send dialog: delete every queued (not failed) row.
+    ClearQueue,
 }
 
 impl gpui::EventEmitter<QueueAction> for Composer {}
@@ -890,6 +894,9 @@ pub struct Composer {
     /// chat`, as the original does when its host passes `onOpenSideChatMessage`.
     side_chat: bool,
     queue_pending: bool,
+    /// The thread's last turn was interrupted: the app-server holds its queue until
+    /// `thread/queue/start` or a new turn.
+    queue_interrupted: bool,
     on_submit: Option<SubmitHandler>,
     on_cancel_edit: Option<CancelEditHandler>,
     edit_pending: bool,
@@ -1010,6 +1017,7 @@ impl Composer {
             queued: Vec::new(),
             side_chat: false,
             queue_pending: false,
+            queue_interrupted: false,
             on_submit: None,
             on_cancel_edit: None,
             edit_pending: false,
@@ -1546,6 +1554,16 @@ impl Composer {
         cx.notify();
     }
 
+    pub fn set_queue_interrupted(&mut self, interrupted: bool, cx: &mut Context<Self>) {
+        self.queue_interrupted = interrupted;
+        cx.notify();
+    }
+
+    /// The original's `isPaused` queue: the last turn was interrupted and queued rows wait.
+    pub fn queue_paused(&self) -> bool {
+        self.queue_interrupted && !self.running && self.queued.iter().any(|row| !row.failed)
+    }
+
     pub fn remove_queued(&mut self, id: &str, cx: &mut Context<Self>) {
         self.queued.retain(|row| row.submission.id != id);
         cx.notify();
@@ -1574,6 +1592,7 @@ impl Composer {
         let kind = match &action {
             QueueAction::Steer(_) => "queued-steer",
             QueueAction::Retry(_) => "queued-retry",
+            QueueAction::Resume => "queued-resume",
             _ => "queued-delete",
         };
         let key_action = action.clone();
@@ -1583,7 +1602,10 @@ impl Composer {
                 .h(px(24.))
                 .min_w(px(24.))
                 .px(px(
-                    if matches!(action, QueueAction::Steer(_) | QueueAction::Retry(_)) {
+                    if matches!(
+                        action,
+                        QueueAction::Steer(_) | QueueAction::Retry(_) | QueueAction::Resume
+                    ) {
                         8.
                     } else {
                         0.
@@ -1618,6 +1640,13 @@ impl Composer {
                         .gap(px(4.))
                         .child(icon("diff-refresh", 14., t.text_tertiary))
                         .child(text("Retry", 13., 18., 430., t.text_tertiary))
+                        .into_any_element(),
+                    QueueAction::Resume => div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(icon("automation-resume", 14., t.text_tertiary))
+                        .child(text("Resume", 13., 18., 430., t.text_tertiary))
                         .into_any_element(),
                     _ => icon("queue-delete", 14., t.text_tertiary).into_any_element(),
                 })
@@ -1923,6 +1952,10 @@ impl Composer {
         {
             return;
         }
+        if self.queue_paused() && self.on_cancel_edit.is_none() {
+            self.confirm_paused_send(background, window, cx);
+            return;
+        }
         if self.shell_commands && self.content.starts_with('!') {
             self.confirm_shell(window, cx);
             return;
@@ -1968,6 +2001,43 @@ impl Composer {
         })
         .detach();
         self.blocked = Some(blocked);
+        cx.notify();
+    }
+
+    /// The original's `pausedQueueSubmit` dialog: a send while the queue is paused asks whether
+    /// to clear it first. Either choice sends; the new turn resumes what stays queued.
+    fn confirm_paused_send(
+        &mut self,
+        background: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::confirmation::Outcome;
+        use gpui::AppContext as _;
+        let count = self.queued.iter().filter(|row| !row.failed).count();
+        let description = format!(
+            "You are about to send a message. Do you want to clear the {count} {} previously queued?",
+            if count == 1 { "message" } else { "messages" }
+        );
+        let dialog =
+            cx.new(|cx| {
+                Confirmation::new("Send message", description, "Send message", window, cx)
+                    .alternate("Clear queue", window, cx)
+            });
+        cx.subscribe_in(&dialog, window, move |this, _, outcome, window, cx| {
+            this.blocked = None;
+            this.focus_handle.focus(window, cx);
+            match outcome {
+                Outcome::Cancel => cx.notify(),
+                Outcome::Alternate => {
+                    cx.emit(QueueAction::ClearQueue);
+                    this.finish_send_draft(background, window, cx);
+                }
+                Outcome::Confirm => this.finish_send_draft(background, window, cx),
+            }
+        })
+        .detach();
+        self.blocked = Some(dialog);
         cx.notify();
     }
 
@@ -3187,6 +3257,31 @@ impl Render for Composer {
                 .flex()
                 .flex_col()
                 .gap(px(1.))
+                .when(self.queue_paused(), |d| {
+                    d.child(
+                        div()
+                            .h(px(32.))
+                            .px(px(10.))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(icon("automation-pause", 14., t.text_tertiary))
+                            .child(div().flex_1().min_w_0().overflow_hidden().child(text(
+                                "Queue paused because you interrupted",
+                                13.,
+                                18.,
+                                430.,
+                                t.text_secondary,
+                            )))
+                            .child(self.queue_button(
+                                QueueAction::Resume,
+                                "Resume",
+                                "Resume",
+                                &t,
+                                cx,
+                            )),
+                    )
+                })
                 .children(self.queued.iter().map(|row| {
                     div()
                         .id(row.key.clone())
