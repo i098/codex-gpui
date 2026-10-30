@@ -93,7 +93,7 @@ fn legacy_directory(name: &str) -> bool {
         && id.bytes().all(|c| c.is_ascii_hexdigit())
 }
 
-fn snapshot(root: &Path) -> Result<()> {
+fn check_nested_repositories(root: &Path) -> Result<()> {
     let nested = checked(run(
         root,
         &[
@@ -121,6 +121,11 @@ fn snapshot(root: &Path) -> Result<()> {
             "Worktree snapshots cannot preserve initialized submodules or embedded Git repositories. Keep this checkout."
         );
     }
+    Ok(())
+}
+
+fn snapshot(root: &Path) -> Result<()> {
+    check_nested_repositories(root)?;
     let scratch = tempfile::tempdir()?;
     let index = scratch.path().join("index");
     let git = |args: &[&str]| -> Result<String> {
@@ -231,9 +236,270 @@ pub(in crate::host) fn remove_managed_worktree(root: &Path, roots: &[PathBuf]) -
     Ok(())
 }
 
+pub(in crate::host) fn thread_worktree_info(params: &Value) -> Result<Value> {
+    let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
+    ensure!(cwd.is_absolute(), "Workspace must be absolute");
+    if !cwd.is_dir() {
+        return Ok(json!({"missing": true}));
+    }
+    let rows = String::from_utf8(checked(run(cwd, &["worktree", "list", "--porcelain"])?)?)?;
+    let local = rows
+        .lines()
+        .find_map(|line| line.strip_prefix("worktree "))
+        .context("Local checkout is unavailable")?;
+    let root = answer(cwd, &["rev-parse", "--show-toplevel"])?.context("Not a repository")?;
+    Ok(json!({"missing": false, "localRoot": local, "worktree": root != local}))
+}
+
+fn stash_changes(root: &Path) -> Result<Option<String>> {
+    if checked(run(root, &["status", "--porcelain"])?)?.is_empty() {
+        return Ok(None);
+    }
+    checked(plain(
+        root,
+        &[
+            "stash",
+            "push",
+            "--include-untracked",
+            "-m",
+            "Codex thread handoff",
+        ],
+    )?)?;
+    Ok(answer(root, &["rev-parse", "refs/stash"])?)
+}
+
+fn apply_stash(root: &Path, stash: Option<&str>) -> Result<()> {
+    if let Some(stash) = stash {
+        checked(run(root, &["stash", "apply", "--index", stash])?)?;
+    }
+    Ok(())
+}
+
+pub(in crate::host) fn move_thread(params: &Value, worktrees_root: &Path) -> Result<Value> {
+    let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
+    ensure!(cwd.is_absolute(), "Workspace must be absolute");
+    let info = thread_worktree_info(params)?;
+    ensure!(info["missing"] != true, "This checkout no longer exists");
+    let to_local = params["toLocal"] == true;
+    ensure!(
+        info["worktree"] == to_local,
+        "Choose the other checkout type for this thread"
+    );
+    let source =
+        PathBuf::from(answer(cwd, &["rev-parse", "--show-toplevel"])?.context("Not a repository")?);
+    let prefix = answer(cwd, &["rev-parse", "--show-prefix"])?.unwrap_or_default();
+    let head = answer(&source, &["rev-parse", "HEAD"])?.context("Repository has no commits")?;
+    let branch = current_branch(&source)?;
+    check_nested_repositories(&source)?;
+    let target = if to_local {
+        let target = PathBuf::from(params["workspace"].as_str().context("missing workspace")?);
+        ensure!(target.is_absolute(), "Workspace must be absolute");
+        let source_common = answer(
+            &source,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?;
+        let target_common = answer(
+            &target,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?;
+        ensure!(
+            source_common == target_common,
+            "Workspace belongs to another repository"
+        );
+        ensure!(
+            checked(run(&target, &["status", "--porcelain"])?)?.is_empty(),
+            "The local checkout has changes. Commit or stash them first."
+        );
+        target
+    } else {
+        create_worktree(worktrees_root, cwd, Some(&head), None)?
+            .context("Not a repository")?
+            .git_root
+    };
+    let target_branch = current_branch(&target)?;
+    let target_head = answer(&target, &["rev-parse", "HEAD"])?.context("Target has no commits")?;
+    let stash = stash_changes(&source)?;
+    let result = (|| -> Result<()> {
+        if to_local {
+            let requested = params["branch"]
+                .as_str()
+                .filter(|s| !s.trim().is_empty())
+                .or(branch.as_deref())
+                .context("Choose a branch name")?;
+            checked(run(&source, &["checkout", "--detach"])?)?;
+            if answer(
+                &target,
+                &["show-ref", "--verify", &format!("refs/heads/{requested}")],
+            )?
+            .is_some()
+            {
+                checked(run(&target, &["checkout", requested])?)?;
+                ensure!(
+                    answer(&target, &["rev-parse", "HEAD"])?.as_deref() == Some(head.as_str()),
+                    "The selected branch points to another commit"
+                );
+            } else {
+                checked(run(&target, &["checkout", "-b", requested, &head])?)?;
+            }
+        }
+        if !to_local || params["bringChanges"] == true {
+            apply_stash(&target, stash.as_deref())?;
+        } else {
+            apply_stash(&source, stash.as_deref())?;
+        }
+        if !to_local && let Some(thread) = params["conversationId"].as_str() {
+            set_owner_thread(&target, thread)?;
+        }
+        Ok(())
+    })();
+    let record = json!({"source": source, "target": target, "sourceBranch": branch,
+        "sourceHead": head, "targetBranch": target_branch, "targetHead": target_head,
+        "stash": stash, "cwd": target.join(prefix.trim_end_matches('/'))});
+    if let Err(error) = result {
+        rollback_move(&record).with_context(|| {
+            format!("Move failed: {error:#}; rollback failed; the stash is retained")
+        })?;
+        return Err(error);
+    }
+    Ok(record)
+}
+
+pub(in crate::host) fn rollback_move(params: &Value) -> Result<Value> {
+    let source = Path::new(params["source"].as_str().context("missing source")?);
+    let target = Path::new(params["target"].as_str().context("missing target")?);
+    ensure!(
+        source.is_absolute() && target.is_absolute(),
+        "Workspace must be absolute"
+    );
+    // Preserve a partial apply before switching back; never discard a user's files.
+    stash_changes(target)?;
+    let target_ref = params["targetBranch"]
+        .as_str()
+        .or(params["targetHead"].as_str())
+        .context("missing target revision")?;
+    checked(run(target, &["checkout", target_ref])?)?;
+    let source_ref = params["sourceBranch"]
+        .as_str()
+        .or(params["sourceHead"].as_str())
+        .context("missing source revision")?;
+    checked(run(source, &["checkout", source_ref])?)?;
+    apply_stash(source, params["stash"].as_str())?;
+    Ok(json!({"success": true}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn repository() -> Result<(tempfile::TempDir, PathBuf)> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("repo");
+        fs::create_dir(&root)?;
+        checked(run(&root, &["init", "-b", "main"])?)?;
+        checked(run(&root, &["config", "user.name", "Test"])?)?;
+        checked(run(&root, &["config", "user.email", "test@example.com"])?)?;
+        fs::write(root.join("file"), "original\n")?;
+        checked(run(&root, &["add", "."])?)?;
+        checked(run(&root, &["commit", "-m", "Initial"])?)?;
+        Ok((temp, root))
+    }
+
+    #[test]
+    fn moving_preserves_index_untracked_files_and_can_roll_back() -> Result<()> {
+        let (temp, root) = repository()?;
+        fs::write(root.join("file"), "staged\n")?;
+        checked(run(&root, &["add", "file"])?)?;
+        fs::write(root.join("file"), "unstaged\n")?;
+        fs::write(root.join("new"), "untracked\n")?;
+        let before = checked(run(&root, &["status", "--porcelain"])?)?;
+        let moved = move_thread(&json!({"cwd": root}), &temp.path().join("worktrees"))?;
+        let target = Path::new(moved["target"].as_str().unwrap());
+        assert_eq!(fs::read_to_string(target.join("file"))?, "unstaged\n");
+        assert_eq!(fs::read_to_string(target.join("new"))?, "untracked\n");
+        assert_eq!(checked(run(target, &["status", "--porcelain"])?)?, before);
+        assert!(checked(run(&root, &["status", "--porcelain"])?)?.is_empty());
+        rollback_move(&moved)?;
+        assert_eq!(checked(run(&root, &["status", "--porcelain"])?)?, before);
+        assert_eq!(fs::read_to_string(root.join("file"))?, "unstaged\n");
+        Ok(())
+    }
+
+    #[test]
+    fn handoff_refuses_dirty_local_checkout_without_moving_changes() -> Result<()> {
+        let (temp, root) = repository()?;
+        let worktree =
+            create_worktree(&temp.path().join("worktrees"), &root, Some("HEAD"), None)?.unwrap();
+        fs::write(root.join("file"), "local\n")?;
+        fs::write(worktree.git_root.join("file"), "worktree\n")?;
+        let result = move_thread(
+            &json!({
+                "cwd": worktree.git_root, "workspace": root, "branch": "feature",
+                "toLocal": true, "bringChanges": true,
+            }),
+            &temp.path().join("worktrees"),
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("local checkout has changes")
+        );
+        assert_eq!(fs::read_to_string(root.join("file"))?, "local\n");
+        assert_eq!(
+            fs::read_to_string(worktree.git_root.join("file"))?,
+            "worktree\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn handoff_moves_changes_to_selected_local_branch() -> Result<()> {
+        let (temp, root) = repository()?;
+        let managed = temp.path().join("worktrees");
+        let worktree = create_worktree(&managed, &root, Some("HEAD"), None)?.unwrap();
+        fs::write(worktree.git_root.join("file"), "staged\n")?;
+        checked(run(&worktree.git_root, &["add", "file"])?)?;
+        fs::write(worktree.git_root.join("new"), "untracked\n")?;
+        let before = checked(run(&worktree.git_root, &["status", "--porcelain"])?)?;
+        move_thread(
+            &json!({
+                "cwd": worktree.git_root, "workspace": root, "branch": "handoff",
+                "toLocal": true, "bringChanges": true,
+            }),
+            &managed,
+        )?;
+        assert_eq!(current_branch(&root)?.as_deref(), Some("handoff"));
+        assert_eq!(checked(run(&root, &["status", "--porcelain"])?)?, before);
+        assert_eq!(fs::read_to_string(root.join("new"))?, "untracked\n");
+        assert!(checked(run(&worktree.git_root, &["status", "--porcelain"])?)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn handoff_without_changes_leaves_the_worktree_draft_intact() -> Result<()> {
+        let (temp, root) = repository()?;
+        let managed = temp.path().join("worktrees");
+        let worktree = create_worktree(&managed, &root, Some("HEAD"), None)?.unwrap();
+        fs::write(worktree.git_root.join("file"), "draft\n")?;
+        fs::write(worktree.git_root.join("new"), "untracked\n")?;
+        move_thread(
+            &json!({
+                "cwd": worktree.git_root, "workspace": root, "branch": "handoff",
+                "toLocal": true, "bringChanges": false,
+            }),
+            &managed,
+        )?;
+        assert_eq!(
+            fs::read_to_string(worktree.git_root.join("file"))?,
+            "draft\n"
+        );
+        assert_eq!(
+            fs::read_to_string(worktree.git_root.join("new"))?,
+            "untracked\n"
+        );
+        assert!(checked(run(&root, &["status", "--porcelain"])?)?.is_empty());
+        Ok(())
+    }
 
     #[test]
     fn reservation_names_exclude_legacy_and_reserved_paths() {
