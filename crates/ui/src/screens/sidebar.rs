@@ -37,6 +37,7 @@ pub use chatgpt::{ChatGptChat, ModeChanged};
 pub use mode::{DEFAULT_MODE, MODES};
 pub use priority::{ActivityOpened, ArchiveActivity};
 
+pub mod projects;
 pub mod sections;
 
 /// `.sidebar-item`: `--radius-lg` (12.5 px) with `corner-shape: superellipse(1.5)`.
@@ -60,9 +61,13 @@ pub struct Project {
     pub new_chat_label: SharedString,
     /// The project's first local root path; the cwd of a chat started in it.
     pub root: Option<SharedString>,
+    /// Every root, primary first: what `Edit` prefills.
+    pub roots: Vec<SharedString>,
     pub worktree: bool,
     pub missing: bool,
     pub expanded: bool,
+    /// In the `pinned-project-ids` atom; pinned projects list first.
+    pub pinned: bool,
 }
 
 /// Thread name or preview, cut to 80 characters. Views supply their own empty-state label.
@@ -591,14 +596,30 @@ impl HomeSidebar {
                             .gap(px(8.))
                             .opacity(0.)
                             .group_hover(group.clone(), |style| style.opacity(1.))
-                            .child(
+                            .child({
+                                let id = project.id.to_string();
                                 div()
+                                    .id("project-actions")
                                     .size(px(20.))
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .child(icon("thread-chat-actions", 14., theme.text_tertiary)),
-                            )
+                                    .role(gpui::Role::Button)
+                                    .aria_label("Project actions")
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(
+                                        move |this, e: &gpui::ClickEvent, window, cx| {
+                                            cx.stop_propagation();
+                                            this.open_project_menu(
+                                                id.clone(),
+                                                e.position(),
+                                                window,
+                                                cx,
+                                            );
+                                        },
+                                    ))
+                                    .child(icon("thread-chat-actions", 14., theme.text_tertiary))
+                            })
                             .child(
                                 div()
                                     .id("project-new-chat")
@@ -632,6 +653,12 @@ impl HomeSidebar {
                     .role(gpui::Role::ListItem)
                     .aria_label(project.label.clone())
                     .child(content)
+                    .on_mouse_down(MouseButton::Right, {
+                        let id = project.id.to_string();
+                        cx.listener(move |this, e: &gpui::MouseDownEvent, window, cx| {
+                            this.open_project_menu(id.clone(), e.position, window, cx)
+                        })
+                    })
                     .when_some(selectable, |row, root| {
                         row.cursor_pointer().on_click(move |_, window, cx| {
                             window.dispatch_action(Box::new(SelectProject(root.to_string())), cx)

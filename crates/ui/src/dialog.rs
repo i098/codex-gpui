@@ -53,7 +53,11 @@ struct ModelAnnouncement {
 struct ArchiveSection {
     title: String,
     description: String,
-    running: bool,
+    /// The confirm button's label and width.
+    confirm: &'static str,
+    width: f32,
+    /// `Remove {project}?` rather than an archive.
+    remove: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,6 +193,8 @@ pub enum Outcome {
         name: String,
     },
     ArchiveSection(String),
+    /// `Remove project` in `Remove {project}?`.
+    RemoveProject(String),
     ScheduleTask {
         prompt: String,
         rrule: String,
@@ -1023,7 +1029,30 @@ impl Dialog {
             archive_section: Some(ArchiveSection {
                 title,
                 description,
-                running,
+                confirm: if running {
+                    "Stop and archive"
+                } else {
+                    "Archive all"
+                },
+                width: if running { 151. } else { 102. },
+                remove: false,
+            }),
+            ..Self::new(Kind::ArchiveSection, cx)
+        }
+    }
+
+    /// `Remove {label}?` from a local project's menu (`sidebarElectron.removeProject.dialog`).
+    pub fn remove_project(id: String, label: &str, cx: &mut Context<Self>) -> Self {
+        Self {
+            thread: id,
+            archive_section: Some(ArchiveSection {
+                title: format!("Remove {label}?"),
+                description: "This only removes the project from the app. Files on your \
+                    computer and existing chats won't be deleted."
+                    .into(),
+                confirm: "Remove project",
+                width: 133.,
+                remove: true,
             }),
             ..Self::new(Kind::ArchiveSection, cx)
         }
@@ -1048,17 +1077,7 @@ impl Dialog {
                     .justify_end()
                     .gap(px(12.))
                     .child(self.button(0, "Cancel", 80., t, cx))
-                    .child(self.button(
-                        1,
-                        if form.running {
-                            "Stop and archive"
-                        } else {
-                            "Archive all"
-                        },
-                        if form.running { 151. } else { 102. },
-                        t,
-                        cx,
-                    )),
+                    .child(self.button(1, form.confirm, form.width, t, cx)),
             )
     }
 
@@ -1502,13 +1521,7 @@ impl Dialog {
             (Kind::LogOut, 0) => "Cancel",
             (Kind::LogOut, _) => "Log out",
             (Kind::ArchiveSection, 0) => "Cancel",
-            (Kind::ArchiveSection, _) => {
-                if self.archive_section.as_ref().is_some_and(|f| f.running) {
-                    "Stop and archive"
-                } else {
-                    "Archive all"
-                }
-            }
+            (Kind::ArchiveSection, _) => self.archive_section.as_ref().map_or("", |f| f.confirm),
             (Kind::DiscardInstructions, 0) => "Keep editing",
             (Kind::DiscardInstructions, _) => "Discard changes",
             (Kind::DeleteMemories, 0) => "Cancel",
@@ -1693,7 +1706,13 @@ impl Dialog {
             (Kind::ScheduleTask, 0 | 4) => {}
             (Kind::FullAccess, 1) => cx.emit(Outcome::FullAccess),
             (Kind::LogOut, 1) => cx.emit(Outcome::LogOut),
-            (Kind::ArchiveSection, 1) => cx.emit(Outcome::ArchiveSection(self.thread.clone())),
+            (Kind::ArchiveSection, 1) => {
+                cx.emit(if self.archive_section.as_ref().is_some_and(|f| f.remove) {
+                    Outcome::RemoveProject(self.thread.clone())
+                } else {
+                    Outcome::ArchiveSection(self.thread.clone())
+                })
+            }
             (Kind::DiscardInstructions, 1) => cx.emit(Outcome::DiscardInstructions),
             (Kind::DeleteMemories, 1) => {
                 self.saving = true;

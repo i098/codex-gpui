@@ -3,7 +3,7 @@
 //! transcript link menu (`thread/menu.rs`): the recorded items, order, accelerators and
 //! submenus. `Pin` reads `Unpin` on a pinned row and `Mark as unread` reads `Mark as read` on
 //! an unread one [INFERENCE: only a plain row was recorded].
-//! Custom section Options uses AppKit's native menu on macOS.
+//! Custom section Options and the project row menu use AppKit's native menu on macOS.
 use super::*;
 use gpui::{Anchor, ElementId, FocusHandle, KeyDownEvent, Point, Role, anchored, deferred};
 
@@ -28,6 +28,7 @@ const WIDTH: f32 = 220.;
 pub(super) struct ThreadMenu {
     thread: String,
     section: Option<String>,
+    project: Option<String>,
     position: Point<Pixels>,
     /// The active top-level item; `sub` is its open submenu's active item.
     active: Option<usize>,
@@ -38,7 +39,7 @@ pub(super) struct ThreadMenu {
 
 impl ThreadMenu {
     pub(super) fn is_native(&self) -> bool {
-        cfg!(target_os = "macos") && self.section.is_some()
+        cfg!(target_os = "macos") && (self.section.is_some() || self.project.is_some())
     }
 }
 
@@ -317,6 +318,57 @@ const SECTION_ITEMS: [Item; 7] = [
     },
 ];
 
+const PIN_PROJECT: Item = Item {
+    id: "pin-project",
+    label: "Pin",
+    accelerator: None,
+    icon: Some(PIN_THREAD),
+    submenu: &[],
+};
+
+const UNPIN_PROJECT: Item = Item {
+    id: "unpin-project",
+    label: "Unpin",
+    ..PIN_PROJECT
+};
+
+/// The original's project menu (`Tbs`) for a local project without sections or worktrees:
+/// `Pin`/`Unpin`, `Edit`, the chat actions, then `Remove project`.
+const fn project_items(pin: Item) -> [Item; 7] {
+    [
+        pin,
+        Item {
+            id: "edit-project",
+            label: "Edit",
+            ..SECTION_ITEMS[0]
+        },
+        Item {
+            id: "project-chat-actions-separator",
+            ..SECTION_ITEMS[1]
+        },
+        Item {
+            id: "mark-project-threads-read",
+            ..SECTION_ITEMS[2]
+        },
+        Item {
+            id: "archive-project-threads",
+            ..SECTION_ITEMS[3]
+        },
+        Item {
+            id: "project-remove-separator",
+            ..SECTION_ITEMS[4]
+        },
+        Item {
+            id: "remove-project",
+            label: "Remove project",
+            ..SECTION_ITEMS[6]
+        },
+    ]
+}
+
+const PROJECT_ITEMS: [Item; 7] = project_items(PIN_PROJECT);
+const PINNED_PROJECT_ITEMS: [Item; 7] = project_items(UNPIN_PROJECT);
+
 impl HomeSidebar {
     pub(super) fn section_menu_open(&self, id: &str) -> bool {
         self.menu
@@ -325,10 +377,21 @@ impl HomeSidebar {
     }
 
     fn menu_items(&self) -> &'static [Item] {
-        if self.menu.as_ref().is_some_and(|m| m.section.is_some()) {
-            &SECTION_ITEMS
-        } else {
-            &ITEMS
+        let Some(menu) = &self.menu else {
+            return &ITEMS;
+        };
+        match &menu.project {
+            Some(id)
+                if self
+                    .projects
+                    .iter()
+                    .any(|p| p.pinned && p.id.as_ref() == id) =>
+            {
+                &PINNED_PROJECT_ITEMS
+            }
+            Some(_) => &PROJECT_ITEMS,
+            None if menu.section.is_some() => &SECTION_ITEMS,
+            None => &ITEMS,
         }
     }
 
@@ -354,17 +417,42 @@ impl HomeSidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.open_group_menu(Some(section), None, position, window, cx);
+    }
+
+    /// The project row's `…` button or right-click.
+    pub(super) fn open_project_menu(
+        &mut self,
+        project: String,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_group_menu(None, Some(project), position, window, cx);
+    }
+
+    fn open_group_menu(
+        &mut self,
+        section: Option<String>,
+        project: Option<String>,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         #[cfg(not(target_os = "macos"))]
         {
             self.open_menu(String::new(), position, window, cx);
-            self.menu.as_mut().unwrap().section = Some(section);
+            let menu = self.menu.as_mut().unwrap();
+            menu.section = section;
+            menu.project = project;
         }
         #[cfg(target_os = "macos")]
         {
             let return_focus = window.focused(cx);
             self.menu = Some(ThreadMenu {
                 thread: String::new(),
-                section: Some(section),
+                section,
+                project,
                 position,
                 active: None,
                 sub: None,
@@ -372,26 +460,26 @@ impl HomeSidebar {
                 return_focus,
             });
             self.native_menu_snapshot = None;
-            let enabled: [bool; SECTION_ITEMS.len()] =
-                std::array::from_fn(|i| self.item_enabled(SECTION_ITEMS[i].id));
+            let items = self.menu_items();
+            let enabled: Vec<bool> = items.iter().map(|i| self.item_enabled(i.id)).collect();
             let dark = cx.theme().appearance == Appearance::Dark;
             let this = cx.weak_entity();
             cx.stop_propagation();
             cx.notify();
             // AppKit runs a nested event loop; release the sidebar borrow before tracking.
             window.defer(cx, move |window, cx| {
-                let result = native::popup(&SECTION_ITEMS, &enabled, position, dark, window);
+                let result = native::popup(items, &enabled, position, dark, window);
                 this.update(cx, |this, cx| match result {
                     Ok(result) => {
                         this.native_menu_snapshot = Some(result.snapshot);
                         if let Some(index) = result.selected {
-                            this.activate(SECTION_ITEMS[index].id, window, cx);
+                            this.activate(items[index].id, window, cx);
                         } else {
                             this.close_menu(window, cx);
                         }
                     }
                     Err(error) => {
-                        eprintln!("codex-gpui: section menu: {error:#}");
+                        eprintln!("codex-gpui: sidebar menu: {error:#}");
                         this.close_menu(window, cx);
                     }
                 })
@@ -501,6 +589,7 @@ impl HomeSidebar {
         self.menu = Some(ThreadMenu {
             thread,
             section: None,
+            project: None,
             position,
             active: None,
             sub: None,
@@ -586,6 +675,20 @@ impl HomeSidebar {
                 _ => return,
             };
             window.dispatch_action(Box::new(SectionAction { section, command }), cx);
+            return;
+        }
+        if let Some(project) = menu.project {
+            use super::projects::{ProjectAction, ProjectCommand};
+            let command = match id {
+                "pin-project" => ProjectCommand::Pin(true),
+                "unpin-project" => ProjectCommand::Pin(false),
+                "edit-project" => ProjectCommand::Edit,
+                "mark-project-threads-read" => ProjectCommand::MarkRead,
+                "archive-project-threads" => ProjectCommand::Archive,
+                "remove-project" => ProjectCommand::Remove,
+                _ => return,
+            };
+            window.dispatch_action(Box::new(ProjectAction { project, command }), cx);
             return;
         }
         let thread = menu.thread;
@@ -731,10 +834,10 @@ impl HomeSidebar {
                 self.menu_items().iter().map(Row::Item).collect(),
                 menu.active,
                 |this, index, cx| {
+                    let sub = !this.menu_items()[index].submenu.is_empty();
                     if let Some(menu) = &mut this.menu {
                         menu.active = Some(index);
-                        menu.sub = (menu.section.is_none() && !ITEMS[index].submenu.is_empty())
-                            .then_some(None);
+                        menu.sub = sub.then_some(None);
                         cx.notify();
                     }
                 },
@@ -742,7 +845,9 @@ impl HomeSidebar {
             )
             .id("thread-row-menu")
             .role(Role::Menu)
-            .aria_label(if menu.section.is_some() {
+            .aria_label(if menu.project.is_some() {
+                "Project actions"
+            } else if menu.section.is_some() {
                 "Section options"
             } else {
                 "Chat actions"
