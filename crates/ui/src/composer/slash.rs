@@ -568,7 +568,7 @@ impl Composer {
         };
         self.finish_command(window, cx);
         if matches!(action, SlashCommand::Fast) {
-            self.fast = true;
+            self.fast = !self.fast;
         }
         cx.emit(action);
         cx.notify();

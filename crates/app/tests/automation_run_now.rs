@@ -1864,7 +1864,7 @@ mod app_tools {
             root.thread()
                 .unwrap()
                 .read(cx)
-                .activity_labels("proposal-turn")
+                .activity_labels("proposal-turn", cx)
                 .is_some_and(|labels| labels.is_empty())
         }));
         if let Ok(out) = std::env::var("CGX_APP_TOOLS_PROOF") {

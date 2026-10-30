@@ -50,7 +50,9 @@ fn selected_host_images_keep_the_draft_after_a_missing_file() -> Result<()> {
         fx.sent()
             .is_ok_and(|rows| rows.iter().any(|row| row["method"] == "fs/readFile"))
     })?;
-    fx.advance(std::time::Duration::from_millis(100))?;
+    fx.wait("selected host image attached", |fx| {
+        composer.read_with(&fx.cx, |composer, _| composer.upload_status().is_none())
+    })?;
     fx.capture_evidence("CGX_IMAGE_EVIDENCE", "selected-host-image")?;
 
     composer.update(&mut fx.cx, |composer, cx| {
@@ -64,7 +66,11 @@ fn selected_host_images_keep_the_draft_after_a_missing_file() -> Result<()> {
                 == 2
         })
     })?;
-    fx.advance(std::time::Duration::from_millis(100))?;
+    fx.wait("missing image rejected", |fx| {
+        composer.read_with(&fx.cx, |composer, _| {
+            composer.upload_status() == Some("Unable to upload file")
+        })
+    })?;
     fx.keys("enter")?;
     ensure!(
         fx.composer_text()? == "Describe the selected host image.",
@@ -86,7 +92,9 @@ fn selected_host_images_keep_the_draft_after_a_missing_file() -> Result<()> {
                 == 3
         })
     })?;
-    fx.advance(std::time::Duration::from_millis(100))?;
+    fx.wait("retry image attached", |fx| {
+        composer.read_with(&fx.cx, |composer, _| composer.upload_status().is_none())
+    })?;
     fx.keys("enter")?;
     fx.wait_thread(GREETING)?;
     let mut sent: Vec<Value> = Vec::new();

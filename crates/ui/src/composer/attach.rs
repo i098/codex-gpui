@@ -74,7 +74,7 @@ impl Attachment {
 }
 
 /// `$CODEX_HOME` (default `~/.codex`).
-pub(crate) fn codex_home() -> io::Result<PathBuf> {
+fn codex_home() -> io::Result<PathBuf> {
     std::env::var_os("CODEX_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
@@ -404,7 +404,7 @@ impl Composer {
 
     /// The status line above the editor: `Files uploading…` while a paste saves, else the
     /// upload failure (`composer.submit.waitForFileUploads`, `composer.fileAttachment.uploadError`).
-    pub(super) fn upload_status(&self) -> Option<&'static str> {
+    pub fn upload_status(&self) -> Option<&'static str> {
         if self.pending_attachments > 0 {
             Some("Files uploading…")
         } else {
