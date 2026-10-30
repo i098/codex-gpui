@@ -315,6 +315,7 @@ enum SubAction {
     Model(usize),
     Effort(String),
     Fork,
+    ForkWorktree,
     Project(String),
     Resume(String),
 }
