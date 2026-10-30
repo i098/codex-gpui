@@ -39,6 +39,7 @@ impl Root {
             if matches!(method.as_str(), "app/list/updated" | "skills/changed"))
             && let Some(page) = self.plugins_page.clone()
             && let Route::Plugins(route) = &self.state.route
+            && should_reload_plugins(&page.read(cx).data.plugins)
         {
             self.load_plugins(page, route.clone(), cx);
         }
@@ -755,6 +756,10 @@ fn app_connect_url(app: &Value) -> Result<String> {
     Ok(url.into())
 }
 
+fn should_reload_plugins(plugins: &Resource<Vec<plugins::Marketplace>>) -> bool {
+    !matches!(plugins, Resource::Loading)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -780,6 +785,11 @@ mod tests {
             url::form_urlencoded::parse(fragment.as_bytes()).collect();
         assert_eq!(params["connector"], "a&b");
         assert_eq!(params["product-sku"], "CODEX");
+    }
+    #[test]
+    fn app_list_updated_during_loading_does_not_reload_plugins() {
+        assert!(!should_reload_plugins(&Resource::Loading));
+        assert!(should_reload_plugins(&Resource::Ready(Vec::new())));
     }
 
     #[test]
