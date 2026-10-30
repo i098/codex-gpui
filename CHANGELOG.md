@@ -18,6 +18,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Add `/memories` and its `Chat memories` dialog while the `memories` feature is on: `Generate memories` sets the open chat's memory mode with `thread/memoryMode/set`, and on Home both switches apply to the next chat.
 - Show `$…$` and `$$…$$` math in agent answers as Unicode math text, with display math centered on its own line; copying a selection keeps the TeX source.
 - Self-update the Linux AppImage from a signed `latest.json` release manifest: check every 6 hours, verify SHA-256 and Ed25519, then swap the file and relaunch on install.
+- Bridge MCP App widget `tools/call` and event subscriptions to `mcpServer/tool/call` and `mcpServer/event/stream/*`, and route stream notifications back to the widget.
 - Open long threads with their newest turns, page older ones with `Load earlier messages`, and make find call `thread/searchOccurrences` to page in matching turns.
 - Add named permission profiles, per-category approval settings, writable folder selection, automatic review notices, and `/approve` for one denied retry.
 - Restrict human-only approval cards to the server's offered one-time decisions.
