@@ -239,7 +239,10 @@ fn fork_from_here_uses_the_selected_server_boundary() -> Result<()> {
             .id
             .clone()
     });
-    fx.click(fx.at("thread", "Fork chat from here")?)?;
+    // More actions, the fourth button after Copy, then its focused `Branch in new chat`.
+    let copy = fx.at("thread", "Copy")?;
+    fx.click((copy.0 + 84., copy.1))?;
+    fx.keys("enter")?;
     fx.wait_thread("bounded-fork")?;
     let forks = requests(&mut fx, "thread/fork")?;
     ensure!(forks[0]["params"] == json!({"threadId": SUBTRACT, "lastTurnId": turn}));
