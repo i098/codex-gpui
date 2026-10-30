@@ -154,6 +154,10 @@ pub struct ThreadView {
     git_repository: Option<Result<crate::dialog::CommitRepository, String>>,
     git_phase: Option<&'static str>,
     git_actions: Option<(gpui::FocusHandle, Option<usize>)>,
+    /// The open More actions menu under a turn: its turn id and focus.
+    turn_menu: Option<(String, gpui::FocusHandle)>,
+    /// The pointer is over a More actions trigger, whose click toggles the menu itself.
+    turn_menu_trigger_hovered: bool,
     git_trigger: Option<gpui::FocusHandle>,
     terminal_item: Option<String>,
     pub terminals_stopping: bool,
@@ -168,6 +172,8 @@ pub struct ThreadView {
     embedded: bool,
     _tick: Option<Task<()>>,
     running_since: HashMap<String, Instant>,
+    /// A running turn's worked seconds, frozen when its final answer started streaming.
+    answer_secs: HashMap<String, i64>,
     /// Reasoning items seen starting, and the seconds each took once completed. The protocol
     /// carries no per-item duration; a loaded history has none, and the original draws no
     /// header for such an item.
@@ -638,6 +644,8 @@ impl ThreadView {
             git_repository: None,
             git_phase: None,
             git_actions: None,
+            turn_menu: None,
+            turn_menu_trigger_hovered: false,
             git_trigger: None,
             terminal_item: None,
             terminals_stopping: false,
@@ -658,6 +666,7 @@ impl ThreadView {
             embedded: false,
             _tick: None,
             running_since: HashMap::new(),
+            answer_secs: HashMap::new(),
             reasoning_since: HashMap::new(),
             reasoning_secs: HashMap::new(),
             stream_fades: HashMap::new(),
@@ -1577,6 +1586,7 @@ impl ThreadView {
                         .or_insert_with(|| cx.background_executor().now());
                 } else {
                     self.running_since.remove(&n.turn.id);
+                    self.answer_secs.remove(&n.turn.id);
                 }
                 match self.turns.iter_mut().find(|t| t.id == n.turn.id) {
                     Some(turn) => {
@@ -1757,10 +1767,11 @@ impl ThreadView {
                     return;
                 };
                 match self.item_mut(&n.item_id) {
-                    Some(ThreadItem::AgentMessage { text, .. }) => {
+                    Some(ThreadItem::AgentMessage { text, phase, .. }) => {
                         let start = text.len();
                         text.push_str(&n.delta);
                         let end = text.len();
+                        let answer = start == 0 && phase.as_deref() == Some("final_answer");
                         if start != end && !cx.reduce_motion() {
                             self.stream_fades
                                 .entry(n.item_id)
@@ -1770,6 +1781,14 @@ impl ThreadView {
                                     started_at: cx.background_executor().now(),
                                     alpha: 0.,
                                 });
+                        }
+                        // The original's `Worked for` stops at the final answer's first text.
+                        if answer && end > 0 {
+                            let now = cx.background_executor().now();
+                            if let Some(turn) = self.turns.iter().find(|t| t.id == n.turn_id) {
+                                let secs = self.running_seconds(turn, now);
+                                self.answer_secs.entry(n.turn_id).or_insert(secs);
+                            }
                         }
                     }
                     Some(ThreadItem::CommandExecution {
@@ -1864,8 +1883,8 @@ impl ThreadView {
                 })
                 .clone()
         };
-        let [undo, view, copy, fork] = ["undo", "view", "copy", "fork"].map(&mut button_focus);
-        let mut focus = TurnFocus::new(self.thread_id.clone(), undo, view, copy, fork, window, cx);
+        let [undo, view, copy, more] = ["undo", "view", "copy", "more"].map(&mut button_focus);
+        let mut focus = TurnFocus::new(self.thread_id.clone(), undo, view, copy, more, window, cx);
         focus.reverted = self.reverted_turns.contains(&turn.id);
         focus.patch_pending = self.patch_pending;
         let user = turn.items.iter().find_map(|i| match i {
@@ -1936,7 +1955,18 @@ impl ThreadView {
                     self.fades(item),
                 ));
             }
-            let secs = turn.duration_ms.unwrap_or(0) / 1000;
+            // The final answer folds the work while it still streams, as `Worked for` the time
+            // until the answer started.
+            let running = turn.status == TurnStatus::InProgress;
+            let secs = if running {
+                self.answer_secs
+                    .get(&turn.id)
+                    .copied()
+                    .unwrap_or_else(|| self.running_seconds(turn, cx.background_executor().now()))
+            } else {
+                turn.duration_ms.unwrap_or(0) / 1000
+            };
+            let label = format!("Worked for {}", duration(secs));
             let open = self.expanded.contains(&turn.id)
                 || self.find.as_ref().is_some_and(|find| {
                     turn.items[..turn.items.len() - 1].iter().any(|item| {
@@ -1970,35 +2000,30 @@ impl ThreadView {
                 )
             };
             col = col.child(div().h(px(16.))).child(
-                disclosure(
-                    format!("Worked for {}", duration(secs)),
-                    Some(angle),
-                    window,
-                    t,
-                )
-                .id(group.clone())
-                // `select-none` in the original: a press here leaves the text selection.
-                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |view, _, _, cx| {
-                    let open = !view.expanded.remove(&id);
-                    if open {
-                        view.expanded.insert(id.clone());
-                    }
-                    let instant = motion::reduced(cx);
-                    state.update(cx, |(epoch, d), cx| {
-                        let now = cx.background_executor().now() - *epoch;
-                        let target = open as u8 as f32;
-                        d.chevron
-                            .transition(target, now, motion::BASIC, motion::EASE_IN_OUT);
-                        let (duration, ease) = match (instant, open) {
-                            (true, _) => (Duration::ZERO, motion::EASE_ENTER),
-                            (false, true) => (motion::RELAXED, motion::EASE_ENTER),
-                            (false, false) => (motion::BASIC, motion::EASE_ENTER_SNAPPY),
-                        };
-                        d.content.transition(target, now, duration, ease);
-                    });
-                    cx.notify();
-                })),
+                disclosure(label, Some(angle), window, t)
+                    .id(group.clone())
+                    // `select-none` in the original: a press here leaves the text selection.
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |view, _, _, cx| {
+                        let open = !view.expanded.remove(&id);
+                        if open {
+                            view.expanded.insert(id.clone());
+                        }
+                        let instant = motion::reduced(cx);
+                        state.update(cx, |(epoch, d), cx| {
+                            let now = cx.background_executor().now() - *epoch;
+                            let target = open as u8 as f32;
+                            d.chevron
+                                .transition(target, now, motion::BASIC, motion::EASE_IN_OUT);
+                            let (duration, ease) = match (instant, open) {
+                                (true, _) => (Duration::ZERO, motion::EASE_ENTER),
+                                (false, true) => (motion::RELAXED, motion::EASE_ENTER),
+                                (false, false) => (motion::BASIC, motion::EASE_ENTER_SNAPPY),
+                            };
+                            d.content.transition(target, now, duration, ease);
+                        });
+                        cx.notify();
+                    })),
             );
             if progress > 0. {
                 let natural = height.get();
@@ -2031,12 +2056,27 @@ impl ThreadView {
                 self.find_paint(item).as_ref(),
                 self.fades(item),
             ));
+            if running {
+                return col;
+            }
             if let Some(card) = diff_card(&turn.id, &turn.items, &focus, window, t, cx) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
             }
+            let menu = self
+                .turn_menu
+                .as_ref()
+                .filter(|(id, _)| *id == turn.id)
+                .map(|_| self.turn_menu_popup(turn.started_at, cx));
+            let id = turn.id.clone();
+            let toggle = cx.listener(move |view, _: &gpui::ClickEvent, window, cx| {
+                view.toggle_turn_menu(&id, window, cx)
+            });
+            let hover = cx.listener(|view, hovered: &bool, _, _| {
+                view.turn_menu_trigger_hovered = *hovered;
+            });
             return col.when(!self.embedded, |col| {
                 col.child(action_row(
-                    last, &group, &turn.id, answer, sent_at, &focus, t,
+                    last, &group, answer, sent_at, menu, toggle, hover, &focus, t,
                 ))
             });
         }
@@ -2636,14 +2676,19 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
     }
 }
 
-/// A finished turn's items before its final answer, and that answer as `(item id, text)`:
-/// the work its `Worked for` disclosure hides. A plan-mode turn's answer is its final plan. A
-/// running turn is all work.
+/// A turn's items before its final answer, and that answer as `(item id, text)`: the work its
+/// `Worked for` disclosure hides. A finished turn's answer is its last agent message or plan. A
+/// running turn has one only once its `final_answer` message has text, as in the original
+/// (`hasFinalAssistantStarted`): its interim commentary then folds while the answer streams.
 fn work(turn: &Turn) -> (&[ThreadItem], Option<(&str, &str)>) {
+    let running = turn.status == TurnStatus::InProgress;
     match turn.items.last() {
-        Some(ThreadItem::AgentMessage { id, text, .. } | ThreadItem::Plan { id, text, .. })
-            if turn.status != TurnStatus::InProgress =>
-        {
+        Some(ThreadItem::AgentMessage {
+            id, text, phase, ..
+        }) if !running || (phase.as_deref() == Some("final_answer") && !text.trim().is_empty()) => {
+            (&turn.items[..turn.items.len() - 1], Some((id, text)))
+        }
+        Some(ThreadItem::Plan { id, text }) if !running => {
             (&turn.items[..turn.items.len() - 1], Some((id, text)))
         }
         _ => (&turn.items, None),
@@ -3000,6 +3045,32 @@ mod tests {
         });
     }
 
+    /// The original folds a running turn's commentary once its `final_answer` has text.
+    #[test]
+    fn running_turn_folds_work_once_the_final_answer_streams() {
+        let turn = |answer: serde_json::Value| -> Turn {
+            serde_json::from_value(serde_json::json!({"id": "t", "status": "inProgress", "items": [
+                {"type": "agentMessage", "id": "c", "phase": "commentary", "text": "I'll load the rules."},
+                answer,
+            ]}))
+            .unwrap()
+        };
+        let interim = turn(serde_json::json!(
+            {"type": "agentMessage", "id": "c2", "phase": "commentary", "text": "Reading."}
+        ));
+        assert!(work(&interim).1.is_none());
+        let started = turn(serde_json::json!(
+            {"type": "agentMessage", "id": "a", "phase": "final_answer", "text": ""}
+        ));
+        assert!(work(&started).1.is_none());
+        let streaming = turn(serde_json::json!(
+            {"type": "agentMessage", "id": "a", "phase": "final_answer", "text": "Done"}
+        ));
+        let (hidden, answer) = work(&streaming);
+        assert_eq!(answer, Some(("a", "Done")));
+        assert_eq!(hidden.len(), 1);
+    }
+
     #[gpui::test]
     fn live_reasoning_gets_a_toggleable_thought_row(cx: &mut gpui::TestAppContext) {
         let thread: Thread = serde_json::from_value(serde_json::json!({
@@ -3250,9 +3321,35 @@ mod tests {
             );
             assert_eq!(view.turns[0].started_at, None);
         });
+        // `Worked for` stops when the final answer's first text arrives.
+        let item = |method: &str, params: serde_json::Value| Event::Notification {
+            method: method.into(),
+            params,
+        };
+        view.update(cx, |view, cx| {
+            view.apply(
+                &item(
+                    "item/started",
+                    serde_json::json!({"threadId": "timing", "turnId": "turn", "item": {
+                        "type": "agentMessage", "id": "answer", "text": "",
+                        "phase": "final_answer",
+                    }}),
+                ),
+                cx,
+            );
+            let delta = item(
+                "item/agentMessage/delta",
+                serde_json::json!({"threadId": "timing", "turnId": "turn",
+                    "itemId": "answer", "delta": "Done"}),
+            );
+            view.apply(&delta, cx);
+        });
+        cx.executor().advance_clock(Duration::from_secs(5));
+        view.read_with(cx, |view, _| assert_eq!(view.answer_secs["turn"], 1));
         view.update(cx, |view, cx| view.apply(&event("completed"), cx));
         view.read_with(cx, |view, _| {
-            assert!(!view.running_since.contains_key("turn"))
+            assert!(!view.running_since.contains_key("turn"));
+            assert!(!view.answer_secs.contains_key("turn"));
         });
     }
 
