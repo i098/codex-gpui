@@ -2249,6 +2249,49 @@ impl Root {
         .detach();
     }
 
+    fn open_handoff(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.git_busy.is_some() || self.has_dialog() {
+            return;
+        }
+        let Some(thread) = self.thread.clone() else {
+            return;
+        };
+        let cwd = thread.read(cx).cwd().to_owned();
+        let host = self.host.clone();
+        let read = cx.background_spawn(async move {
+            let params = json!({"cwd": cwd});
+            let info = git_call(&*host, "thread-worktree-info", params.clone())?;
+            anyhow::ensure!(info["worktree"] == true, "This thread is already local");
+            let status = git_call(&*host, "git-commit-status", params)?;
+            Ok::<_, anyhow::Error>((
+                info["localRoot"].as_str().unwrap_or_default().to_owned(),
+                status["branch"].as_str().unwrap_or_default().to_owned(),
+                host.projects()?
+                    .into_iter()
+                    .filter_map(|project| project.root.map(|root| root.to_string()))
+                    .collect(),
+            ))
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = read.await;
+            this.update_in(cx, |this, window, cx| {
+                if this.thread.as_ref() != Some(&thread) {
+                    return;
+                }
+                match result {
+                    Ok((workspace, branch, workspaces)) => {
+                        let dialog =
+                            cx.new(|cx| Dialog::handoff(workspace, branch, workspaces, cx));
+                        this.show_dialog(dialog, window, cx);
+                    }
+                    Err(error) => this.toast(Toast::danger(error.to_string()), cx),
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     fn open_git_form(&mut self, kind: DialogKind, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.thread.clone() else {
             return;
@@ -3716,6 +3759,7 @@ impl Root {
                 | DialogKind::Branches
                 | DialogKind::CreateBranch
                 | DialogKind::CreatePr
+                | DialogKind::Handoff
         );
         if git_dialog
             && dialog.read(cx).kind() != DialogKind::Branches
@@ -3758,6 +3802,10 @@ impl Root {
             }
             if let DialogOutcome::CreatePr { title, body, base, draft, commit_changes, open_browser } = outcome {
                 this.create_pr(dialog.clone(), json!({"title": title, "body": body, "base": base, "draft": draft, "commitChanges": commit_changes}), *open_browser, window, cx);
+                return;
+            }
+            if let DialogOutcome::Handoff { workspace, branch, bring_changes } = outcome {
+                this.move_thread_checkout(Some((workspace.clone(), branch.clone(), *bring_changes)), false, window, cx);
                 return;
             }
             if let DialogOutcome::CheckoutBranch { name, create } = outcome {
@@ -3898,6 +3946,7 @@ impl Root {
                 | DialogOutcome::CheckoutBranch { .. }
                 | DialogOutcome::CommitBeforeCheckout
                 | DialogOutcome::CreatePr { .. }
+                | DialogOutcome::Handoff { .. }
                 | DialogOutcome::DeleteMemories
                 | DialogOutcome::WritingConnect(_)
                 | DialogOutcome::WritingRetry
@@ -4486,6 +4535,7 @@ impl Root {
                 GitAction::SwitchBranch => this.open_git_form(DialogKind::Branches, window, cx),
                 GitAction::CreatePr => this.open_create_pr(window, cx),
                 GitAction::MoveToWorktree => this.move_thread_checkout(None, false, window, cx),
+                GitAction::HandOff => this.open_handoff(window, cx),
                 GitAction::ViewPr
                 | GitAction::CopyPr
                 | GitAction::AddPrToChat
