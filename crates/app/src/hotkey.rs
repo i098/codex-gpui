@@ -558,19 +558,14 @@ pub(crate) fn projects(
     projects: &[ui::screens::sidebar::Project],
     cx: &mut Context<Root>,
 ) {
-    let choices: Vec<_> = projects
+    let Some(popout) = &root.popout else { return };
+    let controls = popout.controls.clone();
+    let mut options = controls.read(cx).options().clone();
+    options.projects = projects
         .iter()
         .filter(|project| !project.missing)
         .filter_map(|project| Some((project.label.clone(), project.root.as_ref()?.to_string())))
         .collect();
-    root.home.update(cx, |home, cx| {
-        home.projects = choices.clone();
-        cx.notify();
-    });
-    let Some(popout) = &root.popout else { return };
-    let controls = popout.controls.clone();
-    let mut options = controls.read(cx).options().clone();
-    options.projects = choices;
     controls.update(cx, |controls, cx| controls.update_options(options, cx));
     configure_composer(root, cx);
 }
@@ -601,7 +596,6 @@ pub(crate) fn refresh_home(root: &mut Root, cx: &mut Context<Root>) {
         location.environments.clear();
         location.environment = None;
         location.cloud_environment = None;
-        home.project_root = selected.clone();
         cx.notify();
     });
     let host = root.host.clone();

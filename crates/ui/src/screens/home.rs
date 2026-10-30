@@ -6,11 +6,10 @@ use crate::composer::{Composer, label, pill};
 use crate::{Shell, focus, icon::icon, rounded_clip, text};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Corners, Div, Entity,
-    Focusable as _, Global, Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton,
-    ParentElement, Pixels, Render, ScrollHandle, SharedString, Stateful,
-    StatefulInteractiveElement as _, Styled, Window, actions, anchored, canvas, deferred, div,
-    point, px, relative,
+    AnyView, AnyWindowHandle, App, AppContext as _, Bounds, Context, Corners, Div, Entity, Global,
+    Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels,
+    Render, ScrollHandle, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Window,
+    actions, anchored, canvas, deferred, div, point, px, relative,
 };
 use theme::{ActiveTheme as _, Theme};
 
@@ -29,7 +28,6 @@ actions!(
     home,
     [
         OpenFolder,
-        ClearProject,
         /// Account access error page: read the account again.
         ReloadAccount,
         /// Account access error page: open the `Log out?` dialog.
@@ -97,7 +95,6 @@ pub struct LocationMenu {
 /// The utility bar's dropdowns besides `Work in`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Picker {
-    Project,
     Branch,
     Environment,
 }
@@ -136,15 +133,9 @@ pub struct HomeMain {
     pub suggestions_loading: bool,
     /// The ChatGPT or Work headline; `None` shows the Codex hero.
     pub headline: Option<&'static str>,
-    /// `Choose project` rows `(name, root)` and the selected root.
-    pub projects: Vec<(SharedString, String)>,
-    pub project_root: Option<String>,
     pub picker: Option<Picker>,
-    project_search: Entity<Composer>,
-    /// Where each [`Picker`] trigger, and the hero title, were last laid out.
-    picker_bounds: [Bounds<Pixels>; 3],
-    hero_bounds: Bounds<Pixels>,
-    picker_from_hero: bool,
+    /// Where each [`Picker`] trigger was last laid out.
+    picker_bounds: [Bounds<Pixels>; 2],
     /// `account/read` failed: Home shows `We couldn’t load your account` instead.
     pub account_error: bool,
 }
@@ -152,17 +143,11 @@ pub struct HomeMain {
 impl HomeMain {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let composer = fixture_composer(window, cx, Composer::home);
-        Self::with_composer(composer, None, cx)
+        Self::with_composer(composer, None)
     }
 
     /// Home around an existing `composer`, titled with `project`.
-    pub fn with_composer(
-        composer: Entity<Composer>,
-        project: Option<SharedString>,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let project_search = cx.new(|cx| Composer::search_field("Search projects", cx));
-        cx.observe(&project_search, |_, _, cx| cx.notify()).detach();
+    pub fn with_composer(composer: Entity<Composer>, project: Option<SharedString>) -> Self {
         Self {
             composer,
             project,
@@ -172,53 +157,17 @@ impl HomeMain {
             suggestions: Vec::new(),
             suggestions_loading: false,
             headline: None,
-            projects: Vec::new(),
-            project_root: None,
             picker: None,
-            project_search,
             picker_bounds: Default::default(),
-            hero_bounds: Bounds::default(),
-            picker_from_hero: false,
             account_error: false,
         }
     }
 
     /// Opens `picker` (closing any other) or closes it when it is already open.
-    pub fn toggle_picker(
-        &mut self,
-        picker: Picker,
-        from_hero: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn toggle_picker(&mut self, picker: Picker, cx: &mut Context<Self>) {
         self.location.open = false;
-        if self.picker == Some(picker) && self.picker_from_hero == from_hero {
-            self.picker = None;
-        } else {
-            self.picker = Some(picker);
-            self.picker_from_hero = from_hero;
-            if picker == Picker::Project {
-                self.project_search
-                    .update(cx, |search, cx| search.set_text("", cx));
-                window.focus(&self.project_search.focus_handle(cx), cx);
-            }
-        }
+        self.picker = (self.picker != Some(picker)).then_some(picker);
         cx.notify();
-    }
-
-    /// Projects whose name contains the search text, ignoring case.
-    pub fn matching_projects(&self, cx: &App) -> Vec<(SharedString, String)> {
-        let query = self
-            .project_search
-            .read(cx)
-            .field_text()
-            .trim()
-            .to_lowercase();
-        self.projects
-            .iter()
-            .filter(|(name, _)| name.to_lowercase().contains(&query))
-            .cloned()
-            .collect()
     }
 }
 
@@ -492,32 +441,11 @@ pub fn build(window: &mut Window, cx: &mut App) -> AnyView {
     shell(main, cx)
 }
 
-/// Opens or closes `picker` from a click or `Enter`/`Space` on its trigger.
-fn picker_trigger(
-    owner: &Entity<HomeMain>,
-    picker: Picker,
-    from_hero: bool,
-) -> (
-    impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-    impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
-) {
-    let click_owner = owner.clone();
-    let key_owner = owner.clone();
-    (
-        move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
-            click_owner.update(cx, |main, cx| {
-                main.toggle_picker(picker, from_hero, window, cx)
-            })
-        },
-        move |event: &KeyDownEvent, window: &mut Window, cx: &mut App| {
-            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                key_owner.update(cx, |main, cx| {
-                    main.toggle_picker(picker, from_hero, window, cx)
-                });
-                cx.stop_propagation();
-            }
-        },
-    )
+fn open_folder_key(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {
+    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+        window.dispatch_action(Box::new(OpenFolder), cx);
+        cx.stop_propagation();
+    }
 }
 
 /// `Choose project` / `This computer` chip of the utility bar. The pill is `overflow: hidden`:
@@ -545,6 +473,8 @@ fn chip(
         chip.role(gpui::Role::Button)
             .font_features(PROJECT_TOOLTIP_FEATURES.clone())
             .aria_label("Choose project")
+            .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenFolder), cx))
+            .on_key_down(open_folder_key)
     })
     .child(
         pill(id, t)
@@ -608,13 +538,11 @@ fn step_enabled(enabled: [bool; 4], from: usize, step: isize) -> usize {
         .unwrap_or(from)
 }
 
-/// A menu row: label, leading icon, checked, and what a click does (`None`: disabled).
-type Row = (
-    SharedString,
-    Option<&'static str>,
-    bool,
-    Option<std::rc::Rc<dyn Fn(&mut Window, &mut App)>>,
-);
+/// What a menu row's click does (`None`: disabled).
+type RowAction = Option<std::rc::Rc<dyn Fn(&mut Window, &mut App)>>;
+
+/// A menu row: label, leading icon, checked, and its [`RowAction`].
+type Row = (SharedString, Option<&'static str>, bool, RowAction);
 
 fn menu_row(id: (&'static str, usize), row: Row, highlighted: bool, t: &Theme) -> gpui::AnyElement {
     let (label, glyph, checked, action) = row;
@@ -655,25 +583,14 @@ fn menu_row(id: (&'static str, usize), row: Row, highlighted: bool, t: &Theme) -
 }
 
 /// `popup` over a full-window backdrop that closes it on a click anywhere else. It opens
-/// upward from `trigger` (the bar sits at the bottom of the window) or, `down`, below it.
+/// upward from `trigger`: the bar sits at the bottom of the window.
 fn floating(
     popup: Stateful<Div>,
     trigger: Bounds<Pixels>,
-    down: bool,
     dismiss: impl Fn(&mut App) + 'static,
     window: &Window,
 ) -> gpui::AnyElement {
-    let (position, anchor) = if down {
-        (
-            point(trigger.center().x - px(140.), trigger.bottom() + px(4.)),
-            gpui::Anchor::TopLeft,
-        )
-    } else {
-        (
-            point(trigger.left(), trigger.top() - px(4.)),
-            gpui::Anchor::BottomLeft,
-        )
-    };
+    let position = point(trigger.left(), trigger.top() - px(4.));
     deferred(
         anchored().position(point(px(0.), px(0.))).child(
             div()
@@ -684,7 +601,7 @@ fn floating(
                 .child(
                     anchored()
                         .position(position)
-                        .anchor(anchor)
+                        .anchor(gpui::Anchor::BottomLeft)
                         .snap_to_window_with_margin(px(8.))
                         .child(
                             popup
@@ -714,12 +631,10 @@ fn location_menu(
         .enumerate()
         .map(|(i, label)| {
             let owner = owner.clone();
-            let action: Option<std::rc::Rc<dyn Fn(&mut Window, &mut App)>> =
-                enabled[i].then(|| {
-                    std::rc::Rc::new(move |_: &mut Window, cx: &mut App| {
-                        pick_location(&owner, i, cx)
-                    }) as _
-                });
+            let action: RowAction = enabled[i].then(|| {
+                std::rc::Rc::new(move |_: &mut Window, cx: &mut App| pick_location(&owner, i, cx))
+                    as _
+            });
             let checked = LOCATION_MODES[i] == Some(location.mode);
             menu_row(
                 ("work-in-option", i),
@@ -736,7 +651,6 @@ fn location_menu(
     Some(floating(
         popup,
         location.bounds,
-        false,
         move |cx| set_location(&dismiss, Some(false), cx),
         window,
     ))
@@ -746,7 +660,7 @@ fn location_menu(
 fn pick(
     owner: &Entity<HomeMain>,
     f: impl Fn(&mut HomeMain, &mut Window, &mut App) + 'static,
-) -> Option<std::rc::Rc<dyn Fn(&mut Window, &mut App)>> {
+) -> RowAction {
     let owner = owner.clone();
     Some(std::rc::Rc::new(
         move |window: &mut Window, cx: &mut App| {
@@ -759,75 +673,17 @@ fn pick(
     ))
 }
 
-/// Dispatches `action` from a picker row.
-fn dispatch_row(
-    owner: &Entity<HomeMain>,
-    action: impl Fn() -> Box<dyn gpui::Action> + 'static,
-) -> Option<std::rc::Rc<dyn Fn(&mut Window, &mut App)>> {
-    pick(owner, move |_, window, cx| {
-        window.dispatch_action(action(), cx)
-    })
-}
-
-/// The open [`Picker`]: `Choose project` (`composer.localCwdDropdown`), the worktree starting
-/// branch, or the worktree (`composer.worktreeEnvironment`) or cloud
-/// (`composer.environmentSelector`) environment.
+/// The open [`Picker`]: the worktree starting branch, or the worktree
+/// (`composer.worktreeEnvironment`) or cloud (`composer.environmentSelector`) environment.
 fn picker_menu(
     main: &HomeMain,
     owner: &Entity<HomeMain>,
     t: &Theme,
     window: &Window,
-    cx: &App,
 ) -> Option<gpui::AnyElement> {
     let picker = main.picker?;
     let location = &main.location;
-    let mut header = None;
     let rows: Vec<Row> = match picker {
-        Picker::Project => {
-            header = Some(
-                div()
-                    .px(px(4.))
-                    .pb(px(4.))
-                    .child(main.project_search.clone())
-                    .into_any_element(),
-            );
-            let matches = main.matching_projects(cx);
-            let mut rows: Vec<Row> = if matches.is_empty() {
-                vec![("No projects found".into(), None, false, None)]
-            } else {
-                matches
-                    .into_iter()
-                    .map(|(name, root)| {
-                        let checked = main.project_root.as_ref() == Some(&root);
-                        let action = dispatch_row(owner, move || {
-                            Box::new(super::sidebar::SelectProject(root.clone()))
-                        });
-                        (name, Some("folder"), checked, action)
-                    })
-                    .collect()
-            };
-            rows.extend([
-                (
-                    "New remote project".into(),
-                    Some("project-marker-globe"),
-                    false,
-                    dispatch_row(owner, || Box::new(super::new_project::NewProject)),
-                ),
-                (
-                    "Add local project".into(),
-                    Some("folder-add"),
-                    false,
-                    dispatch_row(owner, || Box::new(OpenFolder)),
-                ),
-                (
-                    "Don't work in a project".into(),
-                    Some("new-chat"),
-                    false,
-                    dispatch_row(owner, || Box::new(ClearProject)),
-                ),
-            ]);
-            rows
-        }
         Picker::Branch => location
             .branches
             .iter()
@@ -869,7 +725,6 @@ fn picker_menu(
         .collect(),
     };
     let (id, label): (&'static str, &'static str) = match picker {
-        Picker::Project => ("project-menu", "Choose project"),
         Picker::Branch => ("branch-menu", "What branch should this chat start from?"),
         Picker::Environment => ("environment-menu", "Select environment"),
     };
@@ -877,7 +732,7 @@ fn picker_menu(
         .into_iter()
         .enumerate()
         .map(|(index, row)| menu_row((id, index), row, false, t));
-    let popup = crate::composer::popover(t, 280., |d| d.children(header).children(rows))
+    let popup = crate::composer::popover(t, 280., |d| d.children(rows))
         .id(id)
         .role(gpui::Role::Menu)
         .aria_label(label)
@@ -892,36 +747,12 @@ fn picker_menu(
                     cx.stop_propagation();
                 }
             }
-        })
-        // The search field's Enter binding runs before key listeners: its `Submit` picks the
-        // first matching project, as the original's list does.
-        .capture_action({
-            let owner = owner.clone();
-            move |_: &crate::composer::Submit, window, cx| {
-                if picker != Picker::Project {
-                    return;
-                }
-                let first = owner.read(cx).matching_projects(cx).into_iter().next();
-                if let Some((_, root)) = first {
-                    owner.update(cx, |main, cx| {
-                        main.picker = None;
-                        cx.notify();
-                    });
-                    window.dispatch_action(Box::new(super::sidebar::SelectProject(root)), cx);
-                }
-                cx.stop_propagation();
-            }
         });
-    let (trigger, down) = if main.picker_from_hero {
-        (main.hero_bounds, true)
-    } else {
-        (main.picker_bounds[picker as usize], false)
-    };
+    let trigger = main.picker_bounds[picker as usize];
     let dismiss = owner.clone();
     Some(floating(
         popup,
         trigger,
-        down,
         move |cx| {
             dismiss.update(cx, |main, cx| {
                 main.picker = None;
@@ -933,14 +764,11 @@ fn picker_menu(
 }
 
 /// Records where `picker`'s trigger was laid out, so its menu can anchor there.
-fn picker_bounds(owner: &Entity<HomeMain>, picker: Option<Picker>) -> impl IntoElement {
+fn picker_bounds(owner: &Entity<HomeMain>, picker: Picker) -> impl IntoElement {
     let owner = owner.clone();
     canvas(
         move |bounds, _, cx| {
-            owner.update(cx, |main, _| match picker {
-                Some(picker) => main.picker_bounds[picker as usize] = bounds,
-                None => main.hero_bounds = bounds,
-            })
+            owner.update(cx, |main, _| main.picker_bounds[picker as usize] = bounds)
         },
         |_, (), _, _| {},
     )
@@ -995,7 +823,6 @@ fn utility_bar(
     let enabled = location_enabled(location, has_project);
     let location_menu = location_menu(owner, location, has_project, t, window);
     let mode = location.mode;
-    let (project_click, project_key) = picker_trigger(owner, Picker::Project, false);
     let extra_chip =
         |picker: Picker, glyph: &'static str, label: String, window: &mut Window, cx: &mut App| {
             let id = match picker {
@@ -1003,7 +830,8 @@ fn utility_bar(
                 _ => "home-environment",
             };
             let focus = focus::handle(id, 0, window, cx);
-            let (click, key) = picker_trigger(owner, picker, false);
+            let key_owner = owner.clone();
+            let click_owner = owner.clone();
             chip(
                 id,
                 glyph,
@@ -1020,9 +848,16 @@ fn utility_bar(
                 _ => "Environment",
             })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(click)
-            .on_key_down(key)
-            .child(picker_bounds(owner, Some(picker)))
+            .on_click(move |_, _, cx| {
+                click_owner.update(cx, |main, cx| main.toggle_picker(picker, cx))
+            })
+            .on_key_down(move |event, _, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    key_owner.update(cx, |main, cx| main.toggle_picker(picker, cx));
+                    cx.stop_propagation();
+                }
+            })
+            .child(picker_bounds(owner, picker))
         };
     let branch_chip = (mode != super::hotkey::Mode::Local).then(|| {
         let branch = location.branch.clone().unwrap_or_else(|| "HEAD".into());
@@ -1106,13 +941,7 @@ fn utility_bar(
                                             t,
                                             &project_focus,
                                             cx,
-                                        )
-                                        .on_mouse_down(MouseButton::Left, |_, _, cx| {
-                                            cx.stop_propagation()
-                                        })
-                                        .on_click(project_click)
-                                        .on_key_down(project_key)
-                                        .child(picker_bounds(owner, Some(Picker::Project))),
+                                        ),
                                         "Select a project to run your chat in",
                                         Some("⌥⇧⌘O"),
                                         crate::tooltip::Side::Top,
@@ -1218,7 +1047,6 @@ impl Render for HomeMain {
         }
         let hero_focus = focus::handle("home-project-title", 0, window, cx);
         let owner = cx.entity();
-        let (hero_click, hero_key) = picker_trigger(&owner, Picker::Project, true);
         // `ZLt`: the Chat and Work homes show only the `heading-xl` headline.
         let hero = if let Some(headline) = self.headline {
             div()
@@ -1237,16 +1065,15 @@ impl Render for HomeMain {
                 .child(
                     div()
                         .id("home-project-title")
-                        .relative()
                         .when(self.project.is_some(), |title| {
                             focus::ring(title, &hero_focus, px(4.), px(2.), cx)
                                 .role(gpui::Role::Button)
                                 .aria_label("Choose project")
-                                .on_key_down(hero_key)
-                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                                .on_click(hero_click)
+                                .on_key_down(open_folder_key)
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(OpenFolder), cx)
+                                })
                         })
-                        .child(picker_bounds(&owner, None))
                         .child(
                             text(
                                 self.project.as_ref().map_or_else(
@@ -1278,7 +1105,7 @@ impl Render for HomeMain {
             })
             // The Chat and Work homes have no `Work in` row above the composer.
             .when(!chat, |column| {
-                let picker = picker_menu(self, &owner, &t, window, cx);
+                let picker = picker_menu(self, &owner, &t, window);
                 column.child(utility_bar(
                     &owner,
                     &self.location,

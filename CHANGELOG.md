@@ -9,7 +9,6 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ### Added
 - Open the latest plan from Thread summary ▸ `Plan` in an editable `Plan` side panel tab that saves to `$CODEX_HOME/plans/<thread>/<plan item>/PLAN.md`.
 - Start a cloud task from Home: `Work in` > `Cloud` with an environment picker posts `/wham/tasks` and opens the task page.
-- Add the searchable Home project dropdown with `New project`, `Don't work in a project` and the selected project's check mark.
 - Add Home's starting branch picker and local environment picker for `New worktree` starts.
 - Show Home task suggestions from the ChatGPT backend under the composer; a card fills the composer, and its `×` dismisses it.
 - Show the Home rate limit reset and subagents banners, with `See resets`, `Try now` and dismissal that the app remembers.

@@ -878,11 +878,10 @@ impl Root {
             wide,
             layout_before_narrow: None,
             focus: cx.focus_handle(),
-            home: cx.new(|cx| {
+            home: cx.new(|_| {
                 HomeMain::with_composer(
                     home_composer,
                     state.project_root.as_deref().map(project_name),
-                    cx,
                 )
             }),
             thread_composer,
@@ -1761,7 +1760,8 @@ impl Root {
                 match result {
                     Ok(Some((root, projects))) => {
                         this.project_load = None;
-                        this.set_projects(projects, cx);
+                        this.sidebar
+                            .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx));
                         this.select_project(root, window, cx);
                     }
                     Ok(None) => {}

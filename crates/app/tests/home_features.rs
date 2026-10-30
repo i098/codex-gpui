@@ -1,5 +1,5 @@
-//! Home features on constructed ChatGPT backend fixtures: a Cloud start, the project picker,
-//! task suggestions, banners and the account access error page. Set `HOME_CAPTURE_DIR` to
+//! Home features on constructed ChatGPT backend fixtures: a Cloud start, task suggestions,
+//! banners and the account access error page. Set `HOME_CAPTURE_DIR` to
 //! save each state as a PNG.
 
 mod common;
@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use ui::screens::home::{
-    DismissSuggestion, HomeBanner, Picker, ReloadAccount, TryMultiAgent, UseSuggestion,
+    DismissSuggestion, HomeBanner, ReloadAccount, TryMultiAgent, UseSuggestion,
 };
 use ui::screens::hotkey::Mode;
 
@@ -107,7 +107,8 @@ impl Host for HomeHost {
                 json!([{"id":"env_web","label":"web"},{"id":"env_api","label":"api"}]),
             ),
             ("POST", "/wham/tasks") => wire(200, json!({"task":{"id":"task_e_fixture"}})),
-            // The new task's page: a pending turn of the posted prompt.
+            // The new task's page: a finished turn of the posted prompt, so the
+            // poller sends one snapshot and stops (a running turn would stream).
             ("GET", "/wham/tasks/task_e_fixture") => wire(
                 200,
                 json!({
@@ -116,11 +117,13 @@ impl Host for HomeHost {
                         {"type":"message","role":"user","content":[{"content_type":"text","text":"Fix the login bug"}]}
                     ]},
                     "current_assistant_turn":{"id":"assistant-1","previous_turn_id":"user-1",
-                        "turn_status":"pending","created_at":1792080001,"output_items":[],
-                        "error":null,"thread_events":{"events":[]}},
+                        "turn_status":"completed","created_at":1792080001,"output_items":[
+                            {"type":"message","role":"assistant","content":[{"content_type":"text","text":"Fixed."}]}
+                        ],"error":null,"thread_events":{"events":[]}},
                     "current_diff_task_turn":null
                 }),
             ),
+            ("GET", "/wham/tasks/task_e_fixture/turns") => wire(200, json!({"turn_mapping":{}})),
             ("GET", url) if url.starts_with("/composer/items?") => wire(
                 200,
                 json!({"items":[
@@ -143,9 +146,6 @@ fn boot(lines: Vec<Value>) -> Result<(Fx, Arc<HomeHost>)> {
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     fx.root
         .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
-    fx.wait("Home projects", |fx| {
-        fx.read(|root, cx| root.home().read(cx).projects.len() == 2)
-    })?;
     Ok((fx, host))
 }
 
@@ -198,37 +198,6 @@ fn cloud_start_posts_a_task_in_the_chosen_environment() -> Result<()> {
     for part in ["env_api", "Fix the login bug", "main"] {
         ensure!(post.contains(part), "task POST lacks {part}: {post}");
     }
-    Ok(())
-}
-
-#[test]
-fn project_picker_filters_and_selects() -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Ok(());
-    }
-    let (mut fx, host) = boot(script(None, |_| {})?)?;
-    let home = fx.read(|root, _| root.home().clone());
-    fx.cx.update_window(fx.window, |_, window, cx| {
-        home.update(cx, |home, cx| {
-            home.toggle_picker(Picker::Project, true, window, cx)
-        })
-    })?;
-    fx.type_text("bet")?;
-    capture(&mut fx, "project-picker")?;
-    let rows = home.read_with(&fx.cx, |home, cx| home.matching_projects(cx));
-    ensure!(
-        rows.len() == 1 && rows[0].0 == "beta",
-        "filter kept {rows:?}"
-    );
-    fx.keys("enter")?;
-    let beta = host.roots[1].to_string_lossy().into_owned();
-    fx.wait("selected project", |fx| {
-        fx.read(|root, cx| root.home().read(cx).project_root.as_deref() == Some(beta.as_str()))
-    })?;
-    ensure!(
-        home.read_with(&fx.cx, |home, _| home.picker.is_none()),
-        "picker stayed open"
-    );
     Ok(())
 }
 
