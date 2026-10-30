@@ -392,6 +392,9 @@ Diff code and context rows paint in their own opaque scroll layer, as in the ori
 Failed reads retain the patch and provide Retry.
 Only Staged and Unstaged sources show staging actions. Uncommitted combines both states and does not expose those actions.
 
+File-change activity displays `item/fileChange/outputDelta` while a patch runs and keeps that output after completion.
+Run `cargo test -p ui --lib live_patch_output_keeps_item_boundaries` to check streaming and item isolation.
+
 The Plugins rail opens the native plugin directory and the Skills page.
 Both pages load app-server data and support search.
 Plugin installation, removal, enablement, and sharing wait for server responses.
