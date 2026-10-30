@@ -55,7 +55,7 @@ rustix = { version = "1.1.5", features = ["fs"] }
 block2 = "0.6"
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSRunningApplication", "NSImage", "NSImageRep", "NSBitmapImageRep"] }
 objc2 = "0.6.5"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "NSData", "NSDictionary", "NSString", "NSValue", "NSURL", "NSBundle", "NSError"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSGeometry", "NSData", "NSDictionary", "NSString", "NSValue", "NSURL", "NSBundle", "NSError", "NSProcessInfo", "NSUUID"] }
 objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotificationSettings"] }
 raw-window-handle = "0.6"
 
