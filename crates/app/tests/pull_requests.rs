@@ -149,6 +149,33 @@ fn missing_host_response_keeps_retry_and_chat_available() -> Result<()> {
     Ok(())
 }
 
+/// `Fix checks` and `Address comments` emit `StartChat`: the app starts a new chat with that
+/// prompt (`thread/start`, then `turn/start`) and opens it.
+#[test]
+fn start_chat_opens_a_new_chat_with_the_prompt() -> Result<()> {
+    const PROMPT: &str = "Fix the failing checks on pull request #7";
+    let mut script = common::script(None, |_| {})?;
+    let mut thread = common::recorded_thread(common::GREETING)?;
+    thread["turns"] = serde_json::json!([]);
+    thread["id"] = "pull-request-fix".into();
+    script.extend(common::exchange(
+        "thread/start",
+        serde_json::json!({"thread": thread, "model": "gpt-6-astra", "cwd": common::CWD}),
+    ));
+    script.extend(common::exchange("turn/start", serde_json::json!({})));
+    let mut fx = Fx::scripted(script)?;
+    let host = Arc::new(ReplayHost::from_recording(r#"{"exchanges":[]}"#)?);
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        window.dispatch_action(Box::new(ui::OpenPullRequests), cx);
+    })?;
+    let page = fx.read(|root, _| root.pull_requests_page().unwrap().clone());
+    page.update(&mut fx.cx, |_, cx| cx.emit(Event::StartChat(PROMPT.into())));
+    fx.wait_thread("pull-request-fix")?;
+    Ok(())
+}
+
 #[test]
 fn original_cursor_page_preserves_the_existing_rows() -> Result<()> {
     replay_pane_states(None)
