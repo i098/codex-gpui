@@ -479,6 +479,7 @@ pub(super) enum Activity<'a> {
     /// A command still running, by its command line.
     Running(&'a str),
     Mcp(&'a ThreadItem),
+    PatchOutput(&'a str, &'a str),
     /// A reasoning item seen live: `Thought for 3s` once completed, its summary under it while
     /// open (keyed `reasoning-<id>`); `Thinking` while it streams, with the streamed text
     /// under it.
@@ -542,6 +543,7 @@ impl Activity<'_> {
             Activity::Markdown(_, text) => vec![(*text).to_owned()],
             Activity::Running(command) => vec![(*command).to_owned()],
             Activity::Mcp(item) => vec![mcp_label(item)],
+            Activity::PatchOutput(_, output) => vec![(*output).to_owned()],
             Activity::Reasoning {
                 key,
                 label,
@@ -569,7 +571,7 @@ impl Activity<'_> {
 pub(super) fn activities<'a>(
     items: &'a [ThreadItem],
     running: bool,
-    view: &ThreadView,
+    view: &'a ThreadView,
     visibility: super::ReasoningVisibility,
     now: Instant,
 ) -> Vec<Activity<'a>> {
@@ -617,6 +619,11 @@ pub(super) fn activities<'a>(
                 ));
             }
             ThreadItem::McpToolCall { .. } if automation_item(item).is_some() => {}
+            ThreadItem::FileChange { id, .. } if view.patch_output.contains_key(id) => {
+                group.push(item);
+                flush(&mut out, &mut group);
+                out.push(Activity::PatchOutput(id, &view.patch_output[id]));
+            }
             ThreadItem::McpToolCall { .. } => {
                 flush(&mut out, &mut group);
                 out.push(Activity::Mcp(item));
@@ -852,6 +859,9 @@ pub(super) fn activity(
             Activity::Running(command) => {
                 row("thread-terminal", plain(label(command.to_owned(), text60)))
             }
+            Activity::PatchOutput(id, output) => mcp_output(
+                format!("patch-output-{id}"), "text", output, t,
+            ),
             Activity::Reasoning {
                 key: _,
                 label: words,
