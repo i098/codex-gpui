@@ -71,11 +71,9 @@ impl VoiceChat {
                 let message = params["message"].as_str().unwrap_or("Voice chat failed");
                 self.status = Status::Failed(message.to_owned());
             }
-            "thread/realtime/closed" => {
-                // An error keeps its message; the close that follows it adds nothing.
-                if !matches!(self.status, Status::Failed(_)) {
-                    self.status = Status::Closed(params["reason"].as_str().map(str::to_owned));
-                }
+            // An error keeps its message; the close that follows it adds nothing.
+            "thread/realtime/closed" if !matches!(self.status, Status::Failed(_)) => {
+                self.status = Status::Closed(params["reason"].as_str().map(str::to_owned));
             }
             _ => {}
         }
