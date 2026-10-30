@@ -603,7 +603,7 @@ impl HomeSidebar {
                             .group_hover(group.clone(), |style| style.opacity(1.))
                             .child(
                                 div()
-                                    .id(("project-actions", project_id.clone()))
+                                    .id(SharedString::from(format!("project-actions-{project_id}")))
                                     .size(px(20.))
                                     .flex()
                                     .items_center()
