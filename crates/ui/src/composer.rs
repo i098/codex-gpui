@@ -909,6 +909,8 @@ pub struct Composer {
     dictation: Option<dictation::Active>,
     dictation_error: Option<String>,
     embedded_field: Option<EmbeddedField>,
+    /// A field whose frame sets its own text size and line height (`text-xs` hex input).
+    text_metrics: Option<EmbeddedField>,
     on_settings_paste: Option<SettingsPasteHandler>,
     /// Script and command fields use the original code textarea's monospace text.
     monospace: bool,
@@ -1028,6 +1030,7 @@ impl Composer {
             dictation: None,
             dictation_error: None,
             embedded_field: None,
+            text_metrics: None,
             on_settings_paste: None,
             monospace: false,
             input_style: false,
@@ -1158,6 +1161,14 @@ impl Composer {
         self
     }
 
+    pub fn with_text_metrics(mut self, font_size: Pixels, line_height: Pixels) -> Self {
+        self.text_metrics = Some(EmbeddedField {
+            font_size,
+            line_height,
+        });
+        self
+    }
+
     pub fn monospace_field(mut self) -> Self {
         self.monospace = true;
         self
@@ -1191,7 +1202,7 @@ impl Composer {
     fn editor_font_size(&self) -> Pixels {
         if self.document_field {
             px(14.)
-        } else if let Some(field) = self.embedded_field {
+        } else if let Some(field) = self.text_metrics.or(self.embedded_field) {
             field.font_size
         } else if self.compact_text() {
             px(13.)
@@ -1203,7 +1214,7 @@ impl Composer {
     fn editor_line_height(&self) -> Pixels {
         if self.document_field {
             px(23.59375)
-        } else if let Some(field) = self.embedded_field {
+        } else if let Some(field) = self.text_metrics.or(self.embedded_field) {
             field.line_height
         } else if self.search_field || self.textarea() {
             px(18.571_428)
