@@ -90,6 +90,10 @@ Output follows the bottom only while the view is already at the bottom.
 The recorded PTY stream in `fixtures/sessions/terminal-shell.jsonl` comes from the bundled macOS app-server.
 Run `cargo test -p app --test terminal_states` on macOS for native terminal checks.
 
+Command details include agent input from `item/commandExecution/terminalInteraction`.
+The input remains in the output after the command completes.
+Run `cargo test -p ui --lib command_completion_keeps_streamed_output_and_failure` to check retention.
+
 
 ## Recommended skills
 
