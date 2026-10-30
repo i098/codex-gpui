@@ -1280,6 +1280,32 @@ impl SettingsPane {
                 ]
                 .into_iter()
                 .chain(crate::updater::managed_row(t, cx))
+                .chain(
+                    cx.try_global::<crate::updater::Updates>()
+                        .is_some_and(|updates| updates.available && !updates.managed)
+                        .then(|| {
+                            [
+                                row(
+                                    "Automatic update checks",
+                                    Some("Check for new versions of ChatGPT in the background"),
+                                    self.toggle(
+                                        "host.update-automatic-checks",
+                                        true,
+                                        t,
+                                        window,
+                                        cx,
+                                    ),
+                                ),
+                                row(
+                                    "Beta updates",
+                                    Some("Get early versions before they reach everyone"),
+                                    self.toggle("host.update-beta", false, t, window, cx),
+                                ),
+                            ]
+                        })
+                        .into_iter()
+                        .flatten(),
+                )
                 .collect(),
             ),
             (

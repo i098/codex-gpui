@@ -6610,6 +6610,7 @@ impl Root {
             _ => None,
         });
         self.usage_limit_notice = UsageLimitNotice::for_plan(plan);
+        updater::set_plan(plan, cx);
         if let Some(view) = &self.thread {
             view.update(cx, |view, cx| {
                 view.set_usage_limit_notice(self.usage_limit_notice, cx)

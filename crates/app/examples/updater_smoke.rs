@@ -11,6 +11,12 @@ fn validate(feed: &str, _key: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The smoke feed stays the local appcast without query parameters.
+#[cfg(target_os = "macos")]
+fn feed_url(base: &str, _: &str, _: &str, _: &str, _: bool, _: &str, _: &str) -> Option<String> {
+    Some(base.to_owned())
+}
+
 #[cfg(target_os = "macos")]
 fn main() -> anyhow::Result<()> {
     use block2::RcBlock;
@@ -33,7 +39,8 @@ fn main() -> anyhow::Result<()> {
         std::fs::write(marker, "version=2\n")?;
         return Ok(());
     }
-    let (backend, events) = native::start()?.expect("configured native updater");
+    let (backend, events) =
+        native::start(false, false, "unknown", "smoke")?.expect("configured native updater");
     backend.check();
     let deadline = Instant::now() + Duration::from_secs(90);
     let canceled_at = std::cell::Cell::new(None);
