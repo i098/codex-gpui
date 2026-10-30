@@ -3244,13 +3244,15 @@ impl Root {
             },
         )
         .detach();
-        window.focus(&editor.focus_handle(cx), cx);
+        let focus = editor.focus_handle(cx);
         if side_panel {
             self.automation_panel = Some(editor);
             self.set_side(SidePanel::Automation, window, cx);
         } else {
             self.automation_editor = Some(editor);
         }
+        // After `set_side`: its sync must not leave focus on the card that opened the editor.
+        window.focus(&focus, cx);
         self.load_projects(cx);
         cx.notify();
     }
