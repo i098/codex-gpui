@@ -68,11 +68,28 @@ pub enum Outcome {
     Dismiss,
     PickFolders,
     AddRemote,
+    /// List `path` (`None`: the host's default folder) on the connected remote `host_id`.
+    Browse {
+        host_id: SharedString,
+        path: Option<String>,
+    },
     Create {
         name: String,
         sources: Vec<String>,
         appearance: Option<Value>,
+        /// `Some`: a remote project on that connected host, with one remote folder.
+        host_id: Option<SharedString>,
     },
+}
+
+/// The remote folder picker (`composer.remoteFilePicker`): one remote folder and its subfolders.
+#[derive(Default)]
+pub struct Browser {
+    pub path: String,
+    pub parent: Option<String>,
+    pub folders: Vec<String>,
+    pub error: Option<String>,
+    pub loading: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -87,7 +104,11 @@ pub struct Dialog {
     /// `(color, marker)` indices into [`COLORS`] and [`MARKERS`]; `None` keeps the folder default.
     appearance: Option<(usize, usize)>,
     popover: Option<Popover>,
-    remotes: Vec<SharedString>,
+    /// `(host id, display name)` of each connected remote host.
+    remotes: Vec<(SharedString, SharedString)>,
+    /// Index into `remotes`; `None` is this computer.
+    device: Option<usize>,
+    browser: Option<Browser>,
     saving: bool,
     focus: FocusHandle,
 }
@@ -101,8 +122,8 @@ impl Focusable for Dialog {
 }
 
 impl Dialog {
-    /// `remotes`: display names of the connected remote hosts the device menu lists.
-    pub fn new(remotes: Vec<SharedString>, cx: &mut Context<Self>) -> Self {
+    /// `remotes`: `(host id, display name)` of the connected remote hosts the device menu lists.
+    pub fn new(remotes: Vec<(SharedString, SharedString)>, cx: &mut Context<Self>) -> Self {
         let name = cx.new(|cx| Composer::dialog_field("Name", "Project name", "", cx));
         cx.observe(&name, |_, _, cx| cx.notify()).detach();
         Self {
@@ -111,6 +132,8 @@ impl Dialog {
             appearance: None,
             popover: None,
             remotes,
+            device: None,
+            browser: None,
             saving: false,
             focus: cx.focus_handle(),
         }
@@ -153,9 +176,65 @@ impl Dialog {
         })
     }
 
+    fn host_id(&self) -> Option<SharedString> {
+        self.device.map(|index| self.remotes[index].0.clone())
+    }
+
+    /// Picks this computer (`None`) or a connected remote; the sources belong to one device.
+    pub fn select_device(&mut self, device: Option<usize>, cx: &mut Context<Self>) {
+        self.popover = None;
+        if self.device != device {
+            self.device = device;
+            self.sources.clear();
+            self.browser = None;
+        }
+        cx.notify();
+    }
+
+    pub fn browser(&self) -> Option<&Browser> {
+        self.browser.as_ref()
+    }
+
+    /// The app's answer to [`Outcome::Browse`]; a stale or closed picker ignores it.
+    pub fn set_listing(&mut self, listing: Result<Browser, String>, cx: &mut Context<Self>) {
+        let Some(browser) = self.browser.as_mut().filter(|browser| browser.loading) else {
+            return;
+        };
+        match listing {
+            Ok(listing) => *browser = listing,
+            Err(error) => {
+                browser.loading = false;
+                browser.error = Some(error);
+            }
+        }
+        cx.notify();
+    }
+
+    fn browse(&mut self, path: Option<String>, cx: &mut Context<Self>) {
+        let Some(host_id) = self.host_id() else {
+            return;
+        };
+        let browser = self.browser.get_or_insert_default();
+        browser.loading = true;
+        browser.error = None;
+        cx.emit(Outcome::Browse { host_id, path });
+        cx.notify();
+    }
+
+    /// `remoteFilePicker.add`: a remote project has one folder, so the choice replaces it.
+    fn choose(&mut self, cx: &mut Context<Self>) {
+        if let Some(browser) = self.browser.take() {
+            self.sources = vec![browser.path];
+        }
+        cx.notify();
+    }
+
     fn submit(&mut self, cx: &mut Context<Self>) {
         if self.saving {
             return;
+        }
+        if self.device.is_some() && self.sources.is_empty() {
+            return self.pick(cx);
         }
         self.saving = true;
         self.popover = None;
@@ -163,6 +242,7 @@ impl Dialog {
             name: self.name.read(cx).field_text().trim().to_owned(),
             sources: self.sources.clone(),
             appearance: self.appearance(),
+            host_id: self.host_id(),
         });
         cx.notify();
     }
@@ -180,6 +260,9 @@ impl Dialog {
 
     fn pick(&mut self, cx: &mut Context<Self>) {
         self.popover = None;
+        if self.device.is_some() {
+            return self.browse(None, cx);
+        }
         cx.emit(Outcome::PickFolders);
         cx.notify();
     }
@@ -189,6 +272,10 @@ impl Dialog {
         match key.key.as_str() {
             "escape" if self.popover.is_some() => {
                 self.popover = None;
+                cx.notify();
+            }
+            "escape" if self.browser.is_some() => {
+                self.browser = None;
                 cx.notify();
             }
             "escape" => self.dismiss(cx),
@@ -414,11 +501,11 @@ impl Dialog {
                     )
                     .role(gpui::Role::MenuItem)
                     .hover(|s| s.bg(t.menu_item_hover))
-                    .child(icon("menu-check", 16., t.text))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.popover = None;
-                        cx.notify();
-                    })),
+                    .aria_selected(self.device.is_none())
+                    .when(self.device.is_none(), |row| {
+                        row.child(icon("menu-check", 16., t.text))
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| this.select_device(None, cx))),
                 )
                 .child(div().px(px(8.)).pt(px(8.)).pb(px(4.)).child(text(
                     "Remote devices",
@@ -435,18 +522,23 @@ impl Dialog {
                     t.text_disabled,
                 ));
             }
-            // shortcut: remote projects have no native store yet, so connected remotes are listed
-            // but not selectable. Upgrade when the Connections owner adds remote projects.
-            for (index, remote) in self.remotes.iter().enumerate() {
+            for (index, (_, remote)) in self.remotes.iter().enumerate() {
+                let selected = self.device == Some(index);
                 list = list.child(
                     item(
                         "project-device-remote",
                         "settings-connections",
                         remote.clone(),
-                        t.text_disabled,
+                        t.text,
                     )
                     .id(("project-device-remote", index))
-                    .aria_disabled(true),
+                    .role(gpui::Role::MenuItem)
+                    .aria_selected(selected)
+                    .hover(|s| s.bg(t.menu_item_hover))
+                    .when(selected, |row| row.child(icon("menu-check", 16., t.text)))
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.select_device(Some(index), cx)),
+                    ),
                 );
             }
             list = list.child(
@@ -482,7 +574,14 @@ impl Dialog {
                 .focusable()
                 .tab_index(0)
                 .child(text("Add a folder on", 13., 20., 430., t.text_secondary))
-                .child(text("this computer", 13., 20., 430., t.text))
+                .child(text(
+                    self.device
+                        .map_or("this computer".into(), |index| self.remotes[index].1.clone()),
+                    13.,
+                    20.,
+                    430.,
+                    t.text,
+                ))
                 .child(icon("chevron-down-small", 16., t.text))
                 .on_click(cx.listener(|this, _, _, cx| this.toggle(Popover::Device, cx)))
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
@@ -493,6 +592,113 @@ impl Dialog {
                 }))
                 .children(menu),
         )
+    }
+
+    /// `remoteFilePicker`: the current remote folder, its parent and subfolders, then `Choose`.
+    fn remote_browser(&self, browser: &Browser, t: &Theme, cx: &mut Context<Self>) -> Div {
+        let row = |id: gpui::ElementId, label: SharedString, path: String| {
+            div()
+                .id(id)
+                .h(px(32.))
+                .px(px(12.))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .role(gpui::Role::Button)
+                .aria_label(label.clone())
+                .hover(|s| s.bg(t.ghost_hover))
+                .child(icon("folder", 16., t.text_description))
+                .child(text(label, 13., 20., 430., t.text).flex_1().min_w_0())
+                .on_click(cx.listener(move |this, _, _, cx| this.browse(Some(path.clone()), cx)))
+        };
+        let mut list = div()
+            .id("project-remote-folders")
+            .max_h(px(240.))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col();
+        if let Some(parent) = &browser.parent {
+            list = list.child(row("project-remote-parent".into(), "..".into(), parent.clone()));
+        }
+        let path = browser.path.trim_end_matches('/');
+        for (index, folder) in browser.folders.iter().enumerate() {
+            list = list.child(row(
+                ("project-remote-folder", index).into(),
+                folder.clone().into(),
+                format!("{path}/{folder}"),
+            ));
+        }
+        let status = if browser.loading {
+            Some("Loading…".to_owned())
+        } else {
+            browser.error.clone()
+        };
+        let small = |id: &'static str, label: &'static str| {
+            div()
+                .id(id)
+                .h(px(28.))
+                .px(px(10.))
+                .rounded(px(8.))
+                .flex()
+                .items_center()
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .hover(|s| s.bg(t.ghost_hover))
+                .child(text(label, 13., 18., 430., t.text))
+        };
+        let ready = !browser.loading && browser.error.is_none() && !browser.path.is_empty();
+        div()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .px(px(12.))
+                    .pt(px(10.))
+                    .pb(px(6.))
+                    .flex()
+                    .flex_col()
+                    .child(text("Choose a remote folder", 12., 16., 430., t.text_tertiary))
+                    .child(
+                        text(browser.path.clone(), 13., 20., 430., t.text)
+                            .overflow_hidden()
+                            .text_ellipsis(),
+                    ),
+            )
+            .children(status.map(|status| {
+                div()
+                    .px(px(12.))
+                    .py(px(6.))
+                    .child(text(status, 13., 20., 430., t.text_secondary))
+            }))
+            .child(list)
+            .child(
+                div()
+                    .p(px(8.))
+                    .border_t_1()
+                    .border_color(t.border)
+                    .flex()
+                    .justify_end()
+                    .gap(px(8.))
+                    .child(
+                        small("project-remote-cancel", "Cancel").on_click(cx.listener(
+                            |this, _, _, cx| {
+                                this.browser = None;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        small("project-remote-choose", "Choose")
+                            .bg(t.text_alpha_5)
+                            .aria_disabled(!ready)
+                            .when(!ready, |button| button.opacity(0.4))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if ready {
+                                    this.choose(cx);
+                                }
+                            })),
+                    ),
+            )
     }
 
     fn sources_box(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
@@ -507,6 +713,9 @@ impl Dialog {
                     border: Some((px(1.), t.border)),
                     ..Default::default()
                 }));
+        if let Some(browser) = &self.browser {
+            return frame.child(self.remote_browser(browser, t, cx));
+        }
         if self.sources.is_empty() {
             return frame.child(
                 div()
@@ -771,7 +980,7 @@ impl Render for Dialog {
                 }
             }))
             .on_action(cx.listener(|this, _: &Dismiss, _, cx| {
-                if this.popover.take().is_some() {
+                if this.popover.take().is_some() || this.browser.take().is_some() {
                     cx.notify();
                 } else {
                     this.dismiss(cx);
@@ -848,6 +1057,46 @@ mod tests {
                 view.appearance(),
                 Some(json!({"color": "blue", "marker": {"kind": "icon", "icon": "brain"}}))
             );
+        });
+    }
+
+    /// A remote device owns its one folder: the picker's listing feeds `Choose`, a reply that
+    /// lands after the picker closed is dropped, and switching devices clears the sources.
+    #[gpui::test]
+    fn remote_folder_choice_belongs_to_its_device(cx: &mut gpui::TestAppContext) {
+        let remotes = vec![("ssh:dev".into(), "dev".into())];
+        let view = cx.new(|cx| Dialog::new(remotes, cx));
+        view.update(cx, |view, cx| {
+            view.add_sources(["/local".into()], cx);
+            view.select_device(Some(0), cx);
+            assert!(view.sources().is_empty());
+            view.pick(cx);
+            assert!(view.browser().is_some_and(|browser| browser.loading));
+            view.set_listing(
+                Ok(Browser {
+                    path: "/home/me".into(),
+                    parent: Some("/home".into()),
+                    folders: vec!["repo".into()],
+                    ..Default::default()
+                }),
+                cx,
+            );
+            view.browse(Some("/home/me/repo".into()), cx);
+            view.set_listing(Err("Permission denied".into()), cx);
+            let browser = view.browser().unwrap();
+            assert_eq!(browser.error.as_deref(), Some("Permission denied"));
+            view.browser = None;
+            view.set_listing(Ok(Browser::default()), cx);
+            assert!(view.browser().is_none());
+            view.browser = Some(Browser {
+                path: "/home/me/repo".into(),
+                ..Default::default()
+            });
+            view.choose(cx);
+            assert_eq!(view.sources(), ["/home/me/repo"]);
+            assert_eq!(view.host_id().as_deref(), Some("ssh:dev"));
+            view.select_device(None, cx);
+            assert!(view.sources().is_empty() && view.host_id().is_none());
         });
     }
 }

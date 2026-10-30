@@ -168,6 +168,18 @@ pub trait Host: Send + Sync {
         bail!("creating a local project is unsupported by this host")
     }
 
+    /// `projects.createRemote`: saves `remote-projects` entry `{id, hostId, label, remotePath}`
+    /// first in the project order, with its appearance. The same host and folder are saved once.
+    fn add_remote_project(
+        &self,
+        _host_id: &str,
+        _label: &str,
+        _path: &str,
+        _appearance: Option<Value>,
+    ) -> Result<()> {
+        bail!("remote projects are unsupported by this host")
+    }
+
     fn prepare_projectless(&self, _prompt: &str) -> Result<Workspace> {
         bail!("projectless workspaces are unsupported by this host")
     }
@@ -1781,6 +1793,45 @@ impl Host for LocalHost {
         result
     }
 
+    fn add_remote_project(
+        &self,
+        host_id: &str,
+        label: &str,
+        path: &str,
+        appearance: Option<Value>,
+    ) -> Result<()> {
+        self.update_global_state(|state| {
+            if state["remote-projects"].is_null() {
+                state["remote-projects"] = json!([]);
+            }
+            ensure!(
+                state["project-appearances"].is_null() || state["project-appearances"].is_object(),
+                "project-appearances must be an object"
+            );
+            let projects = state["remote-projects"]
+                .as_array_mut()
+                .context("remote-projects must be an array")?;
+            if projects
+                .iter()
+                .any(|project| project["hostId"] == host_id && project["remotePath"] == path)
+            {
+                return Ok(false);
+            }
+            let id = crate::uuid_v4();
+            projects.insert(
+                0,
+                json!({"id": id, "hostId": host_id, "label": label, "remotePath": path}),
+            );
+            if let Some(appearance) = appearance {
+                state["project-appearances"][id.as_str()] = appearance;
+            }
+            let mut order = vec![Value::from(id)];
+            order.extend(state["project-order"].as_array().into_iter().flatten().cloned());
+            state["project-order"] = order.into();
+            Ok(true)
+        })
+    }
+
     fn fetch(&self, request: &Request) -> Result<Value> {
         let Request::Fetch { method, url, body } = request else {
             bail!("authenticated remote HTTP is unsupported by LocalHost");
@@ -2409,6 +2460,17 @@ impl Host for CloudHost {
         threads: &[(String, String)],
     ) -> Result<String> {
         self.local.create_project(name, roots, appearance, threads)
+    }
+
+    fn add_remote_project(
+        &self,
+        host_id: &str,
+        label: &str,
+        path: &str,
+        appearance: Option<Value>,
+    ) -> Result<()> {
+        self.local
+            .add_remote_project(host_id, label, path, appearance)
     }
 
     fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<Option<bool>> {

@@ -1103,7 +1103,8 @@ impl Root {
             }));
     }
 
-    fn finish_link_host(
+    /// Opens a window on the connected `id` host, then selects `project` (an existing remote folder).
+    pub(crate) fn finish_link_host(
         &mut self,
         id: String,
         project: Option<String>,
