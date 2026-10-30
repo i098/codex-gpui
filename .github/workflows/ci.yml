@@ -54,7 +54,10 @@ jobs:
         run: |
           cargo build -p app
           rc=0
-          HOME=$(mktemp -d) xvfb-run -a timeout 20 "$CARGO_TARGET_DIR/debug/codex-gpui" || rc=$?
+          stub=$(mktemp -d)
+          printf '#!/bin/sh\nexec sleep 3600\n' >"$stub/codex"
+          chmod +x "$stub/codex"
+          HOME=$(mktemp -d) PATH="$stub:$PATH" xvfb-run -a timeout 20 "$CARGO_TARGET_DIR/debug/codex-gpui" || rc=$?
           [[ $rc -eq 124 ]] || { echo "window did not stay open (exit $rc)" >&2; exit 1; }
       - name: Remove job-owned Cargo target
         if: always()
