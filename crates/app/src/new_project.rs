@@ -33,7 +33,7 @@ impl Root {
                 )
             })
             .collect();
-        let dialog = cx.new(|cx| Dialog::new(remotes, cx));
+        let dialog = cx.new(|cx| Dialog::new(remotes, cx).on_host(self.host_id.clone()));
         cx.subscribe_in(
             &dialog,
             window,
@@ -110,34 +110,45 @@ impl Root {
         cx: &mut Context<Self>,
     ) {
         let host = self.host.clone();
-        let bridge = if host_id == "local" {
+        let appearance_changed = dialog.read(cx).appearance_changed();
+        let threads = self
+            .threads
+            .iter()
+            .map(|thread| (thread.id.clone(), thread.cwd.clone()))
+            .collect::<Vec<_>>();
+        let bridge = if host_id == self.host_id {
             Some(self.bridge.clone())
         } else {
             crate::connections::bridge(&host_id, cx)
         };
         cx.spawn_in(window, async move |this, cx| {
             let result = async {
-                let bridge = bridge.as_ref().ok_or_else(|| anyhow::anyhow!("Project host is disconnected"))?;
+                let bridge = bridge
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("Project host is disconnected"))?;
                 let root = if let Some(project_id) = project_id {
-                    update_project(bridge, &project_id, &name, &sources, appearance).await?;
+                    update_project(
+                        bridge,
+                        &project_id,
+                        &name,
+                        &sources,
+                        appearance,
+                        appearance_changed,
+                    )
+                    .await?;
                     sources.first().cloned().unwrap_or_default()
                 } else if host_id == "local" {
                     cx.background_spawn(async move {
                         let roots: Vec<PathBuf> = sources.iter().map(PathBuf::from).collect();
-                        host.create_project(&name, &roots, appearance, &[])
-                    }).await?
+                        host.create_project(&name, &roots, appearance, &threads)
+                    })
+                    .await?
                 } else {
-                    anyhow::ensure!(!sources.is_empty(), "Add a remote project folder");
-                    let _: serde_json::Value = bridge.request("project/create", json!({
-                        "name": name,
-                        "roots": sources.iter().map(|path| json!({"path": path})).collect::<Vec<_>>(),
-                        "metadata": host::project_metadata(json!({}), appearance)?,
-                        "idempotencyKey": crate::uuid_v4(),
-                    })).await?;
-                    sources[0].clone()
+                    host::create_server_project(bridge, &name, &sources, appearance).await?
                 };
                 Ok::<_, anyhow::Error>(root)
-            }.await;
+            }
+            .await;
             this.update_in(cx, |this, window, cx| match result {
                 Ok(root) => {
                     if this.new_project.as_ref() == Some(&dialog) {
@@ -151,7 +162,10 @@ impl Root {
                 Err(error) => {
                     eprintln!("codex-gpui: cannot create project: {error:#}");
                     dialog.update(cx, |dialog, cx| dialog.finish(cx));
-                    this.toast(Toast::danger("Failed to create project"), cx);
+                    this.toast(
+                        Toast::danger(format!("Could not save project: {error}")),
+                        cx,
+                    );
                 }
             })
             .ok();
@@ -243,18 +257,20 @@ async fn update_project(
     name: &str,
     roots: &[String],
     appearance: Option<serde_json::Value>,
+    appearance_changed: bool,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(!name.trim().is_empty(), "A project needs a name");
     let mut current: serde_json::Value = bridge
         .request("project/read", json!({"projectId": id}))
         .await?;
-    let metadata = host::project_metadata(
-        current["project"]
-            .get_mut("metadata")
-            .map(serde_json::Value::take)
-            .unwrap_or_else(|| json!({})),
-        appearance,
-    )?;
+    let mut metadata = current["project"]
+        .get_mut("metadata")
+        .map(serde_json::Value::take)
+        .filter(|value| !value.is_null())
+        .unwrap_or_else(|| json!({}));
+    if appearance_changed {
+        metadata = host::project_metadata(metadata, appearance)?;
+    }
     let _: serde_json::Value = bridge
         .request(
             "project/update",

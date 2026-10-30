@@ -84,6 +84,7 @@ impl Root {
             }
             Event::AskCodex(prompt) => self.prefill_pull_request_chat(prompt, window, cx),
             Event::Code => self.load_pull_request_code(page, cx),
+            Event::Links => self.load_pull_request_links(page.clone(), cx),
             Event::Link { thread, remove } => {
                 let Some(identity) = page.read(cx).selected.clone() else {
                     return;
@@ -91,6 +92,12 @@ impl Root {
                 let bridge = self.bridge.clone();
                 let thread = thread.clone();
                 let remove = *remove;
+                page.update(cx, |page, cx| {
+                    page.link_generation += 1;
+                    page.linked_threads = None;
+                    cx.notify();
+                });
+                let page = page.clone();
                 cx.spawn(async move |this, cx| {
                     let result = link_pull_request(&bridge, &thread, &identity, remove).await;
                     this.update(cx, |this, cx| {
@@ -103,6 +110,7 @@ impl Root {
                             Err(error) => ui::toast::Toast::danger(error.to_string()),
                         };
                         this.toast(toast, cx);
+                        this.load_pull_request_links(page, cx);
                     })
                     .ok();
                 })
@@ -112,6 +120,34 @@ impl Root {
                 self.load_pull_request_media(page, *generation, url.clone(), cx)
             }
         }
+    }
+
+    fn load_pull_request_links(&self, page: Entity<Page>, cx: &mut Context<Self>) {
+        let Some(identity) = page.read(cx).selected.clone() else {
+            return;
+        };
+        let bridge = self.bridge.clone();
+        let generation = page.update(cx, |page, cx| {
+            page.link_generation += 1;
+            page.linked_threads = None;
+            cx.notify();
+            page.link_generation
+        });
+        cx.spawn(async move |_, cx| {
+            let result = async {
+                let key = pull_request_key(&identity)?;
+                crate::settings_git::attachment_owners(&bridge, "pull_request", &key).await
+            }
+            .await
+            .map_err(|error| error.to_string());
+            let _ = page.update(cx, |page, cx| {
+                if page.selected.as_ref() == Some(&identity) && page.link_generation == generation {
+                    page.linked_threads = Some(result);
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     fn prefill_pull_request_chat(
@@ -443,13 +479,7 @@ pub(crate) async fn link_pull_request(
     identity: &Identity,
     remove: bool,
 ) -> Result<()> {
-    anyhow::ensure!(identity.valid(), "Invalid pull request identity");
-    let key = serde_json::to_string(&(
-        identity.hostname.to_lowercase(),
-        identity.owner.to_lowercase(),
-        identity.repository.to_lowercase(),
-        identity.number,
-    ))?;
+    let key = pull_request_key(identity)?;
     let mut params = json!({
         "threadId": thread, "attachmentType": "pull_request", "identityKey": key,
     });
@@ -467,4 +497,14 @@ pub(crate) async fn link_pull_request(
         )
         .await?;
     Ok(())
+}
+
+fn pull_request_key(identity: &Identity) -> Result<String> {
+    anyhow::ensure!(identity.valid(), "Invalid pull request identity");
+    Ok(serde_json::to_string(&(
+        identity.hostname.to_lowercase(),
+        identity.owner.to_lowercase(),
+        identity.repository.to_lowercase(),
+        identity.number,
+    ))?)
 }

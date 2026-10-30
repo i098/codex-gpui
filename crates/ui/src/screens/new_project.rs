@@ -88,6 +88,7 @@ pub struct Dialog {
     sources: Vec<String>,
     /// `(color, marker)` indices into [`COLORS`] and [`MARKERS`]; `None` keeps the folder default.
     appearance: Option<(usize, usize)>,
+    appearance_changed: bool,
     popover: Option<Popover>,
     remotes: Vec<(String, SharedString)>,
     host_id: String,
@@ -116,6 +117,7 @@ impl Dialog {
             name,
             sources: Vec::new(),
             appearance: None,
+            appearance_changed: false,
             popover: None,
             remotes,
             host_id: "local".into(),
@@ -126,9 +128,19 @@ impl Dialog {
         }
     }
 
+    pub fn on_host(mut self, host_id: String) -> Self {
+        self.host_id = host_id;
+        self
+    }
+
+    pub fn appearance_changed(&self) -> bool {
+        self.appearance_changed
+    }
+
     pub fn edit(&mut self, project: &Value, host_id: String, cx: &mut Context<Self>) {
         self.project_id = project["id"].as_str().map(str::to_owned);
         self.host_id = host_id;
+        self.appearance_changed = false;
         self.name.update(cx, |name, cx| {
             name.set_text(project["name"].as_str().unwrap_or_default(), cx)
         });
@@ -214,6 +226,9 @@ impl Dialog {
     }
 
     fn toggle(&mut self, popover: Popover, cx: &mut Context<Self>) {
+        if popover == Popover::Device && self.project_id.is_some() {
+            return;
+        }
         self.popover = (self.popover != Some(popover)).then_some(popover);
         cx.notify();
     }
@@ -224,7 +239,7 @@ impl Dialog {
             cx.emit(Outcome::PickFolders);
         } else {
             let path = self.remote_source.read(cx).field_text().trim().to_owned();
-            if path.starts_with('/') {
+            if !path.is_empty() {
                 self.add_sources([path], cx);
                 self.remote_source
                     .update(cx, |field, cx| field.set_text("", cx));
@@ -343,6 +358,7 @@ impl Dialog {
                 .child(icon(&format!("project-marker-{name}"), 16., color))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.appearance = Some((selected_color, index));
+                    this.appearance_changed = true;
                     this.popover = None;
                     cx.notify();
                 }))
@@ -377,6 +393,7 @@ impl Dialog {
                     .child(div().size(px(16.)).rounded_full().bg(fill))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.appearance = Some((index, selected_marker));
+                        this.appearance_changed = true;
                         cx.notify();
                     }))
             });
@@ -416,6 +433,7 @@ impl Dialog {
                                                 .child(text("Clear", 13., 20., 430., t.text))
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     this.appearance = None;
+                                                    this.appearance_changed = true;
                                                     this.popover = None;
                                                     cx.notify();
                                                 })),

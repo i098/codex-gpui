@@ -590,6 +590,37 @@ pub(crate) fn project_metadata(mut metadata: Value, appearance: Option<Value>) -
     Ok(metadata)
 }
 
+pub(crate) async fn create_server_project(
+    bridge: &Bridge,
+    name: &str,
+    paths: &[String],
+    appearance: Option<Value>,
+) -> Result<String> {
+    let root = paths.first().context("Add a project folder")?;
+    let fallback = root
+        .trim_end_matches(['/', '\\'])
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(root);
+    let name = if name.trim().is_empty() {
+        fallback
+    } else {
+        name.trim()
+    };
+    let _: Value = bridge
+        .request(
+            "project/create",
+            json!({
+                "name": name,
+                "roots": paths.iter().map(|path| json!({"path": path})).collect::<Vec<_>>(),
+                "metadata": project_metadata(json!({}), appearance)?,
+                "idempotencyKey": crate::uuid_v4(),
+            }),
+        )
+        .await?;
+    Ok(root.clone())
+}
+
 pub(crate) async fn app_server_projects(
     bridge: &Bridge,
     home: &Path,
@@ -1684,7 +1715,7 @@ impl Host for LocalHost {
                     .unwrap_or(root);
                 let _: Value = pollster::block_on(bridge.request(
                     "project/import",
-                    json!({"name": name, "roots": [{"path": root}], "idempotencyKey": root}),
+                    json!({"name": name, "roots": [{"path": root}], "idempotencyKey": crate::uuid_v4()}),
                 ))?;
             }
             return Ok(root.to_owned());
@@ -1769,20 +1800,7 @@ impl Host for LocalHost {
                 }
             }
             if let Some(bridge) = &self.bridge {
-                let fallback = Path::new(&paths[0])
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or(&paths[0]);
-                let _: Value = pollster::block_on(bridge.request(
-                    "project/create",
-                    json!({
-                        "name": if name.is_empty() { fallback } else { name },
-                        "roots": paths.iter().map(|path| json!({"path": path})).collect::<Vec<_>>(),
-                        "metadata": project_metadata(json!({}), appearance)?,
-                        "idempotencyKey": crate::uuid_v4(),
-                    }),
-                ))?;
-                return Ok(paths.swap_remove(0));
+                return pollster::block_on(create_server_project(bridge, name, &paths, appearance));
             }
             let threads: Vec<_> = threads
                 .iter()
