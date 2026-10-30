@@ -345,6 +345,126 @@ fn a_failed_setting_write_keeps_the_saved_value_and_shows_an_error() -> Result<(
     Ok(())
 }
 
+/// The `/reasoning` submenu's effort titles; `None` on Linux, whose no-op text system lays
+/// out no slash menu.
+fn reasoning_rows(fx: &mut Fx) -> Result<Option<Vec<String>>> {
+    if !cfg!(target_os = "macos") {
+        return Ok(None);
+    }
+    fx.focus_composer()?;
+    fx.keys("cmd-a backspace")?;
+    fx.type_text("/reasoning")?;
+    fx.keys("enter")?;
+    let rows = fx
+        .read(|root, cx| root.composer(cx).read(cx).slash_state())
+        .context("reasoning submenu")?
+        .0;
+    fx.keys("escape cmd-a backspace")?;
+    Ok(Some(
+        rows.iter()
+            .map(|row| row.split('\n').next().unwrap().to_owned())
+            .collect(),
+    ))
+}
+
+/// `/fast` toggles like the CLI: the first sets `service_tier = "priority"`, the second
+/// removes it (`null` upsert).
+#[test]
+fn fast_toggles_the_priority_service_tier() -> Result<()> {
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("config/batchWrite", json!({"status": "ok"})));
+    lines.extend(exchange("config/batchWrite", json!({"status": "ok"})));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    drain(&mut fx)?;
+    for tier in [json!("priority"), Value::Null] {
+        fx.focus_composer()?;
+        fx.type_text("/fast")?;
+        fx.keys("enter")?;
+        fx.wait("service_tier write", |fx| {
+            fx.read(|root, _| root.config()["service_tier"] == tier)
+        })?;
+    }
+    let written: Vec<Value> = fx
+        .sent()?
+        .iter()
+        .filter(|r| r["method"] == "config/batchWrite")
+        .map(|r| r["params"]["edits"][0]["value"].clone())
+        .collect();
+    ensure!(written == [json!("priority"), Value::Null], "{written:?}");
+    Ok(())
+}
+
+/// `Available reasoning efforts` filters the composer's catalog efforts (low..xhigh stay), and
+/// `Open config.toml` reads the host's layers again: with no user layer it shows a toast.
+#[test]
+fn configuration_efforts_and_open_config_follow_the_host() -> Result<()> {
+    use ui::screens::settings::OpenConfigToml;
+    // Recorded with the live params, so the replay answers every layered read with this
+    // system-only result rather than with readback.jsonl's unused plain `config/read`.
+    let mut layered = exchange(
+        "config/read",
+        json!({"config": {}, "origins": {}, "layers": [
+            {"name": {"type": "system", "file": "/etc/codex/config.toml"}, "version": "v1", "config": {}}
+        ]}),
+    );
+    layered[0]["msg"]["params"] = json!({"includeLayers": true});
+    let mut lines = script(None, |_| {})?;
+    for _ in 0..4 {
+        lines.extend(layered.clone());
+    }
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    drain(&mut fx)?;
+    if let Some(rows) = reasoning_rows(&mut fx)? {
+        ensure!(
+            rows == ["Light", "Medium", "High", "Extra High", "Ultra"],
+            "{rows:?}"
+        );
+    }
+
+    let layered_reads = |fx: &mut Fx| -> Result<usize> {
+        Ok(fx
+            .sent()?
+            .iter()
+            .filter(|r| r["method"] == "config/read" && r["params"]["includeLayers"] == true)
+            .count())
+    };
+    fx.keys("cmd-,")?;
+    drain(&mut fx)?;
+    let opened = layered_reads(&mut fx)?;
+    ensure!(opened > 0, "the page reads the host's layers");
+    let page = fx
+        .read(|root, _| root.settings_page())
+        .context("settings page")?;
+    page.update(&mut fx.cx, |_, cx| cx.emit(OpenConfigToml));
+    fx.wait("missing user layer toast", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|t| t == "No user config.toml on this host")
+        })
+    })?;
+    ensure!(
+        layered_reads(&mut fx)? == opened + 1,
+        "Open config.toml reads once"
+    );
+
+    page.update(&mut fx.cx, |page, cx| {
+        page.set("host.enabled-reasoning-efforts", json!(["max"]), cx)
+    });
+    fx.wait("saved efforts", |fx| {
+        host_value(fx, "enabled-reasoning-efforts") == json!(["max"])
+    })?;
+    let published = fx.read(|_, cx| cx.global::<ui::composer::EnabledEfforts>().0.clone());
+    ensure!(published == Some(vec!["max".to_owned()]), "{published:?}");
+    if let Some(rows) = reasoning_rows(&mut fx)? {
+        ensure!(
+            rows == ["Light", "Medium", "High", "Extra High", "Max"],
+            "{rows:?}"
+        );
+    }
+    Ok(())
+}
+
 // These coordinates require macOS text layout; Linux uses the no-op text system.
 #[cfg(target_os = "macos")]
 fn prepare_instructions(fx: &mut Fx) -> Result<()> {

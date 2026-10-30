@@ -44,6 +44,7 @@ pub mod screenshot;
 mod search;
 mod section_actions;
 mod security;
+mod settings_configuration;
 mod settings_git;
 pub mod settings_import;
 pub(crate) mod settings_integrations;
@@ -683,13 +684,15 @@ impl Root {
         )
         .detach();
         for composer in [&home_composer, &thread_composer] {
-            cx.subscribe_in(composer, window, |this, _, command: &ui::composer::SlashCommand, window, cx| {
+            cx.subscribe_in(composer, window, |this, composer, command: &ui::composer::SlashCommand, window, cx| {
                 match command {
                     ui::composer::SlashCommand::Fast => {
+                        // `/fast` toggles, as the CLI's; off removes `service_tier`.
+                        let tier = if composer.read(cx).fast_mode() { json!("priority") } else { Value::Null };
                         this.write_config("config/batchWrite", json!({
-                            "edits": [{"keyPath": "service_tier", "value": "priority", "mergeStrategy": "upsert"}],
+                            "edits": [{"keyPath": "service_tier", "value": tier.clone(), "mergeStrategy": "upsert"}],
                             "filePath": null, "expectedVersion": null, "reloadUserConfig": true,
-                        }), cx, |config| config["service_tier"] = "priority".into());
+                        }), cx, |config| config["service_tier"] = tier);
                     }
                     ui::composer::SlashCommand::Archive => {
                         if let Route::Thread(id) = this.state.route.clone() {
@@ -1168,6 +1171,7 @@ impl Root {
                     });
                 let models: Vec<Model> =
                     catalog.data.into_iter().map(|entry| entry.model).collect();
+                settings_configuration::sync_enabled_efforts(cx);
                 let mut composers = this.thread_composers();
                 composers.push(this.home.read(cx).composer.clone());
                 for composer in composers {
@@ -5868,6 +5872,9 @@ impl Root {
                     "git-commit-instructions"
                     | "git-pr-instructions"
                     | "git-pr-watch-instructions" => "Failed to save instructions",
+                    settings_configuration::ENABLED_EFFORTS => {
+                        "Could not save reasoning effort preferences"
+                    }
                     "notifications-sound" => "Couldn't change the notification sound. Try again",
                     key if key.starts_with("notifications-") => {
                         "Could not save notification preference"
@@ -5884,6 +5891,9 @@ impl Root {
                     host_settings::apply(cx);
                 }
                 self.git_setting_saved(key, cx);
+                if key == settings_configuration::ENABLED_EFFORTS {
+                    settings_configuration::efforts_saved(self, cx);
+                }
                 let message = match key {
                     "git-branch-prefix" => Some("Saved branch prefix".to_owned()),
                     "git-pull-request-merge-method" => {
