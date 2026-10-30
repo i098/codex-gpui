@@ -531,9 +531,27 @@ fn route_plugin_id(route: &str) -> Option<&str> {
     path.split('/').next().filter(|id| !id.is_empty())
 }
 
+/// The original's `plugin/read` and `plugin/install` params: a remote catalog names the plugin
+/// by its `remotePluginId`, which the ChatGPT backend's `/ps/plugins/{id}` routes expect.
 fn plugin_params(plugin: &Plugin) -> Value {
-    json!({"pluginName":plugin.name(), "marketplacePath":plugin.marketplace_path,
-        "remoteMarketplaceName":plugin.remote_marketplace_name})
+    match &plugin.marketplace_path {
+        Some(path) => json!({"marketplacePath": path, "pluginName": plugin.name()}),
+        None => json!({
+            "pluginName": plugin.summary["remotePluginId"].as_str().unwrap_or(plugin.name()),
+            "remoteMarketplaceName": plugin.remote_marketplace_name,
+        }),
+    }
+}
+
+/// The original's `requestPluginId`: a remote catalog entry uninstalls by its `remotePluginId`;
+/// its catalog `id` returns success without removing the plugin.
+fn request_plugin_id(plugin: &Plugin) -> &str {
+    match &plugin.marketplace_path {
+        Some(_) => plugin.id(),
+        None => plugin.summary["remotePluginId"]
+            .as_str()
+            .unwrap_or(plugin.id()),
+    }
 }
 
 async fn read_skills(bridge: &Bridge, cwd: &str) -> Resource<Vec<Value>> {
@@ -626,7 +644,10 @@ async fn perform(bridge: &Bridge, host: &dyn host::Host, action: &Action) -> Res
                 "This plugin is managed by Codex and cannot be uninstalled"
             );
             bridge
-                .request("plugin/uninstall", json!({"pluginId":plugin.id()}))
+                .request(
+                    "plugin/uninstall",
+                    json!({"pluginId":request_plugin_id(plugin)}),
+                )
                 .await
         }
         Action::EnableSkill {

@@ -7,8 +7,18 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Add a background macOS check for minimize, zoom, hide, quit, and the 480×600 window minimum, with safe call-level checks for Hide Others and Show All.
+- Open the Sites page from the rail: the owned sites list from the ChatGPT backend `/websites`, with loading, error with Retry, and empty states.
+- Stream reasoning summaries under `Thinking`, show context compaction progress and completion, add the composer context window indicator, and add the `Hide thinking` and `Show raw thinking` configuration switches.
+- Wire the Recents row context menu: Section (with custom sections and New section…), Fork chat, Copy deeplink, Copy as Markdown, Copy working directory, Open in new window, and Permanently delete with its `Delete task?` confirmation.
+- Prove that the rail `Code Review` item opens the Code Review page with a native flow test.
+- Keep refused follow-up messages in the queue tray with Retry, preserving their input, chat, draft and local row actions.
+- Run explicit `!` shell commands in Full access chats after a native warning confirmation; keep sandboxed drafts disabled and separate from the terminal panel.
+- Add plan mode: `/plan-mode`, the `@` menu row and the footer `Plan` chip turn it on and off, turns send the `plan` collaboration mode, a resumed chat keeps it, and plan text and step progress show in the chat. Restore an edited queued message's place across every queue page.
 - Show `Unable to send message` with the reason and `OK` when a composer submit waits for file uploads.
+- Draw the 2 px keyboard focus ring on the mobile setup buttons.
 - Draw the 2 px keyboard focus ring on the diff card's `Undo` and `View changes` buttons in a chat.
+- List the Configuration page's available reasoning efforts from the host's model catalog, filter the composer's effort choices by them, show which config layer sets each value, and open the host's actual user `config.toml`.
 - Add the Configuration settings page: the `config.toml` approval policy, sandbox, network access, web search, output detail, and reasoning summary controls, the available reasoning efforts, the Codex dependencies switch, and Open config.toml.
 - Add the advanced Appearance settings: theme presets, colors, contrast, fonts, translucent sidebar, theme import and copy, separate light and dark modes, font sizes, diff markers, reduced motion, pointer cursors, font smoothing, the macOS Dock icon, and Reset to default.
 - Add optional keyboard-accessible documentation links to confirmation dialogs without accepting or cancelling the pending action.
@@ -23,6 +33,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - A contributing guide, issue and pull request templates, a security policy, and this changelog.
 - Add one workspace version, a version bump script, and a tag release workflow that publishes the macOS arm64 zip.
 - Add the native `/first-run` tour with the IDE, cloud, code, and autonomy pages and the original noise background.
+- Add native feedback upload and ZIP saving, Markdown transcript export, and conversation recap commands.
 - Add native Code Review search, filters, and pull request details.
 - Add Storage usage measurement and safe review before deleting old local chats.
 - Add Import settings for Claude Code and Cursor, with saved sync choices and preserved imported workspaces.
@@ -38,6 +49,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Fixed
 - Connect MCP and skill commands to the existing settings and mention actions, and refresh skill lists after changes.
+- Hide the mobile setup artwork below 1024 px, so the setup column stays centered in the main surface.
+- Read and save image attachments on the selected host, and keep the draft when an image cannot load.
+- Install, read and uninstall remote catalog plugins from the Plugins directory by their `remotePluginId`, as the original does; the plain name returned 404 and the catalog ID left the plugin installed.
 - Correct the Home `+` Add files and more row in `docs/flows.md`: the button opens the original Add menu; four of its actions are not wired.
 - Match Home at narrow windows: icon-only utility chips, the full-width composer, no titlebar New chat, and the 40 px light composer shadow below 640 px.
 - Match the original Mobile setup allow-host step: the `Set up Remote` header, balanced heading and description lines (`text-wrap: pretty`), and the Allow button width.

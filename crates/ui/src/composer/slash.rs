@@ -20,6 +20,9 @@ pub enum SlashCommand {
     Pin,
     Fork,
     Mcp,
+    Feedback,
+    Export,
+    Recap,
 }
 
 impl gpui::EventEmitter<SlashCommand> for Composer {}
@@ -66,6 +69,20 @@ const COMMANDS: &[Command] = &[
         title: "Feedback",
         description: "Send feedback about this chat",
         icon: "sidebar-cmd-feedback",
+        requires_empty: false,
+    },
+    Command {
+        id: "export",
+        title: "Export",
+        description: "Export this conversation as Markdown",
+        icon: "sidebar-cmd-create-page",
+        requires_empty: false,
+    },
+    Command {
+        id: "recap",
+        title: "Recap",
+        description: "Summarize this conversation",
+        icon: "thread-summary",
         requires_empty: false,
     },
     Command {
@@ -474,10 +491,10 @@ impl Composer {
             return (&item.title, &item.description, item.icon);
         }
         if let Some(command) = COMMANDS.get(index) {
-            let description = if command.id == "reasoning" {
-                effort_label(self.displayed_effort())
-            } else {
-                command.description
+            let description = match command.id {
+                "reasoning" => effort_label(self.displayed_effort()),
+                "plan-mode" if self.plan => "Turn plan mode off",
+                _ => command.description,
             };
             (command.title, description, command.icon)
         } else {
@@ -531,15 +548,23 @@ impl Composer {
             "rename" => SlashCommand::Rename,
             "pin" => SlashCommand::Pin,
             "mcp" => SlashCommand::Mcp,
+            "feedback" => SlashCommand::Feedback,
+            "export" => SlashCommand::Export,
+            "recap" => SlashCommand::Recap,
             "model" | "reasoning" | "fork" | "project" => {
                 self.open_sub(command.id, cx);
+                return;
+            }
+            "plan-mode" => {
+                self.finish_command(window, cx);
+                self.toggle_plan(cx);
                 return;
             }
             _ => return,
         };
         self.finish_command(window, cx);
         if matches!(action, SlashCommand::Fast) {
-            self.fast = true;
+            self.fast = !self.fast;
         }
         cx.emit(action);
         cx.notify();

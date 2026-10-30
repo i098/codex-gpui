@@ -295,7 +295,11 @@ impl Composer {
 
     pub(super) fn mention_label(&self, index: usize) -> (&str, &str, &str) {
         if let Some(action) = ACTIONS.get(index) {
-            (action.title, action.description, action.icon)
+            let description = match action.id {
+                "plan-mode" if self.plan => "Turn plan mode off",
+                _ => action.description,
+            };
+            (action.title, description, action.icon)
         } else if let Some(skill) = self.slash.skills.get(index - ACTIONS.len()) {
             (&skill.title, &skill.description, "sidebar-cmd-create-page")
         } else {
@@ -311,8 +315,8 @@ impl Composer {
     }
 
     /// Enter, Tab or a click on the highlighted row. `Files and folders` opens the picker; a
-    /// skill or a file becomes a chip followed by a space, the list closes. ponytail: the
-    /// other actions (goal, sketch, project, plan mode) belong to their own rows.
+    /// skill or a file becomes a chip followed by a space, the list closes; `Plan mode` toggles
+    /// plan mode. ponytail: the other actions (goal, sketch, project) belong to their own rows.
     pub(super) fn activate_mention(&mut self, index: usize, cx: &mut Context<Self>) {
         let files = ACTIONS.len() + self.slash.skills.len();
         let (label, link, icon) = match ACTIONS.get(index) {
@@ -325,6 +329,16 @@ impl Composer {
                 self.end_search(cx);
                 self.add_files(cx);
                 cx.notify();
+                return;
+            }
+            Some(action) if action.id == "plan-mode" => {
+                self.cancel_dictation(cx);
+                let range = self.splice(self.slash.range.clone(), "");
+                self.selected_range = range.start..range.start;
+                self.marked_range = None;
+                self.slash.open = false;
+                self.end_search(cx);
+                self.toggle_plan(cx);
                 return;
             }
             Some(_) => return,
