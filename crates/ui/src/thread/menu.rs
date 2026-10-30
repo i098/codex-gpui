@@ -520,6 +520,49 @@ impl ThreadView {
                     eprintln!("Look Up failed: {error:#}");
                 }
             }
+            "create-document" | "create-presentation" | "create-spreadsheet" | "create-site" => {
+                // The original's `appendPromptText`: the plugin mention and the starter prompt.
+                let (kind, label, plugin) = match id {
+                    "create-document" => {
+                        ("document", "Documents", "documents@openai-primary-runtime")
+                    }
+                    "create-presentation" => (
+                        "presentation",
+                        "Presentations",
+                        "presentations@openai-primary-runtime",
+                    ),
+                    "create-spreadsheet" => (
+                        "spreadsheet",
+                        "Spreadsheets",
+                        "spreadsheets@openai-primary-runtime",
+                    ),
+                    _ => ("site", "Sites", "sites@openai-curated-remote"),
+                };
+                let prompt = format!(
+                    "Create a new {kind} with [@{label}](plugin://{plugin}). Start by asking me what it should be about."
+                );
+                if let Ok(composer) = self
+                    .composer
+                    .clone()
+                    .downcast::<crate::composer::Composer>()
+                {
+                    composer.update(cx, |composer, cx| {
+                        composer.append_prompt(&prompt, _window, cx)
+                    });
+                }
+            }
+            // ponytail: with plugins on, the original opens a flyout of connected plugins; the
+            // plugins page holds the same list.
+            "use-plugins" => _window.dispatch_action(Box::new(crate::OpenPlugins), cx),
+            "attach-files" => {
+                if let Ok(composer) = self
+                    .composer
+                    .clone()
+                    .downcast::<crate::composer::Composer>()
+                {
+                    composer.update(cx, |composer, cx| composer.add_files(cx));
+                }
+            }
             "searchWithGoogle" => {
                 cx.open_url(&selection_url("https://www.google.com/search?q=", &url))
             }
@@ -561,6 +604,10 @@ impl ThreadView {
                 "Image actions"
             } else if menu.items.iter().any(|item| item.id == "copy") {
                 "Text actions"
+            } else if menu.items.iter().any(|item| item.id == "create-site") {
+                "Create a file or site"
+            } else if menu.items.iter().any(|item| item.id == "attach-files") {
+                "Add source"
             } else {
                 "Link actions"
             },
