@@ -1878,10 +1878,14 @@ mod app_tools {
         }
         fx.keys("shift-tab enter")?;
         fx.wait("proposal editor", |fx| {
-            fx.read(|root, _| root.automation_editor().is_some())
+            fx.read(|root, _| root.automation_panel().is_some())
         })?;
+        ensure!(fx.read(
+            |root, _| root.side_panel() == Some(app::SidePanel::Automation)
+                && root.automation_editor().is_none()
+        ));
         ensure!(fx.read(|root, cx| {
-            root.automation_editor()
+            root.automation_panel()
                 .unwrap()
                 .read(cx)
                 .draft(cx)
@@ -1897,7 +1901,7 @@ mod app_tools {
         }
         fx.keys("escape")?;
         fx.wait("proposal cancelled", |fx| {
-            fx.read(|root, _| root.automation_editor().is_none())
+            fx.read(|root, _| root.automation_panel().is_none() && root.side_panel().is_none())
         })?;
         ensure!(list()?["items"].as_array().unwrap().is_empty());
 
@@ -1910,9 +1914,13 @@ mod app_tools {
             })
         });
         fx.keys("cmd-enter")?;
-        fx.wait("reviewed task saved", |fx| {
-            fx.read(|root, _| root.automation_editor().is_none())
-        })?;
+        let saved = |fx: &mut Fx| {
+            fx.read(|root, cx| {
+                root.automation_panel()
+                    .and_then(|editor| editor.read(cx).saved_task().map(str::to_owned))
+            })
+        };
+        fx.wait("reviewed task saved", |fx| saved(fx).is_some())?;
         let listed = list()?;
         let tasks = listed["items"].as_array().unwrap();
         ensure!(
@@ -1938,6 +1946,11 @@ mod app_tools {
             })
             .unwrap();
         ensure!(accepted["mode"] == "view" && accepted["id"] == tasks[0]["id"]);
+        ensure!(saved(&mut fx).as_deref() == tasks[0]["id"].as_str());
+        if let Ok(out) = std::env::var("CGX_APP_TOOLS_PROOF") {
+            fx.reference_shot()?
+                .save(Path::new(&out).join("native-card-saved.png"))?;
+        }
         view.update(&mut fx.cx, |_, cx| {
             cx.emit(ui::screens::thread::view::OpenAutomationCard {
                 arguments: accepted,
@@ -1946,10 +1959,14 @@ mod app_tools {
             })
         });
         fx.keys("cmd-enter")?;
-        fx.wait("accepted task updated", |fx| {
-            fx.read(|root, _| root.automation_editor().is_none())
-        })?;
+        fx.wait("accepted task updated", |fx| saved(fx).is_some())?;
         ensure!(list()?["items"].as_array().unwrap().len() == 1);
+        // `Open settings` opens the saved task's Automations page.
+        let id = tasks[0]["id"].as_str().unwrap().to_owned();
+        fx.keys("cmd-enter")?;
+        fx.wait("task page", |fx| {
+            fx.route() == app::Route::Automation(id.clone())
+        })?;
         Ok(())
     }
 }

@@ -75,6 +75,8 @@ pub struct Draft {
 pub enum Outcome {
     Dismiss,
     Save(Draft),
+    /// The side panel's `Open settings`: the saved task's Automations page.
+    OpenSettings(String),
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -113,6 +115,10 @@ pub struct Editor {
     advanced: bool,
     zone: String,
     day_label: SharedString,
+    /// Drawn in the thread's `Automation` side panel tab instead of a dialog.
+    side_panel: bool,
+    /// The side panel's saved task: its footer offers `Open settings`.
+    saved_id: Option<String>,
 }
 
 impl EventEmitter<Outcome> for Editor {}
@@ -167,6 +173,8 @@ impl Editor {
             advanced: false,
             zone,
             day_label: "Monday".into(),
+            side_panel: false,
+            saved_id: None,
         };
         if let Some(rule) = this.original_rule.clone() {
             this.load_rule(&rule, cx);
@@ -316,6 +324,23 @@ impl Editor {
         self.error = Some(message);
         cx.notify();
     }
+    /// The `Automation` side panel tab's editor (`automation-side-panel-tab`).
+    pub fn in_side_panel(mut self) -> Self {
+        self.side_panel = true;
+        self
+    }
+    /// A side panel editor's task saved as `id`.
+    pub fn saved(&mut self, id: String, cx: &mut Context<Self>) {
+        self.saving = false;
+        self.error = None;
+        self.editing = true;
+        self.saved_id = Some(id);
+        cx.notify();
+    }
+    /// The side panel editor's saved task id, once `Create scheduled task` wrote it.
+    pub fn saved_task(&self) -> Option<&str> {
+        self.saved_id.as_deref()
+    }
     fn value<'a>(&'a self, index: usize, cx: &'a App) -> &'a str {
         self.fields[index].read(cx).field_text().trim()
     }
@@ -446,6 +471,11 @@ impl Editor {
 
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.saving {
+            return;
+        }
+        // A saved side panel task is not written twice: its button opens the task.
+        if let Some(id) = self.saved_id.clone() {
+            cx.emit(Outcome::OpenSettings(id));
             return;
         }
         if let Some(draft) = self.draft(cx) {
@@ -1326,10 +1356,12 @@ impl Editor {
 
     fn footer(&self, t: &Theme, cx: &Context<Self>) -> Div {
         let field_error = self.fields_error(cx);
-        let valid = !self.saving
-            && field_error.is_none()
-            && self.execution.valid()
-            && self.rule(cx).is_some();
+        let saved = self.side_panel && self.saved_id.is_some();
+        let valid = saved
+            || !self.saving
+                && field_error.is_none()
+                && self.execution.valid()
+                && self.rule(cx).is_some();
         let reason = if let Some(error) = field_error {
             error
         } else if !self.execution.valid() {
@@ -1342,23 +1374,32 @@ impl Editor {
             .justify_end()
             .gap(px(12.))
             .pt(px(20.))
-            .when(!self.editing, |d| {
+            .when(!self.editing || self.side_panel && !saved, |d| {
                 d.child(self.button(CANCEL, "Cancel", t, cx))
             })
             .child(tooltip(
                 self.button(
                     SAVE,
-                    match (self.saving, self.editing) {
-                        (true, _) => "Saving…",
-                        (false, true) => "Save",
-                        (false, false) => "Create",
+                    match (self.saving, saved, self.side_panel, self.editing) {
+                        (true, ..) => "Saving…",
+                        (_, true, ..) => "Open settings",
+                        (_, _, true, true) => "Apply changes",
+                        (_, _, true, false) => "Create scheduled task",
+                        (_, _, false, true) => "Save",
+                        (_, _, false, false) => "Create",
                     },
                     t,
                     cx,
                 )
                 .aria_disabled(!valid)
                 .opacity(if valid { 1. } else { 0.4 }),
-                if valid { "Save scheduled task" } else { reason },
+                if saved {
+                    "Open the scheduled task"
+                } else if valid {
+                    "Save scheduled task"
+                } else {
+                    reason
+                },
                 None,
                 Side::Top,
             ))
@@ -1417,42 +1458,49 @@ impl Render for Editor {
         };
         let mut form = div()
             .id("automation-editor-form")
-            .role(Role::Dialog)
+            .role(if self.side_panel {
+                Role::Group
+            } else {
+                Role::Dialog
+            })
             .aria_label(title)
             .relative()
-            .w(px(680.).min(window.viewport_size().width * 0.92))
-            .max_h(window.viewport_size().height * 0.85)
-            .p(px(20.))
+            .when(self.side_panel, |d| d.size_full().p(px(16.)))
+            .when(!self.side_panel, |d| {
+                d.w(px(680.).min(window.viewport_size().width * 0.92))
+                    .max_h(window.viewport_size().height * 0.85)
+                    .p(px(20.))
+                    .child(shapes::decoration(shapes::Decoration {
+                        radius: gpui::Corners::all(px(30.)),
+                        fill: Some(t.surface_elevated_secondary),
+                        shadows: vec![
+                            shapes::Shadow {
+                                color: t.border,
+                                offset: gpui::point(px(0.), px(0.)),
+                                blur: px(0.),
+                                spread: px(0.5),
+                                inset: false,
+                            },
+                            shapes::Shadow {
+                                color: gpui::black().opacity(0.1),
+                                offset: gpui::point(px(0.), px(8.)),
+                                blur: px(10.),
+                                spread: px(-6.),
+                                inset: false,
+                            },
+                            shapes::Shadow {
+                                color: gpui::black().opacity(0.1),
+                                offset: gpui::point(px(0.), px(20.)),
+                                blur: px(25.),
+                                spread: px(-5.),
+                                inset: false,
+                            },
+                        ],
+                        ..Default::default()
+                    }))
+            })
             .flex()
             .flex_col()
-            .child(shapes::decoration(shapes::Decoration {
-                radius: gpui::Corners::all(px(30.)),
-                fill: Some(t.surface_elevated_secondary),
-                shadows: vec![
-                    shapes::Shadow {
-                        color: t.border,
-                        offset: gpui::point(px(0.), px(0.)),
-                        blur: px(0.),
-                        spread: px(0.5),
-                        inset: false,
-                    },
-                    shapes::Shadow {
-                        color: gpui::black().opacity(0.1),
-                        offset: gpui::point(px(0.), px(8.)),
-                        blur: px(10.),
-                        spread: px(-6.),
-                        inset: false,
-                    },
-                    shapes::Shadow {
-                        color: gpui::black().opacity(0.1),
-                        offset: gpui::point(px(0.), px(20.)),
-                        blur: px(25.),
-                        spread: px(-5.),
-                        inset: false,
-                    },
-                ],
-                ..Default::default()
-            }))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_key_down(cx.listener(Self::key))
             .on_action(cx.listener(|this, _: &Dismiss, _, cx| this.dismiss(cx)))
@@ -1478,19 +1526,22 @@ impl Render for Editor {
                         text(title, 16., 26., 590., t.text)
                             .font_features(FORM_TITLE_FEATURES.clone()),
                     )
-                    .child(
-                        div()
-                            .absolute()
-                            .right(px(-6.))
-                            .top(px(-4.))
-                            .child(self.button(CLOSE, "Close dialog", t, cx)),
-                    ),
+                    .when(!self.side_panel, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .right(px(-6.))
+                                .top(px(-4.))
+                                .child(self.button(CLOSE, "Close dialog", t, cx)),
+                        )
+                    }),
             )
             .child(
                 div()
                     .id("automation-editor-fields")
                     .font_features(FORM_BODY_FEATURES.clone())
                     .min_h_0()
+                    .when(self.side_panel, |d| d.flex_1())
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll)
                     .when(self.advanced, |d| d.top_layer())
@@ -1525,6 +1576,9 @@ impl Render for Editor {
         }
         if self.saving {
             form = form.child(div().absolute().inset_0().occlude());
+        }
+        if self.side_panel {
+            return form.into_any_element();
         }
         div()
             .absolute()
@@ -1564,6 +1618,7 @@ impl Render for Editor {
                     .mb(px(-52.5))
                     .child(form),
             )
+            .into_any_element()
     }
 }
 

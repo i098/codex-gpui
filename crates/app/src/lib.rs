@@ -211,6 +211,8 @@ pub enum SidePanel {
     File,
     /// `Open in side chat`: the side chat with this [`SideChat::key`].
     SideChat(usize),
+    /// A suggested scheduled task's card: the task's editor (`automation-side-panel-tab`).
+    Automation,
 }
 
 /// Settings ▸ Appearance ▸ Theme (the original's `appearanceTheme`): follow the system, or
@@ -474,6 +476,8 @@ pub struct Root {
     feedback: Option<Entity<features::feedback::Feedback>>,
     diff_confirmation: Option<Entity<ui::confirmation::Confirmation>>,
     automation_editor: Option<Entity<automations::editor::Editor>>,
+    /// The [`SidePanel::Automation`] tab's editor; cleared with the thread.
+    automation_panel: Option<Entity<automations::editor::Editor>>,
     new_project: Option<Entity<ui::screens::new_project::Dialog>>,
     /// The open dialog came from the composer: its close returns focus there.
     dialog_to_composer: bool,
@@ -919,6 +923,7 @@ impl Root {
             feedback: None,
             diff_confirmation: None,
             automation_editor: None,
+            automation_panel: None,
             new_project: None,
             dialog_to_composer: false,
             login: None,
@@ -2914,6 +2919,7 @@ impl Root {
         file: Option<&Entity<FileView>>,
         side_chats: &[SideChat],
         console: bool,
+        automation: bool,
         cx: &App,
     ) -> Option<Tab> {
         match side {
@@ -2956,6 +2962,11 @@ impl Root {
                     preview: false,
                 })
             }
+            SidePanel::Automation => automation.then(|| Tab {
+                icon: "scheduled",
+                label: "Scheduled task".into(),
+                preview: false,
+            }),
         }
     }
 
@@ -2969,13 +2980,16 @@ impl Root {
         let file = self.file.clone();
         let chats = &self.side_chats;
         let console = self.terminal_panel().is_some();
+        let automation = self.automation_panel.is_some();
         self.tabs.retain(|side| {
-            Self::side_tab(*side, view, file.as_ref(), chats, console, cx).is_some()
+            Self::side_tab(*side, view, file.as_ref(), chats, console, automation, cx).is_some()
         });
         let tabs: Vec<Tab> = self
             .tabs
             .iter()
-            .filter_map(|side| Self::side_tab(*side, view, file.as_ref(), chats, console, cx))
+            .filter_map(|side| {
+                Self::side_tab(*side, view, file.as_ref(), chats, console, automation, cx)
+            })
             .collect();
         let active = self
             .side
@@ -2989,6 +3003,7 @@ impl Root {
             SidePanel::Console => self.terminal_panel()?.clone().into(),
             SidePanel::File => self.file.as_ref()?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
+            SidePanel::Automation => self.automation_panel.as_ref()?.clone().into(),
         };
         Some((view, tabs, active))
     }
@@ -3184,7 +3199,17 @@ impl Root {
         if item.is_none() || origin.is_some() {
             self.set_automation_source("local");
         }
-        let editor = cx.new(|cx| automations::editor::Editor::new(item.as_ref(), cx));
+        // A chat's suggested task card edits in the thread's side panel, as the original's
+        // `automation-side-panel-tab`; the Automations page keeps the dialog.
+        let side_panel = origin.is_some();
+        let editor = cx.new(|cx| {
+            let editor = automations::editor::Editor::new(item.as_ref(), cx);
+            if side_panel {
+                editor.in_side_panel()
+            } else {
+                editor
+            }
+        });
         editor.update(cx, |editor, cx| {
             editor.set_options(
                 &self.models,
@@ -3199,10 +3224,17 @@ impl Root {
             &editor,
             window,
             move |this, editor, outcome, window, cx| match outcome {
+                automations::editor::Outcome::Dismiss if side_panel => {
+                    this.automation_panel = None;
+                    this.close_side(SidePanel::Automation, window, cx);
+                }
                 automations::editor::Outcome::Dismiss => {
                     this.automation_editor = None;
                     window.focus(&this.focus, cx);
                     cx.notify();
+                }
+                automations::editor::Outcome::OpenSettings(id) => {
+                    this.navigate(Route::Automation(id.clone()), window, cx);
                 }
                 automations::editor::Outcome::Save(draft) => {
                     let request =
@@ -3213,7 +3245,12 @@ impl Root {
         )
         .detach();
         window.focus(&editor.focus_handle(cx), cx);
-        self.automation_editor = Some(editor);
+        if side_panel {
+            self.automation_panel = Some(editor);
+            self.set_side(SidePanel::Automation, window, cx);
+        } else {
+            self.automation_editor = Some(editor);
+        }
         self.load_projects(cx);
         cx.notify();
     }
@@ -3223,7 +3260,7 @@ impl Root {
         projects: Option<&[ui::screens::sidebar::Project]>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(editor) = &self.automation_editor {
+        for editor in self.automation_editor.iter().chain(&self.automation_panel) {
             editor.update(cx, |editor, cx| {
                 editor.set_options(
                     &self.models,
@@ -3260,11 +3297,18 @@ impl Root {
             this.update_in(cx, |this, window, cx| {
                 if this.automation_source != source
                     || this.automation_editor.as_ref() != Some(&editor)
+                        && this.automation_panel.as_ref() != Some(&editor)
                 {
                     return;
                 }
                 match result {
-                    Ok(item) => this.automation_saved(item, origin, window, cx),
+                    Ok(item) => {
+                        if this.automation_panel.as_ref() == Some(&editor) {
+                            let id = item["id"].as_str().unwrap_or_default().to_owned();
+                            editor.update(cx, |editor, cx| editor.saved(id, cx));
+                        }
+                        this.automation_saved(item, origin, window, cx)
+                    }
                     Err(error) => editor.update(cx, |editor, cx| {
                         editor.failed(format!("Couldn’t save task: {error}"), cx)
                     }),
@@ -3320,6 +3364,11 @@ impl Root {
 
     pub fn automation_editor(&self) -> Option<&Entity<automations::editor::Editor>> {
         self.automation_editor.as_ref()
+    }
+
+    /// The [`SidePanel::Automation`] tab's editor.
+    pub fn automation_panel(&self) -> Option<&Entity<automations::editor::Editor>> {
+        self.automation_panel.as_ref()
     }
 
     /// Row menu `Delete` (AM-026): the confirmation names the task the host lists.
@@ -3664,6 +3713,7 @@ impl Root {
                         this.thread = None;
                         this.diff = None;
                         this.file = None;
+                        this.automation_panel = None;
                         this.split = None;
                         this.pull_requests_page = None;
                         this.tabs.clear();
@@ -4167,6 +4217,7 @@ impl Root {
         .detach();
         self.diff = Some(diff);
         self.file = None;
+        self.automation_panel = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         view.update(cx, |view, cx| {
             view.set_git_phase(self.git_busy, cx);
