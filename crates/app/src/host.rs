@@ -1909,7 +1909,7 @@ impl Host for LocalHost {
             "git-root" | "git-changes" | "git-stage" | "git-unstage" | "git-revert"
             | "git-init-repo" | "git-commit-status" | "git-commit-diff" | "git-commit"
             | "git-push" | "git-checkout" | "git-cat-file" | "git-review-patch"
-            | "git-file-url" => git::fetch(endpoint, &params)?,
+            | "git-file-url" | "git-blame-file" => git::fetch(endpoint, &params)?,
             "gh-cli-status" | "gh-current-user" | "gh-pr-search" | "gh-pr-detail"
             | "gh-pr-patch" | "gh-pr-media" => {
                 github_pull_requests::fetch(self, endpoint, &params)?

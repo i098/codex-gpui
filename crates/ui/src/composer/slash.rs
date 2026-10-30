@@ -420,9 +420,8 @@ impl Composer {
                     "archive" | "review-mode" | "compact" | "fork" | "init" | "new" | "pin"
                     | "rename" | "share" | "side" => self.docked,
                     "project" => !self.docked,
-                    "fast" | "model" | "plan-mode" | "reasoning" | "ultrafast" => {
-                        self.current_model().is_some()
-                    }
+                    "plan-mode" => self.current_model().is_some() && self.plan_supported(),
+                    "fast" | "model" | "reasoning" | "ultrafast" => self.current_model().is_some(),
                     "memories" => self.slash.memories,
                     _ => true,
                 };

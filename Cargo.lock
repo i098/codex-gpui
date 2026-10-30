@@ -160,6 +160,7 @@ dependencies = [
  "glob",
  "gpui",
  "gpui_platform",
+ "http_client",
  "iana-time-zone",
  "image",
  "notify",

@@ -1,7 +1,10 @@
 use super::*;
 use crate::composer::Composer;
 use crate::tooltip::{Side, tooltip};
-use gpui::{Entity, FocusHandle, MouseButton, PathBuilder, Stateful, canvas, point};
+use gpui::{
+    Anchor, AnyElement, Edges, Entity, FocusHandle, MouseButton, PathBuilder, Stateful, anchored,
+    canvas, deferred, point,
+};
 
 #[derive(IntoElement)]
 pub(super) struct UserMessage {
@@ -388,8 +391,8 @@ pub struct PatchTurn {
 #[action(namespace = thread, no_json)]
 pub struct ThreadPressed(pub String);
 
-/// Copy, Read aloud, Rate response, Fork chat from here: shown under the latest turn; earlier
-/// turns (group `group`) show them on hover.
+/// Copy, Rate response, Read aloud, More actions: shown under the latest turn; earlier turns
+/// (group `group`) show them on hover. More actions opens `menu` (`Branch in new chat`).
 /// ponytail: Read aloud (ChatGPT voice playback) and Rate response (feedback menu) have no
 /// handler; wire them with a voice backend and the feedback menu.
 /// Focus handles of a turn's buttons. The original's `group-focus-within` shows a turn's hover
@@ -401,7 +404,7 @@ pub(super) struct TurnFocus {
     pub undo: Entity<crate::focus::ControlFocus>,
     pub view: Entity<crate::focus::ControlFocus>,
     pub copy: FocusHandle,
-    pub fork: FocusHandle,
+    pub more: FocusHandle,
     /// One of them has focus.
     pub engaged: bool,
     pub reverted: bool,
@@ -414,22 +417,22 @@ impl TurnFocus {
         undo: Entity<crate::focus::ControlFocus>,
         view: Entity<crate::focus::ControlFocus>,
         copy: Entity<crate::focus::ControlFocus>,
-        fork: Entity<crate::focus::ControlFocus>,
+        more: Entity<crate::focus::ControlFocus>,
         window: &Window,
         cx: &App,
     ) -> Self {
-        let [copy, fork] = [copy, fork].map(|focus| focus.read(cx).handle.clone());
+        let [copy, more] = [copy, more].map(|focus| focus.read(cx).handle.clone());
         let engaged = [&undo, &view]
             .map(|focus| &focus.read(cx).handle)
             .into_iter()
-            .chain([&copy, &fork])
+            .chain([&copy, &more])
             .any(|handle| handle.is_focused(window));
         Self {
             thread_id,
             undo,
             view,
             copy,
-            fork,
+            more,
             engaged,
             reverted: false,
             patch_pending: false,
@@ -438,16 +441,21 @@ impl TurnFocus {
 }
 
 /// `sent_at` is the turn's `Wednesday 9:54 PM`, shown beside the actions on hover or focus.
+/// `menu` is the open More actions menu; `toggle_menu` opens or closes it and `hover_menu`
+/// reports the pointer over its trigger.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn action_row(
     last: bool,
     group: &SharedString,
-    turn_id: &str,
     answer: &str,
     sent_at: Option<String>,
+    menu: Option<AnyElement>,
+    toggle_menu: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    hover_menu: impl Fn(&bool, &mut Window, &mut App) + 'static,
     focus: &TurnFocus,
     t: &Theme,
 ) -> Div {
-    let engaged = focus.engaged;
+    let engaged = focus.engaged || menu.is_some();
     let action = |name: &'static str| {
         let color = t.text_tertiary;
         // `Icon` folds its own opacity into the color, so the hover sets the color.
@@ -465,7 +473,7 @@ pub(super) fn action_row(
             .rounded(Theme::RADIUS_MD)
             .child(icon)
     };
-    let (answer, turn_id) = (answer.to_owned(), turn_id.to_owned());
+    let answer = answer.to_owned();
     div()
         .mt(px(6.))
         .ml(px(-4.))
@@ -495,14 +503,6 @@ pub(super) fn action_row(
             Side::Top,
         ))
         .child(tooltip(
-            action("thread-read-aloud")
-                .id("read-response")
-                .aria_label("Read aloud"),
-            "Read aloud",
-            None,
-            Side::Top,
-        ))
-        .child(tooltip(
             action("thread-rate")
                 .id("rate-response")
                 .aria_label("Rate response"),
@@ -511,18 +511,31 @@ pub(super) fn action_row(
             Side::Top,
         ))
         .child(tooltip(
-            action("thread-fork")
-                .id("fork-thread")
-                .aria_label("Fork chat from here")
-                .role(gpui::Role::Button)
-                .track_focus(&focus.fork)
-                .on_click(move |_, window, cx| {
-                    window.dispatch_action(Box::new(ForkThread(turn_id.clone())), cx)
-                }),
-            "Branch in new chat",
+            action("thread-read-aloud")
+                .id("read-response")
+                .aria_label("Read aloud"),
+            "Read aloud",
             None,
             Side::Top,
         ))
+        .child(
+            div()
+                .id("more-actions-trigger")
+                .relative()
+                .on_hover(hover_menu)
+                .children(menu)
+                .child(tooltip(
+                    action("diff-more")
+                        .id("more-actions")
+                        .aria_label("More actions")
+                        .role(gpui::Role::Button)
+                        .track_focus(&focus.more)
+                        .on_click(toggle_menu),
+                    "More actions",
+                    None,
+                    Side::Top,
+                )),
+        )
         .children(sent_at.map(|time| {
             let mut stamp = div()
                 .ml(px(6.))
@@ -539,6 +552,119 @@ pub(super) fn action_row(
             };
             stamp
         }))
+}
+
+impl ThreadView {
+    pub(super) fn toggle_turn_menu(
+        &mut self,
+        turn_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.turn_menu.as_ref().is_some_and(|(id, _)| id == turn_id) {
+            self.turn_menu = None;
+        } else {
+            let focus = cx.focus_handle();
+            focus.focus(window, cx);
+            self.turn_menu = Some((turn_id.to_owned(), focus));
+        }
+        cx.notify();
+    }
+
+    /// Closes the menu and returns focus to its trigger.
+    fn close_turn_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((id, _)) = self.turn_menu.take()
+            && let Some(trigger) = self.turn_focus.borrow().get(&format!("{id}-more")).cloned()
+        {
+            let handle = trigger.read(cx).handle.clone();
+            handle.focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    fn branch_from_turn_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((id, _)) = &self.turn_menu {
+            let action = ForkThread(id.clone());
+            self.close_turn_menu(window, cx);
+            window.dispatch_action(Box::new(action), cx);
+        }
+    }
+
+    /// The original's More actions dropdown (`side: top`): the response time as a label, then
+    /// `Branch in new chat`.
+    pub(super) fn turn_menu_popup(
+        &self,
+        started_at: Option<i64>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let t = cx.theme();
+        let hover = t.menu_item_hover;
+        let content = crate::composer::popover(t, 220., |menu| {
+            menu.children(started_at.map(|at| {
+                let (day, time) = day_and_time(at, self.clock.now(), self.clock.utc_offset);
+                let label = format!("{day}, {time}");
+                div()
+                    .id("turn-menu-time")
+                    .px(px(8.))
+                    .py(px(5.))
+                    .role(gpui::Role::MenuItem)
+                    .aria_label(label.clone())
+                    .aria_disabled(true)
+                    .child(text(label, 13., 18.5714, 430., t.text_tertiary))
+            }))
+            .child(
+                div()
+                    .id("turn-menu-branch")
+                    .h(px(28.5625))
+                    .px(px(8.))
+                    .rounded(px(12.))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.))
+                    .role(gpui::Role::MenuItem)
+                    .aria_label("Branch in new chat")
+                    .hover(move |s| s.bg(hover))
+                    .child(icon("thread-branch", 16., t.text))
+                    .child(text("Branch in new chat", 13., 18.5714, 430., t.text))
+                    .on_click(
+                        cx.listener(|view, _, window, cx| view.branch_from_turn_menu(window, cx)),
+                    ),
+            )
+        });
+        let menu = div()
+            .id("turn-menu")
+            .role(gpui::Role::Menu)
+            .aria_label("More actions")
+            .occlude()
+            .when_some(self.turn_menu.as_ref(), |d, (_, focus)| {
+                d.track_focus(focus)
+            })
+            .on_mouse_down_out(cx.listener(|view, _, _, cx| {
+                if !view.turn_menu_trigger_hovered {
+                    view.turn_menu = None;
+                    cx.notify();
+                }
+            }))
+            .on_key_down(cx.listener(|view, event: &gpui::KeyDownEvent, window, cx| {
+                match event.keystroke.key.as_str() {
+                    "escape" => view.close_turn_menu(window, cx),
+                    "enter" | "space" => view.branch_from_turn_menu(window, cx),
+                    _ => return,
+                }
+                cx.stop_propagation();
+            }))
+            .child(content);
+        deferred(
+            div().absolute().bottom(px(30.)).left_0().child(
+                anchored()
+                    .anchor(Anchor::BottomLeft)
+                    .snap_to_window_with_margin(Edges::all(px(6.)))
+                    .child(menu),
+            ),
+        )
+        .with_priority(3)
+        .into_any_element()
+    }
 }
 
 #[cfg(all(test, target_os = "macos"))]

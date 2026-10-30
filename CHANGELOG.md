@@ -7,9 +7,13 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Open the latest plan from Thread summary ▸ `Plan` in an editable `Plan` side panel tab that saves to `$CODEX_HOME/plans/<thread>/<plan item>/PLAN.md`.
+- Add `Toggle Git blame` to the command menu: the file viewer shows the author, commit summary, short SHA and date for the active (clicked or cited) line from the host's `git blame`.
 - Check for updates in the background every hour, send the original's appcast parameters (installation id, architecture, version, beta, macOS version and plan), and add a `Beta updates` setting.
+- Block sending images with a model whose `inputModalities` has no `image`, with the original's `Remove images or switch models to send this message`.
 - Publish a signed Sparkle `appcast.xml` and SHA-256 checksum with each release, and add an Automatically check for updates switch to General settings.
 - Add `/memories` and its `Chat memories` dialog while the `memories` feature is on: `Generate memories` sets the open chat's memory mode with `thread/memoryMode/set`, and on Home both switches apply to the next chat.
+- Show `$…$` and `$$…$$` math in agent answers as Unicode math text, with display math centered on its own line; copying a selection keeps the TeX source.
 - Add named permission profiles, per-category approval settings, writable folder selection, automatic review notices, and `/approve` for one denied retry.
 - Restrict human-only approval cards to the server's offered one-time decisions.
 - Send browser annotations with the next turn under `# Browser comments:`, after the diff comments and with the same comment numbers as the original app.
@@ -24,6 +28,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Start normal chats and forks in managed worktrees, retain the selected checkout, and fork selected turns with the server's history boundary.
 - Run explicit `!` shell commands in Full access chats after a native warning confirmation; keep sandboxed drafts disabled and separate from the terminal panel.
 - Add plan mode: `/plan-mode`, the `@` menu row and the footer `Plan` chip turn it on and off, turns send the `plan` collaboration mode, a resumed chat keeps it, and plan text and step progress show in the chat. Restore an edited queued message's place across every queue page.
+- Open Space (`/space`) from the rail: the account's Spaces from `GET /spaces/v2`, with search, empty, no-match, and `Could not load spaces` / `Try again` states.
 - Show `Unable to send message` with the reason and `OK` when a composer submit waits for file uploads.
 - Draw the 2 px keyboard focus ring on the mobile setup buttons.
 - Draw the 2 px keyboard focus ring on the diff card's `Undo` and `View changes` buttons in a chat.
@@ -57,6 +62,9 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Restore `View` > `Toggle Bottom Panel` and `View` > `Open Terminal` in the macOS menu bar, in the original order.
 
 ### Fixed
+- Put the site's favicon before an external markdown link, with the original's globe until the image loads, and fetch remote images such as favicons and avatars over HTTP.
+- Fold a running turn's interim messages under `Working for` once its final answer starts, as the original does.
+- Show tool activity labels in full when they fit, as the original does, instead of `Read math....`.
 - Show reads of a skill's `SKILL.md` as `Loaded a tool` or `Loaded tools` with the wrench icon in the activity group summary, as the original does.
 - Ignore app list updates while the Plugins page is loading, so large account catalogs can finish loading.
 - Connect MCP and skill commands to the existing settings and mention actions, and refresh skill lists after changes.
@@ -97,3 +105,4 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Group the diff find bar in one composited layer and paint its icons under the bar's rounded overflow clip, as the original does.
 - Clip the diff line-number gutters to the scroller so scrolled-out rows no longer paint over the panel header.
 - Measure text x-height at the requested optical size on macOS so CoreText metrics match the rendered font size
+- Space the Code Review list row's branch and diff stats 8 px apart, as the original does, so long branch names keep the same visible letters.

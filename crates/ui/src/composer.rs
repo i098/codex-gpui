@@ -414,6 +414,8 @@ struct ModelOption {
     id: String,
     label: SharedString,
     efforts: Vec<String>,
+    /// `inputModalities` includes `image`.
+    images: bool,
 }
 
 impl ModelOption {
@@ -422,6 +424,10 @@ impl ModelOption {
             id: m.id.clone(),
             label: model_label(&m.display_name).into(),
             efforts: model_efforts(m, enabled),
+            images: m
+                .input_modalities
+                .as_ref()
+                .is_none_or(|modalities| modalities.iter().any(|m| m == "image")),
         }
     }
 }
@@ -846,6 +852,9 @@ pub struct Composer {
     fast: bool,
     /// Plan mode: the next turns run in the `plan` collaboration mode.
     plan: bool,
+    /// `collaborationMode/list` masks: each names a `mode` and may preset `model` and
+    /// `reasoning_effort`. Empty until the server answers (or when it lacks the method).
+    collaboration_modes: Vec<Value>,
     permission: Permission,
     permission_profiles: Vec<(Permission, String)>,
     menu: Option<Menu>,
@@ -979,6 +988,7 @@ impl Composer {
             default_selection: (0, Some("medium".into())),
             fast: false,
             plan: false,
+            collaboration_modes: Vec::new(),
             permission: Permission::Custom,
             permission_profiles: Vec::new(),
             menu: None,
@@ -1994,11 +2004,8 @@ impl Composer {
             },
             attachments,
             context_files,
-            model: self
-                .current_model()
-                .map(|m| m.id.clone())
-                .unwrap_or_default(),
-            effort: self.effort.clone(),
+            model: self.mode_settings().0,
+            effort: self.mode_settings().1,
             permission: self.permission.clone(),
             fast: self.fast,
             plan: self.plan,
@@ -2328,8 +2335,8 @@ impl Composer {
     pub fn run_settings(&self) -> (Value, Permission) {
         (
             json!({"mode": if self.plan { "plan" } else { "default" }, "settings": {
-                "model": self.current_model().map_or("", |m| m.id.as_str()),
-                "reasoning_effort": self.effort, "developer_instructions": null,
+                "model": self.mode_settings().0,
+                "reasoning_effort": self.mode_settings().1, "developer_instructions": null,
             }}),
             self.permission.clone(),
         )
@@ -2416,13 +2423,56 @@ impl Composer {
         self.fast
     }
 
+    /// The server's `collaborationMode/list` answer; its presets drive the turn settings and
+    /// the plan-mode entries.
+    pub fn set_collaboration_modes(&mut self, response: &Value, cx: &mut Context<Self>) {
+        self.collaboration_modes = response["data"].as_array().cloned().unwrap_or_default();
+        if !self.plan_supported() {
+            self.plan = false;
+        }
+        cx.notify();
+    }
+
+    /// Plan mode is offered unless the server listed modes without `plan`.
+    pub(super) fn plan_supported(&self) -> bool {
+        self.collaboration_modes.is_empty()
+            || self
+                .collaboration_modes
+                .iter()
+                .any(|mode| mode["mode"] == "plan")
+    }
+
+    /// Model id and effort for the active mode: the server preset when it names a model the
+    /// picker lists, else the picker's choice.
+    fn mode_settings(&self) -> (String, Option<String>) {
+        let active = if self.plan { "plan" } else { "default" };
+        let preset = self
+            .collaboration_modes
+            .iter()
+            .find(|mode| mode["mode"] == active);
+        let model = preset
+            .and_then(|mode| mode["model"].as_str())
+            .filter(|id| self.models.iter().any(|m| m.id == *id))
+            .map(str::to_owned);
+        let picked = self
+            .current_model()
+            .map(|m| m.id.clone())
+            .unwrap_or_default();
+        let effort = preset
+            .and_then(|mode| mode["reasoning_effort"].as_str())
+            .filter(|_| model.is_some())
+            .map(str::to_owned)
+            .or_else(|| self.effort.clone());
+        (model.unwrap_or(picked), effort)
+    }
+
     pub fn plan_mode(&self) -> bool {
         self.plan
     }
 
     /// `Plan mode` (slash command, `@` row) and the footer's `Plan` chip turn it on and off.
     pub fn toggle_plan(&mut self, cx: &mut Context<Self>) {
-        self.plan = !self.plan;
+        self.plan = !self.plan && self.plan_supported();
         cx.notify();
     }
 }
@@ -3350,6 +3400,7 @@ mod tests {
                         id: "gpt-6.1-sol".into(),
                         label: "GPT-6.1 Sol".into(),
                         efforts: vec!["medium".into()],
+                        images: true,
                     });
                     composer.on_submit(move |submission, _, _| {
                         received.borrow_mut().push(submission.text.clone());
@@ -3423,6 +3474,7 @@ mod tests {
                         id: "gpt-6.1-sol".into(),
                         label: "GPT-6.1 Sol".into(),
                         efforts: vec!["medium".into()],
+                        images: true,
                     });
                     composer.on_submit(move |submission, _, _| {
                         received.borrow_mut().push(submission.text.clone());
@@ -3549,6 +3601,7 @@ mod tests {
                         id: id.into(),
                         label: id.into(),
                         efforts: vec!["medium".into(), "high".into()],
+                        images: true,
                     })
                     .into();
                 composer.permission = Permission::FullAccess;
@@ -3583,6 +3636,7 @@ mod tests {
                     id: "gpt-6.1-sol".into(),
                     label: "GPT-6.1 Sol".into(),
                     efforts: vec!["low".into(), "medium".into()],
+                    images: true,
                 }];
                 composer.restore_run_settings(
                     &json!({"settings":{"model":"gpt-6.1-sol","reasoning_effort":null}}),

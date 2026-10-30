@@ -161,6 +161,26 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     .on_action(cx.listener(|this, _: &OpenBackgroundTerminal, window, cx| {
         this.set_side(SidePanel::Terminal, window, cx)
     }))
+    .on_action(cx.listener(|this, _: &ui::OpenPlanPanel, window, cx| {
+        let Some(thread) = this.thread.clone() else {
+            return;
+        };
+        let Some((key, text)) = ui::screens::plan::latest_plan(thread.read(cx).turns())
+            .map(|(key, text)| (key.to_owned(), text.to_owned()))
+        else {
+            return;
+        };
+        if this
+            .plan
+            .as_ref()
+            .is_none_or(|plan| plan.read(cx).key() != key)
+        {
+            let plan =
+                cx.new(|cx| ui::screens::plan::PlanView::new(&thread, &key, &text, window, cx));
+            this.plan = Some(plan);
+        }
+        this.set_side(SidePanel::Plan, window, cx)
+    }))
     .on_action(cx.listener(|this, action: &OpenTerminalItem, window, cx| {
         if let Some(thread) = &this.thread {
             thread.update(cx, |thread, cx| thread.select_terminal(Some(&action.0), cx));

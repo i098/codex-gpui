@@ -56,6 +56,8 @@ actions!(
         LogOut,
         ShowKeyboardShortcuts,
         OpenMini,
+        /// Rail `Space`: the Spaces list (`/space`).
+        OpenSpace,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
         OpenPullRequests,
@@ -73,6 +75,8 @@ actions!(
         OpenChangesPanel,
         /// Thread summary ▸ `Background processes` row: the command's terminal tab.
         OpenBackgroundTerminal,
+        /// Thread summary ▸ `Plan`: the latest plan in its editable side panel tab.
+        OpenPlanPanel,
         ShowWorkspaceTabView,
         StepWorkspaceLayout,
         /// `⌘K`, `⌘⇧P`, sidebar `Search`: the command menu.
@@ -1213,7 +1217,10 @@ impl Shell {
                             }),
                         "Home",
                     ))
-                    .child(rail_tip(item("space"), "Space"))
+                    .child(rail_tip(
+                        item("space").on_click(dispatch::<OpenSpace>),
+                        "Space",
+                    ))
                     .child(rail_tip(
                         item("scheduled")
                             .when(self.scheduled_attention, |d| d.child(dot(6.)))

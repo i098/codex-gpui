@@ -16,7 +16,7 @@ fn every_recorded_exchange_replays_offline() -> Result<()> {
     let recording: Value = serde_json::from_str(RECORDING)?;
     let host = ReplayHost::from_recording(RECORDING)?;
     let exchanges = recording["exchanges"].as_array().unwrap();
-    assert_eq!(exchanges.len(), 6);
+    assert_eq!(exchanges.len(), 8);
     for exchange in exchanges {
         let request: Request = serde_json::from_value(exchange["request"].clone())?;
         assert_eq!(host.fetch(&request)?, exchange["response"]);

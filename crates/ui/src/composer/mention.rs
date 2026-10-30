@@ -175,10 +175,10 @@ impl Composer {
     /// search session.
     pub(super) fn refresh_mention(&mut self, query: &str, cx: &mut Context<Self>) {
         let docked = self.docked;
-        let actions = ACTIONS
-            .iter()
-            .enumerate()
-            .filter(move |(_, a)| !(a.home_only && docked) && a.id != "appshot");
+        let plan = self.plan_supported();
+        let actions = ACTIONS.iter().enumerate().filter(move |(_, a)| {
+            !(a.home_only && docked) && a.id != "appshot" && (plan || a.id != "plan-mode")
+        });
         if query.is_empty() {
             self.slash.matches = actions.map(|(i, _)| i).collect();
             self.end_search(cx);
