@@ -483,6 +483,15 @@ pub(crate) fn initialize_window(state: &mut State, window: &mut Window) {
     }
     state.zoom = state.zoom.clamp(0.5, 3.);
     window.set_ui_scale(state.zoom);
+    place_traffic_lights(state.zoom, window);
+}
+
+/// The original's `trafficLightPosition`: x 16, centred in the 44 px top bar at the zoom level.
+fn place_traffic_lights(zoom: f32, window: &Window) {
+    #[cfg(target_os = "macos")]
+    window.set_traffic_light_position(gpui::point(px(16.), px(((44. * zoom - 14.) / 2.).round())));
+    #[cfg(not(target_os = "macos"))]
+    let _ = (zoom, window);
 }
 
 impl Root {
@@ -491,6 +500,7 @@ impl Root {
             ((self.state.zoom * 100. + step as f32 * 10.).round() / 100.).clamp(0.5, 3.)
         });
         window.set_ui_scale(self.state.zoom);
+        place_traffic_lights(self.state.zoom, window);
         self.fit(window, cx);
         self.save(window, cx);
         if let Some(banner) = &self.shortcut_state.zoom_banner {
