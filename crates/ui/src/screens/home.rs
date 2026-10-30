@@ -30,6 +30,9 @@ actions!(home, [OpenFolder]);
 #[derive(Default)]
 pub struct LocationMenu {
     pub open: bool,
+    pub mode: super::hotkey::Mode,
+    pub worktree_available: Option<bool>,
+    selected: usize,
     bounds: Bounds<Pixels>,
 }
 
@@ -204,15 +207,28 @@ fn chip(
 fn set_location(owner: &Entity<HomeMain>, open: Option<bool>, cx: &mut App) {
     owner.update(cx, |main, cx| {
         main.location.open = open.unwrap_or(!main.location.open);
+        main.location.selected = usize::from(main.location.mode == super::hotkey::Mode::Worktree);
         cx.notify();
     });
 }
 
-/// `Work in` menu (`composer.newTask.thisComputer`): `This computer` is the only location the
-/// port runs; the others are listed disabled, in the original's order.
+fn pick_location(owner: &Entity<HomeMain>, index: usize, cx: &mut App) {
+    owner.update(cx, |main, cx| {
+        main.location.mode = if index == 1 {
+            super::hotkey::Mode::Worktree
+        } else {
+            super::hotkey::Mode::Local
+        };
+        main.location.open = false;
+        cx.notify();
+    });
+}
+
+/// `Work in` keeps local and managed-worktree starts on the selected project.
 fn location_menu(
     owner: &Entity<HomeMain>,
     location: &LocationMenu,
+    has_project: bool,
     t: &Theme,
     window: &Window,
 ) -> Option<gpui::AnyElement> {
@@ -222,7 +238,7 @@ fn location_menu(
     let trigger = location.bounds;
     let rows = [
         ("This computer", true),
-        ("New worktree", false),
+        ("New worktree", has_project),
         ("Remote", false),
         ("Cloud", false),
     ]
@@ -242,18 +258,20 @@ fn location_menu(
             .gap(px(8.))
             .rounded(px(12.))
             .opacity(if enabled { 1. } else { 0.5 })
+            .when(i == location.selected, |d| d.bg(t.menu_item_hover))
             .when(enabled, |d| {
                 let hover = t.menu_item_hover;
                 d.hover(move |s| s.bg(hover))
             })
             .child(div().flex_1().child(text(label, 14., 20., 430., t.text)))
             .child(
-                div()
-                    .size(px(16.))
-                    .children((i == 0).then(|| icon("menu-check", 16., t.text))),
+                div().size(px(16.)).children(
+                    (i == usize::from(location.mode == super::hotkey::Mode::Worktree))
+                        .then(|| icon("menu-check", 16., t.text)),
+                ),
             )
             .when(enabled, |d| {
-                d.on_click(move |_, _, cx| set_location(&owner, Some(false), cx))
+                d.on_click(move |_, _, cx| pick_location(&owner, i, cx))
             })
     });
     let dismiss = owner.clone();
@@ -329,7 +347,8 @@ fn utility_bar(
         })
         .read(cx)
         .clone();
-    let location_menu = location_menu(owner, location, t, window);
+    let has_project = project.is_some() && location.worktree_available == Some(true);
+    let location_menu = location_menu(owner, location, has_project, t, window);
     let finished = cx
         .try_global::<FinishedScrollAnimation>()
         .is_some_and(|state| state.0 == window.window_handle());
@@ -388,14 +407,20 @@ fn utility_bar(
                                         let owner = owner.clone();
                                         move |cx: &mut App| set_location(&owner, None, cx)
                                     };
-                                    let close = {
-                                        let owner = owner.clone();
-                                        move |cx: &mut App| set_location(&owner, Some(false), cx)
-                                    };
+                                    let key_owner = owner.clone();
                                     chip(
                                         "work-in",
-                                        "laptop",
-                                        "This computer".into(),
+                                        if location.mode == super::hotkey::Mode::Worktree {
+                                            "thread-fork"
+                                        } else {
+                                            "laptop"
+                                        },
+                                        if location.mode == super::hotkey::Mode::Worktree {
+                                            "New worktree"
+                                        } else {
+                                            "This computer"
+                                        }
+                                        .into(),
                                         t.text,
                                         compact,
                                         t,
@@ -416,9 +441,21 @@ fn utility_bar(
                                         }
                                     })
                                     .on_key_down(move |event, _, cx| {
-                                        match event.keystroke.key.as_str() {
+                                        let key = event.keystroke.key.as_str();
+                                        let menu = &key_owner.read(cx).location;
+                                        match key {
+                                            "enter" | "space" if menu.open => {
+                                                pick_location(&key_owner, menu.selected, cx);
+                                            }
                                             "enter" | "space" => toggle(cx),
-                                            "escape" => close(cx),
+                                            "escape" => set_location(&key_owner, Some(false), cx),
+                                            "up" | "down" if menu.open && has_project => {
+                                                key_owner.update(cx, |main, cx| {
+                                                    main.location.selected =
+                                                        1 - main.location.selected;
+                                                    cx.notify();
+                                                });
+                                            }
                                             _ => return,
                                         }
                                         cx.stop_propagation();
