@@ -100,12 +100,15 @@ fn new_remote_project_browses_the_host_and_opens_there() -> Result<()> {
     let dialog = fx
         .read(|root, _| root.new_project().cloned())
         .ok_or_else(|| anyhow::anyhow!("no New Project dialog"))?;
+    fx.capture_evidence("CGX_REMOTE_PROJECT_SHOTS", "dialog-local")?;
     dialog.update(&mut fx.cx, |dialog, cx| dialog.select_device(Some(0), cx));
+    fx.capture_evidence("CGX_REMOTE_PROJECT_SHOTS", "dialog-remote")?;
 
     // `Create project` without a folder opens the picker at the host's default folder.
     submit(&mut fx)?;
     fx.wait("home listed", |fx| folders(fx).is_some())?;
     let listed = folders(&fx);
+    fx.capture_evidence("CGX_REMOTE_PROJECT_SHOTS", "remote-picker")?;
     ensure!(
         listed == Some(("/home/me".into(), vec!["repo".into(), ".codex".into()])),
         "{listed:?}"
