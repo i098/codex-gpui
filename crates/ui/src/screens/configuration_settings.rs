@@ -227,6 +227,7 @@ impl SettingsPane {
                 }))
                 .into_any_element();
                 agent.push(row(
+                    "approval_policy",
                     title,
                     "Allow this category to ask for approval",
                     control,
@@ -247,6 +248,7 @@ impl SettingsPane {
                 ),
             ));
             agent.push(row(
+                "sandbox_workspace_write.writable_roots",
                 "Additional writable folders",
                 "Allow edits in these folders when using workspace write",
                 self.writable_folders(t, window, cx),
@@ -292,11 +294,13 @@ impl SettingsPane {
             ),
             // The Codex CLI's local thinking display keys; they change what chats draw only.
             row(
+                "hide_agent_reasoning",
                 "Hide thinking",
                 "Hide reasoning summaries in chats",
                 self.toggle("hide_agent_reasoning", false, t, window, cx),
             ),
             row(
+                "show_raw_agent_reasoning",
                 "Show raw thinking",
                 "Show the model's raw reasoning in place of its summary, when it sends any",
                 self.toggle("show_raw_agent_reasoning", false, t, window, cx),
