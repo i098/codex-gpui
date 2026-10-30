@@ -2,7 +2,11 @@
 //! Copy excludes the fence and its final newline; the checkmark lasts two seconds.
 //! HTTP(S) links open the system browser on left or middle click. File links keep their existing action.
 
+use super::select::highlight_copy;
 use super::*;
+
+mod tex;
+
 use crate::code_font;
 use crate::tooltip::{Side, tooltip};
 use gpui::{
@@ -62,7 +66,8 @@ use std::{iter::Peekable, ops::Range};
 
 const OPTIONS: Options = Options::ENABLE_TASKLISTS
     .union(Options::ENABLE_STRIKETHROUGH)
-    .union(Options::ENABLE_TABLES);
+    .union(Options::ENABLE_TABLES)
+    .union(Options::ENABLE_MATH);
 
 static TABLE_FEATURES: std::sync::LazyLock<gpui::FontFeatures> =
     std::sync::LazyLock::new(|| gpui::FontFeatures(std::sync::Arc::new(vec![("tnum".into(), 1)])));
@@ -729,6 +734,27 @@ impl<'a> Markdown<'a> {
                     row.push(self.word(" ", Some(at), style, None).into_any_element());
                 }
                 Event::HardBreak => row.push(self.line_break()),
+                Event::InlineMath(source) => {
+                    let shown = tex::text(&source).replace('\n', " ");
+                    row.push(self.math(&shown, format!("${source}$"), style));
+                }
+                Event::DisplayMath(source) => {
+                    // KaTeX centers display math on its own lines; copy keeps the TeX once.
+                    let mut copy = Some(format!("$${source}$$"));
+                    for line in tex::text(&source).lines() {
+                        row.push(self.line_break());
+                        let line = self.math(line, copy.take().unwrap_or_default(), style);
+                        row.push(
+                            div()
+                                .w_full()
+                                .flex()
+                                .justify_center()
+                                .child(line)
+                                .into_any_element(),
+                        );
+                    }
+                    row.push(self.line_break());
+                }
                 Event::Code(code) => {
                     let at = self.events.start;
                     row.extend(
@@ -916,6 +942,30 @@ impl<'a> Markdown<'a> {
                     .inset_0(),
             )
             .child(label)
+    }
+
+    /// Rendered math: one unbreakable box that copies as `copy`, its TeX source.
+    fn math(&self, shown: &str, copy: String, style: Typography) -> AnyElement {
+        let (width, label) = self.label(shown, None, style);
+        self.record_table_width(width, shown.encode_utf16().count());
+        div()
+            .relative()
+            .flex_none()
+            .w(width)
+            .child(
+                highlight_copy(
+                    shown.to_owned().into(),
+                    Some(copy.into()),
+                    style.size,
+                    style.weight,
+                    None,
+                    0.,
+                )
+                .absolute()
+                .inset_0(),
+            )
+            .child(label)
+            .into_any_element()
     }
 
     /// The word's run width and its text.
