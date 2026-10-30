@@ -1251,3 +1251,71 @@ fn stats(added: usize, removed: usize, color: Hsla) -> [Div; 2] {
     [format!("+{added}"), format!("-{removed}")]
         .map(|s| text(s, 13., 13., 430., color).font_features(features.clone()))
 }
+
+/// `/plan-summary`: one plan message in its own window, drawn by the thread's markdown
+/// renderer inside the original's plan card (`Plan` header over the plan body).
+pub struct PlanSummary {
+    content: String,
+}
+
+impl PlanSummary {
+    pub fn new(content: String) -> Self {
+        Self { content }
+    }
+}
+
+impl Render for PlanSummary {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
+        div()
+            .size_full()
+            .relative()
+            .bg(t.surface)
+            .text_color(t.text)
+            .child(
+                div()
+                    .id("plan-summary")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .pt(Theme::TITLEBAR_HEIGHT)
+                    .px(px(16.))
+                    .pb(px(16.))
+                    .child(
+                        div()
+                            .rounded(px(16.))
+                            .border_1()
+                            .border_color(t.border)
+                            .bg(t.surface_tertiary)
+                            .child(
+                                div()
+                                    .h(px(40.))
+                                    .px(px(12.))
+                                    .flex()
+                                    .items_center()
+                                    .child(text("Plan", 13., 18., 500., t.text)),
+                            )
+                            .child(div().px(px(16.)).pb(px(16.)).child(markdown::markdown(
+                                &self.content,
+                                window,
+                                &t,
+                                &[],
+                            ))),
+                    ),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(Theme::TITLEBAR_HEIGHT)
+                    .on_mouse_down(gpui::MouseButton::Left, |e, window, _| {
+                        if e.click_count == 2 {
+                            window.titlebar_double_click();
+                        } else {
+                            window.start_window_move();
+                        }
+                    }),
+            )
+    }
+}

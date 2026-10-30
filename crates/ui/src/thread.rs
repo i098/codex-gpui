@@ -61,7 +61,8 @@ pub use context::ReasoningVisibility;
 
 pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
-pub use actions::{EditMessage, ForkThread, PatchTurn, RevertTurn, ThreadPressed};
+pub use actions::{EditMessage, ForkThread, OpenPlanSummary, PatchTurn, RevertTurn, ThreadPressed};
+pub use items::PlanSummary;
 use actions::{TurnFocus, action_row};
 pub enum GitAction {
     Refresh,
@@ -2017,7 +2018,14 @@ impl ThreadView {
             }
             return col.when(!self.embedded, |col| {
                 col.child(action_row(
-                    last, &group, &turn.id, answer, sent_at, &focus, t,
+                    last,
+                    &group,
+                    &turn.id,
+                    answer,
+                    matches!(turn.items.last(), Some(ThreadItem::Plan { .. })),
+                    sent_at,
+                    &focus,
+                    t,
                 ))
             });
         }

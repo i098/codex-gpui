@@ -131,6 +131,14 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     .on_action(cx.listener(|this, _: &FindPrevious, _, cx| this.next_search_result(true, cx)))
     .on_action(cx.listener(|this, _: &ui::composer::Stop, _, cx| this.stop(None, cx)))
     .on_action(
+        |action: &ui::screens::thread::view::OpenPlanSummary, window: &mut Window, cx: &mut App| {
+            let owner = window.window_handle();
+            if let Err(error) = crate::windows::open_plan_summary(owner, action.0.clone(), cx) {
+                eprintln!("codex-gpui: cannot open the plan window: {error:#}");
+            }
+        },
+    )
+    .on_action(
         cx.listener(|this, _: &ui::composer::RequestFullAccess, window, cx| {
             this.open_dialog(DialogKind::FullAccess, window, cx);
         }),

@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Open a finished plan in its own window from the plan answer's `Open plan in new window` button (`/plan-summary`), drawn with the chat's Markdown renderer.
 - Publish a signed Sparkle `appcast.xml` and SHA-256 checksum with each release, and add an Automatically check for updates switch to General settings.
 - Add named permission profiles, per-category approval settings, writable folder selection, automatic review notices, and `/approve` for one denied retry.
 - Restrict human-only approval cards to the server's offered one-time decisions.

@@ -293,6 +293,19 @@ pub fn open<V: Render + 'static>(
     Ok(handle)
 }
 
+/// `/plan-summary`: the plan in a page window beside its owner.
+pub fn open_plan_summary(
+    owner: AnyWindowHandle,
+    content: String,
+    cx: &mut App,
+) -> Result<WindowHandle<ui::screens::thread::view::PlanSummary>> {
+    let mut spec = Spec::new(Kind::Page, "Plan");
+    spec.owner = Some(owner);
+    open(spec, cx, |_, cx| {
+        cx.new(|_| ui::screens::thread::view::PlanSummary::new(content))
+    })
+}
+
 pub fn handles(kind: Kind, cx: &App) -> Vec<AnyWindowHandle> {
     cx.try_global::<Windows>()
         .into_iter()

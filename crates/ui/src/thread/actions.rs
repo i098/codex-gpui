@@ -388,6 +388,11 @@ pub struct PatchTurn {
 #[action(namespace = thread, no_json)]
 pub struct ThreadPressed(pub String);
 
+/// The plan answer's `Open plan in new window`: the `/plan-summary` window for that plan text.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = thread, no_json)]
+pub struct OpenPlanSummary(pub String);
+
 /// Copy, Read aloud, Rate response, Fork chat from here: shown under the latest turn; earlier
 /// turns (group `group`) show them on hover.
 /// ponytail: Read aloud (ChatGPT voice playback) and Rate response (feedback menu) have no
@@ -443,6 +448,7 @@ pub(super) fn action_row(
     group: &SharedString,
     turn_id: &str,
     answer: &str,
+    plan: bool,
     sent_at: Option<String>,
     focus: &TurnFocus,
     t: &Theme,
@@ -466,6 +472,7 @@ pub(super) fn action_row(
             .child(icon)
     };
     let (answer, turn_id) = (answer.to_owned(), turn_id.to_owned());
+    let plan = plan.then(|| answer.clone());
     div()
         .mt(px(6.))
         .ml(px(-4.))
@@ -523,6 +530,20 @@ pub(super) fn action_row(
             None,
             Side::Top,
         ))
+        .children(plan.map(|plan| {
+            tooltip(
+                action("arrow-up-right")
+                    .id("open-plan-summary")
+                    .aria_label("Open plan in new window")
+                    .role(gpui::Role::Button)
+                    .on_click(move |_, window, cx| {
+                        window.dispatch_action(Box::new(OpenPlanSummary(plan.clone())), cx)
+                    }),
+                "Open plan in new window",
+                None,
+                Side::Top,
+            )
+        }))
         .children(sent_at.map(|time| {
             let mut stamp = div()
                 .ml(px(6.))

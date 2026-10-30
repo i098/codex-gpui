@@ -167,3 +167,37 @@ fn plan_notifications_reach_the_transcript() -> Result<()> {
     shot(&mut fx, "plan-events")?;
     Ok(())
 }
+
+#[test]
+fn a_finished_plan_opens_in_its_own_window() -> Result<()> {
+    let mut fx = captured(script(None, |_| {})?)?;
+    open_chat(&mut fx)?;
+    let plan = "# Plan\n\n1. Read the code\n2. Write the change";
+    let item = json!({"type": "plan", "id": "plan-item", "text": plan});
+    let turn = json!({"id": "plan-turn", "status": "inProgress", "items": []});
+    notify(&mut fx, "turn/started", json!({"threadId": GREETING, "turn": turn}));
+    notify(
+        &mut fx,
+        "item/completed",
+        json!({"threadId": GREETING, "turnId": "plan-turn", "item": item}),
+    );
+    let turn = json!({"id": "plan-turn", "status": "completed", "items": [item]});
+    notify(&mut fx, "turn/completed", json!({"threadId": GREETING, "turn": turn}));
+    shot(&mut fx, "plan-answer")?;
+    fx.action(Box::new(ui::screens::thread::view::OpenPlanSummary(plan.into())))?;
+    let window = fx
+        .cx
+        .update(|cx| app::windows::handles(app::windows::Kind::Page, cx))
+        .into_iter()
+        .next()
+        .context("the plan opens in a page window")?;
+    let summary = window
+        .downcast::<ui::screens::thread::view::PlanSummary>()
+        .context("the page window shows the plan")?;
+    if let Some(dir) = std::env::var_os("CGX_PLAN_SHOTS") {
+        fx.cx
+            .capture_screenshot(summary.into())?
+            .save(std::path::Path::new(&dir).join("plan-window.png"))?;
+    }
+    Ok(())
+}
