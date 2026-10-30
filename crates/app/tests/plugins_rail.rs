@@ -6,6 +6,7 @@ mod common;
 
 use anyhow::{Context as _, Result, ensure};
 use common::*;
+use bridge::Event;
 use serde_json::{Value, json};
 use std::sync::Arc;
 use ui::screens::plugins::{Action, Page, Plugin, Resource};
@@ -245,6 +246,77 @@ fn remote_plugin_skill_preview_reads_server_content() -> Result<()> {
                 "skillName": "linear",
             }),
         "{request}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_connected_app_reconciles_remote_plugin_suggestions() -> Result<()> {
+    let skills: Value = ui::fixture::response("readback.jsonl", "skills/list", 0);
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("app/list", json!({"data": [], "nextCursor": null})));
+    lines.extend(exchange(
+        "app/list",
+        json!({
+            "data": [{"id": "linear", "isAccessible": true}],
+            "nextCursor": null,
+        }),
+    ));
+    lines.extend(exchange(
+        "plugin/reconcile",
+        json!({
+            "failedRemotePluginIds": [],
+            "failedMaterializationRemotePluginIds": [],
+        }),
+    ));
+    lines.extend(exchange("plugin/list", catalog(false)));
+    lines.extend(exchange("skills/list", skills));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.click(RAIL_PLUGINS)?;
+    let page = settle(&mut fx, "plugin catalog")?;
+    fx.cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.modal = Some(ui::screens::plugins::Modal::Connecting(json!({
+                "id": "linear",
+            })));
+            cx.notify();
+        })
+    });
+
+    fx.root.update(&mut fx.cx, |root, cx| {
+        root.on_event(
+            Event::Notification {
+                method: "app/list/updated".into(),
+                params: json!({}),
+            },
+            cx,
+        )
+    });
+    fx.wait("plugin suggestions reconciled", |fx| {
+        fx.read(|_, cx| page.read(cx).modal.is_none())
+    })?;
+    fx.read(|_, cx| {
+        let page = page.read(cx);
+        ensure!(page.error.is_none(), "{:?}", page.error);
+        ensure!(
+            page.data.apps.value().is_some_and(|apps| {
+                apps.iter()
+                    .any(|app| app["id"] == "linear" && app["isAccessible"] == true)
+            }),
+            "connected app was not loaded"
+        );
+        Ok::<_, anyhow::Error>(())
+    })?;
+    let sent = fx.sent()?;
+    let reconciliations = sent
+        .iter()
+        .filter(|request| request["method"] == "plugin/reconcile")
+        .collect::<Vec<_>>();
+    ensure!(reconciliations.len() == 1, "{reconciliations:?}");
+    ensure!(
+        reconciliations[0]["params"] == json!({"reason": "plugin_suggestion_connected"}),
+        "{}",
+        reconciliations[0]
     );
     Ok(())
 }
