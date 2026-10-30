@@ -41,13 +41,20 @@ fn message_actions_match_original() -> Result<()> {
         "Edit message kept focus in the docked composer"
     );
     fx.click(target(&steps[3]))?;
-    for (step, expected) in steps[4..7]
-        .iter()
-        .zip(rec["result"]["tooltips"].as_array().unwrap())
-    {
-        fx.hover(fx.at("thread", expected["aria"].as_str().unwrap())?)?;
+    // The current original's row (#1105): Copy, Rate response, Read aloud, More actions, one
+    // 26 px button and a 2 px gap apart; the recorded Copy tooltip fixes the first slot.
+    let tooltips = rec["result"]["tooltips"].as_array().unwrap();
+    let copy = fx.at("thread", "Copy")?;
+    let labels = [
+        tooltips[0]["tooltip"][0]["text"].as_str(),
+        tooltips[1]["tooltip"][0]["text"].as_str(),
+        Some("Read aloud"),
+        Some("More actions"),
+    ];
+    for (slot, label) in labels.into_iter().enumerate() {
+        fx.hover((copy.0 + 28. * slot as f32, copy.1))?;
         fx.cx.advance_clock(std::time::Duration::from_millis(
-            step["waitMs"].as_u64().unwrap(),
+            steps[4]["waitMs"].as_u64().unwrap(),
         ));
         fx.cx.run_until_parked();
         let shot = fx.shot()?;
@@ -56,8 +63,8 @@ fn message_actions_match_original() -> Result<()> {
             .update(|cx| ui::tooltip::shown(cx).cloned())
             .expect("action tooltip");
         ensure!(
-            Some(tip.label.as_ref()) == expected["tooltip"][0]["text"].as_str(),
-            "action tooltip differs"
+            Some(tip.label.as_ref()) == label,
+            "action tooltip {slot} differs"
         );
         let x = (f32::from(tip.bounds.origin.x) + 3.) as u32 * 2;
         let y = (f32::from(tip.bounds.origin.y + tip.bounds.size.height / 2.)) as u32 * 2;

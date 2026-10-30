@@ -86,10 +86,13 @@ pub use content::{
 #[path = "diff/word.rs"]
 pub mod word;
 
+#[path = "diff/blame.rs"]
+mod blame;
 #[path = "diff/file_tree.rs"]
 mod file_tree;
 #[path = "diff/patch.rs"]
 pub mod patch;
+pub use blame::{BlameLine, GitBlame};
 pub use file_tree::FileTreeRequest;
 
 /// Panel width the capture had stored (`app-shell:right-panel-width:v3`, a width ratio) before
@@ -2833,6 +2836,7 @@ pub struct FileView {
     go_to_line: Option<controls::TextField>,
     line_count: u32,
     syntax: Vec<Vec<syntax::Mark>>,
+    blame: Vec<BlameLine>,
     tree: file_tree::WorkspaceTree,
     revision: u64,
     preview: bool,
@@ -2855,6 +2859,7 @@ impl FileView {
             go_to_line: None,
             line_count: 0,
             syntax: Vec::new(),
+            blame: Vec::new(),
             tree,
             revision: 0,
             preview: true,
@@ -3021,7 +3026,12 @@ impl FileView {
             )
     }
 
-    fn file_content(&self, t: &Theme) -> gpui::AnyElement {
+    fn file_content(
+        &self,
+        t: &Theme,
+        blame: Option<String>,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
         match &self.contents {
             None => div().flex_1().into_any_element(),
             Some(Err(_)) => div()
@@ -3060,11 +3070,8 @@ impl FileView {
                     .pr(px(16.))
                     .children(lines.into_iter().enumerate().map(|(i, line)| {
                         let number = i as u32 + 1;
-                        let bg = if Some(number) == self.line {
-                            cited
-                        } else {
-                            t.surface
-                        };
+                        let active = Some(number) == self.line;
+                        let bg = if active { cited } else { t.surface };
                         let text: SharedString = line.to_owned().into();
                         let content = StyledText::new(text).with_highlights(
                             self.syntax
@@ -3074,9 +3081,18 @@ impl FileView {
                                 .map(|(range, token)| (range.clone(), token.style(t))),
                         );
                         div()
+                            .id(i)
                             .h(px(FILE_LINE_HEIGHT))
                             .flex()
                             .bg(bg)
+                            // The clicked line becomes the active line that blame describes.
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |view, _, _, cx| {
+                                    view.line = Some(number);
+                                    cx.notify();
+                                }),
+                            )
                             .child(
                                 div()
                                     .w(gutter)
@@ -3094,7 +3110,15 @@ impl FileView {
                                     .pl(px(CH))
                                     .pr(px(CH))
                                     .whitespace_nowrap()
-                                    .child(content),
+                                    .child(content)
+                                    .when_some(blame.clone().filter(|_| active), |row, blame| {
+                                        row.flex().child(
+                                            div()
+                                                .ml(px(CH))
+                                                .text_color(t.text_tertiary)
+                                                .child(blame),
+                                        )
+                                    }),
                             )
                     }))
                     .into_any_element()
@@ -3107,7 +3131,8 @@ impl Render for FileView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
-        let body = self.file_content(&t);
+        let blame = self.active_blame(cx);
+        let body = self.file_content(&t, blame, cx);
         div()
             .id("file-view")
             .relative()

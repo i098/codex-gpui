@@ -1502,7 +1502,7 @@ fn copy_response() -> Result<String> {
     Ok(String::new())
 }
 
-/// `Fork chat from here` under the last turn: `thread/fork` (no rollback), the fork opens
+/// More actions > `Branch in new chat` under the last turn: `thread/fork` (no rollback), the fork opens
 /// and heads Recents.
 fn fork_chat() -> Result<String> {
     const FORK: &str = "fork-of-subtract";
@@ -1512,7 +1512,9 @@ fn fork_chat() -> Result<String> {
     lines.extend(exchange("thread/fork", json!({ "thread": thread })));
     let mut fx = Fx::scripted(lines)?;
     open_subtract(&mut fx)?;
-    fx.click(fx.at("thread", "Fork chat from here")?)?;
+    let copy = fx.at("thread", "Copy")?;
+    fx.click((copy.0 + 84., copy.1))?;
+    fx.keys("enter")?;
     fx.wait_thread(FORK)?;
     let recents = fx.read(|r, _| r.recents());
     ensure!(
