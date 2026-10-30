@@ -134,6 +134,10 @@ impl Clock {
 
 pub struct ThreadView {
     thread_id: String,
+    /// Branch recorded by `thread/metadata/update`; the header shows it once known.
+    branch: Option<SharedString>,
+    /// Remote environment link (`thread/environment/connected` / `disconnected`).
+    environment_connected: Option<bool>,
     /// Workspace folder; its name heads the summary panel.
     cwd: String,
     /// The `Toggle summary` panel is open.
@@ -650,6 +654,8 @@ impl ThreadView {
             terminal_item: None,
             terminals_stopping: false,
             thread_id: thread.id,
+            branch: None,
+            environment_connected: None,
             cwd: thread.cwd,
             summary_open: false,
             clip_right: false,
