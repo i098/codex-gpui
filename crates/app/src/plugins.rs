@@ -112,7 +112,26 @@ impl Root {
             .or_else(|| std::env::var_os("USERPROFILE"))
             .map(|home| PathBuf::from(home).join(".agents/plugins/marketplace.json"));
         let available = page.read(cx).available;
+        let connecting_app_id = page.read(cx).modal.as_ref().and_then(|modal| match modal {
+            Modal::Connecting(app) => app["id"].as_str().map(str::to_owned),
+            _ => None,
+        });
         let task = cx.background_spawn(async move {
+            let apps = read_apps(&bridge).await;
+            let connected_app_id = connecting_app_id.filter(|id| {
+                apps.value()
+                    .into_iter()
+                    .flatten()
+                    .any(|app| app["id"].as_str() == Some(id) && app["isAccessible"] == true)
+            });
+            let reconciliation_error = if connected_app_id.is_some() {
+                reconcile_plugin_suggestions(&bridge)
+                    .await
+                    .err()
+                    .map(|error| error.to_string())
+            } else {
+                None
+            };
             let plugins = if available {
                 match bridge
                     .request::<_, Value>("plugin/list", json!({"cwds":[cwd],"forceRefetch":true}))
@@ -125,50 +144,58 @@ impl Root {
                 Resource::Ready(Vec::new())
             };
             let skills = read_skills(&bridge, &cwd).await;
-            let apps = read_apps(&bridge).await;
-            Data {
-                plugins,
-                skills,
-                apps,
-                personal_marketplace,
-            }
+            (
+                Data {
+                    plugins,
+                    skills,
+                    apps,
+                    personal_marketplace,
+                },
+                connected_app_id,
+                reconciliation_error,
+            )
         });
         cx.spawn(async move |this, cx| {
-            let data = task.await;
-            let _ =
-                this.update(cx, |this, cx| {
-                    if page.read(cx).generation != generation {
-                        return;
-                    }
-                    let selected = route_plugin_id(&route).and_then(|id| {
-                        data.plugins
-                            .value()
-                            .into_iter()
-                            .flatten()
-                            .flat_map(|market| &market.plugins)
-                            .find(|plugin| plugin.id() == id)
-                            .cloned()
-                    });
-                    page.update(cx, |page, cx| {
-                        if let Some(Modal::Connecting(app)) = &page.modal
-                            && data.apps.value().into_iter().flatten().any(|entry| {
-                                entry["id"] == app["id"] && entry["isAccessible"] == true
-                            })
-                        {
+            let (data, connected_app_id, reconciliation_error) = task.await;
+            let _ = this.update(cx, |this, cx| {
+                if page.read(cx).generation != generation {
+                    return;
+                }
+                let selected = route_plugin_id(&route).and_then(|id| {
+                    data.plugins
+                        .value()
+                        .into_iter()
+                        .flatten()
+                        .flat_map(|market| &market.plugins)
+                        .find(|plugin| plugin.id() == id)
+                        .cloned()
+                });
+                page.update(cx, |page, cx| {
+                    if connected_app_id.as_deref().is_some_and(|id| {
+                        matches!(
+                            &page.modal,
+                            Some(Modal::Connecting(app)) if app["id"].as_str() == Some(id)
+                        )
+                    }) {
+                        if let Some(error) = reconciliation_error {
+                            page.error =
+                                Some(format!("Could not reconcile plugin suggestions: {error}"));
+                        } else {
                             page.modal = None;
                         }
-                        page.data = data;
+                    }
+                    page.data = data;
+                    cx.notify();
+                });
+                if let Some(plugin) = selected {
+                    this.read_plugin(page.clone(), plugin, cx);
+                } else if route_plugin_id(&route).is_some() {
+                    page.update(cx, |page, cx| {
+                        page.error = Some("Plugin not found".into());
                         cx.notify();
                     });
-                    if let Some(plugin) = selected {
-                        this.read_plugin(page.clone(), plugin, cx);
-                    } else if route_plugin_id(&route).is_some() {
-                        page.update(cx, |page, cx| {
-                            page.error = Some("Plugin not found".into());
-                            cx.notify();
-                        });
-                    }
-                });
+                }
+            });
         })
         .detach();
     }
@@ -202,16 +229,40 @@ impl Root {
     }
 
     fn read_skill(&self, page: Entity<Page>, path: String, cx: &mut Context<Self>) {
-        let view = cx.new(|_| FileView::new(&self.cwd, path.clone(), None));
+        let skill = page.read(cx).modal.as_ref().and_then(|modal| match modal {
+            Modal::Skill(skill) => Some(skill.clone()),
+            _ => None,
+        });
+        let remote_params = skill.as_ref().map(remote_skill_request_params).transpose();
+        let display_path = if matches!(&remote_params, Ok(Some(_))) {
+            PathBuf::from(&self.cwd)
+                .join(".remote-plugin-skill/SKILL.md")
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            path.clone()
+        };
+        let view = cx.new(|_| FileView::new(&self.cwd, display_path, None));
         page.update(cx, |page, cx| {
             page.skill_file = Some(view.clone());
             cx.notify();
         });
+        let bridge = self.bridge.clone();
         let read = cx.background_spawn(async move {
-            std::fs::read_to_string(&path).map_err(|error| error.to_string())
+            match remote_params {
+                Ok(Some(params)) => {
+                    let result: Value = bridge.request("plugin/skill/read", params).await?;
+                    result["skill_md_contents"]
+                        .as_str()
+                        .map(str::to_owned)
+                        .context("plugin/skill/read returned no skill markdown")
+                }
+                Ok(None) => std::fs::read_to_string(&path).context("Could not read skill markdown"),
+                Err(error) => Err(error),
+            }
         });
         cx.spawn(async move |_, cx| {
-            let result = read.await;
+            let result = read.await.map_err(|error| error.to_string());
             view.update(cx, |view, cx| view.set_contents(result, cx));
         })
         .detach();
@@ -569,6 +620,68 @@ async fn read_skills(bridge: &Bridge, cwd: &str) -> Resource<Vec<Value>> {
         Err(error) => Resource::Failed(error.to_string()),
     }
 }
+fn remote_skill_request_params(skill: &Value) -> Result<Option<Value>> {
+    let nested = skill
+        .get("remotePluginSkill")
+        .filter(|remote| !remote.is_null());
+    let remote = if let Some(remote) = nested {
+        remote
+            .as_object()
+            .context("Remote plugin skill metadata is invalid")?;
+        remote
+    } else {
+        skill
+    };
+    let is_remote = nested.is_some()
+        || !remote["remotePluginId"].is_null()
+        || !remote["remoteMarketplaceName"].is_null();
+    if !is_remote {
+        return Ok(None);
+    }
+    let remote_plugin_id = remote["remotePluginId"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .context("Remote plugin skill has no plugin ID")?;
+    let skill_name = remote["skillName"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .context("Remote plugin skill has no skill name")?;
+    if nested.is_some() {
+        return Ok(Some(remote.clone()));
+    }
+    let mut params = json!({
+        "remotePluginId": remote_plugin_id,
+        "skillName": skill_name,
+    });
+    if let Some(marketplace_name) = remote.get("remoteMarketplaceName") {
+        params["remoteMarketplaceName"] = marketplace_name.clone();
+    }
+    Ok(Some(params))
+}
+
+async fn reconcile_plugin_suggestions(bridge: &Bridge) -> Result<()> {
+    let result: Value = bridge
+        .request(
+            "plugin/reconcile",
+            json!({"reason":"plugin_suggestion_connected"}),
+        )
+        .await?;
+    reconcile_plugin_suggestions_result(&result)
+}
+
+fn reconcile_plugin_suggestions_result(result: &Value) -> Result<()> {
+    let failed_plugins = result["failedRemotePluginIds"]
+        .as_array()
+        .context("plugin/reconcile returned no failedRemotePluginIds")?;
+    let failed_materializations = result["failedMaterializationRemotePluginIds"]
+        .as_array()
+        .context("plugin/reconcile returned no failedMaterializationRemotePluginIds")?;
+    ensure!(
+        failed_plugins.is_empty() && failed_materializations.is_empty(),
+        "plugin/reconcile could not complete all plugin suggestions"
+    );
+    Ok(())
+}
 
 async fn read_apps(bridge: &Bridge) -> Resource<Vec<Value>> {
     let result = async {
@@ -790,6 +903,48 @@ mod tests {
     fn app_list_updated_during_loading_does_not_reload_plugins() {
         assert!(!should_reload_plugins(&Resource::Loading));
         assert!(should_reload_plugins(&Resource::Ready(Vec::new())));
+    }
+    #[test]
+    fn remote_skill_request_uses_remote_plugin_metadata() {
+        let skill = json!({
+            "remotePluginSkill": {
+                "remoteMarketplaceName": "openai-curated",
+                "remotePluginId": "remote-plugin",
+                "skillName": "linear",
+            }
+        });
+        assert_eq!(
+            remote_skill_request_params(&skill).unwrap(),
+            Some(json!({
+                "remoteMarketplaceName": "openai-curated",
+                "remotePluginId": "remote-plugin",
+                "skillName": "linear",
+            }))
+        );
+        assert_eq!(
+            remote_skill_request_params(&json!({"path":"/tmp/SKILL.md"})).unwrap(),
+            None
+        );
+        assert!(remote_skill_request_params(&json!({"remotePluginId":"remote-plugin"})).is_err());
+    }
+
+    #[test]
+    fn reconciliation_rejects_partial_plugin_suggestion_failures() {
+        assert!(
+            reconcile_plugin_suggestions_result(&json!({
+                "failedRemotePluginIds": [],
+                "failedMaterializationRemotePluginIds": [],
+            }))
+            .is_ok()
+        );
+        assert!(
+            reconcile_plugin_suggestions_result(&json!({
+                "failedRemotePluginIds": ["remote-plugin"],
+                "failedMaterializationRemotePluginIds": [],
+            }))
+            .is_err()
+        );
+        assert!(reconcile_plugin_suggestions_result(&json!({})).is_err());
     }
 
     #[test]
