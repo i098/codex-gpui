@@ -1,5 +1,6 @@
 #[cfg(target_os = "macos")]
 #[path = "../src/updater/native.rs"]
+#[allow(dead_code, reason = "the smoke drives a subset of the backend")]
 mod native;
 
 #[cfg(target_os = "macos")]
