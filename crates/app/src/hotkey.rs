@@ -1534,6 +1534,13 @@ mod tests {
                 composer.read(cx).focus_handle(cx).focus(window, cx)
             })?;
         type_keys(&mut popup, &["/"])?;
+        if let Some(directory) = std::env::var_os("CGX_HOTKEY_EVIDENCE") {
+            std::fs::create_dir_all(&directory)?;
+            popup
+                .app
+                .capture_screenshot(popup.popup.into())?
+                .save(Path::new(&directory).join("native-hotkey-slash.png"))?;
+        }
         let rows = slash_rows(&popup);
         anyhow::ensure!(
             rows.contains(&"Resume\nResume a recent chat".to_owned()),
