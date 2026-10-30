@@ -32,6 +32,9 @@ impl Root {
     }
 
     pub(crate) fn plugins_event(&mut self, event: &Event, cx: &mut Context<Self>) {
+        if matches!(event, Event::Notification {method, ..} if method == "skills/changed") {
+            self.refresh_skills(cx);
+        }
         if matches!(event, Event::Notification {method, ..}
             if matches!(method.as_str(), "app/list/updated" | "skills/changed"))
             && let Some(page) = self.plugins_page.clone()
@@ -39,6 +42,36 @@ impl Root {
         {
             self.load_plugins(page, route.clone(), cx);
         }
+    }
+
+    pub(crate) fn set_skills(&mut self, skills: Value, cx: &mut Context<Self>) {
+        let mut composers = self.thread_composers();
+        composers.push(self.home.read(cx).composer.clone());
+        for composer in composers {
+            composer.update(cx, |composer, cx| composer.set_slash_skills(&skills, cx));
+        }
+        self.skills = skills;
+    }
+
+    pub(crate) fn refresh_skills(&self, cx: &mut Context<Self>) {
+        if self.bridge.is_acp() {
+            return;
+        }
+        let bridge = self.bridge.clone();
+        let cwd = self.cwd.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let skills = bridge
+                .request("skills/list", json!({"cwds": [&cwd], "forceReload": true}))
+                .await?;
+            this.update(cx, |this, cx| {
+                if this.cwd != cwd {
+                    return;
+                }
+                this.set_skills(skills, cx);
+            })?;
+            Ok(())
+        });
+        log_err(task, cx);
     }
 
     pub(crate) fn plugins_shell(
@@ -428,6 +461,9 @@ impl Root {
                 let Ok((action, value)) = result else {
                     return;
                 };
+                if matches!(action, Action::EnableSkill { .. }) {
+                    this.refresh_skills(cx);
+                }
                 let copy_link = matches!(action, Action::CreateShare(_));
                 match action {
                     Action::CreateShare(plugin) | Action::UpdateSharedVersion(plugin) => {

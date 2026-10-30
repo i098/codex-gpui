@@ -1,5 +1,5 @@
 use crate::{
-    Root,
+    Root, Route,
     host::{self, Host, Request},
 };
 use anyhow::{Context as _, Result, ensure};
@@ -156,6 +156,7 @@ impl Root {
         snapshot: Option<Snapshot>,
         cx: &mut Context<Self>,
     ) {
+        let refresh_skills = result.is_ok() && matches!(action, Action::SetSkillEnabled { .. });
         let removed_name =
             match &action {
                 Action::RemoveServer(key) => {
@@ -189,6 +190,9 @@ impl Root {
         if let Some(notice) = notice {
             self.toast(Toast::danger(notice), cx);
         }
+        if refresh_skills {
+            self.refresh_skills(cx);
+        }
         if matches!(action, Action::ReloadHooks)
             && matches!(&self.settings_integrations.read(cx).hooks, Load::Ready(_))
         {
@@ -203,6 +207,17 @@ impl Root {
         let Event::Notification { method, .. } = event else {
             return;
         };
+        if method == "skills/changed" {
+            if self.settings_integrations.read(cx).dispatch.is_some()
+                && matches!(
+                    self.state.route,
+                    Route::Settings | Route::SettingsSubtree(_)
+                )
+            {
+                self.settings_integration_action(Action::Refresh, cx);
+            }
+            return;
+        }
         if method == "account/updated" {
             self.security_access_task = None;
             let active = self.settings_integrations.read(cx).dispatch.is_some();

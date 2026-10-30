@@ -9,6 +9,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ### Added
 - Add named permission profiles, per-category approval settings, writable folder selection, automatic review notices, and `/approve` for one denied retry.
 - Restrict human-only approval cards to the server's offered one-time decisions.
+- Switch the sidebar and Home with the ChatGPT and Work modes: the ChatGPT wordmark, the account's ChatGPT conversations in Recents from `GET /conversations`, the `Chat | Work` tabs, and the Chat or Work headline and composer placeholder.
 - Keep file change cards after Undo and add Reapply through the host Git worker, without changing conversation history.
 - Add a background macOS check for minimize, zoom, hide, quit, and the 480×600 window minimum, with safe call-level checks for Hide Others and Show All.
 - Open the Sites page from the rail: the owned sites list from the ChatGPT backend `/websites`, with loading, error with Retry, and empty states.
@@ -52,6 +53,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Restore `View` > `Toggle Bottom Panel` and `View` > `Open Terminal` in the macOS menu bar, in the original order.
 
 ### Fixed
+- Connect MCP and skill commands to the existing settings and mention actions, and refresh skill lists after changes.
 - Hide the mobile setup artwork below 1024 px, so the setup column stays centered in the main surface.
 - Read and save image attachments on the selected host, and keep the draft when an image cannot load.
 - Install, read and uninstall remote catalog plugins from the Plugins directory by their `remotePluginId`, as the original does; the plain name returned 404 and the catalog ID left the plugin installed.
