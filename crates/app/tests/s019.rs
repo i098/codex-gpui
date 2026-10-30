@@ -95,8 +95,8 @@ fn mention_list_replay() -> Result<()> {
     // the notifications of the query after `sessionUpdate`. The replay matches requests by
     // method and emits what follows the recorded response.
     let mut lines = script(None, |_| {})?;
+    lines.extend(common::exchange("app/installed", json!({"apps":[]})));
     lines.extend(common::exchange("fuzzyFileSearch/sessionStart", json!({})));
-    lines.extend(common::exchange("fuzzyFileSearch/sessionUpdate", json!({})));
     lines.extend(search_notifications(
         "fuzzy-1",
         "mat",
@@ -253,6 +253,62 @@ fn mention_list_replay() -> Result<()> {
     ensure!(
         stop == 1,
         "Escape must stop the search session once, sent {stop}"
+    );
+    Ok(())
+}
+#[test]
+fn thread_mentions_refresh_and_list_callable_apps() -> Result<()> {
+    let mut before_lines = script(None, |_| {})?;
+    before_lines.extend(common::exchange("app/installed", json!({"apps":[]})));
+    let mut before = Fx::captured("dark", (1280., 832.), before_lines)?;
+    before.keys("cmd-1")?;
+    before.wait_thread(common::GREETING)?;
+    before.click(before.at("thread", "Work with Codex")?)?;
+    insert(&mut before, "@")?;
+    before.wait("empty connector mention list", |fx| {
+        fx.read(|root, cx| root.composer(cx).read(cx).mention_state())
+            .is_some()
+    })?;
+    before.capture_evidence("CGX_EVIDENCE_DIR", "connector-mentions-before")?;
+    let mut lines = script(None, |_| {})?;
+    lines.extend(common::exchange(
+        "app/installed",
+        json!({"apps":[
+            {"id":"linear","name":"Linear","callable":true,"enabled":true},
+            {"id":"disabled","name":"Disabled","callable":true,"enabled":false}
+        ]}),
+    ));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.keys("cmd-1")?;
+    fx.wait_thread(common::GREETING)?;
+    fx.click(fx.at("thread", "Work with Codex")?)?;
+    insert(&mut fx, "@")?;
+    fx.wait("installed connectors", |fx| {
+        fx.read(|root, cx| root.composer(cx).read(cx).mention_state())
+            .is_some_and(|sections| {
+                sections.iter().any(|(heading, rows)| {
+                    *heading == Some("Apps")
+                        && rows.iter().any(|(row, _)| row == "Linear | Connected app")
+                        && rows.iter().all(|(row, _)| !row.contains("Disabled"))
+                })
+            })
+    })?;
+    fx.capture_evidence("CGX_EVIDENCE_DIR", "connector-mentions-after")?;
+    let request = fx
+        .sent()?
+        .into_iter()
+        .find(|request| request["method"] == "app/installed")
+        .context("app/installed request")?;
+    ensure!(
+        request["params"]["threadId"] == common::GREETING
+            && request["params"]["forceRefresh"] == true,
+        "thread-scoped refresh params differ: {request}"
+    );
+    fx.keys("down down down enter")?;
+    let prompt = fx.read(|root, cx| root.composer(cx).read(cx).prompt());
+    ensure!(
+        prompt.contains("[@Linear](app://linear)"),
+        "connector mention was not included in the prompt: {prompt}"
     );
     Ok(())
 }

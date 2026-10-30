@@ -171,16 +171,64 @@ impl Composer {
         }
     }
 
-    /// Fills `matches` for the `@` token with `query` (raw text after `@`) and drives the file
-    /// search session.
+    fn refresh_installed_apps(&mut self, cx: &mut Context<Self>) {
+        let (Some(bridge), Some(thread_id)) = (self.bridge.clone(), self.thread_id.clone()) else {
+            return;
+        };
+        if self.installed_apps_loaded {
+            return;
+        }
+        self.installed_apps_loaded = true;
+        cx.spawn(async move |this, cx| {
+            let result = bridge
+                .request::<_, Value>(
+                    "app/installed",
+                    serde_json::json!({"threadId":thread_id,"forceRefresh":true}),
+                )
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.thread_id.as_deref() != Some(thread_id.as_str()) {
+                    return;
+                }
+                match result {
+                    Ok(value) => {
+                        this.installed_apps = value["apps"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(|app| app["callable"] == true && app["enabled"] == true)
+                            .cloned()
+                            .collect();
+                        this.refresh_slash(cx);
+                    }
+                    Err(error) => {
+                        this.installed_apps_loaded = false;
+                        eprintln!("app/installed: {error:#}");
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Fills `matches` for the `@` token with `query` and drives file and connector search.
     pub(super) fn refresh_mention(&mut self, query: &str, cx: &mut Context<Self>) {
+        if query.is_empty() {
+            self.refresh_installed_apps(cx);
+        }
         let docked = self.docked;
         let actions = ACTIONS
             .iter()
             .enumerate()
             .filter(move |(_, a)| !(a.home_only && docked) && a.id != "appshot");
         if query.is_empty() {
-            self.slash.matches = actions.map(|(i, _)| i).collect();
+            self.slash.matches = actions
+                .map(|(i, _)| i)
+                .chain(
+                    (0..self.installed_apps.len())
+                        .map(|i| ACTIONS.len() + self.slash.skills.len() + i),
+                )
+                .collect();
             self.end_search(cx);
             return;
         }
@@ -194,9 +242,27 @@ impl Composer {
                 s.title.as_str(),
             )
         });
+        let apps = self
+            .installed_apps
+            .iter()
+            .enumerate()
+            .filter_map(|(i, app)| {
+                let name = app["name"]
+                    .as_str()
+                    .filter(|name| !name.is_empty())
+                    .or_else(|| app["id"].as_str())
+                    .unwrap_or("");
+                let score = degree(name, &lower);
+                (score > 0).then_some((
+                    ACTIONS.len() + self.slash.skills.len() + i,
+                    2,
+                    score,
+                    name,
+                ))
+            });
         let files = self.slash.search.files.iter().enumerate().map(|(i, f)| {
             (
-                ACTIONS.len() + self.slash.skills.len() + i,
+                ACTIONS.len() + self.slash.skills.len() + self.installed_apps.len() + i,
                 3,
                 degree(&f.name, &lower).max(degree(&f.path, &lower)),
                 f.name.as_str(),
@@ -205,14 +271,13 @@ impl Composer {
         let mut ranked: Vec<_> = actions
             .map(|(i, a)| (i, 2, degree(a.title, &lower), a.title))
             .chain(skills)
+            .chain(apps)
             .chain(files)
             .filter(|&(_, _, degree, _)| degree > 0)
             .collect();
-        // Stable sort keeps the chain's index order among equal keys.
         ranked.sort_by_key(|&(_, kind, degree, title)| {
             (kind, std::cmp::Reverse(degree), title.len(), title)
         });
-        // `oYc` caps the ranked rows at 8.
         self.slash.matches = ranked.iter().take(8).map(|r| r.0).collect();
     }
 
@@ -300,11 +365,20 @@ impl Composer {
                 _ => action.description,
             };
             (action.title, description, action.icon)
-        } else if let Some(skill) = self.slash.skills.get(index - ACTIONS.len()) {
+        } else if index < ACTIONS.len() + self.slash.skills.len() {
+            let skill = &self.slash.skills[index - ACTIONS.len()];
             (&skill.title, &skill.description, "sidebar-cmd-create-page")
+        } else if index < ACTIONS.len() + self.slash.skills.len() + self.installed_apps.len() {
+            let app = &self.installed_apps[index - ACTIONS.len() - self.slash.skills.len()];
+            let name = app["name"]
+                .as_str()
+                .filter(|name| !name.is_empty())
+                .or_else(|| app["id"].as_str())
+                .unwrap_or("");
+            (name, "Connected app", "plugins")
         } else {
-            let file = &self.slash.search.files[index - ACTIONS.len() - self.slash.skills.len()];
-            // The directory part shows after the name (`src`).
+            let file = &self.slash.search.files
+                [index - ACTIONS.len() - self.slash.skills.len() - self.installed_apps.len()];
             let dir = file.path.rsplit_once('/').map_or("", |(dir, _)| dir);
             (&file.name, dir, "diff-jump-to-file")
         }
@@ -314,11 +388,10 @@ impl Composer {
         self.activate_mention(ACTIONS.len() + index, cx);
     }
 
-    /// Enter, Tab or a click on the highlighted row. `Files and folders` opens the picker; a
-    /// skill or a file becomes a chip followed by a space, the list closes; `Plan mode` toggles
-    /// plan mode. ponytail: the other actions (goal, sketch, project) belong to their own rows.
+    /// Enter, Tab or a click on the highlighted row activates a mention or action.
     pub(super) fn activate_mention(&mut self, index: usize, cx: &mut Context<Self>) {
-        let files = ACTIONS.len() + self.slash.skills.len();
+        let skills_end = ACTIONS.len() + self.slash.skills.len();
+        let apps_end = skills_end + self.installed_apps.len();
         let (label, link, icon) = match ACTIONS.get(index) {
             Some(action) if action.id == "files-and-folders" => {
                 self.cancel_dictation(cx);
@@ -342,13 +415,22 @@ impl Composer {
                 return;
             }
             Some(_) => return,
-            None if index < files => {
+            None if index < skills_end => {
                 let skill = &self.slash.skills[index - ACTIONS.len()];
                 let link = format!("[${}]({})", skill.name, skill.path);
                 (skill.title.clone(), link, "sidebar-cmd-create-page")
             }
+            None if index < apps_end => {
+                let app = &self.installed_apps[index - skills_end];
+                let id = app["id"].as_str().unwrap_or("");
+                let name = app["name"]
+                    .as_str()
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(id);
+                (name.to_owned(), format!("[@{name}](app://{id})"), "plugins")
+            }
             None => {
-                let file = &self.slash.search.files[index - files];
+                let file = &self.slash.search.files[index - apps_end];
                 let link = format!("[{}]({})", file.name, file.path);
                 let icon = if file.name.ends_with(".py") {
                     "thread-lang-python"
@@ -450,8 +532,7 @@ impl Composer {
             .collect()
     }
 
-    /// The list's sections: `Add` and `Files` for an empty query, else the ranked rows or
-    /// one note (`Searching…`, `No results`).
+    /// The list's sections: actions, installed apps, and file search.
     fn sections(&self) -> Vec<(Option<&'static str>, Vec<Row>)> {
         let start = self.slash.range.start + usize::from(self.slash.add.is_none());
         if self.content[start..self.slash.range.end].is_empty() {
@@ -467,6 +548,20 @@ impl Composer {
                 )
                 .collect();
             let mut sections = vec![(Some("Add"), add)];
+            if !self.installed_apps.is_empty() {
+                let apps_start = ACTIONS.len() + self.slash.skills.len();
+                let apps = (0..self.installed_apps.len())
+                    .filter_map(|i| {
+                        let index = apps_start + i;
+                        self.slash
+                            .matches
+                            .iter()
+                            .position(|&matched| matched == index)
+                            .map(|selected| Row::Item(selected, index))
+                    })
+                    .collect();
+                sections.push((Some("Apps"), apps));
+            }
             if !self.slash.search.roots.is_empty() {
                 sections.push((Some("Files"), vec![Row::Note("Type to search for files")]));
             }

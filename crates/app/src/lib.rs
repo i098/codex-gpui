@@ -4064,6 +4064,7 @@ impl Root {
         // archived chat cannot have a side chat.
         let side_chat = !self.archived.contains(&thread.id);
         self.thread_composer.update(cx, |c, cx| {
+            c.set_thread_id(&thread.id);
             c.set_running(running, cx);
             c.set_queued(Vec::new(), cx);
             c.set_failed_queued(Vec::new(), cx);
@@ -4901,6 +4902,7 @@ impl Root {
         let composer = cx.new(|cx| {
             let mut composer = Composer::thread(window, cx);
             composer.bind_connection(self.bridge.clone());
+            composer.set_thread_id(&thread.id);
             composer.set_models(&self.models, &self.config, cx);
             composer.set_permission_profiles(&self.permission_profiles, cx);
             composer.restore_run_settings(

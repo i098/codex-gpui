@@ -803,6 +803,9 @@ pub struct Draft {
 
 pub struct Composer {
     bridge: Option<std::sync::Arc<bridge::Bridge>>,
+    thread_id: Option<String>,
+    installed_apps: Vec<Value>,
+    installed_apps_loaded: bool,
     focus_handle: FocusHandle,
     placeholder: SharedString,
     /// Docked under a thread: `_ComposerLayoutRoot` paints the card and `_ComposerLayoutBody`
@@ -947,6 +950,9 @@ impl Composer {
             bridge: cx
                 .try_global::<crate::screens::settings::AppServer>()
                 .map(|server| server.0.clone()),
+            thread_id: None,
+            installed_apps: Vec::new(),
+            installed_apps_loaded: false,
             placeholder: placeholder.into(),
             docked,
             shell_commands: false,
@@ -1037,6 +1043,15 @@ impl Composer {
 
     pub fn bind_connection(&mut self, bridge: std::sync::Arc<bridge::Bridge>) {
         self.bridge = Some(bridge);
+    }
+
+    pub fn set_thread_id(&mut self, thread_id: &str) {
+        if self.thread_id.as_deref() == Some(thread_id) {
+            return;
+        }
+        self.thread_id = Some(thread_id.to_owned());
+        self.installed_apps.clear();
+        self.installed_apps_loaded = false;
     }
 
     pub fn set_hotkey_home(
