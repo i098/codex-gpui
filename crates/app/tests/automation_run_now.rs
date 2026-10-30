@@ -1920,7 +1920,18 @@ mod app_tools {
                     .and_then(|editor| editor.read(cx).saved_task().map(str::to_owned))
             })
         };
-        fx.wait("reviewed task saved", |fx| saved(fx).is_some())?;
+        if let Err(error) = fx.wait("reviewed task saved", |fx| saved(fx).is_some()) {
+            let state = fx.read(|root, cx| {
+                format!(
+                    "DEBUG panel={} side={:?} saving={:?} items={}",
+                    root.automation_panel().is_some(),
+                    root.side_panel(),
+                    root.automation_panel().map(|e| e.read(cx).saving()),
+                    list().map(|l| l["items"].to_string()).unwrap_or_default()
+                )
+            });
+            anyhow::bail!("{error}: {state}");
+        }
         let listed = list()?;
         let tasks = listed["items"].as_array().unwrap();
         ensure!(

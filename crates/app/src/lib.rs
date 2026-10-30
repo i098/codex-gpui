@@ -4219,7 +4219,14 @@ impl Root {
         .detach();
         self.diff = Some(diff);
         self.file = None;
-        self.automation_panel = None;
+        // A re-read of the same thread (after a save or revert) keeps the open task editor.
+        if self
+            .thread
+            .as_ref()
+            .is_none_or(|view| view.read(cx).id() != thread.id.as_str())
+        {
+            self.automation_panel = None;
+        }
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         view.update(cx, |view, cx| {
             view.set_git_phase(self.git_busy, cx);
