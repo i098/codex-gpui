@@ -289,6 +289,7 @@ impl Root {
             let panel = self.side_tabs_view(&view, cx);
             with_side_tabs(shell.clone(), view, panel, self.workspace_layout(), cx)
         });
+        self.sync_browser_pages(cx);
         window.focus(&self.route_focus(cx), cx);
         if let Some(id) = thread_id
             && self
