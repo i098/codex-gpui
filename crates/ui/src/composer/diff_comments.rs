@@ -40,16 +40,7 @@ impl Composer {
     }
 
     pub(super) fn with_diff_comments(&self, prompt: String) -> String {
-        if self.diff_comments.is_empty() {
-            return prompt;
-        }
-        let mut combined = String::from("# Diff comments:\n");
-        for (index, comment) in self.diff_comments.iter().enumerate() {
-            combined.push_str(&comment.prompt(index + 1));
-        }
-        combined.push_str("\n## My request:\n");
-        combined.push_str(&prompt);
-        combined
+        crate::screens::diff::panel::comments::with_comments(&self.diff_comments, prompt)
     }
 
     pub(super) fn take_diff_comments(&mut self, cx: &mut Context<Self>) {
