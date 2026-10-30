@@ -81,7 +81,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 use theme::Theme;
-use ui::composer::{Approval, Composer, Permission, QueueAction, Submission};
+use ui::composer::{Approval, Composer, LiveSettingsChange, Permission, QueueAction, Submission};
 use ui::dialog::{
     CommitRepository, CommitStep, Dialog, Kind as DialogKind, Outcome as DialogOutcome, Selection,
 };
@@ -518,6 +518,7 @@ pub struct Root {
     config: Value,
     permission_profiles: Value,
     guardian_denials: HashMap<String, Value>,
+    thread_settings_updates: HashMap<String, Receiver<()>>,
     skills: Value,
     models: Vec<Model>,
     ready: bool,
@@ -960,6 +961,7 @@ impl Root {
             config: Value::Null,
             permission_profiles: Value::Null,
             guardian_denials: HashMap::new(),
+            thread_settings_updates: HashMap::new(),
             skills: Value::Null,
             models: Vec::new(),
             ready: false,
@@ -4064,6 +4066,7 @@ impl Root {
         // archived chat cannot have a side chat.
         let side_chat = !self.archived.contains(&thread.id);
         self.thread_composer.update(cx, |c, cx| {
+            c.bind_thread(&thread.id);
             c.set_running(running, cx);
             c.set_queued(Vec::new(), cx);
             c.set_failed_queued(Vec::new(), cx);
@@ -4269,8 +4272,12 @@ impl Root {
         if retrying {
             self.begin_queue_action(cx);
         }
+        let settings_update = self.thread_settings_updates.get(&id).cloned();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let result = async {
+                if let Some(pending) = settings_update {
+                    let _ = pending.recv().await;
+                }
                 resume_if(resume, &bridge, &this, &id, cx).await?;
                 let input = &message.submission.input;
                 let Some(turn_id) = running.as_ref() else {
@@ -4901,6 +4908,7 @@ impl Root {
         let composer = cx.new(|cx| {
             let mut composer = Composer::thread(window, cx);
             composer.bind_connection(self.bridge.clone());
+            composer.bind_thread(&thread.id);
             composer.set_models(&self.models, &self.config, cx);
             composer.set_permission_profiles(&self.permission_profiles, cx);
             composer.restore_run_settings(
@@ -5767,6 +5775,49 @@ impl Root {
         log_err(task, cx);
     }
 
+    fn update_live_settings(
+        &mut self,
+        side: Option<usize>,
+        change: LiveSettingsChange,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((view, _)) = self.conversation(side) else {
+            return;
+        };
+        let view = view.read(cx);
+        let id = view.id().to_owned();
+        let turn_id = view
+            .turns()
+            .iter()
+            .rev()
+            .find(|turn| turn.status == TurnStatus::InProgress)
+            .map(|turn| turn.id.clone());
+        let (finished, pending) = async_channel::bounded::<()>(1);
+        let previous = self.thread_settings_updates.insert(id.clone(), pending);
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            if let Some(previous) = previous {
+                let _ = previous.recv().await;
+            }
+            let mut params = json!({
+                "threadId": id, "model": change.model, "effort": change.effort,
+            });
+            apply_permissions(&mut params, &change.permission);
+            let result = update_thread_settings(&bridge, params, turn_id.as_deref()).await;
+            if let Err(error) = &result {
+                this.update(cx, |this, cx| {
+                    this.toast(
+                        Toast::danger(format!("Could not update thread settings: {error}")),
+                        cx,
+                    );
+                })?;
+            }
+            drop(finished);
+            result.map(drop)
+        });
+        log_err(task, cx);
+    }
+
     fn instructions_changed(&self, cx: &App) -> bool {
         self.personal_instructions(cx)
             .is_some_and(|editor| editor.read(cx).saving() || editor.read(cx).dirty(cx))
@@ -6389,6 +6440,25 @@ impl Root {
         };
         match event {
             Event::Notification { method, params } => match method.as_str() {
+                "thread/settings/updated" => {
+                    if let Some(id) = params["threadId"].as_str()
+                        && let Some(owner) = self.owner(id, cx)
+                        && let Some((_, composer)) = self.conversation(owner)
+                    {
+                        let (collaboration_mode, permission) =
+                            composer.update(cx, |composer, cx| {
+                                composer.apply_thread_settings(&params["threadSettings"], cx);
+                                composer.run_settings()
+                            });
+                        self.thread_run_settings.insert(
+                            id.to_owned(),
+                            host::run_now::heartbeat::RendererState {
+                                collaboration_mode,
+                                permission,
+                            },
+                        );
+                    }
+                }
                 "item/autoApprovalReview/started" | "item/autoApprovalReview/completed" => {
                     self.guardian_review(&method, &params, cx);
                 }
@@ -6967,6 +7037,20 @@ Do not modify files, source, git state, permissions, configuration, or workspace
 /// The handlers of a thread composer: the open chat's (`side: None`) or side chat `side`'s.
 /// Both pickers write the user's `config.toml`, like the original's `writeModel`.
 fn wire_thread_composer(composer: &mut Composer, this: WeakEntity<Root>, side: Option<usize>) {
+    let settings = this.clone();
+    composer.on_live_settings(move |id, change, cx| {
+        let settings = settings.clone();
+        let id = id.to_owned();
+        cx.defer(move |cx| {
+            settings
+                .update(cx, |this, cx| {
+                    if let Some(owner) = this.owner(&id, cx) {
+                        this.update_live_settings(owner, change, cx);
+                    }
+                })
+                .ok();
+        });
+    });
     composer.enable_shell_commands();
     let (model, send) = (this.clone(), this.clone());
     composer.on_model(move |m, effort, cx| {
@@ -7070,6 +7154,41 @@ async fn turn_start(
     }
     bridge.request::<_, Value>("turn/start", params).await?;
     Ok(())
+}
+
+async fn update_thread_settings(
+    bridge: &Bridge,
+    params: Value,
+    turn_id: Option<&str>,
+) -> Result<()> {
+    if let Err(error) = bridge
+        .request::<_, Value>("thread/settings/update", &params)
+        .await
+        && !unsupported_method(&error, "thread/settings/update")
+    {
+        return Err(error);
+    }
+    if let Some(turn_id) = turn_id
+        && let Some(reviewer) = params.get("approvalsReviewer")
+        && let Err(error) = bridge.request::<_, Value>("turn/settings/update", json!({
+            "threadId": params["threadId"], "turnId": turn_id, "approvalsReviewer": reviewer,
+        })).await
+        && !unsupported_method(&error, "turn/settings/update")
+    {
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn unsupported_method(error: &anyhow::Error, method: &str) -> bool {
+    let Some(error) = error.downcast_ref::<bridge::RpcError>() else {
+        return false;
+    };
+    let message = error.message.to_ascii_lowercase();
+    error.code == -32601
+        || message.contains("method not found")
+        || ((message.contains("unknown method") || message.contains("unknown variant"))
+            && message.contains(method))
 }
 
 async fn take_queued(bridge: &Bridge, thread_id: &str, id: &str, local: bool) -> Result<bool> {

@@ -182,6 +182,7 @@ pub struct ThreadView {
     manual_compacted: HashSet<String>,
     /// The latest `turn/plan/updated` steps of each turn: `(step, status)`.
     todo_plans: HashMap<String, Vec<(String, String)>>,
+    patch_output: HashMap<String, String>,
     /// A turn's `Undo`, `View changes`, copy and fork focus handles. They belong to the view,
     /// not to its place in the element tree: the view moves when a side panel opens, and a
     /// pressed control must keep its focus across that.
@@ -666,6 +667,7 @@ impl ThreadView {
             manual_compactions: 0,
             manual_compacted: HashSet::new(),
             todo_plans: HashMap::new(),
+            patch_output: HashMap::new(),
             turn_focus: RefCell::default(),
             mcp_images: RefCell::default(),
             expanded: HashSet::new(),
@@ -1548,6 +1550,30 @@ impl ThreadView {
             find.dirty = true;
         }
         match method.as_str() {
+            "item/commandExecution/terminalInteraction" => {
+                let (Some(id), Some(stdin)) = (params["itemId"].as_str(), params["stdin"].as_str())
+                else {
+                    return;
+                };
+                if let Some(ThreadItem::CommandExecution {
+                    aggregated_output, ..
+                }) = self.item_mut(id)
+                {
+                    aggregated_output.get_or_insert_default().push_str(stdin);
+                }
+            }
+            "item/fileChange/outputDelta" => {
+                let (Some(id), Some(delta)) = (params["itemId"].as_str(), params["delta"].as_str())
+                else {
+                    return;
+                };
+                if matches!(self.item_mut(id), Some(ThreadItem::FileChange { .. })) {
+                    self.patch_output
+                        .entry(id.to_owned())
+                        .or_default()
+                        .push_str(delta);
+                }
+            }
             "turn/started" | "turn/completed" => {
                 let Ok(mut n) = serde_json::from_value::<TurnNotification>(params.clone()) else {
                     return;
@@ -2967,6 +2993,9 @@ mod tests {
             view.apply(&notification("item/commandExecution/outputDelta", serde_json::json!({
                 "threadId": "retention", "turnId": "turn", "itemId": "command", "delta": "actual output\n",
             })), cx);
+            view.apply(&notification("item/commandExecution/terminalInteraction", serde_json::json!({
+                "threadId": "retention", "turnId": "turn", "itemId": "command", "stdin": "yes\n",
+            })), cx);
             item["status"] = "failed".into();
             item["exitCode"] = 17.into();
             view.apply(&notification("item/completed", serde_json::json!({
@@ -2977,7 +3006,54 @@ mod tests {
             assert!(view.background_terminals().is_empty());
             assert!(matches!(&view.turns[0].items[0],
                 ThreadItem::CommandExecution { status, exit_code: Some(17), aggregated_output: Some(output), .. }
-                    if status == "failed" && output == "actual output\n"));
+                    if status == "failed" && output == "actual output\nyes\n"));
+        });
+    }
+
+    #[gpui::test]
+    fn live_patch_output_keeps_item_boundaries(cx: &mut gpui::TestAppContext) {
+        let thread = serde_json::from_value(serde_json::json!({
+            "id": "live", "preview": "", "modelProvider": "test", "cwd": "/tmp",
+            "createdAt": 0, "updatedAt": 0, "status": {"type": "idle"},
+            "turns": [{"id": "turn", "items": [
+                {"type": "fileChange", "id": "patch", "changes": [], "status": "inProgress"}
+            ], "status": "inProgress"}]
+        }))
+        .unwrap();
+        let composer = cx.new(|_| gpui::EmptyView).into();
+        let view = cx.new(|_| {
+            ThreadView::new(
+                thread,
+                Clock {
+                    utc_offset: 0,
+                    pinned_now: Some(0),
+                    elapsed_since: None,
+                },
+                composer,
+            )
+        });
+        view.update(cx, |view, cx| {
+            let mut send = |method: &str, params| view.apply(&Event::Notification {
+                method: method.into(), params,
+            }, cx);
+            for delta in ["Applying ", "patch\n"] {
+                send("item/fileChange/outputDelta", serde_json::json!({
+                    "threadId": "live", "turnId": "turn", "itemId": "patch", "delta": delta,
+                }));
+            }
+            send("item/fileChange/outputDelta", serde_json::json!({
+                "threadId": "other", "turnId": "turn", "itemId": "patch", "delta": "foreign",
+            }));
+            send("item/fileChange/outputDelta", serde_json::json!({
+                "threadId": "live", "turnId": "turn", "itemId": "unknown", "delta": "unknown",
+            }));
+            send("item/completed", serde_json::json!({
+                "threadId": "live", "turnId": "turn",
+                "item": {"type": "fileChange", "id": "patch", "changes": [], "status": "completed"},
+            }));
+            assert_eq!(view.patch_output["patch"], "Applying patch\n");
+            assert_eq!(view.patch_output.len(), 1);
+            assert!(view.activity_labels("turn", cx).unwrap().iter().any(|label| label == "Applying patch\n"));
         });
     }
 
