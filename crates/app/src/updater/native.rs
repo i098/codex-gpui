@@ -249,6 +249,16 @@ impl Backend {
         }
     }
 
+    pub(super) fn automatic(&self) -> bool {
+        unsafe { msg_send![&*self.updater, automaticallyChecksForUpdates] }
+    }
+
+    pub(super) fn set_automatic(&self, on: bool) {
+        unsafe {
+            let _: () = msg_send![&*self.updater, setAutomaticallyChecksForUpdates: on];
+        }
+    }
+
     pub(super) fn install(&self) {
         self.driver.ivars().install();
     }
