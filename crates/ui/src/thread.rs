@@ -578,7 +578,7 @@ impl ThreadView {
         )
     }
 
-    pub(super) fn git_popup(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
+    pub(super) fn git_popup(&self, _window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let t = cx.theme();
         let (_, active) = self.git_actions.as_ref().unwrap();
         let menu_width = 220.;
