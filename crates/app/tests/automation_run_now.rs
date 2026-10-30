@@ -1913,25 +1913,17 @@ mod app_tools {
                 call_id: "proposal-call".into(),
             })
         });
-        fx.keys("cmd-enter")?;
+        // The side panel footer's right-aligned primary button: `Create scheduled task`,
+        // `Apply changes`, then `Open settings`.
+        let primary = (fx.size.0 - 60., fx.size.1 - 40.);
+        fx.click(primary)?;
         let saved = |fx: &mut Fx| {
             fx.read(|root, cx| {
                 root.automation_panel()
                     .and_then(|editor| editor.read(cx).saved_task().map(str::to_owned))
             })
         };
-        if let Err(error) = fx.wait("reviewed task saved", |fx| saved(fx).is_some()) {
-            let state = fx.read(|root, cx| {
-                format!(
-                    "DEBUG panel={} side={:?} saving={:?} items={}",
-                    root.automation_panel().is_some(),
-                    root.side_panel(),
-                    root.automation_panel().map(|e| e.read(cx).saving()),
-                    list().map(|l| l["items"].to_string()).unwrap_or_default()
-                )
-            });
-            anyhow::bail!("{error}: {state}");
-        }
+        fx.wait("reviewed task saved", |fx| saved(fx).is_some())?;
         let listed = list()?;
         let tasks = listed["items"].as_array().unwrap();
         ensure!(
@@ -1969,12 +1961,12 @@ mod app_tools {
                 call_id: "proposal-call".into(),
             })
         });
-        fx.keys("cmd-enter")?;
+        fx.click(primary)?;
         fx.wait("accepted task updated", |fx| saved(fx).is_some())?;
         ensure!(list()?["items"].as_array().unwrap().len() == 1);
         // `Open settings` opens the saved task's Automations page.
         let id = tasks[0]["id"].as_str().unwrap().to_owned();
-        fx.keys("cmd-enter")?;
+        fx.click(primary)?;
         fx.wait("task page", |fx| {
             fx.route() == app::Route::Automation(id.clone())
         })?;
