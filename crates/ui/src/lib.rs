@@ -56,6 +56,8 @@ actions!(
         LogOut,
         ShowKeyboardShortcuts,
         OpenMini,
+        /// Rail `Space`: the Spaces list (`/space`).
+        OpenSpace,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
         OpenPullRequests,
@@ -1215,7 +1217,10 @@ impl Shell {
                             }),
                         "Home",
                     ))
-                    .child(rail_tip(item("space"), "Space"))
+                    .child(rail_tip(
+                        item("space").on_click(dispatch::<OpenSpace>),
+                        "Space",
+                    ))
                     .child(rail_tip(
                         item("scheduled")
                             .when(self.scheduled_attention, |d| d.child(dot(6.)))

@@ -8,6 +8,7 @@ mod mobile;
 mod plugins;
 mod settings;
 mod sites;
+mod space;
 mod thread;
 
 pub(crate) use settings::request_quit;
@@ -31,6 +32,8 @@ pub enum Route {
     },
     /// Rail `Scheduled` (`/scheduled`): the Automations page.
     Scheduled,
+    /// Rail `Space` (`/space`): the Spaces list.
+    Space,
     /// A sidebar task row (`/scheduled?automationId=<id>`): the task's thread.
     Automation(String),
     /// Profile menu ▸ `Set up mobile` (`/codex-mobile`).
@@ -53,6 +56,7 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = mobile::actions(root, cx);
     root = crate::security::actions(root, cx);
     root = plugins::actions(root, cx);
+    root = space::actions(root, cx);
     root = archive::actions(root, cx);
     root = crate::pull_requests::actions(root, cx);
     root = sites::actions(root, cx);
@@ -180,6 +184,7 @@ impl Root {
         self.cloud = None;
         self.plugins_page = None;
         self.sites_page = None;
+        self.space_page = None;
         self.onboarding_page = None;
         self.cloud_modal = None;
         self.page = match self.state.route.clone() {
@@ -202,6 +207,7 @@ impl Root {
             Route::Archive => Some(archive::page(self, cx)),
             Route::Thread(_) if self.scheduled_thread() => Some(automations::thread(self, cx)),
             Route::Mobile => Some(mobile::page(self, cx)),
+            Route::Space => Some(space::page(self, cx)),
             Route::PullRequests(selected) => Some(self.pull_requests_shell(selected, window, cx)),
             Route::Security => Some(crate::security::shell(self, window, cx)),
             Route::Plugins(path) => Some(self.plugins_shell(path, window, cx)),
