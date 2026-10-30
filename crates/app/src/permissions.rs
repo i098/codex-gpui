@@ -1,6 +1,17 @@
 use super::*;
 
-pub(super) async fn list_profiles(bridge: &Bridge, cwd: &str) -> Result<Value> {
+/// `permissionProfile/list`, with `configRequirements/read` under `requirements` (`null` when
+/// unreadable or `signed_in` is false) for the composer's disabled options. Signed out, the
+/// sign-in screen owns that read.
+pub(super) async fn list_profiles(bridge: &Bridge, cwd: &str, signed_in: bool) -> Result<Value> {
+    let requirements = if signed_in {
+        bridge
+            .request::<_, Value>("configRequirements/read", json!({}))
+            .await
+            .map_or(Value::Null, |read| read["requirements"].clone())
+    } else {
+        Value::Null
+    };
     let mut data = Vec::new();
     let mut cursor = Value::Null;
     loop {
@@ -22,7 +33,7 @@ pub(super) async fn list_profiles(bridge: &Bridge, cwd: &str) -> Result<Value> {
             break;
         }
     }
-    Ok(json!({"data": data}))
+    Ok(json!({"data": data, "requirements": requirements}))
 }
 
 fn assessment(params: &Value) -> Value {

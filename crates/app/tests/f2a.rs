@@ -66,6 +66,7 @@ fn permissions_popover() -> Result<()> {
             Permission::FullAccess => "Full access",
             Permission::Custom => "Custom",
             Permission::Named(name) => name.as_ref(),
+            Permission::Managed => "Managed",
         };
         ensure!(
             label == expected["trigger"]["text"].as_str().unwrap(),

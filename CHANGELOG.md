@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Read `configRequirements/read` and disable the permission options that `requirements.toml` or `config.toml` do not allow, with the original's tooltips, and show `Managed` when no option is allowed.
 - Check for updates in the background every hour, send the original's appcast parameters (installation id, architecture, version, beta, macOS version and plan), and add a `Beta updates` setting.
 - Publish a signed Sparkle `appcast.xml` and SHA-256 checksum with each release, and add an Automatically check for updates switch to General settings.
 - Add named permission profiles, per-category approval settings, writable folder selection, automatic review notices, and `/approve` for one denied retry.

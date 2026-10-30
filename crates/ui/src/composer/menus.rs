@@ -323,50 +323,59 @@ impl Composer {
                 400.,
                 t.text_tertiary,
             )))
-            .children(
-                Permission::ALL
-                    .iter()
-                    .map(|p| (p, p.description()))
-                    .chain(
-                        self.permission_profiles
-                            .iter()
-                            .map(|(p, description)| (p, description.as_str())),
-                    )
-                    .enumerate()
-                    .map(|(i, (p, description))| {
+            .children(self.permission_rows.iter().enumerate().map(|(i, row)| {
+                let disabled = row.disabled;
+                let item = div()
+                    .id(("permission-option", i))
+                    .track_focus(&self.menu_focus.items[i])
+                    .focus(move |s| s.bg(hover))
+                    .on_mouse_move(cx.listener(move |this, _, window, cx| {
+                        this.menu_focus.items[i].focus(window, cx);
+                        cx.stop_propagation();
+                    }))
+                    .hover_listener_mode(gpui::HoverListenerMode::InputModalityIndependent)
+                    // The tooltip owns a disabled row's hover listener.
+                    .when(disabled.is_none(), |d| {
+                        d.on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
+                            if !hovered && this.menu_focus.items[i].is_focused(window) {
+                                this.menu_focus.content.focus(window, cx);
+                            }
+                        }))
+                    })
+                    .aria_disabled(disabled.is_some())
+                    .px(px(8.))
+                    .py(px(6.))
+                    .flex()
+                    .flex_col()
+                    .rounded(px(12.))
+                    .hover(move |s| s.bg(hover))
+                    .when(disabled.is_some(), |d| d.opacity(0.5))
+                    .child(text(
+                        row.permission.option_label().to_owned(),
+                        14.,
+                        20.,
+                        430.,
+                        t.text,
+                    ))
+                    .child(
                         div()
-                            .id(("permission-option", i))
-                            .track_focus(&self.menu_focus.items[i])
-                            .focus(move |s| s.bg(hover))
-                            .on_mouse_move(cx.listener(move |this, _, window, cx| {
-                                this.menu_focus.items[i].focus(window, cx);
-                                cx.stop_propagation();
-                            }))
-                            .hover_listener_mode(gpui::HoverListenerMode::InputModalityIndependent)
-                            .on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
-                                if !hovered && this.menu_focus.items[i].is_focused(window) {
-                                    this.menu_focus.content.focus(window, cx);
-                                }
-                            }))
-                            .px(px(8.))
-                            .py(px(6.))
-                            .flex()
-                            .flex_col()
-                            .rounded(px(12.))
-                            .hover(move |s| s.bg(hover))
-                            .child(text(p.option_label().to_owned(), 14., 20., 430., t.text))
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .line_height(px(16.))
-                                    .text_color(t.text_tertiary)
-                                    .child(description.to_owned()),
-                            )
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.activate_menu_item(i, window, cx)
-                            }))
-                    }),
-            )
+                            .text_size(px(12.))
+                            .line_height(px(16.))
+                            .text_color(t.text_tertiary)
+                            .child(row.description.clone()),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.activate_menu_item(i, window, cx)
+                    }));
+                match disabled {
+                    // `composer.permissionsDropdown.disabledBy*.tooltip`
+                    Some(reason) => {
+                        crate::tooltip::tooltip(item, reason, None, crate::tooltip::Side::Right)
+                            .into_any_element()
+                    }
+                    None => item.into_any_element(),
+                }
+            }))
         })
     }
 

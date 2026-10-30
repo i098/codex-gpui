@@ -276,8 +276,8 @@ impl Composer {
             .child(
                 div()
                     .relative()
-                    .child(
-                        pill("permissions", t)
+                    .child({
+                        let trigger = pill("permissions", t)
                             .track_focus(&self.permissions_focus)
                             .focus_visible(crate::focus::trigger_focus)
                             .on_hover(cx.listener(|this, hovered: &bool, _, _| {
@@ -310,8 +310,21 @@ impl Composer {
                             })
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.toggle_menu(Menu::Permissions, window, cx)
-                            })),
-                    )
+                            }));
+                        if self.permission == Permission::Managed {
+                            // `composer.permissionsDropdown.managed.tooltip`; the pill keeps
+                            // its own hover listener, so a wrapper hosts the tooltip's.
+                            crate::tooltip::tooltip(
+                                div().id("permissions-managed").child(trigger),
+                                "Managed by enterprise policy",
+                                None,
+                                crate::tooltip::Side::Top,
+                            )
+                            .into_any_element()
+                        } else {
+                            trigger.into_any_element()
+                        }
+                    })
                     .when(self.menu == Some(Menu::Permissions), |d| {
                         d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
                     }),
