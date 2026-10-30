@@ -1280,6 +1280,7 @@ impl SettingsPane {
                 ]
                 .into_iter()
                 .chain(crate::updater::managed_row(t, cx))
+                .chain(crate::updater::automatic_row(t, cx))
                 .collect(),
             ),
             (
