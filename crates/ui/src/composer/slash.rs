@@ -735,10 +735,11 @@ impl Composer {
         let command = COMMANDS
             .get(index)
             .filter(|_| !self.slash.mention && self.slash.sub.is_none());
-        // The original authors these two glyphs' colors; the others follow the text color.
-        let icon_color = match command.map(|command| command.id) {
-            Some("mcp") => gpui::rgb(0x222326).into(),
-            Some("sketch") => gpui::rgb(0x04bb9f).into(),
+        // The original authors these glyphs' colors; the others follow the text color.
+        let icon_color = match icon_name {
+            "composer-paperclip" => gpui::rgb(0x949494).into(),
+            "slash-mcp" => gpui::rgb(0x222326).into(),
+            "slash-sketch" => gpui::rgb(0x04bb9f).into(),
             _ => t.text,
         };
         let submenu = command.is_some_and(|command| {

@@ -24,7 +24,7 @@ const ACTIONS: &[Action] = &[
         id: "files-and-folders",
         title: "Files and folders",
         description: "",
-        icon: "folder",
+        icon: "composer-paperclip",
         home_only: false,
     },
     Action {
@@ -45,21 +45,21 @@ const ACTIONS: &[Action] = &[
         id: "goal",
         title: "Goal",
         description: "Set a goal to keep pursuing",
-        icon: "thread-summary",
+        icon: "slash-goal",
         home_only: false,
     },
     Action {
         id: "plan-mode",
         title: "Plan mode",
         description: "Turn plan mode on",
-        icon: "settings-personalization",
+        icon: "slash-plan-mode",
         home_only: true,
     },
     Action {
         id: "sketch",
         title: "Sketch",
         description: "Draw a sketch",
-        icon: "pencil",
+        icon: "slash-sketch",
         home_only: false,
     },
 ];
