@@ -189,6 +189,16 @@ pub trait Host: Send + Sync {
         bail!("removing a local project is unsupported by this host")
     }
 
+    /// Each chat's emoji from `sidebar-thread-metadata` (`{threadId: {emoji}}`).
+    fn thread_emojis(&self) -> Result<Vec<(String, String)>> {
+        Ok(Vec::new())
+    }
+
+    /// `Change emoji` in `Rename chat`: sets or (`None`) clears the chat's emoji.
+    fn set_thread_emoji(&self, _thread: &str, _emoji: Option<&str>) -> Result<()> {
+        bail!("chat emoji is unsupported by this host")
+    }
+
     fn prepare_projectless(&self, _prompt: &str) -> Result<Workspace> {
         bail!("projectless workspaces are unsupported by this host")
     }
@@ -1839,6 +1849,38 @@ impl Host for LocalHost {
         })
     }
 
+    fn thread_emojis(&self) -> Result<Vec<(String, String)>> {
+        let state = self.read_global_state()?;
+        let Some(metadata) = state["sidebar-thread-metadata"].as_object() else {
+            return Ok(Vec::new());
+        };
+        Ok(metadata
+            .iter()
+            .filter_map(|(id, entry)| Some((id.clone(), entry["emoji"].as_str()?.to_owned())))
+            .collect())
+    }
+
+    fn set_thread_emoji(&self, thread: &str, emoji: Option<&str>) -> Result<()> {
+        self.update_global_state(|state| {
+            if !state["sidebar-thread-metadata"].is_object() {
+                state["sidebar-thread-metadata"] = json!({});
+            }
+            let entry = &mut state["sidebar-thread-metadata"][thread];
+            if entry["emoji"].as_str() == emoji {
+                return Ok(false);
+            }
+            match emoji {
+                Some(emoji) => entry["emoji"] = emoji.into(),
+                None => {
+                    if let Some(fields) = entry.as_object_mut() {
+                        fields.remove("emoji");
+                    }
+                }
+            }
+            Ok(true)
+        })
+    }
+
     fn update_project(
         &self,
         id: &str,
@@ -2535,6 +2577,14 @@ impl Host for CloudHost {
 
     fn remove_project(&self, id: &str) -> Result<()> {
         self.local.remove_project(id)
+    }
+
+    fn thread_emojis(&self) -> Result<Vec<(String, String)>> {
+        self.local.thread_emojis()
+    }
+
+    fn set_thread_emoji(&self, thread: &str, emoji: Option<&str>) -> Result<()> {
+        self.local.set_thread_emoji(thread, emoji)
     }
 
     fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<Option<bool>> {

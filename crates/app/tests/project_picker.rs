@@ -198,6 +198,37 @@ fn project_menu_pins_edits_and_removes_without_touching_files_or_other_projects(
     Ok(())
 }
 
+/// `Change emoji` writes `sidebar-thread-metadata.<id>.emoji`; clearing drops only `emoji`.
+#[test]
+fn chat_emoji_is_set_and_cleared_in_sidebar_thread_metadata() -> Result<()> {
+    let profile = tempfile::tempdir()?;
+    let file = profile.path().join(".codex-global-state.json");
+    fs::write(
+        &file,
+        serde_json::to_vec(&json!({
+            "unrelated": {"keep": true},
+            "sidebar-thread-metadata": {"b": {"emoji": "🐛", "labelColor": "red"}},
+        }))?,
+    )?;
+    let host = LocalHost::new(profile.path());
+    host.set_thread_emoji("a", Some("🚀"))?;
+    let mut emojis = host.thread_emojis()?;
+    emojis.sort();
+    assert_eq!(
+        emojis,
+        [("a".into(), "🚀".into()), ("b".into(), "🐛".into())]
+    );
+    host.set_thread_emoji("b", None)?;
+    let state: Value = serde_json::from_slice(&fs::read(&file)?)?;
+    assert_eq!(
+        state["sidebar-thread-metadata"]["b"],
+        json!({"labelColor": "red"})
+    );
+    assert_eq!(state["unrelated"], json!({"keep": true}));
+    assert_eq!(host.thread_emojis()?, [("a".into(), "🚀".into())]);
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn proxy() {
@@ -545,6 +576,71 @@ fn project_menu_pins_edits_and_removes_a_sidebar_project() -> Result<()> {
     assert!(beta.is_dir(), "removing a project keeps its folder");
     assert_eq!(host.projects()?.len(), 1);
     shot(&mut fx, "removed")?;
+    Ok(())
+}
+
+/// `Rename chat`'s `Choose emoji` button opens the grid; the pick shows before the row's title
+/// and lands in `sidebar-thread-metadata`; `Remove emoji` clears it.
+#[cfg(target_os = "macos")]
+#[test]
+fn rename_dialog_sets_and_clears_a_chat_emoji() -> Result<()> {
+    use anyhow::Context as _;
+    use common::{GREETING, script};
+    use std::sync::Arc;
+    use ui::screens::sidebar::RenameThread;
+
+    let temp = tempfile::tempdir()?;
+    let state_path = temp.path().join("state.json");
+    let host = Arc::new(LocalHost::new(temp.path().join("codex")));
+    let (mut fx, _, _) = isolated_root(temp.path(), &script(None, |_| {})?, &state_path)?;
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+    let output = std::env::var_os("CGX_EMOJI_SHOTS").map(std::path::PathBuf::from);
+    let shot = |fx: &mut common::Fx, name: &str| -> Result<()> {
+        if let Some(out) = &output {
+            fs::create_dir_all(out)?;
+            fx.shot()?.save(out.join(format!("{name}.png")))?;
+        }
+        Ok(())
+    };
+    let click = |fx: &mut common::Fx, selector: &'static str| -> Result<()> {
+        let at = fx
+            .cx
+            .debug_bounds(fx.window, selector)?
+            .context(selector)?
+            .center();
+        fx.click((at.x.into(), at.y.into()))
+    };
+    let emoji = |fx: &mut common::Fx| {
+        fx.read(|root, cx| root.sidebar().read(cx).emojis.get(GREETING).cloned())
+    };
+    let rename = |fx: &mut common::Fx| -> Result<()> {
+        fx.action(Box::new(RenameThread(GREETING.into())))?;
+        fx.wait("rename dialog", |fx| {
+            fx.read(|root, _| root.dialog().is_some())
+        })
+    };
+
+    rename(&mut fx)?;
+    click(&mut fx, "rename-emoji")?;
+    shot(&mut fx, "picker")?;
+    click(&mut fx, "rename-emoji-option-0")?;
+    fx.keys("enter")?;
+    fx.wait("rocket shown", |fx| emoji(fx).as_deref() == Some("🚀"))?;
+    fx.wait("rocket saved", |_| {
+        host.thread_emojis()
+            .is_ok_and(|e| e == [(GREETING.into(), "🚀".into())])
+    })?;
+    shot(&mut fx, "row")?;
+
+    rename(&mut fx)?;
+    click(&mut fx, "rename-emoji")?;
+    click(&mut fx, "rename-emoji-option-20")?;
+    fx.keys("enter")?;
+    fx.wait("emoji cleared", |fx| emoji(fx).is_none())?;
+    fx.wait("emoji forgotten", |_| {
+        host.thread_emojis().is_ok_and(|e| e.is_empty())
+    })?;
     Ok(())
 }
 

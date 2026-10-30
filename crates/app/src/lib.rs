@@ -1491,15 +1491,24 @@ impl Root {
         self.sidebar
             .update(cx, |s, cx| s.set_projects_state(ListState::Loading, cx));
         let host = self.host.clone();
-        let read = cx.background_spawn(async move { host.projects() });
+        let read = cx.background_spawn(async move { (host.projects(), host.thread_emojis()) });
         self.project_load = Some(cx.spawn(async move |this, cx| {
-            let result = read.await;
-            this.update(cx, |this, cx| match result {
-                Ok(projects) => this.set_projects(projects, cx),
-                Err(error) => {
-                    eprintln!("codex-gpui: cannot read sidebar projects: {error:#}");
-                    this.sidebar
-                        .update(cx, |s, cx| s.set_projects_state(ListState::Failed, cx));
+            let (result, emojis) = read.await;
+            this.update(cx, |this, cx| {
+                match emojis {
+                    Ok(emojis) => this.sidebar.update(cx, |s, cx| {
+                        s.emojis = emojis.into_iter().map(|(id, e)| (id, e.into())).collect();
+                        cx.notify();
+                    }),
+                    Err(error) => eprintln!("codex-gpui: cannot read chat emojis: {error:#}"),
+                }
+                match result {
+                    Ok(projects) => this.set_projects(projects, cx),
+                    Err(error) => {
+                        eprintln!("codex-gpui: cannot read sidebar projects: {error:#}");
+                        this.sidebar
+                            .update(cx, |s, cx| s.set_projects_state(ListState::Failed, cx));
+                    }
                 }
             })
             .ok();
@@ -3581,8 +3590,13 @@ impl Root {
                     this.flush_settings(cx);
                     windows::close(window, cx);
                 }
-                DialogOutcome::Rename { thread, name } => {
+                DialogOutcome::Rename {
+                    thread,
+                    name,
+                    emoji,
+                } => {
                     window.focus(&focus, cx);
+                    this.set_thread_emoji(thread.clone(), emoji.clone(), cx);
                     this.rename(thread.clone(), name.clone(), window, cx);
                 }
                 DialogOutcome::SectionName { section, name } => {
@@ -5303,9 +5317,46 @@ impl Root {
         }
         let title = self.threads.iter().find(|t| t.id == id).map(thread_title);
         let title = title.unwrap_or_default().to_string();
-        let dialog = cx.new(|cx| Dialog::rename(id, title, cx));
+        let emoji = self.sidebar.read(cx).emojis.get(&id).map(|e| e.to_string());
+        let dialog = cx.new(|cx| Dialog::rename(id, title, emoji, cx));
         self.show_dialog(dialog, window, cx);
         self.dialog_to_composer = from_composer;
+    }
+
+    /// `Change emoji`: the row shows the new emoji at once; a refused write puts the old one back.
+    fn set_thread_emoji(&mut self, id: String, emoji: Option<String>, cx: &mut Context<Self>) {
+        let before = self.sidebar.update(cx, |s, cx| {
+            let before = match &emoji {
+                Some(emoji) => s.emojis.insert(id.clone(), emoji.clone().into()),
+                None => s.emojis.remove(&id),
+            };
+            cx.notify();
+            before
+        });
+        if before.as_deref() == emoji.as_deref() {
+            return;
+        }
+        let host = self.host.clone();
+        let write = {
+            let (id, emoji) = (id.clone(), emoji.clone());
+            cx.background_spawn(async move { host.set_thread_emoji(&id, emoji.as_deref()) })
+        };
+        cx.spawn(async move |this, cx| {
+            let Err(error) = write.await else { return };
+            eprintln!("codex-gpui: cannot save chat emoji: {error:#}");
+            this.update(cx, |this, cx| {
+                this.sidebar.update(cx, |s, cx| {
+                    match before {
+                        Some(before) => s.emojis.insert(id, before),
+                        None => s.emojis.remove(&id),
+                    };
+                    cx.notify();
+                });
+                this.toast(Toast::danger("Couldn't change emoji"), cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// `thread/section/move` into or out of the Pinned section: the row moves at once (no toast);

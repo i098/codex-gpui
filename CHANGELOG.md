@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Add the sidebar project row menu (`...` button or right-click): `Pin`/`Unpin` (pinned projects list first), `Edit project` in the project form, `Mark all as read`, `Archive chats` and `Remove project` with its confirmation. Files and chats stay on disk.
+- Add `Choose emoji`/`Change emoji` to `Rename chat`: the chat's emoji shows before its sidebar title and is saved in `sidebar-thread-metadata`. A chat row in a custom section offers `Remove from section` in place of `Pin chat`.
 - Add `Toggle Git blame` to the command menu: the file viewer shows the author, commit summary, short SHA and date for the active (clicked or cited) line from the host's `git blame`.
 - Check for updates in the background every hour, send the original's appcast parameters (installation id, architecture, version, beta, macOS version and plan), and add a `Beta updates` setting.
 - Publish a signed Sparkle `appcast.xml` and SHA-256 checksum with each release, and add an Automatically check for updates switch to General settings.
