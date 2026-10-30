@@ -81,6 +81,21 @@ It does not require microphone, accessibility, screen recording, account access,
 No page painting code changes in this slice.
 The separate page owners still owe their original-versus-native appearance checks.
 
+Run `CODEX_GPUI_QA=1 cargo build -p app --example native_lifecycle` on macOS for App shell rows 10–12.
+This check creates visible native windows; do not run it on an occupied desktop.
+Use an isolated GUI session and set `CGX_NATIVE_LIFECYCLE_ISOLATED=1` to acknowledge this requirement.
+Set `CODEX_BIN` to the real Codex CLI, not a replay fixture.
+Run the example with an owned `--qa-smoke-profile /tmp/cgx-qa-smoke-<owned-name>` directory.
+Run it again with `CGX_LIFECYCLE_MENUS=1` to check the Minimize, Hide, and Quit menu entries instead of their shortcuts.
+It reads `NSWindow` visibility, miniaturization, zoom, content minimum, content size, and window number after dispatching the app's actions.
+It checks that the app remains inactive and its window never becomes the key window.
+Other applications can change focus during the run; the check records these changes.
+The real Quit handler must reach the application shutdown observer within ten seconds.
+Only `hideOtherApplications:` and `unhideAllApplications:` use a process-local method replacement that records calls.
+Their key and menu checks do not hide or reveal other applications.
+The replacement restores both AppKit methods when the example returns.
+All owned-window actions use the real AppKit implementation.
+
 ## Popout and Spotlight controller
 
 `app::hotkey::open(owner, target, cx)` opens the local popout or Spotlight without changing the primary window's route or draft.
