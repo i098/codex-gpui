@@ -36,7 +36,7 @@ jobs:
           build-essential pkg-config clang cmake libssl-dev libzstd-dev
           libfontconfig-dev libfreetype-dev libasound2-dev libxkbcommon-dev
           libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
-          libvulkan-dev
+          libvulkan-dev xvfb
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -48,6 +48,14 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - if: hashFiles('Cargo.toml') != ''
         run: cargo test --workspace
+      # The primary window must open on the X11 backend: timeout (124) means it stayed up.
+      - if: hashFiles('Cargo.toml') != ''
+        name: Smoke-open the primary window
+        run: |
+          cargo build -p app
+          rc=0
+          HOME=$(mktemp -d) xvfb-run -a timeout 20 "$CARGO_TARGET_DIR/debug/codex-gpui" || rc=$?
+          [[ $rc -eq 124 ]] || { echo "window did not stay open (exit $rc)" >&2; exit 1; }
       - name: Remove job-owned Cargo target
         if: always()
         run: rm -rf -- "$CARGO_TARGET_DIR"
