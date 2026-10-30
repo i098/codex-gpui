@@ -30,6 +30,16 @@ impl ThreadView {
         }
     }
 
+    pub fn set_branch(&mut self, branch: SharedString, cx: &mut Context<Self>) {
+        self.branch = Some(branch);
+        cx.notify();
+    }
+
+    pub fn set_environment(&mut self, connected: bool, cx: &mut Context<Self>) {
+        self.environment_connected = Some(connected);
+        cx.notify();
+    }
+
     pub fn chat_action_labels(&self) -> Option<impl Iterator<Item = &'static str>> {
         self.chat_actions
             .as_ref()
@@ -184,6 +194,29 @@ impl ThreadView {
                                     text(self.header_title(), 14., 24., 500., t.text)
                                         .text_ellipsis(),
                                 ),
+                        )
+                    })
+                    .when_some(self.branch.clone(), |d, branch| {
+                        d.child(text(branch, 12., 16., 400., t.text_tertiary).text_ellipsis())
+                    })
+                    .when_some(self.environment_connected, |d, connected| {
+                        d.child(
+                            text(
+                                if connected {
+                                    "Environment connected"
+                                } else {
+                                    "Environment disconnected"
+                                },
+                                12.,
+                                16.,
+                                400.,
+                                if connected {
+                                    t.text_tertiary
+                                } else {
+                                    t.text_error
+                                },
+                            )
+                            .flex_none(),
                         )
                     }),
             )

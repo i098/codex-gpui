@@ -519,6 +519,8 @@ pub struct Root {
     permission_profiles: Value,
     guardian_denials: HashMap<String, Value>,
     skills: Value,
+    /// `collaborationMode/list` answer (`Null` before it loads or on older servers).
+    collaboration_modes: Value,
     models: Vec<Model>,
     ready: bool,
     /// The app-server process died: the crash page (SH-145) shows until Try again.
@@ -961,6 +963,7 @@ impl Root {
             permission_profiles: Value::Null,
             guardian_denials: HashMap::new(),
             skills: Value::Null,
+            collaboration_modes: Value::Null,
             models: Vec::new(),
             ready: false,
             crashed: false,
@@ -1138,6 +1141,14 @@ impl Root {
                         Value::Null
                     })
             };
+            let modes = if acp {
+                Value::Null
+            } else {
+                bridge
+                    .request("collaborationMode/list", json!({}))
+                    .await
+                    .unwrap_or(Value::Null)
+            };
             this.update_in(cx, |this, window, cx| {
                 this._update_policy = updater::poll_policy(bridge.clone(), cx);
                 this.set_account(account.as_ref(), cx);
@@ -1212,6 +1223,7 @@ impl Root {
                     composer.update(cx, |c, cx| {
                         c.set_models(&models, &config.config, cx);
                         c.set_slash_skills(&skills, cx);
+                        c.set_collaboration_modes(&modes, cx);
                         c.set_permission_profiles(&profiles, cx);
                     });
                 }
@@ -1222,6 +1234,7 @@ impl Root {
                     serde_json::to_value(this.state.confirm_before_close)
                         .expect("close preference");
                 this.skills = skills;
+                this.collaboration_modes = modes;
                 this.models = models;
                 this.refresh_automation_editor_options(None, cx);
                 this.ready = this.login.is_none();
@@ -2041,6 +2054,29 @@ impl Root {
         .detach();
     }
 
+    /// The open thread records its new branch (`updateThreadGitBranch`), then the header shows it.
+    fn record_thread_branch(&mut self, branch: &str, cx: &mut Context<Self>) {
+        let Some(view) = self.thread.clone() else {
+            return;
+        };
+        let thread = view.read(cx).id().to_owned();
+        let bridge = self.bridge.clone();
+        let branch = branch.to_owned();
+        cx.spawn(async move |_, cx| {
+            let params = json!({ "threadId": thread, "gitInfo": { "branch": branch } });
+            match bridge
+                .request::<_, Value>("thread/metadata/update", params)
+                .await
+            {
+                Ok(_) => {
+                    view.update(cx, |view, cx| view.set_branch(branch.into(), cx));
+                }
+                Err(error) => eprintln!("codex-gpui: thread branch metadata: {error:#}"),
+            }
+        })
+        .detach();
+    }
+
     fn checkout_branch(
         &mut self,
         dialog: Entity<Dialog>,
@@ -2094,6 +2130,9 @@ impl Root {
                             this.dialog = None;
                             this.commit_cwd = None;
                             window.focus(&this.composer(cx).focus_handle(cx), cx);
+                        }
+                        if let Some(branch) = body["branch"].as_str() {
+                            this.record_thread_branch(branch, cx);
                         }
                         let title = body["branch"].as_str().map_or_else(
                             || "Checked out detached HEAD".to_owned(),
@@ -4909,6 +4948,7 @@ impl Root {
                 cx,
             );
             composer.set_slash_skills(&self.skills, cx);
+            composer.set_collaboration_modes(&self.collaboration_modes, cx);
             composer.set_search_roots(vec![thread.cwd.clone()], cx);
             composer.set_queue_pending(self.queue_pending, cx);
             wire_thread_composer(&mut composer, this, Some(key));
@@ -6392,6 +6432,14 @@ impl Root {
                 "item/autoApprovalReview/started" | "item/autoApprovalReview/completed" => {
                     self.guardian_review(&method, &params, cx);
                 }
+                "thread/environment/connected" | "thread/environment/disconnected" => {
+                    if let (Some(id), Some(view)) = (params["threadId"].as_str(), &self.thread)
+                        && view.read(cx).id() == id
+                    {
+                        let connected = method.ends_with("/connected");
+                        view.update(cx, |view, cx| view.set_environment(connected, cx));
+                    }
+                }
                 "account/updated" if self.ready => {
                     self.destination_load = None;
                     self.set_unread_destinations(None, cx);
@@ -6528,7 +6576,29 @@ impl Root {
                         "item/permissions/requestApproval" => json!({
                             "permissions": {}, "scope": "turn"
                         }),
-                        _ => return,
+                        "item/tool/requestOptionPicker" => json!({
+                            "action": "dismiss", "selectedOptions": [], "freeformAnswer": null
+                        }),
+                        "currentTime/read" => json!({
+                            "currentTimeAt": std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map_or(0, |elapsed| elapsed.as_secs())
+                        }),
+                        "item/tool/requestSetupCodexContextPicker" => json!({
+                            "action": "dismiss", "selectedSources": []
+                        }),
+                        _ => {
+                            // Not owned by this client; an unanswered request would hang the turn.
+                            let error = self.bridge.respond_error(
+                                pending.id,
+                                -32601,
+                                format!("Unsupported request: {}", pending.method),
+                            );
+                            if let Err(error) = error {
+                                eprintln!("codex-gpui: unsupported {}: {error:#}", pending.method);
+                            }
+                            return;
+                        }
                     };
                     if let Err(error) = self.bridge.respond(pending.id, response) {
                         eprintln!("codex-gpui: unsupported {}: {error:#}", pending.method);
