@@ -1655,7 +1655,7 @@ impl Composer {
         self.footer_width <= UTILITY_WIDTH
     }
 
-    pub(crate) fn set_placeholder(
+    pub fn set_placeholder(
         &mut self,
         placeholder: impl Into<SharedString>,
         cx: &mut Context<Self>,

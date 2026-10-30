@@ -580,6 +580,40 @@ fn configure_composer(root: &Root, cx: &mut Context<Root>) {
     });
 }
 
+pub(crate) fn refresh_home(root: &mut Root, cx: &mut Context<Root>) {
+    root.home.update(cx, |home, cx| {
+        home.location.worktree_available = None;
+        home.location.mode = Mode::Local;
+        cx.notify();
+    });
+    let Some(selected) = root.state.project_root.clone() else {
+        return;
+    };
+    let host = root.host.clone();
+    let lookup = host.clone();
+    let path = selected.clone();
+    let read = cx.background_spawn(async move {
+        crate::git_call(&*lookup, "git-commit-status", json!({"cwd": path}))
+            .is_ok_and(|status| status["root"].is_string() || status["branch"].is_string())
+    });
+    cx.spawn(async move |root, cx| {
+        let available = read.await;
+        root.update(cx, |root, cx| {
+            if root.state.project_root.as_ref() != Some(&selected)
+                || !Arc::ptr_eq(&root.host, &host)
+            {
+                return;
+            }
+            root.home.update(cx, |home, cx| {
+                home.location.worktree_available = Some(available);
+                cx.notify();
+            });
+        })
+        .ok();
+    })
+    .detach();
+}
+
 fn refresh(root: &mut Root, cx: &mut Context<Root>) {
     let Some(popout) = &root.popout else { return };
     let controls = popout.controls.clone();
@@ -759,13 +793,23 @@ pub(crate) fn start_options(root: &Root, cx: &App) -> Option<Options> {
     root.popout
         .as_ref()
         .map(|popout| popout.controls.read(cx).options().clone())
+        .or_else(|| {
+            let home = root.home.read(cx);
+            let mode = home.location.mode;
+            (mode == Mode::Worktree && home.project.is_some()).then(|| Options {
+                root: root.state.project_root.clone(),
+                branch: Some("HEAD".into()),
+                mode,
+                ..Default::default()
+            })
+        })
 }
 
 pub(crate) struct Prepared {
     cwd: String,
     host: Option<Arc<dyn host::Host>>,
     workspace: Option<host::Workspace>,
-    worktree: bool,
+    worktree: Option<String>,
 }
 
 impl Prepared {
@@ -774,7 +818,7 @@ impl Prepared {
             cwd,
             host: None,
             workspace: None,
-            worktree: false,
+            worktree: None,
         }
     }
 
@@ -794,15 +838,22 @@ impl Prepared {
             if let Some(workspace) = self.workspace {
                 host.record_projectless(id, &workspace)?;
             }
-            if self.worktree
+            if let Some(worktree) = self.worktree
                 && let Err(error) = crate::git_call(
                     &*host,
                     "set-worktree-owner-thread",
-                    json!({"worktree": self.cwd, "conversationId": id}),
+                    json!({"worktree": worktree, "conversationId": id}),
                 )
             {
                 eprintln!("codex-gpui: cannot record worktree owner: {error:#}");
             }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn discard(self) -> Result<()> {
+        if let (Some(worktree), Some(host)) = (self.worktree, self.host) {
+            crate::git_call(&*host, "worktree-delete", json!({"worktree": worktree}))?;
         }
         Ok(())
     }
@@ -822,7 +873,7 @@ pub(crate) fn prepare_start(
                     cwd: workspace.cwd.clone(),
                     host: Some(host),
                     workspace: Some(workspace),
-                    worktree: false,
+                    worktree: None,
                 })
             }
         },
@@ -840,7 +891,12 @@ pub(crate) fn prepare_start(
                 cwd,
                 host: Some(host),
                 workspace: None,
-                worktree: true,
+                worktree: Some(
+                    response["worktreeGitRoot"]
+                        .as_str()
+                        .context("Worktree creation returned no Git root")?
+                        .to_owned(),
+                ),
             })
         }
         Mode::Cloud => bail!("Cloud execution requires a cloud environment"),
@@ -1174,7 +1230,8 @@ mod tests {
     fn worktree_chat_uses_an_isolated_checkout_of_the_selected_branch() -> Result<()> {
         let temporary = tempfile::tempdir()?;
         let source = temporary.path().join("project");
-        std::fs::create_dir(&source)?;
+        std::fs::create_dir_all(source.join("nested"))?;
+        std::fs::write(source.join("nested/branch.txt"), "main")?;
         let git = |arguments: &[&str]| -> Result<()> {
             let output = std::process::Command::new("git")
                 .current_dir(&source)
@@ -1188,6 +1245,7 @@ mod tests {
             Ok(())
         };
         git(&["init", "-b", "main"])?;
+        git(&["add", "."])?;
         git(&[
             "-c",
             "user.name=Test",
@@ -1200,15 +1258,40 @@ mod tests {
         ])?;
         let host = Arc::new(host::LocalHost::new(temporary.path().join("codex")));
         let options = Options {
-            root: Some(source.to_string_lossy().into_owned()),
+            root: Some(source.join("nested").to_string_lossy().into_owned()),
             git_root: Some(source.to_string_lossy().into_owned()),
             branch: Some("main".into()),
             mode: Mode::Worktree,
             ..Default::default()
         };
-        let cwd = prepare_start(host, options, "Create a worktree")?.cwd;
-        assert_ne!(Path::new(&cwd), source);
-        assert!(Path::new(&cwd).join(".git").is_file());
+        let unused = prepare_start(host.clone(), options.clone(), "Create a worktree")?;
+        let unused_root = unused.worktree.clone().unwrap();
+        unused.discard()?;
+        assert!(!Path::new(&unused_root).exists());
+        let prepared = prepare_start(host, options, "Create a worktree")?;
+        let root = prepared.worktree.clone().unwrap();
+        assert_eq!(
+            prepared.cwd,
+            Path::new(&root).join("nested").to_string_lossy()
+        );
+        assert_eq!(
+            std::fs::read_to_string(Path::new(&prepared.cwd).join("branch.txt"))?,
+            "main"
+        );
+        prepared.record("thread-owner")?;
+        let output = std::process::Command::new("git")
+            .current_dir(&root)
+            .args([
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "codex-thread.json",
+            ])
+            .output()?;
+        assert!(output.status.success());
+        let owner: Value =
+            serde_json::from_slice(&std::fs::read(String::from_utf8(output.stdout)?.trim())?)?;
+        assert_eq!(owner["ownerThreadId"], "thread-owner");
         assert!(source.join(".git").is_dir());
         Ok(())
     }

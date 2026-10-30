@@ -5,6 +5,7 @@
 
 mod activity_access;
 mod archived_chats;
+mod chatgpt_chats;
 mod cloud_task;
 pub use cloud_task::parse_task_response;
 mod cloud;
@@ -98,9 +99,9 @@ use ui::screens::settings::personalization::WritingPreference;
 use ui::screens::settings::{self, AppServer, SettingChanged, workspace};
 use ui::screens::sidebar::{
     ActivityOpened, ArchiveActivity, ArchiveThread, ArchivedChats, CommandMenu, CommandMenuEvent,
-    HomeSidebar, ListState, LoadMore, OpenThread, PINNED_SECTION_ID, PinThread, RenameThread,
-    RetryActivity, RetryProjects, RetryThreads, SEARCH_LIMIT, SearchHit, SearchRequest,
-    SelectProject, title as thread_title,
+    HomeSidebar, ListState, LoadMore, ModeChanged, OpenThread, PINNED_SECTION_ID, PinThread,
+    RenameThread, RetryActivity, RetryProjects, RetryThreads, SEARCH_LIMIT, SearchHit,
+    SearchRequest, SelectProject, title as thread_title,
 };
 use ui::screens::signin::Login;
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
@@ -527,6 +528,7 @@ pub struct Root {
     automation_card_results: HashMap<(String, String), Value>,
     queue_load: Option<Task<()>>,
     queue_pending: bool,
+    fork_pending: bool,
     deleted_queued: Vec<DeletedQueuedMessage>,
     failed_queued: Vec<FailedQueuedMessage>,
     /// A successful steer must never be sent again when its queue deletion fails.
@@ -708,10 +710,11 @@ impl Root {
                         }
                     }
                     ui::composer::SlashCommand::Compact => this.compact(window, cx),
+                    ui::composer::SlashCommand::Fork => this.fork_chat(None, None, window, cx),
+                    ui::composer::SlashCommand::ForkWorktree => this.fork_worktree(window, cx),
                     ui::composer::SlashCommand::Feedback => this.open_feedback(window, cx),
                     ui::composer::SlashCommand::Export => this.export_transcript(window, cx),
                     ui::composer::SlashCommand::Recap => this.recap(window, cx),
-                    ui::composer::SlashCommand::Fork => this.fork_chat(0, window, cx),
                     ui::composer::SlashCommand::Rename => {
                         if let Route::Thread(id) = this.state.route.clone() {
                             this.open_rename(id, true, window, cx);
@@ -751,6 +754,12 @@ impl Root {
         cx.subscribe_in(&sidebar, window, |this, _, _: &ActivityOpened, _, cx| {
             this.load_activity_threads(cx)
         })
+        .detach();
+        cx.subscribe_in(
+            &sidebar,
+            window,
+            |this, _, mode: &ModeChanged, window, cx| this.mode_changed(mode.0, window, cx),
+        )
         .detach();
         let main = cx.new(|_| ui::EmptyMain).into();
         let wide = window.viewport_size().width * window.ui_scale() >= SIDEBAR_BREAKPOINT;
@@ -859,6 +868,7 @@ impl Root {
                 project: state.project_root.as_deref().map(project_name),
                 location: Default::default(),
                 beacon: false,
+                headline: None,
             }),
             thread_composer,
             queue_edit: None,
@@ -951,6 +961,7 @@ impl Root {
             automation_card_results: HashMap::new(),
             queue_load: None,
             queue_pending: false,
+            fork_pending: false,
             deleted_queued: Vec::new(),
             failed_queued: Vec::new(),
             steered_queued: HashSet::new(),
@@ -1041,6 +1052,7 @@ impl Root {
         root.connect(window, cx);
         root.install_import(cx);
         root.load_projects(cx);
+        hotkey::refresh_home(&mut root, cx);
         windows::bind_root(window, cx);
         root.refresh_automation_unreads(cx);
         root
@@ -1384,6 +1396,7 @@ impl Root {
             thread.update(cx, |view, cx| view.set_git_repository(None, cx));
         }
         self.host = host;
+        hotkey::refresh_home(self, cx);
         self.refresh_activity_access(cx);
         hotkey::policy::refresh(self, cx);
         self.automation_threads.clear();
@@ -1522,6 +1535,41 @@ impl Root {
     fn switch_mode(&mut self, mode: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.sidebar
             .update(cx, |s, cx| s.set_mode(mode, window, cx));
+    }
+
+    /// A mode's surface: its Home headline, and the ChatGPT rows in Recents for ChatGPT and Work.
+    fn mode_changed(&mut self, mode: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.home.update(cx, |home, cx| home.set_mode(mode, cx));
+        if self.sidebar.read(cx).chatgpt_surface() {
+            self.load_chatgpt_chats(window, cx);
+        }
+        if self.state.route != Route::Home {
+            self.navigate(Route::Home, window, cx);
+        }
+    }
+
+    /// The first page of the account's ChatGPT conversations, like the original's
+    /// `chatgpt-conversations` query; a failure is logged and keeps the shown rows.
+    fn load_chatgpt_chats(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let host = self.host.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let chats = cx
+                .background_spawn(async move {
+                    let identity = host
+                        .identity()
+                        .context("No authenticated workspace is available")?;
+                    host.fetch(&chatgpt_chats::request(&identity))
+                        .and_then(|response| host::json_body(&response))
+                        .and_then(chatgpt_chats::chats)
+                })
+                .await
+                .context("ChatGPT conversations")?;
+            this.update(cx, |this, cx| {
+                this.sidebar
+                    .update(cx, |s, cx| s.set_chatgpt_chats(chats, cx))
+            })
+        });
+        log_err(task, cx);
     }
 
     fn toggle_activity(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1726,6 +1774,7 @@ impl Root {
             cx.notify();
         });
         self.state.project_root = Some(root);
+        hotkey::refresh_home(self, cx);
         self.navigate(Route::Home, window, cx);
         self.save(window, cx);
     }
@@ -5055,55 +5104,100 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// `Fork chat from here` under `turn_id`: `thread/fork`, then `thread/rollback` of the
-    /// later turns, and opens the new chat.
+    /// Forks through the selected turn; the server keeps the source transcript unchanged.
     fn fork(&mut self, turn_id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = &self.thread else { return };
-        let Some(later) = view
-            .read(cx)
-            .turns()
-            .iter()
-            .rev()
-            .position(|t| t.id == turn_id)
-        else {
-            return;
-        };
-        self.fork_chat(later, window, cx);
+        self.fork_chat(Some(turn_id.to_owned()), None, window, cx);
     }
 
-    /// `thread/fork` of the open chat in its workspace, `thread/rollback` of its last `later`
-    /// turns, then opens the new chat; a refusal shows `Failed to fork chat`.
-    fn fork_chat(&mut self, later: usize, window: &mut Window, cx: &mut Context<Self>) {
+    fn fork_worktree(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(view) = &self.thread else { return };
+        let options = ui::screens::hotkey::Options {
+            root: Some(view.read(cx).cwd().to_owned()),
+            branch: Some("HEAD".into()),
+            mode: ui::screens::hotkey::Mode::Worktree,
+            ..Default::default()
+        };
+        self.fork_chat(None, Some(options), window, cx);
+    }
+
+    /// Forks the open chat, optionally into a prepared checkout or through a selected turn.
+    fn fork_chat(
+        &mut self,
+        last_turn: Option<String>,
+        options: Option<ui::screens::hotkey::Options>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(view) = &self.thread else { return };
         let id = view.read(cx).id().to_owned();
-        self.fork_thread(id, later, window, cx);
+        self.fork_thread(id, last_turn, options, window, cx);
     }
 
     /// [`Self::fork_chat`] of any thread (its id): a row menu's `Fork`.
     pub(crate) fn fork_thread(
         &mut self,
         id: String,
-        later: usize,
+        last_turn: Option<String>,
+        options: Option<ui::screens::hotkey::Options>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.fork_pending {
+            return;
+        }
         let bridge = self.bridge.clone();
         let computer_use = computer_use_overrides(&self.config);
+        let host = self.host.clone();
+        self.fork_pending = true;
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let forked = async {
+                let prepared = if let Some(options) = options {
+                    Some(
+                        cx.background_executor()
+                            .spawn(async move { hotkey::prepare_start(host, options, "") })
+                            .await?,
+                    )
+                } else {
+                    None
+                };
                 let mut params = json!({ "threadId": id });
+                if let Some(last_turn) = last_turn {
+                    params["lastTurnId"] = json!(last_turn);
+                }
                 if let Some(config) = computer_use {
                     params["config"] = config;
                 }
+                if let Some(prepared) = &prepared {
+                    prepared.apply(&mut params);
+                }
                 // Both answer `{ thread }`, like `thread/read`.
-                let mut read: ThreadReadResponse = bridge.request("thread/fork", params).await?;
-                if later > 0 {
-                    let params = json!({ "threadId": read.thread.id, "numTurns": later });
-                    read = bridge.request("thread/rollback", params).await?;
+                let read: ThreadReadResponse = match bridge.request("thread/fork", params).await {
+                    Ok(read) => read,
+                    Err(error) => {
+                        if let Some(prepared) = prepared {
+                            let cleanup = cx
+                                .background_executor()
+                                .spawn(async move { prepared.discard() })
+                                .await;
+                            if let Err(cleanup) = cleanup {
+                                return Err(
+                                    error.context(format!("Worktree cleanup failed: {cleanup:#}"))
+                                );
+                            }
+                        }
+                        return Err(error);
+                    }
+                };
+                if let Some(prepared) = prepared {
+                    let id = read.thread.id.clone();
+                    cx.background_executor()
+                        .spawn(async move { prepared.record(&id) })
+                        .await?;
                 }
                 Ok::<_, anyhow::Error>(read)
             }
             .await;
+            this.update(cx, |this, _| this.fork_pending = false)?;
             match forked {
                 Ok(read) => this.update_in(cx, |this, window, cx| {
                     this.loaded.insert(read.thread.id.clone());

@@ -30,8 +30,10 @@ use theme::{ActiveTheme as _, Appearance, Theme};
 #[path = "sidebar/menu.rs"]
 mod menu;
 use menu::ThreadMenu;
+mod chatgpt;
 mod mode;
 mod priority;
+pub use chatgpt::{ChatGptChat, ModeChanged};
 pub use mode::{DEFAULT_MODE, MODES};
 pub use priority::{ActivityOpened, ArchiveActivity};
 
@@ -307,6 +309,7 @@ pub struct HomeSidebar {
     /// Index into `MODES`.
     mode: usize,
     mode_menu: Option<mode::ModeMenu>,
+    chatgpt_chats: Vec<ChatGptChat>,
     activity_button: Bounds<Pixels>,
     worktree_tip: bool,
     worktree_tip_epoch: u64,
@@ -432,6 +435,7 @@ impl HomeSidebar {
             activity_menu: None,
             mode: DEFAULT_MODE,
             mode_menu: None,
+            chatgpt_chats: Vec::new(),
             activity_button: Bounds::default(),
             worktree_tip: false,
             worktree_tip_epoch: 0,
@@ -1083,7 +1087,8 @@ impl HomeSidebar {
     }
 
     fn recents_list(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        match self.threads_state {
+        let chatgpt = self.chatgpt_surface() && !self.chatgpt_chats().is_empty();
+        let local = match self.threads_state {
             ListState::Loading if self.threads.is_empty() => {
                 sidebar_empty("Loading chats…", cx).into_any_element()
             }
@@ -1100,11 +1105,19 @@ impl HomeSidebar {
                     cx,
                 ))
                 .into_any_element(),
-            ListState::Ready if !self.has_more && self.recents().next().is_none() => {
+            ListState::Ready if !self.has_more && self.recents().next().is_none() && !chatgpt => {
                 sidebar_empty("No chats", cx).into_any_element()
             }
             ListState::Ready | ListState::Loading => self.rows(ThreadGroup::Recents, window, cx),
-        }
+        };
+        // shortcut: ChatGPT rows follow the local ones instead of merging by update time;
+        // interleave when Recents sorts both sources together.
+        div()
+            .flex()
+            .flex_col()
+            .child(local)
+            .child(self.chatgpt_rows(window, cx))
+            .into_any_element()
     }
 
     fn custom_body(&self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {

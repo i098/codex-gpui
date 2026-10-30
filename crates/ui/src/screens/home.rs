@@ -30,8 +30,22 @@ actions!(home, [OpenFolder]);
 #[derive(Default)]
 pub struct LocationMenu {
     pub open: bool,
+    pub mode: super::hotkey::Mode,
+    pub worktree_available: Option<bool>,
+    selected: usize,
     bounds: Bounds<Pixels>,
 }
+
+/// The original's four rotating Chat home headlines (`p9`), one picked per visit.
+pub const CHAT_HEADLINES: [&str; 4] = [
+    "Ready when you are.",
+    "What’s on your mind today?",
+    "What’s on the agenda today?",
+    "Where should we begin?",
+];
+
+/// The Work home headline (`home.hero.workModeWhatShouldWeWorkOn`).
+pub const WORK_HEADLINE: &str = "What should we work on?";
 
 pub struct HomeMain {
     pub composer: Entity<Composer>,
@@ -41,6 +55,8 @@ pub struct HomeMain {
     /// shows it when `/beacons/home` offers it; the port has no such feed yet, so it starts
     /// hidden (flows.md Home rows 5 and 6) and dismissal lasts for the session only.
     pub beacon: bool,
+    /// The ChatGPT or Work headline; `None` shows the Codex hero.
+    pub headline: Option<&'static str>,
 }
 
 impl HomeMain {
@@ -50,6 +66,7 @@ impl HomeMain {
             project: None,
             location: LocationMenu::default(),
             beacon: false,
+            headline: None,
         }
     }
 }
@@ -58,6 +75,72 @@ impl HomeMain {
     pub fn set_beacon(&mut self, visible: bool, cx: &mut Context<Self>) {
         self.beacon = visible;
         cx.notify();
+    }
+
+    /// Follows the sidebar's mode (a [`crate::screens::sidebar::MODES`] index).
+    pub fn set_mode(&mut self, mode: usize, cx: &mut Context<Self>) {
+        let (headline, placeholder) = match crate::screens::sidebar::MODES[mode].0 {
+            "ChatGPT" => {
+                // `Math.random()` in the original; the clock is random enough for a greeting.
+                let nanos = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.subsec_nanos() as usize);
+                (
+                    Some(CHAT_HEADLINES[nanos % CHAT_HEADLINES.len()]),
+                    "Ask ChatGPT",
+                )
+            }
+            "Work" => (Some(WORK_HEADLINE), "Work with ChatGPT"),
+            _ => (None, "Do anything"),
+        };
+        self.headline = headline;
+        self.composer
+            .update(cx, |composer, cx| composer.set_placeholder(placeholder, cx));
+        cx.notify();
+    }
+
+    /// The ChatGPT home's `Chat | Work` pill (224×36, centered in the toolbar row); the
+    /// selected segment is 120 px wide, the other 104.
+    fn chat_work_toggle(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let work = self.headline == Some(WORK_HEADLINE);
+        let segment =
+            |label: &'static str, selected: bool, window: &mut Window, cx: &mut Context<Self>| {
+                let focus =
+                    focus::handle(SharedString::from(format!("home-{label}")), 0, window, cx);
+                let control = div()
+                    .id(label)
+                    .role(gpui::Role::Tab)
+                    .aria_label(label)
+                    .when(selected, |d| d.aria_selected(true))
+                    .h_full()
+                    .w(px(if selected { 120. } else { 104. }))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .when(selected, |d| {
+                        d.bg(crate::over(t.text_alpha_5, t.background_panel))
+                            .border_1()
+                            .border_color(t.border)
+                    })
+                    .child(text(label, 14., 20., 500., t.text));
+                focus::ring(control, &focus, Theme::RADIUS_FULL, px(2.), cx)
+            };
+        let chat =
+            segment("Chat", !work, window, cx).on_click(crate::dispatch::<crate::SwitchMode1>);
+        let work =
+            segment("Work", work, window, cx).on_click(crate::dispatch::<crate::SwitchMode2>);
+        div().h_full().flex().justify_center().items_center().child(
+            div()
+                .id("home-chat-work")
+                .role(gpui::Role::TabList)
+                .h(px(36.))
+                .flex()
+                .rounded_full()
+                .bg(t.text_alpha_5)
+                .child(chat)
+                .child(work),
+        )
     }
 
     /// `aside` 736×74: copy on the left, `Start Voice` and the dismiss `×` on the right.
@@ -204,15 +287,28 @@ fn chip(
 fn set_location(owner: &Entity<HomeMain>, open: Option<bool>, cx: &mut App) {
     owner.update(cx, |main, cx| {
         main.location.open = open.unwrap_or(!main.location.open);
+        main.location.selected = usize::from(main.location.mode == super::hotkey::Mode::Worktree);
         cx.notify();
     });
 }
 
-/// `Work in` menu (`composer.newTask.thisComputer`): `This computer` is the only location the
-/// port runs; the others are listed disabled, in the original's order.
+fn pick_location(owner: &Entity<HomeMain>, index: usize, cx: &mut App) {
+    owner.update(cx, |main, cx| {
+        main.location.mode = if index == 1 {
+            super::hotkey::Mode::Worktree
+        } else {
+            super::hotkey::Mode::Local
+        };
+        main.location.open = false;
+        cx.notify();
+    });
+}
+
+/// `Work in` keeps local and managed-worktree starts on the selected project.
 fn location_menu(
     owner: &Entity<HomeMain>,
     location: &LocationMenu,
+    has_project: bool,
     t: &Theme,
     window: &Window,
 ) -> Option<gpui::AnyElement> {
@@ -222,7 +318,7 @@ fn location_menu(
     let trigger = location.bounds;
     let rows = [
         ("This computer", true),
-        ("New worktree", false),
+        ("New worktree", has_project),
         ("Remote", false),
         ("Cloud", false),
     ]
@@ -242,18 +338,20 @@ fn location_menu(
             .gap(px(8.))
             .rounded(px(12.))
             .opacity(if enabled { 1. } else { 0.5 })
+            .when(i == location.selected, |d| d.bg(t.menu_item_hover))
             .when(enabled, |d| {
                 let hover = t.menu_item_hover;
                 d.hover(move |s| s.bg(hover))
             })
             .child(div().flex_1().child(text(label, 14., 20., 430., t.text)))
             .child(
-                div()
-                    .size(px(16.))
-                    .children((i == 0).then(|| icon("menu-check", 16., t.text))),
+                div().size(px(16.)).children(
+                    (i == usize::from(location.mode == super::hotkey::Mode::Worktree))
+                        .then(|| icon("menu-check", 16., t.text)),
+                ),
             )
             .when(enabled, |d| {
-                d.on_click(move |_, _, cx| set_location(&owner, Some(false), cx))
+                d.on_click(move |_, _, cx| pick_location(&owner, i, cx))
             })
     });
     let dismiss = owner.clone();
@@ -329,7 +427,8 @@ fn utility_bar(
         })
         .read(cx)
         .clone();
-    let location_menu = location_menu(owner, location, t, window);
+    let has_project = project.is_some() && location.worktree_available == Some(true);
+    let location_menu = location_menu(owner, location, has_project, t, window);
     let finished = cx
         .try_global::<FinishedScrollAnimation>()
         .is_some_and(|state| state.0 == window.window_handle());
@@ -388,14 +487,20 @@ fn utility_bar(
                                         let owner = owner.clone();
                                         move |cx: &mut App| set_location(&owner, None, cx)
                                     };
-                                    let close = {
-                                        let owner = owner.clone();
-                                        move |cx: &mut App| set_location(&owner, Some(false), cx)
-                                    };
+                                    let key_owner = owner.clone();
                                     chip(
                                         "work-in",
-                                        "laptop",
-                                        "This computer".into(),
+                                        if location.mode == super::hotkey::Mode::Worktree {
+                                            "thread-fork"
+                                        } else {
+                                            "laptop"
+                                        },
+                                        if location.mode == super::hotkey::Mode::Worktree {
+                                            "New worktree"
+                                        } else {
+                                            "This computer"
+                                        }
+                                        .into(),
                                         t.text,
                                         compact,
                                         t,
@@ -416,9 +521,21 @@ fn utility_bar(
                                         }
                                     })
                                     .on_key_down(move |event, _, cx| {
-                                        match event.keystroke.key.as_str() {
+                                        let key = event.keystroke.key.as_str();
+                                        let menu = &key_owner.read(cx).location;
+                                        match key {
+                                            "enter" | "space" if menu.open => {
+                                                pick_location(&key_owner, menu.selected, cx);
+                                            }
                                             "enter" | "space" => toggle(cx),
-                                            "escape" => close(cx),
+                                            "escape" => set_location(&key_owner, Some(false), cx),
+                                            "up" | "down" if menu.open && has_project => {
+                                                key_owner.update(cx, |main, cx| {
+                                                    main.location.selected =
+                                                        1 - main.location.selected;
+                                                    cx.notify();
+                                                });
+                                            }
                                             _ => return,
                                         }
                                         cx.stop_propagation();
@@ -453,43 +570,54 @@ impl Render for HomeMain {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let hero_focus = focus::handle("home-project-title", 0, window, cx);
-        let hero = div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(24.))
-            // `opacity-30` on the logo's box.
-            .child(icon("codex-logo", 56., t.text).opacity(0.3))
-            .child(
-                div()
-                    .id("home-project-title")
-                    .when(self.project.is_some(), |title| {
-                        focus::ring(title, &hero_focus, px(4.), px(2.), cx)
-                            .role(gpui::Role::Button)
-                            .aria_label("Choose project")
-                            .on_key_down(open_folder_key)
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(Box::new(OpenFolder), cx)
-                            })
-                    })
-                    .child(
-                        text(
-                            self.project.as_ref().map_or_else(
-                                || "What should we build?".to_owned(),
-                                |project| format!("What should we build in {project}?"),
-                            ),
-                            28.,
-                            33.6,
-                            400.,
-                            t.text,
-                        )
-                        // `.heading-xl`: a unitless `line-height: 1.2`.
-                        .line_height(relative(1.2)),
-                    ),
-            );
+        // `ZLt`: the Chat and Work homes show only the `heading-xl` headline.
+        let hero = if let Some(headline) = self.headline {
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .child(text(headline, 28., 33.6, 400., t.text).line_height(relative(1.2)))
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(24.))
+                // `opacity-30` on the logo's box.
+                .child(icon("codex-logo", 56., t.text).opacity(0.3))
+                .child(
+                    div()
+                        .id("home-project-title")
+                        .when(self.project.is_some(), |title| {
+                            focus::ring(title, &hero_focus, px(4.), px(2.), cx)
+                                .role(gpui::Role::Button)
+                                .aria_label("Choose project")
+                                .on_key_down(open_folder_key)
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(Box::new(OpenFolder), cx)
+                                })
+                        })
+                        .child(
+                            text(
+                                self.project.as_ref().map_or_else(
+                                    || "What should we build?".to_owned(),
+                                    |project| format!("What should we build in {project}?"),
+                                ),
+                                28.,
+                                33.6,
+                                400.,
+                                t.text,
+                            )
+                            // `.heading-xl`: a unitless `line-height: 1.2`.
+                            .line_height(relative(1.2)),
+                        ),
+                )
+        };
+        let chat = self.headline.is_some();
         let column = div()
             .w_full()
-            .max_w(px(768.))
+            // The ChatGPT composer is 640 px wide.
+            .max_w(px(if chat { 672. } else { 768. }))
             .px(px(16.))
             .pt(px(8.))
             .flex()
@@ -498,16 +626,42 @@ impl Render for HomeMain {
             .when(self.beacon, |column| {
                 column.child(self.beacon(&t, window, cx))
             })
-            .child(utility_bar(
-                &cx.entity(),
-                &self.location,
-                self.project.clone(),
-                self.composer.read(cx).utility_compact(),
-                &t,
-                window,
-                cx,
-            ))
+            // The Chat and Work homes have no `Work in` row above the composer.
+            .when(!chat, |column| {
+                column.child(utility_bar(
+                    &cx.entity(),
+                    &self.location,
+                    self.project.clone(),
+                    self.composer.read(cx).utility_compact(),
+                    &t,
+                    window,
+                    cx,
+                ))
+            })
             .child(self.composer.clone());
+        let toolbar = div().flex_none().h(px(46.));
+        if chat {
+            // The headline sits right above the composer, the pair a little above the middle
+            // (headline top at 296 px of the main panel's 788 at 1280×832).
+            let page = div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .items_center()
+                .pt(px(24.))
+                .child(div().flex_grow(2.))
+                .child(hero.w_full().px(px(20.)))
+                .child(div().h(px(14.)))
+                .child(column)
+                .child(div().flex_grow(3.));
+            return div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(toolbar.child(self.chat_work_toggle(&t, window, cx)))
+                .child(crate::composer::drop_target(page, &self.composer, cx));
+        }
         // The page column under the `home-mode-toggle` row is the file drop target.
         let page = div()
             .flex_1()
@@ -573,7 +727,7 @@ impl Render for HomeMain {
             .flex()
             .flex_col()
             // `home-mode-toggle` toolbar row.
-            .child(div().flex_none().h(px(46.)))
+            .child(toolbar)
             .child(crate::composer::drop_target(page, &self.composer, cx))
     }
 }
