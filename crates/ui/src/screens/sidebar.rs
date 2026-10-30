@@ -2656,6 +2656,14 @@ const COMMANDS: &[Command] = &[
     (
         "Project",
         None,
+        "Toggle Git blame",
+        "Show or hide author and commit details for the active editor line",
+        "",
+        true,
+    ),
+    (
+        "Project",
+        None,
         "New project",
         "Create a project",
         "",

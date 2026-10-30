@@ -46,6 +46,12 @@ pub fn prepare() -> Result<()> {
     let home =
         PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?).canonicalize()?;
     let root = home.join("Library/Application Support/codex-gpui-qa/profile");
+    let smoke = std::env::args()
+        .nth(1)
+        .is_some_and(|flag| flag == "--qa-smoke-profile");
+    let shared_auth = std::env::var_os("CODEX_HOME")
+        .map_or_else(|| home.join(".codex"), PathBuf::from)
+        .join("auth.json");
     let root = match std::env::args().skip(1).collect::<Vec<_>>().as_slice() {
         [flag, path] if flag == "--qa-smoke-profile" => {
             let path = PathBuf::from(path).canonicalize()?;
@@ -74,6 +80,13 @@ pub fn prepare() -> Result<()> {
         .context("QA profile is already open or updating")?;
     for directory in ["home", "codex", "workspace"] {
         private_directory(&root.join(directory))?;
+    }
+    if smoke {
+        // Link, never copy: a copy would fork the rotating token.
+        let link = root.join("codex/auth.json");
+        if shared_auth.is_file() && fs::symlink_metadata(&link).is_err() {
+            std::os::unix::fs::symlink(&shared_auth, &link)?;
+        }
     }
     // This runs before GPUI, app-server, or any worker thread starts.
     unsafe {
