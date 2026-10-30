@@ -947,6 +947,8 @@ pub fn home_sidebar_header(
                         .items_center()
                         .gap(px(6.))
                         .rounded(RADIUS_BUTTON_XL)
+                        // The original's ghost trigger stays filled while its menu is open.
+                        .when(mode.menu.is_some(), |d| d.bg(t.text_alpha_5))
                         .child(
                             icon::icon_sized(
                                 mode.wordmark.0,
