@@ -11,9 +11,9 @@ fn avatar(fx: &Fx) -> (f32, f32) {
     (26., fx.size.1 - 26.)
 }
 
-/// `Add account`: the row above `Settings` (bottom-anchored menu, 32 px rows).
+/// `Add account`: the row above `Settings`, under the email label (bottom-anchored menu).
 fn switch_row(fx: &Fx) -> (f32, f32) {
-    (118., fx.size.1 - 224.)
+    (118., fx.size.1 - 258.)
 }
 
 /// The sign-in screen's `Cancel`, 16 px from the right edge and 44 px from the top.
