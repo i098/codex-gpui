@@ -41,6 +41,12 @@ impl Root {
         {
             return;
         }
+        if self.side_visible(SidePanel::File)
+            && let Some(file) = &self.file
+            && file.update(cx, |file, cx| file.next_find(previous, cx))
+        {
+            return;
+        }
         if let Some(thread) = &self.thread {
             thread.update(cx, |thread, cx| thread.next_find(previous, cx));
         }

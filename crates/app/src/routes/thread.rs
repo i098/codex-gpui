@@ -116,6 +116,12 @@ fn find_in_workspace(root: &mut Root, window: &mut Window, cx: &mut Context<Root
     {
         return;
     }
+    if root.side_visible(SidePanel::File)
+        && let Some(file) = &root.file
+        && file.update(cx, |file, cx| file.open_find(window, cx))
+    {
+        return;
+    }
     if !full && let Some(thread) = &root.thread {
         thread.update(cx, |thread, cx| thread.open_find(window, cx));
     }

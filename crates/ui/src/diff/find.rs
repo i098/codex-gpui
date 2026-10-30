@@ -118,6 +118,339 @@ impl DiffPanel {
     }
 }
 
+/// The `Find in file…` / `Search diff…` popover: query, prev/next, `N / M results`, close.
+pub(super) struct FindBar<'a> {
+    pub label: &'static str,
+    pub placeholder: &'static str,
+    pub query: &'a str,
+    /// The selected match among the `shown` highlighted ones; `total` counts every match.
+    pub active: usize,
+    pub shown: usize,
+    pub total: usize,
+    pub scope: Option<Div>,
+    pub top: Pixels,
+}
+
+pub(super) fn find_bar<V: 'static>(
+    bar: FindBar,
+    close: fn(&mut V, &mut Context<V>),
+    step: fn(&mut V, bool, &mut Context<V>),
+    cx: &Context<V>,
+) -> impl IntoElement + use<V> {
+    let t = cx.theme();
+    let query = bar.query;
+    let count = format!(
+        "{} / {} results",
+        if bar.shown == 0 { 0 } else { bar.active + 1 },
+        bar.total
+    );
+    let button = |id, name, label, size, color| {
+        div()
+            .size(px(size))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(10.))
+            .child(icon(name, 16., color))
+            .id(id)
+            .role(gpui::Role::Button)
+            .aria_label(label)
+            .cursor_pointer()
+            .hover(|style| style.bg(t.text_alpha_10))
+    };
+    let find_shadow = shadow(black().opacity(0.12), 8., 16., -4., false);
+    let popover = div()
+        .w(px(340.))
+        .h(px(81.))
+        .rounded(px(20.))
+        .p(px(0.5))
+        .child(shapes::decoration(Decoration {
+            fill: Some(t.surface_secondary),
+            border: Some((px(0.5), t.border)),
+            radius: Corners::all(px(20.)),
+            shadows: vec![find_shadow],
+            ..Default::default()
+        }))
+        .flex()
+        .flex_col()
+        .font_family(SANS)
+        // `overflow-hidden rounded-[20px]` with a 0.5px border: the content sits in an AA
+        // rounded clip (padding box, radius 19.5) that changes the icons' edge pixels.
+        .child(crate::rounded_clip(
+            px(19.5),
+            shapes::Corner::Round,
+            div()
+                .flex_1()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .h(px(44.))
+                        .flex()
+                        .items_center()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .pl(px(16.))
+                                .gap(px(8.))
+                                .child(icon("diff-find-search", 16., t.text))
+                                .child(
+                                    div()
+                                        .id("diff-find-input")
+                                        .flex_1()
+                                        .cursor_text()
+                                        .role(gpui::Role::TextInput)
+                                        .aria_label(bar.label)
+                                        .aria_placeholder(bar.placeholder)
+                                        .aria_value(query.to_owned())
+                                        .aria_active_descendant()
+                                        .child(text(
+                                            if query.is_empty() {
+                                                bar.placeholder.to_owned()
+                                            } else {
+                                                query.to_owned()
+                                            },
+                                            14.,
+                                            24.,
+                                            430.,
+                                            if query.is_empty() {
+                                                t.text_tertiary
+                                            } else {
+                                                t.text
+                                            },
+                                        )),
+                                ),
+                        )
+                        .children(bar.scope)
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .pr(px(16.))
+                                .child(div().mx(px(8.)).w(px(1.)).h(px(16.)).bg(t.border))
+                                .child(
+                                    button(
+                                        "diff-find-close",
+                                        "diff-find-close",
+                                        "Close find",
+                                        24.,
+                                        t.text,
+                                    )
+                                    .mx(px(-2.))
+                                    .on_click(cx.listener(move |this, _, _, cx| close(this, cx))),
+                                ),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .px(px(16.))
+                        .gap(px(12.))
+                        .border_t_1()
+                        .border_color(t.border)
+                        .child(
+                            button(
+                                "diff-find-previous",
+                                "diff-find-previous",
+                                "Previous result",
+                                16.,
+                                t.text_tertiary,
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| step(this, true, cx))),
+                        )
+                        .child(
+                            button(
+                                "diff-find-next",
+                                "diff-find-next",
+                                "Next result",
+                                16.,
+                                t.text_tertiary,
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| step(this, false, cx))),
+                        )
+                        .child(div().flex_1())
+                        .child(
+                            text(count, 14., 24., 430., t.text_tertiary)
+                                .self_start()
+                                .mt(px(7.)),
+                        ),
+                ),
+        ));
+    // Include the shadow's three-sigma raster extent in the composited layer.
+    let outset = find_shadow.blur * 1.5 + find_shadow.spread;
+    deferred(
+        div()
+            .absolute()
+            .top(bar.top - (outset - find_shadow.offset.y))
+            .right(px(12.) - outset)
+            .w(px(340.) + outset * 2.)
+            .h(px(81.) + outset * 2.)
+            .pt(outset - find_shadow.offset.y)
+            .pl(outset)
+            .top_layer()
+            .child(popover),
+    )
+    .with_priority(3)
+}
+
+/// Highlighted matches past this many are only counted, as the diff caps its own.
+const FILE_FIND_LIMIT: usize = 1000;
+
+impl FileView {
+    /// `⌘F` in the file tab: opens `Find in file…` with its query selected. `false` when the
+    /// tab is not focused or shows no lines.
+    pub fn open_find(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
+        if !self
+            .focus
+            .as_ref()
+            .is_some_and(|focus| focus.contains_focused(window, cx))
+            || self.line_count == 0
+        {
+            return false;
+        }
+        self.go_to_line = None;
+        self.find.get_or_insert_default().selected = true;
+        self.search_file();
+        cx.notify();
+        true
+    }
+
+    pub fn close_find(&mut self, cx: &mut Context<Self>) {
+        self.find = None;
+        self.find_matches.clear();
+        self.find_total = 0;
+        cx.notify();
+    }
+
+    /// `⌘G` / `⇧⌘G`, Enter / Shift-Enter: the next or previous match, wrapping. `false`
+    /// while the bar is closed.
+    pub fn next_find(&mut self, previous: bool, cx: &mut Context<Self>) -> bool {
+        if self.find.is_none() {
+            return false;
+        }
+        let n = self.find_matches.len();
+        if n > 0 {
+            self.find_active = (self.find_active + if previous { n - 1 } else { 1 }) % n;
+            self.reveal_find();
+            cx.notify();
+        }
+        true
+    }
+
+    /// The matched `(line index, byte range)`s of the query, case-insensitive.
+    pub fn find_matches(&self) -> &[(usize, Range<usize>)] {
+        &self.find_matches
+    }
+
+    pub(super) fn search_file(&mut self) {
+        self.find_matches.clear();
+        self.find_total = 0;
+        let (Some(find), Some(Ok(contents))) = (&self.find, &self.contents) else {
+            return;
+        };
+        let query = find.text.to_lowercase();
+        for (index, line) in controls::lines(contents).enumerate() {
+            let (ranges, total) = crate::screens::thread::view::find_ranges(
+                line,
+                &query,
+                FILE_FIND_LIMIT - self.find_matches.len(),
+            );
+            self.find_matches
+                .extend(ranges.into_iter().map(|range| (index, range)));
+            self.find_total += total;
+        }
+        self.find_active = self
+            .find_active
+            .min(self.find_matches.len().saturating_sub(1));
+        self.reveal_find();
+    }
+
+    fn reveal_find(&mut self) {
+        if let Some((line, _)) = self.find_matches.get(self.find_active) {
+            let top = line.saturating_sub(2) as f32 * FILE_LINE_HEIGHT;
+            self.scroll.set_offset(gpui::point(px(0.), -px(top)));
+        }
+    }
+
+    /// The open bar's keys: Escape closes, Enter steps, typing edits the query.
+    pub(super) fn find_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
+        let Some(find) = &mut self.find else {
+            return false;
+        };
+        let key = &event.keystroke;
+        match key.key.as_str() {
+            "escape" => {
+                self.close_find(cx);
+                return true;
+            }
+            "enter" => {
+                self.next_find(key.modifiers.shift, cx);
+                return true;
+            }
+            _ if !find.key(event) => return false,
+            _ => {}
+        }
+        self.find_active = 0;
+        self.search_file();
+        cx.notify();
+        true
+    }
+
+    pub(super) fn file_find_bar(&self, cx: &Context<Self>) -> impl IntoElement + use<> {
+        find_bar(
+            FindBar {
+                label: "Find in file",
+                placeholder: "Find in file…",
+                query: self.find.as_ref().map_or("", |find| find.text.as_str()),
+                active: self.find_active,
+                shown: self.find_matches.len(),
+                total: self.find_total,
+                scope: None,
+                top: px(56.),
+            },
+            Self::close_find,
+            |this, previous, cx| {
+                this.next_find(previous, cx);
+            },
+            cx,
+        )
+    }
+
+    /// The match highlights of line `index`: the selected match orange, the others yellow.
+    pub(super) fn find_highlights(
+        &self,
+        index: usize,
+    ) -> impl Iterator<Item = (Range<usize>, gpui::HighlightStyle)> + '_ {
+        let start = self.find_matches.partition_point(|(line, _)| *line < index);
+        self.find_matches[start..]
+            .iter()
+            .enumerate()
+            .take_while(move |(_, (line, _))| *line == index)
+            .map(move |(offset, (_, range))| {
+                (
+                    range.clone(),
+                    gpui::HighlightStyle {
+                        background_color: Some(
+                            rgb(if start + offset == self.find_active {
+                                0xfb6a22
+                            } else {
+                                0xffd240
+                            })
+                            .into(),
+                        ),
+                        color: Some(gpui::white()),
+                        ..Default::default()
+                    },
+                )
+            })
+    }
+}
+
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = ui, no_json)]
 pub struct FindInChat(pub String);
@@ -181,4 +514,26 @@ pub(crate) fn find_scope_buttons(query: &str, diffs: bool, t: &Theme) -> Div {
                 })
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_find_matches_every_line_case_insensitively() {
+        let mut view = FileView::new("/w", "/w/a.txt".into(), None);
+        view.contents = Some(Ok("Foo foo\nbar\nxFOO".into()));
+        view.find = Some(controls::TextField {
+            text: "foo".into(),
+            selected: false,
+        });
+        view.search_file();
+        assert_eq!(view.find_matches(), [(0, 0..3), (0, 4..7), (2, 1..4)]);
+        assert_eq!(view.find_total, 3);
+        view.find_active = 2;
+        let line: Vec<_> = view.find_highlights(2).map(|(range, _)| range).collect();
+        assert_eq!((line.len(), line[0].clone()), (1, 1..4));
+        assert_eq!(view.find_highlights(1).count(), 0);
+    }
 }
