@@ -61,7 +61,7 @@ pub use context::ReasoningVisibility;
 
 pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
-pub use actions::{EditMessage, ForkThread, RevertTurn, ThreadPressed};
+pub use actions::{EditMessage, ForkThread, PatchTurn, RevertTurn, ThreadPressed};
 use actions::{TurnFocus, action_row};
 pub enum GitAction {
     Refresh,
@@ -158,6 +158,8 @@ pub struct ThreadView {
     terminal_item: Option<String>,
     pub terminals_stopping: bool,
     turns: Vec<Turn>,
+    reverted_turns: HashSet<String>,
+    patch_pending: bool,
     render_errors: RefCell<HashMap<String, String>>,
     stream_errors: HashMap<String, Vec<(bridge::types::TurnError, bool)>>,
     usage_limit_notice: UsageLimitNotice,
@@ -646,6 +648,8 @@ impl ThreadView {
             clip_top_left: false,
             docked_below: false,
             turns: thread.turns,
+            reverted_turns: HashSet::new(),
+            patch_pending: false,
             render_errors: RefCell::default(),
             stream_errors: HashMap::new(),
             usage_limit_notice: UsageLimitNotice::RetryLater,
@@ -700,6 +704,33 @@ impl ThreadView {
 
     pub fn turns(&self) -> &[Turn] {
         &self.turns
+    }
+
+    pub fn begin_patch(&mut self, turn: &str, cx: &mut Context<Self>) -> Option<bool> {
+        if self.patch_pending {
+            return None;
+        }
+        self.patch_pending = true;
+        cx.notify();
+        Some(!self.reverted_turns.contains(turn))
+    }
+
+    pub fn finish_patch(
+        &mut self,
+        turn: &str,
+        revert: bool,
+        success: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.patch_pending = false;
+        if success {
+            if revert {
+                self.reverted_turns.insert(turn.to_owned());
+            } else {
+                self.reverted_turns.remove(turn);
+            }
+        }
+        cx.notify();
     }
 
     pub fn is_running(&self) -> bool {
@@ -1815,7 +1846,9 @@ impl ThreadView {
                 .clone()
         };
         let [undo, view, copy, fork] = ["undo", "view", "copy", "fork"].map(&mut button_focus);
-        let focus = TurnFocus::new(self.thread_id.clone(), undo, view, copy, fork, window, cx);
+        let mut focus = TurnFocus::new(self.thread_id.clone(), undo, view, copy, fork, window, cx);
+        focus.reverted = self.reverted_turns.contains(&turn.id);
+        focus.patch_pending = self.patch_pending;
         let user = turn.items.iter().find_map(|i| match i {
             ThreadItem::UserMessage { id, content } => Some((id, user_text(content))),
             _ => None,
