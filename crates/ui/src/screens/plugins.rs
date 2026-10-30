@@ -255,6 +255,8 @@ pub struct Page {
     pub section: &'static str,
     /// Lists expanded past their first rows by `See ...`.
     pub expanded: std::collections::HashSet<&'static str>,
+    /// Cards shown per plugin marketplace section, raised by its `See more`.
+    pub plugin_rows: std::collections::HashMap<String, usize>,
     pub generation: u64,
     pub focus: FocusHandle,
     modal_focus: FocusHandle,
@@ -306,6 +308,7 @@ impl Page {
                 "Public"
             },
             expanded: Default::default(),
+            plugin_rows: Default::default(),
             generation: 0,
             focus: cx.focus_handle(),
             modal_focus: cx.focus_handle(),
