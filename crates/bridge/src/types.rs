@@ -157,6 +157,15 @@ pub enum ThreadItem {
     ContextCompaction {
         id: String,
     },
+    /// `action`: `{"type": "search", "query"?, "queries"?}` | `{"type": "openPage" |
+    /// "findInPage", "url"?}`; absent on older servers.
+    WebSearch {
+        id: String,
+        #[serde(default)]
+        query: String,
+        #[serde(default)]
+        action: Option<Value>,
+    },
     #[serde(other)]
     Other,
 }
@@ -166,6 +175,9 @@ pub enum ThreadItem {
 pub enum UserInput {
     Text {
         text: String,
+    },
+    LocalImage {
+        path: String,
     },
     #[serde(other)]
     Other,
@@ -188,6 +200,9 @@ pub struct CommandAction {
     pub command: String,
     /// File name of a `read`.
     pub name: Option<String>,
+    /// Absolute path of a `read`.
+    #[serde(default)]
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

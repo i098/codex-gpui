@@ -161,6 +161,9 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     .on_action(cx.listener(|this, _: &OpenBackgroundTerminal, window, cx| {
         this.set_side(SidePanel::Terminal, window, cx)
     }))
+    .on_action(cx.listener(|this, _: &ui::OpenSourcesPanel, window, cx| {
+        this.set_side(SidePanel::Sources, window, cx)
+    }))
     .on_action(cx.listener(|this, action: &OpenTerminalItem, window, cx| {
         if let Some(thread) = &this.thread {
             thread.update(cx, |thread, cx| thread.select_terminal(Some(&action.0), cx));

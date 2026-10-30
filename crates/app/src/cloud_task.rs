@@ -1164,7 +1164,8 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::CommandExecution { id, .. }
         | ThreadItem::FileChange { id, .. }
         | ThreadItem::McpToolCall { id, .. }
-        | ThreadItem::ContextCompaction { id } => Some(id),
+        | ThreadItem::ContextCompaction { id }
+        | ThreadItem::WebSearch { id, .. } => Some(id),
         _ => None,
     }
 }

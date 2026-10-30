@@ -24,5 +24,6 @@ pub mod settings;
 pub mod sidebar;
 pub mod signin;
 pub mod sites;
+pub mod sources;
 pub mod terminal;
 pub mod thread;

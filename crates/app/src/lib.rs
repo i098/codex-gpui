@@ -211,6 +211,8 @@ pub enum SidePanel {
     File,
     /// `Open in side chat`: the side chat with this [`SideChat::key`].
     SideChat(usize),
+    /// Thread summary ▸ `Sources`: what the chat read, changed, searched and called.
+    Sources,
 }
 
 /// Settings ▸ Appearance ▸ Theme (the original's `appearanceTheme`): follow the system, or
@@ -2956,6 +2958,11 @@ impl Root {
                     preview: false,
                 })
             }
+            SidePanel::Sources => Some(Tab {
+                icon: "navigation-files",
+                label: "Sources".into(),
+                preview: false,
+            }),
         }
     }
 
@@ -2989,6 +2996,9 @@ impl Root {
             SidePanel::Console => self.terminal_panel()?.clone().into(),
             SidePanel::File => self.file.as_ref()?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
+            SidePanel::Sources => cx
+                .new(|cx| ui::screens::sources::SourcesView::new(view.clone(), cx))
+                .into(),
         };
         Some((view, tabs, active))
     }
