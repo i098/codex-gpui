@@ -1,7 +1,7 @@
 use crate::*;
 use ui::screens::diff::panel::{FileTreeRequest, GitBlame};
 
-pub(crate) fn available(root: &Root, cx: &App) -> bool {
+fn available(root: &Root, cx: &App) -> bool {
     super::active_thread(root, cx).is_some()
         && match root.side {
             Some(SidePanel::Changes) => root.diff.is_some(),

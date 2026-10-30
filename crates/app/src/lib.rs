@@ -3045,11 +3045,9 @@ impl Root {
         let unread = self.sidebar.read(cx).unread.clone();
         let thread_open = matches!(self.state.route, Route::Thread(_));
         let cloud = self.chatgpt_account && self.host.supports_cloud_search();
-        let navigation = native_menus::navigation::available(self, cx);
         let menu = cx.new(|cx| {
             CommandMenu::with_threads(&self.threads, &unread, thread_open, "", cx)
                 .with_cloud_search(cloud)
-                .with_navigation_panel(navigation)
         });
         menu.update(cx, |menu, cx| {
             menu.set_activity_available(self.sidebar.read(cx).activity_available, cx)

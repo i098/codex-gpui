@@ -2186,7 +2186,6 @@ pub struct CommandMenu {
     /// A thread is open: its commands show (`Search files`, `Mark as unread`, ...).
     thread_open: bool,
     git_available: bool,
-    navigation_available: bool,
     activity_available: bool,
     /// Bumped on every query change; a debounced search only fires for the latest.
     search_gen: usize,
@@ -2875,7 +2874,6 @@ impl CommandMenu {
             focus: cx.focus_handle(),
             thread_open,
             git_available: false,
-            navigation_available: false,
             activity_available: true,
             search_gen: 0,
             search_scheduled: false,
@@ -2939,11 +2937,6 @@ impl CommandMenu {
 
     pub fn with_cloud_search(mut self, enabled: bool) -> Self {
         self.cloud_enabled = enabled;
-        self
-    }
-
-    pub fn with_navigation_panel(mut self, available: bool) -> Self {
-        self.navigation_available = available;
         self
     }
 
@@ -3290,9 +3283,6 @@ impl CommandMenu {
                     .filter(|item| self.thread_open || !item.thread_only)
                     .filter(|item| item.label != "Commit or push" || self.git_available)
                     .filter(|item| item.label != "Toggle activity view" || self.activity_available)
-                    .filter(|item| {
-                        item.label != "Toggle navigation panel" || self.navigation_available
-                    })
                     .filter_map(|item| {
                         let rank = if query.is_empty() {
                             Some((0, 0))
