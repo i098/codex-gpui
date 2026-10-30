@@ -49,6 +49,24 @@ fn capture_cell() -> Result<()> {
             fx.wait_thread(SUBTRACT)?;
             "thread"
         }
+        ("thread", "worked" | "tools") => {
+            fx.click(fx.at("home", "Add a subtract")?)?;
+            fx.wait_thread(SUBTRACT)?;
+            // Each disclosure animates open (motion::RELAXED); the original shoots at rest.
+            fx.click(fx.at("thread", "Worked for")?)?;
+            fx.advance(std::time::Duration::from_millis(400))?;
+            let screen = if state == "tools" {
+                // The original's `Edited a file, read files, ran commands` summary row.
+                fx.click((520., 332.))?;
+                fx.advance(std::time::Duration::from_millis(400))?;
+                "thread-tools"
+            } else {
+                "thread-worked"
+            };
+            // The original parks the pointer on the empty titlebar centre.
+            fx.hover((width as f32 * 0.6, 6.))?;
+            screen
+        }
         ("composer", "rest") => {
             fx.wait("navigation destinations", |fx| {
                 fx.shell(|shell| shell.unread_destinations.is_some())
