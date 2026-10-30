@@ -62,8 +62,8 @@ pub use context::ReasoningVisibility;
 pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
 pub use actions::{EditMessage, ForkThread, OpenPlanSummary, PatchTurn, RevertTurn, ThreadPressed};
-pub use items::PlanSummary;
 use actions::{TurnFocus, action_row};
+pub use items::PlanSummary;
 pub enum GitAction {
     Refresh,
     OpenForm,

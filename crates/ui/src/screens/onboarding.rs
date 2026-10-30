@@ -6,6 +6,7 @@ use crate::{
     confirmation::{Confirmation, Outcome},
     focus,
     icon::icon,
+    screens::computer_use::{ComputerUseAction, ComputerUseState, Load},
     text,
 };
 use gpui::{
@@ -15,6 +16,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use theme::{ActiveTheme as _, Theme};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +92,16 @@ pub enum OnboardingEvent {
     CreateProject,
     OpenImport(Completion),
     FirstRunComplete,
+    /// Entering the capabilities step: check Computer use and memories.
+    ReadCapabilities,
+    /// Computer history: turn on memories (`setMemoryFeatureEnabled` + `writeMemoryConfig`).
+    EnableHistory,
+    /// Entering the connectors step, or `Check connection`: read `app/list`.
+    ReadApps,
+    /// `Connect` on an `app/list` entry: open its browser setup.
+    ConnectApp(Value),
+    /// A starter card: complete setup, then start a chat with the card's prompt.
+    StartTask(Completion, &'static str),
 }
 impl EventEmitter<OnboardingEvent> for Onboarding {}
 
@@ -108,6 +120,11 @@ enum Action {
     Import,
     NotNow,
     Reload,
+    SetUpComputerUse,
+    SetUpHistory,
+    ReloadApps,
+    Connect(usize),
+    Starter(usize),
 }
 
 const ROLES: &[(&str, &str)] = &[
@@ -125,6 +142,35 @@ const ROLES: &[(&str, &str)] = &[
     ("something_else", "Something else"),
 ];
 
+/// `chatgpt.tpp.onboarding.starter.{personal_website,manage_inbox,personalized_presentation}`
+/// and `skill_fallback.repeatable_work` cards: label, description, prompt.
+const STARTERS: &[(&str, &str, &str)] = &[
+    (
+        "Build a personal website",
+        "Create a personalized website based on what you have shared",
+        "Based on everything you know about me and what we’ve discussed in past conversations, choose the most useful subject for a personal website. If there isn’t enough context to choose honestly, ask me one focused question about what the site should be for. Then design, build, and host it for me. Make confident choices about the content, structure, and visual style you think I’ll like best, and start creating it now.",
+    ),
+    (
+        "Help manage my inbox",
+        "Learn your writing style and help draft replies to unread emails",
+        "Use my connected email app. If I haven’t connected one, ask which email provider I use and help me connect it before continuing. Then review the emails I’ve sent over the last three months and learn how my writing changes for different people and situations. Create a reusable email-writing skill that captures those styles, patterns, and preferences. Set up a daily automation that reviews my unread emails and drafts a response to each one in the appropriate style. Never send an email without my explicit confirmation.",
+    ),
+    (
+        "Make my work repeatable",
+        "Turn recurring tasks into skills you can run",
+        "Find a workflow I repeat and turn it into a reusable skill",
+    ),
+    (
+        "Make a presentation for me",
+        "Create a polished slide presentation based on your past conversations",
+        "Review our past conversations and choose the topic that would be most useful to turn into a polished slide presentation for me right now. If there isn’t enough context to choose honestly, ask me one focused question about the subject. Then pull together the relevant context, decide on a strong story and structure, write the content, and create the complete presentation with useful visuals. Make confident choices and start creating it now. When it’s ready, give me the finished file and a brief note explaining what you chose and why.",
+    ),
+];
+
+/// `app/list` entries shown on the connectors step.
+pub const CONNECTOR_LIMIT: usize = 5;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
     Loading,
     Roles,
@@ -132,6 +178,90 @@ enum State {
     Workspace,
     Error,
     FirstRun(usize),
+    Capabilities,
+    Connectors,
+    Starter,
+}
+
+/// The setup step after `state`: Import when detected, then the original's capabilities,
+/// connectors and starter-task steps; `None` completes setup.
+fn next_step(state: State, import_available: bool) -> Option<State> {
+    match state {
+        State::Roles if import_available => Some(State::Import),
+        State::Roles | State::Import => Some(State::Capabilities),
+        State::Capabilities => Some(State::Connectors),
+        State::Connectors => Some(State::Starter),
+        _ => None,
+    }
+}
+
+fn previous_step(state: State, import_available: bool) -> Option<State> {
+    match state {
+        State::Capabilities if import_available => Some(State::Import),
+        State::Capabilities => Some(State::Roles),
+        State::Connectors => Some(State::Capabilities),
+        State::Starter => Some(State::Connectors),
+        _ => None,
+    }
+}
+
+/// A capability row's status (`electron.onboarding.capabilitiesSetup.*`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Setup {
+    Checking,
+    Ready,
+    SettingUp,
+    Incomplete,
+    Done,
+    Unavailable,
+}
+
+/// The Computer use setup this page started.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ComputerUseStep {
+    Install,
+    Enable,
+    Failed,
+}
+
+/// The Computer use row from the shared Computer Use state and the setup this page started:
+/// the row status, the setup still running, and the action to send next.
+fn computer_use_setup(
+    state: &ComputerUseState,
+    step: Option<ComputerUseStep>,
+) -> (Setup, Option<ComputerUseStep>, Option<ComputerUseAction>) {
+    if !state.available || matches!(state.plugin, Load::Ready(None)) {
+        return (Setup::Unavailable, None, None);
+    }
+    let installed = match &state.plugin {
+        Load::Ready(Some(plugin)) if plugin.enabled && !state.pending => {
+            return (Setup::Done, None, None);
+        }
+        Load::Ready(Some(plugin)) => plugin.installed,
+        _ => false,
+    };
+    if step == Some(ComputerUseStep::Failed) {
+        return (Setup::Incomplete, step, None);
+    }
+    if state.pending || matches!(state.plugin, Load::Loading) {
+        let setup = if step.is_some() {
+            Setup::SettingUp
+        } else {
+            Setup::Checking
+        };
+        return (setup, step, None);
+    }
+    match step {
+        // Install reloaded the plugin; turn it on next, as the Settings toggle does.
+        Some(ComputerUseStep::Install) if installed && state.error.is_none() => (
+            Setup::SettingUp,
+            Some(ComputerUseStep::Enable),
+            Some(ComputerUseAction::SetEnabled(true)),
+        ),
+        Some(_) => (Setup::Incomplete, Some(ComputerUseStep::Failed), None),
+        None if matches!(state.plugin, Load::Failed(_)) => (Setup::Incomplete, None, None),
+        None => (Setup::Ready, None, None),
+    }
 }
 
 pub struct Onboarding {
@@ -152,6 +282,11 @@ pub struct Onboarding {
     busy: bool,
     error: Option<String>,
     confirmation: Option<Entity<Confirmation>>,
+    computer_use: Option<ComputerUseStep>,
+    history: Setup,
+    apps: Option<Result<Vec<Value>, String>>,
+    /// App ids whose browser setup is open; their button checks the connection.
+    connecting: Vec<String>,
 }
 
 impl Onboarding {
@@ -161,6 +296,8 @@ impl Onboarding {
         clock: Option<crate::screens::thread::view::Clock>,
         cx: &mut Context<Self>,
     ) -> Self {
+        cx.observe_global::<ComputerUseState>(|this, cx| this.sync_computer_use(cx))
+            .detach();
         Self {
             page,
             chatgpt,
@@ -183,6 +320,10 @@ impl Onboarding {
             busy: false,
             error: None,
             confirmation: None,
+            computer_use: None,
+            history: Setup::Checking,
+            apps: None,
+            connecting: Vec::new(),
         }
     }
     pub fn page(&self) -> Page {
@@ -264,6 +405,48 @@ impl Onboarding {
         self.busy = busy;
         cx.notify();
     }
+    pub fn set_history(&mut self, setup: Setup, cx: &mut Context<Self>) {
+        self.history = setup;
+        cx.notify();
+    }
+    /// `app/list` result for the connectors step, already trimmed to [`CONNECTOR_LIMIT`].
+    pub fn set_apps(&mut self, apps: Result<Vec<Value>, String>, cx: &mut Context<Self>) {
+        self.apps = Some(apps);
+        cx.notify();
+    }
+    /// The browser setup for app `id` opened.
+    pub fn app_opened(&mut self, id: String, cx: &mut Context<Self>) {
+        if !self.connecting.contains(&id) {
+            self.connecting.push(id);
+        }
+        cx.notify();
+    }
+    /// Follows the shared Computer Use state; sends the next setup action this page owes.
+    fn sync_computer_use(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = cx.try_global::<ComputerUseState>() else {
+            return;
+        };
+        let (_, step, action) = computer_use_setup(state, self.computer_use);
+        let dispatch = state.dispatch.clone();
+        self.computer_use = step;
+        if let (Some(action), Some(dispatch)) = (action, dispatch) {
+            dispatch(action, cx);
+        }
+        cx.notify();
+    }
+    fn advance(&mut self, cx: &mut Context<Self>) {
+        let Some(next) = next_step(self.state, self.import_available) else {
+            self.complete(false, cx);
+            return;
+        };
+        self.state = next;
+        if next == State::Capabilities && self.history == Setup::Checking {
+            cx.emit(OnboardingEvent::ReadCapabilities);
+        }
+        if next == State::Connectors && self.apps.is_none() {
+            cx.emit(OnboardingEvent::ReadApps);
+        }
+    }
     fn completion(&self, skipped: bool) -> Completion {
         Completion {
             roles: if skipped {
@@ -296,14 +479,12 @@ impl Onboarding {
                 cx.emit(OnboardingEvent::Reload);
             }
             Action::Continue => match self.state {
-                State::Roles if !self.roles.is_empty() => {
-                    if self.import_available {
-                        self.state = State::Import;
-                    } else {
-                        self.complete(false, cx);
-                    }
-                }
-                State::Import => self.complete(false, cx),
+                State::Roles if self.roles.is_empty() => {}
+                State::Roles
+                | State::Import
+                | State::Capabilities
+                | State::Connectors
+                | State::Starter => self.advance(cx),
                 State::Workspace if !self.roots.is_empty() => self.complete(false, cx),
                 State::FirstRun(index) if index < 3 => self.state = State::FirstRun(index + 1),
                 State::FirstRun(_) => {
@@ -312,11 +493,14 @@ impl Onboarding {
                 }
                 _ => {}
             },
-            Action::Back => {
-                if let State::FirstRun(index) = self.state {
-                    self.state = State::FirstRun(index.saturating_sub(1));
+            Action::Back => match self.state {
+                State::FirstRun(index) => self.state = State::FirstRun(index.saturating_sub(1)),
+                state => {
+                    if let Some(previous) = previous_step(state, self.import_available) {
+                        self.state = previous;
+                    }
                 }
-            }
+            },
             Action::Role(index) => {
                 let role = ROLES[index].0;
                 if let Some(index) = self.roles.iter().position(|value| value == role) {
@@ -392,7 +576,58 @@ impl Onboarding {
                 self.error = None;
                 cx.emit(OnboardingEvent::OpenImport(self.completion(false)));
             }
-            Action::NotNow => self.complete(false, cx),
+            Action::NotNow => self.advance(cx),
+            Action::SetUpComputerUse => {
+                let Some(state) = cx.try_global::<ComputerUseState>() else {
+                    return;
+                };
+                if state.pending {
+                    return;
+                }
+                let installed =
+                    matches!(&state.plugin, Load::Ready(Some(plugin)) if plugin.installed);
+                let dispatch = state.dispatch.clone();
+                let (step, action) = if installed {
+                    (ComputerUseStep::Enable, ComputerUseAction::SetEnabled(true))
+                } else {
+                    (ComputerUseStep::Install, ComputerUseAction::Install)
+                };
+                self.computer_use = Some(step);
+                if let Some(dispatch) = dispatch {
+                    dispatch(action, cx);
+                }
+            }
+            Action::SetUpHistory => {
+                self.history = Setup::SettingUp;
+                cx.emit(OnboardingEvent::EnableHistory);
+            }
+            Action::ReloadApps => {
+                self.apps = None;
+                cx.emit(OnboardingEvent::ReadApps);
+            }
+            Action::Connect(index) => {
+                let Some(Ok(apps)) = &self.apps else {
+                    return;
+                };
+                let app = apps[index].clone();
+                if self
+                    .connecting
+                    .iter()
+                    .any(|id| app["id"].as_str() == Some(id.as_str()))
+                {
+                    cx.emit(OnboardingEvent::ReadApps);
+                } else {
+                    cx.emit(OnboardingEvent::ConnectApp(app));
+                }
+            }
+            Action::Starter(index) => {
+                self.busy = true;
+                self.error = None;
+                cx.emit(OnboardingEvent::StartTask(
+                    self.completion(false),
+                    STARTERS[index].2,
+                ));
+            }
         }
         cx.notify();
     }
@@ -422,7 +657,11 @@ impl Onboarding {
                     State::Roles => self.roles.is_empty(),
                     State::Workspace => self.roots.is_empty(),
                     State::Loading | State::Error => true,
-                    State::Import | State::FirstRun(_) => false,
+                    State::Import
+                    | State::FirstRun(_)
+                    | State::Capabilities
+                    | State::Connectors
+                    | State::Starter => false,
                 });
         let border = t.border;
         let (background, foreground) = if primary {
@@ -645,6 +884,232 @@ impl Onboarding {
                 self.button("onboarding-skip", "Skip", Action::Skip, false, window, cx)
                     .mt(px(12.)),
             )
+    }
+    /// Frame of the steps after Roles. The forward button keeps the `onboarding-continue` id,
+    /// so keyboard focus stays on it from step to step.
+    fn step_view(
+        &self,
+        title: &'static str,
+        introduction: Option<&'static str>,
+        body: Div,
+        forward: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let t = cx.theme().clone();
+        div()
+            .w(px(640.))
+            .max_w_full()
+            .p(px(40.))
+            .flex()
+            .flex_col()
+            .gap(px(24.))
+            .child(text(title, 28., 34., 400., t.text).whitespace_normal())
+            .children(
+                introduction.map(|introduction| {
+                    text(introduction, 18., 28., 400., t.text).whitespace_normal()
+                }),
+            )
+            .child(body)
+            .child(self.button(
+                "onboarding-continue",
+                forward,
+                Action::Continue,
+                true,
+                window,
+                cx,
+            ))
+            .child(self.button("onboarding-back", "Back", Action::Back, false, window, cx))
+    }
+    /// One `capabilitiesSetup` row: the description, or the status while not set up.
+    fn capability(
+        &self,
+        label: &'static str,
+        description: &'static str,
+        setup: Setup,
+        action: Action,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let t = cx.theme().clone();
+        let status = match setup {
+            Setup::Checking => "Checking…",
+            Setup::SettingUp => "Setting up…",
+            Setup::Incomplete => "Setup incomplete",
+            Setup::Unavailable => "Unavailable",
+            Setup::Ready | Setup::Done => description,
+        };
+        let control = match setup {
+            Setup::Ready => Some(self.button(label, "Set up", action, false, window, cx)),
+            Setup::Incomplete => Some(self.button(label, "Retry", action, false, window, cx)),
+            _ => None,
+        };
+        div()
+            .w_full()
+            .flex()
+            .items_center()
+            .gap(px(16.))
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .child(text(label, 18., 24., 400., t.text))
+                    .child(text(status, 16., 20., 400., t.text_description).whitespace_normal()),
+            )
+            .children(control)
+            .when(setup == Setup::Done, |row| {
+                row.child(icon("menu-check", 16., t.text))
+            })
+    }
+    fn capabilities_view(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let computer_use = cx
+            .try_global::<ComputerUseState>()
+            .map_or(Setup::Unavailable, |state| {
+                computer_use_setup(state, self.computer_use).0
+            });
+        let rows = div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(self.capability(
+                "Computer use",
+                "Control apps to complete tasks",
+                computer_use,
+                Action::SetUpComputerUse,
+                window,
+                cx,
+            ))
+            .child(self.capability(
+                "Computer history",
+                "Find past work and pick up where you left off",
+                self.history,
+                Action::SetUpHistory,
+                window,
+                cx,
+            ));
+        self.step_view(
+            "Give ChatGPT access to your computer",
+            Some(
+                "Let ChatGPT use your apps, browser, files, and work history to understand what you’re working on and help you get things done with less explaining",
+            ),
+            rows,
+            "Continue",
+            window,
+            cx,
+        )
+    }
+    /// `orbit.onboarding.connectors.*` over the first `app/list` entries.
+    fn connectors_view(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        let mut connected = false;
+        let body = match &self.apps {
+            None => text("Checking your tools", 16., 24., 400., t.text_description),
+            Some(Err(_)) => div()
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .child(text(
+                    "We couldn’t load your tools",
+                    16.,
+                    24.,
+                    400.,
+                    t.text_description,
+                ))
+                .child(self.button(
+                    "onboarding-apps-retry",
+                    "Retry",
+                    Action::ReloadApps,
+                    false,
+                    window,
+                    cx,
+                )),
+            Some(Ok(apps)) => {
+                let mut list = div().w_full().flex().flex_col().gap(px(12.));
+                for (index, app) in apps.iter().enumerate() {
+                    let accessible = app["isAccessible"] == true;
+                    connected |= accessible;
+                    let opened = self
+                        .connecting
+                        .iter()
+                        .any(|id| app["id"].as_str() == Some(id.as_str()));
+                    let row = div().w_full().flex().items_center().gap(px(16.)).child(
+                        text(
+                            app["name"].as_str().unwrap_or_default().to_owned(),
+                            18.,
+                            24.,
+                            400.,
+                            t.text,
+                        )
+                        .min_w_0()
+                        .flex_1()
+                        .truncate(),
+                    );
+                    list = list.child(if accessible {
+                        row.child(text("Connected", 16., 20., 400., t.text_description))
+                    } else {
+                        row.child(self.button(
+                            ("onboarding-connect", index),
+                            if opened {
+                                "Check connection"
+                            } else {
+                                "Connect"
+                            },
+                            Action::Connect(index),
+                            false,
+                            window,
+                            cx,
+                        ))
+                    });
+                }
+                list
+            }
+        };
+        self.step_view(
+            "Make your ChatGPT more helpful",
+            None,
+            body,
+            if connected { "Continue" } else { "Not now" },
+            window,
+            cx,
+        )
+    }
+    fn starter_view(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
+        let mut cards = div().w_full().flex().flex_col().gap(px(8.));
+        for (index, (label, description, _)) in STARTERS.iter().enumerate() {
+            cards = cards.child(
+                self.button(
+                    ("onboarding-starter", index),
+                    *label,
+                    Action::Starter(index),
+                    false,
+                    window,
+                    cx,
+                )
+                .w_full()
+                .h_auto()
+                .py(px(12.))
+                .flex_col()
+                .gap(px(4.))
+                .rounded(px(15.))
+                .child(
+                    text(*description, 13., 18., 400., t.text_description)
+                        .whitespace_normal()
+                        .text_center(),
+                ),
+            );
+        }
+        self.step_view(
+            "Start with a simple task to see how it works",
+            None,
+            cards,
+            "Skip",
+            window,
+            cx,
+        )
     }
     fn close_project_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.add_project = false;
@@ -966,6 +1431,9 @@ impl Render for Onboarding {
             State::Roles=>self.role_view(window,cx),
             State::Workspace=>self.workspace_view(window,cx),
             State::FirstRun(index)=>self.first_run_view(index,window,cx),
+            State::Capabilities=>self.capabilities_view(window,cx),
+            State::Connectors=>self.connectors_view(window,cx),
+            State::Starter=>self.starter_view(window,cx),
             State::Import=>div().w(px(640.)).max_w_full().p(px(40.)).flex().flex_col().gap(px(24.))
                 .child(text("Import work from other AI apps",28.,34.,400.,t.text))
                 .child(text("Before we get started, would you like to bring over your work from other AI apps? You can review your setup, projects, and chats before importing.",18.,28.,400.,t.text).whitespace_normal())
@@ -1004,6 +1472,77 @@ impl Render for Onboarding {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::screens::computer_use::Plugin;
+
+    #[test]
+    fn setup_steps_follow_roles_and_import_and_back_returns() {
+        let mut forward = vec![State::Roles];
+        while let Some(next) = next_step(*forward.last().unwrap(), true) {
+            forward.push(next);
+        }
+        assert_eq!(
+            forward,
+            [
+                State::Roles,
+                State::Import,
+                State::Capabilities,
+                State::Connectors,
+                State::Starter
+            ]
+        );
+        assert_eq!(next_step(State::Roles, false), Some(State::Capabilities));
+        assert_eq!(
+            previous_step(State::Capabilities, false),
+            Some(State::Roles)
+        );
+        assert_eq!(
+            previous_step(State::Capabilities, true),
+            Some(State::Import)
+        );
+        assert_eq!(previous_step(State::Starter, true), Some(State::Connectors));
+        assert_eq!(next_step(State::Workspace, true), None);
+    }
+
+    #[test]
+    fn computer_use_setup_installs_then_enables_once() {
+        let mut state = ComputerUseState {
+            available: true,
+            plugin: Load::Ready(Some(Plugin {
+                installed: false,
+                enabled: false,
+            })),
+            ..Default::default()
+        };
+        assert_eq!(computer_use_setup(&state, None).0, Setup::Ready);
+        state.pending = true;
+        let step = Some(ComputerUseStep::Install);
+        assert_eq!(computer_use_setup(&state, step).0, Setup::SettingUp);
+        assert_eq!(computer_use_setup(&state, None).0, Setup::Checking);
+        state.pending = false;
+        state.plugin = Load::Ready(Some(Plugin {
+            installed: true,
+            enabled: false,
+        }));
+        let (setup, step, action) = computer_use_setup(&state, step);
+        assert_eq!(setup, Setup::SettingUp);
+        assert_eq!(step, Some(ComputerUseStep::Enable));
+        assert!(matches!(action, Some(ComputerUseAction::SetEnabled(true))));
+        // Enable finished without registering the provider: incomplete, never a loop.
+        let (setup, step, action) = computer_use_setup(&state, step);
+        assert_eq!(
+            (setup, step),
+            (Setup::Incomplete, Some(ComputerUseStep::Failed))
+        );
+        assert!(action.is_none());
+        assert_eq!(computer_use_setup(&state, step).0, Setup::Incomplete);
+        state.plugin = Load::Ready(Some(Plugin {
+            installed: true,
+            enabled: true,
+        }));
+        assert_eq!(computer_use_setup(&state, step).0, Setup::Done);
+        state.available = false;
+        assert_eq!(computer_use_setup(&state, None).0, Setup::Unavailable);
+    }
     #[test]
     fn role_priority_and_skip_match_completion_contract() {
         let mut value = Completion {

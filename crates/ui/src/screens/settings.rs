@@ -265,6 +265,8 @@ pub mod workspace {
 
 #[path = "settings/notifications.rs"]
 pub mod notifications;
+#[path = "settings/profile.rs"]
+pub mod profile;
 #[path = "settings_subtrees.rs"]
 pub mod subtrees;
 #[path = "settings/usage.rs"]
@@ -340,7 +342,7 @@ pub fn section(label: &str) -> Option<&'static str> {
     NAV.iter()
         .flat_map(|(_, items)| items.iter())
         .map(|&(l, _)| l)
-        .find(|&l| l == label && l != EXTERNAL)
+        .find(|&l| l == label)
 }
 
 /// The Settings route's shell for a `config/read` config and `skills/list` result: settings
@@ -422,9 +424,6 @@ const NAV: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
 ];
-
-/// Opens in the browser instead of a settings page (trailing arrow in the nav).
-const EXTERNAL: &str = "Profile";
 
 /// State the nav and the page share: the open section, the search query and the settings.
 ///
@@ -741,10 +740,7 @@ impl SettingsNav {
                         if selected { t.icon_primary } else { t.text },
                     ))
                     .child(text(label, 14., 21., 400., t.text)),
-            )
-            .when(label == EXTERNAL, |d| {
-                d.child(icon("arrow-up-right", 16., t.text_secondary).opacity(0.5))
-            });
+            );
         let control = div()
             .id((gpui::ElementId::from("settings-nav-item"), label))
             .role(gpui::Role::Button)
@@ -758,22 +754,20 @@ impl SettingsNav {
             .child(rounded_clip(Theme::RADIUS_LG, Squircle, row));
         focus::ring(control, &focus, Theme::RADIUS_LG, px(2.), cx)
             .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
-            .when(label != EXTERNAL, |d| {
-                d.on_click(cx.listener(move |this, _, window, cx| {
-                    if this.page.read(cx).subtree.is_some() {
-                        window.dispatch_action(
-                            Box::new(subtrees::OpenSection {
-                                label: label.into(),
-                            }),
-                            cx,
-                        );
-                        return;
-                    }
-                    this.page.update(cx, |p, cx| {
-                        p.select_section(label, cx);
-                    });
-                }))
-            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                if this.page.read(cx).subtree.is_some() {
+                    window.dispatch_action(
+                        Box::new(subtrees::OpenSection {
+                            label: label.into(),
+                        }),
+                        cx,
+                    );
+                    return;
+                }
+                this.page.update(cx, |p, cx| {
+                    p.select_section(label, cx);
+                });
+            }))
     }
 }
 
@@ -1397,6 +1391,9 @@ impl Render for SettingsPane {
         }
         if section == "Usage & billing" {
             return usage::render(window, cx);
+        }
+        if section == "Profile" {
+            return profile::render(window, cx);
         }
         if section == "Personalization" {
             return div()

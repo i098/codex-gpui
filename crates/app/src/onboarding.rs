@@ -1,9 +1,12 @@
-use crate::{Root, Route, host, host_settings};
+use crate::{Root, Route, host, host_settings, personalization};
 use anyhow::{Context as _, Result, ensure};
 use gpui::{AppContext as _, Context, Entity, PathPromptOptions, Window};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
-use ui::screens::onboarding::{Completion, Onboarding, OnboardingEvent, Page, Project};
+use ui::screens::onboarding::{
+    CONNECTOR_LIMIT, Completion, Onboarding, OnboardingEvent, Page, Project, Setup,
+};
+use ui::screens::settings::personalization::MemoryChange;
 
 pub fn route(path: &str) -> Option<Route> {
     let page = match path {
@@ -118,6 +121,7 @@ impl Root {
                         view.clone(),
                         completion.clone(),
                         Route::Home,
+                        None,
                         window,
                         cx,
                     ),
@@ -132,6 +136,7 @@ impl Root {
                             view.clone(),
                             completion.clone(),
                             Route::Settings,
+                            None,
                             window,
                             cx,
                         );
@@ -148,6 +153,25 @@ impl Root {
                             }),
                         }
                     }
+                    OnboardingEvent::ReadCapabilities => {
+                        this.load_computer_use(cx);
+                        this.onboarding_history(view.clone(), false, cx);
+                    }
+                    OnboardingEvent::EnableHistory => {
+                        this.onboarding_history(view.clone(), true, cx)
+                    }
+                    OnboardingEvent::ReadApps => this.read_onboarding_apps(view.clone(), cx),
+                    OnboardingEvent::ConnectApp(app) => {
+                        this.connect_onboarding_app(view.clone(), app.clone(), cx)
+                    }
+                    OnboardingEvent::StartTask(completion, prompt) => this.complete_onboarding(
+                        view.clone(),
+                        completion.clone(),
+                        Route::Home,
+                        Some(*prompt),
+                        window,
+                        cx,
+                    ),
                 }
             },
         )
@@ -252,6 +276,7 @@ impl Root {
         view: Entity<Onboarding>,
         completion: Completion,
         destination: Route,
+        prompt: Option<&'static str>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -280,11 +305,172 @@ impl Root {
                         if destination == Route::Settings {this.settings_section=Some("Import");}
                         this.load_projects(cx);
                         if destination == Route::Home && let Some(root)=completion.roots.first() {this.select_project(root.clone(),window,cx);}else{this.navigate(destination,window,cx);}
+                        if let Some(prompt)=prompt {this.start_onboarding_task(prompt,window,cx);}
                     }
                     Err(error)=>view.update(cx,|view,cx|view.set_error(format!("Couldn't finish setup — try again: {error}"),cx)),
                 }
             }).ok();
         }).detach();
+    }
+
+    /// A starter card's prompt as a new chat from Home, with the Home composer's permissions
+    /// and the server's default model.
+    fn start_onboarding_task(
+        &mut self,
+        prompt: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let permission = self.home.read(cx).composer.read(cx).permission();
+        self.start_thread(
+            ui::composer::Submission {
+                text: prompt.into(),
+                shell_command: false,
+                attachments: Vec::new(),
+                context_files: Vec::new(),
+                model: String::new(),
+                effort: None,
+                permission,
+                fast: false,
+                plan: false,
+                background: false,
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Computer history: reads memories, or turns them on as Settings > Personalization does.
+    fn onboarding_history(
+        &mut self,
+        view: Entity<Onboarding>,
+        enable: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let bridge = self.bridge.clone();
+        let task = cx.background_spawn(async move {
+            let read = personalization::read_memory(&bridge)?;
+            if !enable || !read.settings.available || read.settings.enabled() {
+                return Ok::<_, anyhow::Error>(read);
+            }
+            let change = MemoryChange::Enabled(true);
+            let write = personalization::write_memory(&bridge, &read.settings, change);
+            if let Some(error) = write.error {
+                anyhow::bail!(error);
+            }
+            write.read
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                if this.onboarding_page.as_ref() != Some(&view) {
+                    return;
+                }
+                let setup = match result {
+                    Ok(read) => {
+                        if enable {
+                            this.config["memories"] = read.config["memories"].clone();
+                            this.config["features"]["memories"] =
+                                read.settings.feature_enabled.into();
+                        }
+                        if !read.settings.available {
+                            Setup::Unavailable
+                        } else if read.settings.enabled() {
+                            Setup::Done
+                        } else if enable {
+                            Setup::Incomplete
+                        } else {
+                            Setup::Ready
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("codex-gpui: onboarding memories: {error:#}");
+                        Setup::Incomplete
+                    }
+                };
+                view.update(cx, |view, cx| view.set_history(setup, cx));
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The first `app/list` entries for the connectors step.
+    fn read_onboarding_apps(&mut self, view: Entity<Onboarding>, cx: &mut Context<Self>) {
+        let bridge = self.bridge.clone();
+        cx.spawn(async move |this, cx| {
+            let result = async {
+                let page: Value = bridge
+                    .request(
+                        "app/list",
+                        json!({"cursor":null,"limit":CONNECTOR_LIMIT,"forceRefetch":true}),
+                    )
+                    .await?;
+                let apps = page["data"].as_array().context("App list has no data")?;
+                let apps = apps
+                    .iter()
+                    .take(CONNECTOR_LIMIT)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                Ok::<_, anyhow::Error>(apps)
+            }
+            .await
+            .map_err(|error| error.to_string());
+            this.update(cx, |this, cx| {
+                if this.onboarding_page.as_ref() == Some(&view) {
+                    view.update(cx, |view, cx| view.set_apps(result, cx));
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// `Connect`: the Plugins page's browser setup for one app (`app/read` when the list
+    /// entry lacks its `installUrl`).
+    fn connect_onboarding_app(
+        &mut self,
+        view: Entity<Onboarding>,
+        app: Value,
+        cx: &mut Context<Self>,
+    ) {
+        let bridge = self.bridge.clone();
+        cx.spawn(async move |this, cx| {
+            let result = async move {
+                let app = if app["installUrl"].is_string() {
+                    app
+                } else {
+                    let id = app["id"].as_str().context("The app has no connector ID")?;
+                    let response: Value =
+                        bridge.request("app/read", json!({"appIds":[id]})).await?;
+                    response["apps"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|entry| entry["id"] == id)
+                        .context("The requested app is unavailable")?
+                        .clone()
+                };
+                let url = crate::plugins::app_connect_url(&app)?;
+                let id = app["id"].as_str().unwrap_or_default().to_owned();
+                Ok::<_, anyhow::Error>((url, id))
+            }
+            .await;
+            this.update(cx, |this, cx| {
+                if this.onboarding_page.as_ref() != Some(&view) {
+                    return;
+                }
+                match result {
+                    Ok((url, id)) => {
+                        cx.open_url(&url);
+                        view.update(cx, |view, cx| view.app_opened(id, cx));
+                    }
+                    Err(error) => view.update(cx, |view, cx| view.set_error(error.to_string(), cx)),
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn pick_onboarding_folder(

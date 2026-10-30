@@ -735,7 +735,7 @@ fn connector_request(
     }
 }
 
-fn app_connect_url(app: &Value) -> Result<String> {
+pub(crate) fn app_connect_url(app: &Value) -> Result<String> {
     let mut url = url::Url::parse(
         app["installUrl"]
             .as_str()

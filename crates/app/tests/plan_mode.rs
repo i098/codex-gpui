@@ -175,16 +175,26 @@ fn a_finished_plan_opens_in_its_own_window() -> Result<()> {
     let plan = "# Plan\n\n1. Read the code\n2. Write the change";
     let item = json!({"type": "plan", "id": "plan-item", "text": plan});
     let turn = json!({"id": "plan-turn", "status": "inProgress", "items": []});
-    notify(&mut fx, "turn/started", json!({"threadId": GREETING, "turn": turn}));
+    notify(
+        &mut fx,
+        "turn/started",
+        json!({"threadId": GREETING, "turn": turn}),
+    );
     notify(
         &mut fx,
         "item/completed",
         json!({"threadId": GREETING, "turnId": "plan-turn", "item": item}),
     );
     let turn = json!({"id": "plan-turn", "status": "completed", "items": [item]});
-    notify(&mut fx, "turn/completed", json!({"threadId": GREETING, "turn": turn}));
+    notify(
+        &mut fx,
+        "turn/completed",
+        json!({"threadId": GREETING, "turn": turn}),
+    );
     shot(&mut fx, "plan-answer")?;
-    fx.action(Box::new(ui::screens::thread::view::OpenPlanSummary(plan.into())))?;
+    fx.action(Box::new(ui::screens::thread::view::OpenPlanSummary(
+        plan.into(),
+    )))?;
     let window = fx
         .cx
         .update(|cx| app::windows::handles(app::windows::Kind::Page, cx))

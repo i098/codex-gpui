@@ -452,11 +452,11 @@ fn new_chat_row() -> Result<String> {
 fn your_dot_row() -> Result<String> {
     let mut fx = Fx::new()?;
     fx.click(fx.at("home", "Your dot")?)?;
+    ensure!(fx.route() == Route::Dots, "route {:?}", fx.route());
     ensure!(
-        fx.cx.take_opened_url().as_deref() == Some("https://chatgpt.com/dots/home"),
-        "Your dot did not open the dot home page"
+        fx.cx.take_opened_url().is_none(),
+        "Your dot opened a browser page"
     );
-    ensure!(fx.route() == Route::Home, "route {:?}", fx.route());
     Ok(String::new())
 }
 

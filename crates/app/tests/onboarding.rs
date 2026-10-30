@@ -89,7 +89,8 @@ fn onboarding_keeps_failed_saves_and_cancelled_skips_on_the_page() -> Result<()>
     for _ in 0..14 {
         fx.keys("tab")?;
     }
-    fx.keys("enter")?;
+    // Continue, then the forward button of capabilities, connectors and starter (`Skip`).
+    fx.keys("enter enter enter enter")?;
     fx.wait("onboarding save error", |fx| {
         fx.read(|root, cx| {
             root.onboarding()

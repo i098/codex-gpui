@@ -310,7 +310,7 @@ fn usage_visible(
         || analytics
 }
 
-fn payload_gates(value: Value) -> Result<Value> {
+pub(crate) fn payload_gates(value: Value) -> Result<Value> {
     if let Some(payload) = value["payload"].as_str() {
         Ok(serde_json::from_str(payload)?)
     } else if value.get("feature_gates").is_some() {

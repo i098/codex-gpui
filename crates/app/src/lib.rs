@@ -43,6 +43,7 @@ pub mod terminal;
 mod thread_patch;
 pub use routes::Route;
 mod plugins;
+mod profile;
 pub mod screenshot;
 mod search;
 mod section_actions;
@@ -453,6 +454,7 @@ pub struct Root {
     pull_requests_page: Option<Entity<ui::screens::pull_requests::Page>>,
     plugins_page: Option<Entity<ui::screens::plugins::Page>>,
     sites_page: Option<Entity<ui::screens::sites::Page>>,
+    dots_page: Option<Entity<ui::screens::dots::Page>>,
     cloud_modal: Option<Entity<ui::screens::cloud::CloudModal>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
@@ -633,6 +635,7 @@ impl Root {
         features::install_shortcuts(cx);
         let this = cx.weak_entity();
         usage::install(this.clone(), cx);
+        profile::install(this.clone(), cx);
         notifications::install(this.clone(), cx);
         settings_git::init(this.clone(), cx);
         let computer_use = this.clone();
@@ -900,6 +903,7 @@ impl Root {
             pull_requests_page: None,
             plugins_page: None,
             sites_page: None,
+            dots_page: None,
             cloud_modal: None,
             settings_section: None,
             settings_page: None,
@@ -1427,6 +1431,7 @@ impl Root {
         self.bind_context_files(cx);
         self.reset_pull_requests(cx);
         usage::invalidate(cx);
+        profile::invalidate(cx);
         if self.ready
             && matches!(
                 self.state.route,
@@ -6290,6 +6295,7 @@ impl Root {
         self.plugins_event(&event, cx);
         self.oauth_account_event(&event, cx);
         usage::on_event(&event, cx);
+        profile::on_event(&event, cx);
         if matches!(event, Event::Closed) {
             self.crashed = true;
             cx.notify();

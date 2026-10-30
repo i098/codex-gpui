@@ -3,6 +3,7 @@ use gpui::Div;
 
 mod archive;
 mod automations;
+mod dots;
 mod home;
 mod mobile;
 mod plugins;
@@ -43,6 +44,8 @@ pub enum Route {
     Onboarding(ui::screens::onboarding::Page),
     /// Rail `Sites` (`/sites`).
     Sites,
+    /// Profile menu ▸ `Your dot` (`/dots/home`): the dots eligibility page.
+    Dots,
 }
 
 pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
@@ -56,6 +59,7 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = archive::actions(root, cx);
     root = crate::pull_requests::actions(root, cx);
     root = sites::actions(root, cx);
+    root = dots::actions(root, cx);
     root
 }
 
@@ -180,6 +184,7 @@ impl Root {
         self.cloud = None;
         self.plugins_page = None;
         self.sites_page = None;
+        self.dots_page = None;
         self.onboarding_page = None;
         self.cloud_modal = None;
         self.page = match self.state.route.clone() {
@@ -206,6 +211,7 @@ impl Root {
             Route::Security => Some(crate::security::shell(self, window, cx)),
             Route::Plugins(path) => Some(self.plugins_shell(path, window, cx)),
             Route::Sites => Some(sites::page(self, cx)),
+            Route::Dots => Some(dots::page(self, window, cx)),
             Route::Onboarding(page) => {
                 self.open_onboarding(page, window, cx);
                 None

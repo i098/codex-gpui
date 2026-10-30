@@ -63,6 +63,8 @@ actions!(
         OpenSecurity,
         /// Rail `Sites` (`/sites`).
         OpenSites,
+        /// Profile menu ▸ `Your dot` (`/dots/home`).
+        OpenDots,
         /// Home beacon `Start Voice` and the composer's `Start new voice chat`.
         StartVoiceChat,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
@@ -1070,9 +1072,7 @@ pub fn home_sidebar_header(
                             .into_any_element(),
                         "Your dot",
                     )
-                    // The original navigates in-app to its `/dots/home` route; the port has no
-                    // dot screen, so it opens the same ChatGPT page, like dot search results.
-                    .on_click(|_, _, cx| cx.open_url("https://chatgpt.com/dots/home")),
+                    .on_click(dispatch::<OpenDots>),
                 )),
         )
 }
