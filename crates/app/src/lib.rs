@@ -3247,7 +3247,12 @@ impl Root {
         let focus = editor.focus_handle(cx);
         if side_panel {
             self.automation_panel = Some(editor);
-            self.set_side(SidePanel::Automation, window, cx);
+            // An open tab still draws the replaced editor until the next sync.
+            if self.side_visible(SidePanel::Automation) {
+                self.sync(window, cx);
+            } else {
+                self.set_side(SidePanel::Automation, window, cx);
+            }
         } else {
             self.automation_editor = Some(editor);
         }

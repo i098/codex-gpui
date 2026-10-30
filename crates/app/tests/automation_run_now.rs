@@ -1961,14 +1961,23 @@ mod app_tools {
                 call_id: "proposal-call".into(),
             })
         });
-        // The reopened card's fresh editor must draw before its `Apply changes` takes the click.
-        fx.advance(Duration::ZERO)?;
+        // The save toast may sit over the footer's button: move off it and let it expire.
+        let clear_toast = |fx: &mut common::Fx| -> Result<()> {
+            fx.hover((10., 10.))?;
+            fx.advance(ui::toast::LIFETIME + Duration::from_millis(1))?;
+            ensure!(
+                fx.read(|root, cx| root.toasts(cx).is_empty()),
+                "toast still shown"
+            );
+            Ok(())
+        };
+        clear_toast(&mut fx)?;
         fx.click(primary)?;
         fx.wait("accepted task updated", |fx| saved(fx).is_some())?;
         ensure!(list()?["items"].as_array().unwrap().len() == 1);
         // `Open settings` opens the saved task's Automations page.
         let id = tasks[0]["id"].as_str().unwrap().to_owned();
-        fx.advance(Duration::ZERO)?;
+        clear_toast(&mut fx)?;
         fx.click(primary)?;
         fx.wait("task page", |fx| {
             fx.route() == app::Route::Automation(id.clone())
