@@ -73,6 +73,8 @@ actions!(
         OpenChangesPanel,
         /// Thread summary ▸ `Background processes` row: the command's terminal tab.
         OpenBackgroundTerminal,
+        /// Thread summary ▸ `Plan`: the latest plan in its editable side panel tab.
+        OpenPlanPanel,
         ShowWorkspaceTabView,
         StepWorkspaceLayout,
         /// `⌘K`, `⌘⇧P`, sidebar `Search`: the command menu.

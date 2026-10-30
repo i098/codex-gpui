@@ -1480,6 +1480,25 @@ impl ThreadView {
                     )),
             );
         }
+        if let Some((_, plan)) = crate::screens::plan::latest_plan(&self.turns) {
+            let title = crate::screens::plan::plan_title(plan);
+            sections.push(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(header("Plan".into()))
+                    .child(
+                        row("context-file-document", title, 16., 0, window)
+                            .mx(px(12.))
+                            .px(px(8.))
+                            .rounded(Theme::RADIUS_SM)
+                            .hover(move |style| style.bg(row_hover))
+                            .aria_label("Open plan")
+                            .on_click(crate::dispatch::<crate::OpenPlanPanel>),
+                    ),
+            );
+        }
         let n = sections.len();
         // A fixed popover: its own composited layer, whose rect (and tile grid) starts at the
         // widest shadow's ink, 1.5 blur = 30 px out.
