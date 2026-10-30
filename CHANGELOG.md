@@ -96,3 +96,4 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Group the diff find bar in one composited layer and paint its icons under the bar's rounded overflow clip, as the original does.
 - Clip the diff line-number gutters to the scroller so scrolled-out rows no longer paint over the panel header.
 - Measure text x-height at the requested optical size on macOS so CoreText metrics match the rendered font size
+- Space the Code Review list row's branch and diff stats 8 px apart, as the original does, so long branch names keep the same visible letters.
