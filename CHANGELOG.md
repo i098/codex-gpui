@@ -7,6 +7,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Send browser annotations with the next turn under `# Browser comments:`, after the diff comments and with the same comment numbers as the original app.
 - Keep file change cards after Undo and add Reapply through the host Git worker, without changing conversation history.
 - Add a background macOS check for minimize, zoom, hide, quit, and the 480×600 window minimum, with safe call-level checks for Hide Others and Show All.
 - Open the Sites page from the rail: the owned sites list from the ChatGPT backend `/websites`, with loading, error with Retry, and empty states.
