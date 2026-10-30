@@ -4,6 +4,7 @@ use gpui::Div;
 mod archive;
 mod automations;
 mod home;
+mod maps;
 mod mobile;
 mod plugins;
 mod settings;
@@ -46,6 +47,8 @@ pub enum Route {
     Onboarding(ui::screens::onboarding::Page),
     /// Rail `Sites` (`/sites`).
     Sites,
+    /// Explore ▸ `Maps` (`/maps`).
+    Maps,
 }
 
 pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
@@ -60,6 +63,7 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = archive::actions(root, cx);
     root = crate::pull_requests::actions(root, cx);
     root = sites::actions(root, cx);
+    root = maps::actions(root, cx);
     root
 }
 
@@ -185,6 +189,7 @@ impl Root {
         self.plugins_page = None;
         self.sites_page = None;
         self.space_page = None;
+        self.maps_page = None;
         self.onboarding_page = None;
         self.cloud_modal = None;
         self.page = match self.state.route.clone() {
@@ -212,6 +217,7 @@ impl Root {
             Route::Security => Some(crate::security::shell(self, window, cx)),
             Route::Plugins(path) => Some(self.plugins_shell(path, window, cx)),
             Route::Sites => Some(sites::page(self, cx)),
+            Route::Maps => Some(maps::page(self, cx)),
             Route::Onboarding(page) => {
                 self.open_onboarding(page, window, cx);
                 None
