@@ -4,7 +4,7 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 pub(super) struct Watch {
     path: String,
     dirty: bool,
-    local: Option<(RecommendedWatcher, Task<()>)>,
+    _local: Option<(RecommendedWatcher, Task<()>)>,
     remote: Option<RemoteWatch>,
 }
 
@@ -96,7 +96,7 @@ impl Root {
         self.diff_watch = Some(Watch {
             path,
             dirty: true,
-            local: Some((watcher, events)),
+            _local: Some((watcher, events)),
             remote: None,
         });
         if let Some(panel) = &self.diff {
@@ -112,7 +112,7 @@ impl Root {
         self.diff_watch = Some(Watch {
             path: path.clone(),
             dirty: true,
-            local: None,
+            _local: None,
             remote: Some(RemoteWatch {
                 id: id.clone(),
                 bridge: bridge.clone(),
