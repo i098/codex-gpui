@@ -169,6 +169,54 @@ pub(super) fn create(host: &super::LocalHost, params: &Value) -> Result<Value> {
     Ok(json!({"url": url}))
 }
 
+pub(super) fn compare(host: &super::LocalHost, params: &Value) -> Result<Value> {
+    let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
+    let repo: Value = serde_json::from_str(&repository_command(
+        host,
+        cwd,
+        &[
+            "gh".into(),
+            "repo".into(),
+            "view".into(),
+            "--json".into(),
+            "url,defaultBranchRef".into(),
+        ],
+    )?)?;
+    let status = super::git::fetch("git-commit-status", params)?;
+    let head = status["branch"]
+        .as_str()
+        .context("Create a branch before comparing")?;
+    let base = repo["defaultBranchRef"]["name"]
+        .as_str()
+        .context("Default branch is unavailable")?;
+    let mut url = url::Url::parse(
+        repo["url"]
+            .as_str()
+            .context("Repository URL is unavailable")?,
+    )?;
+    url.path_segments_mut()
+        .map_err(|_| anyhow::anyhow!("Invalid repository URL"))?
+        .push("compare")
+        .push(&format!("{base}...{head}"));
+    Ok(json!({"url": url.as_str()}))
+}
+
+pub(super) fn repair(host: &super::LocalHost, params: &Value) -> Result<Value> {
+    let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
+    let details = repository_command(
+        host,
+        cwd,
+        &[
+            "gh".into(),
+            "pr".into(),
+            "view".into(),
+            "--json".into(),
+            "url,title,body,comments,reviews,statusCheckRollup,mergeable".into(),
+        ],
+    )?;
+    Ok(serde_json::from_str(&details)?)
+}
+
 struct NotifyThread(Thread);
 
 impl Wake for NotifyThread {
@@ -317,6 +365,28 @@ for line in sys.stdin:
         assert_eq!(pushed.stdout, b"pending\n");
         let status = super::super::git::fetch("git-commit-status", &json!({"cwd": temp.path()}))?;
         assert_eq!(status["all"]["files"], 0);
+        Ok(())
+    }
+
+    #[test]
+    fn compare_encodes_branch_names_as_one_path_segment() -> Result<()> {
+        let (temp, host) = pr_fixture(
+            r#"{"url":"https://github.com/example/project","defaultBranchRef":{"name":"release/v1"}}"#,
+        )?;
+        ensure!(
+            Command::new("git")
+                .current_dir(temp.path())
+                .args(["checkout", "-b", "topic/one#two"])
+                .output()?
+                .status
+                .success(),
+            "Branch setup failed"
+        );
+        let result = compare(&host, &json!({"cwd": temp.path()}))?;
+        assert_eq!(
+            result["url"],
+            "https://github.com/example/project/compare/release%2Fv1...topic%2Fone%23two"
+        );
         Ok(())
     }
 

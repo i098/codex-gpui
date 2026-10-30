@@ -277,6 +277,8 @@ Branch prefix saves on blur or Enter; multiline instructions save after three id
 Save and Command-S also write pending instructions.
 The native `cargo test -p app --test git_settings -- --test-threads=1` replay checks autosave, write recovery, shutdown flush, and confirmed worktree preferences.
 PR watch preference changes update active PR heartbeat instructions; paused automations remain unchanged.
+The branch row shows changed files and line counts.
+Its menu opens, copies, compares, and adds pull requests to the chat.
 The thread Git menu creates pull requests with a title, description, base branch, draft option, and explicit commit consent.
 Worktree starts show creating and attaching notices, then a thread status after creation.
 Setup failures show a separate error notice.

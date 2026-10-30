@@ -1911,7 +1911,8 @@ impl Host for LocalHost {
             | "git-push" | "git-checkout" | "git-cat-file" | "git-review-patch"
             | "git-file-url" => git::fetch(endpoint, &params)?,
             "gh-cli-status" | "gh-current-user" | "gh-pr-search" | "gh-pr-detail"
-            | "gh-pr-patch" | "gh-pr-media" | "gh-create-pr" => {
+            | "gh-pr-patch" | "gh-pr-media" | "gh-create-pr" | "gh-thread-pr"
+            | "gh-thread-compare" | "gh-pr-repair" => {
                 github_pull_requests::fetch(self, endpoint, &params)?
             }
             "create-worktree" => self.create_worktree(&params)?,

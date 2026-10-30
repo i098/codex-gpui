@@ -63,12 +63,18 @@ pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
 pub use actions::{EditMessage, ForkThread, PatchTurn, RevertTurn, ThreadPressed};
 use actions::{TurnFocus, action_row};
+#[derive(Clone, Copy)]
 pub enum GitAction {
     Refresh,
     OpenForm,
     CreateBranch,
     SwitchBranch,
     CreatePr,
+    ViewPr,
+    CopyPr,
+    AddPrToChat,
+    CompareBranch,
+    RepairPr,
 }
 
 impl gpui::EventEmitter<GitAction> for ThreadView {}
@@ -154,6 +160,7 @@ pub struct ThreadView {
     chat_actions_hovered: bool,
     git_repository: Option<Result<crate::dialog::CommitRepository, String>>,
     git_phase: Option<&'static str>,
+    pull_request: Option<Value>,
     worktree_status: Option<&'static str>,
     git_actions: Option<(gpui::FocusHandle, Option<usize>)>,
     git_trigger: Option<gpui::FocusHandle>,
@@ -345,9 +352,18 @@ impl ThreadView {
         cx.notify();
     }
 
+    pub fn set_pull_request(&mut self, pull_request: Option<Value>, cx: &mut Context<Self>) {
+        self.pull_request = pull_request;
+        cx.notify();
+    }
+
     pub fn set_worktree_status(&mut self, status: Option<&'static str>, cx: &mut Context<Self>) {
         self.worktree_status = status;
         cx.notify();
+    }
+
+    pub fn pull_request(&self) -> Option<&Value> {
+        self.pull_request.as_ref()
     }
 
     pub fn git_branch(&self) -> Option<&str> {
@@ -359,7 +375,7 @@ impl ThreadView {
             .as_deref()
     }
 
-    pub fn git_action_rows(&self) -> [(&'static str, Option<&'static str>); 5] {
+    pub fn git_action_rows(&self) -> [(&'static str, Option<&'static str>); 11] {
         let (commit, push) = match &self.git_repository {
             None => (Some("Loading diff…"), Some("Loading push status…")),
             Some(Err(_)) => (
@@ -392,7 +408,29 @@ impl ThreadView {
             ("Create branch", self.git_phase.or(create)),
             ("Switch branch", self.git_phase.or(switch)),
             ("Create pull request", self.git_phase.or(switch)),
+            (
+                "View PR",
+                self.pull_request.is_none().then_some("No pull request"),
+            ),
+            (
+                "Copy link",
+                self.pull_request.is_none().then_some("No pull request"),
+            ),
+            (
+                "Add to chat",
+                self.pull_request.is_none().then_some("No pull request"),
+            ),
+            ("Compare branch", self.git_phase),
+            (
+                "Repair",
+                self.pull_request.is_none().then_some("No pull request"),
+            ),
+            (
+                "Open in GitHub",
+                self.pull_request.is_none().then_some("No pull request"),
+            ),
         ]
+        .map(|(label, reason)| (label, self.git_phase.or(reason)))
     }
 
     pub fn git_command_available(&self) -> bool {
@@ -448,6 +486,12 @@ impl ThreadView {
             2 => GitAction::CreateBranch,
             3 => GitAction::SwitchBranch,
             4 => GitAction::CreatePr,
+            5 => GitAction::ViewPr,
+            6 => GitAction::CopyPr,
+            7 => GitAction::AddPrToChat,
+            8 => GitAction::CompareBranch,
+            9 => GitAction::RepairPr,
+            10 => GitAction::ViewPr,
             _ => GitAction::OpenForm,
         });
     }
@@ -521,12 +565,10 @@ impl ThreadView {
         )
     }
 
-    pub(super) fn git_popup(&self, window: &Window, cx: &Context<Self>) -> impl IntoElement {
+    pub(super) fn git_popup(&self, _window: &Window, cx: &Context<Self>) -> impl IntoElement {
         let t = cx.theme();
         let (_, active) = self.git_actions.as_ref().unwrap();
-        let menu_width = self.git_phase.map_or(112.03125, |phase| {
-            (f32::from(width(window, phase, 13., 430., None)) + 24.).max(112.03125)
-        });
+        let menu_width = 220.;
         let content = crate::composer::popover(t, menu_width, |mut menu| {
             if let Some(phase) = self.git_phase {
                 return menu.child(
@@ -655,6 +697,7 @@ impl ThreadView {
             chat_actions_hovered: false,
             git_repository: None,
             git_phase: None,
+            pull_request: None,
             worktree_status: None,
             git_actions: None,
             git_trigger: None,
@@ -2545,6 +2588,55 @@ impl Render for ThreadView {
                             .when_some(self.worktree_status, |d, status| {
                                 d.child(text(status, 14., 20., 400., t.text))
                             })
+                            .when_some(
+                                self.git_repository
+                                    .as_ref()
+                                    .and_then(|result| result.as_ref().ok()),
+                                |d, repo| {
+                                    d.child(
+                                        div()
+                                            .id("thread-git-summary")
+                                            .role(gpui::Role::Button)
+                                            .aria_label("Branch changes and pull request actions")
+                                            .tab_index(0)
+                                            .flex()
+                                            .gap(px(12.))
+                                            .p(px(8.))
+                                            .rounded(px(8.))
+                                            .border_1()
+                                            .border_color(t.border)
+                                            .child(text(
+                                                format!(
+                                                    "{} · {} files · +{} −{}",
+                                                    repo.branch
+                                                        .as_deref()
+                                                        .unwrap_or("Detached HEAD"),
+                                                    repo.all.files,
+                                                    repo.all.additions,
+                                                    repo.all.deletions
+                                                ),
+                                                13.,
+                                                20.,
+                                                400.,
+                                                t.text_secondary,
+                                            ))
+                                            .child(text(
+                                                if self.pull_request.is_some() {
+                                                    "View PR"
+                                                } else {
+                                                    "Create pull request"
+                                                },
+                                                13.,
+                                                20.,
+                                                500.,
+                                                t.text,
+                                            ))
+                                            .on_click(cx.listener(|view, _, window, cx| {
+                                                view.open_git_actions(false, window, cx)
+                                            })),
+                                    )
+                                },
+                            )
                             .children(turns)
                             .on_children_prepainted(measure),
                     )
@@ -2561,7 +2653,7 @@ impl Render for ThreadView {
             .when(self.summary_open, |d| {
                 d.child(gpui::deferred(self.summary(window, &t, cx)))
             })
-            .when(self.summary_open && self.git_actions.is_some(), |d| {
+            .when(self.git_actions.is_some(), |d| {
                 d.child(self.git_popup(window, cx))
             })
             // The `z-20` composer band is its own cc layer; its rect (and tile grid) starts at

@@ -199,6 +199,15 @@ fn ci(value: &Value) -> &'static str {
 }
 
 pub(super) fn fetch(host: &super::LocalHost, endpoint: &str, params: &Value) -> Result<Value> {
+    if endpoint == "gh-thread-pr" {
+        return super::git_pr::summary(host, params);
+    }
+    if endpoint == "gh-thread-compare" {
+        return super::git_pr::compare(host, params);
+    }
+    if endpoint == "gh-pr-repair" {
+        return super::git_pr::repair(host, params);
+    }
     if endpoint == "gh-create-pr" {
         return super::git_pr::create(host, params);
     }
