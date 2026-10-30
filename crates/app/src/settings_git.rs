@@ -17,6 +17,91 @@ pub(super) fn init(root: WeakEntity<Root>, cx: &mut App) {
     });
 }
 
+pub(crate) async fn attachment_owners(
+    bridge: &Bridge,
+    attachment_type: &str,
+    key: &str,
+) -> Result<HashSet<String>> {
+    let mut owners = HashSet::new();
+    let mut cursor: Option<String> = None;
+    let mut seen = HashSet::new();
+    loop {
+        let response: Value = bridge
+            .request(
+                "thread/attachmentOwner/list",
+                json!({
+                    "attachmentType": attachment_type, "identityKey": key, "archived": false,
+                    "cursor": cursor, "limit": 100
+                }),
+            )
+            .await?;
+        let data = response["data"]
+            .as_array()
+            .context("Missing attachment owners")?;
+        for owner in data {
+            if owner["archived"] != true {
+                owners.insert(
+                    owner["threadId"]
+                        .as_str()
+                        .context("Missing owner thread ID")?
+                        .to_owned(),
+                );
+            }
+        }
+        cursor = response["nextCursor"].as_str().map(str::to_owned);
+        let Some(next) = &cursor else {
+            return Ok(owners);
+        };
+        anyhow::ensure!(
+            seen.insert(next.clone()),
+            "Repeated attachment owner cursor"
+        );
+    }
+}
+
+async fn worktree_threads(bridge: &Bridge, threads: &[Value], root: &str) -> Result<Vec<Value>> {
+    let owners = if bridge.is_acp() {
+        HashSet::new()
+    } else {
+        match attachment_owners(bridge, "worktree", root).await {
+            Err(error)
+                if error
+                    .downcast_ref::<bridge::RpcError>()
+                    .is_some_and(|error| error.code == -32601) =>
+            {
+                HashSet::new()
+            }
+            result => result?,
+        }
+    };
+    let mut related = threads
+        .iter()
+        .filter(|thread| {
+            in_worktree(thread, root) || thread["id"].as_str().is_some_and(|id| owners.contains(id))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    for id in &owners {
+        if !related
+            .iter()
+            .any(|thread| thread["id"].as_str() == Some(id))
+        {
+            let response: Value = bridge
+                .request(
+                    "thread/read",
+                    json!({"threadId": id, "includeTurns": false}),
+                )
+                .await?;
+            related.push(response["thread"].clone());
+        }
+    }
+    for thread in &mut related {
+        thread["isAttachmentOwner"] =
+            json!(thread["id"].as_str().is_some_and(|id| owners.contains(id)));
+    }
+    Ok(related)
+}
+
 async fn threads(bridge: &Bridge) -> Result<Vec<Value>> {
     let mut rows = Vec::new();
     let mut cursor: Option<String> = None;
@@ -80,10 +165,12 @@ impl Root {
             let rows = response["worktrees"].as_array_mut().context("Missing worktree list")?;
             for row in rows.iter_mut() {
                 let root = row["dir"].as_str().context("Missing worktree path")?.to_owned();
-                row["conversations"] = json!(threads.iter().filter(|thread| in_worktree(thread, &root)).map(|thread| json!({
-                    "id": thread["id"], "title": thread["name"].as_str().map(str::trim).filter(|name| !name.is_empty()).or_else(|| thread["preview"].as_str()).unwrap_or_default(),
-                    "isPinned": pinned(thread), "isSubagent": thread["source"].get("subAgent").is_some()
-                })).collect::<Vec<_>>());
+                row["conversations"] = json!(worktree_threads(&bridge, &threads, &root).await?.iter()
+                    .map(|thread| json!({
+                        "id": thread["id"], "title": thread["name"].as_str().map(str::trim).filter(|name| !name.is_empty()).or_else(|| thread["preview"].as_str()).unwrap_or_default(),
+                        "isPinned": pinned(thread), "isSubagent": thread["source"].get("subAgent").is_some(),
+                        "isAttachmentOwner": thread["isAttachmentOwner"]
+                    })).collect::<Vec<_>>());
             }
             Ok::<_, anyhow::Error>((default_root, std::mem::take(rows)))
         });
@@ -113,7 +200,7 @@ impl Root {
         let bridge = self.bridge.clone();
         let remove = cx.background_spawn(async move {
             let threads = threads(&bridge).await?;
-            let owners: Vec<_> = threads.iter().filter(|thread| in_worktree(thread, &path)).collect();
+            let owners = worktree_threads(&bridge, &threads, &path).await?;
             ensure!(!owners.iter().any(|thread| pinned(thread)), "Unpin the chats in this worktree before deleting it");
             for thread in owners {
                 bridge.request::<_, Value>("thread/archive", json!({"threadId": thread["id"]})).await?;
@@ -368,5 +455,71 @@ impl Root {
             });
         })
         .detach();
+    }
+}
+
+#[cfg(test)]
+mod owner_tests {
+    use super::*;
+
+    #[test]
+    fn owners_exclude_archived_threads_and_merge_pages() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let fixture = directory.path().join("owners.jsonl");
+        let pages = [
+            json!({"data": [{"threadId": "one", "archived": false}, {"threadId": "archived", "archived": true}], "nextCursor": "next"}),
+            json!({"data": [{"threadId": "one", "archived": false}, {"threadId": "two", "archived": false}], "nextCursor": null}),
+        ];
+        let mut records = String::new();
+        for (id, page) in pages.into_iter().enumerate() {
+            for (dir, msg) in [
+                (
+                    "send",
+                    json!({"id": id, "method": "thread/attachmentOwner/list", "params": {
+                        "attachmentType": "worktree", "identityKey": "/worktree", "archived": false,
+                        "cursor": if id == 0 { Value::Null } else { json!("next") }, "limit": 100
+                    }}),
+                ),
+                ("recv", json!({"id": id, "result": page})),
+            ] {
+                records.push_str(&json!({"dir": dir, "msg": msg}).to_string());
+                records.push('\n');
+            }
+        }
+        std::fs::write(&fixture, records)?;
+        let (bridge, _) = Bridge::replay(&fixture)?;
+        let owners = pollster::block_on(attachment_owners(&bridge, "worktree", "/worktree"))?;
+        assert_eq!(owners, HashSet::from(["one".to_owned(), "two".to_owned()]));
+        Ok(())
+    }
+
+    #[test]
+    fn attachment_only_pinned_chat_blocks_worktree_deletion() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let fixture = directory.path().join("pinned-owner.jsonl");
+        let exchanges = [
+            (
+                "thread/attachmentOwner/list",
+                json!({"data": [{"threadId": "attached"}], "nextCursor": null}),
+            ),
+            (
+                "thread/read",
+                json!({"thread": {"id": "attached", "cwd": "/elsewhere", "section": {"id": PINNED_SECTION_ID}}}),
+            ),
+        ];
+        let mut records = String::new();
+        for (id, (method, result)) in exchanges.into_iter().enumerate() {
+            records.push_str(&format!(
+                "{}\n{}\n",
+                json!({"dir": "send", "msg": {"id": id, "method": method, "params": {}}}),
+                json!({"dir": "recv", "msg": {"id": id, "result": result}})
+            ));
+        }
+        std::fs::write(&fixture, records)?;
+        let (bridge, _) = Bridge::replay(&fixture)?;
+        let threads = pollster::block_on(worktree_threads(&bridge, &[], "/worktree"))?;
+        assert!(threads.iter().any(pinned));
+        assert_eq!(threads[0]["isAttachmentOwner"], true);
+        Ok(())
     }
 }

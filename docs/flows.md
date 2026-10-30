@@ -1695,3 +1695,13 @@ The recap prompt asks the model not to use tools; the existing permissions remai
 Live protocol evidence uses Codex CLI `0.164.0-alpha.11.1`.
 The synthetic conversation retained both turns after the recap.
 The real server accepted `feedback/save` and `feedback/upload` with logs excluded.
+
+## Pull request chat attachments (PROTO-18)
+
+Open `Link a chat` in the pull request detail pane to read the current attachment owners.
+Each chat shows `Link` or `Unlink` according to that result.
+The app uses `thread/attachment/add` and `thread/attachment/remove` with the canonical pull request identity.
+Worktree settings show attachment owners alongside chats whose working directory lies in the worktree.
+Worktree deletion checks both groups and refuses deletion while an owner chat is pinned.
+Servers without attachment-owner support retain the working-directory list.
+
