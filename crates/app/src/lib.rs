@@ -2975,6 +2975,7 @@ impl Root {
     /// The strip tab of `side` in the open thread `view`: `(icon, label)`. No terminal tab
     /// without a background command, no file tab without a file viewer, no side chat tab
     /// once the side chat is gone.
+    #[allow(clippy::too_many_arguments)]
     fn side_tab(
         side: SidePanel,
         view: &Entity<ThreadView>,
