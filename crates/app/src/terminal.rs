@@ -7,7 +7,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 use portable_pty::{CommandBuilder, MasterPty, PtySize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     io::{Read, Write},
@@ -25,6 +25,20 @@ use ui::{
 
 static NEXT_PROCESS: AtomicU64 = AtomicU64::new(1);
 const HOME_TERMINAL: &str = "home";
+const READ_THREAD_TERMINAL: &str = "read_thread_terminal";
+
+/// The `dynamicTools` entry a new chat starts with, as the original declares it.
+pub(crate) fn read_thread_terminal_tool() -> Value {
+    json!({
+        "name": READ_THREAD_TERMINAL,
+        "description": "Read the current app terminal output for this desktop thread. Use it when you need shell output or the current prompt before deciding the next step. This tool takes no arguments.",
+        "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+    })
+}
+
+fn tool_failure(text: &str) -> Value {
+    json!({ "success": false, "contentItems": [{ "type": "inputText", "text": text }] })
+}
 
 impl Root {
     pub(super) fn send_shell(
@@ -317,6 +331,65 @@ impl Root {
     pub fn terminal_visible(&self) -> bool {
         self.terminal_panel().is_some()
             && (self.terminal.visible || self.side == Some(SidePanel::Console))
+    }
+
+    /// The answer to an `item/tool/call` of `read_thread_terminal`, or `None` for another tool:
+    /// the active tab of the calling thread's terminal, as the original words it.
+    pub(crate) fn read_thread_terminal(&self, params: &Value, cx: &App) -> Option<Value> {
+        if params["tool"] != READ_THREAD_TERMINAL {
+            return None;
+        }
+        if !params["arguments"].is_null()
+            && params["arguments"]
+                .as_object()
+                .is_none_or(|a| !a.is_empty())
+        {
+            return Some(tool_failure(&format!(
+                "{READ_THREAD_TERMINAL} takes no arguments."
+            )));
+        }
+        let session = params["threadId"]
+            .as_str()
+            .and_then(|id| self.terminal.panels.get(id))
+            .map(|panel| panel.read(cx))
+            .and_then(|panel| Some((panel.sessions.get(panel.active)?, &panel.shell)));
+        let Some((session, shell)) = session else {
+            return Some(tool_failure(
+                "No app terminal session is attached to this thread yet.",
+            ));
+        };
+        let buffer = &session.surface.read(cx).buffer;
+        let output = buffer
+            .selected(
+                (0, 0),
+                (
+                    buffer.rows.len().saturating_sub(1),
+                    usize::from(buffer.size.1),
+                ),
+            )
+            .trim_end()
+            .to_owned();
+        let mut lines = vec![
+            "App terminal snapshot for this thread:".to_owned(),
+            format!("cwd: {}", session.cwd),
+            format!("shell: {shell}"),
+        ];
+        if buffer.truncated() {
+            lines.push(
+                "note: output is truncated to the latest terminal buffer kept by the app.".into(),
+            );
+        }
+        lines.push("```text".into());
+        lines.push(if output.is_empty() {
+            "[terminal has no output yet]".into()
+        } else {
+            output
+        });
+        lines.push("```".into());
+        Some(json!({
+            "success": true,
+            "contentItems": [{ "type": "inputText", "text": lines.join("\n") }],
+        }))
     }
 
     /// The active tab's screen text.

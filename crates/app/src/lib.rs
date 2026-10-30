@@ -6517,10 +6517,12 @@ impl Root {
                     self.show_approval(cx);
                 } else {
                     let response = match pending.method.as_str() {
-                        "item/tool/call" => json!({
-                            "success": false,
-                            "contentItems": [{ "type": "inputText", "text": format!("Unsupported dynamic tool: {}", pending.params["tool"].as_str().unwrap_or_default()) }]
-                        }),
+                        "item/tool/call" => self
+                            .read_thread_terminal(&pending.params, cx)
+                            .unwrap_or_else(|| json!({
+                                "success": false,
+                                "contentItems": [{ "type": "inputText", "text": format!("Unsupported dynamic tool: {}", pending.params["tool"].as_str().unwrap_or_default()) }]
+                            })),
                         "mcpServer/elicitation/request" => json!({
                             "action": "decline", "content": null, "_meta": null
                         }),

@@ -154,6 +154,13 @@ pub enum ThreadItem {
         #[serde(flatten)]
         metadata: serde_json::Map<String, Value>,
     },
+    /// A call to a client tool the thread was started with (`dynamicTools`).
+    DynamicToolCall {
+        id: String,
+        tool: String,
+        /// `inProgress` | `completed` | `failed`
+        status: String,
+    },
     ContextCompaction {
         id: String,
     },

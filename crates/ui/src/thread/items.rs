@@ -490,6 +490,8 @@ pub(super) enum Activity<'a> {
     },
     /// A `contextCompaction` item: `Compacting context`, `Context compacted`, …
     Compaction(&'static str),
+    /// A `dynamicToolCall` item: `Reading chat terminal`, `Read chat terminal`, or the tool name.
+    Tool(&'static str, String),
     /// Consecutive finished commands and file changes behind one summary
     /// (`agent-activity-group`, keyed by its first item): `Edited a file, read files, ran
     /// commands`.
@@ -552,6 +554,7 @@ impl Activity<'_> {
                 .filter(|s| !s.is_empty())
                 .collect(),
             Activity::Compaction(label) => vec![(*label).to_owned()],
+            Activity::Tool(_, label) => vec![label.clone()],
             Activity::Group {
                 key, summary, rows, ..
             } => std::iter::once(summary.clone())
@@ -620,6 +623,18 @@ pub(super) fn activities<'a>(
             ThreadItem::McpToolCall { .. } => {
                 flush(&mut out, &mut group);
                 out.push(Activity::Mcp(item));
+            }
+            ThreadItem::DynamicToolCall { tool, status, .. } => {
+                flush(&mut out, &mut group);
+                out.push(match (tool.as_str(), status.as_str()) {
+                    ("read_thread_terminal", "inProgress") => {
+                        Activity::Tool("thread-terminal", "Reading chat terminal".into())
+                    }
+                    ("read_thread_terminal", _) => {
+                        Activity::Tool("thread-terminal", "Read chat terminal".into())
+                    }
+                    _ => Activity::Tool("thread-mcp", tool.clone()),
+                });
             }
             ThreadItem::CommandExecution { .. } | ThreadItem::FileChange { .. } => {
                 group.push(item);
@@ -890,6 +905,7 @@ pub(super) fn activity(
                 "thread-compaction",
                 plain(label(words.to_owned(), text60)),
             ),
+            Activity::Tool(icon, words) => row(icon, plain(label(words, text60))),
             Activity::Mcp(item) => {
                 let ThreadItem::McpToolCall {
                     id,
