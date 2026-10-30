@@ -168,6 +168,8 @@ pub struct ThreadView {
     embedded: bool,
     _tick: Option<Task<()>>,
     running_since: HashMap<String, Instant>,
+    /// A running turn's worked seconds, frozen when its final answer started streaming.
+    answer_secs: HashMap<String, i64>,
     /// Reasoning items seen starting, and the seconds each took once completed. The protocol
     /// carries no per-item duration; a loaded history has none, and the original draws no
     /// header for such an item.
@@ -658,6 +660,7 @@ impl ThreadView {
             embedded: false,
             _tick: None,
             running_since: HashMap::new(),
+            answer_secs: HashMap::new(),
             reasoning_since: HashMap::new(),
             reasoning_secs: HashMap::new(),
             stream_fades: HashMap::new(),
@@ -1558,6 +1561,7 @@ impl ThreadView {
                         .or_insert_with(|| cx.background_executor().now());
                 } else {
                     self.running_since.remove(&n.turn.id);
+                    self.answer_secs.remove(&n.turn.id);
                 }
                 match self.turns.iter_mut().find(|t| t.id == n.turn.id) {
                     Some(turn) => {
@@ -1738,10 +1742,11 @@ impl ThreadView {
                     return;
                 };
                 match self.item_mut(&n.item_id) {
-                    Some(ThreadItem::AgentMessage { text, .. }) => {
+                    Some(ThreadItem::AgentMessage { text, phase, .. }) => {
                         let start = text.len();
                         text.push_str(&n.delta);
                         let end = text.len();
+                        let answer = start == 0 && phase.as_deref() == Some("final_answer");
                         if start != end && !cx.reduce_motion() {
                             self.stream_fades
                                 .entry(n.item_id)
@@ -1751,6 +1756,14 @@ impl ThreadView {
                                     started_at: cx.background_executor().now(),
                                     alpha: 0.,
                                 });
+                        }
+                        // The original's `Worked for` stops at the final answer's first text.
+                        if answer && end > 0 {
+                            let now = cx.background_executor().now();
+                            if let Some(turn) = self.turns.iter().find(|t| t.id == n.turn_id) {
+                                let secs = self.running_seconds(turn, now);
+                                self.answer_secs.entry(n.turn_id).or_insert(secs);
+                            }
                         }
                     }
                     Some(ThreadItem::CommandExecution {
@@ -1917,17 +1930,18 @@ impl ThreadView {
                     self.fades(item),
                 ));
             }
-            // The final answer folds the work while it still streams; the label stays live.
+            // The final answer folds the work while it still streams, as `Worked for` the time
+            // until the answer started.
             let running = turn.status == TurnStatus::InProgress;
-            let label = if running {
-                let secs = self.running_seconds(turn, cx.background_executor().now());
-                format!("Working for {}", duration(secs))
+            let secs = if running {
+                self.answer_secs
+                    .get(&turn.id)
+                    .copied()
+                    .unwrap_or_else(|| self.running_seconds(turn, cx.background_executor().now()))
             } else {
-                format!(
-                    "Worked for {}",
-                    duration(turn.duration_ms.unwrap_or(0) / 1000)
-                )
+                turn.duration_ms.unwrap_or(0) / 1000
             };
+            let label = format!("Worked for {}", duration(secs));
             let open = self.expanded.contains(&turn.id)
                 || self.find.as_ref().is_some_and(|find| {
                     turn.items[..turn.items.len() - 1].iter().any(|item| {
@@ -3270,9 +3284,35 @@ mod tests {
             );
             assert_eq!(view.turns[0].started_at, None);
         });
+        // `Worked for` stops when the final answer's first text arrives.
+        let item = |method: &str, params: serde_json::Value| Event::Notification {
+            method: method.into(),
+            params,
+        };
+        view.update(cx, |view, cx| {
+            view.apply(
+                &item(
+                    "item/started",
+                    serde_json::json!({"threadId": "timing", "turnId": "turn", "item": {
+                        "type": "agentMessage", "id": "answer", "text": "",
+                        "phase": "final_answer",
+                    }}),
+                ),
+                cx,
+            );
+            let delta = item(
+                "item/agentMessage/delta",
+                serde_json::json!({"threadId": "timing", "turnId": "turn",
+                    "itemId": "answer", "delta": "Done"}),
+            );
+            view.apply(&delta, cx);
+        });
+        cx.executor().advance_clock(Duration::from_secs(5));
+        view.read_with(cx, |view, _| assert_eq!(view.answer_secs["turn"], 1));
         view.update(cx, |view, cx| view.apply(&event("completed"), cx));
         view.read_with(cx, |view, _| {
-            assert!(!view.running_since.contains_key("turn"))
+            assert!(!view.running_since.contains_key("turn"));
+            assert!(!view.answer_secs.contains_key("turn"));
         });
     }
 
