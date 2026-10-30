@@ -125,7 +125,11 @@ impl PickerMotion {
             1.
         };
         if target != self.scale.1 {
-            let spring = if target > 1. { THUMB_GROW } else { THUMB_SHRINK };
+            let spring = if target > 1. {
+                THUMB_GROW
+            } else {
+                THUMB_SHRINK
+            };
             self.scale = (self.scale_at(now), target, spring, now);
         }
     }
@@ -134,8 +138,8 @@ impl PickerMotion {
         let enter = if reduced {
             1.
         } else {
-            let t = now.saturating_sub(PICKER_ENTER_DELAY).as_secs_f32()
-                / PICKER_ENTER.as_secs_f32();
+            let t =
+                now.saturating_sub(PICKER_ENTER_DELAY).as_secs_f32() / PICKER_ENTER.as_secs_f32();
             motion::EASE_ENTER_SNAPPY(t.min(1.))
         };
         let scale = self.scale_at(now);
@@ -145,14 +149,18 @@ impl PickerMotion {
         PickerFrame {
             enter,
             height: self.height.value(now),
-            views: self.views.each_ref().map(|[o, t]| (o.value(now), t.value(now))),
+            views: self
+                .views
+                .each_ref()
+                .map(|[o, t]| (o.value(now), t.value(now))),
             thumb: self.thumb_at(now),
-            scale: if settled { self.scale.1 } else { scale.position },
+            scale: if settled {
+                self.scale.1
+            } else {
+                scale.position
+            },
             switching,
-            animating: enter < 1.
-                || switching
-                || now < self.thumb.2 + motion::RELAXED
-                || !settled,
+            animating: enter < 1. || switching || now < self.thumb.2 + motion::RELAXED || !settled,
         }
     }
 }
@@ -223,9 +231,8 @@ impl Composer {
                     .child(view(f.views[1], -10., slider)),
             )
         });
-        let list = shown(f.views[2], advanced).then(|| {
-            track(view(f.views[2], 10., self.models_view(t, advanced, cx)))
-        });
+        let list = shown(f.views[2], advanced)
+            .then(|| track(view(f.views[2], 10., self.models_view(t, advanced, cx))));
         let list_height = 8. + 28. + 32. * self.models.len() as f32;
         let height = SIMPLE_VIEW_HEIGHT + (list_height - SIMPLE_VIEW_HEIGHT) * f.height;
         popover(t, 254., |d| {
@@ -280,37 +287,38 @@ impl Composer {
             .px(px(32.))
             .flex()
             .justify_center()
-            .child(corner("fast-mode", "composer-bolt", bolt).left_0().when(
-                interactive,
-                |d| {
-                    d.track_focus(&self.menu_focus.items[SPEED_ITEM])
-                        .hover_listener_mode(gpui::HoverListenerMode::InputModalityIndependent)
-                        .on_hover(cx.listener(|this, hovered: &bool, window, cx| {
-                            if *hovered {
-                                this.hover_speed(window, cx);
-                            } else {
-                                this.speed_timer = None;
-                            }
-                        }))
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.activate_menu_item(SPEED_ITEM, window, cx)
-                        }))
-                        .when(self.speed_open, |d| {
-                            // Right of the 32 px trigger plus 5 px, top-aligned with the
-                            // menu's box (4 px above its padding box).
-                            d.child(
-                                deferred(
-                                    div()
-                                        .absolute()
-                                        .left(px(37.))
-                                        .top(px(-4.))
-                                        .child(self.speed_menu(t, cx)),
+            .child(
+                corner("fast-mode", "composer-bolt", bolt)
+                    .left_0()
+                    .when(interactive, |d| {
+                        d.track_focus(&self.menu_focus.items[SPEED_ITEM])
+                            .hover_listener_mode(gpui::HoverListenerMode::InputModalityIndependent)
+                            .on_hover(cx.listener(|this, hovered: &bool, window, cx| {
+                                if *hovered {
+                                    this.hover_speed(window, cx);
+                                } else {
+                                    this.speed_timer = None;
+                                }
+                            }))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.activate_menu_item(SPEED_ITEM, window, cx)
+                            }))
+                            .when(self.speed_open, |d| {
+                                // Right of the 32 px trigger plus 5 px, top-aligned with the
+                                // menu's box (4 px above its padding box).
+                                d.child(
+                                    deferred(
+                                        div()
+                                            .absolute()
+                                            .left(px(37.))
+                                            .top(px(-4.))
+                                            .child(self.speed_menu(t, cx)),
+                                    )
+                                    .with_priority(2),
                                 )
-                                .with_priority(2),
-                            )
-                        })
-                },
-            ))
+                            })
+                    }),
+            )
             .child(
                 div()
                     .id("select-model")
@@ -350,18 +358,22 @@ impl Composer {
                             ),
                     )
                     .when(interactive, |d| {
-                        d.track_focus(&self.menu_focus.items[0]).on_click(cx.listener(
-                            |this, _, window, cx| this.activate_menu_item(0, window, cx),
-                        ))
+                        d.track_focus(&self.menu_focus.items[0]).on_click(
+                            cx.listener(|this, _, window, cx| {
+                                this.activate_menu_item(0, window, cx)
+                            }),
+                        )
                     }),
             )
             .child(
                 corner("reset-effort", "composer-reset", t.text_tertiary)
                     .right_0()
                     .when(interactive, |d| {
-                        d.track_focus(&self.menu_focus.items[2]).on_click(cx.listener(
-                            |this, _, window, cx| this.activate_menu_item(2, window, cx),
-                        ))
+                        d.track_focus(&self.menu_focus.items[2]).on_click(
+                            cx.listener(|this, _, window, cx| {
+                                this.activate_menu_item(2, window, cx)
+                            }),
+                        )
                     }),
             );
         // Track 230 px; dot centers 13 + 51·i; the thumb (28 px) centers on the thumb
@@ -475,9 +487,7 @@ impl Composer {
                         .when(interactive, |d| {
                             d.on_mouse_down(MouseButton::Left, move |_, _, cx| press(cx))
                                 .on_mouse_up(MouseButton::Left, move |_, _, cx| release(cx))
-                                .on_mouse_up_out(MouseButton::Left, move |_, _, cx| {
-                                    release_out(cx)
-                                })
+                                .on_mouse_up_out(MouseButton::Left, move |_, _, cx| release_out(cx))
                                 // `_ThumbInput`: the 28 px hover target on the thumb.
                                 .child(
                                     div()
@@ -487,7 +497,11 @@ impl Composer {
                                         .top(px(-2.))
                                         .size(px(28.))
                                         .on_hover(move |hovered: &bool, _, cx| {
-                                            if *hovered { hover_on(cx) } else { hover_off(cx) }
+                                            if *hovered {
+                                                hover_on(cx)
+                                            } else {
+                                                hover_off(cx)
+                                            }
                                         }),
                                 )
                                 .children(efforts.iter().enumerate().map(|(i, effort)| {

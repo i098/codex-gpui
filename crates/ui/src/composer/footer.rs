@@ -162,9 +162,7 @@ impl Composer {
             .when(!open, |d| {
                 d.child(
                     gpui::canvas(
-                        move |bounds, _, cx| {
-                            closed_width.update(cx, |w, _| *w = bounds.size.width)
-                        },
+                        move |bounds, _, cx| closed_width.update(cx, |w, _| *w = bounds.size.width),
                         |_, (), _, _| {},
                     )
                     .absolute()
