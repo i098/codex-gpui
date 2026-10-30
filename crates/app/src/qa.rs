@@ -46,7 +46,9 @@ pub fn prepare() -> Result<()> {
     let home =
         PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?).canonicalize()?;
     let root = home.join("Library/Application Support/codex-gpui-qa/profile");
-    let smoke = std::env::args().nth(1).is_some_and(|flag| flag == "--qa-smoke-profile");
+    let smoke = std::env::args()
+        .nth(1)
+        .is_some_and(|flag| flag == "--qa-smoke-profile");
     let shared_auth = std::env::var_os("CODEX_HOME")
         .map_or_else(|| home.join(".codex"), PathBuf::from)
         .join("auth.json");
