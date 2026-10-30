@@ -572,6 +572,11 @@ It then runs `tools/appcast.py` and uploads `appcast.xml` and `<zip>.sha256` bes
 General settings has an `Automatically check for updates` switch that sets Sparkle's `automaticallyChecksForUpdates`.
 The release owner must supply the production feed and complete signing and notarization before distribution.
 
+Until a production feed exists, `tools/install-mac.sh` updates an installed copy in place.
+Run it on the Mac through `tools/mac.sh -l install "nice -n 19 bash tools/install-mac.sh $(git rev-parse HEAD)"`.
+It builds the normal bundle, replaces `~/Applications/Codex GPUI.app`, and keeps the old bundle as `~/Applications/.Codex GPUI.previous.app`.
+It never opens, activates, or closes the app; a running copy changes at its next launch.
+
 Sparkle checks, downloads, verifies, installs, and relaunches the app.
 The rail shows download progress and enables `Update available` only when installation is ready.
 The app reads the `in_app_updates` policy through `experimentalFeature/list`.
