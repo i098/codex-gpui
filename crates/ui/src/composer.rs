@@ -2021,7 +2021,7 @@ impl Composer {
         );
         let dialog =
             cx.new(|cx| {
-                Confirmation::new("Send message", description, "Send message", window, cx)
+                Confirmation::new("Send message?", description, "Send message", window, cx)
                     .alternate("Clear queue", window, cx)
             });
         cx.subscribe_in(&dialog, window, move |this, _, outcome, window, cx| {
