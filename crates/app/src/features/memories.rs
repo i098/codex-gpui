@@ -6,7 +6,7 @@
 
 use crate::Root;
 use crate::routes::Route;
-use gpui::{Context, Entity, Window};
+use gpui::{AppContext as _, Context, Entity, Window};
 use serde_json::{Value, json};
 use ui::dialog::Dialog;
 

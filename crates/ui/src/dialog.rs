@@ -1039,6 +1039,7 @@ impl Dialog {
                 .child(
                     div()
                         .flex_1()
+                        .min_w_0()
                         .flex()
                         .flex_col()
                         .child(text(label, 14., 20., 500., t.text))
@@ -4074,7 +4075,15 @@ impl Render for Dialog {
             Kind::LogOut => (380., 145. + if self.email.is_some() { 25. } else { 0. }),
             Kind::DiscardInstructions => (420., 180.),
             Kind::DeleteMemories => (420., 137.),
-            Kind::ChatMemories => (440., 252.),
+            // Each long description wraps to a second 18 px line at this width.
+            Kind::ChatMemories => (
+                440.,
+                if self.memories.as_ref().is_some_and(|m| m.started) {
+                    270.
+                } else {
+                    288.
+                },
+            ),
             Kind::WritingStyle => (480., 600.),
             Kind::ModelAnnouncement => (480., 432.),
             Kind::Commit => (420., self.commit_height()),

@@ -177,9 +177,10 @@ fn memories_sets_the_open_chats_memory_mode_and_restores_a_refusal() -> Result<(
     let mut fx = captured(script(None, |_| {})?)?;
     open_chat(&mut fx)?;
     fx.type_text("/memo")?;
+    let found = rows(&fx)?;
     ensure!(
-        rows(&fx)?.is_empty(),
-        "/memories needs the memories feature"
+        !found.iter().any(|row| row == "Memories"),
+        "/memories needs the memories feature: {found:?}"
     );
 
     let mut lines = script(None, memories_on)?;
@@ -188,7 +189,13 @@ fn memories_sets_the_open_chats_memory_mode_and_restores_a_refusal() -> Result<(
     let mut fx = captured(lines)?;
     open_chat(&mut fx)?;
     fx.type_text("/memo")?;
-    ensure!(rows(&fx)? == ["Memories"]);
+    let found = rows(&fx)?;
+    // Recorded skills (`… Memo`) match too; the command ranks first, so Enter picks it.
+    ensure!(
+        found.first().map(String::as_str) == Some("Memories"),
+        "{found:?}"
+    );
+    shot(&mut fx, "memories-slash")?;
     fx.keys("enter")?;
     let focused = |fx: &Fx| {
         fx.read(|root, cx| {
