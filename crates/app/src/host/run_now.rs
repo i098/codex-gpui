@@ -977,13 +977,25 @@ pub(crate) mod heartbeat {
         let cwd = read["thread"]["cwd"]
             .as_str()
             .context("Heartbeat thread not found.")?;
-        let selected = state.as_ref().map(|s| match s.permission {
+        let selected = state.as_ref().map(|s| match &s.permission {
             Permission::Ask => "auto",
             Permission::ApproveForMe => "guardian-approvals",
             Permission::FullAccess => "full-access",
             Permission::Custom => "custom",
+            Permission::Named(_) => "custom",
         });
-        let (config, permissions) = read_permissions(bridge, cwd, selected).await?;
+        let (config, mut permissions) = read_permissions(bridge, cwd, selected).await?;
+        if let Some(RendererState {
+            permission: Permission::Named(profile),
+            ..
+        }) = &state
+        {
+            permissions
+                .as_object_mut()
+                .expect("permission object")
+                .remove("sandboxPolicy");
+            permissions["permissions"] = json!(profile);
+        }
         let collaboration_mode = state.map(|s| s.collaboration_mode).unwrap_or_else(|| json!({
         "mode": "default", "settings": {
             "model": read["thread"]["model"].as_str().or_else(|| config["model"].as_str()).unwrap_or_default(),

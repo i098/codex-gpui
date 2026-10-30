@@ -7,6 +7,8 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ## [Unreleased]
 
 ### Added
+- Add named permission profiles, per-category approval settings, writable folder selection, automatic review notices, and `/approve` for one denied retry.
+- Restrict human-only approval cards to the server's offered one-time decisions.
 - Send browser annotations with the next turn under `# Browser comments:`, after the diff comments and with the same comment numbers as the original app.
 - Switch the sidebar and Home with the ChatGPT and Work modes: the ChatGPT wordmark, the account's ChatGPT conversations in Recents from `GET /conversations`, the `Chat | Work` tabs, and the Chat or Work headline and composer placeholder.
 - Keep file change cards after Undo and add Reapply through the host Git worker, without changing conversation history.

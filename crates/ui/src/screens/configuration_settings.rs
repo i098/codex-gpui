@@ -8,6 +8,7 @@ use crate::settings_kit::{Choice, MultiSelect, Select, SelectionChanged};
 const APPROVAL: &[(&str, &str)] = &[
     ("on-request", "On request"),
     ("never", "Never ask for approval"),
+    ("granular", "Per-category approval"),
 ];
 const APPROVAL_DETAILS: &[(&str, &str)] = &[
     ("on-request", "Ask when escalation is requested"),
@@ -15,6 +16,7 @@ const APPROVAL_DETAILS: &[(&str, &str)] = &[
         "never",
         "Blocked actions fail instead of requesting approval",
     ),
+    ("granular", "Choose which actions can request approval"),
 ];
 /// `sandbox_mode` options, default first.
 const SANDBOX: &[(&str, &str)] = &[
@@ -130,6 +132,7 @@ impl SettingsPane {
     ) -> AnyElement {
         let page = self.page.read(cx);
         let sandbox = page.choice("sandbox_mode", "read-only").to_owned();
+        let approval = page.get("approval_policy").clone();
         let origins = page.config_layers["origins"].clone();
         let ignored: Vec<(String, String)> = page.config_layers["layers"]
             .as_array()
@@ -173,13 +176,7 @@ impl SettingsPane {
                 "approval_policy",
                 "Approval policy",
                 "Choose when ChatGPT asks for approval",
-                self.select_menu(
-                    "approval_policy",
-                    APPROVAL,
-                    None,
-                    |s| s.with_details(APPROVAL_DETAILS),
-                    cx,
-                ),
+                self.approval_policy_menu(&approval, cx),
             ),
             row(
                 "sandbox_mode",
@@ -194,6 +191,49 @@ impl SettingsPane {
                 ),
             ),
         ];
+        if approval["granular"].is_object() {
+            for (key, title) in [
+                ("sandbox_approval", "Sandbox escalation"),
+                ("rules", "Command rules"),
+                ("mcp_elicitations", "MCP questions"),
+                ("request_permissions", "Permission requests"),
+                ("skill_approval", "Skill approval"),
+            ] {
+                let on = approval["granular"][key].as_bool().unwrap_or(false);
+                let focus = focus::handle(key, 0, window, cx);
+                let control = focus::ring(
+                    switch(key, on, false, t).relative(),
+                    &focus,
+                    Theme::RADIUS_FULL,
+                    px(2.),
+                    cx,
+                )
+                .role(gpui::Role::Switch)
+                .aria_label(title)
+                .aria_toggled(if on {
+                    gpui::Toggled::True
+                } else {
+                    gpui::Toggled::False
+                })
+                .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
+                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        this.toggle_approval_category(key, cx);
+                        cx.stop_propagation();
+                    }
+                }))
+                .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.toggle_approval_category(key, cx);
+                }))
+                .into_any_element();
+                agent.push(row(
+                    "approval_policy",
+                    title,
+                    "Allow this category to ask for approval",
+                    control,
+                ));
+            }
+        }
         if sandbox == "workspace-write" {
             agent.push(row(
                 "sandbox_workspace_write.network_access",
@@ -206,6 +246,12 @@ impl SettingsPane {
                     window,
                     cx,
                 ),
+            ));
+            agent.push(row(
+                "sandbox_workspace_write.writable_roots",
+                "Additional writable folders",
+                "Allow edits in these folders when using workspace write",
+                self.writable_folders(t, window, cx),
             ));
         }
         agent.extend([
@@ -426,5 +472,201 @@ impl SettingsPane {
                     ),
             )
             .into_any_element()
+    }
+
+    fn toggle_approval_category(&self, key: &str, cx: &mut Context<Self>) {
+        self.page.update(cx, |page, cx| {
+            let mut policy = page.get("approval_policy").clone();
+            let Some(granular) = policy.get_mut("granular").and_then(Value::as_object_mut) else {
+                return;
+            };
+            let on = granular.get(key).and_then(Value::as_bool).unwrap_or(false);
+            granular.insert(key.to_owned(), json!(!on));
+            page.set("approval_policy", policy, cx);
+        });
+    }
+
+    fn approval_policy_menu(&mut self, policy: &Value, cx: &mut Context<Self>) -> AnyElement {
+        let current = if policy["granular"].is_object() {
+            "granular"
+        } else {
+            policy.as_str().unwrap_or("on-request")
+        };
+        let page = self.page.clone();
+        let select = self.selects.entry("approval_policy").or_insert_with(|| {
+            let choices = APPROVAL
+                .iter()
+                .map(|&(value, label)| Choice {
+                    value: value.into(),
+                    label: label.into(),
+                    checked: false,
+                    disabled: false,
+                })
+                .collect();
+            let select =
+                cx.new(|cx| Select::new(current, choices, None, cx).with_details(APPROVAL_DETAILS));
+            cx.subscribe(
+                &select,
+                move |_, _, selected: &crate::settings_kit::Selected, cx| {
+                    let value = if selected.0 == "granular" {
+                        json!({"granular": {
+                            "sandbox_approval": true, "rules": true, "mcp_elicitations": true,
+                            "request_permissions": true, "skill_approval": true,
+                        }})
+                    } else {
+                        json!(selected.0)
+                    };
+                    page.update(cx, |page, cx| page.set("approval_policy", value, cx));
+                },
+            )
+            .detach();
+            select
+        });
+        select.update(cx, |select, cx| select.set_value(current, cx));
+        select.clone().into_any_element()
+    }
+
+    fn writable_folders(
+        &self,
+        t: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let roots = self
+            .page
+            .read(cx)
+            .get("sandbox_workspace_write.writable_roots")
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let add_focus = focus::handle("add-writable-folder", 0, window, cx);
+        let add = focus::ring(
+            button("Add folder", t.text_alpha_5, None, t).id("add-writable-folder"),
+            &add_focus,
+            Theme::RADIUS_FULL,
+            px(2.),
+            cx,
+        )
+        .role(gpui::Role::Button)
+        .aria_label("Add writable folder")
+        .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(add_focus))
+        .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _, cx| {
+            if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                this.add_writable_folder(cx);
+                cx.stop_propagation();
+            }
+        }))
+        .on_click(cx.listener(|this, _, _, cx| this.add_writable_folder(cx)));
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .children(roots.iter().enumerate().map(|(index, path)| {
+                let key_path = path.clone();
+                let click_path = path.clone();
+                let name = path.as_str().unwrap_or_default();
+                let focus = focus::handle(("writable-root", index), 0, window, cx);
+                focus::ring(
+                    button(format!("{name}  ×"), t.text_alpha_5, None, t)
+                        .id(("writable-root", index)),
+                    &focus,
+                    Theme::RADIUS_FULL,
+                    px(2.),
+                    cx,
+                )
+                .role(gpui::Role::Button)
+                .aria_label(format!("Remove writable folder {name}"))
+                .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
+                .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
+                    if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                        this.remove_writable_folder(&key_path, cx);
+                        cx.stop_propagation();
+                    }
+                }))
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.remove_writable_folder(&click_path, cx)),
+                )
+            }))
+            .child(add)
+            .into_any_element()
+    }
+
+    fn remove_writable_folder(&self, path: &Value, cx: &mut Context<Self>) {
+        self.page.update(cx, |page, cx| {
+            let mut roots = page
+                .get("sandbox_workspace_write.writable_roots")
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            roots.retain(|root| root != path);
+            page.set("sandbox_workspace_write.writable_roots", json!(roots), cx);
+        });
+    }
+
+    fn add_writable_folder(&self, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: true,
+            prompt: None,
+        });
+        let page = self.page.clone();
+        cx.spawn(async move |_, cx| {
+            if let Ok(Ok(Some(paths))) = paths.await {
+                page.update(cx, |page, cx| {
+                    let mut roots = page
+                        .get("sandbox_workspace_write.writable_roots")
+                        .as_array()
+                        .cloned()
+                        .unwrap_or_default();
+                    for path in paths {
+                        if let Some(path) = path.to_str().filter(|_| path.is_absolute()) {
+                            let value = json!(path);
+                            if !roots.contains(&value) {
+                                roots.push(value);
+                            }
+                        }
+                    }
+                    page.set("sandbox_workspace_write.writable_roots", json!(roots), cx);
+                });
+            }
+        })
+        .detach();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn changing_one_approval_category_preserves_the_others() {
+        let mut app = gpui::HeadlessAppContext::with_asset_source(
+            textsys::text_system(),
+            std::sync::Arc::new(theme::Assets),
+        );
+        app.update(|cx| {
+            let initial = json!({"granular": {
+                "sandbox_approval": true, "rules": false, "mcp_elicitations": true,
+                "request_permissions": false, "skill_approval": false,
+            }});
+            let integrations = cx.new(|_| integrations::State::default());
+            let (_, page) = shell(
+                &json!({"approval_policy": initial}),
+                &json!({}),
+                Some("Configuration"),
+                integrations,
+                cx,
+            );
+            let pane = cx.new(|cx| SettingsPane::new(page.clone(), cx));
+            pane.update(cx, |pane, cx| pane.toggle_approval_category("rules", cx));
+            pane.update(cx, |pane, cx| {
+                pane.toggle_approval_category("request_permissions", cx)
+            });
+            let mut expected = initial;
+            expected["granular"]["rules"] = json!(true);
+            expected["granular"]["request_permissions"] = json!(true);
+            assert_eq!(page.read(cx).get("approval_policy"), &expected);
+        });
     }
 }

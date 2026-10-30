@@ -34,6 +34,7 @@ mod new_project;
 mod notifications;
 pub mod oauth;
 pub mod onboarding;
+mod permissions;
 mod personalization;
 mod pull_requests;
 pub mod qa;
@@ -515,6 +516,8 @@ pub struct Root {
     cwd: String,
     clock: Option<Clock>,
     config: Value,
+    permission_profiles: Value,
+    guardian_denials: HashMap<String, Value>,
     skills: Value,
     models: Vec<Model>,
     ready: bool,
@@ -713,6 +716,7 @@ impl Root {
                         this.open_settings_section("MCP servers", window, cx);
                     }
                     ui::composer::SlashCommand::Compact => this.compact(window, cx),
+                    ui::composer::SlashCommand::Approve => this.approve_denied_action(cx),
                     ui::composer::SlashCommand::Fork => this.fork_chat(None, None, window, cx),
                     ui::composer::SlashCommand::ForkWorktree => this.fork_worktree(window, cx),
                     ui::composer::SlashCommand::Feedback => this.open_feedback(window, cx),
@@ -954,6 +958,8 @@ impl Root {
             cwd,
             clock: None,
             config: Value::Null,
+            permission_profiles: Value::Null,
+            guardian_denials: HashMap::new(),
             skills: Value::Null,
             models: Vec::new(),
             ready: false,
@@ -1122,6 +1128,16 @@ impl Root {
                     .unwrap_or(Value::Null);
                 (catalog, config, skills)
             };
+            let profiles = if acp {
+                Value::Null
+            } else {
+                permissions::list_profiles(&bridge, &cwd)
+                    .await
+                    .unwrap_or_else(|error| {
+                        eprintln!("codex-gpui: permission profiles: {error:#}");
+                        Value::Null
+                    })
+            };
             this.update_in(cx, |this, window, cx| {
                 this._update_policy = updater::poll_policy(bridge.clone(), cx);
                 this.set_account(account.as_ref(), cx);
@@ -1196,9 +1212,11 @@ impl Root {
                     composer.update(cx, |c, cx| {
                         c.set_models(&models, &config.config, cx);
                         c.set_slash_skills(&skills, cx);
+                        c.set_permission_profiles(&profiles, cx);
                     });
                 }
                 this.config = config.config;
+                this.permission_profiles = profiles;
                 this.refresh_config_globals(cx);
                 this.config["host"]["confirm-before-close"] =
                     serde_json::to_value(this.state.confirm_before_close)
@@ -4060,7 +4078,7 @@ impl Root {
         {
             if let Some(state) = self.thread_run_settings.get(&thread.id) {
                 self.thread_composer.update(cx, |c, cx| {
-                    c.restore_run_settings(&state.collaboration_mode, state.permission, cx)
+                    c.restore_run_settings(&state.collaboration_mode, state.permission.clone(), cx)
                 });
             } else if let Some(model) = thread.model.as_deref() {
                 let effort = thread
@@ -4884,7 +4902,12 @@ impl Root {
             let mut composer = Composer::thread(window, cx);
             composer.bind_connection(self.bridge.clone());
             composer.set_models(&self.models, &self.config, cx);
-            composer.restore_run_settings(&settings.collaboration_mode, settings.permission, cx);
+            composer.set_permission_profiles(&self.permission_profiles, cx);
+            composer.restore_run_settings(
+                &settings.collaboration_mode,
+                settings.permission.clone(),
+                cx,
+            );
             composer.set_slash_skills(&self.skills, cx);
             composer.set_search_roots(vec![thread.cwd.clone()], cx);
             composer.set_queue_pending(self.queue_pending, cx);
@@ -6366,6 +6389,9 @@ impl Root {
         };
         match event {
             Event::Notification { method, params } => match method.as_str() {
+                "item/autoApprovalReview/started" | "item/autoApprovalReview/completed" => {
+                    self.guardian_review(&method, &params, cx);
+                }
                 "account/updated" if self.ready => {
                     self.destination_load = None;
                     self.set_unread_destinations(None, cx);
@@ -6848,12 +6874,16 @@ fn computer_use_overrides(config: &Value) -> Option<Value> {
 fn model(s: &Submission) -> Option<&str> {
     (!s.model.is_empty()).then_some(s.model.as_str())
 }
-fn apply_permissions(params: &mut Value, permission: Permission) {
+fn apply_permissions(params: &mut Value, permission: &Permission) {
     let (policy, profile, reviewer) = match permission {
         Permission::Ask => ("on-request", ":workspace", "user"),
         Permission::ApproveForMe => ("on-request", ":workspace", "guardian_subagent"),
         Permission::FullAccess => ("never", ":danger-full-access", "user"),
         Permission::Custom => return,
+        Permission::Named(profile) => {
+            params["permissions"] = profile.as_ref().into();
+            return;
+        }
     };
     params["approvalPolicy"] = policy.into();
     params["permissions"] = profile.into();
@@ -7028,7 +7058,7 @@ async fn turn_start(
     if let Some(id) = client_user_message_id {
         params["clientUserMessageId"] = id.into();
     }
-    apply_permissions(&mut params, s.permission);
+    apply_permissions(&mut params, &s.permission);
     if s.fast {
         params["serviceTier"] = "priority".into();
     }

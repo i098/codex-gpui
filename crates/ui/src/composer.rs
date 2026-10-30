@@ -436,12 +436,13 @@ fn model_efforts(m: &Model, enabled: &EnabledEfforts) -> Vec<String> {
 }
 
 /// Approval mode of the permissions dropdown (`composer.permissionsDropdown.*`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Permission {
     Ask,
     ApproveForMe,
     FullAccess,
     Custom,
+    Named(SharedString),
 }
 
 impl Permission {
@@ -454,6 +455,9 @@ impl Permission {
 
     /// The preset `config/read` matches; anything else is `Custom (config.toml)`.
     pub fn from_config(config: &Value) -> Self {
+        if let Some(profile) = config["default_permissions"].as_str() {
+            return Self::Named(profile.to_owned().into());
+        }
         match (
             config["approval_policy"].as_str(),
             config["sandbox_mode"].as_str(),
@@ -468,28 +472,30 @@ impl Permission {
         }
     }
 
-    fn short_label(self) -> &'static str {
+    pub(crate) fn short_label(&self) -> &str {
         match self {
             Self::Ask => "Ask for approval",
             Self::ApproveForMe => "Approve for me",
             Self::FullAccess => "Full access",
             Self::Custom => "Custom",
+            Self::Named(name) => name,
         }
     }
 
-    fn option_label(self) -> &'static str {
+    pub(crate) fn option_label(&self) -> &str {
         match self {
             Self::Custom => "Custom (config.toml)",
             other => other.short_label(),
         }
     }
 
-    fn description(self) -> &'static str {
+    fn description(&self) -> &str {
         match self {
             Self::Ask => "Always ask to edit external files and use the internet",
             Self::ApproveForMe => "Only ask for actions detected as potentially unsafe",
             Self::FullAccess => "Unrestricted access to the internet and any file on your computer",
             Self::Custom => "Uses permissions defined in config.toml",
+            Self::Named(_) => "Uses the selected permission profile",
         }
     }
 }
@@ -543,6 +549,7 @@ pub struct Approval {
     reason: Option<String>,
     /// Session-wide approve label (`acceptForSession`).
     scoped_label: SharedString,
+    decisions: Option<Vec<Value>>,
     permissions: Option<Value>,
     form: Option<requests::Form>,
     computer_use: Option<computer_use::ComputerUseApproval>,
@@ -552,10 +559,27 @@ pub struct Approval {
 impl Approval {
     pub fn command(id: Value, req: &CommandApprovalRequest) -> Self {
         Self {
-            title: "Allow ChatGPT to run this command?".into(),
+            title: if req.kind == "humanCommand" {
+                "This command requires your approval".into()
+            } else {
+                "Allow ChatGPT to run this command?".into()
+            },
             detail: req.command.clone(),
             reason: req.reason.clone(),
             scoped_label: "Allow similar commands".into(),
+            decisions: {
+                let mut decisions = req.available_decisions.clone();
+                if req.kind == "humanCommand" {
+                    decisions
+                        .get_or_insert_with(|| {
+                            vec![json!("accept"), json!("decline"), json!("cancel")]
+                        })
+                        .retain(|decision| {
+                            matches!(decision.as_str(), Some("accept" | "decline" | "cancel"))
+                        });
+                }
+                decisions
+            },
             permissions: None,
             form: None,
             computer_use: None,
@@ -578,6 +602,7 @@ impl Approval {
             detail: (!paths.is_empty()).then(|| paths.join("\n")),
             reason: req.reason.clone(),
             scoped_label: "Allow all edits".into(),
+            decisions: None,
             permissions: None,
             form: None,
             computer_use: None,
@@ -615,6 +640,7 @@ impl Approval {
             detail: None,
             reason: req.reason.clone(),
             scoped_label: "Allow for this session".into(),
+            decisions: None,
             permissions: Some(req.permissions.clone()),
             form: None,
             computer_use: None,
@@ -623,6 +649,32 @@ impl Approval {
                 thread: req.thread_id.clone(),
             }),
         }
+    }
+
+    fn allows(&self, decision: ApprovalDecision) -> bool {
+        self.decisions.is_none() || self.choices().any(|choice| choice == decision)
+    }
+
+    fn choices(&self) -> impl Iterator<Item = ApprovalDecision> + '_ {
+        self.decisions
+            .iter()
+            .flatten()
+            .filter_map(|value| match value.as_str() {
+                Some("accept") => Some(ApprovalDecision::Accept),
+                Some("acceptForSession") => Some(ApprovalDecision::AcceptForSession),
+                Some("decline") => Some(ApprovalDecision::Decline),
+                Some("cancel") => Some(ApprovalDecision::Cancel),
+                _ => None,
+            })
+            .chain(
+                [
+                    ApprovalDecision::Decline,
+                    ApprovalDecision::AcceptForSession,
+                    ApprovalDecision::Accept,
+                ]
+                .into_iter()
+                .filter(move |_| self.decisions.is_none()),
+            )
     }
 
     fn response(&self, decision: ApprovalDecision) -> Value {
@@ -795,6 +847,7 @@ pub struct Composer {
     /// Plan mode: the next turns run in the `plan` collaboration mode.
     plan: bool,
     permission: Permission,
+    permission_profiles: Vec<(Permission, String)>,
     menu: Option<Menu>,
     slash: slash::Slash,
     menu_focus: menu::MenuFocus,
@@ -927,6 +980,7 @@ impl Composer {
             fast: false,
             plan: false,
             permission: Permission::Custom,
+            permission_profiles: Vec::new(),
             menu: None,
             slash: slash::Slash::default(),
             menu_focus: menu::MenuFocus::new(cx),
@@ -1945,7 +1999,7 @@ impl Composer {
                 .map(|m| m.id.clone())
                 .unwrap_or_default(),
             effort: self.effort.clone(),
-            permission: self.permission,
+            permission: self.permission.clone(),
             fast: self.fast,
             plan: self.plan,
             background,
@@ -1954,7 +2008,11 @@ impl Composer {
 
     fn decide(&mut self, decision: ApprovalDecision, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_dictation(cx);
-        if self.approval.is_none() {
+        if self
+            .approval
+            .as_ref()
+            .is_none_or(|approval| !approval.allows(decision))
+        {
             return;
         }
         let response = match self.request_response(decision, cx) {
@@ -2002,7 +2060,7 @@ impl Composer {
         } else {
             self.menu = Some(menu);
             let count = match menu {
-                Menu::Permissions => Permission::ALL.len(),
+                Menu::Permissions => Permission::ALL.len() + self.permission_profiles.len(),
                 Menu::Models => self.models.len(),
                 Menu::Effort => 3,
                 Menu::Comments => self.diff_comments.len(),
@@ -2046,11 +2104,9 @@ impl Composer {
             cx.notify();
         } else if self.approval.is_some() {
             // `approval.decline` (Escape), unless a menu has focus.
-            let decision = if self
-                .approval
-                .as_ref()
-                .is_some_and(|approval| approval.form.is_some())
-            {
+            let decision = if self.approval.as_ref().is_some_and(|approval| {
+                approval.form.is_some() || !approval.allows(ApprovalDecision::Decline)
+            }) {
                 ApprovalDecision::Cancel
             } else {
                 ApprovalDecision::Decline
@@ -2124,12 +2180,7 @@ impl Composer {
                 self.menu_focus.items[SPEED_ITEM].focus(window, cx);
             }
             "space" if self.menu == Some(Menu::Permissions) && self.menu_focus.searching() => {
-                self.menu_focus.typeahead(
-                    " ",
-                    &Permission::ALL.map(|p| p.option_label()),
-                    window,
-                    cx,
-                );
+                self.permission_typeahead(" ", window, cx);
             }
             "escape" => self.dismiss(&Dismiss, window, cx),
             "enter" | "space" if self.speed_open => {
@@ -2148,12 +2199,7 @@ impl Composer {
                 && !modifiers.platform
                 && !modifiers.alt =>
             {
-                self.menu_focus.typeahead(
-                    key,
-                    &Permission::ALL.map(|p| p.option_label()),
-                    window,
-                    cx,
-                );
+                self.permission_typeahead(key, window, cx);
             }
             _ => return,
         }
@@ -2222,7 +2268,13 @@ impl Composer {
     fn activate_menu_item(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         match self.menu {
             Some(Menu::Permissions) => {
-                let permission = Permission::ALL[index];
+                let permission = if index < Permission::ALL.len() {
+                    Permission::ALL[index].clone()
+                } else {
+                    self.permission_profiles[index - Permission::ALL.len()]
+                        .0
+                        .clone()
+                };
                 self.dismiss(&Dismiss, window, cx);
                 if permission == Permission::FullAccess {
                     window.dispatch_action(Box::new(RequestFullAccess), cx);
@@ -2270,7 +2322,7 @@ impl Composer {
     }
 
     pub fn permission(&self) -> Permission {
-        self.permission
+        self.permission.clone()
     }
 
     pub fn run_settings(&self) -> (Value, Permission) {
@@ -2279,7 +2331,7 @@ impl Composer {
                 "model": self.current_model().map_or("", |m| m.id.as_str()),
                 "reasoning_effort": self.effort, "developer_instructions": null,
             }}),
-            self.permission,
+            self.permission.clone(),
         )
     }
 
@@ -2305,6 +2357,54 @@ impl Composer {
     pub fn confirm_full_access(&mut self, cx: &mut Context<Self>) {
         self.permission = Permission::FullAccess;
         cx.notify();
+    }
+
+    pub(crate) fn named_permissions(&self) -> impl Iterator<Item = &Permission> {
+        self.permission_profiles
+            .iter()
+            .map(|(permission, _)| permission)
+    }
+
+    pub fn set_permission_profiles(&mut self, profiles: &Value, cx: &mut Context<Self>) {
+        self.permission_profiles = profiles["data"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|profile| profile["allowed"] == true)
+            .filter(|profile| {
+                profile["id"]
+                    .as_str()
+                    .is_some_and(|id| !id.starts_with(':'))
+            })
+            .filter_map(|profile| {
+                Some((
+                    Permission::Named(profile["id"].as_str()?.to_owned().into()),
+                    profile["description"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                ))
+            })
+            .collect();
+        if self.menu == Some(Menu::Permissions) {
+            self.menu_focus
+                .prepare(Permission::ALL.len() + self.permission_profiles.len(), cx);
+        }
+        cx.notify();
+    }
+
+    fn permission_typeahead(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let labels: Vec<String> = Permission::ALL
+            .iter()
+            .map(|p| p.option_label().to_owned())
+            .chain(
+                self.permission_profiles
+                    .iter()
+                    .map(|(p, _)| p.option_label().to_owned()),
+            )
+            .collect();
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        self.menu_focus.typeahead(key, &labels, window, cx);
     }
 
     /// The stop confirmation is armed (first Escape of two).

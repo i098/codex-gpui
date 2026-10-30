@@ -201,19 +201,14 @@ impl Controls {
                     ));
                 }
                 if self.options.mode != Mode::Cloud {
-                    let permission = match self
+                    let permission = self
                         .composer
                         .upgrade()
                         .map_or(Permission::Custom, |composer| {
                             composer.read(cx).permission()
-                        }) {
-                        Permission::Ask => "Ask for approval",
-                        Permission::ApproveForMe => "Approve for me",
-                        Permission::FullAccess => "Full access",
-                        Permission::Custom => "Custom",
-                    };
+                        });
                     rows.push((
-                        format!("Permissions\t{permission}"),
+                        format!("Permissions\t{}", permission.short_label()),
                         None,
                         Some(Menu::Permission),
                         None,
@@ -287,22 +282,35 @@ impl Controls {
                     )))
                     .collect()
             }
-            Menu::Permission => [
-                ("Ask for approval", Permission::Ask),
-                ("Approve for me", Permission::ApproveForMe),
-                ("Full access", Permission::FullAccess),
-                ("Custom (config.toml)", Permission::Custom),
-            ]
-            .into_iter()
-            .map(|(label, permission)| {
-                (
-                    label.into(),
-                    Some(Change::Permission(permission)),
-                    None,
-                    None,
-                )
-            })
-            .collect(),
+            Menu::Permission => {
+                let mut entries: Vec<_> = [
+                    ("Ask for approval", Permission::Ask),
+                    ("Approve for me", Permission::ApproveForMe),
+                    ("Full access", Permission::FullAccess),
+                    ("Custom (config.toml)", Permission::Custom),
+                ]
+                .into_iter()
+                .map(|(label, permission)| {
+                    (
+                        label.into(),
+                        Some(Change::Permission(permission)),
+                        None,
+                        None,
+                    )
+                })
+                .collect();
+                if let Some(composer) = self.composer.upgrade() {
+                    entries.extend(composer.read(cx).named_permissions().map(|permission| {
+                        (
+                            permission.option_label().to_owned(),
+                            Some(Change::Permission(permission.clone())),
+                            None,
+                            None,
+                        )
+                    }));
+                }
+                entries
+            }
         }
     }
 

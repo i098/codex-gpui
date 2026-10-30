@@ -770,7 +770,7 @@ fn changed(root: &mut Root, change: &Change, window: &mut Window, cx: &mut Conte
                 .composer
                 .clone()
                 .update(cx, |composer, cx| {
-                    composer.restore_run_settings(&Value::Null, *permission, cx)
+                    composer.restore_run_settings(&Value::Null, permission.clone(), cx)
                 });
         }
         Change::EnvironmentSettings => {

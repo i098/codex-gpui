@@ -60,11 +60,12 @@ fn permissions_popover() -> Result<()> {
             state.2 == (expected["active"]["aria"] == "Change permissions"),
             "step {i}: trigger focus {state:?}"
         );
-        let label = match permission {
+        let label = match &permission {
             Permission::Ask => "Ask for approval",
             Permission::ApproveForMe => "Approve for me",
             Permission::FullAccess => "Full access",
             Permission::Custom => "Custom",
+            Permission::Named(name) => name.as_ref(),
         };
         ensure!(
             label == expected["trigger"]["text"].as_str().unwrap(),

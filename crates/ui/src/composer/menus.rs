@@ -323,39 +323,50 @@ impl Composer {
                 400.,
                 t.text_tertiary,
             )))
-            .children(Permission::ALL.into_iter().enumerate().map(|(i, p)| {
-                div()
-                    .id(p.short_label())
-                    .track_focus(&self.menu_focus.items[i])
-                    .focus(move |s| s.bg(hover))
-                    .on_mouse_move(cx.listener(move |this, _, window, cx| {
-                        this.menu_focus.items[i].focus(window, cx);
-                        cx.stop_propagation();
-                    }))
-                    .hover_listener_mode(gpui::HoverListenerMode::InputModalityIndependent)
-                    .on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
-                        if !hovered && this.menu_focus.items[i].is_focused(window) {
-                            this.menu_focus.content.focus(window, cx);
-                        }
-                    }))
-                    .px(px(8.))
-                    .py(px(6.))
-                    .flex()
-                    .flex_col()
-                    .rounded(px(12.))
-                    .hover(move |s| s.bg(hover))
-                    .child(text(p.option_label(), 14., 20., 430., t.text))
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .line_height(px(16.))
-                            .text_color(t.text_tertiary)
-                            .child(p.description()),
+            .children(
+                Permission::ALL
+                    .iter()
+                    .map(|p| (p, p.description()))
+                    .chain(
+                        self.permission_profiles
+                            .iter()
+                            .map(|(p, description)| (p, description.as_str())),
                     )
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.activate_menu_item(i, window, cx)
-                    }))
-            }))
+                    .enumerate()
+                    .map(|(i, (p, description))| {
+                        div()
+                            .id(("permission-option", i))
+                            .track_focus(&self.menu_focus.items[i])
+                            .focus(move |s| s.bg(hover))
+                            .on_mouse_move(cx.listener(move |this, _, window, cx| {
+                                this.menu_focus.items[i].focus(window, cx);
+                                cx.stop_propagation();
+                            }))
+                            .hover_listener_mode(gpui::HoverListenerMode::InputModalityIndependent)
+                            .on_hover(cx.listener(move |this, hovered: &bool, window, cx| {
+                                if !hovered && this.menu_focus.items[i].is_focused(window) {
+                                    this.menu_focus.content.focus(window, cx);
+                                }
+                            }))
+                            .px(px(8.))
+                            .py(px(6.))
+                            .flex()
+                            .flex_col()
+                            .rounded(px(12.))
+                            .hover(move |s| s.bg(hover))
+                            .child(text(p.option_label().to_owned(), 14., 20., 430., t.text))
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .line_height(px(16.))
+                                    .text_color(t.text_tertiary)
+                                    .child(description.to_owned()),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.activate_menu_item(i, window, cx)
+                            }))
+                    }),
+            )
         })
     }
 
@@ -400,40 +411,33 @@ impl Composer {
                     .flex()
                     .justify_end()
                     .gap(px(8.))
-                    .child(
-                        button("deny", "Deny".into(), gpui::transparent_black(), t.text).on_click(
-                            self.request_listener(cx, |this, _, window, cx| {
-                                this.decide(ApprovalDecision::Decline, window, cx)
+                    .children(a.choices().map(|decision| {
+                        let (id, title, bg, fg) = match decision {
+                            ApprovalDecision::Accept => (
+                                "allow-once",
+                                "Allow once".into(),
+                                t.button_primary_solid,
+                                t.text_inverse,
+                            ),
+                            ApprovalDecision::AcceptForSession => (
+                                "allow-session",
+                                a.scoped_label.clone(),
+                                t.button_secondary,
+                                t.text,
+                            ),
+                            ApprovalDecision::Decline => {
+                                ("deny", "Deny".into(), gpui::transparent_black(), t.text)
+                            }
+                            ApprovalDecision::Cancel => {
+                                ("cancel", "Cancel".into(), gpui::transparent_black(), t.text)
+                            }
+                        };
+                        button(id, title, bg, fg).on_click(
+                            self.request_listener(cx, move |this, _, window, cx| {
+                                this.decide(decision, window, cx)
                             }),
-                        ),
-                    )
-                    .child(
-                        button(
-                            "allow-session",
-                            a.scoped_label.clone(),
-                            t.button_secondary,
-                            t.text,
                         )
-                        .on_click(self.request_listener(
-                            cx,
-                            |this, _, window, cx| {
-                                this.decide(ApprovalDecision::AcceptForSession, window, cx)
-                            },
-                        )),
-                    )
-                    .child(
-                        button(
-                            "allow-once",
-                            "Allow once".into(),
-                            t.button_primary_solid,
-                            t.text_inverse,
-                        )
-                        .on_click(
-                            self.request_listener(cx, |this, _, window, cx| {
-                                this.decide(ApprovalDecision::Accept, window, cx)
-                            }),
-                        ),
-                    ),
+                    })),
             )
     }
 
