@@ -58,6 +58,7 @@ mod recovery;
 #[path = "thread/select.rs"]
 mod select;
 pub use context::ReasoningVisibility;
+pub use items::{ImageView, OpenImage};
 
 pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
@@ -2689,6 +2690,7 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::CommandExecution { id, .. }
         | ThreadItem::FileChange { id, .. }
         | ThreadItem::McpToolCall { id, .. }
+        | ThreadItem::ImageGeneration { id, .. }
         | ThreadItem::ContextCompaction { id } => Some(id),
         ThreadItem::Other => None,
     }
