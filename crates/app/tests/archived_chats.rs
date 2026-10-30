@@ -37,25 +37,6 @@ fn fixture_with_host(host: Option<Arc<dyn app::host::Host>>) -> Result<Fx> {
             "nextCursor": null,
         }),
     ));
-    // Opening a chat reads its header, then its newest turns page (newest first). The replay
-    // falls back to recording order per method unless the params match exactly.
-    let mut recorded = common::recorded_thread(common::SUBTRACT)?;
-    let mut turns = recorded["turns"].take();
-    recorded["turns"] = serde_json::json!([]);
-    let mut read = common::exchange("thread/read", serde_json::json!({"thread": recorded}));
-    read[0]["msg"]["params"] =
-        serde_json::json!({"threadId": common::SUBTRACT, "includeTurns": false});
-    script.extend(read);
-    turns.as_array_mut().expect("recorded turns").reverse();
-    let mut page = common::exchange(
-        "thread/turns/list",
-        serde_json::json!({"data": turns, "nextCursor": null}),
-    );
-    page[0]["msg"]["params"] = serde_json::json!({
-        "threadId": common::SUBTRACT, "cursor": null, "limit": 10,
-        "itemsView": "full", "sortDirection": "desc",
-    });
-    script.extend(page);
     let mut fx = Fx::captured("dark", (1280., 832.), script)?;
     if let Some(host) = host {
         fx.root
