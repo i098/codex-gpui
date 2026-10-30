@@ -2665,7 +2665,7 @@ const COMMANDS: &[Command] = &[
         "Show Mini",
         "Show Mini from anywhere",
         "⌥Space",
-        true,
+        false,
     ),
     (
         "App",
