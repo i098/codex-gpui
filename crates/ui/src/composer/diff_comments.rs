@@ -63,7 +63,7 @@ impl Composer {
                 .map(|m| m.id.clone())
                 .unwrap_or_default(),
             effort: self.effort.clone(),
-            permission: self.permission,
+            permission: self.permission.clone(),
             fast: self.fast,
             plan: self.plan,
             background: false,
