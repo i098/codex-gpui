@@ -1,14 +1,15 @@
 name: release
-# A `vMAJOR.MINOR.PATCH` tag on a merged `tools/version.sh` bump publishes the macOS arm64 zip.
+# A `vMAJOR.MINOR.PATCH` tag on a merged `tools/version.sh` bump publishes the universal (arm64 + x86_64) macOS zip.
 on:
   push:
     tags: ['v*']
 permissions:
   contents: write
 jobs:
-  macos-arm64:
+  macos:
     runs-on: macos-14
     env:
+      CODEX_GPUI_UNIVERSAL: "1"
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       GH_TOKEN: ${{ github.token }}
       # With SPARKLE_ED_PRIVATE_KEY, SPARKLE_ED_PUBLIC_KEY and CODEX_GPUI_SIGN_IDENTITY set, the zip
@@ -23,6 +24,8 @@ jobs:
           version=$(tools/version.sh)
           [[ $GITHUB_REF_NAME == "v$version" ]] || { echo "tag $GITHUB_REF_NAME is not v$version" >&2; exit 1; }
           echo "VERSION=$version" >>"$GITHUB_ENV"
+      - name: Add the Intel Rust target
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
       - name: Fetch Sparkle
         if: ${{ env.SPARKLE_ED_PRIVATE_KEY != '' }}
         run: |
@@ -36,7 +39,7 @@ jobs:
         run: bash tools/bundle.sh --assemble /tmp/codex-gpui-release normal "$GITHUB_SHA" archive
       - name: Publish the release
         run: |
-          zip=codex-gpui-$VERSION-macos-arm64.zip
+          zip=codex-gpui-$VERSION-macos-universal.zip
           mv /tmp/codex-gpui-release/bundle.zip "$zip"
           assets=("$zip")
           if [[ -n $SPARKLE_ED_PRIVATE_KEY ]]; then
