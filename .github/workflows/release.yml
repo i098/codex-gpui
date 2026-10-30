@@ -46,3 +46,41 @@ jobs:
           fi
           awk -v heading="## [$VERSION]" 'index($0, heading) == 1 { found = 1; next } found && /^## \[/ { exit } found' CHANGELOG.md >notes.md
           gh release create "$GITHUB_REF_NAME" "${assets[@]}" --title "Codex GPUI $VERSION" --notes-file notes.md --verify-tag
+  linux-x86_64:
+    # The AppImage self-updates from latest.json, which is signed with an Ed25519 key.
+    # Without the three secrets below the release ships no Linux build.
+    needs: macos-arm64
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CODEX_GPUI_UPDATE_PRIVATE_KEY: ${{ secrets.CODEX_GPUI_UPDATE_PRIVATE_KEY }}
+      CODEX_GPUI_UPDATE_PUBLIC_KEY: ${{ secrets.CODEX_GPUI_UPDATE_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the signing key is configured
+        id: gate
+        run: '[[ -n $CODEX_GPUI_UPDATE_PRIVATE_KEY && -n $CODEX_GPUI_UPDATE_PUBLIC_KEY ]] && echo run=1 >>"$GITHUB_OUTPUT" || echo "no update signing key; skipping the Linux build"'
+      - if: steps.gate.outputs.run
+        run: >
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          build-essential pkg-config clang cmake libssl-dev libzstd-dev
+          libfontconfig-dev libfreetype-dev libasound2-dev libxkbcommon-dev
+          libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
+          libvulkan-dev libfuse2t64 xxd
+      - if: steps.gate.outputs.run
+        uses: dtolnay/rust-toolchain@stable
+      - if: steps.gate.outputs.run
+        name: Build the AppImage and sign the manifest
+        env:
+          CODEX_GPUI_UPDATE_FEED: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+        run: |
+          version=$(tools/version.sh)
+          [[ $GITHUB_REF_NAME == "v$version" ]] || { echo "tag $GITHUB_REF_NAME is not v$version" >&2; exit 1; }
+          cargo build --release -p app --bin codex-gpui
+          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          sudo mv appimagetool /usr/local/bin/appimagetool
+          appimage=codex-gpui-$version-x86_64.AppImage
+          tools/appimage.sh target/release/codex-gpui "$appimage"
+          tools/linux-manifest.sh "$appimage" "$version" "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$appimage" latest.json
+          gh release upload "$GITHUB_REF_NAME" "$appimage" latest.json
