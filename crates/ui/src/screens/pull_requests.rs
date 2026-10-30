@@ -1639,7 +1639,7 @@ impl Page {
         let (Some(identity), Some(Ok(detail))) = (&self.selected, &self.detail) else {
             return;
         };
-        let failing = failing_checks(detail);
+        let failing = fixable_checks(detail);
         if failing.is_empty() {
             return;
         }
@@ -1968,7 +1968,7 @@ impl Page {
             if !collapsed {
                 let body = match index {
                     0 => self.description(detail["body"].as_str().unwrap_or(""), window, cx),
-                    1 if !failing_checks(detail).is_empty() => check_details(detail, t).child(
+                    1 if !fixable_checks(detail).is_empty() => check_details(detail, t).child(
                         self.button("fix-checks", "Fix checks", cx)
                             .self_start()
                             .on_click(cx.listener(|this, _, _, cx| this.fix_checks(cx))),
@@ -2221,8 +2221,9 @@ fn check_details(detail: &Value, t: &theme::Theme) -> Div {
 }
 
 /// Names of the checks whose conclusion (or status context state) the host's `ciStatus`
-/// counts as failing.
-fn failing_checks(detail: &Value) -> Vec<&str> {
+/// counts as failing; none for a pull request that is not open, as in the original
+/// (`Fix is only available for open pull requests`).
+fn fixable_checks(detail: &Value) -> Vec<&str> {
     const FAILING: [&str; 6] = [
         "FAILURE",
         "ERROR",
@@ -2231,6 +2232,9 @@ fn failing_checks(detail: &Value) -> Vec<&str> {
         "ACTION_REQUIRED",
         "STARTUP_FAILURE",
     ];
+    if detail["state"] != "OPEN" {
+        return Vec::new();
+    }
     detail["statusCheckRollup"]["contexts"]["nodes"]
         .as_array()
         .into_iter()
@@ -2678,8 +2682,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn failing_checks_name_check_runs_and_status_contexts_that_failed() {
-        let detail = serde_json::json!({"statusCheckRollup":{"contexts":{"nodes":[
+    fn fixable_checks_name_failed_runs_and_contexts_of_an_open_pull_request() {
+        let mut detail = serde_json::json!({"state":"OPEN","statusCheckRollup":{"contexts":{"nodes":[
             {"name":"build","conclusion":"FAILURE","status":"COMPLETED"},
             {"name":"lint","conclusion":"SUCCESS","status":"COMPLETED"},
             {"name":"test","conclusion":null,"status":"IN_PROGRESS"},
@@ -2687,8 +2691,10 @@ mod tests {
             {"context":"ci/docs","state":"PENDING"},
             {"name":"e2e","conclusion":"TIMED_OUT","status":"COMPLETED"}
         ]}}});
-        assert_eq!(failing_checks(&detail), ["build", "ci/deploy", "e2e"]);
-        assert!(failing_checks(&serde_json::json!({})).is_empty());
+        assert_eq!(fixable_checks(&detail), ["build", "ci/deploy", "e2e"]);
+        detail["state"] = "MERGED".into();
+        assert!(fixable_checks(&detail).is_empty());
+        assert!(fixable_checks(&serde_json::json!({"state":"OPEN"})).is_empty());
     }
 
     #[test]
