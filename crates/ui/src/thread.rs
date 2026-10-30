@@ -187,6 +187,8 @@ pub struct ThreadView {
     /// Context status, compaction lifecycle and the manual compactions awaiting their item
     /// (`context.rs`).
     context_usage: Option<crate::composer::ContextUsage>,
+    /// The chat's `/goal` (`thread/goal/*`).
+    goal: Option<crate::composer::Goal>,
     compacting: HashMap<String, Instant>,
     manual_compactions: usize,
     manual_compacted: HashSet<String>,
@@ -677,6 +679,7 @@ impl ThreadView {
             reasoning_secs: HashMap::new(),
             stream_fades: HashMap::new(),
             context_usage: None,
+            goal: None,
             compacting: HashMap::new(),
             manual_compactions: 0,
             manual_compacted: HashSet::new(),
@@ -2687,9 +2690,11 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::Plan { id, .. }
         | ThreadItem::Reasoning { id, .. }
         | ThreadItem::CommandExecution { id, .. }
-        | ThreadItem::FileChange { id, .. }
         | ThreadItem::McpToolCall { id, .. }
-        | ThreadItem::ContextCompaction { id } => Some(id),
+        | ThreadItem::FileChange { id, .. }
+        | ThreadItem::ContextCompaction { id }
+        | ThreadItem::EnteredReviewMode { id, .. }
+        | ThreadItem::ExitedReviewMode { id, .. } => Some(id),
         ThreadItem::Other => None,
     }
 }

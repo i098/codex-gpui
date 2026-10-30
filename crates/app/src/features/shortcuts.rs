@@ -187,7 +187,12 @@ impl Root {
         self.toast(Toast::danger("Error starting chat"), cx);
     }
 
-    fn new_special_chat(&mut self, mode: NewChatMode, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn new_special_chat(
+        &mut self,
+        mode: NewChatMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.new_chat(window, cx);
         self.shortcut_state.new_chat_mode = mode;
         self.home.update(cx, |home, cx| {

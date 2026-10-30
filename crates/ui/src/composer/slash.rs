@@ -9,7 +9,7 @@
 use super::*;
 use crate::screens::sidebar::SelectProject;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum SlashCommand {
     Fast,
     Archive,
@@ -26,6 +26,19 @@ pub enum SlashCommand {
     Export,
     Recap,
     Memories,
+    Status,
+    Init,
+    Side,
+    Chat,
+    Worktree,
+    /// `/review-mode` opened: the app reads the branches for `Composer::set_review_branches`.
+    ReviewBranches,
+    /// Start a review of the working tree (`None`) or against a branch.
+    Review(Option<String>),
+    Personality(&'static str),
+    /// `/goal <objective>`; an empty objective asks for the current goal.
+    Goal(String),
+    GoalClear,
 }
 
 impl gpui::EventEmitter<SlashCommand> for Composer {}
@@ -51,6 +64,13 @@ const COMMANDS: &[Command] = &[
         title: "Archive",
         description: "Archive the current chat",
         icon: "sidebar-archive",
+        requires_empty: true,
+    },
+    Command {
+        id: "chat",
+        title: "Chat",
+        description: "Start a chat without a project",
+        icon: "sidebar-cmd-new-chat",
         requires_empty: true,
     },
     Command {
@@ -152,6 +172,13 @@ const COMMANDS: &[Command] = &[
         requires_empty: false,
     },
     Command {
+        id: "personality",
+        title: "Personality",
+        description: "Friendly or Pragmatic",
+        icon: "settings-personalization",
+        requires_empty: false,
+    },
+    Command {
         id: "pin",
         title: "Pin chat",
         description: "Keep this chat in the sidebar",
@@ -198,6 +225,13 @@ const COMMANDS: &[Command] = &[
         title: "Sketch",
         description: "Draw a sketch",
         icon: "pencil",
+        requires_empty: false,
+    },
+    Command {
+        id: "worktree",
+        title: "Worktree",
+        description: "Run the next chat in a new worktree",
+        icon: "thread-fork",
         requires_empty: false,
     },
     Command {
@@ -255,6 +289,10 @@ pub(super) struct Slash {
     pub(super) sub: Option<Sub>,
     /// Home's projects for `/project`: label and root path.
     pub(super) projects: Vec<(SharedString, String)>,
+    /// Local branches offered by `/review-mode`.
+    review_branches: Vec<String>,
+    /// The open chat's goal, shown as the footer pill (`goal.rs`).
+    pub(super) goal: Option<super::goal::Goal>,
     scroll: gpui::ScrollHandle,
     pub(super) search: mention::Search,
     /// The `memories` feature is on, so `/memories` is offered.
@@ -295,6 +333,8 @@ enum SubAction {
     Fork,
     ForkWorktree,
     Project(String),
+    Review(Option<String>),
+    Personality(&'static str),
 }
 
 /// The open submenu of command `id`. `items` are all its rows; `Slash::matches` indexes the
@@ -418,8 +458,8 @@ impl Composer {
             for (index, command) in COMMANDS.iter().enumerate() {
                 let available = match command.id {
                     "archive" | "review-mode" | "compact" | "fork" | "init" | "new" | "pin"
-                    | "rename" | "share" | "side" => self.docked,
-                    "project" => !self.docked,
+                    | "goal" | "rename" | "share" | "side" | "status" => self.docked,
+                    "project" | "chat" | "worktree" => !self.docked,
                     "plan-mode" => self.current_model().is_some() && self.plan_supported(),
                     "fast" | "model" | "reasoning" | "ultrafast" => self.current_model().is_some(),
                     "memories" => self.slash.memories,
@@ -573,8 +613,28 @@ impl Composer {
             "export" => SlashCommand::Export,
             "recap" => SlashCommand::Recap,
             "memories" => SlashCommand::Memories,
-            "model" | "reasoning" | "fork" | "project" => {
+            "status" => SlashCommand::Status,
+            "init" => SlashCommand::Init,
+            "side" => SlashCommand::Side,
+            "chat" => SlashCommand::Chat,
+            "worktree" => SlashCommand::Worktree,
+            "model" | "reasoning" | "fork" | "project" | "personality" => {
                 self.open_sub(command.id, cx);
+                return;
+            }
+            "review-mode" => {
+                self.open_sub(command.id, cx);
+                cx.emit(SlashCommand::ReviewBranches);
+                return;
+            }
+            "goal" => {
+                self.finish_command(window, cx);
+                let objective = self.content.trim().to_owned();
+                if !objective.is_empty() {
+                    self.set_text("", cx);
+                }
+                cx.emit(SlashCommand::Goal(objective));
+                cx.notify();
                 return;
             }
             "plan-mode" => {
@@ -606,6 +666,24 @@ impl Composer {
 
     fn is_skill(&self, index: usize) -> bool {
         self.slash.sub.is_none() && index >= COMMANDS.len()
+    }
+
+    /// The local branches `/review-mode` offers as comparison bases, read by the app on
+    /// `SlashCommand::ReviewBranches`. An open submenu shows them at once.
+    pub fn set_review_branches(&mut self, branches: Vec<String>, cx: &mut Context<Self>) {
+        self.slash.review_branches = branches;
+        if self
+            .slash
+            .sub
+            .as_ref()
+            .is_some_and(|sub| sub.id == "review-mode")
+        {
+            let items = self.sub_items("review-mode");
+            if let Some(sub) = &mut self.slash.sub {
+                sub.items = items;
+            }
+            self.refresh_sub(cx);
+        }
     }
 
     /// The projects `/project` offers on Home: label and root path.
@@ -657,6 +735,34 @@ impl Composer {
                     action: SubAction::ForkWorktree,
                 },
             ],
+            "review-mode" => std::iter::once(SubItem {
+                title: "Review uncommitted changes".into(),
+                description: "Review the changes in the working tree".into(),
+                icon: "code-review",
+                action: SubAction::Review(None),
+            })
+            .chain(self.slash.review_branches.iter().map(|branch| SubItem {
+                title: format!("Review against {branch}"),
+                description: "Compare this branch with the base branch".into(),
+                icon: "code-review",
+                action: SubAction::Review(Some(branch.clone())),
+            }))
+            .collect(),
+            "personality" => [
+                (
+                    "Friendly",
+                    "Warm, collaborative and encouraging",
+                    "friendly",
+                ),
+                ("Pragmatic", "Concise, direct and task focused", "pragmatic"),
+            ]
+            .map(|(title, description, name)| SubItem {
+                title: title.into(),
+                description: description.into(),
+                icon: "settings-personalization",
+                action: SubAction::Personality(name),
+            })
+            .into(),
             _ => self
                 .slash
                 .projects
@@ -732,6 +838,8 @@ impl Composer {
             }
             SubAction::Fork => cx.emit(SlashCommand::Fork),
             SubAction::ForkWorktree => cx.emit(SlashCommand::ForkWorktree),
+            SubAction::Review(branch) => cx.emit(SlashCommand::Review(branch)),
+            SubAction::Personality(name) => cx.emit(SlashCommand::Personality(name)),
             SubAction::Project(root) => {
                 window.dispatch_action(Box::new(SelectProject(root)), cx);
             }

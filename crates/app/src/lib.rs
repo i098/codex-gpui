@@ -744,6 +744,16 @@ impl Root {
                     ui::composer::SlashCommand::Export => this.export_transcript(window, cx),
                     ui::composer::SlashCommand::Recap => this.recap(window, cx),
                     ui::composer::SlashCommand::Memories => this.open_memories(window, cx),
+                    ui::composer::SlashCommand::Status => this.show_status(window, cx),
+                    ui::composer::SlashCommand::Init => this.init_agents(window, cx),
+                    ui::composer::SlashCommand::Side => this.start_side_chat(window, cx),
+                    ui::composer::SlashCommand::ReviewBranches => this.load_review_branches(composer.clone(), cx),
+                    ui::composer::SlashCommand::Review(branch) => this.start_review(branch.clone(), window, cx),
+                    ui::composer::SlashCommand::Personality(name) => this.set_personality(name, cx),
+                    ui::composer::SlashCommand::Goal(objective) => this.set_goal(objective.clone(), window, cx),
+                    ui::composer::SlashCommand::GoalClear => this.clear_goal(window, cx),
+                    ui::composer::SlashCommand::Chat => this.new_special_chat(features::shortcuts::NewChatMode::Standalone, window, cx),
+                    ui::composer::SlashCommand::Worktree => this.toggle_worktree_run(cx),
                     ui::composer::SlashCommand::Rename => {
                         if let Route::Thread(id) = this.state.route.clone() {
                             this.open_rename(id, true, window, cx);
@@ -4392,6 +4402,7 @@ impl Root {
         .detach();
         self.thread = Some(view);
         self.sync_context_usage(cx);
+        self.load_goal(cx);
         self.show_approval(cx);
         hotkey::thread_shown(self, window, cx);
         self.refresh_git_actions(cx);
@@ -6552,6 +6563,11 @@ impl Root {
         if matches!(&event, Event::Notification { method, .. } if method == "thread/tokenUsage/updated")
         {
             self.sync_context_usage(cx);
+        }
+        if let Event::Notification { method, params } = &event
+            && method.starts_with("thread/goal/")
+        {
+            self.goal_notification(method, params, cx);
         }
         if turn_edge {
             let side = self

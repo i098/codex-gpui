@@ -112,6 +112,8 @@ actions!(
 
 mod context_usage;
 pub use context_usage::ContextUsage;
+mod goal;
+pub use goal::Goal;
 mod attach;
 mod chat_shell;
 pub mod computer_use;
