@@ -38,6 +38,7 @@ mod pull_requests;
 pub mod qa;
 mod routes;
 pub mod terminal;
+mod thread_patch;
 pub use routes::Route;
 mod plugins;
 pub mod screenshot;
