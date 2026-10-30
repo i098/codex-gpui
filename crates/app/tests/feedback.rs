@@ -2,7 +2,7 @@
 mod common;
 
 use anyhow::{Result, ensure};
-use common::{Fx, GREETING, exchange, recorded_thread, script};
+use common::{Fx, GREETING, SUBTRACT, exchange, recorded_thread, script};
 use serde_json::{Value, json};
 
 #[test]
@@ -187,5 +187,47 @@ fn export_reads_the_whole_thread_and_refuses_to_overwrite_a_file() -> Result<()>
             .iter()
             .any(|r| r["params"] == json!({"threadId":GREETING, "includeTurns":true}))
     );
+    Ok(())
+}
+
+#[test]
+fn rate_response_sends_the_picked_option_as_feedback() -> Result<()> {
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange(
+        "feedback/upload",
+        json!({"threadId": SUBTRACT, "promptHash": null}),
+    ));
+    // refs/thread shows SUBTRACT, so `fx.at` finds its last turn's `Rate response`.
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.click(fx.at("home", "Add a subtract")?)?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.click(fx.at("thread", "Rate response")?)?;
+    let rows: Vec<String> = fx.read(|root, cx| {
+        root.thread().map_or(Vec::new(), |view| {
+            view.read(cx)
+                .context_menu_items()
+                .map(|(_, label, _)| label.to_owned())
+                .collect()
+        })
+    });
+    ensure!(
+        rows.first().is_some_and(|row| row == "Good response"),
+        "{rows:?}"
+    );
+    ensure!(rows.iter().any(|row| row == "Lost context"), "{rows:?}");
+    keys(&mut fx, "down enter")?;
+    fx.wait("rating sent", |fx| {
+        fx.read(|root, cx| {
+            root.toasts(cx)
+                .iter()
+                .any(|t| t == "Thanks for your feedback")
+        })
+    })?;
+    let sent = requests(&mut fx, "feedback/upload")?;
+    ensure!(sent.len() == 1);
+    let params = &sent[0]["params"];
+    ensure!(params["classification"] == "good_result" && params["reason"] == "Solved my task");
+    ensure!(params["threadId"] == SUBTRACT && params["includeLogs"] == false);
+    ensure!(params["tags"]["turn_id"].is_string(), "{params}");
     Ok(())
 }

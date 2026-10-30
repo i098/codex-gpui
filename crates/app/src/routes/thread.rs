@@ -227,6 +227,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
         this.open_rename(a.0.clone(), false, window, cx)
     }))
     .on_action(cx.listener(|this, a: &ForkThread, window, cx| this.fork(&a.0, window, cx)))
+    .on_action(cx.listener(
+        |this, a: &ui::screens::thread::view::SubmitRating, window, cx| {
+            this.submit_rating(a, window, cx)
+        },
+    ))
     .on_action(cx.listener(|this, edit: &EditMessage, window, cx| {
         this.edit_message(edit.clone(), window, cx)
     }))
