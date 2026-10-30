@@ -1902,6 +1902,14 @@ impl Host for LocalHost {
                     .context("missing environment path")?,
             )?,
             "codex-worktrees" => self.worktrees()?,
+            "thread-worktree-info" => git::thread_worktree_info(&params)?,
+            "move-thread-to-local" | "move-thread-to-worktree" => {
+                let mut params = params.clone();
+                params["toLocal"] = json!(endpoint == "move-thread-to-local");
+                git::move_thread(&params, &self.home.join("worktrees"))?
+            }
+            "rollback-thread-move" => git::rollback_move(&params)?,
+            "restore-worktree" => git::restore_thread_worktree(&params)?,
             "worktree-delete" => {
                 self.delete_worktree(params["worktree"].as_str().context("missing worktree")?)?
             }
@@ -1911,7 +1919,8 @@ impl Host for LocalHost {
             | "git-push" | "git-checkout" | "git-cat-file" | "git-review-patch"
             | "git-file-url" => git::fetch(endpoint, &params)?,
             "gh-cli-status" | "gh-current-user" | "gh-pr-search" | "gh-pr-detail"
-            | "gh-pr-patch" | "gh-pr-media" => {
+            | "gh-pr-patch" | "gh-pr-media" | "gh-thread-pr" | "gh-create-pr"
+            | "gh-thread-compare" | "gh-pr-repair" => {
                 github_pull_requests::fetch(self, endpoint, &params)?
             }
             "create-worktree" => self.create_worktree(&params)?,

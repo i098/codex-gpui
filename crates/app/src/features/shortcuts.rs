@@ -541,7 +541,16 @@ impl Root {
         let mode = self.shortcut_state.new_chat_mode;
         let host = self.host.clone();
         let hotkey_options = hotkey::start_options(self, cx);
+        let preparing_worktree = mode != NewChatMode::Standalone
+            && hotkey_options
+                .as_ref()
+                .is_some_and(|options| options.mode == ui::screens::hotkey::Mode::Worktree);
+        if preparing_worktree {
+            self.set_git_phase(Some("Creating worktree…"), cx);
+            self.toast(Toast::info("Creating worktree…"), cx);
+        }
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let result = async {
             let workspace = if mode == features::shortcuts::NewChatMode::Standalone {
                 let prepare = host.clone();
                 let prompt = s.text.clone();
@@ -558,7 +567,15 @@ impl Root {
                     let host = host.clone();
                     let prompt = s.text.clone();
                     match cx.background_executor().spawn(async move { hotkey::prepare_start(host, options, &prompt) }).await {
-                        Ok(prepared) => Some(prepared),
+                        Ok(prepared) => {
+                            if preparing_worktree {
+                                this.update(cx, |this, cx| {
+                                    this.set_git_phase(Some("Attaching worktree…"), cx);
+                                    this.toast(Toast::info("Attaching worktree…"), cx);
+                                })?;
+                            }
+                            Some(prepared)
+                        },
                         Err(error) => {
                             this.update(cx, |this, cx| this.restore_start_draft(&s, cx))?;
                             return Err(error);
@@ -657,11 +674,29 @@ impl Root {
                 // `composer.submitInBackground`: the chat starts and shows in Recents; Home stays.
                 if !s.background {
                     this.show_thread(thread, window, cx);
+                    if preparing_worktree && let Some(thread) = &this.thread {
+                        thread.update(cx, |view, cx| view.set_worktree_status(Some("Checkout created"), cx));
+                    }
                 }
             })?;
             let result = turn_start(&bridge, &id, &s, user_input(&s), None).await;
             if result.is_err() {
                 this.update(cx, |this, cx| this.restore_failed_send(&s, cx))?;
+            }
+            result
+            }.await;
+            if preparing_worktree {
+                this.update(cx, |this, cx| {
+                    this.set_git_phase(None, cx);
+                    if let Err(error) = &result
+                        && format!("{error:#}").contains("Setup script")
+                    {
+                        if let Some(thread) = &this.thread {
+                            thread.update(cx, |view, cx| view.set_worktree_status(Some("Checkout created; setup failed"), cx));
+                        }
+                        this.toast(Toast::danger("Checkout created; setup failed"), cx);
+                    }
+                })?;
             }
             result
         });
