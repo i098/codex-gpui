@@ -1,6 +1,6 @@
 //! Replay the original Home menu interactions in `refs/interactions/f2a.json`.
 
-use anyhow::{Result, ensure};
+use anyhow::{Context as _, Result, ensure};
 use common::Fx;
 use serde_json::Value;
 use ui::composer::Permission;
@@ -147,6 +147,19 @@ fn keyboard_model_selection_and_reset_preserve_the_draft() -> Result<()> {
                 .map(|model| model["id"].clone())
         })
         .unwrap();
+    // The recommended model: `model/list`'s `isDefault` among the visible models.
+    let recommended = lines.iter().find_map(|line| {
+        let models = line["msg"]["result"]["data"].as_array()?;
+        let visible: Vec<_> = models
+            .iter()
+            .filter(|model| model["model"].is_string() && model["hidden"] != true)
+            .collect();
+        let model = visible
+            .iter()
+            .find(|model| model["isDefault"] == true)
+            .or(visible.first())?;
+        model["id"].as_str().map(String::from)
+    });
     for _ in 0..2 {
         lines.extend(common::exchange(
             "config/batchWrite",
@@ -154,7 +167,6 @@ fn keyboard_model_selection_and_reset_preserve_the_draft() -> Result<()> {
         ));
     }
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
-    let original_model = fx.read(|root, _| root.config()["model"].clone());
     let before_requests = fx.sent()?.len();
     fx.type_text("Keep this draft")?;
     fx.click(fx.at("home", "GPT-6 Astra")?)?;
@@ -186,10 +198,20 @@ fn keyboard_model_selection_and_reset_preserve_the_draft() -> Result<()> {
         "model selection did not return to the effort popup"
     );
 
+    // `Reset to default` removes the override: `null` upserts, then the recommended model.
+    fx.capture_evidence("CGX_MODEL_RESET_EVIDENCE", "before-reset")?;
     fx.keys("down down down enter")?;
     fx.wait("keyboard model reset", |fx| {
-        fx.read(|root, _| root.config()["model"] == original_model)
+        fx.read(|root, _| root.config()["model"].is_null())
     })?;
+    fx.capture_evidence("CGX_MODEL_RESET_EVIDENCE", "after-reset")?;
+    let model = fx.composer().read_with(&fx.cx, |composer, _| {
+        composer.run_settings().0["settings"]["model"].clone()
+    });
+    ensure!(
+        model.as_str() == recommended.as_deref(),
+        "Reset to default selected {model}, not {recommended:?}"
+    );
     fx.keys("escape")?;
     // The model picker's close focuses the editor (refs/interactions/s033.json step 1).
     ensure!(
@@ -205,6 +227,11 @@ fn keyboard_model_selection_and_reset_preserve_the_draft() -> Result<()> {
         "menu keys changed the draft"
     );
     let sent = fx.sent()?;
+    let reset = &sent.last().context("reset write")?["params"]["edits"];
+    ensure!(
+        reset[0]["value"].is_null() && reset[1]["value"].is_null(),
+        "Reset to default did not remove the override: {reset}"
+    );
     let methods: Vec<_> = sent[before_requests..]
         .iter()
         .map(|request| request["method"].as_str().unwrap())

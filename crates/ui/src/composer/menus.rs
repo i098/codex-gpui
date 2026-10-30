@@ -367,6 +367,8 @@ impl Composer {
             )
             .child(
                 corner("reset-effort", "composer-reset", t.text_tertiary)
+                    .role(gpui::Role::Button)
+                    .aria_label("Reset to default")
                     .right_0()
                     .when(interactive, |d| {
                         d.track_focus(&self.menu_focus.items[2]).on_click(

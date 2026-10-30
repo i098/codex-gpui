@@ -745,8 +745,8 @@ const SPEEDS: [(&str, &str); 3] = [
 type SubmitHandler = Rc<dyn Fn(&Submission, &mut Window, &mut App)>;
 type CancelEditHandler = Rc<dyn Fn(&mut Window, &mut App)>;
 type ApprovalHandler = Rc<dyn Fn(Value, String, Value, &mut Window, &mut App)>;
-/// `(model id, effort)` after the user picks them.
-type ModelHandler = Rc<dyn Fn(&str, &str, &mut App)>;
+/// `(model id, effort)` after the user picks them; `None` for `Reset to default`.
+type ModelHandler = Rc<dyn Fn(Option<(&str, &str)>, &mut App)>;
 type SettingsPasteHandler = Rc<dyn Fn(&str, &mut App) -> bool>;
 
 /// What a queued row's buttons and `Queued message actions` menu ask of the app.
@@ -1299,27 +1299,28 @@ impl Composer {
             .filter(|m| !m.hidden)
             .map(|m| ModelOption::new(m, enabled))
             .collect();
+        let recommended = models
+            .iter()
+            .filter(|m| !m.hidden)
+            .position(|m| m.is_default)
+            .unwrap_or(0);
         let configured = config["model"].as_str();
         self.model = self
             .models
             .iter()
             .position(|m| Some(m.id.as_str()) == configured)
-            .or_else(|| {
-                models
-                    .iter()
-                    .filter(|m| !m.hidden)
-                    .position(|m| m.is_default)
-            })
-            .unwrap_or(0);
+            .unwrap_or(recommended);
+        let default_effort = |index: usize| {
+            let id = &self.models.get(index)?.id;
+            let m = models.iter().find(|m| &m.id == id)?;
+            Some(m.default_reasoning_effort.clone())
+        };
         self.effort = config["model_reasoning_effort"]
             .as_str()
             .map(String::from)
-            .or_else(|| {
-                let id = &self.models.get(self.model)?.id;
-                let m = models.iter().find(|m| &m.id == id)?;
-                Some(m.default_reasoning_effort.clone())
-            });
-        self.default_selection = (self.model, self.effort.clone());
+            .or_else(|| default_effort(self.model));
+        // `Reset to default`: the recommended model, as with no `model` override.
+        self.default_selection = (recommended, default_effort(recommended));
         self.permission = Permission::from_config(config);
         self.queue_mode = config["desktop"]["followUpQueueMode"] == "queue";
         self.fast = config["service_tier"] == "priority";
@@ -1356,6 +1357,11 @@ impl Composer {
     pub fn on_submit(&mut self, f: impl Fn(&Submission, &mut Window, &mut App) + 'static) {
         self.on_submit = Some(Rc::new(f));
     }
+    /// `Reset to default` saved: the recommended model and its default effort.
+    pub fn reset_model(&mut self, cx: &mut Context<Self>) {
+        (self.model, self.effort) = self.default_selection.clone();
+        cx.notify();
+    }
 
     pub fn on_approval(
         &mut self,
@@ -1364,8 +1370,9 @@ impl Composer {
         self.on_approval = Some(Rc::new(f));
     }
 
-    /// Called when the user picks a model or an effort in the picker.
-    pub fn on_model(&mut self, f: impl Fn(&str, &str, &mut App) + 'static) {
+    /// Called when the user picks a model or an effort in the picker, or `None` when
+    /// `Reset to default` clears the override.
+    pub fn on_model(&mut self, f: impl Fn(Option<(&str, &str)>, &mut App) + 'static) {
         self.on_model = Some(Rc::new(f));
     }
 
@@ -1847,7 +1854,7 @@ impl Composer {
     /// Reports the picked model and effort to [`Self::on_model`].
     fn picked(&self, cx: &mut App) {
         if let (Some(f), Some(model)) = (self.on_model.clone(), self.current_model()) {
-            f(&model.id, self.displayed_effort(), cx);
+            f(Some((&model.id, self.displayed_effort())), cx);
         }
     }
 
@@ -2300,7 +2307,9 @@ impl Composer {
                 SPEED_ITEM => self.open_speed(window, cx),
                 2 => {
                     (self.model, self.effort) = self.default_selection.clone();
-                    self.picked(cx);
+                    if let Some(f) = self.on_model.clone() {
+                        f(None, cx);
+                    }
                 }
                 _ => {}
             },
