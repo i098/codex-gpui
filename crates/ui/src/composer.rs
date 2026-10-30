@@ -110,8 +110,10 @@ actions!(
     ]
 );
 
+mod context_usage;
+pub use context_usage::ContextUsage;
 mod attach;
-pub(crate) use attach::codex_home;
+mod chat_shell;
 pub mod computer_use;
 pub mod dictation;
 mod diff_comments;
@@ -321,6 +323,25 @@ pub fn bind_keys(cx: &mut App) {
 /// (`low medium high xhigh ultra`) intersected with the model's supported efforts.
 const ENABLED_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "ultra"];
 
+/// The selected host's `enabled-reasoning-efforts` setting; `None` keeps [`ENABLED_EFFORTS`].
+#[derive(Default)]
+pub struct EnabledEfforts(pub Option<Vec<String>>);
+
+impl gpui::Global for EnabledEfforts {}
+
+impl EnabledEfforts {
+    /// The slider never shows `persistent`, as the original's `i2a`, and always shows the
+    /// locked `low`..`xhigh`.
+    fn allows(&self, effort: &str) -> bool {
+        effort != "persistent"
+            && (ENABLED_EFFORTS[..4].contains(&effort)
+                || match &self.0 {
+                    Some(enabled) => enabled.iter().any(|e| e == effort),
+                    None => ENABLED_EFFORTS.contains(&effort),
+                })
+    }
+}
+
 /// `composer.mode.local.reasoning.*.label`.
 pub fn effort_label(effort: &str) -> &str {
     match effort {
@@ -396,20 +417,22 @@ struct ModelOption {
 }
 
 impl ModelOption {
-    fn new(m: &Model) -> Self {
-        let efforts = m
-            .supported_reasoning_efforts
-            .iter()
-            .filter_map(|e| e["reasoningEffort"].as_str())
-            .filter(|e| ENABLED_EFFORTS.contains(e))
-            .map(String::from)
-            .collect();
+    fn new(m: &Model, enabled: &EnabledEfforts) -> Self {
         Self {
             id: m.id.clone(),
             label: model_label(&m.display_name).into(),
-            efforts,
+            efforts: model_efforts(m, enabled),
         }
     }
+}
+
+fn model_efforts(m: &Model, enabled: &EnabledEfforts) -> Vec<String> {
+    m.supported_reasoning_efforts
+        .iter()
+        .filter_map(|e| e["reasoningEffort"].as_str())
+        .filter(|e| enabled.allows(e))
+        .map(String::from)
+        .collect()
 }
 
 /// Approval mode of the permissions dropdown (`composer.permissionsDropdown.*`).
@@ -471,10 +494,12 @@ impl Permission {
     }
 }
 
-/// What the composer sends: the app turns it into `thread/start` + `turn/start`.
+/// What the composer sends: model input or a confirmed shell command.
 #[derive(Clone, Debug)]
 pub struct Submission {
     pub text: String,
+    /// Set only after the user confirms the shell command.
+    pub shell_command: bool,
     pub attachments: Vec<PathBuf>,
     /// File references added as context, not image uploads.
     pub context_files: Vec<PathBuf>,
@@ -483,6 +508,8 @@ pub struct Submission {
     pub permission: Permission,
     /// Fast mode (bolt toggle in the model picker).
     pub fast: bool,
+    /// Plan mode (`collaborationMode.mode` `plan`).
+    pub plan: bool,
     /// `composer.submitInBackground`: create the chat and start its turn without opening it.
     pub background: bool,
 }
@@ -668,6 +695,7 @@ type SettingsPasteHandler = Rc<dyn Fn(&str, &mut App) -> bool>;
 #[derive(Clone)]
 pub enum QueueAction {
     Steer(String),
+    Retry(String),
     Delete(String),
     /// `Edit message`: the queued submission with this id returns to the composer.
     Edit(String),
@@ -683,7 +711,24 @@ impl gpui::EventEmitter<QueueAction> for Composer {}
 pub struct QueuedMessage {
     pub submission: QueuedSubmission,
     pub text: SharedString,
+    pub failed: bool,
     key: SharedString,
+}
+
+impl QueuedMessage {
+    fn new(submission: QueuedSubmission, failed: bool) -> Self {
+        let text = submission
+            .input
+            .iter()
+            .filter_map(|part| part["text"].as_str())
+            .collect::<String>();
+        Self {
+            key: submission.id.clone().into(),
+            submission,
+            text: text.trim_end().to_owned().into(),
+            failed,
+        }
+    }
 }
 
 const QUEUE_ACTIONS: &str = "Queued message actions";
@@ -711,6 +756,7 @@ pub struct Composer {
     /// Docked under a thread: `_ComposerLayoutRoot` paints the card and `_ComposerLayoutBody`
     /// (the content) is a `will-change: opacity` layer. On Home the body paints the card.
     docked: bool,
+    shell_commands: bool,
     content: String,
     /// Mention chips in `content`, in order.
     mentions: Vec<mention::Mention>,
@@ -746,6 +792,8 @@ pub struct Composer {
     effort: Option<String>,
     default_selection: (usize, Option<String>),
     fast: bool,
+    /// Plan mode: the next turns run in the `plan` collaboration mode.
+    plan: bool,
     permission: Permission,
     menu: Option<Menu>,
     slash: slash::Slash,
@@ -775,6 +823,8 @@ pub struct Composer {
     secret: bool,
     request_parent: Option<(gpui::WeakEntity<Composer>, Rc<RequestIdentity>, usize)>,
     running: bool,
+    /// The open chat's context window use, while `Show context window usage` is on.
+    context_usage: Option<ContextUsage>,
     /// Escape while a turn runs arms the stop for 2 s (the Stop button reads `Esc`); a second
     /// Escape in that window interrupts the turn. The task clears the arm.
     stop_armed: Option<Task<()>>,
@@ -846,6 +896,7 @@ impl Composer {
                 .map(|server| server.0.clone()),
             placeholder: placeholder.into(),
             docked,
+            shell_commands: false,
             content: String::new(),
             mentions: Vec::new(),
             selected_range: 0..0,
@@ -874,6 +925,7 @@ impl Composer {
             effort: Some("medium".into()),
             default_selection: (0, Some("medium".into())),
             fast: false,
+            plan: false,
             permission: Permission::Custom,
             menu: None,
             slash: slash::Slash::default(),
@@ -898,6 +950,7 @@ impl Composer {
             secret: false,
             request_parent: None,
             running: false,
+            context_usage: None,
             stop_armed: None,
             queue_mode: false,
             queued: Vec::new(),
@@ -1175,10 +1228,12 @@ impl Composer {
     /// Models from `model/list` and the selection from `config/read` (`model`,
     /// `model_reasoning_effort`, approval settings).
     pub fn set_models(&mut self, models: &[Model], config: &Value, cx: &mut Context<Self>) {
+        let none = EnabledEfforts::default();
+        let enabled = cx.try_global::<EnabledEfforts>().unwrap_or(&none);
         self.models = models
             .iter()
             .filter(|m| !m.hidden)
-            .map(ModelOption::new)
+            .map(|m| ModelOption::new(m, enabled))
             .collect();
         let configured = config["model"].as_str();
         self.model = self
@@ -1203,8 +1258,21 @@ impl Composer {
         self.default_selection = (self.model, self.effort.clone());
         self.permission = Permission::from_config(config);
         self.queue_mode = config["desktop"]["followUpQueueMode"] == "queue";
+        self.fast = config["service_tier"] == "priority";
         if self.menu == Some(Menu::Models) {
             self.menu_focus.prepare(self.models.len(), cx);
+        }
+        cx.notify();
+    }
+
+    /// Re-reads [`EnabledEfforts`] for the listed models, keeping the selection.
+    pub fn refresh_efforts(&mut self, models: &[Model], cx: &mut Context<Self>) {
+        let none = EnabledEfforts::default();
+        let enabled = cx.try_global::<EnabledEfforts>().unwrap_or(&none);
+        for option in &mut self.models {
+            if let Some(model) = models.iter().find(|m| m.id == option.id) {
+                option.efforts = model_efforts(model, enabled);
+            }
         }
         cx.notify();
     }
@@ -1312,21 +1380,22 @@ impl Composer {
     }
 
     pub fn set_queued(&mut self, queued: Vec<QueuedSubmission>, cx: &mut Context<Self>) {
+        let failed = self
+            .queued
+            .extract_if(.., |row| row.failed)
+            .collect::<Vec<_>>();
         self.queued = queued
             .into_iter()
-            .map(|submission| {
-                let text = submission
-                    .input
-                    .iter()
-                    .filter_map(|part| part["text"].as_str())
-                    .collect::<String>();
-                QueuedMessage {
-                    key: submission.id.clone().into(),
-                    submission,
-                    text: text.trim_end().to_owned().into(),
-                }
-            })
+            .map(|submission| QueuedMessage::new(submission, false))
+            .chain(failed)
             .collect();
+        cx.notify();
+    }
+
+    pub fn set_failed_queued(&mut self, queued: Vec<QueuedSubmission>, cx: &mut Context<Self>) {
+        self.queued.retain(|row| !row.failed);
+        self.queued
+            .extend(queued.into_iter().map(|s| QueuedMessage::new(s, true)));
         cx.notify();
     }
 
@@ -1450,6 +1519,7 @@ impl Composer {
     ) -> crate::tooltip::Tooltip {
         let kind = match &action {
             QueueAction::Steer(_) => "queued-steer",
+            QueueAction::Retry(_) => "queued-retry",
             _ => "queued-delete",
         };
         let key_action = action.clone();
@@ -1458,11 +1528,13 @@ impl Composer {
                 .id(kind)
                 .h(px(24.))
                 .min_w(px(24.))
-                .px(px(if matches!(action, QueueAction::Steer(_)) {
-                    8.
-                } else {
-                    0.
-                }))
+                .px(px(
+                    if matches!(action, QueueAction::Steer(_) | QueueAction::Retry(_)) {
+                        8.
+                    } else {
+                        0.
+                    },
+                ))
                 .border_1()
                 .border_color(gpui::transparent_black())
                 .flex_shrink_0()
@@ -1485,6 +1557,13 @@ impl Composer {
                         .gap(px(4.))
                         .child(icon("queue-steer", 14., t.text_tertiary))
                         .child(text("Steer", 13., 18., 430., t.text_tertiary))
+                        .into_any_element(),
+                    QueueAction::Retry(_) => div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(icon("diff-refresh", 14., t.text_tertiary))
+                        .child(text("Retry", 13., 18., 430., t.text_tertiary))
                         .into_any_element(),
                     _ => icon("queue-delete", 14., t.text_tertiary).into_any_element(),
                 })
@@ -1630,7 +1709,7 @@ impl Composer {
         self.context_menu = None;
         self.menu = None;
         self.set_text("", cx);
-        self.set_queued(Vec::new(), cx);
+        self.queued.clear();
         self.set_running(false, cx);
         self.set_approval(None, cx);
     }
@@ -1770,6 +1849,9 @@ impl Composer {
     }
 
     fn send_draft(&mut self, background: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.blocked.is_some() {
+            return;
+        }
         if self.slash.open {
             self.activate_slash(window, cx);
             return;
@@ -1777,7 +1859,7 @@ impl Composer {
         if self.edit_pending || (!self.running && self.current_model().is_none()) {
             return;
         }
-        if self.pending_attachments > 0 {
+        if self.upload_status().is_some() {
             self.show_submit_blocked(window, cx);
             return;
         }
@@ -1787,6 +1869,14 @@ impl Composer {
         {
             return;
         }
+        if self.shell_commands && self.content.starts_with('!') {
+            self.confirm_shell(window, cx);
+            return;
+        }
+        self.finish_send_draft(background, window, cx);
+    }
+
+    fn finish_send_draft(&mut self, background: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_dictation(cx);
         let submission = self.take_submission(background);
         if self.on_cancel_edit.is_some() {
@@ -1839,6 +1929,7 @@ impl Composer {
             }
         }
         Submission {
+            shell_command: self.shell_commands && self.content.starts_with('!'),
             text: if self.mentions.is_empty()
                 && self.on_cancel_edit.is_none()
                 && self.diff_comments.is_empty()
@@ -1856,6 +1947,7 @@ impl Composer {
             effort: self.effort.clone(),
             permission: self.permission,
             fast: self.fast,
+            plan: self.plan,
             background,
         }
     }
@@ -2183,7 +2275,7 @@ impl Composer {
 
     pub fn run_settings(&self) -> (Value, Permission) {
         (
-            json!({"mode": "default", "settings": {
+            json!({"mode": if self.plan { "plan" } else { "default" }, "settings": {
                 "model": self.current_model().map_or("", |m| m.id.as_str()),
                 "reasoning_effort": self.effort, "developer_instructions": null,
             }}),
@@ -2205,6 +2297,7 @@ impl Composer {
                 .as_str()
                 .map(str::to_owned);
         }
+        self.plan = mode["mode"] == "plan";
         self.permission = permission;
         cx.notify();
     }
@@ -2221,6 +2314,16 @@ impl Composer {
 
     pub fn fast_mode(&self) -> bool {
         self.fast
+    }
+
+    pub fn plan_mode(&self) -> bool {
+        self.plan
+    }
+
+    /// `Plan mode` (slash command, `@` row) and the footer's `Plan` chip turn it on and off.
+    pub fn toggle_plan(&mut self, cx: &mut Context<Self>) {
+        self.plan = !self.plan;
+        cx.notify();
     }
 }
 
@@ -3006,9 +3109,17 @@ impl Render for Composer {
                                 .items_center()
                                 .gap(px(4.))
                                 .child(self.queue_button(
-                                    QueueAction::Steer(row.submission.id.clone()),
-                                    "Steer",
-                                    "Submit without interrupting the model",
+                                    if row.failed {
+                                        QueueAction::Retry(row.submission.id.clone())
+                                    } else {
+                                        QueueAction::Steer(row.submission.id.clone())
+                                    },
+                                    if row.failed { "Retry" } else { "Steer" },
+                                    if row.failed {
+                                        "Retry"
+                                    } else {
+                                        "Submit without interrupting the model"
+                                    },
                                     &t,
                                     cx,
                                 ))
@@ -3053,6 +3164,9 @@ impl Render for Composer {
                         )
                     })),
             )
+            .when_some(self.shell_disabled_reason(), |d, reason| {
+                d.child(text(reason, 12., 16., 400., t.text))
+            })
             .when_some(self.dictation_error.clone(), |d, error| {
                 d.child(text(error, 12., 16., 400., t.text))
             })
@@ -3078,6 +3192,35 @@ impl Render for Composer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enabled_efforts_keep_low_to_xhigh_and_filter_the_rest() {
+        let supported = [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra",
+            "persistent",
+        ]
+        .map(|e| json!({"reasoningEffort": e}));
+        let model: Model = serde_json::from_value(json!({
+            "id": "m", "model": "m", "displayName": "m", "description": "", "hidden": false,
+            "defaultReasoningEffort": "medium", "isDefault": true,
+            "supportedReasoningEfforts": supported,
+        }))
+        .unwrap();
+        let efforts = |enabled: Option<&[&str]>| {
+            let enabled = EnabledEfforts(enabled.map(|e| e.iter().map(|&e| e.into()).collect()));
+            model_efforts(&model, &enabled)
+        };
+        assert_eq!(efforts(None), ["low", "medium", "high", "xhigh", "ultra"]);
+        assert_eq!(
+            efforts(Some(&["max", "persistent"])),
+            ["low", "medium", "high", "xhigh", "max"]
+        );
+    }
 
     #[test]
     fn send_shortcut_controls_enter_without_changing_shift_enter() {
@@ -3119,6 +3262,7 @@ mod tests {
             .unwrap();
         for (setting, draft, key, sends) in [
             ("enter", "one", "enter", true),
+            ("enter", "!ordinary prompt", "enter", true),
             ("enter", "one\ntwo", "cmd-enter", true),
             ("cmdIfMultiline", "one", "enter", true),
             ("cmdIfMultiline", "one\ntwo", "enter", false),
@@ -3227,7 +3371,18 @@ mod tests {
         assert!(sent.borrow().is_empty());
         app.update(|cx| {
             window
-                .update(cx, |composer, _, _| composer.pending_attachments = 0)
+                .update(cx, |composer, _, _| {
+                    composer.pending_attachments = 0;
+                    composer.attachment_error = Some("Unable to upload file");
+                })
+                .unwrap();
+        });
+        assert_eq!(press(&mut app, "enter"), (Some(true), false, "hi".into()));
+        assert!(sent.borrow().is_empty());
+        assert_eq!(press(&mut app, "escape"), (None, true, "hi".into()));
+        app.update(|cx| {
+            window
+                .update(cx, |composer, _, _| composer.attachment_error = None)
                 .unwrap();
         });
         assert_eq!(press(&mut app, "enter"), (None, true, String::new()));

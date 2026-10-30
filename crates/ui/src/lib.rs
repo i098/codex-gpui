@@ -61,6 +61,8 @@ actions!(
         OpenPullRequests,
         OpenPlugins,
         OpenSecurity,
+        /// Rail `Sites` (`/sites`).
+        OpenSites,
         /// Home beacon `Start Voice` and the composer's `Start new voice chat`.
         StartVoiceChat,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
@@ -1121,7 +1123,7 @@ impl Shell {
             let fg = if on { t.text } else { t.text_tertiary };
             let id = SharedString::from(format!("rail-{name}"));
             let focus = focus::handle(id.clone(), 0, window, cx);
-            let glyph = if on && !matches!(name, "explore" | "rail-code-review") {
+            let glyph = if on && !matches!(name, "explore" | "rail-code-review" | "sites") {
                 format!("{name}-filled")
             } else {
                 name.to_string()
@@ -1286,6 +1288,9 @@ impl Shell {
                             item(destination.icon)
                                 .when(destination.id == "builtin:pull-requests", |item| {
                                     item.on_click(dispatch::<OpenPullRequests>)
+                                })
+                                .when(destination.id == "builtin:sites", |item| {
+                                    item.on_click(dispatch::<OpenSites>)
                                 })
                                 .on_drag(RailDrag(index), |drag, _, _, cx| {
                                     cx.new(|_| RailDrag(drag.0))

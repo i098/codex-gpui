@@ -687,6 +687,17 @@ pub fn exchange(method: &str, result: Value) -> [Value; 2] {
     ]
 }
 
+pub fn refusal(method: &str, message: &str) -> [Value; 2] {
+    let [request, _] = exchange(method, Value::Null);
+    let response = json!({
+        "dir": "recv", "msg": {
+            "id": request["msg"]["id"],
+            "error": { "code": -32000, "message": message },
+        },
+    });
+    [request, response]
+}
+
 /// readback.jsonl's `thread/read` thread `id`, with its turns.
 pub fn recorded_thread(id: &str) -> Result<Value> {
     script(None, |_| {})?
@@ -775,7 +786,12 @@ pub fn parity_flow(screen: &str, reach: fn(&mut Fx) -> Result<()>) -> Result<Str
         for size in [(1280., 832.), (1440., 900.)] {
             let result = (|| {
                 let session = (screen == "sidebar").then_some("sessions/sidebar-math-search.jsonl");
-                let mut fx = Fx::with(theme, size, session, |_| {})?;
+                let mut lines = script(session, |_| {})?;
+                if screen == "screenshot" {
+                    lines.extend(exchange("fs/createDirectory", json!({})));
+                    lines.extend(exchange("fs/writeFile", json!({})));
+                }
+                let mut fx = Fx::open(theme, size, lines)?;
                 reach(&mut fx)?;
                 fx.cx.run_until_parked();
                 ensure!(

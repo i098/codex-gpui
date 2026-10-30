@@ -443,6 +443,7 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
                 Route::SelectWorkspace => "select-workspace".to_owned(),
                 Route::Plugins(path) => path,
                 Route::Onboarding(page) => page.path().trim_start_matches('/').to_owned(),
+                Route::Sites => "sites".to_owned(),
             }
             .into(),
             "selectedRail" => fx.shell(|s| s.selected_rail).into(),

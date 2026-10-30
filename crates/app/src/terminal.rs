@@ -26,6 +26,65 @@ use ui::{
 static NEXT_PROCESS: AtomicU64 = AtomicU64::new(1);
 const HOME_TERMINAL: &str = "home";
 
+impl Root {
+    pub(super) fn send_shell(
+        &mut self,
+        side: Option<usize>,
+        submission: ui::composer::Submission,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((view, composer)) = self.conversation(side) else {
+            return;
+        };
+        let id = view.read(cx).id().to_owned();
+        let resume = !self.loaded.contains(&id);
+        let bridge = self.bridge.clone();
+        let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
+            let result = async {
+                crate::resume_if(resume, &bridge, &this, &id, cx).await?;
+                shell_command(&bridge, &id, &submission).await
+            }
+            .await;
+            if result.is_err() {
+                this.update(cx, |this, cx| {
+                    composer.update(cx, |composer, cx| {
+                        composer.restore_text(&submission.text, cx);
+                        composer.drop_files(&submission.attachments, cx);
+                    });
+                    this.toast(ui::toast::Toast::danger("Error submitting message"), cx);
+                })?;
+            }
+            result
+        });
+        crate::log_err(task, cx);
+    }
+}
+
+async fn shell_command(
+    bridge: &bridge::Bridge,
+    thread: &str,
+    submission: &ui::composer::Submission,
+) -> Result<()> {
+    anyhow::ensure!(
+        submission.permission == ui::composer::Permission::FullAccess,
+        "Shell commands require Full access"
+    );
+    anyhow::ensure!(
+        submission.attachments.is_empty() && submission.context_files.is_empty(),
+        "Shell commands cannot include attachments"
+    );
+    let command = submission.text.strip_prefix('!').unwrap_or_default();
+    anyhow::ensure!(!command.trim().is_empty(), "Shell command is empty");
+    bridge
+        .request::<_, Value>(
+            "thread/shellCommand",
+            serde_json::json!({ "threadId": thread, "command": command }),
+        )
+        .await?;
+    Ok(())
+}
+
 #[derive(Default)]
 pub struct Terminals {
     panels: HashMap<String, Entity<TerminalPanel>>,

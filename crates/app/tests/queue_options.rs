@@ -11,7 +11,7 @@ mod common;
 use anyhow::Result;
 use app::SidePanel;
 use bridge::{Event, types::TurnStatus};
-use common::{Fx, SUBTRACT, exchange, proxy_child, recorded_thread, script};
+use common::{Fx, SUBTRACT, exchange, proxy_child, recorded_thread, refusal, script};
 use serde_json::{Value, json};
 use ui::screens::diff::panel::CloseSideTab;
 
@@ -130,6 +130,15 @@ fn save(fx: &mut Fx, name: &str) -> Result<()> {
 
 #[test]
 fn edit_moves_the_exact_draft_back_and_queues_it_in_place() -> Result<()> {
+    edit_and_resubmit(false)
+}
+
+#[test]
+fn retry_keeps_edited_images_skills_and_queue_position() -> Result<()> {
+    edit_and_resubmit(true)
+}
+
+fn edit_and_resubmit(retry: bool) -> Result<()> {
     if !cfg!(target_os = "macos") {
         return Ok(());
     }
@@ -146,6 +155,9 @@ fn edit_moves_the_exact_draft_back_and_queues_it_in_place() -> Result<()> {
     lines.extend(list(&[&first, &second, &third]));
     lines.extend(exchange("thread/queue/delete", json!({ "deleted": true })));
     lines.extend(list(&[&first, &third]));
+    if retry {
+        lines.extend(refusal("thread/queue/add", "Submission refused"));
+    }
     lines.extend(exchange(
         "thread/queue/add",
         json!({ "queuedSubmission": again }),
@@ -186,15 +198,25 @@ fn edit_moves_the_exact_draft_back_and_queues_it_in_place() -> Result<()> {
 
     // Sent again, the draft keeps its image and skill and returns between the other rows.
     fx.keys("enter")?;
+    if retry {
+        fx.wait("failed edited submission", |fx| {
+            queued(fx) == ["first", "third", draft.trim_end()]
+        })?;
+        assert_eq!(fx.composer_text()?, "");
+        fx.click((1080., 698.))?;
+    }
     fx.wait("queued in place", |fx| {
         queued(fx) == ["first", draft.trim_end(), "third"]
     })?;
     let added = sent(&mut fx, "thread/queue/add")?;
-    assert_eq!(added.len(), 1, "{added:?}");
+    assert_eq!(added.len(), if retry { 2 } else { 1 }, "{added:?}");
     assert_eq!(
         added[0]["params"]["input"],
         json!([text(draft), image, skill])
     );
+    if retry {
+        assert_eq!(added[0]["params"], added[1]["params"]);
+    }
     let reordered = sent(&mut fx, "thread/queue/reorder")?;
     assert_eq!(reordered.len(), 1, "{reordered:?}");
     assert_eq!(
@@ -202,6 +224,60 @@ fn edit_moves_the_exact_draft_back_and_queues_it_in_place() -> Result<()> {
         json!({ "threadId": SUBTRACT, "queuedSubmissionIds": ["a", "b2", "c"] })
     );
     assert_eq!(fx.composer_text()?, "");
+    Ok(())
+}
+
+/// The queue restore reads every `thread/queue/list` page before it reorders: a reorder of
+/// the first page alone would drop the rows of the later pages.
+#[test]
+fn edit_restores_the_place_in_a_queue_of_several_pages() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    let first = submission("a", json!([text("first")]));
+    let second = submission("b", json!([text("second")]));
+    let third = submission("c", json!([text("third")]));
+    let again = submission("b2", json!([text("second")]));
+    let page = |rows: &[&Value], cursor: Option<&str>, next: Option<&str>| {
+        let mut page = exchange(
+            "thread/queue/list",
+            json!({ "data": rows, "nextCursor": next }),
+        );
+        page[0]["msg"]["params"] = json!({ "threadId": SUBTRACT, "cursor": cursor });
+        page
+    };
+
+    let mut lines = script(None, queue_mode)?;
+    lines.extend(exchange("thread/resume", json!({})));
+    lines.extend(list(&[&first, &second, &third]));
+    lines.extend(exchange("thread/queue/delete", json!({ "deleted": true })));
+    lines.extend(list(&[&first, &third]));
+    lines.extend(exchange(
+        "thread/queue/add",
+        json!({ "queuedSubmission": again }),
+    ));
+    lines.extend(page(&[&first], None, Some("page-2")));
+    lines.extend(page(&[&third, &again], Some("page-2"), None));
+    lines.extend(exchange("thread/queue/reorder", json!({})));
+    lines.extend(list(&[&first, &again, &third]));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    open_running(&mut fx)?;
+    fx.wait("three rows", |fx| {
+        queued(fx) == ["first", "second", "third"]
+    })?;
+    fx.click(actions_button(3, 1))?;
+    fx.keys("down enter")?;
+    fx.wait("draft in the composer", |fx| {
+        fx.composer_text().is_ok_and(|text| text == "second")
+    })?;
+    fx.keys("enter")?;
+    fx.wait("reordered", |fx| {
+        sent(fx, "thread/queue/reorder").is_ok_and(|r| r.len() == 1)
+    })?;
+    assert_eq!(
+        sent(&mut fx, "thread/queue/reorder")?[0]["params"],
+        json!({ "threadId": SUBTRACT, "queuedSubmissionIds": ["a", "b2", "c"] })
+    );
     Ok(())
 }
 
@@ -610,5 +686,62 @@ fn a_side_chat_that_fails_to_open_puts_the_message_back_in_place() -> Result<()>
     assert!(sent(&mut fx, "turn/start")?.is_empty());
     assert!(fx.read(|root, _| root.side_tabs().is_empty()));
     assert_eq!(fx.composer_text()?, "keep me");
+    Ok(())
+}
+
+#[test]
+fn failed_follow_up_can_open_a_side_chat_without_deleting_a_server_row() -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    for fail_fork in [false, true] {
+        let mut fork = recorded_thread(SUBTRACT)?;
+        fork["id"] = SIDE.into();
+        fork["turns"] = json!([]);
+        let mut lines = script(None, queue_mode)?;
+        lines.extend(exchange("thread/resume", json!({})));
+        lines.extend(refusal("thread/queue/add", "Submission refused"));
+        lines.extend(if fail_fork {
+            refusal("thread/fork", "Fork refused")
+        } else {
+            exchange("thread/fork", fork_response(fork))
+        });
+        lines.extend(exchange("thread/inject_items", json!({})));
+        lines.extend(exchange("turn/start", json!({})));
+        let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+        open_running(&mut fx)?;
+        fx.type_text("Retry in a side chat")?;
+        fx.keys("enter")?;
+        fx.wait("failed follow-up", |fx| {
+            queued(fx) == ["Retry in a side chat"]
+        })?;
+        let original = sent(&mut fx, "thread/queue/add")?[0]["params"].clone();
+        fx.type_text("Keep my draft")?;
+        fx.click(actions_button(1, 0))?;
+        fx.keys("down down enter")?;
+        if fail_fork {
+            fx.wait("fork failure", |fx| {
+                fx.read(|root, cx| {
+                    root.toasts(cx)
+                        .iter()
+                        .any(|toast| toast.as_ref() == "Failed to open side chat")
+                })
+            })?;
+            assert_eq!(queued(&mut fx), ["Retry in a side chat"]);
+        } else {
+            fx.wait("side chat accepted the failed message", |fx| {
+                side_chat(fx).is_some() && queued(fx).is_empty()
+            })?;
+            let started = sent(&mut fx, "turn/start")?;
+            assert_eq!(started[0]["params"]["input"], original["input"]);
+            assert_eq!(
+                started[0]["params"]["clientUserMessageId"],
+                original["clientUserMessageId"]
+            );
+        }
+        assert_eq!(fx.composer_text()?, "Keep my draft");
+        assert!(sent(&mut fx, "thread/queue/delete")?.is_empty());
+        assert_eq!(sent(&mut fx, "thread/queue/add")?.len(), 1);
+    }
     Ok(())
 }

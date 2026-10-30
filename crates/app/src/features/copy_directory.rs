@@ -14,17 +14,23 @@ const MIN_VERSION: &str = "0.155.0-alpha.2";
 
 pub(super) fn actions(root: gpui::Div, cx: &mut Context<Root>) -> gpui::Div {
     root.on_action(cx.listener(|this, _: &CopyWorkingDirectory, window, cx| {
-        this.copy_working_directory(window, cx)
-    }))
-}
-
-impl Root {
-    fn copy_working_directory(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let (Route::Thread(id), Some(thread)) = (self.state.route.clone(), self.thread.as_ref())
+        let (Route::Thread(id), Some(thread)) = (this.state.route.clone(), this.thread.as_ref())
         else {
             return;
         };
         let cwd = thread.read(cx).cwd().to_owned();
+        this.copy_working_directory(id, cwd, window, cx)
+    }))
+}
+
+impl Root {
+    pub(super) fn copy_working_directory(
+        &mut self,
+        id: String,
+        cwd: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (bridge, host) = (self.bridge.clone(), self.host.clone());
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let root = async {
