@@ -2612,6 +2612,7 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
         | ThreadItem::CommandExecution { id, .. }
         | ThreadItem::FileChange { id, .. }
         | ThreadItem::McpToolCall { id, .. }
+        | ThreadItem::DynamicToolCall { id, .. }
         | ThreadItem::ContextCompaction { id } => Some(id),
         ThreadItem::Other => None,
     }

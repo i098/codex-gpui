@@ -578,6 +578,7 @@ impl Root {
             if let Some(config) = computer_use {
                 params["config"] = config;
             }
+            params["dynamicTools"] = json!([crate::terminal::read_thread_terminal_tool()]);
             let mut thread = match bridge
                 .request::<_, ThreadStartResponse>("thread/start", params)
                 .await
