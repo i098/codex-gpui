@@ -158,6 +158,8 @@ pub enum Kind {
     BranchConflict,
     DiscardInstructions,
     DeleteMemories,
+    /// `Chat memories` from `/memories` (`composer.memoriesSlashCommand`).
+    ChatMemories,
     WritingStyle,
 }
 
@@ -168,6 +170,11 @@ pub enum Outcome {
     LogOut,
     DiscardInstructions,
     DeleteMemories,
+    /// A `Chat memories` switch changed; the dialog stays open.
+    ChatMemories {
+        use_memories: bool,
+        generate: bool,
+    },
     DismissAnnouncement(SharedString),
     UseAnnouncedModel {
         model: SharedString,
@@ -262,6 +269,13 @@ struct BranchForm {
     conflicts: Vec<String>,
 }
 
+/// The `Chat memories` switches. `Use memories` is fixed once the chat has started.
+struct ChatMemories {
+    started: bool,
+    use_memories: bool,
+    generate: bool,
+}
+
 pub struct Dialog {
     kind: Kind,
     controls: [FocusHandle; 7],
@@ -287,6 +301,7 @@ pub struct Dialog {
     commit: Option<CommitForm>,
     branch: Option<BranchForm>,
     writing: Option<WritingSetup>,
+    memories: Option<ChatMemories>,
     shortcuts: Vec<Shortcut>,
 }
 impl EventEmitter<Outcome> for Dialog {}
@@ -329,6 +344,7 @@ impl Dialog {
             commit: None,
             branch: None,
             writing: None,
+            memories: None,
             shortcuts: if kind == Kind::Shortcuts {
                 crate::screens::settings::keyboard_shortcuts::active_shortcuts(cx)
             } else {
@@ -947,6 +963,162 @@ impl Dialog {
             ..Self::new(Kind::LogOut, cx)
         }
     }
+    /// `Chat memories` for the open chat (`started`) or for the chat the composer starts.
+    pub fn chat_memories(
+        started: bool,
+        use_memories: bool,
+        generate: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self {
+            selected: usize::from(started),
+            memories: Some(ChatMemories {
+                started,
+                use_memories,
+                generate,
+            }),
+            ..Self::new(Kind::ChatMemories, cx)
+        }
+    }
+
+    /// The `Chat memories` switches `(use_memories, generate)`.
+    pub fn memory_switches(&self) -> Option<(bool, bool)> {
+        self.memories.as_ref().map(|m| (m.use_memories, m.generate))
+    }
+
+    /// Restores `Generate memories` after the app-server refused the change.
+    pub fn set_memory_generate(&mut self, generate: bool, cx: &mut Context<Self>) {
+        if let Some(memories) = &mut self.memories {
+            memories.generate = generate;
+            cx.notify();
+        }
+    }
+
+    fn toggle_memory(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(memories) = &mut self.memories else {
+            return;
+        };
+        match index {
+            0 if !memories.started => memories.use_memories = !memories.use_memories,
+            1 => memories.generate = !memories.generate,
+            _ => return,
+        }
+        cx.emit(Outcome::ChatMemories {
+            use_memories: memories.use_memories,
+            generate: memories.generate,
+        });
+        cx.notify();
+    }
+
+    fn chat_memories_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        let memories = self.memories.as_ref().expect("chat memories");
+        let row = |index: usize, label: &'static str, description: &'static str, on: bool| {
+            let disabled = index == 0 && memories.started;
+            div()
+                .id(("memory-switch", index))
+                .role(gpui::Role::Switch)
+                .aria_label(label)
+                .aria_toggled(if on {
+                    gpui::Toggled::True
+                } else {
+                    gpui::Toggled::False
+                })
+                .aria_disabled(disabled)
+                .track_focus(&self.controls[index])
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .p(px(4.))
+                .rounded(px(8.))
+                .border_2()
+                .border_color(if self.selected == index {
+                    rgba(0x3a83f7ff)
+                } else {
+                    rgba(0)
+                })
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .child(text(label, 14., 20., 500., t.text))
+                        .child(
+                            text(description, 13., 18., 400., t.text_secondary).whitespace_normal(),
+                        ),
+                )
+                .child(crate::screens::settings::switch(
+                    ("memory-switch-track", index),
+                    on,
+                    disabled,
+                    t,
+                ))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.selected = index;
+                    this.controls[index].focus(window, cx);
+                    this.toggle_memory(index, cx);
+                }))
+        };
+        div()
+            .relative()
+            .size_full()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .gap(px(16.))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .child(icon("project-marker-brain", 16., t.text).mt(px(6.)))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(text("Chat memories", 20., 28., 600., t.text))
+                            .child(text(
+                                if memories.started {
+                                    "These switches apply to the current chat"
+                                } else {
+                                    "These switches apply to the chat started from this composer"
+                                },
+                                14.,
+                                20.,
+                                430.,
+                                t.text_secondary,
+                            )),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(row(
+                        0,
+                        "Use memories",
+                        if memories.started {
+                            "Cannot be changed after conversation has started"
+                        } else {
+                            "Let ChatGPT bring existing memories into this chat's context"
+                        },
+                        memories.use_memories,
+                    ))
+                    .child(row(
+                        1,
+                        "Generate memories",
+                        "Allow ChatGPT to use this chat when creating new memories later",
+                        memories.generate,
+                    )),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .bottom(px(20.))
+                    .right(px(20.))
+                    .child(self.button(2, "Done", 72., t, cx)),
+            )
+    }
+
     /// `Rename chat` for `thread`, its input prefilled with `title` and all of it selected.
     pub fn rename(thread: String, title: String, cx: &mut Context<Self>) -> Self {
         Self {
@@ -1514,6 +1686,9 @@ impl Dialog {
             (Kind::DeleteMemories, 0) => "Cancel",
             (Kind::DeleteMemories, 1) => "Delete",
             (Kind::DeleteMemories, _) => "Close dialog",
+            (Kind::ChatMemories, 0) => "Use memories",
+            (Kind::ChatMemories, 1) => "Generate memories",
+            (Kind::ChatMemories, _) => "Done",
             (Kind::WritingStyle, _) => "Writing style",
             (Kind::ModelAnnouncement, 0) => "Close",
             (Kind::ModelAnnouncement, 1) => "Continue with current model",
@@ -1695,6 +1870,7 @@ impl Dialog {
             (Kind::LogOut, 1) => cx.emit(Outcome::LogOut),
             (Kind::ArchiveSection, 1) => cx.emit(Outcome::ArchiveSection(self.thread.clone())),
             (Kind::DiscardInstructions, 1) => cx.emit(Outcome::DiscardInstructions),
+            (Kind::ChatMemories, 0 | 1) => self.toggle_memory(self.selected, cx),
             (Kind::DeleteMemories, 1) => {
                 self.saving = true;
                 cx.emit(Outcome::DeleteMemories);
@@ -1926,6 +2102,13 @@ impl Dialog {
                     | Kind::ArchiveSection
                     | Kind::DiscardInstructions => vec![0, 1],
                     Kind::DeleteMemories => vec![0, 1, 2],
+                    Kind::ChatMemories => {
+                        if self.memories.as_ref().is_some_and(|m| m.started) {
+                            vec![1, 2]
+                        } else {
+                            vec![0, 1, 2]
+                        }
+                    }
                     Kind::DeleteTask => vec![0, 1],
                     Kind::ScheduleTask => vec![0, 3, 4, 5, 1, 2],
                     Kind::Branches => vec![0, 1],
@@ -1974,6 +2157,7 @@ impl Dialog {
                         | Kind::RevertChanges
                         | Kind::DiscardInstructions
                         | Kind::DeleteMemories
+                        | Kind::ChatMemories
                 ) || (self.selected != 0 && !self.editing()) =>
             {
                 self.activate(cx);
@@ -3890,6 +4074,7 @@ impl Render for Dialog {
             Kind::LogOut => (380., 145. + if self.email.is_some() { 25. } else { 0. }),
             Kind::DiscardInstructions => (420., 180.),
             Kind::DeleteMemories => (420., 137.),
+            Kind::ChatMemories => (440., 252.),
             Kind::WritingStyle => (480., 600.),
             Kind::ModelAnnouncement => (480., 432.),
             Kind::Commit => (420., self.commit_height()),
@@ -3917,6 +4102,7 @@ impl Render for Dialog {
             Kind::LogOut => self.logout_content(t, cx),
             Kind::DiscardInstructions => self.discard_instructions_content(t, cx),
             Kind::DeleteMemories => self.memory_delete_content(t, cx),
+            Kind::ChatMemories => self.chat_memories_content(t, cx),
             Kind::WritingStyle => self.writing_content(t, cx),
             Kind::ModelAnnouncement => self.announcement_content(t, cx),
             Kind::Commit => self.commit_content(t, cx),
@@ -3973,6 +4159,7 @@ impl Render for Dialog {
                         Kind::LogOut => "Log out?".into(),
                         Kind::DiscardInstructions => "Discard changes?".into(),
                         Kind::DeleteMemories => "Delete all Codex memories?".into(),
+                        Kind::ChatMemories => "Chat memories".into(),
                         Kind::WritingStyle => "Writing style".into(),
                         Kind::Commit => "Commit or push".into(),
                         Kind::Branches => "Switch branch".into(),

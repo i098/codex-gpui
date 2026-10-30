@@ -477,6 +477,10 @@ pub struct Root {
     new_project: Option<Entity<ui::screens::new_project::Dialog>>,
     /// The open dialog came from the composer: its close returns focus there.
     dialog_to_composer: bool,
+    /// `/memories` switches for the chat the Home composer starts next.
+    new_chat_memory: Option<features::memories::MemoryPrefs>,
+    /// `/memories` switches set on open chats this session.
+    thread_memory: HashMap<String, features::memories::MemoryPrefs>,
     /// Signed out: replaces the whole window.
     login: Option<Entity<Login>>,
     logout_pending: bool,
@@ -722,6 +726,7 @@ impl Root {
                     ui::composer::SlashCommand::Feedback => this.open_feedback(window, cx),
                     ui::composer::SlashCommand::Export => this.export_transcript(window, cx),
                     ui::composer::SlashCommand::Recap => this.recap(window, cx),
+                    ui::composer::SlashCommand::Memories => this.open_memories(window, cx),
                     ui::composer::SlashCommand::Rename => {
                         if let Route::Thread(id) = this.state.route.clone() {
                             this.open_rename(id, true, window, cx);
@@ -921,6 +926,8 @@ impl Root {
             automation_editor: None,
             new_project: None,
             dialog_to_composer: false,
+            new_chat_memory: None,
+            thread_memory: HashMap::new(),
             login: None,
             logout_pending: false,
             account_email: None,
@@ -3474,6 +3481,18 @@ impl Root {
                 this.delete_memories(dialog.clone(), window, cx);
                 return;
             }
+            if let DialogOutcome::ChatMemories {
+                use_memories,
+                generate,
+            } = outcome
+            {
+                let prefs = features::memories::MemoryPrefs {
+                    use_memories: *use_memories,
+                    generate: *generate,
+                };
+                this.change_chat_memory(dialog.clone(), prefs, cx);
+                return;
+            }
             if let DialogOutcome::ScheduleTask { prompt, rrule } = outcome {
                 this.create_task(prompt.clone(), rrule.clone(), window, cx);
                 return;
@@ -3616,6 +3635,7 @@ impl Root {
                 | DialogOutcome::CheckoutBranch { .. }
                 | DialogOutcome::CommitBeforeCheckout
                 | DialogOutcome::DeleteMemories
+                | DialogOutcome::ChatMemories { .. }
                 | DialogOutcome::WritingConnect(_)
                 | DialogOutcome::WritingRetry
                 | DialogOutcome::WritingSample => unreachable!(),
@@ -6122,7 +6142,8 @@ impl Root {
         log_err(task, cx);
     }
 
-    /// The globals read from the kept config: Enter behavior and the local thinking display.
+    /// The globals read from the kept config: Enter behavior, the local thinking display and
+    /// whether the composers offer `/memories`.
     fn refresh_config_globals(&self, cx: &mut Context<Self>) {
         cx.set_global(ui::composer::EnterBehavior::from_setting(
             self.config["desktop"]["composerEnterBehavior"]
@@ -6133,6 +6154,13 @@ impl Root {
         if ReasoningVisibility::get(cx) != visibility {
             cx.set_global(visibility);
             cx.refresh_windows();
+        }
+        let memories = self.memories_available();
+        for composer in [
+            self.home.read(cx).composer.clone(),
+            self.thread_composer.clone(),
+        ] {
+            composer.update(cx, |composer, _| composer.set_memories_available(memories));
         }
     }
 
