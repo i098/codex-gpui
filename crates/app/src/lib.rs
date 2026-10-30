@@ -5069,22 +5069,23 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.fork_pending {
-            return;
-        }
         let Some(view) = &self.thread else { return };
         let id = view.read(cx).id().to_owned();
-        self.fork_thread(id, later, window, cx);
+        self.fork_thread(id, last_turn, options, window, cx);
     }
 
     /// [`Self::fork_chat`] of any thread (its id): a row menu's `Fork`.
     pub(crate) fn fork_thread(
         &mut self,
         id: String,
-        later: usize,
+        last_turn: Option<String>,
+        options: Option<ui::screens::hotkey::Options>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.fork_pending {
+            return;
+        }
         let bridge = self.bridge.clone();
         let computer_use = computer_use_overrides(&self.config);
         let host = self.host.clone();
