@@ -81,6 +81,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 use theme::Theme;
+use ui::browser::{BrowserEvent, BrowserTab};
 use ui::composer::{Approval, Composer, Permission, QueueAction, Submission};
 use ui::dialog::{
     CommitRepository, CommitStep, Dialog, Kind as DialogKind, Outcome as DialogOutcome, Selection,
@@ -213,6 +214,9 @@ pub enum SidePanel {
     SideChat(usize),
     /// Thread summary ▸ `Plan`: the latest plan, editable.
     Plan,
+    /// `⌘T` and a link's `Open in` ▸ `New tab`: the browser tab with this key
+    /// ([`Root::browser_tab`]).
+    Browser(usize),
 }
 
 /// Settings ▸ Appearance ▸ Theme (the original's `appearanceTheme`): follow the system, or
@@ -431,6 +435,10 @@ pub struct Root {
     side_chats: Vec<SideChat>,
     /// The [`SideChat::key`] of the next side chat.
     next_side_chat: usize,
+    /// In-app browser tabs, each a [`SidePanel::Browser`] tab, with their keys.
+    browser_tabs: Vec<(usize, Entity<BrowserTab>)>,
+    /// The [`SidePanel::Browser`] key of the next browser tab.
+    next_browser_tab: usize,
     /// Chats archived in this session: no side chat for them.
     archived: HashSet<String>,
     diff: Option<Entity<DiffPanel>>,
@@ -896,6 +904,8 @@ impl Root {
             history: None,
             side_chats: Vec::new(),
             next_side_chat: 1,
+            browser_tabs: Vec::new(),
+            next_browser_tab: 1,
             archived: HashSet::new(),
             diff: None,
             diff_watch: None,
@@ -2972,12 +2982,14 @@ impl Root {
     /// The strip tab of `side` in the open thread `view`: `(icon, label)`. No terminal tab
     /// without a background command, no file tab without a file viewer, no side chat tab
     /// once the side chat is gone.
+    #[allow(clippy::too_many_arguments)]
     fn side_tab(
         side: SidePanel,
         view: &Entity<ThreadView>,
         file: Option<&Entity<FileView>>,
         plan: Option<&Entity<ui::screens::plan::PlanView>>,
         side_chats: &[SideChat],
+        browsers: &[(usize, Entity<BrowserTab>)],
         console: bool,
         cx: &App,
     ) -> Option<Tab> {
@@ -3026,6 +3038,14 @@ impl Root {
                 label: plan?.read(cx).title(),
                 preview: false,
             }),
+            SidePanel::Browser(key) => {
+                let (_, tab) = browsers.iter().find(|(k, _)| *k == key)?;
+                Some(Tab {
+                    icon: "sidebar-cmd-browser",
+                    label: tab.read(cx).title(),
+                    preview: false,
+                })
+            }
         }
     }
 
@@ -3039,34 +3059,22 @@ impl Root {
         let file = self.file.clone();
         let plan = self.plan.clone();
         let chats = &self.side_chats;
+        let browsers = &self.browser_tabs;
         let console = self.terminal_panel().is_some();
-        self.tabs.retain(|side| {
+        let tab = |side: &SidePanel| {
             Self::side_tab(
                 *side,
                 view,
                 file.as_ref(),
                 plan.as_ref(),
                 chats,
+                browsers,
                 console,
                 cx,
             )
-            .is_some()
-        });
-        let tabs: Vec<Tab> = self
-            .tabs
-            .iter()
-            .filter_map(|side| {
-                Self::side_tab(
-                    *side,
-                    view,
-                    file.as_ref(),
-                    plan.as_ref(),
-                    chats,
-                    console,
-                    cx,
-                )
-            })
-            .collect();
+        };
+        self.tabs.retain(|side| tab(side).is_some());
+        let tabs: Vec<Tab> = self.tabs.iter().filter_map(tab).collect();
         let active = self
             .side
             .and_then(|side| self.tabs.iter().position(|t| *t == side))
@@ -3080,6 +3088,7 @@ impl Root {
             SidePanel::File => self.file.as_ref()?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
             SidePanel::Plan => self.plan.as_ref()?.clone().into(),
+            SidePanel::Browser(key) => self.browser_tab(key)?.clone().into(),
         };
         Some((view, tabs, active))
     }
@@ -3115,8 +3124,11 @@ impl Root {
     /// the previous, is selected; closing the last tab closes the panel. A side chat's tab
     /// discards its conversation.
     fn close_side(&mut self, side: SidePanel, window: &mut Window, cx: &mut Context<Self>) {
-        if let SidePanel::SideChat(key) = side {
-            self.discard_side_chat(key, cx);
+        match side {
+            SidePanel::SideChat(key) => self.discard_side_chat(key, cx),
+            // Dropping the tab removes its page from the window.
+            SidePanel::Browser(key) => self.browser_tabs.retain(|(k, _)| *k != key),
+            _ => {}
         }
         let Some(ix) = self.tabs.iter().position(|t| *t == side) else {
             return;
@@ -3126,6 +3138,66 @@ impl Root {
             self.side = self.tabs.get(ix).or(self.tabs.last()).copied();
         }
         self.sync(window, cx);
+    }
+
+    /// `⌘T` (`url` none, the address bar focused) and a link's `Open in` ▸ `New tab`: a new
+    /// browser tab after the others, selected.
+    pub fn open_browser_tab(
+        &mut self,
+        url: Option<url::Url>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<BrowserTab> {
+        let key = self.next_browser_tab;
+        self.next_browser_tab += 1;
+        let blank = url.is_none();
+        let tab = cx.new(|cx| BrowserTab::new(url, window, cx));
+        cx.subscribe(&tab, move |this, tab, event: &BrowserEvent, cx| {
+            if !matches!(
+                event,
+                BrowserEvent::TitleChanged | BrowserEvent::Navigated { .. }
+            ) {
+                return;
+            }
+            let index = this.tabs.iter().position(|t| *t == SidePanel::Browser(key));
+            if let (Some(index), Some(split)) = (index, &this.split) {
+                let label = tab.read(cx).title();
+                split.update(cx, |split, cx| split.set_tab_label(index, label, cx));
+            }
+        })
+        .detach();
+        self.browser_tabs.push((key, tab.clone()));
+        self.set_side(SidePanel::Browser(key), window, cx);
+        if blank {
+            tab.update(cx, |tab, cx| tab.focus_address(window, cx));
+        }
+        tab
+    }
+
+    pub fn browser_tab(&self, key: usize) -> Option<&Entity<BrowserTab>> {
+        self.browser_tabs
+            .iter()
+            .find_map(|(k, tab)| (*k == key).then_some(tab))
+    }
+
+    /// The selected side tab's browser, when it is one.
+    pub fn active_browser_tab(&self) -> Option<Entity<BrowserTab>> {
+        match self.side? {
+            SidePanel::Browser(key) => self.browser_tab(key).cloned(),
+            _ => None,
+        }
+    }
+
+    /// Shows only the page of the browser tab on screen: a native page draws over every
+    /// gpui element, so the others and every other route must hide theirs.
+    // shortcut: a menu or dialog over the visible page draws under it; hide the page while
+    // an overlay is open when one needs to overlap the panel.
+    fn sync_browser_pages(&self, cx: &mut App) {
+        let thread = matches!(self.state.route, Route::Thread(_)) && self.page.is_none();
+        for (key, tab) in &self.browser_tabs {
+            let shown = thread && self.side_visible(SidePanel::Browser(*key));
+            tab.update(cx, |tab, cx| tab.set_page_hidden(!shown, cx));
+        }
     }
 
     /// `⌘K`, `⌘⇧P` and the sidebar `Search`: the command menu over live Recents, focused.

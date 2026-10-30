@@ -19,6 +19,7 @@ use std::time::Instant;
 use theme::{ActiveTheme as _, Theme};
 use tooltip::{Side, tooltip};
 
+pub mod browser;
 pub mod composer;
 pub mod confirmation;
 pub mod dialog;
