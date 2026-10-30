@@ -7,11 +7,11 @@ use gpui::{App, Task};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
-use ui::updater::Updates;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use ui::updater::InstallUpdate;
 #[cfg(target_os = "macos")]
 use ui::updater::ToggleAutomaticChecks;
+use ui::updater::Updates;
 
 #[cfg(target_os = "macos")]
 mod native;
