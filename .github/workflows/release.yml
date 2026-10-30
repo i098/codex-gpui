@@ -1,5 +1,5 @@
 name: release
-# A `vMAJOR.MINOR.PATCH` tag on a merged `tools/version.sh` bump publishes the macOS arm64 zip.
+# A `vMAJOR.MINOR.PATCH` tag on a merged `tools/version.sh` bump publishes the macOS arm64 zip and the Linux .deb and AppImage.
 on:
   push:
     tags: ['v*']
@@ -46,3 +46,29 @@ jobs:
           fi
           awk -v heading="## [$VERSION]" 'index($0, heading) == 1 { found = 1; next } found && /^## \[/ { exit } found' CHANGELOG.md >notes.md
           gh release create "$GITHUB_REF_NAME" "${assets[@]}" --title "Codex GPUI $VERSION" --notes-file notes.md --verify-tag
+  linux:
+    # Runs after the macOS job so the release exists to receive the upload.
+    needs: macos-arm64
+    runs-on: ubuntu-22.04
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install build dependencies
+        run: >
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          build-essential pkg-config clang cmake libssl-dev libzstd-dev
+          libfontconfig-dev libfreetype-dev libasound2-dev libxkbcommon-dev
+          libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
+          libvulkan-dev fakeroot
+      - name: Fetch appimagetool
+        run: |
+          curl -fsSL -o /tmp/appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x /tmp/appimagetool
+          echo APPIMAGETOOL=/tmp/appimagetool >>"$GITHUB_ENV"
+      - name: Build the .deb and the AppImage
+        run: tools/package-linux.sh dist
+      - name: Attach them to the release
+        run: gh release upload "$GITHUB_REF_NAME" dist/*
