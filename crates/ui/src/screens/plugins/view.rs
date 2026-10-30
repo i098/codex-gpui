@@ -488,12 +488,12 @@ impl Page {
             )
             .child(
                 self.skill_grid("installed", &installed, window, cx)
-                    .mt(px(14.)),
+                    .mt(px(16.)),
             )
             .child(self.pills(&["Personal", "System"], window, cx).mt(px(32.)))
             .child(
                 self.skill_grid(self.section, &group, window, cx)
-                    .mt(px(38.)),
+                    .mt(px(40.)),
             )
             .into_any_element()
     }
@@ -539,14 +539,15 @@ impl Page {
                         .id(id)
                         .role(gpui::Role::Button)
                         .aria_label(label.clone())
-                        .mt(px(14.))
+                        // The Installed column's gap is 16 px; the tab section's is 32 px.
+                        .mt(px(if list == "installed" { 16. } else { 32. }))
                         .min_h(px(31.))
                         .px(px(8.))
                         .flex()
                         .items_center()
                         .rounded_full()
                         .hover(|d| d.bg(t.ghost_hover))
-                        .child(text(label, 13., 21.125, 430., t.text_secondary)),
+                        .child(text(label, 13., 21.125, 400., t.text_tertiary)),
                     &handle,
                     px(16.),
                     px(2.),
