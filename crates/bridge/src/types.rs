@@ -200,8 +200,8 @@ pub struct CommandAction {
     pub command: String,
     /// File name of a `read`.
     pub name: Option<String>,
-    /// Absolute path of a `read`.
-    #[serde(default)]
+    /// Path of a `read` (as the command names it, maybe relative to the item's `cwd`), or the
+    /// directory of a `search` / `list_files`.
     pub path: Option<String>,
 }
 

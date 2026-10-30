@@ -100,13 +100,15 @@ pub fn sources(turns: &[Turn]) -> Sources {
                 ..
             } => {
                 for action in command_actions.iter().filter(|a| a.kind == "read") {
-                    let path = action.path.clone().or_else(|| {
-                        let name = action.name.as_deref()?;
-                        Some(format!("{}/{name}", cwd.trim_end_matches('/')))
-                    });
-                    if let Some(path) = path {
-                        out.file(path, Activity::Read);
-                    }
+                    let Some(path) = action.path.as_deref().or(action.name.as_deref()) else {
+                        continue;
+                    };
+                    let path = if path.starts_with('/') {
+                        path.to_owned()
+                    } else {
+                        format!("{}/{path}", cwd.trim_end_matches('/'))
+                    };
+                    out.file(path, Activity::Read);
                 }
             }
             ThreadItem::FileChange {
