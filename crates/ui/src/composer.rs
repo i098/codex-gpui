@@ -110,8 +110,9 @@ actions!(
     ]
 );
 
+mod context_usage;
+pub use context_usage::ContextUsage;
 mod attach;
-pub(crate) use attach::codex_home;
 mod chat_shell;
 pub mod computer_use;
 pub mod dictation;
@@ -322,6 +323,25 @@ pub fn bind_keys(cx: &mut App) {
 /// (`low medium high xhigh ultra`) intersected with the model's supported efforts.
 const ENABLED_EFFORTS: [&str; 5] = ["low", "medium", "high", "xhigh", "ultra"];
 
+/// The selected host's `enabled-reasoning-efforts` setting; `None` keeps [`ENABLED_EFFORTS`].
+#[derive(Default)]
+pub struct EnabledEfforts(pub Option<Vec<String>>);
+
+impl gpui::Global for EnabledEfforts {}
+
+impl EnabledEfforts {
+    /// The slider never shows `persistent`, as the original's `i2a`, and always shows the
+    /// locked `low`..`xhigh`.
+    fn allows(&self, effort: &str) -> bool {
+        effort != "persistent"
+            && (ENABLED_EFFORTS[..4].contains(&effort)
+                || match &self.0 {
+                    Some(enabled) => enabled.iter().any(|e| e == effort),
+                    None => ENABLED_EFFORTS.contains(&effort),
+                })
+    }
+}
+
 /// `composer.mode.local.reasoning.*.label`.
 pub fn effort_label(effort: &str) -> &str {
     match effort {
@@ -397,20 +417,22 @@ struct ModelOption {
 }
 
 impl ModelOption {
-    fn new(m: &Model) -> Self {
-        let efforts = m
-            .supported_reasoning_efforts
-            .iter()
-            .filter_map(|e| e["reasoningEffort"].as_str())
-            .filter(|e| ENABLED_EFFORTS.contains(e))
-            .map(String::from)
-            .collect();
+    fn new(m: &Model, enabled: &EnabledEfforts) -> Self {
         Self {
             id: m.id.clone(),
             label: model_label(&m.display_name).into(),
-            efforts,
+            efforts: model_efforts(m, enabled),
         }
     }
+}
+
+fn model_efforts(m: &Model, enabled: &EnabledEfforts) -> Vec<String> {
+    m.supported_reasoning_efforts
+        .iter()
+        .filter_map(|e| e["reasoningEffort"].as_str())
+        .filter(|e| enabled.allows(e))
+        .map(String::from)
+        .collect()
 }
 
 /// Approval mode of the permissions dropdown (`composer.permissionsDropdown.*`).
@@ -801,6 +823,8 @@ pub struct Composer {
     secret: bool,
     request_parent: Option<(gpui::WeakEntity<Composer>, Rc<RequestIdentity>, usize)>,
     running: bool,
+    /// The open chat's context window use, while `Show context window usage` is on.
+    context_usage: Option<ContextUsage>,
     /// Escape while a turn runs arms the stop for 2 s (the Stop button reads `Esc`); a second
     /// Escape in that window interrupts the turn. The task clears the arm.
     stop_armed: Option<Task<()>>,
@@ -926,6 +950,7 @@ impl Composer {
             secret: false,
             request_parent: None,
             running: false,
+            context_usage: None,
             stop_armed: None,
             queue_mode: false,
             queued: Vec::new(),
@@ -1203,10 +1228,12 @@ impl Composer {
     /// Models from `model/list` and the selection from `config/read` (`model`,
     /// `model_reasoning_effort`, approval settings).
     pub fn set_models(&mut self, models: &[Model], config: &Value, cx: &mut Context<Self>) {
+        let none = EnabledEfforts::default();
+        let enabled = cx.try_global::<EnabledEfforts>().unwrap_or(&none);
         self.models = models
             .iter()
             .filter(|m| !m.hidden)
-            .map(ModelOption::new)
+            .map(|m| ModelOption::new(m, enabled))
             .collect();
         let configured = config["model"].as_str();
         self.model = self
@@ -1231,8 +1258,21 @@ impl Composer {
         self.default_selection = (self.model, self.effort.clone());
         self.permission = Permission::from_config(config);
         self.queue_mode = config["desktop"]["followUpQueueMode"] == "queue";
+        self.fast = config["service_tier"] == "priority";
         if self.menu == Some(Menu::Models) {
             self.menu_focus.prepare(self.models.len(), cx);
+        }
+        cx.notify();
+    }
+
+    /// Re-reads [`EnabledEfforts`] for the listed models, keeping the selection.
+    pub fn refresh_efforts(&mut self, models: &[Model], cx: &mut Context<Self>) {
+        let none = EnabledEfforts::default();
+        let enabled = cx.try_global::<EnabledEfforts>().unwrap_or(&none);
+        for option in &mut self.models {
+            if let Some(model) = models.iter().find(|m| m.id == option.id) {
+                option.efforts = model_efforts(model, enabled);
+            }
         }
         cx.notify();
     }
@@ -3152,6 +3192,35 @@ impl Render for Composer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enabled_efforts_keep_low_to_xhigh_and_filter_the_rest() {
+        let supported = [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra",
+            "persistent",
+        ]
+        .map(|e| json!({"reasoningEffort": e}));
+        let model: Model = serde_json::from_value(json!({
+            "id": "m", "model": "m", "displayName": "m", "description": "", "hidden": false,
+            "defaultReasoningEffort": "medium", "isDefault": true,
+            "supportedReasoningEfforts": supported,
+        }))
+        .unwrap();
+        let efforts = |enabled: Option<&[&str]>| {
+            let enabled = EnabledEfforts(enabled.map(|e| e.iter().map(|&e| e.into()).collect()));
+            model_efforts(&model, &enabled)
+        };
+        assert_eq!(efforts(None), ["low", "medium", "high", "xhigh", "ultra"]);
+        assert_eq!(
+            efforts(Some(&["max", "persistent"])),
+            ["low", "medium", "high", "xhigh", "max"]
+        );
+    }
 
     #[test]
     fn send_shortcut_controls_enter_without_changing_shift_enter() {

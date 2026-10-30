@@ -7,6 +7,7 @@ mod home;
 mod mobile;
 mod plugins;
 mod settings;
+mod sites;
 mod thread;
 
 pub(crate) use settings::request_quit;
@@ -40,6 +41,8 @@ pub enum Route {
     PullRequests(Option<ui::screens::pull_requests::model::Identity>),
     SelectWorkspace,
     Onboarding(ui::screens::onboarding::Page),
+    /// Rail `Sites` (`/sites`).
+    Sites,
 }
 
 pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
@@ -52,6 +55,7 @@ pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
     root = plugins::actions(root, cx);
     root = archive::actions(root, cx);
     root = crate::pull_requests::actions(root, cx);
+    root = sites::actions(root, cx);
     root
 }
 
@@ -175,6 +179,7 @@ impl Root {
         self.mobile_page = None;
         self.cloud = None;
         self.plugins_page = None;
+        self.sites_page = None;
         self.onboarding_page = None;
         self.cloud_modal = None;
         self.page = match self.state.route.clone() {
@@ -200,6 +205,7 @@ impl Root {
             Route::PullRequests(selected) => Some(self.pull_requests_shell(selected, window, cx)),
             Route::Security => Some(crate::security::shell(self, window, cx)),
             Route::Plugins(path) => Some(self.plugins_shell(path, window, cx)),
+            Route::Sites => Some(sites::page(self, cx)),
             Route::Onboarding(page) => {
                 self.open_onboarding(page, window, cx);
                 None
@@ -319,6 +325,11 @@ impl Root {
                 }
             }
             Route::Onboarding(_) => self.focus.clone(),
+            Route::Mobile => self
+                .mobile_page
+                .as_ref()
+                .and_then(|page| page.read(cx).focus())
+                .unwrap_or_else(|| self.focus.clone()),
             _ if self.page.is_some() => self.focus.clone(),
             Route::Thread(_) => self.focus.clone(),
             _ => self.home.read(cx).composer.focus_handle(cx),

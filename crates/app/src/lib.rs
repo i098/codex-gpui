@@ -12,6 +12,7 @@ pub use cloud::{CloudTaskRequest, create_cloud_task};
 mod automation_notifications;
 pub mod computer_use_requests;
 pub mod connections;
+mod context_status;
 pub mod deep_link;
 mod destinations;
 pub mod dictation;
@@ -43,6 +44,7 @@ pub mod screenshot;
 mod search;
 mod section_actions;
 mod security;
+mod settings_configuration;
 mod settings_git;
 pub mod settings_import;
 pub(crate) mod settings_integrations;
@@ -102,8 +104,8 @@ use ui::screens::sidebar::{
 use ui::screens::signin::Login;
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
-    Clock, EditMessage, ForkThread, GitAction, History, OpenAutomationCard, RetryHistory,
-    RevertTurn, ThreadPressed, ThreadView, UsageLimitNotice,
+    Clock, EditMessage, ForkThread, GitAction, History, OpenAutomationCard, ReasoningVisibility,
+    RetryHistory, RevertTurn, ThreadPressed, ThreadView, UsageLimitNotice,
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
@@ -447,6 +449,7 @@ pub struct Root {
     cloud: Option<cloud_task::Session>,
     pull_requests_page: Option<Entity<ui::screens::pull_requests::Page>>,
     plugins_page: Option<Entity<ui::screens::plugins::Page>>,
+    sites_page: Option<Entity<ui::screens::sites::Page>>,
     cloud_modal: Option<Entity<ui::screens::cloud::CloudModal>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
@@ -683,13 +686,15 @@ impl Root {
         )
         .detach();
         for composer in [&home_composer, &thread_composer] {
-            cx.subscribe_in(composer, window, |this, _, command: &ui::composer::SlashCommand, window, cx| {
+            cx.subscribe_in(composer, window, |this, composer, command: &ui::composer::SlashCommand, window, cx| {
                 match command {
                     ui::composer::SlashCommand::Fast => {
+                        // `/fast` toggles, as the CLI's; off removes `service_tier`.
+                        let tier = if composer.read(cx).fast_mode() { json!("priority") } else { Value::Null };
                         this.write_config("config/batchWrite", json!({
-                            "edits": [{"keyPath": "service_tier", "value": "priority", "mergeStrategy": "upsert"}],
+                            "edits": [{"keyPath": "service_tier", "value": tier.clone(), "mergeStrategy": "upsert"}],
                             "filePath": null, "expectedVersion": null, "reloadUserConfig": true,
-                        }), cx, |config| config["service_tier"] = "priority".into());
+                        }), cx, |config| config["service_tier"] = tier);
                     }
                     ui::composer::SlashCommand::Archive => {
                         if let Route::Thread(id) = this.state.route.clone() {
@@ -878,6 +883,7 @@ impl Root {
             cloud: None,
             pull_requests_page: None,
             plugins_page: None,
+            sites_page: None,
             cloud_modal: None,
             settings_section: None,
             settings_page: None,
@@ -1171,6 +1177,7 @@ impl Root {
                     });
                 let models: Vec<Model> =
                     catalog.data.into_iter().map(|entry| entry.model).collect();
+                settings_configuration::sync_enabled_efforts(cx);
                 let mut composers = this.thread_composers();
                 composers.push(this.home.read(cx).composer.clone());
                 for composer in composers {
@@ -1180,7 +1187,7 @@ impl Root {
                     });
                 }
                 this.config = config.config;
-                this.refresh_enter_behavior(cx);
+                this.refresh_config_globals(cx);
                 this.config["host"]["confirm-before-close"] =
                     serde_json::to_value(this.state.confirm_before_close)
                         .expect("close preference");
@@ -1276,6 +1283,10 @@ impl Root {
 
     pub fn mobile_page(&self) -> Option<&Entity<mobile::MobileSetupPage>> {
         self.mobile_page.as_ref()
+    }
+
+    pub fn sites_page(&self) -> Option<&Entity<ui::screens::sites::Page>> {
+        self.sites_page.as_ref()
     }
 
     /// The Home route's main panel.
@@ -1408,6 +1419,9 @@ impl Root {
         self.refresh_git_actions(cx);
         if self.settings_page.is_some() {
             self.load_settings_integrations(cx);
+        }
+        if let Some(page) = self.sites_page.clone() {
+            self.load_sites(page, cx);
         }
         cx.notify();
     }
@@ -4124,6 +4138,7 @@ impl Root {
         )
         .detach();
         self.thread = Some(view);
+        self.sync_context_usage(cx);
         self.show_approval(cx);
         hotkey::thread_shown(self, window, cx);
         self.refresh_git_actions(cx);
@@ -5159,8 +5174,10 @@ impl Root {
     /// `/compact`: `thread/compact/start` on the open chat, resumed first when this app-server
     /// has not loaded it. A running turn refuses it; a failed request shows `Failed to compact chat`.
     fn compact(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(view) = &self.thread else { return };
-        let view = view.read(cx);
+        let Some(entity) = self.thread.clone() else {
+            return;
+        };
+        let view = entity.read(cx);
         let id = view.id().to_owned();
         let running = view
             .turns()
@@ -5175,6 +5192,8 @@ impl Root {
         }
         let resume = !self.loaded.contains(&id);
         let bridge = self.bridge.clone();
+        // `item/started` can precede the response, so the mark goes first.
+        entity.update(cx, |view, _| view.expect_manual_compaction());
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let started = async {
                 resume_if(resume, &bridge, &this, &id, cx).await?;
@@ -5185,6 +5204,7 @@ impl Root {
             }
             .await;
             if started.is_err() {
+                entity.update(cx, |view, _| view.forget_manual_compaction());
                 this.update(cx, |this, cx| {
                     this.toast(Toast::danger("Failed to compact chat"), cx)
                 })?;
@@ -5600,7 +5620,7 @@ impl Root {
                 });
                 if let Ok(Some(config)) = result {
                     this.config = config;
-                    this.refresh_enter_behavior(cx);
+                    this.refresh_config_globals(cx);
                 }
                 if success {
                     this.load_computer_use(cx);
@@ -5912,6 +5932,9 @@ impl Root {
                     "git-commit-instructions"
                     | "git-pr-instructions"
                     | "git-pr-watch-instructions" => "Failed to save instructions",
+                    settings_configuration::ENABLED_EFFORTS => {
+                        "Could not save reasoning effort preferences"
+                    }
                     "notifications-sound" => "Couldn't change the notification sound. Try again",
                     key if key.starts_with("notifications-") => {
                         "Could not save notification preference"
@@ -5921,10 +5944,16 @@ impl Root {
                 self.toast(Toast::danger(message), cx);
             } else {
                 self.sync_terminal(cx);
+                if key == context_status::SETTING {
+                    self.sync_context_usage(cx);
+                }
                 if matches!(key, "reduced-motion-preference" | "dock-icon-preference") {
                     host_settings::apply(cx);
                 }
                 self.git_setting_saved(key, cx);
+                if key == settings_configuration::ENABLED_EFFORTS {
+                    settings_configuration::efforts_saved(self, cx);
+                }
                 let message = match key {
                     "git-branch-prefix" => Some("Saved branch prefix".to_owned()),
                     "git-pull-request-merge-method" => {
@@ -6017,18 +6046,24 @@ impl Root {
             }
             this.update(cx, |this, cx| {
                 apply(&mut this.config);
-                this.refresh_enter_behavior(cx);
+                this.refresh_config_globals(cx);
             })
         });
         log_err(task, cx);
     }
 
-    fn refresh_enter_behavior(&self, cx: &mut Context<Self>) {
+    /// The globals read from the kept config: Enter behavior and the local thinking display.
+    fn refresh_config_globals(&self, cx: &mut Context<Self>) {
         cx.set_global(ui::composer::EnterBehavior::from_setting(
             self.config["desktop"]["composerEnterBehavior"]
                 .as_str()
                 .unwrap_or("enter"),
         ));
+        let visibility = ReasoningVisibility::from_config(&self.config);
+        if ReasoningVisibility::get(cx) != visibility {
+            cx.set_global(visibility);
+            cx.refresh_windows();
+        }
     }
 
     /// Settles only the request whose card produced the answer.
@@ -6246,6 +6281,10 @@ impl Root {
         // Each side chat takes its own thread's notifications (`ThreadView::apply`).
         for chat in &self.side_chats {
             chat.view.update(cx, |view, cx| view.apply(&event, cx));
+        }
+        if matches!(&event, Event::Notification { method, .. } if method == "thread/tokenUsage/updated")
+        {
+            self.sync_context_usage(cx);
         }
         if turn_edge {
             let side = self
