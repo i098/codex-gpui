@@ -314,6 +314,7 @@ impl FileView {
             return false;
         }
         self.go_to_line = None;
+        self.show_source = true;
         self.find.get_or_insert_default().selected = true;
         self.search_file();
         cx.notify();

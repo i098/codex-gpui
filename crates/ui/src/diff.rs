@@ -2688,6 +2688,8 @@ pub struct FileView {
     tree: file_tree::WorkspaceTree,
     revision: u64,
     preview: bool,
+    /// A Markdown file shows its rendered preview until `View source`.
+    show_source: bool,
 }
 
 impl FileView {
@@ -2715,6 +2717,7 @@ impl FileView {
             tree,
             revision: 0,
             preview: true,
+            show_source: line.is_some(),
         }
     }
 
@@ -2735,6 +2738,26 @@ impl FileView {
 
     pub fn is_preview(&self) -> bool {
         self.preview
+    }
+
+    /// Markdown files open as the rendered preview (`markdownFileEditor`).
+    pub fn is_markdown(&self) -> bool {
+        let path = self.path.to_ascii_lowercase();
+        path.ends_with(".md") || path.ends_with(".markdown")
+    }
+
+    /// Whether the rendered Markdown shows instead of the numbered lines.
+    pub fn shows_markdown_preview(&self) -> bool {
+        self.is_markdown() && !self.show_source
+    }
+
+    fn toggle_markdown_source(&mut self, cx: &mut Context<Self>) {
+        self.show_source = !self.show_source;
+        if !self.show_source {
+            self.close_find(cx);
+            self.go_to_line = None;
+        }
+        cx.notify();
     }
 
     fn pin_preview(&mut self, cx: &mut Context<Self>) {
@@ -2822,6 +2845,60 @@ impl FileView {
                 div()
                     .flex()
                     .gap(px(6.))
+                    .when(self.is_markdown(), |d| {
+                        d.child(
+                            capsule(t, clamped)
+                                .id("file-markdown-mode")
+                                .role(gpui::Role::Button)
+                                .aria_label(if self.show_source {
+                                    "View preview"
+                                } else {
+                                    "View source"
+                                })
+                                .focusable()
+                                .tab_index(0)
+                                .focus_visible(crate::composer::menu::trigger_focus)
+                                .px(px(10.))
+                                .cursor_pointer()
+                                .child(text(
+                                    if self.show_source {
+                                        "View preview"
+                                    } else {
+                                        "View source"
+                                    },
+                                    13.,
+                                    18.,
+                                    430.,
+                                    t.text,
+                                ))
+                                .on_click(cx.listener(|view, _, _, cx| {
+                                    view.toggle_markdown_source(cx);
+                                    cx.stop_propagation();
+                                })),
+                        )
+                        .child(
+                            capsule(t, clamped)
+                                .w(px(32.))
+                                .id("file-copy-markdown")
+                                .role(gpui::Role::Button)
+                                .aria_label("Copy Markdown")
+                                .focusable()
+                                .tab_index(0)
+                                .rounded_full()
+                                .focus_visible(crate::composer::menu::trigger_focus)
+                                .justify_center()
+                                .cursor_pointer()
+                                .child(icon("thread-copy", 16., t.text))
+                                .on_click(cx.listener(|view, _, _, cx| {
+                                    if let Some(Ok(source)) = &view.contents {
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                            source.clone(),
+                                        ));
+                                    }
+                                    cx.stop_propagation();
+                                })),
+                        )
+                    })
                     .child(
                         capsule(t, clamped)
                             .w(px(32.))
@@ -2887,6 +2964,7 @@ impl FileView {
         &self,
         t: &Theme,
         blame: Option<String>,
+        window: &Window,
         cx: &Context<Self>,
     ) -> gpui::AnyElement {
         match &self.contents {
@@ -2897,6 +2975,17 @@ impl FileView {
                 .items_center()
                 .justify_center()
                 .child(text("Could not open file", 13., 20., 430., t.text_tertiary))
+                .into_any_element(),
+            Some(Ok(contents)) if self.shows_markdown_preview() => div()
+                .id("file-markdown-preview")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .px(px(24.))
+                .py(px(16.))
+                .child(crate::screens::thread::view::markdown_preview(
+                    contents, window, t,
+                ))
                 .into_any_element(),
             Some(Ok(contents)) => {
                 let lines: Vec<_> = controls::lines(contents).collect();
@@ -2990,7 +3079,7 @@ impl Render for FileView {
         let t = cx.theme().clone();
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let blame = self.active_blame(cx);
-        let body = self.file_content(&t, blame, cx);
+        let body = self.file_content(&t, blame, window, cx);
         div()
             .id("file-view")
             .relative()
@@ -3009,6 +3098,7 @@ impl Render for FileView {
                 this.line_key(event, window, cx);
                 if this.go_to_line.is_some() {
                     this.find = None;
+                    this.show_source = true;
                 }
             }))
             .on_action(cx.listener(|this, _: &crate::Paste, _, cx| {

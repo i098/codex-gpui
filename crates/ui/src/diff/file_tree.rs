@@ -214,6 +214,7 @@ impl FileView {
         self.tree.select(relative_path(&self.tree.root, &path));
         self.path = path;
         self.line = line;
+        self.show_source = line.is_some();
         self.contents = None;
         self.blame.clear();
         self.go_to_line = None;
