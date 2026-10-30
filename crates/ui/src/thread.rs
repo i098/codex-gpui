@@ -1917,7 +1917,17 @@ impl ThreadView {
                     self.fades(item),
                 ));
             }
-            let secs = turn.duration_ms.unwrap_or(0) / 1000;
+            // The final answer folds the work while it still streams; the label stays live.
+            let running = turn.status == TurnStatus::InProgress;
+            let label = if running {
+                let secs = self.running_seconds(turn, cx.background_executor().now());
+                format!("Working for {}", duration(secs))
+            } else {
+                format!(
+                    "Worked for {}",
+                    duration(turn.duration_ms.unwrap_or(0) / 1000)
+                )
+            };
             let open = self.expanded.contains(&turn.id)
                 || self.find.as_ref().is_some_and(|find| {
                     turn.items[..turn.items.len() - 1].iter().any(|item| {
@@ -1951,35 +1961,30 @@ impl ThreadView {
                 )
             };
             col = col.child(div().h(px(16.))).child(
-                disclosure(
-                    format!("Worked for {}", duration(secs)),
-                    Some(angle),
-                    window,
-                    t,
-                )
-                .id(group.clone())
-                // `select-none` in the original: a press here leaves the text selection.
-                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |view, _, _, cx| {
-                    let open = !view.expanded.remove(&id);
-                    if open {
-                        view.expanded.insert(id.clone());
-                    }
-                    let instant = motion::reduced(cx);
-                    state.update(cx, |(epoch, d), cx| {
-                        let now = cx.background_executor().now() - *epoch;
-                        let target = open as u8 as f32;
-                        d.chevron
-                            .transition(target, now, motion::BASIC, motion::EASE_IN_OUT);
-                        let (duration, ease) = match (instant, open) {
-                            (true, _) => (Duration::ZERO, motion::EASE_ENTER),
-                            (false, true) => (motion::RELAXED, motion::EASE_ENTER),
-                            (false, false) => (motion::BASIC, motion::EASE_ENTER_SNAPPY),
-                        };
-                        d.content.transition(target, now, duration, ease);
-                    });
-                    cx.notify();
-                })),
+                disclosure(label, Some(angle), window, t)
+                    .id(group.clone())
+                    // `select-none` in the original: a press here leaves the text selection.
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |view, _, _, cx| {
+                        let open = !view.expanded.remove(&id);
+                        if open {
+                            view.expanded.insert(id.clone());
+                        }
+                        let instant = motion::reduced(cx);
+                        state.update(cx, |(epoch, d), cx| {
+                            let now = cx.background_executor().now() - *epoch;
+                            let target = open as u8 as f32;
+                            d.chevron
+                                .transition(target, now, motion::BASIC, motion::EASE_IN_OUT);
+                            let (duration, ease) = match (instant, open) {
+                                (true, _) => (Duration::ZERO, motion::EASE_ENTER),
+                                (false, true) => (motion::RELAXED, motion::EASE_ENTER),
+                                (false, false) => (motion::BASIC, motion::EASE_ENTER_SNAPPY),
+                            };
+                            d.content.transition(target, now, duration, ease);
+                        });
+                        cx.notify();
+                    })),
             );
             if progress > 0. {
                 let natural = height.get();
@@ -2012,6 +2017,9 @@ impl ThreadView {
                 self.find_paint(item).as_ref(),
                 self.fades(item),
             ));
+            if running {
+                return col;
+            }
             if let Some(card) = diff_card(&turn.id, &turn.items, &focus, window, t, cx) {
                 col = col.child(div().mt(px(12.)).pb(px(8.)).child(card));
             }
@@ -2617,14 +2625,19 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
     }
 }
 
-/// A finished turn's items before its final answer, and that answer as `(item id, text)`:
-/// the work its `Worked for` disclosure hides. A plan-mode turn's answer is its final plan. A
-/// running turn is all work.
+/// A turn's items before its final answer, and that answer as `(item id, text)`: the work its
+/// `Worked for` disclosure hides. A finished turn's answer is its last agent message or plan. A
+/// running turn has one only once its `final_answer` message has text, as in the original
+/// (`hasFinalAssistantStarted`): its interim commentary then folds while the answer streams.
 fn work(turn: &Turn) -> (&[ThreadItem], Option<(&str, &str)>) {
+    let running = turn.status == TurnStatus::InProgress;
     match turn.items.last() {
-        Some(ThreadItem::AgentMessage { id, text, .. } | ThreadItem::Plan { id, text, .. })
-            if turn.status != TurnStatus::InProgress =>
-        {
+        Some(ThreadItem::AgentMessage {
+            id, text, phase, ..
+        }) if !running || (phase.as_deref() == Some("final_answer") && !text.trim().is_empty()) => {
+            (&turn.items[..turn.items.len() - 1], Some((id, text)))
+        }
+        Some(ThreadItem::Plan { id, text }) if !running => {
             (&turn.items[..turn.items.len() - 1], Some((id, text)))
         }
         _ => (&turn.items, None),
@@ -2979,6 +2992,32 @@ mod tests {
                 ThreadItem::CommandExecution { status, exit_code: Some(17), aggregated_output: Some(output), .. }
                     if status == "failed" && output == "actual output\n"));
         });
+    }
+
+    /// The original folds a running turn's commentary once its `final_answer` has text.
+    #[test]
+    fn running_turn_folds_work_once_the_final_answer_streams() {
+        let turn = |answer: serde_json::Value| -> Turn {
+            serde_json::from_value(serde_json::json!({"id": "t", "status": "inProgress", "items": [
+                {"type": "agentMessage", "id": "c", "phase": "commentary", "text": "I'll load the rules."},
+                answer,
+            ]}))
+            .unwrap()
+        };
+        let interim = turn(serde_json::json!(
+            {"type": "agentMessage", "id": "c2", "phase": "commentary", "text": "Reading."}
+        ));
+        assert!(work(&interim).1.is_none());
+        let started = turn(serde_json::json!(
+            {"type": "agentMessage", "id": "a", "phase": "final_answer", "text": ""}
+        ));
+        assert!(work(&started).1.is_none());
+        let streaming = turn(serde_json::json!(
+            {"type": "agentMessage", "id": "a", "phase": "final_answer", "text": "Done"}
+        ));
+        let (hidden, answer) = work(&streaming);
+        assert_eq!(answer, Some(("a", "Done")));
+        assert_eq!(hidden.len(), 1);
     }
 
     #[gpui::test]
