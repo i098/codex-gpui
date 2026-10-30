@@ -602,6 +602,10 @@ impl Composer {
         self.slash.projects = projects;
     }
 
+    pub fn slash_projects(&self) -> &[(SharedString, String)] {
+        &self.slash.projects
+    }
+
     fn sub_items(&self, id: &str) -> Vec<SubItem> {
         let current = |is_current: bool| if is_current { "Current" } else { "" };
         match id {

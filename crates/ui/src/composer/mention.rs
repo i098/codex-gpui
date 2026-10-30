@@ -159,6 +159,11 @@ impl Composer {
         self.focus_handle.focus(window, cx);
     }
 
+    /// The selected project's root, if any: Home keeps it as the only file-search root.
+    pub fn search_roots(&self) -> &[String] {
+        &self.slash.search.roots
+    }
+
     /// Changes the file-search roots without losing the current draft or query.
     pub fn set_search_roots(&mut self, roots: Vec<String>, cx: &mut Context<Self>) {
         if self.slash.search.roots == roots {
