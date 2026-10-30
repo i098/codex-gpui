@@ -294,7 +294,10 @@ fn toggle_git_blame_shows_the_active_line_commit() -> Result<()> {
         ensure!(output.status.success(), "git {args:?}");
         Ok(())
     };
-    std::fs::write(root.join("math.py"), "def subtract(a, b):\n    return a - b\n")?;
+    std::fs::write(
+        root.join("math.py"),
+        "def subtract(a, b):\n    return a - b\n",
+    )?;
     git(&["init", "-q"])?;
     git(&["add", "."])?;
     git(&[
