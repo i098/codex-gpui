@@ -200,6 +200,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
         this.edit_message(edit.clone(), window, cx)
     }))
     .on_action(cx.listener(|this, a: &RevertTurn, window, cx| this.revert(a.0.clone(), window, cx)))
+    .on_action(cx.listener(
+        |this, action: &ui::screens::thread::view::PatchTurn, _, cx| {
+            this.patch_turn(action, cx);
+        },
+    ))
     .on_action(cx.listener(|this, a: &ThreadPressed, _, cx| {
         this.sidebar
             .update(cx, |sidebar, cx| sidebar.set_read(&a.0, cx));

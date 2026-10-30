@@ -14,27 +14,12 @@ mod cloud_patch {
         }
         let root = PathBuf::from(String::from_utf8(found.stdout)?.trim_end());
         let scratch = tempfile::tempdir()?;
-        let index = git_path(&root, "index")?;
         let temp_index = scratch.path().join("index");
-        if index.exists() {
-            fs::copy(&index, &temp_index)?;
-        }
-        if let Some(shared) = answer(&root, &["rev-parse", "--shared-index-path"])? {
-            let shared = PathBuf::from(shared);
-            let shared = if shared.is_absolute() {
-                shared
-            } else {
-                root.join(shared)
-            };
-            if shared.is_file() {
-                fs::copy(
-                    &shared,
-                    scratch
-                        .path()
-                        .join(shared.file_name().context("shared index filename")?),
-                )?;
-            }
-        }
+        checked(
+            command(&root, &["read-tree", "--empty"])
+                .env("GIT_INDEX_FILE", &temp_index)
+                .output()?,
+        )?;
         let patch = scratch.path().join("patch.diff");
         fs::write(&patch, diff)?;
         let stat = run(
@@ -46,7 +31,18 @@ mod cloud_patch {
                 patch.to_str().context("patch path must be UTF-8")?,
             ],
         )?;
-        let paths = patch_paths(&checked(stat)?)?;
+        let mut paths = patch_paths(&checked(stat)?)?;
+        let reverse = run(
+            &root,
+            &[
+                "apply",
+                "--reverse",
+                "--numstat",
+                "-z",
+                patch.to_str().context("patch path must be UTF-8")?,
+            ],
+        )?;
+        paths.extend(patch_paths(&checked(reverse)?)?);
         let existing: Vec<_> = paths
             .iter()
             .filter(|path| root.join(path).symlink_metadata().is_ok())
@@ -867,6 +863,9 @@ pub(super) fn fetch(endpoint: &str, params: &Value) -> Result<Value> {
     let root = checked(run(cwd, &["rev-parse", "--show-toplevel"])?)?;
     let root = String::from_utf8(root).context("Git root must be UTF-8")?;
     let root = Path::new(root.strip_suffix('\n').unwrap_or(&root));
+    if endpoint == "git-root" {
+        return Ok(json!({"root": root}));
+    }
     if endpoint == "git-cat-file" {
         return contents::cat_file(root, params);
     }

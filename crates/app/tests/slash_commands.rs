@@ -203,7 +203,7 @@ fn fork_submenu_forks_in_the_same_workspace_and_opens_the_fork() -> Result<()> {
         fx.composer_text()? == "/fork ",
         "the token opens its submenu"
     );
-    ensure!(rows(&fx)? == ["Fork chat"]);
+    ensure!(rows(&fx)? == ["Fork chat", "Fork into new worktree"]);
     shot(&mut fx, "fork-submenu")?;
     ensure!(
         requests(&mut fx, "thread/fork")?.is_empty(),
@@ -216,6 +216,33 @@ fn fork_submenu_forks_in_the_same_workspace_and_opens_the_fork() -> Result<()> {
     fx.wait_thread("forked-chat")?;
     let forks = requests(&mut fx, "thread/fork")?;
     ensure!(forks.len() == 1 && forks[0]["params"] == json!({"threadId": GREETING}));
+    ensure!(requests(&mut fx, "thread/rollback")?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn fork_from_here_uses_the_selected_server_boundary() -> Result<()> {
+    let mut thread = recorded_thread(SUBTRACT)?;
+    thread["id"] = "bounded-fork".into();
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange("thread/fork", json!({"thread": thread})));
+    let mut fx = captured(lines)?;
+    fx.keys("cmd-2")?;
+    fx.wait_thread(SUBTRACT)?;
+    let turn = fx.read(|root, cx| {
+        root.thread()
+            .unwrap()
+            .read(cx)
+            .turns()
+            .last()
+            .unwrap()
+            .id
+            .clone()
+    });
+    fx.click(fx.at("thread", "Fork chat from here")?)?;
+    fx.wait_thread("bounded-fork")?;
+    let forks = requests(&mut fx, "thread/fork")?;
+    ensure!(forks[0]["params"] == json!({"threadId": SUBTRACT, "lastTurnId": turn}));
     ensure!(requests(&mut fx, "thread/rollback")?.is_empty());
     Ok(())
 }
@@ -346,6 +373,284 @@ fn project_submenu_selects_an_existing_project_for_the_next_chat() -> Result<()>
     ensure!(
         starts.len() == 1 && starts[0]["params"]["cwd"] == json!(beta),
         "{starts:?}"
+    );
+    Ok(())
+}
+
+fn git(root: &std::path::Path, args: &[&str]) -> Result<String> {
+    let output = std::process::Command::new("git")
+        .current_dir(root)
+        .args(args)
+        .output()?;
+    ensure!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+}
+
+fn worktree_project() -> Result<(tempfile::TempDir, Arc<LocalHost>, std::path::PathBuf)> {
+    let temp = tempfile::tempdir()?;
+    let source = temp.path().join("project");
+    std::fs::create_dir_all(source.join("nested"))?;
+    git(&source, &["init", "-b", "main"])?;
+    std::fs::write(source.join("nested/branch.txt"), "main")?;
+    git(&source, &["add", "."])?;
+    git(
+        &source,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-m",
+            "main",
+        ],
+    )?;
+    git(&source, &["checkout", "-b", "selected"])?;
+    std::fs::write(source.join("nested/branch.txt"), "selected")?;
+    git(
+        &source,
+        &[
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-am",
+            "selected",
+        ],
+    )?;
+    let host = Arc::new(LocalHost::new(temp.path().join("codex")));
+    let project = source.join("nested");
+    host.add_project(&project)?;
+    Ok((temp, host, project))
+}
+
+fn managed_worktrees(host: &LocalHost) -> Result<Value> {
+    app::host::json_body(&host.fetch(&app::host::Request::post("codex-worktrees", None))?)
+}
+
+fn assert_worktree_owner(cwd: &std::path::Path, thread: &str) -> Result<()> {
+    ensure!(std::fs::read_to_string(cwd.join("branch.txt"))? == "selected");
+    let file = git(
+        cwd,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "codex-thread.json",
+        ],
+    )?;
+    let owner: Value = serde_json::from_slice(&std::fs::read(file)?)?;
+    ensure!(owner["ownerThreadId"] == thread, "{owner}");
+    Ok(())
+}
+
+#[test]
+fn normal_composer_worktree_owns_the_selected_checkout_and_restores_failed_drafts() -> Result<()> {
+    for accepted in [false, true] {
+        let (_temp, host, project) = worktree_project()?;
+        let mut lines = script(None, |_| {})?;
+        if accepted {
+            let mut thread = recorded_thread(GREETING)?;
+            thread["id"] = "worktree-chat".into();
+            thread["turns"] = json!([]);
+            lines.extend(exchange(
+                "thread/start",
+                json!({
+                    "thread": thread, "model": "gpt-6.1-sol", "cwd": project
+                }),
+            ));
+            lines.extend(exchange(
+                "turn/start",
+                json!({"turn": {
+                    "id": "turn", "items": [], "status": "completed", "error": null
+                }}),
+            ));
+        }
+        let mut fx = captured(lines)?;
+        fx.root
+            .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+        fx.action(Box::new(ui::screens::sidebar::SelectProject(
+            project.to_string_lossy().into_owned(),
+        )))?;
+        fx.wait("Git project probe", |fx| {
+            fx.read(|root, cx| root.home().read(cx).location.worktree_available == Some(true))
+        })?;
+        fx.focus_composer()?;
+        fx.keys("shift-tab space")?;
+        shot(&mut fx, "worktree-menu")?;
+        fx.keys("down enter")?;
+        shot(&mut fx, "worktree-selected")?;
+        fx.focus_composer()?;
+        fx.type_text("Keep this draft")?;
+        fx.keys("enter")?;
+        if accepted {
+            fx.wait_thread("worktree-chat")?;
+            let starts = requests(&mut fx, "thread/start")?;
+            let cwd =
+                std::path::Path::new(starts.last().unwrap()["params"]["cwd"].as_str().unwrap());
+            ensure!(cwd != project);
+            assert_worktree_owner(cwd, "worktree-chat")?;
+        } else {
+            fx.wait("restored draft", |fx| {
+                fx.composer_text()
+                    .is_ok_and(|text| text == "Keep this draft")
+            })?;
+            ensure!(requests(&mut fx, "thread/start")?.len() == 1);
+            ensure!(
+                managed_worktrees(&host)?["worktrees"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+            ensure!(fx.route() == app::Route::Home);
+        }
+        ensure!(git(&project, &["branch", "--show-current"])? == "selected");
+        ensure!(std::fs::read_to_string(project.join("branch.txt"))? == "selected");
+    }
+    Ok(())
+}
+
+#[test]
+fn worktree_fork_keeps_the_source_transcript_and_cleans_up_a_refusal() -> Result<()> {
+    for accepted in [false, true] {
+        let (_temp, host, project) = worktree_project()?;
+        let mut lines = script(None, |_| {})?;
+        for line in &mut lines {
+            if line.pointer("/msg/result/thread/id") == Some(&json!(GREETING)) {
+                line["msg"]["result"]["thread"]["cwd"] = json!(project);
+            }
+        }
+        let mut original = recorded_thread(GREETING)?;
+        original["cwd"] = json!(project);
+        if accepted {
+            let mut forked = original.clone();
+            forked["id"] = "worktree-fork".into();
+            lines.extend(exchange("thread/fork", json!({"thread": forked})));
+            let mut reread = exchange("thread/read", json!({"thread": original}));
+            reread[0]["msg"]["params"] = json!({"threadId": GREETING, "includeTurns": true});
+            lines.extend(reread);
+        }
+        let mut fx = captured(lines)?;
+        fx.root
+            .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+        open_chat(&mut fx)?;
+        let source_turns =
+            fx.read(|root, cx| format!("{:?}", root.thread().unwrap().read(cx).turns()));
+        fx.type_text("/fork")?;
+        fx.keys("enter down")?;
+        if accepted {
+            fx.composer().update(&mut fx.cx, |_, cx| {
+                cx.emit(ui::composer::SlashCommand::ForkWorktree);
+                cx.emit(ui::composer::SlashCommand::ForkWorktree);
+            });
+        } else {
+            fx.keys("enter")?;
+        }
+        if accepted {
+            fx.wait_thread("worktree-fork")?;
+            let forks = requests(&mut fx, "thread/fork")?;
+            ensure!(forks.len() == 1);
+            let params = &forks.last().unwrap()["params"];
+            ensure!(params["threadId"] == GREETING);
+            let cwd = std::path::Path::new(params["cwd"].as_str().unwrap());
+            ensure!(cwd != project);
+            assert_worktree_owner(cwd, "worktree-fork")?;
+            ensure!(
+                fx.read(|root, cx| format!("{:?}", root.thread().unwrap().read(cx).turns()))
+                    == source_turns
+            );
+            fx.root.update(&mut fx.cx, |root, cx| {
+                root.sidebar().update(cx, |_, cx| {
+                    cx.emit(ui::screens::sidebar::OpenThread(GREETING.into()));
+                });
+            });
+            fx.wait_thread(GREETING)?;
+        } else {
+            fx.wait("fork refusal", |fx| {
+                fx.read(|root, cx| {
+                    root.toasts(cx)
+                        .iter()
+                        .any(|toast| toast == "Failed to fork chat")
+                })
+            })?;
+            ensure!(
+                managed_worktrees(&host)?["worktrees"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        ensure!(fx.route() == app::Route::Thread(GREETING.into()));
+        ensure!(
+            fx.read(|root, cx| format!("{:?}", root.thread().unwrap().read(cx).turns()))
+                == source_turns
+        );
+        ensure!(requests(&mut fx, "thread/rollback")?.is_empty());
+        ensure!(git(&project, &["branch", "--show-current"])? == "selected");
+    }
+    Ok(())
+}
+
+#[test]
+fn temporary_chat_does_not_reuse_the_home_worktree_choice() -> Result<()> {
+    let (_temp, host, project) = worktree_project()?;
+    let mut fx = captured(script(None, |_| {})?)?;
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host.clone(), cx));
+    fx.action(Box::new(ui::screens::sidebar::SelectProject(
+        project.to_string_lossy().into_owned(),
+    )))?;
+    fx.wait("Git project probe", |fx| {
+        fx.read(|root, cx| root.home().read(cx).location.worktree_available == Some(true))
+    })?;
+    fx.focus_composer()?;
+    fx.keys("shift-tab space down enter")?;
+    let action = fx
+        .cx
+        .update(|cx| cx.build_action("app::NewTemporaryChat", None))?;
+    fx.action(action)?;
+    fx.focus_composer()?;
+    fx.type_text("temporary draft")?;
+    fx.keys("enter")?;
+    fx.wait("restored temporary draft", |fx| {
+        fx.composer_text()
+            .is_ok_and(|text| text == "temporary draft")
+    })?;
+    let starts = requests(&mut fx, "thread/start")?;
+    ensure!(starts.len() == 1);
+    ensure!(starts[0]["params"]["ephemeral"] == true);
+    ensure!(starts[0]["params"]["cwd"] == json!(project));
+    ensure!(
+        managed_worktrees(&host)?["worktrees"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn worktree_choice_stays_disabled_for_a_project_without_git() -> Result<()> {
+    let (_temp, host, project) = worktree_project()?;
+    std::fs::remove_dir_all(project.parent().unwrap().join(".git"))?;
+    let mut fx = captured(script(None, |_| {})?)?;
+    fx.root
+        .update(&mut fx.cx, |root, cx| root.set_host(host, cx));
+    fx.action(Box::new(ui::screens::sidebar::SelectProject(
+        project.to_string_lossy().into_owned(),
+    )))?;
+    fx.wait("non-Git project probe", |fx| {
+        fx.read(|root, cx| root.home().read(cx).location.worktree_available == Some(false))
+    })?;
+    fx.focus_composer()?;
+    fx.keys("shift-tab space down enter")?;
+    ensure!(
+        fx.read(|root, cx| root.home().read(cx).location.mode) == ui::screens::hotkey::Mode::Local
     );
     Ok(())
 }
