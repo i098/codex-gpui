@@ -11,7 +11,7 @@
 {"dir":"send","msg":{"id":95006,"method":"mcpServer/tool/call","params":{"server":"codex_apps","tool":"codex_security_cloud.defense_factory_workflow_repositories","arguments":{},"threadId":"019a0000-0000-7000-8000-00000000c10d"}}}
 {"dir":"recv","msg":{"id":95006,"result":{"structuredContent":{"data":{"items":[]}},"isError":false}}}
 {"dir":"send","msg":{"id":95007,"method":"mcpServer/tool/call","params":{"server":"codex_apps","tool":"codex_security_cloud.defense_factory_github_repositories","arguments":{"parameters":{"query":{"connector_id":"connector_recorded","page":1,"per_page":50}}},"threadId":"019a0000-0000-7000-8000-00000000c10d"}}}
-{"dir":"recv","msg":{"id":95007,"result":{"structuredContent":{"error":{"message":"GitHub could not complete the request."},"error_code":"FORBIDDEN"},"isError":true}}}
+{"dir":"recv","msg":{"id":95007,"result":{"content":[{"type":"text","text":"GitHub could not complete the request."}],"structuredContent":{"error":{"message":"GitHub could not complete the request."},"error_code":"FORBIDDEN"},"isError":true}}}
 {"dir":"send","msg":{"id":95008,"method":"mcpServer/tool/call","params":{"server":"codex_apps","tool":"codex_security_cloud.defense_factory_workflow_list","arguments":{"parameters":{"query":{"limit":50,"include_ownership":true}}},"threadId":"019a0000-0000-7000-8000-00000000c10d"}}}
 {"dir":"recv","msg":{"id":95008,"result":{"structuredContent":{"data":{"items":[],"next_cursor":null}},"isError":false}}}
 {"dir":"send","msg":{"id":95009,"method":"thread/unsubscribe","params":{"threadId":"019a0000-0000-7000-8000-00000000c10d"}}}

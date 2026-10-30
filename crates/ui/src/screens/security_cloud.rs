@@ -45,7 +45,7 @@ impl Page {
     pub fn new(clock: Clock, cx: &mut Context<Self>) -> Self {
         let search =
             ["Search findings", "Search repositories", "Search scans"].map(|placeholder| {
-                let field = cx.new(|cx| Composer::inline_field(placeholder, "", cx));
+                let field = cx.new(|cx| Composer::dialog_field(placeholder, placeholder, "", cx));
                 cx.observe(&field, |_, _, cx| cx.notify()).detach();
                 field
             });
@@ -301,23 +301,23 @@ impl Page {
             page = page.children(rows.iter().map(|finding| self.finding_row(finding, &t)));
         }
         let shown = rows.len() as u64;
-        page.child(
-            div()
-                .h(px(58.))
-                .px(px(24.))
-                .flex()
-                .items_center()
-                .border_t_1()
-                .border_b_1()
-                .border_color(t.border)
-                .child(text(
-                    format!("{}–{shown} of {total} findings", u64::from(shown > 0)),
-                    12.,
-                    16.,
-                    430.,
-                    t.text_secondary,
-                )),
-        )
+        page.child(Self::footer(
+            format!("{}–{shown} of {total} findings", u64::from(shown > 0)),
+            &t,
+        ))
+    }
+
+    /// The table's count bar under the rows.
+    fn footer(label: String, t: &Theme) -> Div {
+        div()
+            .h(px(58.))
+            .px(px(24.))
+            .flex()
+            .items_center()
+            .border_t_1()
+            .border_b_1()
+            .border_color(t.border)
+            .child(text(label, 12., 16., 430., t.text_secondary))
     }
 
     fn view_all(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -418,7 +418,14 @@ impl Page {
         ));
         let rows: Vec<&Repository> = match self.snapshot.as_ref().map(|s| &s.repositories) {
             None => return page.child(Self::state("Loading repositories…", t)),
-            Some(Err(_)) => return page.child(Self::state("Repositories couldn’t be loaded.", t)),
+            Some(Err(_)) => {
+                return page
+                    .child(Self::state("Repositories couldn’t be loaded.", t))
+                    .child(Self::footer(
+                        "Some repositories couldn’t be loaded. Results may be incomplete.".into(),
+                        t,
+                    ));
+            }
             Some(Ok(list)) => list
                 .iter()
                 .filter(|repo| matches(&query, &[&repo.name]))
@@ -464,16 +471,31 @@ impl Page {
             &[("Repository", 0.), ("Status", 160.), ("Started", 120.)],
             t,
         ));
-        let rows: Vec<&Scan> = match self.snapshot.as_ref().map(|s| &s.scans) {
+        let (rows, total): (Vec<&Scan>, usize) = match self.snapshot.as_ref().map(|s| &s.scans) {
             None => return page.child(Self::state("Loading scans…", t)),
             Some(Err(_)) => return page.child(Self::state("Scan history could not be loaded.", t)),
-            Some(Ok(list)) => list
-                .iter()
-                .filter(|scan| matches(&query, &[scan_repository(scan), &scan.status]))
-                .collect(),
+            Some(Ok(list)) => (
+                list.iter()
+                    .filter(|scan| matches(&query, &[scan_repository(scan), &scan.status]))
+                    .collect(),
+                list.len(),
+            ),
         };
+        let footer = Self::footer(
+            format!(
+                "{} scan{}",
+                rows.len(),
+                if rows.len() == 1 { "" } else { "s" }
+            ),
+            t,
+        );
         if rows.is_empty() {
-            return page.child(Self::state("No scans to show.", t));
+            let empty = if total == 0 {
+                "No scans have completed yet."
+            } else {
+                "No scans on this page match your current filters."
+            };
+            return page.child(Self::state(empty, t)).child(footer);
         }
         page.children(rows.into_iter().map(|scan| {
             div()
@@ -509,6 +531,7 @@ impl Page {
                     )),
                 )
         }))
+        .child(footer)
     }
 }
 
@@ -573,7 +596,7 @@ fn plural(count: u64, noun: &str) -> String {
 /// USD with no forced decimals, as `formatNumber(…, {style: "currency", maximumFractionDigits: 2})`.
 fn usd(amount: f64) -> String {
     let cents = (amount * 100.).round() as u64;
-    if cents % 100 == 0 {
+    if cents.is_multiple_of(100) {
         format!("${}", cents / 100)
     } else {
         format!("${}.{:02}", cents / 100, cents % 100)
