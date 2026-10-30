@@ -8,11 +8,24 @@ mod common;
 
 use anyhow::{Context as _, Result, ensure};
 use common::{Fx, GREETING, SUBTRACT, exchange, recorded_thread, script};
+use gpui::{
+    EntityInputHandler as _, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    PlatformInput, point, px,
+};
 use serde_json::{Value, json};
 
 #[test]
 fn proxy() {
     common::proxy_child();
+}
+
+fn insert(fx: &mut Fx, text: &str) -> Result<()> {
+    let composer = fx.composer();
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        composer.update(cx, |c, cx| c.replace_text_in_range(None, text, window, cx));
+    })?;
+    fx.cx.run_until_parked();
+    Ok(())
 }
 
 fn turn_text(fx: &mut Fx, before: usize) -> Result<String> {
@@ -59,7 +72,7 @@ fn at_mention_lists_chats_and_sends_the_reference() -> Result<()> {
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     let before = fx.sent()?.len();
     fx.click(fx.at("home", "Do anything")?)?;
-    fx.type_text("@Greet")?;
+    insert(&mut fx, "@Greet")?;
     fx.wait("Chats section", |fx| {
         fx.read(|r, cx| r.composer(cx).read(cx).mention_state())
             .is_some_and(|s| {
@@ -71,6 +84,7 @@ fn at_mention_lists_chats_and_sends_the_reference() -> Result<()> {
                 })
             })
     })?;
+    fx.capture_evidence("CGX_CHAT_SHOTS", "mention-chats")?;
     let search = fx
         .sent()?
         .into_iter()
@@ -84,7 +98,7 @@ fn at_mention_lists_chats_and_sends_the_reference() -> Result<()> {
         chips == [("Greeting tweak".to_owned(), "mobile-chat")],
         "{chips:?}"
     );
-    fx.type_text("summarise it")?;
+    insert(&mut fx, "summarise it")?;
     fx.keys("enter")?;
     let text = turn_text(&mut fx, before)?;
     let expected = format!(
@@ -104,7 +118,39 @@ fn sidebar_chat_dropped_on_the_composer_becomes_a_reference() -> Result<()> {
     lines.extend(started()?);
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     let before = fx.sent()?.len();
-    fx.drag((150., 335.), fx.at("home", "Do anything")?, 8)?;
+    // The drag by hand, so the `Drop to reference chat` overlay is on screen for the shot.
+    let (from, to) = ((150., 335.), fx.at("home", "Do anything")?);
+    fx.hover(from)?;
+    fx.input(PlatformInput::MouseDown(MouseDownEvent {
+        button: MouseButton::Left,
+        position: point(px(from.0), px(from.1)),
+        modifiers: Modifiers::default(),
+        click_count: 1,
+        first_mouse: false,
+    }))?;
+    for position in [(from.0 + 20., from.1), to] {
+        fx.input(PlatformInput::MouseMove(MouseMoveEvent {
+            position: point(px(position.0), px(position.1)),
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::default(),
+        }))?;
+    }
+    ensure!(
+        fx.read(|r, cx| r.composer(cx).read(cx).drag_active(cx)),
+        "a chat over the composer shows `Drop to reference chat`"
+    );
+    // `capture_evidence` hovers the title bar first, which would move the drag off the composer.
+    if let Some(dir) = std::env::var_os("CGX_CHAT_SHOTS") {
+        fx.shot()?
+            .save(std::path::Path::new(&dir).join("drop-overlay.png"))?;
+    }
+    fx.input(PlatformInput::MouseUp(MouseUpEvent {
+        button: MouseButton::Left,
+        position: point(px(to.0), px(to.1)),
+        modifiers: Modifiers::default(),
+        click_count: 1,
+    }))?;
+    fx.capture_evidence("CGX_CHAT_SHOTS", "dropped-chip")?;
     let chips = fx.read(|r, cx| r.composer(cx).read(cx).chips());
     ensure!(chips.len() == 1 && chips[0].1 == "mobile-chat", "{chips:?}");
     fx.keys("enter")?;

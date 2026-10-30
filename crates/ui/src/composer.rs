@@ -2597,8 +2597,11 @@ pub fn drop_target(target: Div, composer: &Entity<Composer>, cx: &App) -> Div {
                 c.set_drag_active(over, cx)
             });
         })
-        .on_drop::<ChatDrag>(move |chat, _, cx| {
-            chat_dropped.update(cx, |c, cx| c.drop_chat(chat, cx));
+        .on_drop::<ChatDrag>(move |chat, window, cx| {
+            chat_dropped.update(cx, |c, cx| {
+                c.drop_chat(chat, cx);
+                c.focus_handle.focus(window, cx);
+            });
         });
     if !over {
         return target;
