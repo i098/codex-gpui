@@ -12,7 +12,7 @@ use objc2_foundation::{
     MainThreadMarker, NSBundle, NSError, NSObject, NSObjectProtocol, NSProcessInfo, NSString,
 };
 use std::cell::{Cell, RefCell};
-use ui::updater::Status;
+use ui::updater::{Release, Status};
 
 const SKIP: isize = 0;
 const INSTALL: isize = 1;
@@ -36,6 +36,7 @@ struct DriverState {
     received: Cell<u64>,
     status: Cell<Status>,
     feed: RefCell<Option<Retained<NSString>>>,
+    release: RefCell<Option<Release>>,
 }
 
 impl DriverState {
@@ -118,6 +119,7 @@ define_class!(
                     let _: () = msg_send![&*self.ivars().standard, showUpdateFoundWithAppcastItem: item, state: state, reply: reply];
                     return;
                 }
+                *self.ivars().release.borrow_mut() = Some(release(item));
                 if stage == STAGE_INSTALLING {
                     *self.ivars().install.borrow_mut() = Some(Installation { reply: reply.copy(), cancel_choice: SKIP });
                     self.emit(Status::Ready);
@@ -307,6 +309,28 @@ impl Backend {
         );
         *self.driver.ivars().feed.borrow_mut() = feed.as_deref().map(NSString::from_str);
     }
+
+    pub(super) fn release(&self) -> Option<Release> {
+        self.driver.ivars().release.borrow().clone()
+    }
+}
+
+/// The appcast item's display version and release notes page (full notes first).
+fn release(item: &AnyObject) -> Release {
+    unsafe {
+        let title: Option<Retained<NSString>> = msg_send![item, displayVersionString];
+        let full: Option<Retained<AnyObject>> = msg_send![item, fullReleaseNotesURL];
+        let notes = full.or_else(|| msg_send![item, releaseNotesURL]);
+        let notes: Option<Retained<NSString>> =
+            notes.and_then(|url| msg_send![&*url, absoluteString]);
+        Release {
+            title: title
+                .map(|title| title.to_string())
+                .unwrap_or_default()
+                .into(),
+            notes: notes.map(|url| url.to_string().into()),
+        }
+    }
 }
 
 fn bundle_string(key: &str) -> Option<String> {
@@ -353,6 +377,7 @@ pub(super) fn start(
         received: Cell::new(0),
         status: Cell::new(Status::Idle),
         feed: RefCell::new(None),
+        release: RefCell::new(None),
     });
     let driver: Retained<UserDriver> = unsafe { msg_send![super(driver), init] };
     let class = AnyClass::get(c"SPUUpdater").context("Sparkle updater is unavailable")?;
@@ -407,6 +432,7 @@ mod tests {
             received: Cell::new(0),
             status: Cell::new(Status::Ready),
             feed: RefCell::new(None),
+            release: RefCell::new(None),
         };
 
         state.set_managed(true);
