@@ -819,6 +819,25 @@ impl Composer {
                     .child(Editor(cx.entity())),
             )
     }
+
+    /// The card's editor: the field row of the Home and thread composers.
+    pub(super) fn card_editor(
+        &self,
+        editing: bool,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        self.editor(cx)
+            .when(self.hotkey_controls.is_some(), |d| d.px_0().min_h(px(48.)))
+            .when(editing, |d| d.pt(px(12.)).pb_0().min_h(px(52.)))
+            // The original's `max-h-[min(25dvh,…)] overflow-y-auto`.
+            .id("composer-editor")
+            .max_h(window.viewport_size().height / 4.)
+            .overflow_y_scroll()
+            .when_some(self.field_scroll.as_ref(), |d, scroll| {
+                d.track_scroll(scroll)
+            })
+    }
 }
 
 impl Focusable for Composer {

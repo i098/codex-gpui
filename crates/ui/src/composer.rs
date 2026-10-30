@@ -808,6 +808,8 @@ pub struct Composer {
     /// Docked under a thread: `_ComposerLayoutRoot` paints the card and `_ComposerLayoutBody`
     /// (the content) is a `will-change: opacity` layer. On Home the body paints the card.
     docked: bool,
+    /// The ChatGPT home's one-row pill: `+`, the editor, then the model, microphone and voice.
+    chat: bool,
     shell_commands: bool,
     content: String,
     /// Mention chips in `content`, in order.
@@ -949,6 +951,7 @@ impl Composer {
                 .map(|server| server.0.clone()),
             placeholder: placeholder.into(),
             docked,
+            chat: false,
             shell_commands: false,
             content: String::new(),
             mentions: Vec::new(),
@@ -1715,6 +1718,12 @@ impl Composer {
         cx: &mut Context<Self>,
     ) {
         self.placeholder = placeholder.into();
+        cx.notify();
+    }
+
+    /// Switches to the ChatGPT home's one-row layout ([`Self::chat`]).
+    pub fn set_chat(&mut self, chat: bool, cx: &mut Context<Self>) {
+        self.chat = chat;
         cx.notify();
     }
 
@@ -3097,24 +3106,16 @@ impl Render for Composer {
                     .when(self.docked, |d| d.layer())
                     .when(
                         !editing
-                            && (self.hotkey_controls.is_none() || !self.attachments.is_empty()),
+                            && ((self.hotkey_controls.is_none() && !self.chat)
+                                || !self.attachments.is_empty()),
                         |d| d.child(self.attachments_row(&t, cx)),
                     )
                     .when_some(self.upload_status(), |d, error| {
                         d.child(label(error, t.text))
                     })
-                    .child(
-                        self.editor(cx)
-                            .when(self.hotkey_controls.is_some(), |d| d.px_0().min_h(px(48.)))
-                            .when(editing, |d| d.pt(px(12.)).pb_0().min_h(px(52.)))
-                            // The original's `max-h-[min(25dvh,…)] overflow-y-auto`.
-                            .id("composer-editor")
-                            .max_h(window.viewport_size().height / 4.)
-                            .overflow_y_scroll()
-                            .when_some(self.field_scroll.as_ref(), |d, scroll| {
-                                d.track_scroll(scroll)
-                            }),
-                    )
+                    .when(!self.chat || editing, |d| {
+                        d.child(self.card_editor(editing, window, cx))
+                    })
                     .child(if editing {
                         let cancel = self.on_cancel_edit.clone().expect("edit callback");
                         let enabled = !self.edit_pending && !self.content.trim().is_empty();

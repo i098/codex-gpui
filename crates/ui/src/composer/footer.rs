@@ -273,50 +273,52 @@ impl Composer {
                 // The 1 px trigger border leaves a 4 px visible gap with this content-edge offset.
                 .side_offset(px(5.)),
             )
-            .child(
-                div()
-                    .relative()
-                    .child(
-                        pill("permissions", t)
-                            .track_focus(&self.permissions_focus)
-                            .focus_visible(crate::focus::trigger_focus)
-                            .on_hover(cx.listener(|this, hovered: &bool, _, _| {
-                                this.menu_trigger_hovered = *hovered
-                            }))
-                            .on_key_down(cx.listener(|this, event, window, cx| {
-                                this.trigger_key(Menu::Permissions, event, window, cx)
-                            }))
-                            .px(px(6.))
-                            .gap(px(4.))
-                            .child(footer_icon(
-                                if self.permission == Permission::Ask {
-                                    "composer-permission-ask"
-                                } else {
-                                    "permissions"
-                                },
-                                t.text_tertiary,
-                            ))
-                            .when(self.footer_width > SM_WIDTH, |d| {
-                                d.child(
-                                    text(
-                                        self.permission.short_label().to_owned(),
-                                        13.,
-                                        18.,
-                                        400.,
-                                        t.text_tertiary,
+            .when(!self.chat, |d| {
+                d.child(
+                    div()
+                        .relative()
+                        .child(
+                            pill("permissions", t)
+                                .track_focus(&self.permissions_focus)
+                                .focus_visible(crate::focus::trigger_focus)
+                                .on_hover(cx.listener(|this, hovered: &bool, _, _| {
+                                    this.menu_trigger_hovered = *hovered
+                                }))
+                                .on_key_down(cx.listener(|this, event, window, cx| {
+                                    this.trigger_key(Menu::Permissions, event, window, cx)
+                                }))
+                                .px(px(6.))
+                                .gap(px(4.))
+                                .child(footer_icon(
+                                    if self.permission == Permission::Ask {
+                                        "composer-permission-ask"
+                                    } else {
+                                        "permissions"
+                                    },
+                                    t.text_tertiary,
+                                ))
+                                .when(self.footer_width > SM_WIDTH, |d| {
+                                    d.child(
+                                        text(
+                                            self.permission.short_label().to_owned(),
+                                            13.,
+                                            18.,
+                                            400.,
+                                            t.text_tertiary,
+                                        )
+                                        .when(self.docked, |d| d.top_layer()),
                                     )
-                                    .when(self.docked, |d| d.top_layer()),
-                                )
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.toggle_menu(Menu::Permissions, window, cx)
-                            })),
-                    )
-                    .when(self.menu == Some(Menu::Permissions), |d| {
-                        d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
-                    }),
-            )
-            .when(self.plan, |d| {
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.toggle_menu(Menu::Permissions, window, cx)
+                                })),
+                        )
+                        .when(self.menu == Some(Menu::Permissions), |d| {
+                            d.child(self.anchored_menu(self.permissions_menu(t, cx), None, cx))
+                        }),
+                )
+            })
+            .when(self.plan && !self.chat, |d| {
                 // `composer.planModeIndicator`: a divider, then a chip whose click turns plan
                 // mode off; hovering swaps its icon for the close icon.
                 d.child(div().h(px(16.)).w(px(1.)).bg(t.border.opacity(0.7)))
@@ -451,7 +453,25 @@ impl Composer {
             .children(self.hotkey_controls.clone())
             .child(self.dictation_button(t, cx))
             .child(send);
-        // Grid columns: controls, an empty column, then the right group, 5 px apart.
+        // Grid columns: controls, an empty column, then the right group, 5 px apart. The
+        // ChatGPT pill puts the editor in the middle column, 5 px from each side.
+        if self.chat {
+            return div()
+                .flex()
+                .items_center()
+                .gap(px(5.))
+                .p(px(8.))
+                .child(left)
+                .child(
+                    self.card_editor(false, window, cx)
+                        .flex_1()
+                        .min_w_0()
+                        .px_0()
+                        .pb_0()
+                        .min_h(px(20.)),
+                )
+                .child(right.flex_none());
+        }
         div()
             .flex()
             .items_center()
