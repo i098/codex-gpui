@@ -62,6 +62,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Fixed
 - Put the site's favicon before an external markdown link, with the original's globe until the image loads, and fetch remote images such as favicons and avatars over HTTP.
+- Show the Appearance `Mode` choice as the original's System, Light and Dark preview tiles instead of a text segmented control.
 - Fold a running turn's interim messages under `Working for` once its final answer starts, as the original does.
 - Show tool activity labels in full when they fit, as the original does, instead of `Read math....`.
 - Show reads of a skill's `SKILL.md` as `Loaded a tool` or `Loaded tools` with the wrench icon in the activity group summary, as the original does.

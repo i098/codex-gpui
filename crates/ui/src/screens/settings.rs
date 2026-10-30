@@ -1057,11 +1057,8 @@ impl SettingsPane {
                     ));
                 focus::ring(control.relative(), &focus, Theme::RADIUS_FULL, px(2.), cx)
                     .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
-                    .on_click(cx.listener(move |this, _, window, cx| {
+                    .on_click(cx.listener(move |this, _, _, cx| {
                         this.page.update(cx, |p, cx| p.set(key, json!(value), cx));
-                        if key == THEME {
-                            window.dispatch_action(Box::new(SetTheme(value)), cx);
-                        }
                     }))
             }))
             .into_any_element()

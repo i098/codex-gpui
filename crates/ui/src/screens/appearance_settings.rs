@@ -1375,6 +1375,72 @@ impl SettingsPane {
             .child(text(title, 14., 21., 500., t.text))
     }
 
+    /// `xc`: the System, Light and Dark radio tiles, each an 80×60 preview with a 2 px border.
+    fn mode_tiles(&self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let current = self.page.read(cx).choice(THEME, "system").to_string();
+        let tiles = [("system", "System"), ("light", "Light"), ("dark", "Dark")]
+            .into_iter()
+            .enumerate()
+            .map(|(index, (value, label))| {
+                let selected = current == value;
+                let preview = |path: &'static str| gpui::img(path).size_full();
+                let image = if value == "system" {
+                    div()
+                        .size_full()
+                        .flex()
+                        .child(preview("ui/appearance-mode/system-light.svg"))
+                        .child(preview("ui/appearance-mode/system-dark.svg"))
+                } else {
+                    div().size_full().child(preview(if value == "light" {
+                        "ui/appearance-mode/light.svg"
+                    } else {
+                        "ui/appearance-mode/dark.svg"
+                    }))
+                };
+                let border = div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(Theme::RADIUS_LG)
+                    .border_2()
+                    .when(selected, |d| d.border_color(t.border_focus))
+                    .when(!selected, |d| {
+                        let strong = t.border_strong;
+                        d.border_color(t.border)
+                            .group_hover("appearance-mode-tile", move |s| s.border_color(strong))
+                    });
+                let focus = focus::handle("appearance-mode", index as isize, window, cx);
+                let tile = div()
+                    .id(("appearance-mode", index))
+                    .role(gpui::Role::RadioButton)
+                    .aria_label(label)
+                    .aria_toggled(if selected {
+                        gpui::Toggled::True
+                    } else {
+                        gpui::Toggled::False
+                    })
+                    .group("appearance-mode-tile")
+                    .relative()
+                    .w(px(80.))
+                    .h(px(60.))
+                    .child(image)
+                    .child(border);
+                focus::ring(tile, &focus, Theme::RADIUS_LG, px(2.), cx)
+                    .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.page.update(cx, |p, cx| p.set(THEME, json!(value), cx));
+                        window.dispatch_action(Box::new(SetTheme(value)), cx);
+                    }))
+            });
+        div()
+            .id("appearance-mode")
+            .role(gpui::Role::RadioGroup)
+            .aria_label("Mode")
+            .flex()
+            .gap(px(16.))
+            .children(tiles)
+            .into_any_element()
+    }
+
     pub(super) fn render_appearance(
         &mut self,
         t: &Theme,
@@ -1382,15 +1448,11 @@ impl SettingsPane {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let card = |rows: Vec<Div>, layer: &Layer| super::worktrees::card(rows, Some(layer), t);
-        let mode = self.segmented(
-            THEME,
-            "system",
-            &[("light", "Light"), ("dark", "Dark"), ("system", "System")],
-            t,
-            window,
-            cx,
-        );
-        let mut visual = vec![card(vec![settings_row("Mode", None, mode, t)], &self.layer)];
+        let mode = self.mode_tiles(t, window, cx);
+        let mut visual = vec![card(
+            vec![settings_row("Mode", None, mode, t).py(px(8.))],
+            &self.layer,
+        )];
         for variant in self.variants(t) {
             let rows = self.visual_card(variant, t, window, cx);
             visual.push(card(rows, &self.layer));
