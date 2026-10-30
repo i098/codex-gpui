@@ -250,6 +250,9 @@ pub fn open<V: Render + 'static>(
         } else {
             gpui::WindowBackgroundAppearance::Opaque
         },
+        // Chromium animates visible unfocused windows at the display rate; GPUI's default
+        // caps them at 30 fps, and passive panels (Mini, overlays) never take focus.
+        inactive_frame_interval: None,
         ..Default::default()
     };
     let kind = spec.kind;

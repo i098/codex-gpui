@@ -1291,6 +1291,18 @@ fn raster(
         // The last px's probe values and blits: a fill's inner px repeat their neighbor's.
         let mut last: Option<([[u8; 3]; 5], Blits)> = None;
         for y in rect[1]..rect[3] {
+            // A px's blits depend only on its probe values, so a row equal to the one above in
+            // every probe repeats its blits: a fill's interior costs one row, not its area.
+            let repeats = |(px, stride): &(Vec<u8>, usize)| {
+                let i = (y - rect[1]) as usize * stride;
+                px[i - stride..i] == px[i..i + stride]
+            };
+            if y > rect[1] && seen.iter().all(repeats) {
+                let above = ((y - 1 - y0) * w + rect[0] - x0) as usize;
+                let len = (rect[2] - rect[0]) as usize;
+                out.copy_within(above..above + len, above + w as usize);
+                continue;
+            }
             for x in rect[0]..rect[2] {
                 // RGBA bytes (macOS N32).
                 let i = (y - rect[1]) as usize * seen[0].1 + (x - rect[0]) as usize * 4;
@@ -1742,6 +1754,12 @@ pub(crate) fn sprites(
 }
 
 fn sprites_from_blits(rect: [i32; 4], blits: &[Blits]) -> Vec<Sprite> {
+    let mut present = [[false; 256]; 2];
+    for b in blits {
+        for (k, blit) in [0, 2].into_iter().enumerate() {
+            present[k][usize::from(b[blit + 1])] |= b[blit] != 0;
+        }
+    }
     let mut out = Vec::new();
     for (blit, mode) in [0, 2].into_iter().flat_map(|b| {
         [
@@ -1756,7 +1774,7 @@ fn sprites_from_blits(rect: [i32; 4], blits: &[Blits]) -> Vec<Sprite> {
         ]
         .map(|m| (b, m))
     }) {
-        if !blits.iter().any(|b| b[blit + 1] == mode && b[blit] != 0) {
+        if !present[blit / 2][usize::from(mode)] {
             continue;
         }
         let value = |i: usize| {
