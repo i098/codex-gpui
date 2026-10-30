@@ -4346,6 +4346,7 @@ impl Root {
         diff_repositories::load(
             diff.clone(),
             self.host.clone(),
+            (self.host_id != "local").then(|| self.bridge.clone()),
             thread.id.clone(),
             thread.cwd.clone(),
             cx,
@@ -6554,6 +6555,7 @@ impl Root {
         }
         self.on_import_event(&event, cx);
         self.plugins_event(&event, cx);
+        self.diff_watch_event(&event, cx);
         self.oauth_account_event(&event, cx);
         usage::on_event(&event, cx);
         if matches!(event, Event::Closed) {
