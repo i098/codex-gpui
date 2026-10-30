@@ -1035,11 +1035,6 @@ impl DiffPanel {
             return;
         }
         let key = &event.keystroke;
-        if key.modifiers.platform && key.key == "enter" && self.artifact_modified_enter(window, cx)
-        {
-            cx.stop_propagation();
-            return;
-        }
         if self
             .filter_focus
             .as_ref()
@@ -1055,6 +1050,17 @@ impl DiffPanel {
             }
             cx.stop_propagation();
             cx.notify();
+            return;
+        }
+        // A line comment card keeps its own Cmd+Enter.
+        if key.modifiers.platform
+            && key.key == "enter"
+            && !self.comment_draft().is_some_and(|editor| {
+                gpui::Focusable::focus_handle(editor.read(cx), cx).is_focused(window)
+            })
+            && self.artifact_modified_enter(window, cx)
+        {
+            cx.stop_propagation();
             return;
         }
         if key.modifiers.platform && key.key == "f" {
