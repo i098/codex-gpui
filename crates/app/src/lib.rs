@@ -74,13 +74,14 @@ use gpui::{
     Action, AnyElement, AnyView, App, AppContext as _, AsyncWindowContext, BorrowAppContext as _,
     Context, Entity, EntityInputHandler as _, FocusHandle, Focusable as _, InteractiveElement as _,
     IntoElement, KeyBinding, KeyDownEvent, ParentElement as _, PathPromptOptions, Pixels, Render,
-    SharedString, Styled as _, Task, WeakEntity, Window, WindowAppearance, actions, div, px,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window,
+    WindowAppearance, actions, div, px,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::{fs, path::PathBuf, sync::Arc, time::Duration};
-use theme::Theme;
+use theme::{ActiveTheme as _, Theme};
 use ui::composer::{Approval, Composer, Permission, QueueAction, Submission};
 use ui::dialog::{
     CommitRepository, CommitStep, Dialog, Kind as DialogKind, Outcome as DialogOutcome, Selection,
@@ -7681,7 +7682,7 @@ impl Render for Root {
                     .on_action(|_: &Zoom, window, _| window.zoom_window())
                     .child(exclusive)
                     .when(self.switching_account && self.login.is_some(), |d| {
-                        let t = theme::ActiveTheme::theme(cx).clone();
+                        let t = cx.theme().clone();
                         d.child(
                             div()
                                 .id("switch-account-cancel")

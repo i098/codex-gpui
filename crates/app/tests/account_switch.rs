@@ -19,15 +19,6 @@ fn switch_row(fx: &Fx) -> (f32, f32) {
 /// The sign-in screen's `Cancel`, 16 px from the right edge and 44 px from the top.
 const CANCEL: (f32, f32) = (1230., 60.);
 
-fn shot(fx: &mut Fx, name: &str) -> Result<()> {
-    if let Some(directory) = std::env::var_os("CGX_ACCOUNT_SHOTS") {
-        let directory = std::path::PathBuf::from(directory);
-        std::fs::create_dir_all(&directory)?;
-        fx.shot()?.save(directory.join(format!("{name}.png")))?;
-    }
-    Ok(())
-}
-
 #[test]
 fn add_account_opens_sign_in_and_cancel_keeps_the_session() -> Result<()> {
     let mut fx = Fx::new()?;
@@ -39,11 +30,11 @@ fn add_account_opens_sign_in_and_cancel_keeps_the_session() -> Result<()> {
     );
     fx.click(avatar(&fx))?;
     ensure!(fx.shell(|s| s.profile_menu));
-    shot(&mut fx, "profile-menu")?;
+    fx.capture_evidence("CGX_ACCOUNT_SHOTS", "profile-menu")?;
     fx.click(switch_row(&fx))?;
     ensure!(fx.read(|root, _| root.signed_out()), "no sign-in screen");
     ensure!(fx.shell(|s| !s.profile_menu));
-    shot(&mut fx, "sign-in-cancelable")?;
+    fx.capture_evidence("CGX_ACCOUNT_SHOTS", "sign-in-cancelable")?;
     fx.click(CANCEL)?;
     ensure!(fx.read(|root, _| !root.signed_out()), "Cancel kept sign-in");
     ensure!(fx.route() == Route::Home, "route {:?}", fx.route());
