@@ -3844,6 +3844,7 @@ impl Root {
                 "Go to recent chat 5" => window.dispatch_action(Box::new(GoToRecentChat(4)), cx),
                 "Go to recent chat 6" => window.dispatch_action(Box::new(GoToRecentChat(5)), cx),
                 "Toggle sidebar" => window.dispatch_action(Box::new(ToggleSidebar), cx),
+                "Toggle Git blame" => self.toggle_git_blame(cx),
                 "Toggle activity view" => window.dispatch_action(Box::new(ToggleActivity), cx),
                 "Open Changes tab" => window.dispatch_action(Box::new(OpenChangesPanel), cx),
                 "New tab" => window.dispatch_action(Box::new(ToggleChangesPanel), cx),
