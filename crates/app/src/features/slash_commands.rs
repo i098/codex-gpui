@@ -279,11 +279,9 @@ impl Root {
                     })
                 })
                 .unwrap_or_default();
-            composer
-                .update(cx, |composer, cx| {
-                    composer.set_review_branches(branches, cx)
-                })
-                .ok();
+            composer.update(cx, |composer, cx| {
+                composer.set_review_branches(branches, cx)
+            });
         })
         .detach();
     }
