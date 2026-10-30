@@ -59,6 +59,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 ### Fixed
 - Fold a running turn's interim messages under `Working for` once its final answer starts, as the original does.
 - Show reads of a skill's `SKILL.md` as `Loaded a tool` or `Loaded tools` with the wrench icon in the activity group summary, as the original does.
+- Show the thread's day-and-time separator only where the original does: above the first message once it is over an hour old, and after an hour (message) or ten minutes (answer) since the last answer. A fresh thread no longer shows `Today 9:33 PM`; older days read `Wednesday`, `Wed, Oct 14 at 9:54 PM` or `Oct 14, 2025 at 9:54 PM`.
 - Ignore app list updates while the Plugins page is loading, so large account catalogs can finish loading.
 - Connect MCP and skill commands to the existing settings and mention actions, and refresh skill lists after changes.
 - Hide the mobile setup artwork below 1024 px, so the setup column stays centered in the main surface.
