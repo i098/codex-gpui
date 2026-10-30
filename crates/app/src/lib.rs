@@ -1344,6 +1344,11 @@ impl Root {
         &self.tabs
     }
 
+    /// The [`SidePanel::Plan`] tab's plan.
+    pub fn plan(&self) -> Option<&Entity<ui::screens::plan::PlanView>> {
+        self.plan.as_ref()
+    }
+
     pub fn workspace_layout(&self) -> WorkspaceLayout {
         if self.tabs.is_empty() {
             WorkspaceLayout::Chat
