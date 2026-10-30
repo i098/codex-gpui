@@ -82,9 +82,9 @@ impl HomeSidebar {
             current: MODES[self.mode].0,
             // The original's `Dns`: the Codex wordmark in Codex, else the ChatGPT one.
             wordmark: if self.chatgpt_surface() {
-                ("chatgpt-wordmark", 77.129955)
+                ("chatgpt-wordmark", 77.13)
             } else {
-                ("codex-wordmark", 53.225983)
+                ("codex-wordmark", 53.22)
             },
             on_click: Box::new(cx.listener(|s, _, window, cx| s.open_mode_menu(window, cx))),
             menu: self

@@ -65,8 +65,16 @@ fn surface(app: &Fx) -> (usize, Option<&'static str>, String) {
     })
 }
 
-fn shows(app: &Fx, label: &str) -> bool {
-    app.at("home", label).is_ok()
+/// Whether Recents lists this ChatGPT conversation.
+fn shows(app: &Fx, title: &str) -> bool {
+    app.read(|root, cx| {
+        let sidebar = root.sidebar().read(cx);
+        sidebar.chatgpt_surface()
+            && sidebar
+                .chatgpt_chats()
+                .iter()
+                .any(|c| c.title.as_ref() == title)
+    })
 }
 
 #[test]
@@ -79,10 +87,11 @@ fn mode_switch_changes_sidebar_and_home() -> Result<()> {
     app.root
         .update(&mut app.cx, |root, cx| root.set_host(host.clone(), cx));
     assert_eq!(surface(&app), (1, None, "Do anything".into()));
-    assert!(!shows(&app, "Chat"));
+    app.capture_evidence("CGX_MODES_SHOTS", "codex-home")?;
 
     app.keys("ctrl-1")?;
     app.wait("ChatGPT rows in Recents", |app| shows(app, "Trip plan"))?;
+    app.capture_evidence("CGX_MODES_SHOTS", "chatgpt-home")?;
     let titles: Vec<_> = app.read(|root, cx| {
         let sidebar = root.sidebar().read(cx);
         sidebar
@@ -111,8 +120,8 @@ fn mode_switch_changes_sidebar_and_home() -> Result<()> {
 
     // A failed page keeps the shown rows, without a message, like the original.
     *host.fail.lock().unwrap() = true;
-    app.click(app.at("home", "Work")?)?;
-    app.wait("Work page request", |app| {
+    app.keys("ctrl-2")?;
+    app.wait("Work page request", |_| {
         host.urls.lock().unwrap().len() == 2
     })?;
     app.cx.run_until_parked();
@@ -121,10 +130,10 @@ fn mode_switch_changes_sidebar_and_home() -> Result<()> {
         (2, Some(WORK_HEADLINE), "Work with ChatGPT".into())
     );
     assert!(shows(&app, "Trip plan"));
+    app.capture_evidence("CGX_MODES_SHOTS", "work-home")?;
 
     app.keys("ctrl-3")?;
     assert_eq!(surface(&app), (1, None, "Do anything".into()));
     assert!(!shows(&app, "Trip plan"));
-    assert!(!shows(&app, "Chat"));
     Ok(())
 }

@@ -5,7 +5,7 @@ use super::{HomeSidebar, RADIUS_ROW};
 use crate::{focus, text};
 use gpui::{
     AnyElement, Context, Corners, EventEmitter, InteractiveElement, IntoElement, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder as _, px,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use theme::ActiveTheme as _;
 
@@ -41,17 +41,15 @@ impl HomeSidebar {
 
     /// The ChatGPT rows under the local Recents rows, or nothing in Codex mode.
     pub(super) fn chatgpt_rows(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        div()
-            .flex()
-            .flex_col()
-            .when(self.chatgpt_surface(), |d| {
-                d.children(
-                    self.chatgpt_chats
-                        .iter()
-                        .map(|chat| chat_row(chat, window, cx)),
-                )
-            })
-            .into_any_element()
+        let rows: Vec<_> = if self.chatgpt_surface() {
+            self.chatgpt_chats
+                .iter()
+                .map(|chat| chat_row(chat, window, cx))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        div().flex().flex_col().children(rows).into_any_element()
     }
 }
 
@@ -62,7 +60,7 @@ fn chat_row(
     chat: &ChatGptChat,
     window: &mut Window,
     cx: &mut Context<HomeSidebar>,
-) -> impl IntoElement {
+) -> gpui::Stateful<gpui::Div> {
     let id = SharedString::from(format!("chatgpt-chat-{}", chat.id));
     let handle = focus::handle(id.clone(), 0, window, cx);
     let t = cx.theme();

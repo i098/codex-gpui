@@ -102,7 +102,8 @@ impl HomeMain {
         let work = self.headline == Some(WORK_HEADLINE);
         let segment =
             |label: &'static str, selected: bool, window: &mut Window, cx: &mut Context<Self>| {
-                let focus = focus::handle(("home-chat-work", label), 0, window, cx);
+                let focus =
+                    focus::handle(SharedString::from(format!("home-{label}")), 0, window, cx);
                 let control = div()
                     .id(label)
                     .role(gpui::Role::Tab)
@@ -117,7 +118,7 @@ impl HomeMain {
                     .when(selected, |d| {
                         d.bg(crate::over(t.text_alpha_5, t.background_panel))
                             .border_1()
-                            .border_color(t.border_light)
+                            .border_color(t.border)
                     })
                     .child(text(label, 14., 20., 500., t.text));
                 focus::ring(control, &focus, Theme::RADIUS_FULL, px(2.), cx)
@@ -128,6 +129,7 @@ impl HomeMain {
             segment("Work", work, window, cx).on_click(crate::dispatch::<crate::SwitchMode2>);
         div().h_full().flex().justify_center().items_center().child(
             div()
+                .id("home-chat-work")
                 .role(gpui::Role::TabList)
                 .h(px(36.))
                 .flex()

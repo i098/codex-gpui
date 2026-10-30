@@ -843,6 +843,7 @@ impl Root {
                 project: state.project_root.as_deref().map(project_name),
                 location: Default::default(),
                 beacon: false,
+                headline: None,
             }),
             thread_composer,
             queue_edit: None,

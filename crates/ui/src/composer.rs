@@ -943,11 +943,6 @@ impl Composer {
         cx.notify();
     }
 
-    pub fn set_placeholder(&mut self, placeholder: &'static str, cx: &mut Context<Self>) {
-        self.placeholder = placeholder.into();
-        cx.notify();
-    }
-
     pub fn set_mini(&mut self, cx: &mut Context<Self>) {
         self.mini = true;
         self.search_field = true;
@@ -1581,7 +1576,7 @@ impl Composer {
         self.footer_width <= UTILITY_WIDTH
     }
 
-    pub(crate) fn set_placeholder(
+    pub fn set_placeholder(
         &mut self,
         placeholder: impl Into<SharedString>,
         cx: &mut Context<Self>,

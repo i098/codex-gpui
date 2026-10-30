@@ -778,7 +778,7 @@ impl Render for EmptySidebar {
                 true,
                 ModeSwitch {
                     current: "Codex",
-                    wordmark: ("codex-wordmark", 53.225983),
+                    wordmark: ("codex-wordmark", 53.22),
                     on_click: Box::new(|_, _, _| {}),
                     menu: None,
                 },
