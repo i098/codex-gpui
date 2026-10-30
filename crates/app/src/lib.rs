@@ -1115,6 +1115,7 @@ impl Root {
                     default_reasoning_effort: String::new(),
                     supported_reasoning_efforts: Vec::new(),
                     is_default: true,
+                    input_modalities: None,
                 };
                 let data = vec![CatalogModel {
                     model,
