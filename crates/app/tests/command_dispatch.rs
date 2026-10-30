@@ -281,3 +281,59 @@ fn unread_command_and_accelerator_share_the_sidebar_state() -> Result<()> {
     }));
     Ok(())
 }
+
+#[test]
+fn toggle_git_blame_shows_the_active_line_commit() -> Result<()> {
+    let workspace = tempfile::tempdir()?;
+    let root = workspace.path();
+    let git = |args: &[&str]| -> Result<()> {
+        let output = std::process::Command::new("git")
+            .current_dir(root)
+            .args(args)
+            .output()?;
+        ensure!(output.status.success(), "git {args:?}");
+        Ok(())
+    };
+    std::fs::write(root.join("math.py"), "def subtract(a, b):\n    return a - b\n")?;
+    git(&["init", "-q"])?;
+    git(&["add", "."])?;
+    git(&[
+        "-c",
+        "user.name=Blame proof",
+        "-c",
+        "user.email=proof@example.invalid",
+        "commit",
+        "-qm",
+        "Add subtract",
+    ])?;
+    let cwd = root.to_string_lossy().into_owned();
+    let script = script(None, |_| {})?
+        .into_iter()
+        .map(|line| serde_json::from_str(&line.to_string().replace(common::CWD, &cwd)))
+        .collect::<serde_json::Result<Vec<_>>>()?;
+    let mut fx = Fx::scripted(script)?;
+    fx.action(Box::new(app::GoToRecentChat(1)))?;
+    fx.wait_thread(SUBTRACT)?;
+    fx.action(Box::new(ui::screens::diff::panel::OpenFile {
+        path: root.join("math.py").to_string_lossy().into_owned(),
+        line: Some(2),
+    }))?;
+    fx.wait("the file read", |fx| {
+        fx.read(|root, cx| {
+            root.file_view()
+                .is_some_and(|file| file.read(cx).contents.as_ref().is_some_and(Result::is_ok))
+        })
+    })?;
+    let file = fx.read(|root, _| root.file_view().cloned()).unwrap();
+    let blame = |fx: &Fx| fx.read(|_, cx| file.read(cx).active_blame(cx));
+    ensure!(blame(&fx).is_none(), "blame starts off");
+    fx.capture_evidence("CGX_BLAME_EVIDENCE", "blame-off")?;
+    command(&mut fx, "Toggle Git blame")?;
+    fx.wait("the active line blame", |fx| {
+        blame(fx).is_some_and(|text| text.starts_with("Blame proof · Add subtract · "))
+    })?;
+    fx.capture_evidence("CGX_BLAME_EVIDENCE", "blame-on")?;
+    command(&mut fx, "Toggle Git blame")?;
+    ensure!(blame(&fx).is_none(), "the second toggle hides blame");
+    Ok(())
+}
