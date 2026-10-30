@@ -176,12 +176,13 @@ impl Dialog {
     }
 
     fn submit(&mut self, cx: &mut Context<Self>) {
-        if self.saving {
+        let name = self.name.read(cx).field_text().trim().to_owned();
+        // A rename has no fallback name, unlike Create.
+        if self.saving || self.editing.is_some() && name.is_empty() {
             return;
         }
         self.saving = true;
         self.popover = None;
-        let name = self.name.read(cx).field_text().trim().to_owned();
         cx.emit(match &self.editing {
             Some(id) => Outcome::Rename {
                 id: id.clone(),

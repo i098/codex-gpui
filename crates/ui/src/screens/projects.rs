@@ -164,7 +164,8 @@ impl Page {
             || "-".to_owned(),
             |ms| compact_age(ms.div_euclid(1000), self.clock),
         );
-        let open = project.root.clone();
+        // A deleted or moved folder cannot host a chat, as in the sidebar.
+        let open = project.root.clone().filter(|_| !project.missing);
         let edit = (project.id.clone(), project.label.clone());
         let menu_open = self.menu.as_ref() == Some(&project.id);
         div()
@@ -227,6 +228,7 @@ impl Page {
                         .on_click(cx.listener({
                             let id = id.clone();
                             move |this, _, _, cx| {
+                                cx.stop_propagation();
                                 this.menu = if this.menu.as_ref() == Some(&id) {
                                     None
                                 } else {
@@ -245,9 +247,10 @@ impl Page {
                             t,
                         )
                         .when_some(open.clone(), |d, root| {
-                            d.on_click(
-                                cx.listener(move |_, _, _, cx| cx.emit(Event::Open(root.clone()))),
-                            )
+                            d.on_click(cx.listener(move |_, _, _, cx| {
+                                cx.stop_propagation();
+                                cx.emit(Event::Open(root.clone()));
+                            }))
                         })
                         .when(open.is_none(), |d| d.opacity(0.4)),
                     ),
