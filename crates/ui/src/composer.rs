@@ -414,6 +414,8 @@ struct ModelOption {
     id: String,
     label: SharedString,
     efforts: Vec<String>,
+    /// `inputModalities` includes `image`.
+    images: bool,
 }
 
 impl ModelOption {
@@ -422,6 +424,10 @@ impl ModelOption {
             id: m.id.clone(),
             label: model_label(&m.display_name).into(),
             efforts: model_efforts(m, enabled),
+            images: m
+                .input_modalities
+                .as_ref()
+                .is_none_or(|modalities| modalities.iter().any(|m| m == "image")),
         }
     }
 }
@@ -3350,6 +3356,7 @@ mod tests {
                         id: "gpt-6.1-sol".into(),
                         label: "GPT-6.1 Sol".into(),
                         efforts: vec!["medium".into()],
+                        images: true,
                     });
                     composer.on_submit(move |submission, _, _| {
                         received.borrow_mut().push(submission.text.clone());
@@ -3423,6 +3430,7 @@ mod tests {
                         id: "gpt-6.1-sol".into(),
                         label: "GPT-6.1 Sol".into(),
                         efforts: vec!["medium".into()],
+                        images: true,
                     });
                     composer.on_submit(move |submission, _, _| {
                         received.borrow_mut().push(submission.text.clone());
@@ -3549,6 +3557,7 @@ mod tests {
                         id: id.into(),
                         label: id.into(),
                         efforts: vec!["medium".into(), "high".into()],
+                        images: true,
                     })
                     .into();
                 composer.permission = Permission::FullAccess;
@@ -3583,6 +3592,7 @@ mod tests {
                     id: "gpt-6.1-sol".into(),
                     label: "GPT-6.1 Sol".into(),
                     efforts: vec!["low".into(), "medium".into()],
+                    images: true,
                 }];
                 composer.restore_run_settings(
                     &json!({"settings":{"model":"gpt-6.1-sol","reasoning_effort":null}}),
