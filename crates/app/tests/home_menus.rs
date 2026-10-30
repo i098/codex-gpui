@@ -32,7 +32,8 @@ fn mode_switch_menu_picks_with_keys_and_click_outside_closes() -> Result<()> {
     assert_eq!(mode(&app), 0);
 
     app.click(trigger)?;
-    app.click(app.at("home", "This computer")?)?;
+    // A blank point of the page, outside the menu.
+    app.click((1000., 150.))?;
     assert!(!mode_menu(&app));
 
     // Clicking the trigger again closes the menu instead of reopening it.
