@@ -1375,6 +1375,13 @@ impl SettingsPane {
             .child(text(title, 14., 21., 500., t.text))
     }
 
+    /// `size: compact` settings rows (`gap-4 py-2`): the theme cards' rows.
+    fn compact(rows: Vec<Div>) -> Vec<Div> {
+        rows.into_iter()
+            .map(|row| row.py(px(8.)).gap(px(16.)))
+            .collect()
+    }
+
     pub(super) fn render_appearance(
         &mut self,
         t: &Theme,
@@ -1392,7 +1399,7 @@ impl SettingsPane {
         );
         let mut visual = vec![card(vec![settings_row("Mode", None, mode, t)], &self.layer)];
         for variant in self.variants(t) {
-            let rows = self.visual_card(variant, t, window, cx);
+            let rows = Self::compact(self.visual_card(variant, t, window, cx));
             visual.push(card(rows, &self.layer));
         }
 
@@ -1495,7 +1502,7 @@ impl SettingsPane {
                 &self.layer,
             ));
             for variant in self.variants(t) {
-                let rows = self.advanced_card(variant, t, window, cx);
+                let rows = Self::compact(self.advanced_card(variant, t, window, cx));
                 advanced.push(card(rows, &self.layer));
             }
             let markers = self.segmented(
