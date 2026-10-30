@@ -889,6 +889,12 @@ It waits for `turn/completed` and checks that the thread view shows `pong`.
 It prints the transcript and saves `live-1-home.png`, `live-2-streaming.png` and `live-3-done.png`.
 `$LIVE_ROOT` (default `/tmp/cgx-mac`) holds the project, the Codex home and the screenshots.
 
+Thread model, reasoning effort, and permission changes use `thread/settings/update`.
+Reviewer changes also use `turn/settings/update` during an active turn.
+The composer applies `thread/settings/updated` without changing the draft.
+Older servers keep the next-turn settings path.
+Run `cargo test -p app --test live_thread_settings` to check these requests and the fallback.
+
 ## Frame benchmark
 
 ```sh

@@ -5813,7 +5813,7 @@ impl Root {
                 })?;
             }
             drop(finished);
-            result.map(drop)
+            result
         });
         log_err(task, cx);
     }

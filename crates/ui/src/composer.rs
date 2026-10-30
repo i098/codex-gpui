@@ -3616,6 +3616,7 @@ mod tests {
 
     #[gpui::test]
     fn server_settings_preserve_draft_and_do_not_echo(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext as _;
         let composer = cx.new(|cx| Composer::new("Work with Codex", true, cx));
         composer.update(cx, |composer, cx| {
             composer.models = ["first", "second"]
