@@ -793,12 +793,32 @@ struct EmbeddedField {
     font_size: Pixels,
     line_height: Pixels,
 }
-/// A composer's unsent input, carried to its replacement ([`Composer::take_draft`]).
+/// A composer's unsent input, carried to its replacement ([`Composer::take_draft`]) or kept
+/// for a thread the composer left ([`Composer::swap_draft`]).
+#[derive(Default)]
 pub struct Draft {
     content: String,
     mentions: Vec<mention::Mention>,
     attachments: Vec<attach::Attachment>,
     diff_comments: Vec<crate::screens::diff::panel::comments::Comment>,
+}
+
+impl Draft {
+    /// A text-only draft, as `state.json` keeps it across restarts.
+    pub fn from_text(text: String) -> Self {
+        Self {
+            content: text,
+            ..Self::default()
+        }
+    }
+
+    pub fn text(&self) -> &str {
+        &self.content
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.content.trim().is_empty() && self.attachments.is_empty()
+    }
 }
 
 pub struct Composer {
@@ -1786,6 +1806,21 @@ impl Composer {
         self.attachments = draft.attachments;
         self.diff_comments = draft.diff_comments;
         cx.emit(DiffCommentsChanged(self.diff_comments.clone()));
+    }
+
+    /// Replaces the unsent text, chips and attachments with `next`, a thread's kept draft, and
+    /// returns the ones replaced. Diff comments stay: the app keeps them per thread.
+    pub fn swap_draft(&mut self, next: Draft, cx: &mut Context<Self>) -> Draft {
+        let left = Draft {
+            content: std::mem::take(&mut self.content),
+            mentions: std::mem::take(&mut self.mentions),
+            attachments: std::mem::take(&mut self.attachments),
+            diff_comments: Vec::new(),
+        };
+        self.set_text(&next.content, cx);
+        self.mentions = next.mentions;
+        self.attachments = next.attachments;
+        left
     }
 
     pub fn restore_text(&mut self, text: &str, cx: &mut Context<Self>) {
