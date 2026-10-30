@@ -1843,6 +1843,7 @@ impl Root {
             | DiffRequest::LoadFullFile(_)
             | DiffRequest::LoadPreview(_)
             | DiffRequest::CommentsChanged(_)
+            | DiffRequest::SendAnnotations(_)
             | DiffRequest::DismissModelComment(_)
             | DiffRequest::Preference(_, _)
             | DiffRequest::ViewedFile { .. } => return,
@@ -4144,6 +4145,9 @@ impl Root {
                     diff_preview::load(panel.clone(), this.host.clone(), request.clone(), cx)
                 }
                 DiffRequest::CommentsChanged(comments) => this.change_diff_comments(comments, cx),
+                DiffRequest::SendAnnotations(comments) => {
+                    this.send_artifact_annotations(panel.clone(), comments, window, cx)
+                }
                 DiffRequest::DismissModelComment(key) => {
                     this.confirm_diff_comment(panel.clone(), key.clone(), window, cx)
                 }

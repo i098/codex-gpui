@@ -43,6 +43,33 @@ impl Composer {
         crate::screens::diff::panel::comments::with_comments(&self.diff_comments, prompt)
     }
 
+    /// `artifact-direct-comment`: the turn that sends `comments` on their own with an empty
+    /// request (bundle `Wdt`), keeping the draft. None when the turn cannot start now.
+    pub fn comments_submission(&self, comments: &[Comment]) -> Option<Submission> {
+        if comments.is_empty()
+            || self.blocked.is_some()
+            || self.edit_pending
+            || (!self.running && self.current_model().is_none())
+        {
+            return None;
+        }
+        Some(Submission {
+            text: crate::screens::diff::panel::comments::with_comments(comments, String::new()),
+            shell_command: false,
+            attachments: Vec::new(),
+            context_files: Vec::new(),
+            model: self
+                .current_model()
+                .map(|m| m.id.clone())
+                .unwrap_or_default(),
+            effort: self.effort.clone(),
+            permission: self.permission,
+            fast: self.fast,
+            plan: self.plan,
+            background: false,
+        })
+    }
+
     pub(super) fn take_diff_comments(&mut self, cx: &mut Context<Self>) {
         if !self.diff_comments.is_empty() {
             self.close_comments_popup();
