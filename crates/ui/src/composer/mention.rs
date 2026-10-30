@@ -253,12 +253,7 @@ impl Composer {
                     .or_else(|| app["id"].as_str())
                     .unwrap_or("");
                 let score = degree(name, &lower);
-                (score > 0).then_some((
-                    ACTIONS.len() + self.slash.skills.len() + i,
-                    2,
-                    score,
-                    name,
-                ))
+                (score > 0).then_some((ACTIONS.len() + self.slash.skills.len() + i, 2, score, name))
             });
         let files = self.slash.search.files.iter().enumerate().map(|(i, f)| {
             (
