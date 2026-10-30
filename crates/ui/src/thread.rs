@@ -1582,6 +1582,18 @@ impl ThreadView {
             find.dirty = true;
         }
         match method.as_str() {
+            "item/commandExecution/terminalInteraction" => {
+                let (Some(id), Some(stdin)) = (params["itemId"].as_str(), params["stdin"].as_str())
+                else {
+                    return;
+                };
+                if let Some(ThreadItem::CommandExecution {
+                    aggregated_output, ..
+                }) = self.item_mut(id)
+                {
+                    aggregated_output.get_or_insert_default().push_str(stdin);
+                }
+            }
             "turn/started" | "turn/completed" => {
                 let Ok(mut n) = serde_json::from_value::<TurnNotification>(params.clone()) else {
                     return;
@@ -3046,6 +3058,9 @@ mod tests {
             view.apply(&notification("item/commandExecution/outputDelta", serde_json::json!({
                 "threadId": "retention", "turnId": "turn", "itemId": "command", "delta": "actual output\n",
             })), cx);
+            view.apply(&notification("item/commandExecution/terminalInteraction", serde_json::json!({
+                "threadId": "retention", "turnId": "turn", "itemId": "command", "stdin": "yes\n",
+            })), cx);
             item["status"] = "failed".into();
             item["exitCode"] = 17.into();
             view.apply(&notification("item/completed", serde_json::json!({
@@ -3056,7 +3071,7 @@ mod tests {
             assert!(view.background_terminals().is_empty());
             assert!(matches!(&view.turns[0].items[0],
                 ThreadItem::CommandExecution { status, exit_code: Some(17), aggregated_output: Some(output), .. }
-                    if status == "failed" && output == "actual output\n"));
+                    if status == "failed" && output == "actual output\nyes\n"));
         });
     }
 
