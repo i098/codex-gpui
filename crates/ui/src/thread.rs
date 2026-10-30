@@ -43,6 +43,8 @@ use gpui::{Anchor, Edges, anchored, deferred};
 
 #[path = "thread/actions.rs"]
 mod actions;
+#[path = "thread/context.rs"]
+mod context;
 #[path = "thread/header.rs"]
 mod header;
 #[path = "thread/items.rs"]
@@ -55,6 +57,7 @@ pub(crate) mod menu;
 mod recovery;
 #[path = "thread/select.rs"]
 mod select;
+pub use context::ReasoningVisibility;
 
 pub use recovery::{History, RetryHistory, UsageLimitNotice};
 
@@ -171,6 +174,14 @@ pub struct ThreadView {
     reasoning_since: HashMap<String, Instant>,
     reasoning_secs: HashMap<String, i64>,
     stream_fades: HashMap<String, Vec<StreamSegment>>,
+    /// Context status, compaction lifecycle and the manual compactions awaiting their item
+    /// (`context.rs`).
+    context_usage: Option<crate::composer::ContextUsage>,
+    compacting: HashMap<String, Instant>,
+    manual_compactions: usize,
+    manual_compacted: HashSet<String>,
+    /// The latest `turn/plan/updated` steps of each turn: `(step, status)`.
+    todo_plans: HashMap<String, Vec<(String, String)>>,
     /// A turn's `Undo`, `View changes`, copy and fork focus handles. They belong to the view,
     /// not to its place in the element tree: the view moves when a side panel opens, and a
     /// pressed control must keep its focus across that.
@@ -650,6 +661,11 @@ impl ThreadView {
             reasoning_since: HashMap::new(),
             reasoning_secs: HashMap::new(),
             stream_fades: HashMap::new(),
+            context_usage: None,
+            compacting: HashMap::new(),
+            manual_compactions: 0,
+            manual_compacted: HashSet::new(),
+            todo_plans: HashMap::new(),
             turn_focus: RefCell::default(),
             mcp_images: RefCell::default(),
             expanded: HashSet::new(),
@@ -769,14 +785,16 @@ impl ThreadView {
 
     /// The activity texts of turn `turn_id`, as drawn under its `Worked for` disclosure: each
     /// group's summary, then its rows while the group is open.
-    pub fn activity_labels(&self, turn_id: &str) -> Option<Vec<String>> {
+    pub fn activity_labels(&self, turn_id: &str, cx: &App) -> Option<Vec<String>> {
         let turn = self.turns.iter().find(|t| t.id == turn_id)?;
         let (work, _) = work(turn);
         Some(
             items::activities(
                 work,
                 turn.status == TurnStatus::InProgress,
-                &self.reasoning_secs,
+                self,
+                ReasoningVisibility::get(cx),
+                cx.background_executor().now(),
             )
             .iter()
             .flat_map(|a| a.labels(&self.expanded))
@@ -1596,6 +1614,7 @@ impl ThreadView {
                 let Ok(mut n) = serde_json::from_value::<ItemNotification>(params.clone()) else {
                     return;
                 };
+                self.track_compaction(method, &n.item, cx.background_executor().now());
                 let Some(turn) = self.turns.iter_mut().find(|t| t.id == n.turn_id) else {
                     return;
                 };
@@ -1688,6 +1707,31 @@ impl ThreadView {
                 };
                 progress.push(params.clone());
             }
+            "item/plan/delta" => {
+                let (Some(item_id), Some(delta)) =
+                    (params["itemId"].as_str(), params["delta"].as_str())
+                else {
+                    return;
+                };
+                if let Some(ThreadItem::Plan { text, .. }) = self.item_mut(item_id) {
+                    text.push_str(delta);
+                }
+            }
+            "turn/plan/updated" => {
+                let (Some(turn_id), Some(plan)) =
+                    (params["turnId"].as_str(), params["plan"].as_array())
+                else {
+                    return;
+                };
+                let steps = plan
+                    .iter()
+                    .map(|s| {
+                        let field = |key: &str| s[key].as_str().unwrap_or_default().to_owned();
+                        (field("step"), field("status"))
+                    })
+                    .collect();
+                self.todo_plans.insert(turn_id.to_owned(), steps);
+            }
             "item/agentMessage/delta" | "item/commandExecution/outputDelta" => {
                 let Ok(n) = serde_json::from_value::<AgentMessageDeltaNotification>(params.clone())
                 else {
@@ -1727,6 +1771,7 @@ impl ThreadView {
                     _ => errors.push((error.error, error.will_retry)),
                 }
             }
+            method if self.apply_context(method, params) => {}
             _ => return,
         }
         cx.notify();
@@ -1977,6 +2022,7 @@ impl ThreadView {
             });
         }
         let running = turn.status == TurnStatus::InProgress;
+        let visibility = ReasoningVisibility::get(cx);
         if running && has_work {
             let secs = self.running_seconds(turn, cx.background_executor().now());
             col = col
@@ -1994,6 +2040,8 @@ impl ThreadView {
                 ThreadItem::CommandExecution { status, .. }
                 | ThreadItem::FileChange { status, .. }
                 | ThreadItem::McpToolCall { status, .. } => status == "inProgress",
+                ThreadItem::Reasoning { id, .. } => self.thinking(id) && !visibility.hide,
+                ThreadItem::ContextCompaction { id } => self.compacting.contains_key(id),
                 _ => false,
             });
         col.child(self.activity(work, running, window, t, cx))
@@ -2006,6 +2054,16 @@ impl ThreadView {
                     t.text_tertiary,
                 )))
             })
+            .when_some(
+                self.todo_plans
+                    .get(&turn.id)
+                    .filter(|_| running)
+                    .and_then(|p| step_label(p)),
+                |col, label| {
+                    let label = text(label, 14., 21., 400., t.text_secondary);
+                    col.child(div().mt(px(16.)).child(crate::composer::tabular(label)))
+                },
+            )
             .child(self.automation_cards(&turn.items, window, t, cx))
     }
 
@@ -2560,16 +2618,27 @@ fn item_id(item: &ThreadItem) -> Option<&str> {
 }
 
 /// A finished turn's items before its final answer, and that answer as `(item id, text)`:
-/// the work its `Worked for` disclosure hides. A running turn is all work.
+/// the work its `Worked for` disclosure hides. A plan-mode turn's answer is its final plan. A
+/// running turn is all work.
 fn work(turn: &Turn) -> (&[ThreadItem], Option<(&str, &str)>) {
     match turn.items.last() {
-        Some(ThreadItem::AgentMessage { id, text, .. })
+        Some(ThreadItem::AgentMessage { id, text, .. } | ThreadItem::Plan { id, text, .. })
             if turn.status != TurnStatus::InProgress =>
         {
             (&turn.items[..turn.items.len() - 1], Some((id, text)))
         }
         _ => (&turn.items, None),
     }
+}
+
+/// `codex.todoPlan.pillProgress` (`Step 2 / 4`): the first step in progress, else the first
+/// pending one, else the last.
+fn step_label(plan: &[(String, String)]) -> Option<String> {
+    let at = |status: &str| plan.iter().position(|(_, s)| s == status);
+    let index = at("inProgress")
+        .or_else(|| at("pending"))
+        .unwrap_or(plan.len().checked_sub(1)?);
+    Some(format!("Step {} / {}", index + 1, plan.len()))
 }
 
 /// Uses the server's parsed command when it reports one, otherwise removes the shell wrapper.
@@ -2950,13 +3019,168 @@ mod tests {
                 );
             }
         });
-        view.update(cx, |view, _| {
+        view.update(cx, |view, cx| {
             // A loaded-history item has no seen duration and stays hidden.
-            assert_eq!(view.activity_labels("turn").unwrap(), ["Thought for 0s"]);
+            assert_eq!(
+                view.activity_labels("turn", cx).unwrap(),
+                ["Thought for 0s"]
+            );
             view.expanded.insert("reasoning-live".into());
             assert_eq!(
-                view.activity_labels("turn").unwrap(),
+                view.activity_labels("turn", cx).unwrap(),
                 ["Thought for 0s", "Check the sum"]
+            );
+        });
+    }
+
+    /// S05: `thread/tokenUsage/updated`, streamed reasoning deltas, the local thinking display
+    /// and the compaction lifecycle, in the order the 0.164 app-server sent them live.
+    #[gpui::test]
+    fn context_status_reasoning_stream_and_compaction(cx: &mut gpui::TestAppContext) {
+        let thread: Thread = serde_json::from_value(serde_json::json!({
+            "id": "ctx", "preview": "", "modelProvider": "test", "cwd": "/tmp",
+            "createdAt": 0, "updatedAt": 0, "status": {"type": "idle"},
+            "turns": [{"id": "turn", "items": [], "status": "inProgress"}]
+        }))
+        .unwrap();
+        let composer = cx.new(|_| gpui::EmptyView).into();
+        let view = cx.new(|_| {
+            ThreadView::new(
+                thread,
+                Clock {
+                    utc_offset: 0,
+                    pinned_now: Some(0),
+                    elapsed_since: None,
+                },
+                composer,
+            )
+        });
+        let send = |view: &mut ThreadView, method: &str, params: Value, cx: &mut Context<_>| {
+            let mut params = params;
+            params["threadId"] = "ctx".into();
+            params["turnId"] = "turn".into();
+            view.apply(
+                &Event::Notification {
+                    method: method.into(),
+                    params,
+                },
+                cx,
+            );
+        };
+        let reasoning =
+            serde_json::json!({"type": "reasoning", "id": "rs", "summary": [], "content": []});
+        view.update(cx, |view, cx| {
+            assert_eq!(view.context_usage(), None);
+            send(
+                view,
+                "thread/tokenUsage/updated",
+                serde_json::json!({"tokenUsage": {
+                    "total": {"totalTokens": 60411}, "last": {"totalTokens": 30697},
+                    "modelContextWindow": 828400,
+                }}),
+                cx,
+            );
+            let usage = view.context_usage().unwrap();
+            assert_eq!(
+                (usage.used, usage.window, usage.percent()),
+                (30697, 828400, 4)
+            );
+
+            send(
+                view,
+                "item/started",
+                serde_json::json!({"item": reasoning}),
+                cx,
+            );
+            assert_eq!(view.activity_labels("turn", cx).unwrap(), ["Thinking"]);
+            send(
+                view,
+                "item/reasoning/summaryPartAdded",
+                serde_json::json!({"itemId": "rs", "summaryIndex": 0}),
+                cx,
+            );
+            for delta in ["**Reviewing task**", "\n\nAdding 17 and 23."] {
+                send(
+                    view,
+                    "item/reasoning/summaryTextDelta",
+                    serde_json::json!({"itemId": "rs", "summaryIndex": 0, "delta": delta}),
+                    cx,
+                );
+            }
+            send(
+                view,
+                "item/reasoning/textDelta",
+                serde_json::json!({"itemId": "rs", "contentIndex": 0, "delta": "raw steps"}),
+                cx,
+            );
+            // The streaming summary shows under `Thinking` without its heading.
+            assert_eq!(
+                view.activity_labels("turn", cx).unwrap(),
+                ["Thinking", "Adding 17 and 23."]
+            );
+            cx.set_global(ReasoningVisibility {
+                hide: false,
+                raw: true,
+            });
+            assert_eq!(
+                view.activity_labels("turn", cx).unwrap(),
+                ["Thinking", "raw steps"]
+            );
+            cx.set_global(ReasoningVisibility {
+                hide: true,
+                raw: false,
+            });
+            assert_eq!(
+                view.activity_labels("turn", cx).unwrap(),
+                Vec::<String>::new()
+            );
+            cx.set_global(ReasoningVisibility::default());
+
+            // Completion keeps the streamed text: the completed item's own summary wins.
+            let done = serde_json::json!({"type": "reasoning", "id": "rs",
+                "summary": ["**Reviewing task**\n\nAdding 17 and 23."], "content": []});
+            send(
+                view,
+                "item/completed",
+                serde_json::json!({"item": done}),
+                cx,
+            );
+            assert_eq!(
+                view.activity_labels("turn", cx).unwrap(),
+                ["Thought for 0s"]
+            );
+
+            // An automatic compaction, then one the user asked for.
+            let compaction =
+                |id: &str| serde_json::json!({"item": {"type": "contextCompaction", "id": id}});
+            send(view, "item/started", compaction("auto"), cx);
+            assert_eq!(
+                view.activity_labels("turn", cx).unwrap(),
+                ["Thought for 0s", "Compacting context"]
+            );
+            send(view, "item/completed", compaction("auto"), cx);
+            view.expect_manual_compaction();
+            send(view, "item/started", compaction("manual"), cx);
+            send(view, "item/completed", compaction("manual"), cx);
+            assert_eq!(
+                view.activity_labels("turn", cx).unwrap(),
+                [
+                    "Thought for 0s",
+                    "Context automatically compacted",
+                    "Context compacted"
+                ]
+            );
+            // A compaction whose turn ended before its completion is interrupted.
+            send(view, "item/started", compaction("cut"), cx);
+            send(
+                view,
+                "turn/completed",
+                serde_json::json!({"turn": {"id": "turn", "items": [], "status": "interrupted"}}),
+                cx,
+            );
+            assert_eq!(
+                view.activity_labels("turn", cx).unwrap().last().unwrap(),
+                "Compaction interrupted"
             );
         });
     }

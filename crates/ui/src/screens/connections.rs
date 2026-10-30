@@ -310,7 +310,7 @@ impl ConnectionsPage {
             } else {
                 super::mobile::MobileSetupPage::pairing_dialog
             });
-            if let Some(focus) = page.read(cx).dialog_focus() {
+            if let Some(focus) = page.read(cx).focus() {
                 focus.focus(window, cx);
             }
             cx.update_global::<ConnectionsState, _>(|state, _| {
@@ -1167,13 +1167,7 @@ mod tests {
         cx.update_window(window.into(), |_, window, cx| {
             page.update(cx, |page, cx| {
                 page.activate(Action::StartPairing, window, cx);
-                let focus = page
-                    .pairing
-                    .as_ref()
-                    .unwrap()
-                    .read(cx)
-                    .dialog_focus()
-                    .unwrap();
+                let focus = page.pairing.as_ref().unwrap().read(cx).focus().unwrap();
                 assert!(focus.is_focused(window));
                 assert!(!cx.global::<ConnectionsState>().pairing_connected);
                 page.close_pairing(cx);

@@ -83,7 +83,7 @@ fn grouped_activity_matches_the_original() -> Result<()> {
             r.thread()
                 .unwrap()
                 .read(cx)
-                .activity_labels(SUBTRACT_TURN)
+                .activity_labels(SUBTRACT_TURN, cx)
                 .unwrap()
         })
     };

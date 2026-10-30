@@ -79,6 +79,7 @@ pub(super) fn page(root: &mut Root, window: &mut Window, cx: &mut Context<Root>)
         cloud.update(cx, |cloud, cx| cloud.open_path(path, cx));
     }
     root.settings_page = Some(page.clone());
+    crate::settings_configuration::attach(root, &page, cx);
     if let Route::SettingsSubtree(path) = &root.state.route
         && let Some(view) = root.settings_subtree(path, cx)
     {

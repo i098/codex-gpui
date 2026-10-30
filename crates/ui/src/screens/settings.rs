@@ -447,6 +447,10 @@ pub struct SettingsPage {
     pub personalization: Entity<personalization::Personalization>,
     toaster: Option<Entity<crate::toast::Toaster>>,
     cloud: Option<Entity<super::cloud::CloudPage>>,
+    /// Every effort a listed `model/list` model supports, in catalog order.
+    catalog_efforts: Vec<String>,
+    /// The selected host's `config/read` with `includeLayers` (`origins`, `layers`).
+    config_layers: Value,
 }
 
 impl SettingsPage {
@@ -480,6 +484,8 @@ impl SettingsPage {
             personalization: cx.new(personalization::Personalization::new),
             toaster: None,
             cloud: None,
+            catalog_efforts: Vec::new(),
+            config_layers: Value::Null,
         }
     }
 
@@ -538,6 +544,27 @@ impl SettingsPage {
         cx.notify();
     }
 
+    /// The efforts the selected host's `model/list` catalog supports (original's `Kn`).
+    pub fn set_models(&mut self, models: &[bridge::types::Model], cx: &mut Context<Self>) {
+        self.catalog_efforts.clear();
+        for effort in models
+            .iter()
+            .filter(|m| !m.hidden)
+            .flat_map(|m| &m.supported_reasoning_efforts)
+            .filter_map(|e| e["reasoningEffort"].as_str())
+        {
+            if !self.catalog_efforts.iter().any(|e| e == effort) {
+                self.catalog_efforts.push(effort.to_owned());
+            }
+        }
+        cx.notify();
+    }
+
+    pub fn set_config_layers(&mut self, read: Value, cx: &mut Context<Self>) {
+        self.config_layers = read;
+        cx.notify();
+    }
+
     pub fn show_subtree(&mut self, view: AnyView, cx: &mut Context<Self>) {
         self.subtree = Some(view);
         cx.notify();
@@ -591,9 +618,13 @@ pub struct SettingChanged {
 /// Several `host.<key>` settings changed together (see [`SettingsPage::set_host_batch`]).
 pub struct HostSettingsChanged(pub Vec<(&'static str, Value)>);
 
+/// `Open config.toml`: the app opens the selected host's user config layer.
+pub struct OpenConfigToml;
+
 impl EventEmitter<SettingChanged> for SettingsPage {}
 impl EventEmitter<HostSettingsChanged> for SettingsPage {}
 impl EventEmitter<personalization::Event> for SettingsPage {}
+impl EventEmitter<OpenConfigToml> for SettingsPage {}
 
 /// `--sidebar-navigation` background, opaque.
 fn sidebar_color(t: &Theme) -> Hsla {
@@ -848,7 +879,7 @@ pub struct SettingsPane {
     git_saved_until: std::collections::HashMap<&'static str, std::time::Instant>,
     appearance: appearance_settings::State,
     /// `Available reasoning efforts` on the Configuration page.
-    efforts: Option<Entity<crate::settings_kit::MultiSelect>>,
+    efforts: Option<(Vec<String>, Entity<crate::settings_kit::MultiSelect>)>,
 }
 
 /// `Confirm before closing a window` options, default first.

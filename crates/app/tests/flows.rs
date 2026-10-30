@@ -112,6 +112,8 @@ const FLOWS: &[(&str, Flow)] = &[
     ("profile_menu_dismiss", profile_menu_dismiss),
     ("profile_menu_mobile", profile_menu_mobile),
     ("mobile_button_hover", mobile_button_hover),
+    ("mobile_focus_ring", mobile_focus_ring),
+    ("mobile_resize_three_widths", mobile_resize_three_widths),
     ("parity_mobile", || parity_flow("mobile", open_mobile)),
     ("command_menu_keys", command_menu_keys),
     ("command_menu_search_click", command_menu_search_click),
@@ -986,6 +988,97 @@ fn mobile_button_hover() -> Result<String> {
     Ok(format!("{n} px"))
 }
 
+/// Pixels of the 2 px `#3a83f7` keyboard ring in `[x, y, w, h]`.
+fn ring_pixels(shot: &RgbaImage, [x, y, w, h]: [f32; 4]) -> usize {
+    let (x1, y1) = (((x + w) * 2.) as u32, ((y + h) * 2.) as u32);
+    ((y * 2.) as u32..y1)
+        .flat_map(|py| ((x * 2.) as u32..x1).map(move |px| (px, py)))
+        .filter(|&(px, py)| {
+            let p = shot.get_pixel(px, py);
+            [0x3a, 0x83, 0xf7]
+                .iter()
+                .zip(p.0)
+                .all(|(want, got)| (*want - got as i32).abs() <= 8)
+        })
+        .count()
+}
+
+/// Tab reaches `Get started`, which draws the 2 px ring (`focus-visible:ring-2`) above its
+/// pill; a pointer press clears it.
+fn mobile_focus_ring() -> Result<String> {
+    let mut fx = Fx::new()?;
+    open_mobile(&mut fx)?;
+    fx.hover((640., 22.))?;
+    // The original's 400 × 36 pill starts at y 560.25: its ring is the 2 px above it.
+    let band = [152., 557.25, 400., 3.];
+    ensure!(
+        ring_pixels(&fx.shot()?, band) == 0,
+        "a ring shows without focus"
+    );
+    let mut step = None;
+    for n in 1..=40 {
+        fx.keys("tab")?;
+        if ring_pixels(&fx.shot()?, band) > 1000 {
+            step = Some(n);
+            break;
+        }
+    }
+    let step = step.context("Tab never drew a ring on Get started")?;
+    fx.capture_evidence("CGX_MOBILE_EVIDENCE", "focus-get-started")?;
+    fx.click((900., 200.))?;
+    let left = ring_pixels(&fx.shot()?, band);
+    ensure!(left == 0, "a pointer press left {left} ring px");
+    Ok(format!("tab {step}"))
+}
+
+/// At 1280, 767 and 600 px the setup column stays centered in its area. Below 1024 px the
+/// original hides the artwork (`hidden lg:block`), so the column takes the whole main surface.
+fn mobile_resize_three_widths() -> Result<String> {
+    let mut centers = Vec::new();
+    for w in [1280., 767., 600.] {
+        let mut fx = Fx::with("dark", (w, 832.), None, |_| {})?;
+        open_mobile(&mut fx)?;
+        ensure!(
+            fx.route() == Route::Mobile,
+            "{w} px: route {:?}",
+            fx.route()
+        );
+        fx.hover((w / 2., 22.))?;
+        fx.capture_evidence("CGX_MOBILE_EVIDENCE", &format!("resize-{w}"))?;
+        let shot = fx.shot()?;
+        // The main surface spans 52..w - 4 px; at 1280 px the column has its left half.
+        let center = if w >= 1024. {
+            352.
+        } else {
+            (52. + w - 4.) / 2.
+        };
+        // `Get started`'s near-white pill, 400 px wide on the row through its label.
+        let y = 578 * 2;
+        let light = |x: f32| {
+            let [r, g, b, _] = shot.get_pixel((x * 2.) as u32, y).0;
+            r.min(g).min(b) > 200 && r.max(g).max(b) - r.min(g).min(b) < 16
+        };
+        ensure!(
+            light(center - 150.) && light(center + 150.),
+            "{w} px: Get started is not centered at {center}"
+        );
+        let (mut left, mut right) = (center - 150., center + 150.);
+        while light(left - 0.5) {
+            left -= 0.5;
+        }
+        while light(right + 0.5) {
+            right += 0.5;
+        }
+        let mid = (left + right) / 2.;
+        ensure!(
+            (mid - center).abs() <= 1.,
+            "{w} px: pill {left}..{right}, center {mid}, expected {center}"
+        );
+        centers.push(mid);
+    }
+    Ok(format!("{centers:?}"))
+}
+
 // --- Command menu, sidebar sections ---
 
 fn command_menu_open(fx: &Fx) -> bool {
@@ -1130,19 +1223,7 @@ fn thread_card_focus_ring() -> Result<String> {
     // The original's button boxes (refs/thread spec nodes 310 and 312), plus the 2 px ring.
     const UNDO: [f32; 4] = [982.95, 334.8, 72.71, 32.];
     const VIEW: [f32; 4] = [1059.66, 334.8, 106.59, 32.];
-    let ring = |shot: &RgbaImage, [x, y, w, h]: [f32; 4]| {
-        let (x1, y1) = (((x + w) * 2.) as u32, ((y + h) * 2.) as u32);
-        ((y * 2.) as u32..y1)
-            .flat_map(|py| ((x * 2.) as u32..x1).map(move |px| (px, py)))
-            .filter(|&(px, py)| {
-                let p = shot.get_pixel(px, py);
-                [0x3a, 0x83, 0xf7]
-                    .iter()
-                    .zip(p.0)
-                    .all(|(want, got)| (*want - got as i32).abs() <= 8)
-            })
-            .count()
-    };
+    let ring = ring_pixels;
     let mut fx = Fx::new()?;
     open_subtract(&mut fx)?;
     fx.focus_composer()?;
