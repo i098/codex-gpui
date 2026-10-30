@@ -1,23 +1,26 @@
-//! `Codex ⌄` mode switch menu: `ChatGPT`, `Codex`, `Work` and their `⌃1` (ChatGPT), `⌃2` (Work), `⌃3` (Codex) shortcuts.
+//! `Codex ⌄` mode switch menu: the original's two items, `ChatGPT` and `Codex`. The ChatGPT
+//! surface has two homes, Chat (`⌃1`) and Work (`⌃2`); Codex is `⌃3`.
 
 use super::HomeSidebar;
 use crate::{ModeSwitch, RAIL_WIDTH, icon::icon, text};
 use gpui::{
-    AnyElement, Bounds, Context, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, ParentElement, Pixels, StatefulInteractiveElement, Styled, Window, anchored,
-    deferred, div, point, prelude::FluentBuilder as _, px, size,
+    AnyElement, Bounds, ClickEvent, Context, FocusHandle, InteractiveElement, IntoElement,
+    KeyDownEvent, MouseButton, ParentElement, Pixels, StatefulInteractiveElement, Styled, Window,
+    anchored, deferred, div, point, prelude::FluentBuilder as _, px, size,
 };
 use theme::{ActiveTheme as _, Theme};
 
-/// Label, caption and shortcut of each mode, in menu order.
-pub const MODES: [(&str, &str, &str); 3] = [
-    ("ChatGPT", "", "⌃1"),
-    ("Codex", "Build, debug, and ship", "⌃3"),
-    ("Work", "Create, learn, and explore", "⌃2"),
-];
+/// Mode names by index: the ChatGPT surface's Chat home, Codex, and its Work home.
+pub const MODES: [&str; 3] = ["ChatGPT", "Codex", "Work"];
 
 /// Index into [`MODES`] at launch: the original opens in Codex.
 pub const DEFAULT_MODE: usize = 1;
+
+/// The menu items in order: label, caption and the [`MODES`] index a pick selects.
+const ITEMS: [(&str, &str, usize); 2] = [
+    ("ChatGPT", "Create, learn, and explore", 0),
+    ("Codex", "Build, debug, and ship", DEFAULT_MODE),
+];
 
 /// The 84x32 `Codex ⌄` trigger, 10 px right of the rail and 10 px under the titlebar.
 fn trigger_bounds() -> Bounds<Pixels> {
@@ -30,7 +33,8 @@ fn trigger_bounds() -> Bounds<Pixels> {
 pub(super) struct ModeMenu {
     focus: FocusHandle,
     previous: Option<FocusHandle>,
-    selected: usize,
+    /// The highlighted [`ITEMS`] row; none after a pointer open, like the original's Radix menu.
+    selected: Option<usize>,
 }
 
 impl HomeSidebar {
@@ -54,7 +58,7 @@ impl HomeSidebar {
         self.close_mode_menu(window, cx);
     }
 
-    fn open_mode_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_mode_menu(&mut self, keyboard: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.mode_menu.is_some() {
             return self.close_mode_menu(window, cx);
         }
@@ -62,10 +66,25 @@ impl HomeSidebar {
         self.mode_menu = Some(ModeMenu {
             previous: window.focused(cx),
             focus: focus.clone(),
-            selected: self.mode,
+            selected: keyboard.then_some(0),
         });
         window.focus(&focus, cx);
         cx.notify();
+    }
+
+    /// The [`ITEMS`] row of the current mode: ChatGPT for both of its homes.
+    fn current_item(&self) -> usize {
+        usize::from(!self.chatgpt_surface())
+    }
+
+    /// Picking the current item keeps the current home, like the original's no-op reselect.
+    fn pick(&mut self, item: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let mode = if item == self.current_item() {
+            self.mode
+        } else {
+            ITEMS[item].2
+        };
+        self.set_mode(mode, window, cx);
     }
 
     fn close_mode_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -79,14 +98,16 @@ impl HomeSidebar {
 
     pub(super) fn mode_switch(&self, window: &Window, cx: &mut Context<Self>) -> ModeSwitch {
         ModeSwitch {
-            current: MODES[self.mode].0,
+            current: ITEMS[self.current_item()].0,
             // The original's `Dns`: the Codex wordmark in Codex, else the ChatGPT one.
             wordmark: if self.chatgpt_surface() {
                 ("chatgpt-wordmark", 77.13)
             } else {
                 ("codex-wordmark", 53.22)
             },
-            on_click: Box::new(cx.listener(|s, _, window, cx| s.open_mode_menu(window, cx))),
+            on_click: Box::new(cx.listener(|s, e: &ClickEvent, window, cx| {
+                s.open_mode_menu(e.is_keyboard(), window, cx)
+            })),
             menu: self
                 .mode_menu
                 .as_ref()
@@ -96,48 +117,47 @@ impl HomeSidebar {
 
     fn mode_popup(&self, menu: &ModeMenu, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let t = cx.theme().clone();
-        let rows = MODES
+        let current = self.current_item();
+        // `Pm.Item` with `py-2.5 text-base`: 232x54, the check at 75% until hovered.
+        let rows = ITEMS
             .into_iter()
             .enumerate()
-            .map(|(i, (label, caption, key))| {
+            .map(|(i, (label, caption, _))| {
+                let hot = menu.selected == Some(i);
                 div()
                     .id(("mode-option", i))
                     .role(gpui::Role::MenuItemRadio)
                     .aria_label(label)
-                    .when(i == self.mode, |d| d.aria_toggled(gpui::Toggled::True))
-                    .when(i == menu.selected, |d| d.aria_active_descendant())
+                    .when(i == current, |d| d.aria_toggled(gpui::Toggled::True))
+                    .when(hot, |d| d.aria_active_descendant())
                     .px(px(8.))
-                    .py(px(6.))
+                    .py(px(10.))
                     .flex()
                     .items_center()
-                    .gap(px(8.))
-                    .rounded(px(12.))
-                    .when(i == menu.selected, |d| d.bg(t.menu_item_hover))
+                    .gap(px(6.))
+                    .rounded(px(15.))
+                    .when(hot, |d| d.bg(t.menu_item_hover))
                     .child(
                         div()
                             .flex_1()
                             .flex()
                             .flex_col()
-                            .child(text(label, 14., 20., 430., t.text))
-                            .when(!caption.is_empty(), |d| {
-                                d.child(text(caption, 12., 16., 400., t.text_tertiary))
-                            }),
+                            .child(text(label, 14., 20., 430., t.text).font_family("OpenAI Sans"))
+                            .child(text(caption, 12., 14., 430., t.text_tertiary)),
                     )
-                    .child(text(key, 12., 16., 400., t.text_tertiary))
-                    .child(
-                        div()
-                            .size(px(16.))
-                            .children((i == self.mode).then(|| icon("menu-check", 16., t.text))),
-                    )
+                    .when(i == current, |d| {
+                        let alpha = if hot { 1. } else { 0.75 };
+                        d.child(icon("menu-check", 16., t.text.opacity(alpha)))
+                    })
                     .on_hover(cx.listener(move |s, hovered: &bool, _, cx| {
                         if *hovered && let Some(menu) = &mut s.mode_menu {
-                            menu.selected = i;
+                            menu.selected = Some(i);
                             cx.notify();
                         }
                     }))
-                    .on_click(cx.listener(move |s, _, window, cx| s.set_mode(i, window, cx)))
+                    .on_click(cx.listener(move |s, _, window, cx| s.pick(i, window, cx)))
             });
-        let popup = crate::composer::popover(&t, 260., |d| d.children(rows))
+        let popup = crate::composer::popover(&t, 240., |d| d.children(rows))
             .id("mode-menu")
             .role(gpui::Role::Menu)
             .aria_label("Switch mode")
@@ -147,21 +167,22 @@ impl HomeSidebar {
                 let Some(menu) = &mut s.mode_menu else {
                     return;
                 };
-                let n = MODES.len();
-                match e.keystroke.key.as_str() {
-                    "escape" => s.close_mode_menu(window, cx),
-                    "up" => menu.selected = (menu.selected + n - 1) % n,
-                    "down" => menu.selected = (menu.selected + 1) % n,
-                    "enter" | "space" => {
-                        let item = menu.selected;
-                        s.set_mode(item, window, cx);
-                    }
+                let n = ITEMS.len();
+                // With no highlight, Radix starts at the first row (down) or the last (up).
+                match (e.keystroke.key.as_str(), menu.selected) {
+                    ("escape", _) => s.close_mode_menu(window, cx),
+                    ("up", Some(i)) => menu.selected = Some((i + n - 1) % n),
+                    ("up", None) => menu.selected = Some(n - 1),
+                    ("down", Some(i)) => menu.selected = Some((i + 1) % n),
+                    ("down", None) => menu.selected = Some(0),
+                    ("enter" | "space", Some(i)) => s.pick(i, window, cx),
                     _ => return,
                 }
                 cx.notify();
                 cx.stop_propagation();
             }));
-        let below = trigger_bounds().bottom_left() + point(px(0.), px(4.));
+        // `sideOffset: 4` plus the panel's `m-px`.
+        let below = trigger_bounds().bottom_left() + point(px(1.), px(5.));
         // A full-window backdrop under the popup: a click anywhere else (the trigger too) closes.
         deferred(
             anchored().position(point(px(0.), px(0.))).child(

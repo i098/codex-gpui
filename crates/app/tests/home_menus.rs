@@ -21,9 +21,18 @@ fn mode_switch_menu_picks_with_keys_and_click_outside_closes() -> Result<()> {
 
     app.click(trigger)?;
     assert!(mode_menu(&app));
-    app.keys("up enter")?;
+    app.capture_evidence("CGX_MODE_MENU_SHOTS", "mode-menu")?;
+    // A pointer open highlights no row, so `down` reaches the first one: ChatGPT.
+    app.keys("down enter")?;
     assert_eq!(mode(&app), 0);
     assert!(!mode_menu(&app));
+
+    // Picking ChatGPT again on its Work home keeps that home.
+    app.keys("ctrl-2")?;
+    app.click(trigger)?;
+    app.keys("down enter")?;
+    assert_eq!(mode(&app), 2);
+    app.keys("ctrl-1")?;
 
     app.click(trigger)?;
     assert!(mode_menu(&app));
