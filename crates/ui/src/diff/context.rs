@@ -22,12 +22,12 @@ pub struct ContextRequest {
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenTarget {
-    target: String,
-    label: String,
+    pub(super) target: String,
+    pub(super) label: String,
     icon: Option<String>,
-    app_path: Option<String>,
+    pub(super) app_path: Option<String>,
     #[serde(default)]
-    kind: String,
+    pub(super) kind: String,
     #[serde(skip)]
     image: Option<ImageSource>,
 }
@@ -43,7 +43,7 @@ pub struct OpenTargets {
 }
 
 impl OpenTargets {
-    fn visible(mut self) -> (Vec<OpenTarget>, Option<usize>) {
+    pub(super) fn visible(mut self) -> (Vec<OpenTarget>, Option<usize>) {
         let native = self.targets.iter().any(|target| target.app_path.is_some());
         if native {
             self.targets.retain(|target| target.app_path.is_some());
@@ -83,7 +83,7 @@ fn image_source(path: String) -> Option<ImageSource> {
         .map(ImageSource::from)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OpenTargetRequest {
     pub path: String,
     pub cwd: String,

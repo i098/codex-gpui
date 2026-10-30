@@ -41,8 +41,7 @@ impl Root {
         {
             return;
         }
-        if self.side_visible(SidePanel::File)
-            && let Some(file) = &self.file
+        if let Some(file) = self.visible_file()
             && file.update(cx, |file, cx| file.next_find(previous, cx))
         {
             return;

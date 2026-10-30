@@ -1,11 +1,11 @@
 use crate::*;
-use ui::screens::diff::panel::{FileTreeRequest, GitBlame};
+use ui::screens::diff::panel::{FileTreeRequest, GitBlame, OpenTargets};
 
 pub(crate) fn available(root: &Root, cx: &App) -> bool {
     super::active_thread(root, cx).is_some()
         && match root.side {
             Some(SidePanel::Changes) => root.diff.is_some(),
-            Some(SidePanel::File) => root.file.is_some(),
+            Some(SidePanel::File(key)) => root.file(key).is_some(),
             _ => false,
         }
 }
@@ -25,8 +25,8 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
                         panel.update(cx, |panel, cx| panel.toggle_file_tree(cx));
                     }
                 }
-                Some(SidePanel::File) => {
-                    if let Some(file) = &root.file {
+                Some(SidePanel::File(key)) => {
+                    if let Some(file) = root.file(key) {
                         file.update(cx, |file, cx| file.toggle_file_tree(window, cx));
                     }
                 }
@@ -72,22 +72,33 @@ impl Root {
         } else {
             format!("{cwd}/{}", action.path.trim_start_matches("./"))
         };
-        let file = if let Some(file) = self
-            .file
-            .as_ref()
-            .filter(|file| file.read(cx).workspace_root() == cwd)
-        {
+        // The tab already showing `path`, else the preview tab, else a new tab.
+        let reuse = self
+            .files
+            .iter()
+            .find(|(_, file)| file.read(cx).path == path)
+            .or_else(|| {
+                self.files.iter().find(|(_, file)| {
+                    let file = file.read(cx);
+                    file.is_preview() && file.workspace_root() == cwd
+                })
+            })
+            .map(|(key, file)| (*key, file.clone()));
+        let (key, file) = if let Some((key, file)) = reuse {
             file.update(cx, |file, cx| {
                 file.navigate_file(path.clone(), action.line, cx)
             });
-            file.clone()
+            (key, file)
         } else {
             let file = cx.new(|_| FileView::new(&cwd, path.clone(), action.line));
             cx.subscribe_in(&file, window, |root, file, request, window, cx| {
                 root.navigate_file_tree(file, request, window, cx);
             })
             .detach();
-            file
+            let key = self.next_file;
+            self.next_file += 1;
+            self.files.push((key, file.clone()));
+            (key, file)
         };
         let revision = file.read(cx).file_revision();
         self.load_blame(&file, cx);
@@ -127,18 +138,23 @@ impl Root {
             .ok();
         })
         .detach();
-        self.file = Some(file);
-        if self.side == Some(SidePanel::File) {
+        let side = SidePanel::File(key);
+        if self.side == Some(side) {
             self.sync(window, cx);
         } else {
-            self.set_side(SidePanel::File, window, cx);
+            self.set_side(side, window, cx);
         }
     }
 
     /// `git.toggleBlame`: flips the active-line blame and loads it for the open file.
     pub(crate) fn toggle_git_blame(&mut self, cx: &mut Context<Self>) {
         cx.set_global(GitBlame(!GitBlame::enabled(cx)));
-        if let Some(file) = self.file.clone() {
+        for file in self
+            .files
+            .iter()
+            .map(|(_, file)| file.clone())
+            .collect::<Vec<_>>()
+        {
             self.load_blame(&file, cx);
             file.update(cx, |_, cx| cx.notify());
         }
@@ -177,7 +193,7 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if super::active_thread(self, cx).is_none() || self.file.as_ref() != Some(file) {
+        if super::active_thread(self, cx).is_none() || !self.files.iter().any(|(_, f)| f == file) {
             if let FileTreeRequest::Directory(directory) = request {
                 file.update(cx, |file, cx| {
                     file.set_tree_directory(
@@ -267,10 +283,35 @@ impl Root {
                     window,
                     cx,
                 );
-                if let Some(file) = &self.file {
+                if let Some(file) = self.file_view() {
                     file.update(cx, |file, cx| file.focus_file_tree(window, cx));
                 }
             }
+            FileTreeRequest::OpenTargets => {
+                let view = file.read(cx);
+                let params = json!({
+                    "cwd": view.workspace_root(), "path": view.path, "line": view.line,
+                });
+                let host = self.host.clone();
+                let task = cx.background_spawn(async move {
+                    host.fetch(&host::Request::post("open-in-targets", Some(params)))
+                        .and_then(|response| host::json_body(&response))
+                        .map_err(|error| format!("{error:#}"))
+                });
+                let file = file.downgrade();
+                cx.spawn_in(window, async move |_, cx| {
+                    // `OpenTargets` holds app icons, which stay on the main thread.
+                    let catalog = task.await.and_then(|value| {
+                        serde_json::from_value::<OpenTargets>(value).map_err(|e| e.to_string())
+                    });
+                    file.update_in(cx, |file, window, cx| {
+                        file.show_open_targets(catalog, window, cx)
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+            FileTreeRequest::OpenIn(request) => self.launch_diff_target(request, cx),
         }
     }
 }

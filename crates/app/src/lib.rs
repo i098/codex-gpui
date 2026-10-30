@@ -207,8 +207,8 @@ pub enum SidePanel {
     Terminal,
     /// An interactive shell, separate from a background command's read-only output.
     Console,
-    /// A file link in an answer: the file viewer ([`Root::file`]).
-    File,
+    /// A file link in an answer: the file viewer with this key in [`Root::files`].
+    File(usize),
     /// `Open in side chat`: the side chat with this [`SideChat::key`].
     SideChat(usize),
     /// Thread summary ▸ `Plan`: the latest plan, editable.
@@ -435,8 +435,10 @@ pub struct Root {
     archived: HashSet<String>,
     diff: Option<Entity<DiffPanel>>,
     diff_watch: Option<diff_watch::Watch>,
-    /// The file viewer of [`SidePanel::File`]; cleared with the thread.
-    file: Option<Entity<FileView>>,
+    /// The file viewers of the [`SidePanel::File`] tabs, by key; cleared with the thread.
+    /// At most one is a preview tab, which the next opened file replaces.
+    files: Vec<(usize, Entity<FileView>)>,
+    next_file: usize,
     /// The plan of [`SidePanel::Plan`]; cleared with the thread.
     plan: Option<Entity<ui::screens::plan::PlanView>>,
     /// The open thread in the main shell, with its side panel if any.
@@ -894,7 +896,8 @@ impl Root {
             archived: HashSet::new(),
             diff: None,
             diff_watch: None,
-            file: None,
+            files: Vec::new(),
+            next_file: 1,
             plan: None,
             split: None,
             terminal: terminal::Terminals::default(),
@@ -1388,7 +1391,26 @@ impl Root {
 
     /// The file viewer of the open thread, once a file link was clicked.
     pub fn file_view(&self) -> Option<&Entity<FileView>> {
-        self.file.as_ref()
+        match self.side {
+            Some(SidePanel::File(key)) => self.file(key),
+            _ => self.files.last().map(|(_, file)| file),
+        }
+    }
+
+    /// The file viewer of tab [`SidePanel::File`] `key`.
+    pub(crate) fn file(&self, key: usize) -> Option<&Entity<FileView>> {
+        self.files
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, file)| file)
+    }
+
+    /// The file viewer of the selected tab, when that tab is a file and shows.
+    pub(crate) fn visible_file(&self) -> Option<&Entity<FileView>> {
+        match self.side {
+            Some(side @ SidePanel::File(key)) if self.side_visible(side) => self.file(key),
+            _ => None,
+        }
     }
 
     /// The `⌘K` command menu, while open.
@@ -2968,7 +2990,7 @@ impl Root {
     fn side_tab(
         side: SidePanel,
         view: &Entity<ThreadView>,
-        file: Option<&Entity<FileView>>,
+        files: &[(usize, Entity<FileView>)],
         plan: Option<&Entity<ui::screens::plan::PlanView>>,
         side_chats: &[SideChat],
         console: bool,
@@ -2993,8 +3015,8 @@ impl Root {
                 label: "Terminal".into(),
                 preview: false,
             }),
-            SidePanel::File => {
-                let file = file?.read(cx);
+            SidePanel::File(key) => {
+                let file = files.iter().find(|(k, _)| *k == key)?.1.read(cx);
                 Some(Tab {
                     icon: file.tab_icon(),
                     label: file.name(),
@@ -3029,35 +3051,18 @@ impl Root {
         view: &Entity<ThreadView>,
         cx: &mut Context<Self>,
     ) -> Option<(AnyView, Vec<Tab>, usize)> {
-        let file = self.file.clone();
+        let files = &self.files;
         let plan = self.plan.clone();
         let chats = &self.side_chats;
         let console = self.terminal_panel().is_some();
         self.tabs.retain(|side| {
-            Self::side_tab(
-                *side,
-                view,
-                file.as_ref(),
-                plan.as_ref(),
-                chats,
-                console,
-                cx,
-            )
-            .is_some()
+            Self::side_tab(*side, view, files, plan.as_ref(), chats, console, cx).is_some()
         });
         let tabs: Vec<Tab> = self
             .tabs
             .iter()
             .filter_map(|side| {
-                Self::side_tab(
-                    *side,
-                    view,
-                    file.as_ref(),
-                    plan.as_ref(),
-                    chats,
-                    console,
-                    cx,
-                )
+                Self::side_tab(*side, view, files, plan.as_ref(), chats, console, cx)
             })
             .collect();
         let active = self
@@ -3070,7 +3075,7 @@ impl Root {
             SidePanel::Changes => self.diff.as_ref()?.clone().into(),
             SidePanel::Terminal => cx.new(|cx| Xterm::new(view.clone(), cx)).into(),
             SidePanel::Console => self.terminal_panel()?.clone().into(),
-            SidePanel::File => self.file.as_ref()?.clone().into(),
+            SidePanel::File(key) => self.file(key)?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
             SidePanel::Plan => self.plan.as_ref()?.clone().into(),
         };
@@ -3115,6 +3120,9 @@ impl Root {
             return;
         };
         self.tabs.remove(ix);
+        if let SidePanel::File(key) = side {
+            self.files.retain(|(k, _)| *k != key);
+        }
         if self.side == Some(side) {
             self.side = self.tabs.get(ix).or(self.tabs.last()).copied();
         }
@@ -3747,7 +3755,7 @@ impl Root {
                         this.cloud_modal = None;
                         this.thread = None;
                         this.diff = None;
-                        this.file = None;
+                        this.files.clear();
                         this.plan = None;
                         this.split = None;
                         this.pull_requests_page = None;
@@ -4251,7 +4259,7 @@ impl Root {
         )
         .detach();
         self.diff = Some(diff);
-        self.file = None;
+        self.files.clear();
         self.plan = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         view.update(cx, |view, cx| {

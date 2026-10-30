@@ -2,6 +2,7 @@
 //! refs/terminal share, and the Changes panel with the unified diff of the last turn's file
 //! changes. All numbers are the spec's CSS px.
 
+use crate::screens::thread::view::menu::{ContextMenu as OpenMenu, Item as OpenMenuItem};
 use crate::workspace::WorkspaceLayout;
 use crate::{
     MONO, SANS, Shell, composer::shadow, drag_layer, fixture, icon::icon, layout_color, over,
@@ -2690,6 +2691,10 @@ pub struct FileView {
     preview: bool,
     /// A Markdown file shows its rendered preview until `View source`.
     show_source: bool,
+    /// The header `Open` menu over the targets the host reported for this file.
+    open_menu: Option<OpenMenu>,
+    open_targets: Vec<context::OpenTarget>,
+    open_at: gpui::Point<Pixels>,
 }
 
 impl FileView {
@@ -2718,6 +2723,9 @@ impl FileView {
             revision: 0,
             preview: true,
             show_source: line.is_some(),
+            open_menu: None,
+            open_targets: Vec::new(),
+            open_at: gpui::Point::default(),
         }
     }
 
@@ -2765,6 +2773,70 @@ impl FileView {
             self.preview = false;
             cx.emit(FileTreeRequest::PinPreview);
             cx.notify();
+        }
+    }
+
+    /// The header `Open` button asks the host for this file's open-in targets.
+    fn request_open_targets(&mut self, at: gpui::Point<Pixels>, cx: &mut Context<Self>) {
+        self.open_at = at;
+        cx.emit(FileTreeRequest::OpenTargets);
+    }
+
+    /// The host's open-in catalog: shows the `Open` menu, one item per target, then `Copy path`.
+    pub fn show_open_targets(
+        &mut self,
+        catalog: Result<context::OpenTargets, String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (targets, _) = catalog.map(|catalog| catalog.visible()).unwrap_or_default();
+        let mut items: Vec<_> = targets
+            .iter()
+            .enumerate()
+            .map(|(index, target)| OpenMenuItem {
+                payload: Some(index.to_string().into()),
+                ..OpenMenuItem::new("file-open-target", target.label.clone(), true)
+            })
+            .collect();
+        if items.is_empty() {
+            items.push(OpenMenuItem::new(
+                "file-open-none",
+                "No available apps",
+                false,
+            ));
+        }
+        items.push(OpenMenuItem::separator("file-open-separator"));
+        items.push(OpenMenuItem::new("file-copy-path", "Copy path", true));
+        self.open_targets = targets;
+        let at = self.open_at + gpui::point(px(0.), px(12.));
+        self.open_menu = Some(OpenMenu::open(items, self.path.clone(), at, window, cx));
+        cx.notify();
+    }
+
+    fn open_menu_pick(&mut self, id: &'static str, subject: String, cx: &mut Context<Self>) {
+        match id {
+            "file-copy-path" => cx.write_to_clipboard(gpui::ClipboardItem::new_string(subject)),
+            "file-open-target" => {
+                let Some(target) = subject
+                    .parse()
+                    .ok()
+                    .and_then(|i: usize| self.open_targets.get(i))
+                else {
+                    return;
+                };
+                let cwd = self.workspace_root().to_owned();
+                cx.emit(FileTreeRequest::OpenIn(context::OpenTargetRequest {
+                    path: self.path.clone(),
+                    line: self.line,
+                    target: target.target.clone(),
+                    app_path: target.app_path.clone(),
+                    persist_preferred_target_path: (target.kind == "editor"
+                        && target.app_path.is_none())
+                    .then_some(cwd.clone()),
+                    cwd,
+                }));
+            }
+            _ => {}
         }
     }
 
@@ -2928,34 +3000,47 @@ impl FileView {
                     )
                     .child(self.file_tree_button(t, clamped, cx))
                     .child(
-                        capsule(t, clamped).p_0().child(
-                            div()
-                                .h(px(32.))
-                                .pl(px(9.))
-                                .flex()
-                                .items_center()
-                                .child(text("Open", 13., 18., 430., t.text))
-                                .child(
-                                    div()
-                                        .ml(px(4.))
-                                        .w(px(23.))
-                                        .h_full()
-                                        .flex()
-                                        .items_center()
-                                        .pl(px(2.))
-                                        .child(
-                                            menu::backdrop_glyph(
-                                                include_bytes!(
-                                                    "../../../assets/icons/chevron-down.svg"
-                                                ),
-                                                "navigation-open-chevron",
-                                                t.text,
-                                                128,
-                                            )
-                                            .size(px(14.)),
-                                        ),
-                                ),
-                        ),
+                        capsule(t, clamped)
+                            .p_0()
+                            .id("file-open-in")
+                            .role(gpui::Role::Button)
+                            .aria_label("Open in")
+                            .focusable()
+                            .tab_index(0)
+                            .focus_visible(crate::composer::menu::trigger_focus)
+                            .cursor_pointer()
+                            .on_click(cx.listener(|view, event: &gpui::ClickEvent, _, cx| {
+                                view.request_open_targets(event.position(), cx);
+                                cx.stop_propagation();
+                            }))
+                            .child(
+                                div()
+                                    .h(px(32.))
+                                    .pl(px(9.))
+                                    .flex()
+                                    .items_center()
+                                    .child(text("Open", 13., 18., 430., t.text))
+                                    .child(
+                                        div()
+                                            .ml(px(4.))
+                                            .w(px(23.))
+                                            .h_full()
+                                            .flex()
+                                            .items_center()
+                                            .pl(px(2.))
+                                            .child(
+                                                menu::backdrop_glyph(
+                                                    include_bytes!(
+                                                        "../../../assets/icons/chevron-down.svg"
+                                                    ),
+                                                    "navigation-open-chevron",
+                                                    t.text,
+                                                    128,
+                                                )
+                                                .size(px(14.)),
+                                            ),
+                                    ),
+                            ),
                     ),
             )
     }
@@ -3155,6 +3240,16 @@ impl Render for FileView {
             )
             .when(self.go_to_line.is_some(), |d| d.child(self.line_bar(cx)))
             .when(self.find.is_some(), |d| d.child(self.file_find_bar(cx)))
+            .children(self.open_menu.as_ref().map(|menu| {
+                menu.overlay(
+                    "file-open-menu",
+                    "Open in",
+                    |this: &mut Self| &mut this.open_menu,
+                    |this, id, subject, _, cx| this.open_menu_pick(id, subject, cx),
+                    window,
+                    cx,
+                )
+            }))
     }
 }
 

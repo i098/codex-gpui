@@ -116,8 +116,7 @@ fn find_in_workspace(root: &mut Root, window: &mut Window, cx: &mut Context<Root
     {
         return;
     }
-    if root.side_visible(SidePanel::File)
-        && let Some(file) = &root.file
+    if let Some(file) = root.visible_file()
         && file.update(cx, |file, cx| file.open_find(window, cx))
     {
         return;
