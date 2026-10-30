@@ -12,6 +12,8 @@ if (surface === "sidebar" && state === "rest") {
   await capture(surface, theme, w, h, output);
 } else if (surface === "composer" && ["rest", "typed"].includes(state)) {
   await capture(`composer-${state}`, theme, w, h, output);
+} else if (surface === "diff" && state === "menu") {
+  await capture("diff-menu", theme, w, h, output);
 } else if (surface === "mobile" && state === "get-started") {
   await capture("mobile", theme, w, h, output);
 } else if (surface === "mobile" && state === "continuation") {
