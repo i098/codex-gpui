@@ -57,6 +57,7 @@ mod storage;
 pub mod updater;
 mod usage;
 mod voice;
+mod voice_chat;
 mod window_shell;
 pub mod windows;
 
@@ -108,9 +109,9 @@ use ui::screens::sidebar::{
 use ui::screens::signin::Login;
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
-    Clock, EditMessage, ForkThread, GitAction, History, LoadOlderTurns, OpenAutomationCard,
-    ReasoningVisibility, RetryHistory, RevertTurn, SearchHistory, ThreadPressed, ThreadView,
-    UsageLimitNotice,
+    Clock, EditMessage, EndVoice, ForkThread, GitAction, History, LoadOlderTurns,
+    OpenAutomationCard, ReasoningVisibility, RetryHistory, RevertTurn, SearchHistory,
+    ThreadPressed, ThreadView, UsageLimitNotice,
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
@@ -467,6 +468,7 @@ pub struct Root {
     cloud: Option<cloud_task::Session>,
     pull_requests_page: Option<Entity<ui::screens::pull_requests::Page>>,
     plugins_page: Option<Entity<ui::screens::plugins::Page>>,
+    voice_chat: Option<voice_chat::VoiceChat>,
     sites_page: Option<Entity<ui::screens::sites::Page>>,
     maps_page: Option<Entity<ui::screens::maps::Page>>,
     cloud_modal: Option<Entity<ui::screens::cloud::CloudModal>>,
@@ -926,6 +928,7 @@ impl Root {
             cloud: None,
             pull_requests_page: None,
             plugins_page: None,
+            voice_chat: None,
             sites_page: None,
             maps_page: None,
             cloud_modal: None,
@@ -4441,6 +4444,10 @@ impl Root {
             },
         )
         .detach();
+        cx.subscribe_in(&view, window, |this, _, _: &EndVoice, _, cx| {
+            this.end_voice_chat(cx);
+        })
+        .detach();
         cx.subscribe_in(&view, window, |this, view, _: &LoadOlderTurns, _, cx| {
             this.load_older_turns(view.clone(), Vec::new(), cx);
         })
@@ -4461,6 +4468,7 @@ impl Root {
         )
         .detach();
         self.thread = Some(view);
+        self.sync_voice(cx);
         self.sync_context_usage(cx);
         self.show_approval(cx);
         hotkey::thread_shown(self, window, cx);
@@ -4491,11 +4499,17 @@ impl Root {
             self.send_shell(side, s, window, cx);
             return;
         }
+        let Some((view, _)) = self.conversation(side) else {
+            return;
+        };
+        let id = view.read(cx).id().to_owned();
+        if side.is_none() && self.voice_text(&id, &s.text, cx) {
+            return;
+        }
         let Some((view, composer)) = self.conversation(side) else {
             return;
         };
         let view = view.read(cx);
-        let id = view.id().to_owned();
         let resume = !self.loaded.contains(&id);
         let bridge = self.bridge.clone();
         let running = view
@@ -6556,6 +6570,7 @@ impl Root {
         self.on_import_event(&event, cx);
         self.plugins_event(&event, cx);
         self.diff_watch_event(&event, cx);
+        self.voice_event(&event, cx);
         self.oauth_account_event(&event, cx);
         usage::on_event(&event, cx);
         if matches!(event, Event::Closed) {
@@ -8149,11 +8164,8 @@ impl Render for Root {
                     this.load_projects(cx);
                 }
             }))
-            // BOUNDARY: realtime voice (`thread/realtime/*` audio) has no native backend yet;
-            // the request is answered with a visible notice (flows.md Home rows 5 and 14).
-            .on_action(cx.listener(|this, _: &StartVoiceChat, _, cx| {
-                this.toast(Toast::info("Realtime voice chat isn't available yet"), cx);
-            }))
+            // Text realtime session on the open thread; audio capture has no native backend.
+            .on_action(cx.listener(|this, _: &StartVoiceChat, _, cx| this.start_voice_chat(cx)))
             .on_action(cx.listener(|this, _: &ShowKeyboardShortcuts, window, cx| {
                 if this
                     .dialog

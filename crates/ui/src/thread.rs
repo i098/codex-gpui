@@ -87,6 +87,24 @@ pub struct LoadOlderTurns;
 
 impl gpui::EventEmitter<LoadOlderTurns> for ThreadView {}
 
+/// The realtime voice session shown under the transcript.
+pub struct VoiceCard {
+    pub status: SharedString,
+    /// Starting or live: the card offers `End voice chat`; otherwise `Dismiss`.
+    pub live: bool,
+    pub lines: Vec<VoiceLine>,
+}
+
+pub struct VoiceLine {
+    pub user: bool,
+    pub text: SharedString,
+}
+
+/// The voice card's end or dismiss button was pressed.
+pub struct EndVoice;
+
+impl gpui::EventEmitter<EndVoice> for ThreadView {}
+
 /// The find query changed while older turns are unloaded: ask the server where it occurs.
 pub struct SearchHistory(pub String);
 
@@ -226,6 +244,7 @@ pub struct ThreadView {
     /// `thread/turns/list` cursor of the turns before `turns`; `None` once all are loaded.
     older_cursor: Option<String>,
     loading_older: bool,
+    voice: Option<VoiceCard>,
     /// The turn that stays put when older turns are prepended, and its top in the viewport.
     older_anchor: Rc<RefCell<Option<(String, Pixels)>>>,
     /// The link menu (`menu.rs`): `subject` is the right-clicked link.
@@ -710,6 +729,7 @@ impl ThreadView {
             find: None,
             older_cursor: thread.older_cursor,
             loading_older: false,
+            voice: None,
             older_anchor: Rc::default(),
             menu: None,
             context_image: None,
@@ -730,6 +750,59 @@ impl ThreadView {
 
     pub fn id(&self) -> &str {
         &self.thread_id
+    }
+
+    pub fn set_voice(&mut self, voice: Option<VoiceCard>, cx: &mut Context<Self>) {
+        self.voice = voice;
+        cx.notify();
+    }
+
+    fn voice_card(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Div> {
+        let voice = self.voice.as_ref()?;
+        let t = cx.theme().clone();
+        let button = recovery::retry_button(
+            "end-voice",
+            if voice.live {
+                "End voice chat"
+            } else {
+                "Dismiss"
+            },
+            window,
+            cx,
+        )
+        .on_click(cx.listener(|_, _, _, cx| cx.emit(EndVoice)));
+        let lines = voice.lines.iter().map(|line| {
+            let who = if line.user { "You" } else { "Codex" };
+            text(format!("{who}: {}", line.text), 14., 21., 400., t.text)
+        });
+        Some(
+            div()
+                .mx_auto()
+                .w_full()
+                .max_w(CONTENT_MAX_WIDTH)
+                .px(px(16.))
+                .pb(px(12.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(8.))
+                        .p(px(12.))
+                        .rounded(Theme::RADIUS_XL_BASE)
+                        .border_1()
+                        .border_color(t.border)
+                        .bg(t.surface_secondary)
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .child(text(voice.status.clone(), 14., 21., 500., t.text_secondary))
+                                .child(button),
+                        )
+                        .children(lines),
+                ),
+        )
     }
 
     pub fn has_turn(&self, id: &str) -> bool {
@@ -2699,6 +2772,7 @@ impl Render for ThreadView {
                             .children(turns)
                             .on_children_prepainted(measure),
                     )
+                    .children(self.voice_card(window, cx))
                     // Room for the docked composer.
                     .child(div().h(px(114.)))
                     .child(top_fade),
