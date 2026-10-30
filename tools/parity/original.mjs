@@ -10,6 +10,8 @@ if (surface === "sidebar" && state === "rest") {
   await capture("home", theme, w, h, output);
 } else if ((state === "rest" && ["home", "terminal", "thread", "diff"].includes(surface)) || (surface === "automations" && state === "empty")) {
   await capture(surface, theme, w, h, output);
+} else if (surface === "thread" && state === "approval") {
+  await capture("thread-approval", theme, w, h, output);
 } else if (surface === "composer" && ["rest", "typed"].includes(state)) {
   await capture(`composer-${state}`, theme, w, h, output);
 } else if (surface === "mobile" && state === "get-started") {

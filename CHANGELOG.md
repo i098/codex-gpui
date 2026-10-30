@@ -57,6 +57,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 - Restore `View` > `Toggle Bottom Panel` and `View` > `Open Terminal` in the macOS menu bar, in the original order.
 
 ### Fixed
+- Show a command approval as the original's `Terminal` card in place of the composer: the reason as title, the command in a code box, and `Deny` and `Allow once` with their `Esc` and return keys. Offer `Allow similar commands` only when the request proposes a command prefix.
 - Fold a running turn's interim messages under `Working for` once its final answer starts, as the original does.
 - Show reads of a skill's `SKILL.md` as `Loaded a tool` or `Loaded tools` with the wrench icon in the activity group summary, as the original does.
 - Ignore app list updates while the Plugins page is loading, so large account catalogs can finish loading.
