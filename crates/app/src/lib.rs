@@ -744,6 +744,12 @@ impl Root {
                     ui::composer::SlashCommand::Export => this.export_transcript(window, cx),
                     ui::composer::SlashCommand::Recap => this.recap(window, cx),
                     ui::composer::SlashCommand::Memories => this.open_memories(window, cx),
+                    ui::composer::SlashCommand::HotkeyNew => {
+                        window.dispatch_action(Box::new(hotkey::Collapse), cx)
+                    }
+                    ui::composer::SlashCommand::Resume(id) => {
+                        this.navigate(Route::Thread(id.clone()), window, cx)
+                    }
                     ui::composer::SlashCommand::Rename => {
                         if let Route::Thread(id) = this.state.route.clone() {
                             this.open_rename(id, true, window, cx);
@@ -2834,6 +2840,7 @@ impl Root {
             menu.update(cx, |menu, cx| menu.update_catalog(threads, &unread, cx));
         }
         self.sidebar.update(cx, |s, cx| s.set_threads(threads, cx));
+        hotkey::sync_recents(self, cx);
         self.refresh_automation_editor_options(None, cx);
     }
 
