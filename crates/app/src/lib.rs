@@ -878,12 +878,12 @@ impl Root {
             wide,
             layout_before_narrow: None,
             focus: cx.focus_handle(),
-            home: cx.new(|_| HomeMain {
-                composer: home_composer,
-                project: state.project_root.as_deref().map(project_name),
-                location: Default::default(),
-                beacon: false,
-                headline: None,
+            home: cx.new(|cx| {
+                HomeMain::with_composer(
+                    home_composer,
+                    state.project_root.as_deref().map(project_name),
+                    cx,
+                )
             }),
             thread_composer,
             queue_edit: None,
@@ -1097,13 +1097,7 @@ impl Root {
             let account = if acp {
                 None
             } else {
-                match bridge.account_read().await {
-                    Ok(account) => Some(account),
-                    Err(error) => {
-                        eprintln!("codex-gpui: cannot read account: {error:#}");
-                        None
-                    }
-                }
+                Some(bridge.account_read().await)
             };
             let threads = bridge.thread_list().await;
             let (mut catalog, config, skills) = if acp {
@@ -1160,8 +1154,19 @@ impl Root {
             };
             this.update_in(cx, |this, window, cx| {
                 this._update_policy = updater::poll_policy(bridge.clone(), cx);
+                let failed = matches!(account, Some(Err(_)));
+                let account = match account {
+                    Some(Ok(account)) => Some(account),
+                    Some(Err(error)) => {
+                        eprintln!("codex-gpui: cannot read account: {error:#}");
+                        None
+                    }
+                    None => None,
+                };
                 this.set_account(account.as_ref(), cx);
+                this.set_account_error(failed, cx);
                 if !acp
+                    && !failed
                     && account
                         .as_ref()
                         .is_none_or(|a| a.account.is_none() && a.requires_openai_auth)
@@ -1247,6 +1252,10 @@ impl Root {
                 this.models = models;
                 this.refresh_automation_editor_options(None, cx);
                 this.ready = this.login.is_none();
+                if this.ready && !failed && !bridge.is_acp() {
+                    this.refresh_home_banner(cx);
+                    this.load_task_suggestions(cx);
+                }
                 hotkey::policy::refresh(this, cx);
                 connections::startup(this, cx);
                 this.select_route(cx);
@@ -1471,6 +1480,7 @@ impl Root {
         self.load_projects(cx);
         if self.ready && !self.signed_out() {
             self.load_destinations(cx);
+            self.load_task_suggestions(cx);
         }
         self.refresh_automation_unreads(cx);
         if self.scheduled_route() {
@@ -1751,8 +1761,7 @@ impl Root {
                 match result {
                     Ok(Some((root, projects))) => {
                         this.project_load = None;
-                        this.sidebar
-                            .update(cx, |sidebar, cx| sidebar.set_projects(projects, cx));
+                        this.set_projects(projects, cx);
                         this.select_project(root, window, cx);
                     }
                     Ok(None) => {}
@@ -6749,7 +6758,9 @@ impl Root {
         let task = cx.spawn(async move |this, cx| -> Result<()> {
             cx.background_spawn(async move { host.invalidate_identity() })
                 .await;
-            let account = bridge.account_read().await?;
+            let account = bridge.account_read().await;
+            this.update(cx, |this, cx| this.set_account_error(account.is_err(), cx))?;
+            let account = account?;
             this.update(cx, |this, cx| {
                 this.set_account(Some(&account), cx);
                 if this.chatgpt_account
@@ -6763,13 +6774,29 @@ impl Root {
                 }
             })?;
             if let Some(handle) = handle {
+                let signed_out = account.account.is_none() && account.requires_openai_auth;
                 cx.update_window(handle, |_, window, cx| {
-                    this.update(cx, |this, cx| this.maybe_onboard(window, cx))
+                    this.update(cx, |this, cx| {
+                        if signed_out && this.login.is_none() {
+                            cx.set_global(AppServer(this.bridge.clone()));
+                            this.login = Some(this.new_login(window, cx));
+                            cx.notify();
+                        }
+                        this.maybe_onboard(window, cx)
+                    })
                 })??;
             }
             Ok(())
         });
         log_err(task, cx);
+    }
+
+    /// `account/read` failed: Home shows the account access error page until a read succeeds.
+    fn set_account_error(&mut self, failed: bool, cx: &mut Context<Self>) {
+        self.home.update(cx, |home, cx| {
+            home.account_error = failed;
+            cx.notify();
+        });
     }
 
     /// Reads the first `thread/list` page again; threads of later loaded pages stay after it.

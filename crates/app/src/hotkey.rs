@@ -508,11 +508,14 @@ fn attach(
                     .get("hotkey-window-projectless-default-enabled")
                     == Some(&json!(true))
             });
+    let cloud_environments = root.home.read(cx).location.cloud_environments.clone();
     let options = Options {
         root: (!projectless)
             .then(|| root.state.project_root.clone())
             .flatten(),
         projectless,
+        cloud_available: !cloud_environments.is_empty(),
+        cloud_environments,
         ..Default::default()
     };
     let controls = cx.new(|cx| Controls::new(composer.clone(), options, cx));
@@ -555,14 +558,19 @@ pub(crate) fn projects(
     projects: &[ui::screens::sidebar::Project],
     cx: &mut Context<Root>,
 ) {
-    let Some(popout) = &root.popout else { return };
-    let controls = popout.controls.clone();
-    let mut options = controls.read(cx).options().clone();
-    options.projects = projects
+    let choices: Vec<_> = projects
         .iter()
         .filter(|project| !project.missing)
         .filter_map(|project| Some((project.label.clone(), project.root.as_ref()?.to_string())))
         .collect();
+    root.home.update(cx, |home, cx| {
+        home.projects = choices.clone();
+        cx.notify();
+    });
+    let Some(popout) = &root.popout else { return };
+    let controls = popout.controls.clone();
+    let mut options = controls.read(cx).options().clone();
+    options.projects = choices;
     controls.update(cx, |controls, cx| controls.update_options(options, cx));
     configure_composer(root, cx);
 }
@@ -580,24 +588,61 @@ fn configure_composer(root: &Root, cx: &mut Context<Root>) {
     });
 }
 
+/// Resets Home's `Work in` choices for the selected project, then reads its Git state, local
+/// environments and the account's cloud environments.
 pub(crate) fn refresh_home(root: &mut Root, cx: &mut Context<Root>) {
+    let selected = root.state.project_root.clone();
     root.home.update(cx, |home, cx| {
-        home.location.worktree_available = None;
-        home.location.mode = Mode::Local;
+        let location = &mut home.location;
+        location.worktree_available = None;
+        location.mode = Mode::Local;
+        location.branches.clear();
+        location.branch = None;
+        location.environments.clear();
+        location.environment = None;
+        location.cloud_environment = None;
+        home.project_root = selected.clone();
         cx.notify();
     });
-    let Some(selected) = root.state.project_root.clone() else {
-        return;
-    };
     let host = root.host.clone();
+    let lookup = host.clone();
+    let cloud = cx.background_spawn(async move {
+        crate::cloud::environment_names(&*lookup).unwrap_or_default()
+    });
+    let owner = host.clone();
+    cx.spawn(async move |root, cx| {
+        let cloud = cloud.await;
+        root.update(cx, |root, cx| {
+            if !Arc::ptr_eq(&root.host, &owner) {
+                return;
+            }
+            if let Some(popout) = &root.popout {
+                let controls = popout.controls.clone();
+                let mut options = controls.read(cx).options().clone();
+                options.cloud_available = !cloud.is_empty();
+                options.cloud_environments = cloud.clone();
+                controls.update(cx, |controls, cx| controls.update_options(options, cx));
+            }
+            root.home.update(cx, |home, cx| {
+                home.location.cloud_environments = cloud;
+                cx.notify();
+            });
+        })
+        .ok();
+    })
+    .detach();
+    let Some(selected) = selected else { return };
     let lookup = host.clone();
     let path = selected.clone();
     let read = cx.background_spawn(async move {
-        crate::git_call(&*lookup, "git-commit-status", json!({"cwd": path}))
-            .is_ok_and(|status| status["root"].is_string() || status["branch"].is_string())
+        let status = crate::git_call(&*lookup, "git-commit-status", json!({"cwd": path}));
+        (
+            status.ok(),
+            environments(Path::new(&path)).unwrap_or_default(),
+        )
     });
     cx.spawn(async move |root, cx| {
-        let available = read.await;
+        let (status, environments) = read.await;
         root.update(cx, |root, cx| {
             if root.state.project_root.as_ref() != Some(&selected)
                 || !Arc::ptr_eq(&root.host, &host)
@@ -605,7 +650,21 @@ pub(crate) fn refresh_home(root: &mut Root, cx: &mut Context<Root>) {
                 return;
             }
             root.home.update(cx, |home, cx| {
-                home.location.worktree_available = Some(available);
+                let location = &mut home.location;
+                location.worktree_available = Some(status.as_ref().is_some_and(|status| {
+                    status["root"].is_string() || status["branch"].is_string()
+                }));
+                if let Some(status) = status {
+                    location.branch = status["branch"].as_str().map(str::to_owned);
+                    location.branches = status["branches"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect();
+                }
+                location.environments = environments;
                 cx.notify();
             });
         })
@@ -723,7 +782,12 @@ fn changed(root: &mut Root, change: &Change, window: &mut Window, cx: &mut Conte
             refresh(root, cx);
             return;
         }
-        Change::Mode(mode) => options.mode = *mode,
+        Change::Mode(mode) => {
+            options.mode = *mode;
+            options.environment = (*mode == Mode::Cloud)
+                .then(|| options.cloud_environments.first().map(|(_, id)| id.clone()))
+                .flatten();
+        }
         Change::Branch(branch) if options.mode == Mode::Local => {
             let Some(cwd) = options.root else { return };
             let host = root.host.clone();
@@ -795,11 +859,17 @@ pub(crate) fn start_options(root: &Root, cx: &App) -> Option<Options> {
         .map(|popout| popout.controls.read(cx).options().clone())
         .or_else(|| {
             let home = root.home.read(cx);
-            let mode = home.location.mode;
-            (mode == Mode::Worktree && home.project.is_some()).then(|| Options {
+            let location = &home.location;
+            let environment = match location.mode {
+                Mode::Local => return None,
+                Mode::Worktree => location.environment.clone(),
+                Mode::Cloud => location.cloud_environment.clone(),
+            };
+            home.project.is_some().then(|| Options {
                 root: root.state.project_root.clone(),
-                branch: Some("HEAD".into()),
-                mode,
+                branch: Some(location.branch.clone().unwrap_or_else(|| "HEAD".into())),
+                mode: location.mode,
+                environment,
                 ..Default::default()
             })
         })

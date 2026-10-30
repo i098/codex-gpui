@@ -541,6 +541,14 @@ impl Root {
         let mode = self.shortcut_state.new_chat_mode;
         let host = self.host.clone();
         let hotkey_options = hotkey::start_options(self, cx);
+        if mode != NewChatMode::Standalone
+            && let Some(options) = hotkey_options
+                .clone()
+                .filter(|options| options.mode == ui::screens::hotkey::Mode::Cloud)
+        {
+            self.start_cloud_task(s, options, window, cx);
+            return;
+        }
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let workspace = if mode == features::shortcuts::NewChatMode::Standalone {
                 let prepare = host.clone();
