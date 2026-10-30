@@ -29,10 +29,45 @@ impl Root {
             .map(|connection| connection.display_name.clone().into())
             .collect();
         let dialog = cx.new(|cx| Dialog::new(remotes, cx));
+        self.show_project_dialog(dialog, None, window, cx);
+    }
+
+    /// `Edit project` from a project row's menu: the same form, prefilled, saving over `id`.
+    pub(crate) fn open_edit_project(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.has_dialog() {
+            return;
+        }
+        let Some(project) = self
+            .sidebar
+            .read(cx)
+            .projects()
+            .iter()
+            .find(|p| p.id.as_ref() == id)
+        else {
+            return;
+        };
+        let sources = project.roots.iter().map(ToString::to_string).collect();
+        let label = project.label.clone();
+        let dialog = cx.new(|cx| Dialog::edit(&label, sources, cx));
+        self.show_project_dialog(dialog, Some(id), window, cx);
+    }
+
+    fn show_project_dialog(
+        &mut self,
+        dialog: Entity<Dialog>,
+        editing: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         cx.subscribe_in(
             &dialog,
             window,
-            |this, dialog, outcome, window, cx| match outcome {
+            move |this, dialog, outcome, window, cx| match outcome {
                 Outcome::Dismiss => this.close_new_project(window, cx),
                 Outcome::AddRemote => {
                     this.close_new_project(window, cx);
@@ -43,14 +78,25 @@ impl Root {
                     name,
                     sources,
                     appearance,
-                } => this.create_project(
-                    dialog.clone(),
-                    name.clone(),
-                    sources.clone(),
-                    appearance.clone(),
-                    window,
-                    cx,
-                ),
+                } => match &editing {
+                    Some(id) => this.update_project(
+                        dialog.clone(),
+                        id.clone(),
+                        name.clone(),
+                        sources.clone(),
+                        appearance.clone(),
+                        window,
+                        cx,
+                    ),
+                    None => this.create_project(
+                        dialog.clone(),
+                        name.clone(),
+                        sources.clone(),
+                        appearance.clone(),
+                        window,
+                        cx,
+                    ),
+                },
             },
         )
         .detach();
@@ -59,7 +105,7 @@ impl Root {
         cx.notify();
     }
 
-    fn close_new_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn close_new_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.new_project = None;
         window.focus(&self.focus, cx);
         cx.notify();

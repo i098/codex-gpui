@@ -250,7 +250,12 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let members = self.sidebar.read(cx).section_threads(&id);
+        let project = id.strip_prefix(crate::project_actions::PROJECT_PREFIX);
+        let members = match project {
+            Some(project) => self.project_threads(project, cx),
+            None => self.sidebar.read(cx).section_threads(&id),
+        };
+        let section = project.is_none().then(|| id.clone());
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let mut failed = 0;
@@ -270,7 +275,7 @@ impl Root {
                         });
                         if this.state.route == Route::Thread(thread_id) {
                             this.new_chat(window, cx);
-                            this.new_chat_section = Some(id.clone());
+                            this.new_chat_section = section.clone();
                         }
                     })?;
                 } else {

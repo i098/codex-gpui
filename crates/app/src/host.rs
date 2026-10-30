@@ -168,6 +168,27 @@ pub trait Host: Send + Sync {
         bail!("creating a local project is unsupported by this host")
     }
 
+    /// `Pin`/`Unpin` on a project row: adds `id` to or drops it from `pinned-project-ids`.
+    fn set_project_pinned(&self, _id: &str, _pinned: bool) -> Result<()> {
+        bail!("pinning a project is unsupported by this host")
+    }
+
+    /// `Edit project` `Save`: renames `id` and replaces its roots, primary first.
+    fn update_project(
+        &self,
+        _id: &str,
+        _name: &str,
+        _roots: &[PathBuf],
+        _appearance: Option<Value>,
+    ) -> Result<()> {
+        bail!("editing a local project is unsupported by this host")
+    }
+
+    /// `Remove project`: forgets `id` and its order, pin and appearance; files and chats stay.
+    fn remove_project(&self, _id: &str) -> Result<()> {
+        bail!("removing a local project is unsupported by this host")
+    }
+
     fn prepare_projectless(&self, _prompt: &str) -> Result<Workspace> {
         bail!("projectless workspaces are unsupported by this host")
     }
@@ -515,6 +536,7 @@ fn project_rows(
     };
     let managed_root = normalized_project_path(&codex_home.join("worktrees").to_string_lossy());
     let mut rows = Vec::with_capacity(projects.len());
+    let pinned = &state["electron-persisted-atom-state"]["pinned-project-ids"];
     for stored in projects.values() {
         let (Some(id), Some(name), Some(roots)) = (
             stored["id"].as_str(),
@@ -555,9 +577,16 @@ fn project_rows(
                 format!("Start new chat in {label}").into()
             },
             root: root.map(|root| root.to_owned().into()),
+            roots: roots
+                .iter()
+                .filter_map(|root| Some(root.as_str()?.to_owned().into()))
+                .collect(),
             worktree,
             missing,
             expanded: state["electron-persisted-atom-state"][&expanded_key] != false,
+            pinned: pinned
+                .as_array()
+                .is_some_and(|ids| ids.iter().any(|pin| pin == id)),
         });
     }
     if let Some(order) = state["project-order"].as_array() {
@@ -568,7 +597,28 @@ fn project_rows(
             .collect();
         rows.sort_by_key(|project| ranks.get(project.id.as_ref()).copied());
     }
+    // Stable: pinned projects first, each group in `project-order`.
+    rows.sort_by_key(|project| !project.pinned);
     Ok(rows)
+}
+
+/// The canonical UTF-8 folders behind `roots`, deduplicated in order.
+fn project_folders<'a>(roots: impl Iterator<Item = &'a PathBuf>) -> Result<Vec<String>> {
+    let mut paths = Vec::new();
+    for root in roots {
+        let root = root
+            .canonicalize()
+            .with_context(|| format!("resolve project folder {}", root.display()))?;
+        ensure!(root.is_dir(), "{} is not a folder", root.display());
+        let root = root
+            .to_str()
+            .context("project path must be UTF-8")?
+            .to_owned();
+        if !paths.contains(&root) {
+            paths.push(root);
+        }
+    }
+    Ok(paths)
 }
 
 fn is_windows_path(path: &str) -> bool {
@@ -1665,20 +1715,7 @@ impl Host for LocalHost {
             None
         };
         let result = (|| {
-            let mut paths = Vec::new();
-            for root in created.iter().chain(roots) {
-                let root = root
-                    .canonicalize()
-                    .with_context(|| format!("resolve project folder {}", root.display()))?;
-                ensure!(root.is_dir(), "{} is not a folder", root.display());
-                let root = root
-                    .to_str()
-                    .context("project path must be UTF-8")?
-                    .to_owned();
-                if !paths.contains(&root) {
-                    paths.push(root);
-                }
-            }
+            let mut paths = project_folders(created.iter().chain(roots))?;
             let threads: Vec<_> = threads
                 .iter()
                 .map(|(id, cwd)| {
@@ -1779,6 +1816,83 @@ impl Host for LocalHost {
             let _ = fs::remove_dir(folder);
         }
         result
+    }
+
+    fn set_project_pinned(&self, id: &str, pinned: bool) -> Result<()> {
+        self.update_global_state(|state| {
+            let atoms = &mut state["electron-persisted-atom-state"];
+            if atoms.is_null() {
+                *atoms = json!({});
+            }
+            let mut ids: Vec<Value> = atoms["pinned-project-ids"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let present = ids.iter().any(|other| other == id);
+            if present == pinned {
+                return Ok(false);
+            }
+            if pinned {
+                ids.push(id.into());
+            } else {
+                ids.retain(|other| other != id);
+            }
+            atoms["pinned-project-ids"] = ids.into();
+            Ok(true)
+        })
+    }
+
+    fn update_project(
+        &self,
+        id: &str,
+        name: &str,
+        roots: &[PathBuf],
+        appearance: Option<Value>,
+    ) -> Result<()> {
+        let paths = project_folders(roots.iter())?;
+        ensure!(!paths.is_empty(), "a project needs a folder");
+        self.update_global_state(|state| {
+            let project = state["local-projects"]
+                .get_mut(id)
+                .context("the project no longer exists")?;
+            if !name.trim().is_empty() {
+                project["name"] = name.trim().into();
+            }
+            project["rootPaths"] = paths.into();
+            project["updatedAt"] = chrono::Utc::now().timestamp_millis().into();
+            if let Some(appearance) = appearance {
+                state["project-appearances"][id] = appearance;
+            }
+            Ok(true)
+        })
+    }
+
+    fn remove_project(&self, id: &str) -> Result<()> {
+        self.update_global_state(|state| {
+            let removed = state["local-projects"]
+                .as_object_mut()
+                .and_then(|projects| projects.remove(id))
+                .is_some();
+            if let Some(appearances) = state["project-appearances"].as_object_mut() {
+                appearances.remove(id);
+            }
+            for list in [
+                "/project-order",
+                "/electron-persisted-atom-state/pinned-project-ids",
+            ] {
+                if let Some(ids) = state.pointer_mut(list).and_then(Value::as_array_mut) {
+                    ids.retain(|other| other != id);
+                }
+            }
+            // Its chats keep their files and history and fall back to Recents.
+            if let Some(assignments) = state["thread-project-assignments"].as_object_mut() {
+                assignments.retain(|_, owner| owner["projectId"] != id);
+            }
+            if state["selected-project"]["projectId"] == id {
+                state["selected-project"] = Value::Null;
+            }
+            Ok(removed)
+        })
     }
 
     fn fetch(&self, request: &Request) -> Result<Value> {
@@ -2409,6 +2523,24 @@ impl Host for CloudHost {
         threads: &[(String, String)],
     ) -> Result<String> {
         self.local.create_project(name, roots, appearance, threads)
+    }
+
+    fn set_project_pinned(&self, id: &str, pinned: bool) -> Result<()> {
+        self.local.set_project_pinned(id, pinned)
+    }
+
+    fn update_project(
+        &self,
+        id: &str,
+        name: &str,
+        roots: &[PathBuf],
+        appearance: Option<Value>,
+    ) -> Result<()> {
+        self.local.update_project(id, name, roots, appearance)
+    }
+
+    fn remove_project(&self, id: &str) -> Result<()> {
+        self.local.remove_project(id)
     }
 
     fn finish_automation_run(&self, thread_id: &str, turn: &Value) -> Result<Option<bool>> {

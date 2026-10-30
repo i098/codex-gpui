@@ -89,6 +89,8 @@ pub struct Dialog {
     popover: Option<Popover>,
     remotes: Vec<SharedString>,
     saving: bool,
+    /// `Edit project` (`projectSetup.editLocalProject`) rather than `Create project`.
+    editing: bool,
     focus: FocusHandle,
 }
 
@@ -103,7 +105,20 @@ impl Focusable for Dialog {
 impl Dialog {
     /// `remotes`: display names of the connected remote hosts the device menu lists.
     pub fn new(remotes: Vec<SharedString>, cx: &mut Context<Self>) -> Self {
-        let name = cx.new(|cx| Composer::dialog_field("Name", "Project name", "", cx));
+        Self::with_name(remotes, "", cx)
+    }
+
+    /// `Edit project` over an existing project's name and roots, primary first.
+    pub fn edit(name: &str, sources: Vec<String>, cx: &mut Context<Self>) -> Self {
+        Self {
+            sources,
+            editing: true,
+            ..Self::with_name(Vec::new(), name, cx)
+        }
+    }
+
+    fn with_name(remotes: Vec<SharedString>, name: &str, cx: &mut Context<Self>) -> Self {
+        let name = cx.new(|cx| Composer::dialog_field("Name", "Project name", name, cx));
         cx.observe(&name, |_, _, cx| cx.notify()).detach();
         Self {
             name,
@@ -112,6 +127,7 @@ impl Dialog {
             popover: None,
             remotes,
             saving: false,
+            editing: false,
             focus: cx.focus_handle(),
         }
     }
@@ -151,6 +167,14 @@ impl Dialog {
         self.appearance.map(|(color, marker)| {
             json!({"color": COLORS[color].0, "marker": {"kind": "icon", "icon": MARKERS[marker]}})
         })
+    }
+
+    fn title(&self) -> &'static str {
+        if self.editing {
+            "Edit project"
+        } else {
+            "Create project"
+        }
     }
 
     fn submit(&mut self, cx: &mut Context<Self>) {
@@ -725,7 +749,7 @@ impl Render for Dialog {
             .p(px(20.))
             .flex()
             .flex_col()
-            .child(text("Create project", 20., 28., 600., t.text))
+            .child(text(self.title(), 20., 28., 600., t.text))
             .child(div().pt(px(12.)).child(self.name_input(window, &t, cx)))
             .child(
                 div()
@@ -743,7 +767,17 @@ impl Render for Dialog {
                     .justify_end()
                     .gap(px(12.))
                     .child(self.button("new-project-cancel", "Cancel", false, &t, cx))
-                    .child(self.button("new-project-create", "Create project", true, &t, cx)),
+                    .child(self.button(
+                        "new-project-create",
+                        if self.editing {
+                            "Save"
+                        } else {
+                            "Create project"
+                        },
+                        true,
+                        &t,
+                        cx,
+                    )),
             );
         let frame = div()
             .id("new-project-dialog")
@@ -751,7 +785,7 @@ impl Render for Dialog {
             .w(px(520.))
             .max_w(viewport.width * 0.92)
             .role(gpui::Role::Dialog)
-            .aria_label("Create project")
+            .aria_label(self.title())
             .track_focus(&self.focus)
             .on_mouse_down(
                 MouseButton::Left,
