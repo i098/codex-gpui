@@ -189,3 +189,62 @@ fn rail_plugins_lists_reads_installs_and_uninstalls() -> Result<()> {
     ensure!(params("plugin/list").len() == 4);
     Ok(())
 }
+
+#[test]
+fn remote_plugin_skill_preview_reads_server_content() -> Result<()> {
+    let path = "/remote/linear/SKILL.md";
+    let content = "# Linear\n\nRemote preview content.";
+    let mut lines = script(None, |_| {})?;
+    lines.extend(exchange(
+        "plugin/skill/read",
+        json!({"skill_md_contents": content}),
+    ));
+    let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
+    fx.click(RAIL_PLUGINS)?;
+    let page = settle(&mut fx, "plugin catalog")?;
+    fx.capture_evidence("CGX_PLUGIN_EVIDENCE_DIR", "remote-skill-before")?;
+
+    let skill = json!({
+        "name": "linear",
+        "path": path,
+        "description": "Remote Linear skill",
+        "remotePluginSkill": {
+            "remotePluginId": LINEAR_REMOTE_ID,
+            "remoteMarketplaceName": "openai-curated",
+            "skillName": "linear",
+        },
+    });
+    fx.cx.update(|cx| {
+        page.update(cx, |page, cx| {
+            page.modal = Some(ui::screens::plugins::Modal::Skill(skill));
+            cx.notify();
+        })
+    });
+    act(&mut fx, &page, Action::ReadSkill(path.to_owned()));
+    fx.wait("remote skill contents", |fx| {
+        fx.read(|_, cx| {
+            page.read(cx).skill_file.as_ref().is_some_and(|file| {
+                file.read(cx)
+                    .contents
+                    .as_ref()
+                    .is_some_and(|contents| contents.as_ref().is_ok_and(|text| text == content))
+            })
+        })
+    })?;
+    fx.capture_evidence("CGX_PLUGIN_EVIDENCE_DIR", "remote-skill-after")?;
+    let sent = fx.sent()?;
+    let request = sent
+        .iter()
+        .find(|request| request["method"] == "plugin/skill/read")
+        .context("remote plugin skill read request")?;
+    ensure!(
+        request["params"]
+            == json!({
+                "remotePluginId": LINEAR_REMOTE_ID,
+                "remoteMarketplaceName": "openai-curated",
+                "skillName": "linear",
+            }),
+        "{request}"
+    );
+    Ok(())
+}

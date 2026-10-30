@@ -234,7 +234,8 @@ impl Root {
             _ => None,
         });
         let remote_params = skill.as_ref().map(remote_skill_request_params).transpose();
-        let display_path = if matches!(&remote_params, Ok(Some(_))) {
+        let remote = matches!(&remote_params, Ok(Some(_)));
+        let display_path = if remote {
             PathBuf::from(&self.cwd)
                 .join(".remote-plugin-skill/SKILL.md")
                 .to_string_lossy()
@@ -242,7 +243,11 @@ impl Root {
         } else {
             path.clone()
         };
-        let view = cx.new(|_| FileView::new(&self.cwd, display_path, None));
+        let view = cx.new(|_| {
+            let mut view = FileView::new(&self.cwd, display_path, None);
+            view.set_local_controls(!remote);
+            view
+        });
         page.update(cx, |page, cx| {
             page.skill_file = Some(view.clone());
             cx.notify();
