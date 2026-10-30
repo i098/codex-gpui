@@ -541,6 +541,7 @@ impl Root {
         let mode = self.shortcut_state.new_chat_mode;
         let host = self.host.clone();
         let hotkey_options = hotkey::start_options(self, cx);
+        let memory = self.new_chat_memory;
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let workspace = if mode == features::shortcuts::NewChatMode::Standalone {
                 let prepare = host.clone();
@@ -577,6 +578,9 @@ impl Root {
             apply_permissions(&mut params, &s.permission);
             if let Some(config) = computer_use {
                 params["config"] = config;
+            }
+            if let Some(memory) = memory {
+                memory.apply(&mut params);
             }
             let mut thread = match bridge
                 .request::<_, ThreadStartResponse>("thread/start", params)
@@ -644,6 +648,10 @@ impl Root {
             };
             this.update_in(cx, |this, window, cx| {
                 this.new_chat_section = None;
+                if let Some(memory) = memory {
+                    this.new_chat_memory = None;
+                    this.thread_memory.insert(id.clone(), memory);
+                }
                 this.loaded.insert(id.clone());
                 if mode == features::shortcuts::NewChatMode::Temporary {
                     this.shortcut_state.ephemeral.insert(id.clone());
