@@ -5,8 +5,8 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use bridge::types::{ThreadItem, Turn, TurnStatus};
 use gpui::{
-    App, Context, Entity, IntoElement, ParentElement, Render, SharedString, Styled, Window, div,
-    prelude::*, px,
+    App, Context, Entity, Focusable as _, IntoElement, ParentElement, Render, SharedString, Styled,
+    Window, div, prelude::*, px,
 };
 use serde_json::{Value, json};
 use theme::{ActiveTheme as _, Theme};
