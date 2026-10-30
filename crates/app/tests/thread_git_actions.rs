@@ -102,6 +102,17 @@ fn failed_pr_creation_retains_the_description_and_local_changes() -> Result<()> 
     fx.shot()?.save(evidence.join("create-pr-failure.png"))?;
     fx.keys("escape")?;
     ensure!(fx.composer_focused()?);
+    #[cfg(target_os = "macos")]
+    {
+        let thread = fx.read(|root, _| root.thread().unwrap().clone());
+        thread.update(&mut fx.cx, |view, cx| view.set_worktree_missing(true, cx));
+        fx.shot()?.save(evidence.join("restore-banner.png"))?;
+        thread.update(&mut fx.cx, |view, cx| {
+            view.set_worktree_missing(false, cx);
+            view.set_worktree_status(Some("Checkout created; setup failed"), cx);
+        });
+        fx.shot()?.save(evidence.join("setup-failure.png"))?;
+    }
     Ok(())
 }
 

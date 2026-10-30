@@ -387,6 +387,53 @@ pub(in crate::host) fn rollback_move(params: &Value) -> Result<Value> {
     Ok(json!({"success": true}))
 }
 
+pub(in crate::host) fn restore_thread_worktree(params: &Value) -> Result<Value> {
+    let cwd = Path::new(params["cwd"].as_str().context("missing cwd")?);
+    ensure!(
+        cwd.is_absolute() && !cwd.exists(),
+        "The workspace must be missing"
+    );
+    for root in params["candidateRoots"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+    {
+        let root = Path::new(root);
+        if !root.is_absolute() || !root.is_dir() {
+            continue;
+        }
+        for candidate in cwd.ancestors().take_while(|candidate| !candidate.exists()) {
+            let id = format!("{:x}", Sha1::digest(candidate.to_string_lossy().as_bytes()));
+            let reference = format!("refs/codex/snapshots/{id}");
+            if let Some(snapshot) = answer(root, &["rev-parse", "--verify", &reference])? {
+                checked(run(
+                    root,
+                    &[
+                        "worktree",
+                        "add",
+                        "--detach",
+                        candidate.to_str().context("Invalid workspace")?,
+                        &snapshot,
+                    ],
+                )?)?;
+                if let Some(parent) = answer(candidate, &["rev-parse", "--verify", "HEAD^"])? {
+                    checked(run(candidate, &["reset", "--mixed", &parent])?)?;
+                }
+                ensure!(
+                    cwd.is_dir(),
+                    "The restored snapshot does not contain the working directory"
+                );
+                if let Some(thread) = params["conversationId"].as_str() {
+                    set_owner_thread(candidate, thread)?;
+                }
+                return Ok(json!({"success": true, "cwd": cwd}));
+            }
+        }
+    }
+    bail!("No saved snapshot exists for this worktree");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,6 +545,42 @@ mod tests {
             "untracked\n"
         );
         assert!(checked(run(&root, &["status", "--porcelain"])?)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn cleaned_worktree_restores_saved_changes() -> Result<()> {
+        let (temp, root) = repository()?;
+        let managed = temp.path().join("worktrees");
+        let worktree = create_worktree(&managed, &root, Some("HEAD"), None)?.unwrap();
+        fs::write(worktree.git_root.join("file"), "saved\n")?;
+        fs::write(worktree.git_root.join("new"), "untracked\n")?;
+        remove_managed_worktree(&worktree.git_root, &[managed])?;
+        assert!(!worktree.git_root.exists());
+        restore_thread_worktree(&json!({"cwd": worktree.git_root, "candidateRoots": [root]}))?;
+        assert_eq!(
+            fs::read_to_string(worktree.git_root.join("file"))?,
+            "saved\n"
+        );
+        assert_eq!(
+            fs::read_to_string(worktree.git_root.join("new"))?,
+            "untracked\n"
+        );
+        assert!(!checked(run(&worktree.git_root, &["status", "--porcelain"])?)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn restoring_a_thread_in_a_subdirectory_finds_the_checkout_snapshot() -> Result<()> {
+        let (temp, root) = repository()?;
+        let managed = temp.path().join("worktrees");
+        let worktree = create_worktree(&managed, &root, Some("HEAD"), None)?.unwrap();
+        let cwd = worktree.git_root.join("project");
+        fs::create_dir(&cwd)?;
+        fs::write(cwd.join("draft"), "saved draft\n")?;
+        remove_managed_worktree(&worktree.git_root, &[managed])?;
+        restore_thread_worktree(&json!({"cwd": cwd, "candidateRoots": [root]}))?;
+        assert_eq!(fs::read_to_string(cwd.join("draft"))?, "saved draft\n");
         Ok(())
     }
 

@@ -277,6 +277,7 @@ Branch prefix saves on blur or Enter; multiline instructions save after three id
 Save and Command-S also write pending instructions.
 The native `cargo test -p app --test git_settings -- --test-threads=1` replay checks autosave, write recovery, shutdown flush, and confirmed worktree preferences.
 PR watch preference changes update active PR heartbeat instructions; paused automations remain unchanged.
+A missing-worktree banner restores saved changes or retries the repository lookup.
 Hand off moves a worktree thread to a selected local workspace and refuses a dirty target checkout.
 Move to worktree transfers the current thread and preserves staged, unstaged, and untracked changes.
 Transfers retain a recovery stash, including after successful attachment.
