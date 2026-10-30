@@ -182,6 +182,7 @@ impl Root {
                 "Remove project?",
                 Some("This removes the project from the sidebar. Files on disk are not deleted."),
                 &["Cancel", "Remove"],
+                cx,
             )
         });
         cx.spawn_in(window, async move |this, cx| {
