@@ -16,6 +16,7 @@ pub mod mobile;
 pub mod new_project;
 pub mod oauth;
 pub mod onboarding;
+pub mod plan;
 pub mod plugins;
 pub mod pull_requests;
 pub mod recovery;

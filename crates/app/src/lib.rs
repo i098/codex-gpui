@@ -211,6 +211,8 @@ pub enum SidePanel {
     File,
     /// `Open in side chat`: the side chat with this [`SideChat::key`].
     SideChat(usize),
+    /// Thread summary ▸ `Plan`: the latest plan, editable.
+    Plan,
 }
 
 /// Settings ▸ Appearance ▸ Theme (the original's `appearanceTheme`): follow the system, or
@@ -435,6 +437,8 @@ pub struct Root {
     diff_watch: Option<diff_watch::Watch>,
     /// The file viewer of [`SidePanel::File`]; cleared with the thread.
     file: Option<Entity<FileView>>,
+    /// The plan of [`SidePanel::Plan`]; cleared with the thread.
+    plan: Option<Entity<ui::screens::plan::PlanView>>,
     /// The open thread in the main shell, with its side panel if any.
     split: Option<Entity<SplitScreen>>,
     terminal: terminal::Terminals,
@@ -887,6 +891,7 @@ impl Root {
             diff: None,
             diff_watch: None,
             file: None,
+            plan: None,
             split: None,
             terminal: terminal::Terminals::default(),
             tabs: Vec::new(),
@@ -1337,6 +1342,11 @@ impl Root {
     /// The thread route's side panel tabs in strip order.
     pub fn side_tabs(&self) -> &[SidePanel] {
         &self.tabs
+    }
+
+    /// The [`SidePanel::Plan`] tab's plan.
+    pub fn plan(&self) -> Option<&Entity<ui::screens::plan::PlanView>> {
+        self.plan.as_ref()
     }
 
     pub fn workspace_layout(&self) -> WorkspaceLayout {
@@ -2912,6 +2922,7 @@ impl Root {
         side: SidePanel,
         view: &Entity<ThreadView>,
         file: Option<&Entity<FileView>>,
+        plan: Option<&Entity<ui::screens::plan::PlanView>>,
         side_chats: &[SideChat],
         console: bool,
         cx: &App,
@@ -2956,6 +2967,11 @@ impl Root {
                     preview: false,
                 })
             }
+            SidePanel::Plan => Some(Tab {
+                icon: "navigation-files",
+                label: plan?.read(cx).title(),
+                preview: false,
+            }),
         }
     }
 
@@ -2967,15 +2983,35 @@ impl Root {
         cx: &mut Context<Self>,
     ) -> Option<(AnyView, Vec<Tab>, usize)> {
         let file = self.file.clone();
+        let plan = self.plan.clone();
         let chats = &self.side_chats;
         let console = self.terminal_panel().is_some();
         self.tabs.retain(|side| {
-            Self::side_tab(*side, view, file.as_ref(), chats, console, cx).is_some()
+            Self::side_tab(
+                *side,
+                view,
+                file.as_ref(),
+                plan.as_ref(),
+                chats,
+                console,
+                cx,
+            )
+            .is_some()
         });
         let tabs: Vec<Tab> = self
             .tabs
             .iter()
-            .filter_map(|side| Self::side_tab(*side, view, file.as_ref(), chats, console, cx))
+            .filter_map(|side| {
+                Self::side_tab(
+                    *side,
+                    view,
+                    file.as_ref(),
+                    plan.as_ref(),
+                    chats,
+                    console,
+                    cx,
+                )
+            })
             .collect();
         let active = self
             .side
@@ -2989,6 +3025,7 @@ impl Root {
             SidePanel::Console => self.terminal_panel()?.clone().into(),
             SidePanel::File => self.file.as_ref()?.clone().into(),
             SidePanel::SideChat(key) => self.chat(key)?.view.clone().into(),
+            SidePanel::Plan => self.plan.as_ref()?.clone().into(),
         };
         Some((view, tabs, active))
     }
@@ -3664,6 +3701,7 @@ impl Root {
                         this.thread = None;
                         this.diff = None;
                         this.file = None;
+                        this.plan = None;
                         this.split = None;
                         this.pull_requests_page = None;
                         this.tabs.clear();
@@ -4167,6 +4205,7 @@ impl Root {
         .detach();
         self.diff = Some(diff);
         self.file = None;
+        self.plan = None;
         let view = cx.new(|_| ThreadView::new(thread, clock, composer));
         view.update(cx, |view, cx| {
             view.set_git_phase(self.git_busy, cx);
