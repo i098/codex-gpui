@@ -1490,7 +1490,15 @@ impl Root {
         self.sidebar
             .update(cx, |s, cx| s.set_projects_state(ListState::Loading, cx));
         let host = self.host.clone();
-        let read = cx.background_spawn(async move { host.projects() });
+        let bridge = self.bridge.clone();
+        let local = self.host_id == "local";
+        let read = cx.background_spawn(async move {
+            if local {
+                host.projects()
+            } else {
+                host::app_server_projects(&bridge, std::path::Path::new(""), json!({}), false).await
+            }
+        });
         self.project_load = Some(cx.spawn(async move |this, cx| {
             let result = read.await;
             this.update(cx, |this, cx| match result {
@@ -6389,6 +6397,10 @@ impl Root {
         };
         match event {
             Event::Notification { method, params } => match method.as_str() {
+                "project/changed" | "thread/project/updated" => {
+                    self.load_projects(cx);
+                    self.refresh_threads(cx);
+                }
                 "item/autoApprovalReview/started" | "item/autoApprovalReview/completed" => {
                     self.guardian_review(&method, &params, cx);
                 }

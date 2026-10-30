@@ -1465,10 +1465,10 @@ The [strict static report](https://pub-c548cd7bc64c41ae8ce0d860578f3b6f.r2.dev/f
 
 `Choose project`, the selected Home title, `⌘O`, `⌥⇧⌘O`, File > Open Folder, and the `Open folder` command use GPUI's folder picker.
 The picker accepts one folder and does not change the selection or the current chat when canceled.
-The local host adds the folder to the existing `local-projects` and `project-order` records.
-It retains other projects and unrelated values in `.codex-global-state.json`.
-Selecting an existing root does not add a duplicate project.
-The sidebar uses the same host project rows as the marker flow.
+With an app-server connection, the local host imports the folder through `project/import`.
+The sidebar reads paginated `project/list` results from the window's host.
+`project/changed` and `thread/project/updated` refresh the sidebar and chats.
+Hosts without an app-server connection retain the local project store.
 
 The app saves the selected new-chat root in `state.json`.
 The Home title, project chip, and file search use that selection.
