@@ -49,6 +49,8 @@ pub enum Route {
     Sites,
     /// Explore ▸ `Maps` (`/maps`).
     Maps,
+    /// A Sites row (`/sites/:projectId`): the site's details.
+    Site(String),
 }
 
 pub(crate) fn actions(mut root: Div, cx: &mut Context<Root>) -> Div {
@@ -216,7 +218,8 @@ impl Root {
             Route::PullRequests(selected) => Some(self.pull_requests_shell(selected, window, cx)),
             Route::Security => Some(crate::security::shell(self, window, cx)),
             Route::Plugins(path) => Some(self.plugins_shell(path, window, cx)),
-            Route::Sites => Some(sites::page(self, cx)),
+            Route::Sites => Some(sites::page(self, None, window, cx)),
+            Route::Site(id) => Some(sites::page(self, Some(id), window, cx)),
             Route::Maps => Some(maps::page(self, cx)),
             Route::Onboarding(page) => {
                 self.open_onboarding(page, window, cx);
