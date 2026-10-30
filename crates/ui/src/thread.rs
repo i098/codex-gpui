@@ -6,7 +6,9 @@
 //! User-message controls appear on hover or focus without moving the transcript.
 //! Copy writes plain text and HTML on macOS and shows a checkmark for 1500 ms.
 //! Answer text is selectable by drag (`thread/select.rs`); `Copy` writes the selection.
-//! Find searches user and agent messages, including collapsed activity, without server requests.
+//! Find searches user and agent messages, including collapsed activity. While older turns are
+//! unloaded, the app asks `thread/searchOccurrences` and pages them in until the matches show.
+//! Opening loads the newest page of turns; `Load earlier messages` fetches the one before.
 //! The last text message opens an inline editor. Send reverts that turn before resending it.
 //! Response copy adds HTML. Response actions use the shared delayed tooltip.
 //! A failed resume or revert leaves the draft open and shows `Failed to edit message`.
@@ -79,6 +81,16 @@ pub struct OpenAutomationCard {
 }
 
 impl gpui::EventEmitter<OpenAutomationCard> for ThreadView {}
+
+/// The `Load earlier messages` row was pressed (or find needs older turns).
+pub struct LoadOlderTurns;
+
+impl gpui::EventEmitter<LoadOlderTurns> for ThreadView {}
+
+/// The find query changed while older turns are unloaded: ask the server where it occurs.
+pub struct SearchHistory(pub String);
+
+impl gpui::EventEmitter<SearchHistory> for ThreadView {}
 
 use items::{activity, cache_automation_result, diff_card, disclosure, user_bubble, wrap_row};
 use markdown::{markdown, tones};
@@ -201,6 +213,11 @@ pub struct ThreadView {
     /// press that focuses it).
     press_focus: Option<gpui::FocusHandle>,
     find: Option<FindState>,
+    /// `thread/turns/list` cursor of the turns before `turns`; `None` once all are loaded.
+    older_cursor: Option<String>,
+    loading_older: bool,
+    /// The turn that stays put when older turns are prepended, and its top in the viewport.
+    older_anchor: Rc<RefCell<Option<(String, Pixels)>>>,
     /// The link menu (`menu.rs`): `subject` is the right-clicked link.
     menu: Option<menu::ContextMenu>,
     context_image: Option<crate::image_context::ImageContext>,
@@ -676,6 +693,9 @@ impl ThreadView {
             carets: Carets::default(),
             press_focus: None,
             find: None,
+            older_cursor: thread.older_cursor,
+            loading_older: false,
+            older_anchor: Rc::default(),
             menu: None,
             context_image: None,
         }
@@ -695,6 +715,56 @@ impl ThreadView {
 
     pub fn id(&self) -> &str {
         &self.thread_id
+    }
+
+    pub fn has_turn(&self, id: &str) -> bool {
+        self.turns.iter().any(|turn| turn.id == id)
+    }
+
+    /// The cursor to fetch the next older page with, once; `None` while one is in flight.
+    pub fn begin_older(&mut self, cx: &mut Context<Self>) -> Option<String> {
+        if self.loading_older {
+            return None;
+        }
+        let cursor = self.older_cursor.clone()?;
+        self.loading_older = true;
+        cx.notify();
+        Some(cursor)
+    }
+
+    /// Adds a fetched older page above the loaded turns without moving what is on screen.
+    pub fn prepend_turns(
+        &mut self,
+        mut turns: Vec<Turn>,
+        cursor: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        for item in turns.iter_mut().flat_map(|turn| &mut turn.items) {
+            cache_automation_result(item);
+        }
+        if let Some(first) = self.turns.first() {
+            let top = self
+                .laid_out
+                .borrow()
+                .turns
+                .get(&first.id)
+                .map(|&(top, _)| top);
+            *self.older_anchor.borrow_mut() =
+                top.map(|top| (first.id.clone(), top + self.scroll.offset().y));
+        }
+        turns.append(&mut self.turns);
+        self.turns = turns;
+        self.older_cursor = cursor;
+        self.loading_older = false;
+        if let Some(find) = &mut self.find {
+            find.dirty = true;
+        }
+        cx.notify();
+    }
+
+    pub fn older_failed(&mut self, cx: &mut Context<Self>) {
+        self.loading_older = false;
+        cx.notify();
     }
 
     /// The thread's working directory, as the server reports it.
@@ -861,6 +931,10 @@ impl ThreadView {
         let cursor = find.selection.start + text.len();
         find.selection = cursor..cursor;
         find.dirty = true;
+        let query = find.query.trim().to_owned();
+        if self.older_cursor.is_some() && !query.is_empty() {
+            cx.emit(SearchHistory(query));
+        }
         cx.notify();
     }
 
@@ -2273,6 +2347,7 @@ impl Render for ThreadView {
             .as_ref()
             .map(|find| (find.target.clone(), find.scroll_pending.clone()));
         let view_id = cx.entity().entity_id();
+        let older_anchor = self.older_anchor.clone();
         let measure = move |bounds: Vec<Bounds<Pixels>>, window: &mut Window, cx: &mut App| {
             let origin = scroll.bounds().top() + scroll.offset().y;
             let width = bounds.first().map_or(px(0.), |b| b.size.width);
@@ -2301,6 +2376,14 @@ impl Render for ThreadView {
                 .zip(&bounds)
                 .map(|(id, b)| (id.clone(), (b.top() - origin, b.size.height)))
                 .collect();
+            if let Some((id, viewport_top)) = older_anchor.borrow_mut().take()
+                && let Some(&(top, _)) = l.turns.get(&id)
+            {
+                let mut offset = scroll.offset();
+                offset.y = (viewport_top - top).clamp(-scroll.max_offset().y, px(0.));
+                scroll.set_offset(offset);
+                window.defer(cx, move |_, cx| cx.notify(view_id));
+            }
             if let Some((target, pending)) = &find_scroll
                 && pending.replace(false)
                 && let Some((layout, index)) = target.borrow().as_ref()
@@ -2510,6 +2593,22 @@ impl Render for ThreadView {
                             .size_0(),
                     )
                     .children(tracker)
+                    .children(self.older_cursor.is_some().then(|| {
+                        let label = if self.loading_older {
+                            "Loading earlier messages"
+                        } else {
+                            "Load earlier messages"
+                        };
+                        div().mx_auto().max_w(CONTENT_MAX_WIDTH).pb(px(12.)).child(
+                            recovery::retry_button("load-older", label, window, cx).on_click(
+                                cx.listener(|view, _, _, cx| {
+                                    if !view.loading_older {
+                                        cx.emit(LoadOlderTurns);
+                                    }
+                                }),
+                            ),
+                        )
+                    }))
                     .child(
                         div()
                             .mx_auto()

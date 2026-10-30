@@ -107,8 +107,9 @@ use ui::screens::sidebar::{
 use ui::screens::signin::Login;
 use ui::screens::terminal::{OpenTerminalItem, StopBackgroundTerminals, Xterm};
 use ui::screens::thread::view::{
-    Clock, EditMessage, ForkThread, GitAction, History, OpenAutomationCard, ReasoningVisibility,
-    RetryHistory, RevertTurn, ThreadPressed, ThreadView, UsageLimitNotice,
+    Clock, EditMessage, ForkThread, GitAction, History, LoadOlderTurns, OpenAutomationCard,
+    ReasoningVisibility, RetryHistory, RevertTurn, SearchHistory, ThreadPressed, ThreadView,
+    UsageLimitNotice,
 };
 use ui::screens::{automations, mobile};
 use ui::toast::{Toast, Toaster};
@@ -4042,6 +4043,66 @@ impl Root {
         view
     }
 
+    /// Pages older turns into `view`; with `until`, keeps paging until every listed turn is loaded.
+    fn load_older_turns(
+        &mut self,
+        view: Entity<ThreadView>,
+        until: Vec<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |_, cx| -> Result<()> {
+            loop {
+                let Some((id, cursor)) = view.update(cx, |view, cx| {
+                    let id = view.id().to_owned();
+                    view.begin_older(cx).map(|cursor| (id, cursor))
+                }) else {
+                    return Ok(());
+                };
+                let page = routes::turns_page(&bridge, &id, Some(&cursor)).await;
+                let more = match page {
+                    Ok((turns, next)) => {
+                        ensure!(next.as_ref() != Some(&cursor), "unchanged turns cursor");
+                        view.update(cx, |view, cx| view.prepend_turns(turns, next, cx));
+                        view.update(cx, |view, _| until.iter().any(|turn| !view.has_turn(turn)))
+                    }
+                    Err(error) => {
+                        view.update(cx, |view, cx| view.older_failed(cx));
+                        return Err(error);
+                    }
+                };
+                if !more {
+                    return Ok(());
+                }
+            }
+        });
+        log_err(task, cx);
+    }
+
+    /// Finds, on the server, the unloaded turns that match `query` and pages them in.
+    fn search_history(&mut self, view: Entity<ThreadView>, query: String, cx: &mut Context<Self>) {
+        let bridge = self.bridge.clone();
+        let task = cx.spawn(async move |this, cx| -> Result<()> {
+            let id = view.read_with(cx, |view, _| view.id().to_owned());
+            let turns = routes::search_turns(&bridge, &id, &query).await?;
+            let current = view.read_with(cx, |view, _| {
+                view.find_state()
+                    .is_some_and(|(now, ..)| now.trim() == query)
+            });
+            let unloaded = view.read_with(cx, |view, _| {
+                turns
+                    .into_iter()
+                    .filter(|turn| !view.has_turn(turn))
+                    .collect::<Vec<_>>()
+            });
+            if current && !unloaded.is_empty() {
+                this.update(cx, |this, cx| this.load_older_turns(view, unloaded, cx))?;
+            }
+            Ok(())
+        });
+        log_err(task, cx);
+    }
+
     /// The transcript clock: the pinned one, else the local wall clock.
     fn clock(&self) -> Clock {
         self.clock.unwrap_or_else(|| Clock {
@@ -4190,6 +4251,14 @@ impl Root {
                 );
             },
         )
+        .detach();
+        cx.subscribe_in(&view, window, |this, view, _: &LoadOlderTurns, _, cx| {
+            this.load_older_turns(view.clone(), Vec::new(), cx);
+        })
+        .detach();
+        cx.subscribe_in(&view, window, |this, view, event: &SearchHistory, _, cx| {
+            this.search_history(view.clone(), event.0.clone(), cx);
+        })
         .detach();
         cx.subscribe_in(
             &view,

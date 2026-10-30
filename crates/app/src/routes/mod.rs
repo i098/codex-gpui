@@ -11,7 +11,7 @@ mod sites;
 mod thread;
 
 pub(crate) use settings::request_quit;
-pub(crate) use thread::{forked_thread, load_thread};
+pub(crate) use thread::{forked_thread, load_thread, search_turns, turns_page};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Route {
