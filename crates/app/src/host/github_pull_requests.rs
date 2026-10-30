@@ -199,6 +199,9 @@ fn ci(value: &Value) -> &'static str {
 }
 
 pub(super) fn fetch(host: &super::LocalHost, endpoint: &str, params: &Value) -> Result<Value> {
+    if endpoint == "gh-create-pr" {
+        return super::git_pr::create(host, params);
+    }
     match endpoint {
         "gh-cli-status" => {
             let hostname = params["hostname"].as_str().unwrap_or("github.com");
