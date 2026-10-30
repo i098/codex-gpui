@@ -201,7 +201,7 @@ impl Root {
         let remove = cx.background_spawn(async move {
             let threads = threads(&bridge).await?;
             let owners = worktree_threads(&bridge, &threads, &path).await?;
-            ensure!(!owners.iter().any(|thread| pinned(thread)), "Unpin the chats in this worktree before deleting it");
+            ensure!(!owners.iter().any(pinned), "Unpin the chats in this worktree before deleting it");
             for thread in owners {
                 bridge.request::<_, Value>("thread/archive", json!({"threadId": thread["id"]})).await?;
             }

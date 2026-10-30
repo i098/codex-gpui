@@ -140,7 +140,7 @@ impl Root {
             }
             .await
             .map_err(|error| error.to_string());
-            let _ = page.update(cx, |page, cx| {
+            page.update(cx, |page, cx| {
                 if page.selected.as_ref() == Some(&identity) && page.link_generation == generation {
                     page.linked_threads = Some(result);
                     cx.notify();
@@ -444,35 +444,6 @@ fn repository_error(login: &str, error: String) -> String {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn invalid_request_identity_returns_to_the_inbox() {
-        let route =
-            Route::pull_request_path("/pull-requests/github.com/i098/codex-gpui/12?view=all");
-        assert!(matches!(
-            route,
-            Some(Route::PullRequests(Some(Identity { number: 12, .. })))
-        ));
-        for path in ["/settings", "/pull-requests/github.com/i098/repo/1/extra"] {
-            assert_eq!(Route::pull_request_path(path), None, "{path}");
-        }
-        for path in [
-            "/pull-requests/github.com/i098/repo/0",
-            "/pull-requests/github.com/i098/repo/not-a-number",
-            "/pull-requests/github.com/../repo/2",
-        ] {
-            assert_eq!(
-                Route::pull_request_path(path),
-                Some(Route::PullRequests(None)),
-                "{path}"
-            );
-        }
-    }
-}
-
 pub(crate) async fn link_pull_request(
     bridge: &Bridge,
     thread: &str,
@@ -508,3 +479,33 @@ fn pull_request_key(identity: &Identity) -> Result<String> {
         identity.number,
     ))?)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_request_identity_returns_to_the_inbox() {
+        let route =
+            Route::pull_request_path("/pull-requests/github.com/i098/codex-gpui/12?view=all");
+        assert!(matches!(
+            route,
+            Some(Route::PullRequests(Some(Identity { number: 12, .. })))
+        ));
+        for path in ["/settings", "/pull-requests/github.com/i098/repo/1/extra"] {
+            assert_eq!(Route::pull_request_path(path), None, "{path}");
+        }
+        for path in [
+            "/pull-requests/github.com/i098/repo/0",
+            "/pull-requests/github.com/i098/repo/not-a-number",
+            "/pull-requests/github.com/../repo/2",
+        ] {
+            assert_eq!(
+                Route::pull_request_path(path),
+                Some(Route::PullRequests(None)),
+                "{path}"
+            );
+        }
+    }
+}
+
