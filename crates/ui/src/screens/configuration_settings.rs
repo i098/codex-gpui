@@ -248,11 +248,13 @@ impl SettingsPane {
             ),
             // The Codex CLI's local thinking display keys; they change what chats draw only.
             row(
+                "hide_agent_reasoning",
                 "Hide thinking",
                 "Hide reasoning summaries in chats",
                 self.toggle("hide_agent_reasoning", false, t, window, cx),
             ),
             row(
+                "show_raw_agent_reasoning",
                 "Show raw thinking",
                 "Show the model's raw reasoning in place of its summary, when it sends any",
                 self.toggle("show_raw_agent_reasoning", false, t, window, cx),
