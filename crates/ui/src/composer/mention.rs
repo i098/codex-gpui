@@ -310,6 +310,10 @@ impl Composer {
         }
     }
 
+    pub(super) fn activate_slash_skill(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.activate_mention(ACTIONS.len() + index, cx);
+    }
+
     /// Enter, Tab or a click on the highlighted row. `Files and folders` opens the picker; a
     /// skill or a file becomes a chip followed by a space, the list closes; `Plan mode` toggles
     /// plan mode. ponytail: the other actions (goal, sketch, project) belong to their own rows.

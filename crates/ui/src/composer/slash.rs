@@ -1,5 +1,5 @@
 //! Slash completion keeps keyboard focus in the editor and preserves text outside the command token.
-//! Fast, Archive, New chat, Usage, Compact, Rename, Pin chat, Feedback, Export, and Recap run app handlers.
+//! Chat commands and MCP use existing app handlers; skill rows insert linked mention chips.
 //! Model, Reasoning, Fork chat, and Work in a project open a submenu. It replaces the token with
 //! `/id ` and filters on the text typed after it; Backspace over the space returns to the list,
 //! Escape closes it, and only a pick removes the token and its query and acts.
@@ -19,6 +19,7 @@ pub enum SlashCommand {
     Rename,
     Pin,
     Fork,
+    Mcp,
     ForkWorktree,
     Feedback,
     Export,
@@ -323,7 +324,9 @@ impl Composer {
             })
             .collect();
         self.slash.skills.sort_by(|a, b| a.title.cmp(&b.title));
+        let selected = self.slash.selected;
         self.refresh_slash(cx);
+        self.slash.selected = selected.min(self.slash.matches.len().saturating_sub(1));
     }
 
     /// The token before the cursor: `@` or `/` at the start or after whitespace (an `@` query
@@ -535,6 +538,7 @@ impl Composer {
             return;
         }
         let Some(command) = COMMANDS.get(index) else {
+            self.activate_slash_skill(index - COMMANDS.len(), cx);
             return;
         };
         let action = match command.id {
@@ -545,6 +549,7 @@ impl Composer {
             "compact" => SlashCommand::Compact,
             "rename" => SlashCommand::Rename,
             "pin" => SlashCommand::Pin,
+            "mcp" => SlashCommand::Mcp,
             "feedback" => SlashCommand::Feedback,
             "export" => SlashCommand::Export,
             "recap" => SlashCommand::Recap,
