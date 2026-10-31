@@ -1605,7 +1605,16 @@ impl RenderOnce for CodeBlock {
                     cx.notify();
                 })
             })
-            .child(icon("diff-word-wrap", 16., t.text));
+            // As the original, the icon shows the current state: overflow while wrap is off.
+            .child(icon(
+                if wrap {
+                    "diff-word-wrap"
+                } else {
+                    "text-overflow"
+                },
+                16.,
+                t.text,
+            ));
         let body = div()
             .flex()
             .flex_col()
