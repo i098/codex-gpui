@@ -856,6 +856,8 @@ pub fn home_shell(_: &mut Window, cx: &mut App) -> AnyView {
 
 /// Click handler for the Home mode switch.
 pub type ModeSwitchClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+/// Profile-menu row action.
+type MenuAction = Box<dyn Fn(&mut Window, &mut App)>;
 
 /// The `Codex ⌄` trigger's current mode, click handler and open menu.
 pub struct ModeSwitch {
@@ -1423,7 +1425,7 @@ impl Shell {
         let item = |id: &'static str,
                     label: &'static str,
                     trailing: Option<String>,
-                    action: Box<dyn Fn(&mut Window, &mut App)>| {
+                    action: MenuAction| {
             div()
                 .id(id)
                 .px(px(8.))
@@ -1440,7 +1442,7 @@ impl Shell {
                     action(window, cx);
                 }))
         };
-        fn send<A: Action + Clone>(action: A) -> Box<dyn Fn(&mut Window, &mut App)> {
+        fn send<A: Action + Clone>(action: A) -> MenuAction {
             Box::new(move |window, cx| window.dispatch_action(Box::new(action.clone()), cx))
         }
         let section = |label: &str| {
