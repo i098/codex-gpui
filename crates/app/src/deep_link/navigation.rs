@@ -120,6 +120,24 @@ impl Root {
         .detach();
     }
 
+    /// An OS-delivered path: a folder becomes the project of a new chat, a file opens
+    /// in the file viewer rooted at its folder.
+    pub(super) fn open_path_link(
+        &mut self,
+        path: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let target = std::path::Path::new(&path);
+        if target.is_dir() {
+            self.open_link_project(None, Some(path), None, None, window, cx);
+        } else if target.is_file() {
+            self.open_file(&ui::diff::OpenFile { path, line: None }, window, cx);
+        } else {
+            self.toast(Toast::danger("Cannot open the dropped item"), cx);
+        }
+    }
+
     pub(super) fn prefill_link(
         &mut self,
         prompt: Option<&str>,

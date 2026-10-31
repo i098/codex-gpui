@@ -38,11 +38,17 @@ pub enum Link {
     },
     OAuth(String),
     Launch,
+    /// A local file or folder handed over by the OS (`open -a`, Dock drop).
+    Path(String),
 }
 
 /// Parses the original native URL grammar without accepting excluded products.
 pub fn parse(value: &str) -> Option<Link> {
     let url = Url::parse(value).ok()?;
+    if url.scheme() == "file" {
+        let path = url.to_file_path().ok()?;
+        return Some(Link::Path(path.to_string_lossy().into_owned()));
+    }
     if !matches!(url.scheme(), "codex" | "codex-dev")
         || !url.username().is_empty()
         || url.password().is_some()
@@ -253,7 +259,10 @@ impl Root {
     /// (and focus) of the route's composer.
     pub fn open_deep_link(&mut self, link: &Link, window: &mut Window, cx: &mut Context<Self>) {
         if self.host_id() != "local"
-            && !matches!(link, Link::Thread { .. } | Link::OAuth(_) | Link::Launch)
+            && !matches!(
+                link,
+                Link::Thread { .. } | Link::OAuth(_) | Link::Launch | Link::Path(_)
+            )
         {
             self.open_link_host("local", link, window, cx);
             return;
@@ -309,6 +318,10 @@ impl Root {
             }
             Link::OAuth(value) => {
                 self.receive_oauth_redirect(value, window, cx);
+                return;
+            }
+            Link::Path(path) => {
+                self.open_path_link(path.clone(), window, cx);
                 return;
             }
             Link::Launch => {}
@@ -377,6 +390,16 @@ mod tests {
     use super::*;
 
     const ID: &str = "00000000-0000-4000-8000-000000000001";
+
+    #[test]
+    fn file_urls_become_decoded_paths() {
+        assert_eq!(
+            parse("file:///tmp/a%20b/c"),
+            Some(Link::Path("/tmp/a b/c".into()))
+        );
+        assert!(parse("file://remote/tmp/x").is_none() || cfg!(windows));
+        assert!(parse("https://example.com").is_none());
+    }
 
     #[test]
     fn preserves_thread_host_access_and_prompt() {

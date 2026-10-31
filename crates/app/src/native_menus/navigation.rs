@@ -43,9 +43,10 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(thread) = super::active_thread(self, cx) else {
+        let thread = super::active_thread(self, cx);
+        if thread.is_none() && !std::path::Path::new(&action.path).is_absolute() {
             return;
-        };
+        }
         // An absolute path inside a review repository opens with that repository as root.
         let root = self
             .diff
@@ -61,7 +62,13 @@ impl Root {
                     .max_by_key(|repository| repository.root.len())
                     .map(|repository| repository.root.clone())
             })
-            .unwrap_or_else(|| thread.read(cx).cwd().to_owned());
+            .or_else(|| thread.map(|thread| thread.read(cx).cwd().to_owned()))
+            .or_else(|| {
+                std::path::Path::new(&action.path)
+                    .parent()
+                    .map(|parent| parent.to_string_lossy().into_owned())
+            })
+            .unwrap_or_default();
         let cwd = std::path::Path::new(&root)
             .components()
             .as_path()
