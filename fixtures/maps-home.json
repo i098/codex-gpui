@@ -1,0 +1,93 @@
+{
+  "provenance": {
+    "appVersion": "26.1007.30912",
+    "queries": [
+      "page-1bebb704a6e2.js maps-home /local/home",
+      "app-initial-6350d04672d0.js chatgpt-conversations /conversations (identity only)"
+    ],
+    "schema": "Response fields follow the original's maps-home reader: personalized_prompts (id, primary_title, secondary_title, prompt, image_urls), nearby_entities (entity_data with latitude/longitude), map_center.",
+    "origin": "Owned synthetic data derived from the contract. No live account call. Placeholders: example.invalid."
+  },
+  "exchanges": [
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/conversations?exclude_conversation_origin=tpp&expand=false&hide_snorlax=false&is_archived=false&is_starred=false&limit=20&order=updated&offset=0",
+          "method": "GET",
+          "headers": {
+            "x-openai-web-frontend": "codex_webview",
+            "x-oai-mcp-form-version": "2",
+            "x-openai-codex-window-type": "electron",
+            "OAI-Language": "en-US",
+            "oai-did": "device-00000000",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1"
+          },
+          "expectedIdentity": {
+            "accountId": "account-00000000",
+            "userId": "user-00000000"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"items\":[]}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/local/home",
+          "method": "GET",
+          "headers": {
+            "x-openai-web-frontend": "codex_webview",
+            "x-oai-mcp-form-version": "2",
+            "x-openai-codex-window-type": "electron",
+            "OAI-Language": "en-US",
+            "oai-did": "device-00000000",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "ChatGPT-Account-ID": "account-00000000",
+            "oai-language": "en-US"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"personalized_prompts\":[{\"id\":\"prompt-coffee\",\"primary_title\":\"Coffee nearby\",\"secondary_title\":\"Quiet caf\\u00e9s to work from\",\"prompt\":\"Find quiet caf\\u00e9s near me where I can work for a few hours\",\"image_urls\":[\"https://example.invalid/coffee.jpg\"]},{\"id\":\"prompt-parks\",\"primary_title\":\"Parks for a walk\",\"secondary_title\":\"\",\"prompt\":\"Which parks near me are good for an evening walk?\",\"image_urls\":[]},{\"id\":\"prompt-dinner\",\"primary_title\":\"Dinner tonight\",\"prompt\":\"Suggest a place for dinner tonight within walking distance\",\"image_urls\":[]}],\"nearby_entities\":[{\"entity_data\":{\"id\":\"place-1\",\"name\":\"Example Caf\\u00e9\",\"provider\":\"example\",\"latitude\":37.7793,\"longitude\":-122.4193},\"entity_category\":\"cafe\"},{\"entity_data\":{\"id\":\"place-2\",\"name\":\"Example Park\",\"provider\":\"example\",\"latitude\":37.7694,\"longitude\":-122.4862},\"notes\":null}],\"map_center\":{\"latitude\":37.7749,\"longitude\":-122.4194}}"
+            }
+          }
+        }
+      }
+    }
+  ]
+}
