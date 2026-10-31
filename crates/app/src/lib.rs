@@ -96,6 +96,8 @@ use ui::screens::diff::panel::{
     SIDE_PANEL_BREAKPOINT, SplitScreen, Tab, with_side_tabs,
 };
 use ui::screens::home::{HomeMain, OpenFolder};
+#[cfg(target_os = "windows")]
+use ui::screens::home::{SetupWindowsSandboxElevated, SetupWindowsSandboxUnelevated};
 use ui::screens::recovery;
 use ui::screens::settings::archived_chats::ArchivedChats as ArchivedSettings;
 use ui::screens::settings::personalization::WritingPreference;
@@ -897,6 +899,8 @@ impl Root {
                 project: state.project_root.as_deref().map(project_name),
                 location: Default::default(),
                 beacon: false,
+                windows_sandbox_setup_needed: false,
+                windows_sandbox_setup_pending: false,
                 headline: None,
             }),
             thread_composer,
@@ -1268,6 +1272,8 @@ impl Root {
                 this.ready = this.login.is_none();
                 hotkey::policy::refresh(this, cx);
                 connections::startup(this, cx);
+                #[cfg(target_os = "windows")]
+                this.check_windows_sandbox_readiness(cx);
                 this.select_route(cx);
                 this.sync(window, cx);
                 this.maybe_onboard(window, cx);
@@ -6493,6 +6499,12 @@ impl Root {
             return;
         }
         self.settings_integration_event(&event, cx);
+        #[cfg(target_os = "windows")]
+        if let Event::Notification { method, params } = &event
+            && method == "windowsSandbox/setupCompleted"
+        {
+            self.windows_sandbox_setup_completed(params, cx);
+        }
         if let Some(login) = &self.login {
             login.update(cx, |login, cx| login.apply(&event, cx));
             return;
@@ -8129,6 +8141,16 @@ impl Render for Root {
                 self.archived_settings
                     .as_ref()
                     .and_then(|page| page.read(cx).confirmation()),
+            );
+        #[cfg(target_os = "windows")]
+        let root = root
+            .on_action(cx.listener(|this, _: &SetupWindowsSandboxElevated, _, cx| {
+                this.start_windows_sandbox_setup("elevated", cx)
+            }))
+            .on_action(
+                cx.listener(|this, _: &SetupWindowsSandboxUnelevated, _, cx| {
+                    this.start_windows_sandbox_setup("unelevated", cx)
+                }),
             );
         let root = routes::actions(archived_chats::actions(root, cx), cx);
         let root = hotkey::actions(root, self.popout.is_some(), cx);
