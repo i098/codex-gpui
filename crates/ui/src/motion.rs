@@ -207,6 +207,18 @@ impl HoverFade {
         duration: Duration,
         ease: fn(f32) -> f32,
     ) {
+        self.transition_after(target, now, Duration::ZERO, duration, ease);
+    }
+
+    /// [`HoverFade::transition`] after a CSS `transition-delay`: the value holds until then.
+    pub fn transition_after(
+        &mut self,
+        target: f32,
+        now: Duration,
+        delay: Duration,
+        duration: Duration,
+        ease: fn(f32) -> f32,
+    ) {
         if target == self.target {
             return;
         }
@@ -219,7 +231,7 @@ impl HoverFade {
         };
         self.from = value;
         self.target = target;
-        self.started = now;
+        self.started = now + delay;
         self.duration = duration;
         self.ease = ease;
     }

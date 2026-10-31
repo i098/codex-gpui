@@ -1,7 +1,13 @@
 use crate::*;
 use ui::screens::diff::panel::{FileTreeRequest, GitBlame};
 
-fn available(root: &Root, cx: &App) -> bool {
+/// A Files tab read: text lines, or an image or PDF's bytes and MIME type.
+enum FileRead {
+    Text(String),
+    Media(std::sync::Arc<Vec<u8>>, Option<String>),
+}
+
+pub(crate) fn available(root: &Root, cx: &App) -> bool {
     super::active_thread(root, cx).is_some()
         && match root.side {
             Some(SidePanel::Changes) => root.diff.is_some(),
@@ -92,14 +98,31 @@ impl Root {
         let revision = file.read(cx).file_revision();
         self.load_blame(&file, cx);
         let host = self.host.clone();
-        let request = host::Request::post("read-file", Some(json!({ "cwd": cwd, "path": path })));
+        let media = FileView::previews(&path);
+        let endpoint = if media {
+            "read-file-binary"
+        } else {
+            "read-file"
+        };
+        let request = host::Request::post(endpoint, Some(json!({ "cwd": cwd, "path": path })));
         let read = cx.background_spawn(async move {
             host.fetch(&request)
                 .and_then(|response| host::json_body(&response))
                 .and_then(|body| {
+                    if media {
+                        let bytes = body["contentsBase64"]
+                            .as_str()
+                            .context("file response has no binary contents")?;
+                        let bytes = base64::Engine::decode(
+                            &base64::engine::general_purpose::STANDARD,
+                            bytes,
+                        )?;
+                        let mime = body["mimeType"].as_str().map(str::to_owned);
+                        return Ok(FileRead::Media(std::sync::Arc::new(bytes), mime));
+                    }
                     body["contents"]
                         .as_str()
-                        .map(str::to_owned)
+                        .map(|text| FileRead::Text(text.to_owned()))
                         .context("file response has no text contents")
                 })
                 .map_err(|error| format!("{error:#}"))
@@ -109,8 +132,12 @@ impl Root {
             let contents = read.await;
             let failed = contents.is_err();
             if target
-                .update(cx, |file, cx| {
-                    file.set_file_contents(revision, contents, cx)
+                .update(cx, |file, cx| match contents {
+                    Ok(FileRead::Media(bytes, mime)) => {
+                        file.set_file_media(revision, Ok((bytes, mime)), cx)
+                    }
+                    Ok(FileRead::Text(text)) => file.set_file_contents(revision, Ok(text), cx),
+                    Err(error) => file.set_file_contents(revision, Err(error), cx),
                 })
                 .ok()
                 != Some(true)
