@@ -8,7 +8,9 @@ use objc2::{
     rc::{Allocated, Retained},
     runtime::{AnyClass, AnyObject},
 };
-use objc2_foundation::{MainThreadMarker, NSBundle, NSError, NSObject, NSObjectProtocol, NSString};
+use objc2_foundation::{
+    MainThreadMarker, NSBundle, NSError, NSObject, NSObjectProtocol, NSProcessInfo, NSString,
+};
 use std::cell::{Cell, RefCell};
 use ui::updater::Status;
 
@@ -16,6 +18,8 @@ const SKIP: isize = 0;
 const INSTALL: isize = 1;
 const DISMISS: isize = 2;
 const STAGE_INSTALLING: isize = 2;
+/// Sparkle checks in the background on this interval when automatic checks are on.
+const CHECK_INTERVAL_SECONDS: f64 = 3600.;
 
 struct Installation {
     reply: RcBlock<dyn Fn(isize)>,
@@ -31,6 +35,7 @@ struct DriverState {
     expected: Cell<u64>,
     received: Cell<u64>,
     status: Cell<Status>,
+    feed: RefCell<Option<Retained<NSString>>>,
 }
 
 impl DriverState {
@@ -81,6 +86,11 @@ define_class!(
         #[unsafe(method(updater:mayPerformUpdateCheck:error:))]
         fn may_check(&self, _: &AnyObject, _: isize, _: *mut *mut NSError) -> bool {
             !self.ivars().blocked.get()
+        }
+
+        #[unsafe(method_id(feedURLStringForUpdater:))]
+        fn feed_url(&self, _: &AnyObject) -> Option<Retained<NSString>> {
+            self.ivars().feed.borrow().clone()
         }
 
         #[unsafe(method(showUpdatePermissionRequest:reply:))]
@@ -234,6 +244,7 @@ impl UserDriver {
 pub(super) struct Backend {
     updater: Retained<AnyObject>,
     driver: Retained<UserDriver>,
+    base: String,
 }
 
 impl Backend {
@@ -266,6 +277,36 @@ impl Backend {
     pub(super) fn set_managed(&self, managed: bool) {
         self.driver.ivars().set_managed(managed);
     }
+
+    /// The original checks once in the background at start when automatic checks are on.
+    pub(super) fn check_at_start(&self) {
+        if self.automatic() {
+            unsafe {
+                let _: () = msg_send![&*self.updater, checkForUpdatesInBackground];
+            }
+        }
+    }
+
+    /// Sets the appcast URL that Sparkle reads on its next check.
+    pub(super) fn configure(&self, beta: bool, plan: &str, installation: &str) {
+        let version = bundle_string("CFBundleShortVersionString")
+            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_owned());
+        let os = NSProcessInfo::processInfo().operatingSystemVersion();
+        let os = format!(
+            "{}.{}.{}",
+            os.majorVersion, os.minorVersion, os.patchVersion
+        );
+        let feed = super::feed_url(
+            &self.base,
+            installation,
+            std::env::consts::ARCH,
+            &version,
+            beta,
+            &os,
+            plan,
+        );
+        *self.driver.ivars().feed.borrow_mut() = feed.as_deref().map(NSString::from_str);
+    }
 }
 
 fn bundle_string(key: &str) -> Option<String> {
@@ -277,7 +318,11 @@ fn bundle_string(key: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-pub(super) fn start() -> Result<Option<(Backend, Receiver<Status>)>> {
+pub(super) fn start(
+    beta: bool,
+    plan: &str,
+    installation: &str,
+) -> Result<Option<(Backend, Receiver<Status>)>> {
     let (Some(feed), Some(key)) = (bundle_string("SUFeedURL"), bundle_string("SUPublicEDKey"))
     else {
         return Ok(None);
@@ -307,6 +352,7 @@ pub(super) fn start() -> Result<Option<(Backend, Receiver<Status>)>> {
         expected: Cell::new(0),
         received: Cell::new(0),
         status: Cell::new(Status::Idle),
+        feed: RefCell::new(None),
     });
     let driver: Retained<UserDriver> = unsafe { msg_send![super(driver), init] };
     let class = AnyClass::get(c"SPUUpdater").context("Sparkle updater is unavailable")?;
@@ -314,8 +360,17 @@ pub(super) fn start() -> Result<Option<(Backend, Receiver<Status>)>> {
         let allocated: Allocated<AnyObject> = msg_send![class, alloc];
         msg_send![allocated, initWithHostBundle: &*bundle, applicationBundle: &*bundle, userDriver: &*driver, delegate: &*driver]
     };
+    let backend = Backend {
+        updater,
+        driver,
+        base: feed,
+    };
+    backend.configure(beta, plan, installation);
+    unsafe {
+        let _: () = msg_send![&*backend.updater, setUpdateCheckInterval: CHECK_INTERVAL_SECONDS];
+    }
     let mut error: Option<Retained<NSError>> = None;
-    let started: bool = unsafe { msg_send![&*updater, startUpdater: &mut error] };
+    let started: bool = unsafe { msg_send![&*backend.updater, startUpdater: &mut error] };
     ensure!(
         started,
         "{}",
@@ -323,7 +378,7 @@ pub(super) fn start() -> Result<Option<(Backend, Receiver<Status>)>> {
             .map(|error| error.localizedDescription().to_string())
             .unwrap_or_else(|| "Sparkle could not start".into())
     );
-    Ok(Some((Backend { updater, driver }, receiver)))
+    Ok(Some((backend, receiver)))
 }
 
 #[cfg(test)]
@@ -351,6 +406,7 @@ mod tests {
             expected: Cell::new(0),
             received: Cell::new(0),
             status: Cell::new(Status::Ready),
+            feed: RefCell::new(None),
         };
 
         state.set_managed(true);
