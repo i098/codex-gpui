@@ -1116,6 +1116,7 @@ mod tests {
                     default_reasoning_effort: "medium".into(),
                     supported_reasoning_efforts: Vec::new(),
                     is_default: true,
+                    input_modalities: None,
                 });
                 page.base_revision
                     .update(cx, |input, cx| input.set_text("base", cx));
