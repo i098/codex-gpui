@@ -1,4 +1,4 @@
-use crate::host::{Identity, Request};
+use crate::host::{Host, Identity, Request};
 use crate::*;
 use gpui::Div;
 use ui::OpenGpts;
@@ -55,32 +55,31 @@ fn read(host: &dyn Host, identity: &Identity, url: &str) -> Result<Value, String
         .map_err(|error| error.to_string())
 }
 
+fn lists(host: &dyn Host, identity: &Identity) -> Result<gpts::Lists, String> {
+    Ok(gpts::Lists {
+        mine: gpts::mine(&read(host, identity, "/gizmos/bootstrap?limit=20")?)?,
+        catalog: gpts::catalog(&read(host, identity, "/public-api/gizmos/discovery")?)?,
+    })
+}
+
+fn ready<T>(result: Result<T, String>) -> Load<T> {
+    result.map_or_else(Load::Failed, Load::Ready)
+}
+
 /// The list's two reads, else the GPT's `/gizmos/{id}`.
 fn load(host: &dyn Host, view: &View) -> View {
-    let Some(identity) = host.identity() else {
-        let failed = || Load::Failed("not signed in".to_owned());
-        return match view {
-            View::List(_) => View::List(failed()),
-            View::Gpt(id, _) => View::Gpt(id.clone(), failed()),
-        };
-    };
-    let ready = |result: Result<_, String>| result.map_or_else(Load::Failed, Load::Ready);
+    let identity = host.identity().ok_or_else(|| "not signed in".to_owned());
     match view {
-        View::List(_) => View::List(ready((|| {
-            Ok(gpts::Lists {
-                mine: gpts::mine(&read(host, &identity, "/gizmos/bootstrap?limit=20")?)?,
-                catalog: gpts::catalog(&read(host, &identity, "/public-api/gizmos/discovery")?)?,
-            })
-        })())),
+        View::List(_) => View::List(ready(identity.and_then(|identity| lists(host, &identity)))),
         View::Gpt(id, _) => {
             let url = format!(
                 "/gizmos/{}",
                 url::form_urlencoded::byte_serialize(id.as_bytes()).collect::<String>()
             );
-            View::Gpt(
-                id.clone(),
-                ready(read(host, &identity, &url).and_then(|body| gpts::detail(&body))),
-            )
+            let gpt = identity.and_then(|identity| {
+                read(host, &identity, &url).and_then(|body| gpts::detail(&body))
+            });
+            View::Gpt(id.clone(), ready(gpt))
         }
     }
 }
