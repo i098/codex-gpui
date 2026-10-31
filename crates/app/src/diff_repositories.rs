@@ -10,6 +10,9 @@ pub(crate) fn load(
     cwd: String,
     cx: &mut App,
 ) {
+    if panel.read(cx).last_turn_only() {
+        return;
+    }
     let target = panel.downgrade();
     let request = cx
         .background_executor()

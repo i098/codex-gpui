@@ -795,7 +795,9 @@ impl DiffPanel {
                 .child(text(title, 16., 24., 500., t.text))
                 .child(text(description, 13., 20., 400., t.text_tertiary))
                 .when(
-                    self.source == DiffSource::LastTurn && self.last_turn_state.is_some(),
+                    self.source == DiffSource::LastTurn
+                        && self.last_turn_state.is_some()
+                        && !self.last_turn_only,
                     |d| {
                         d.child(
                             div()
