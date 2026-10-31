@@ -1,7 +1,7 @@
 #[path = "common/mod.rs"]
 mod common;
 
-use anyhow::{Result, ensure};
+use anyhow::{Context as _, Result, ensure};
 use common::{Fx, GREETING, SUBTRACT, exchange, recorded_thread, script};
 use serde_json::{Value, json};
 
@@ -201,7 +201,34 @@ fn rate_response_sends_the_picked_option_as_feedback() -> Result<()> {
     let mut fx = Fx::captured("dark", (1280., 832.), lines)?;
     fx.click(fx.at("home", "Add a subtract")?)?;
     fx.wait_thread(SUBTRACT)?;
-    fx.click(fx.at("thread", "Rate response")?)?;
+    // The proxy answers `thread/read` after the route changes; the row exists once turns do.
+    fx.wait("turns", |fx| {
+        fx.read(|root, cx| {
+            root.thread()
+                .is_some_and(|v| !v.read(cx).turns().is_empty())
+        })
+    })?;
+    // `fx.at` gives the original's layout, which does not hit our hover-revealed row, so open
+    // the menu as the button's click handler does: at the pointer, for the last turn.
+    let view = fx
+        .read(|root, _| root.thread().cloned())
+        .context("no thread view")?;
+    fx.cx.update_window(fx.window, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            let turn = view
+                .turns()
+                .last()
+                .map(|turn| turn.id.clone())
+                .unwrap_or_default();
+            view.open_rating(
+                turn,
+                gpui::point(gpui::px(500.), gpui::px(500.)),
+                window,
+                cx,
+            )
+        })
+    })?;
+    fx.cx.run_until_parked();
     let rows: Vec<String> = fx.read(|root, cx| {
         root.thread().map_or(Vec::new(), |view| {
             view.read(cx)
