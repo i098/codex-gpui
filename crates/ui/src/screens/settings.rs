@@ -263,6 +263,8 @@ pub mod workspace {
     }
 }
 
+#[path = "settings/appshots.rs"]
+mod appshots;
 #[path = "settings/notifications.rs"]
 pub mod notifications;
 #[path = "settings_subtrees.rs"]
@@ -1448,6 +1450,7 @@ impl Render for SettingsPane {
         let groups = match section {
             "General" => self.general(&t, window, cx),
             "Notifications" => self.notifications_page(&t, window, cx),
+            "Appshots" => self.appshots_page(&t, window, cx),
             _ => Vec::new(),
         };
         let card_border = over(t.border, t.background_panel);
