@@ -54,6 +54,7 @@ mod account_page;
 pub mod backend;
 mod languages;
 pub mod personalization;
+pub mod security_settings;
 pub mod trusted_contact;
 pub mod workspace {
     use crate::{SANS, composer::popover, focus, icon::icon, text};
@@ -1431,6 +1432,10 @@ impl Render for SettingsPane {
         }
         if section == "Archived chats" {
             return archived_chats::render(window, cx);
+        }
+        // Only `codex://settings/security` opens it: the original keeps it out of the nav.
+        if section == "Security" {
+            return security_settings::render(window, cx);
         }
         if section == "Trusted contact" {
             return trusted_contact::render(window, cx);
