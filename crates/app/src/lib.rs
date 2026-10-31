@@ -453,6 +453,9 @@ pub struct Root {
     /// Side panel tabs of the thread route in opening order, and the selected one (always in
     /// `tabs`); kept across threads like the original's panel.
     tabs: Vec<SidePanel>,
+    /// Closed side tabs, the last closed last, for `Reopen closed tab` (`⌘⇧T`); a browser
+    /// tab keeps its page's address.
+    closed_tabs: Vec<(SidePanel, Option<url::Url>)>,
     side: Option<SidePanel>,
     workspace_layout: WorkspaceLayout,
     /// The route's own shell.
@@ -915,6 +918,7 @@ impl Root {
             split: None,
             terminal: terminal::Terminals::default(),
             tabs: Vec::new(),
+            closed_tabs: Vec::new(),
             side: None,
             workspace_layout: WorkspaceLayout::Split,
             page: None,
@@ -3133,10 +3137,20 @@ impl Root {
     /// the previous, is selected; closing the last tab closes the panel. A side chat's tab
     /// discards its conversation.
     fn close_side(&mut self, side: SidePanel, window: &mut Window, cx: &mut Context<Self>) {
+        let open = self.tabs.contains(&side);
         match side {
             SidePanel::SideChat(key) => self.discard_side_chat(key, cx),
-            // Dropping the tab removes its page from the window.
-            SidePanel::Browser(key) => self.browser_tabs.retain(|(k, _)| *k != key),
+            SidePanel::Browser(key) => {
+                let url = self
+                    .browser_tab(key)
+                    .and_then(|tab| tab.read(cx).url().cloned());
+                if open {
+                    self.closed_tabs.push((side, url));
+                }
+                // Dropping the tab removes its page from the window.
+                self.browser_tabs.retain(|(k, _)| *k != key);
+            }
+            _ if open => self.closed_tabs.push((side, None)),
             _ => {}
         }
         let Some(ix) = self.tabs.iter().position(|t| *t == side) else {
@@ -3147,6 +3161,24 @@ impl Root {
             self.side = self.tabs.get(ix).or(self.tabs.last()).copied();
         }
         self.sync(window, cx);
+    }
+
+    /// `Reopen closed tab` (`⌘⇧T`): the last closed tab whose content the thread still has
+    /// (a browser tab reloads its address), selected.
+    fn reopen_closed_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        while let Some((side, url)) = self.closed_tabs.pop() {
+            if self.tabs.contains(&side) {
+                continue;
+            }
+            if let SidePanel::Browser(_) = side {
+                self.open_browser_tab(url, window, cx);
+                return;
+            }
+            self.set_side(side, window, cx);
+            if self.tabs.contains(&side) {
+                return;
+            }
+        }
     }
 
     /// `⌘T` (`url` none, the address bar focused) and a link's `Open in` ▸ `New tab`: a new
