@@ -88,7 +88,9 @@ pub(crate) fn actions(root: Div, owner: &crate::Root, cx: &mut Context<crate::Ro
         if let Some((key, _)) = this.browser_tabs.last() {
             let side = crate::SidePanel::Browser(*key);
             if this.side_visible(side) {
-                this.side = None;
+                this.tabs
+                    .retain(|tab| !matches!(tab, crate::SidePanel::Browser(_)));
+                this.side = this.tabs.last().copied();
                 this.sync(window, cx);
             } else {
                 this.set_side(side, window, cx);
