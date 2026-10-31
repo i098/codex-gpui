@@ -226,6 +226,12 @@ pub trait Host: Send + Sync {
         None
     }
 
+    /// The signed-in ChatGPT account user (`chatgpt_account_user_id`, else `account_user_id`);
+    /// `None` without a ChatGPT sign-in. Call this off the UI thread for a cloud host.
+    fn account_user_id(&self) -> Option<String> {
+        None
+    }
+
     /// The managed worktrees of `thread_id` that the original's archive queue has already
     /// detached or is still archiving for the signed-in owner (`getPendingArchives`); none
     /// without a ChatGPT sign-in. Call this off the UI thread.
@@ -276,6 +282,10 @@ impl Host for RemoteThreadHost {
 
     fn identity(&self) -> Option<Identity> {
         self.0.identity()
+    }
+
+    fn account_user_id(&self) -> Option<String> {
+        self.0.account_user_id()
     }
 
     fn invalidate_identity(&self) {
@@ -2540,6 +2550,10 @@ impl Host for CloudHost {
             device_id: self.device_id.clone(),
         })
     }
+
+    fn account_user_id(&self) -> Option<String> {
+        claims(&self.credentials(false).ok()?.token).account_user_id
+    }
 }
 
 fn event_stream(
@@ -2651,6 +2665,8 @@ struct Claims {
     principal_account: Option<String>,
     /// `chatgpt_user_id`, else `user_id`.
     user_id: Option<String>,
+    /// `chatgpt_account_user_id`, else `account_user_id`.
+    account_user_id: Option<String>,
     fedramp: bool,
 }
 
@@ -2667,6 +2683,7 @@ fn claims(token: &str) -> Claims {
         account_id: text("chatgpt_account_id"),
         principal_account: text("chatgpt_account_id").or_else(|| text("account_id")),
         user_id: text("chatgpt_user_id").or_else(|| text("user_id")),
+        account_user_id: text("chatgpt_account_user_id").or_else(|| text("account_user_id")),
         fedramp: auth["chatgpt_account_is_fedramp"] == true,
     }
 }

@@ -488,7 +488,7 @@ fn history_row(item: &Value) -> (String, String) {
 }
 
 /// `occurred_at` (RFC 3339, or Unix seconds or milliseconds) as a local `Oct 5, 2026`.
-fn date(value: &Value) -> Option<String> {
+pub(super) fn date(value: &Value) -> Option<String> {
     let time = match value {
         Value::String(s) => DateTime::parse_from_rfc3339(s).ok()?.with_timezone(&Local),
         Value::Number(n) => {

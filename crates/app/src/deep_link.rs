@@ -165,6 +165,7 @@ fn settings(sub: &[&str], params: &Params<'_>) -> Link {
         ["browser-use"] => Link::Settings(Some("Browser")),
         ["trusted-contact"] => Link::Settings(Some("Trusted contact")),
         ["ads-controls"] => Link::Settings(Some("Ads controls")),
+        ["passwords"] => Link::Settings(Some("Passwords")),
         _ => Link::Settings(None),
     }
 }

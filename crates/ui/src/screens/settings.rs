@@ -54,6 +54,7 @@ mod account_page;
 mod ads_controls;
 pub mod backend;
 mod languages;
+mod passwords;
 pub mod personalization;
 pub mod trusted_contact;
 pub mod workspace {
@@ -1436,6 +1437,9 @@ impl Render for SettingsPane {
         }
         if section == "Ads controls" {
             return ads_controls::render(window, cx);
+        }
+        if section == "Passwords" {
+            return passwords::render(window, cx);
         }
         if section == "Trusted contact" {
             return trusted_contact::render(window, cx);

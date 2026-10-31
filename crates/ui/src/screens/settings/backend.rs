@@ -11,6 +11,9 @@ pub struct Call {
     pub method: &'static str,
     pub path: String,
     pub body: Option<Value>,
+    /// A body field the app sets to the signed-in account user id (the original's
+    /// `expected_account_user_id`); the call fails without a ChatGPT sign-in.
+    pub account_user_field: Option<&'static str>,
 }
 
 impl Call {
@@ -19,7 +22,13 @@ impl Call {
             method,
             path: path.into(),
             body,
+            account_user_field: None,
         }
+    }
+
+    pub fn with_account_user(mut self, field: &'static str) -> Self {
+        self.account_user_field = Some(field);
+        self
     }
 }
 
