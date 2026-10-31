@@ -263,6 +263,8 @@ pub mod workspace {
     }
 }
 
+#[path = "settings/debug.rs"]
+pub mod debug;
 #[path = "settings/notifications.rs"]
 pub mod notifications;
 #[path = "settings_subtrees.rs"]
@@ -395,6 +397,7 @@ const NAV: &[(&str, &[(&str, &str)])] = &[
             ("Keyboard shortcuts", "settings-keyboard-shortcuts"),
             ("Usage & billing", "settings-usage"),
             ("Data controls", "settings-data-controls"),
+            ("Debug", "settings-configuration"),
         ],
     ),
     (
@@ -518,7 +521,14 @@ impl SettingsPage {
             Some((store, key)) => self.values[store][key] = value.clone(),
             None => self.values[path] = value.clone(),
         }
-        cx.emit(SettingChanged { path, value });
+        cx.emit(SettingChanged {
+            path,
+            value: value.clone(),
+        });
+        if let Some(on) = value.as_bool() {
+            let reduce_motion = self.choice("host.reduced-motion-preference", "") == "on";
+            debug::apply(path, on, reduce_motion, cx);
+        }
         cx.notify();
     }
 
@@ -799,6 +809,7 @@ impl Render for SettingsNav {
                     "Cloud computer" => false,
                     "Codex Cloud" => cloud_access.cloud,
                     "Legacy Codex Cloud" => cloud_access.legacy,
+                    "Debug" => debug::allowed(),
                     _ => true,
                 })
                 .map(|&(label, glyph)| self.item(label, glyph, label == section, &t, window, cx))
@@ -1448,6 +1459,7 @@ impl Render for SettingsPane {
         let groups = match section {
             "General" => self.general(&t, window, cx),
             "Notifications" => self.notifications_page(&t, window, cx),
+            "Debug" => self.debug_page(&t, window, cx),
             _ => Vec::new(),
         };
         let card_border = over(t.border, t.background_panel);
