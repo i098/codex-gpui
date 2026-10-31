@@ -35,6 +35,8 @@ struct Word {
     size: f32,
     weight: f32,
     family: Option<&'static str>,
+    /// Copied whole in place of any selected part (KaTeX's copy-tex: math copies its TeX).
+    copy: Option<SharedString>,
 }
 
 enum Entry {
@@ -154,7 +156,7 @@ impl Transcript {
                             out.extend(std::iter::repeat_n('\n', pending));
                         }
                         pending = 0;
-                        out.push_str(&word.text[s..e]);
+                        out.push_str(word.copy.as_deref().unwrap_or(&word.text[s..e]));
                     }
                 }
             }
@@ -213,6 +215,18 @@ pub(super) fn highlight(
     family: Option<&'static str>,
     pad: f32,
 ) -> gpui::Canvas<Option<(usize, usize)>> {
+    highlight_copy(text, None, size, weight, family, pad)
+}
+
+/// [`highlight`] for a word that copies as `copy` when any of it is selected.
+pub(super) fn highlight_copy(
+    text: SharedString,
+    copy: Option<SharedString>,
+    size: f32,
+    weight: f32,
+    family: Option<&'static str>,
+    pad: f32,
+) -> gpui::Canvas<Option<(usize, usize)>> {
     canvas(
         move |bounds, _, cx| {
             let transcripts = &mut Selection::get(cx).transcripts;
@@ -225,6 +239,7 @@ pub(super) fn highlight(
                 size,
                 weight,
                 family,
+                copy,
             }));
             Some((at, entries.len() - 1))
         },
@@ -376,6 +391,7 @@ mod tests {
             size: 14.,
             weight: 430.,
             family: None,
+            copy: None,
         };
         let sel = Transcript {
             carets: 0,
