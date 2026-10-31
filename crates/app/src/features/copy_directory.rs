@@ -80,12 +80,7 @@ impl Root {
         log_err(task, cx);
     }
 
-    fn copy_conversation_path(
-        &mut self,
-        id: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn copy_conversation_path(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         let bridge = self.bridge.clone();
         let task = cx.spawn_in(window, async move |this, cx| -> Result<()> {
             let result = bridge

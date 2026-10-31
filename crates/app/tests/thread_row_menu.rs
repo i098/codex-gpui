@@ -228,10 +228,7 @@ fn copy_conversation_path_uses_the_thread_read_path() -> Result<()> {
             line["msg"]["result"]["thread"]["path"] = PATH.into();
         }
     }
-    let mut read = exchange(
-        "thread/read",
-        json!({"thread": recorded_thread(GREETING)?}),
-    );
+    let mut read = exchange("thread/read", json!({"thread": recorded_thread(GREETING)?}));
     read[0]["msg"]["params"] = json!({"threadId": GREETING, "includeTurns": false});
     read[1]["msg"]["result"]["thread"]["path"] = PATH.into();
     lines.extend(read);
