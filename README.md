@@ -9,7 +9,7 @@ The app drives the real `codex app-server` over stdio, the same JSON-RPC transpo
 
 ## Requirements
 
-- macOS on Apple silicon (arm64).
+- macOS on Apple silicon (arm64) and Intel (x86_64); the release zip is universal.
 - Rust 1.98.1. `rust-toolchain.toml` pins it, so `rustup` installs it on the first build.
 - A `codex` binary. The app uses the first one that it finds:
   1. `$CODEX_BIN`.
@@ -89,6 +89,10 @@ Like the original app, the views keep 1,000 scrollback rows plus the visible scr
 Output follows the bottom only while the view is already at the bottom.
 The recorded PTY stream in `fixtures/sessions/terminal-shell.jsonl` comes from the bundled macOS app-server.
 Run `cargo test -p app --test terminal_states` on macOS for native terminal checks.
+
+Command details include agent input from `item/commandExecution/terminalInteraction`.
+The input remains in the output after the command completes.
+Run `cargo test -p ui --lib command_completion_keeps_streamed_output_and_failure` to check retention.
 
 
 ## Recommended skills
@@ -567,7 +571,15 @@ The framework path refers to the Mac build host and must contain the verified Sp
 Set `CODEX_GPUI_SIGN_IDENTITY` to the release signing identity.
 The script rejects an update feed with an ad-hoc signing identity.
 The script embeds the feed and Ed25519 public key, then signs Sparkle's helpers, framework, and app with that identity.
+The release workflow does this when the repository secrets `SPARKLE_ED_PRIVATE_KEY`, `SPARKLE_ED_PUBLIC_KEY` and `CODEX_GPUI_SIGN_IDENTITY` exist.
+It then runs `tools/appcast.py` and uploads `appcast.xml` and `<zip>.sha256` beside the zip; run `python3 tools/test_appcast.py` for its checks.
+General settings has an `Automatically check for updates` switch that sets Sparkle's `automaticallyChecksForUpdates`.
 The release owner must supply the production feed and complete signing and notarization before distribution.
+
+Until a production feed exists, `tools/install-mac.sh` updates an installed copy in place.
+Run it on the Mac through `tools/mac.sh -l install "nice -n 19 bash tools/install-mac.sh $(git rev-parse HEAD)"`.
+It builds the normal bundle, replaces `~/Applications/Codex GPUI.app`, and keeps the old bundle as `~/Applications/.Codex GPUI.previous.app`.
+It never opens, activates, or closes the app; a running copy changes at its next launch.
 
 Sparkle checks, downloads, verifies, installs, and relaunches the app.
 The rail shows download progress and enables `Update available` only when installation is ready.
@@ -593,8 +605,8 @@ Every crate under `crates/` except `skia-hairline-sys` inherits it.
 `tools/version.sh` prints it.
 `tools/version.sh 0.2.0` bumps it in `Cargo.toml` and `Cargo.lock` and adds a `## [0.2.0]` section under `## [Unreleased]` in `CHANGELOG.md`.
 Merge the bump, then push the tag `v0.2.0`.
-The `release` workflow builds the bundle on a GitHub macOS arm64 runner and stops if the tag is not `v` plus the workspace version.
-It publishes `codex-gpui-0.2.0-macos-arm64.zip` as a GitHub release with that version's changelog section as notes.
+The `release` workflow builds the bundle on a GitHub macOS arm64 runner, cross-compiling the Intel slice into one universal binary, and stops if the tag is not `v` plus the workspace version.
+It publishes `codex-gpui-0.2.0-macos-universal.zip` as a GitHub release with that version's changelog section as notes.
 About Codex shows the version.
 `Codex` > `Check for Updates…` uses the signed update feed when the bundle has one and organization policy permits updates.
 

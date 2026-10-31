@@ -1,16 +1,22 @@
 name: release
-# A `vMAJOR.MINOR.PATCH` tag on a merged `tools/version.sh` bump publishes the macOS arm64 zip.
+# A `vMAJOR.MINOR.PATCH` tag on a merged `tools/version.sh` bump publishes the universal (arm64 + x86_64) macOS zip.
 on:
   push:
     tags: ['v*']
 permissions:
   contents: write
 jobs:
-  macos-arm64:
+  macos:
     runs-on: macos-14
     env:
+      CODEX_GPUI_UNIVERSAL: "1"
       CARGO_TARGET_DIR: ${{ github.workspace }}/target
       GH_TOKEN: ${{ github.token }}
+      # With SPARKLE_ED_PRIVATE_KEY, SPARKLE_ED_PUBLIC_KEY and CODEX_GPUI_SIGN_IDENTITY set, the zip
+      # embeds the update feed and the release also publishes appcast.xml; without them it ships no feed.
+      SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+      SPARKLE_ED_PUBLIC_KEY: ${{ secrets.SPARKLE_ED_PUBLIC_KEY }}
+      CODEX_GPUI_SIGN_IDENTITY: ${{ secrets.CODEX_GPUI_SIGN_IDENTITY }}
     steps:
       - uses: actions/checkout@v4
       - name: Check the tag matches the workspace version
@@ -18,11 +24,66 @@ jobs:
           version=$(tools/version.sh)
           [[ $GITHUB_REF_NAME == "v$version" ]] || { echo "tag $GITHUB_REF_NAME is not v$version" >&2; exit 1; }
           echo "VERSION=$version" >>"$GITHUB_ENV"
+      - name: Add the Intel Rust target
+        run: rustup target add x86_64-apple-darwin aarch64-apple-darwin
+      - name: Fetch Sparkle
+        if: ${{ env.SPARKLE_ED_PRIVATE_KEY != '' }}
+        run: |
+          curl -fsSL -o /tmp/sparkle.tar.xz https://github.com/sparkle-project/Sparkle/releases/download/2.9.0/Sparkle-2.9.0.tar.xz
+          echo '01e0f0ebf6614061ea816d414de50f937d64ffa6822ad572243031ca3676fe19  /tmp/sparkle.tar.xz' | shasum -a 256 -c -
+          mkdir /tmp/sparkle && tar -xf /tmp/sparkle.tar.xz -C /tmp/sparkle
+          echo "CODEX_GPUI_SPARKLE_FRAMEWORK=/tmp/sparkle/Sparkle.framework" >>"$GITHUB_ENV"
+          echo "CODEX_GPUI_UPDATE_PUBLIC_KEY=$SPARKLE_ED_PUBLIC_KEY" >>"$GITHUB_ENV"
+          echo "CODEX_GPUI_UPDATE_FEED=https://github.com/$GITHUB_REPOSITORY/releases/latest/download/appcast.xml" >>"$GITHUB_ENV"
       - name: Build, sign and verify the bundle
         run: bash tools/bundle.sh --assemble /tmp/codex-gpui-release normal "$GITHUB_SHA" archive
       - name: Publish the release
         run: |
-          zip=codex-gpui-$VERSION-macos-arm64.zip
+          zip=codex-gpui-$VERSION-macos-universal.zip
           mv /tmp/codex-gpui-release/bundle.zip "$zip"
+          assets=("$zip")
+          if [[ -n $SPARKLE_ED_PRIVATE_KEY ]]; then
+              python3 tools/appcast.py "$zip" --tag "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --sign-update /tmp/sparkle/bin/sign_update --out feed
+              (cd feed && ln -s "../$zip" . && shasum -a 256 -c "$zip.sha256" && rm "$zip")
+              assets+=(feed/appcast.xml "feed/$zip.sha256")
+          fi
           awk -v heading="## [$VERSION]" 'index($0, heading) == 1 { found = 1; next } found && /^## \[/ { exit } found' CHANGELOG.md >notes.md
-          gh release create "$GITHUB_REF_NAME" "$zip" --title "Codex GPUI $VERSION" --notes-file notes.md --verify-tag
+          gh release create "$GITHUB_REF_NAME" "${assets[@]}" --title "Codex GPUI $VERSION" --notes-file notes.md --verify-tag
+  linux-x86_64:
+    # The AppImage self-updates from latest.json, which is signed with an Ed25519 key.
+    # Without the three secrets below the release ships no Linux build.
+    needs: macos
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CODEX_GPUI_UPDATE_PRIVATE_KEY: ${{ secrets.CODEX_GPUI_UPDATE_PRIVATE_KEY }}
+      CODEX_GPUI_UPDATE_PUBLIC_KEY: ${{ secrets.CODEX_GPUI_UPDATE_PUBLIC_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the signing key is configured
+        id: gate
+        run: '[[ -n $CODEX_GPUI_UPDATE_PRIVATE_KEY && -n $CODEX_GPUI_UPDATE_PUBLIC_KEY ]] && echo run=1 >>"$GITHUB_OUTPUT" || echo "no update signing key; skipping the Linux build"'
+      - if: steps.gate.outputs.run
+        run: >
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends
+          build-essential pkg-config clang cmake libssl-dev libzstd-dev
+          libfontconfig-dev libfreetype-dev libasound2-dev libxkbcommon-dev
+          libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
+          libvulkan-dev libfuse2t64 xxd
+      - if: steps.gate.outputs.run
+        uses: dtolnay/rust-toolchain@stable
+      - if: steps.gate.outputs.run
+        name: Build the AppImage and sign the manifest
+        env:
+          CODEX_GPUI_UPDATE_FEED: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+        run: |
+          version=$(tools/version.sh)
+          [[ $GITHUB_REF_NAME == "v$version" ]] || { echo "tag $GITHUB_REF_NAME is not v$version" >&2; exit 1; }
+          cargo build --release -p app --bin codex-gpui
+          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          sudo mv appimagetool /usr/local/bin/appimagetool
+          appimage=codex-gpui-$version-x86_64.AppImage
+          tools/appimage.sh target/release/codex-gpui "$appimage"
+          tools/linux-manifest.sh "$appimage" "$version" "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$appimage" latest.json
+          gh release upload "$GITHUB_REF_NAME" "$appimage" latest.json

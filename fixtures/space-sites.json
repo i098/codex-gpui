@@ -5,7 +5,8 @@
       "appgen-sites-query-8ee1359247fa.js /websites",
       "appgen-sites-query-8ee1359247fa.js /websites/shared (query O)",
       "app-initial-6350d04672d0.js /files/library/nodes (entry_surface=spaces)",
-      "app-initial-6350d04672d0.js Mwr /pages/{page_id}"
+      "app-initial-6350d04672d0.js Mwr /pages/{page_id}",
+      "app-initial-6350d04672d0.js QR /spaces/v2 (space-list-v2, next_cursor pages)"
     ],
     "schema": "Response fields follow the original zod schemas A and j (items, cursor).",
     "origin": "Owned synthetic data derived from the contract. No live account call. Placeholders: user@example.com, Demo User, example.invalid.",
@@ -211,6 +212,74 @@
                 ]
               ],
               "body": "{\"metadata\":{\"page_id\":\"page-00000000000000000000000001\",\"title\":\"Demo space\",\"document_type\":\"page\",\"has_children\":false},\"actor_displays\":[],\"block_attributions\":[]}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/spaces/v2?limit=100",
+          "method": "GET",
+          "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "originator": "Codex Desktop"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"items\":[{\"id\":\"space-0000000000000000000000001\",\"name\":\"Demo space\",\"backing_type\":\"native\",\"root_page_id\":\"page-00000000000000000000000001\",\"updated_at\":\"2026-10-15T22:00:00Z\"}],\"next_cursor\":\"cursor/2\"}"
+            }
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "transport": "http",
+        "request": {
+          "url": "/spaces/v2?cursor=cursor%2F2&limit=100",
+          "method": "GET",
+          "headers": {
+            "OAI-Language": "en-US",
+            "X-OpenAI-Attach-Auth": "1",
+            "X-OpenAI-Attach-Desktop-Surface": "1",
+            "X-OpenAI-Attach-Integrity-State": "1",
+            "originator": "Codex Desktop"
+          },
+          "returnErrorResponse": true
+        }
+      },
+      "response": {
+        "value": {
+          "response": {
+            "__response": {
+              "status": 200,
+              "statusText": "",
+              "headers": [
+                [
+                  "content-type",
+                  "application/json"
+                ]
+              ],
+              "body": "{\"items\":[{\"id\":\"space-0000000000000000000000002\",\"name\":\"Launch notes\",\"backing_type\":\"native\",\"root_page_id\":\"page-00000000000000000000000002\",\"updated_at\":\"2026-10-15T23:30:00Z\"}],\"next_cursor\":null}"
             }
           }
         }
