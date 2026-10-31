@@ -31,11 +31,11 @@ fn normalize(extension: &str) -> String {
     extension.trim().trim_start_matches('.').to_lowercase()
 }
 
-/// The file viewers in an `mcpServerStatus/list` page: tools with a `ui://` resource and at
-/// least one `file` entrypoint that lists extensions.
+/// The file viewers in the `{"data": [server]}` that `mcpServerStatus/list` paging gives:
+/// tools with a `ui://` resource and at least one `file` entrypoint that lists extensions.
 pub fn viewers(servers: &Value) -> Vec<Viewer> {
     let mut viewers = Vec::new();
-    for server in servers.as_array().into_iter().flatten() {
+    for server in servers["data"].as_array().into_iter().flatten() {
         let Some(name) = server["name"].as_str() else {
             continue;
         };
@@ -102,7 +102,7 @@ impl SettingsPane {
         let integrations = self.page.read(cx).integrations.read(cx);
         let (servers, failed) = match &integrations.servers {
             Load::Ready(servers) => {
-                let failed = servers
+                let failed = servers["data"]
                     .as_array()
                     .is_some_and(|all| all.iter().any(|s| !s["toolsError"].is_null()));
                 ((**servers).clone(), failed)
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn only_ui_tools_with_file_entrypoints_are_viewers() {
-        let servers = json!([server(
+        let servers = json!({"data": [server(
             "docs",
             json!({
                 "open": {"name": "open", "title": "Docs", "_meta": {
@@ -245,7 +245,7 @@ mod tests {
                     "openai/ui": {"entrypoints": [{"type": "global"}]}
                 }}
             })
-        )]);
+        )]});
         assert_eq!(
             viewers(&servers),
             vec![Viewer {
