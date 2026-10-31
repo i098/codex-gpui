@@ -2650,12 +2650,28 @@ const COMMANDS: &[Command] = &[
         "",
         false,
     ),
+    (
+        "Skills",
+        None,
+        "Force reload skills",
+        "Refresh the skill catalog for the current context",
+        "",
+        false,
+    ),
     ("Configure", None, "Theme", "Codex", "", false),
     (
         "Configure",
         Some("settings-import"),
         "Import from other AI apps",
         "Import from other AI apps",
+        "",
+        false,
+    ),
+    (
+        "Configure",
+        None,
+        "Codex Micro setup",
+        "Open Codex Micro setup",
         "",
         false,
     ),
@@ -4534,6 +4550,59 @@ mod tests {
                     .iter()
                     .any(|item| item.label.as_ref() == "Import")
             );
+        });
+    }
+
+    #[gpui::test]
+    fn configure_and_skills_commands_are_available_in_the_menu_and_shortcuts(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let commands = crate::screens::settings::keyboard_shortcuts::commands();
+        for id in [
+            "forceReloadSkills",
+            "openSkills",
+            "mcpSettings",
+            "personalitySettings",
+            "importExternalAgent",
+            "feedback",
+            "codexMicroSettings",
+        ] {
+            assert_eq!(
+                commands.iter().filter(|command| command.id == id).count(),
+                1,
+                "{id} must have one shortcut catalog row"
+            );
+            assert!(
+                commands
+                    .iter()
+                    .any(|command| command.id == id && command.visible),
+                "{id} must be visible in keyboard shortcuts"
+            );
+        }
+
+        cx.update(|cx| {
+            let menu = cx.new(|cx| CommandMenu::with_threads(&[], &[], false, "", cx));
+            let labels = menu
+                .read(cx)
+                .groups
+                .iter()
+                .flat_map(|(_, rows)| rows)
+                .map(|item| item.label.to_string())
+                .collect::<Vec<_>>();
+            for label in [
+                "Force reload skills",
+                "Go to skills",
+                "MCP servers",
+                "Personalization",
+                "Import from other AI apps",
+                "Feedback",
+                "Codex Micro setup",
+            ] {
+                assert!(
+                    labels.iter().any(|candidate| candidate == label),
+                    "{label}"
+                );
+            }
         });
     }
 }
