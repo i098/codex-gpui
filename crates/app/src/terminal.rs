@@ -331,7 +331,7 @@ impl Root {
         }
         config["environment"]["environment"]["actions"]
             .as_array()?
-            .get(number - 1)?
+            .get(number - 1)
             .filter(|action| {
                 action["platform"].as_str().is_none_or(|platform| {
                     platform
