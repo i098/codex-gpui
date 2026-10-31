@@ -263,10 +263,10 @@ pub mod workspace {
     }
 }
 
-#[path = "settings/file_type_handlers.rs"]
-pub mod file_type_handlers;
 #[path = "settings/appshots.rs"]
 mod appshots;
+#[path = "settings/file_type_handlers.rs"]
+pub mod file_type_handlers;
 #[path = "settings/notifications.rs"]
 pub mod notifications;
 #[path = "settings_subtrees.rs"]
