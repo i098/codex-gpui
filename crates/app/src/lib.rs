@@ -469,6 +469,7 @@ pub struct Root {
     sites_page: Option<Entity<ui::screens::sites::Page>>,
     maps_page: Option<Entity<ui::screens::maps::Page>>,
     images_page: Option<Entity<ui::screens::images::Page>>,
+    gpts_page: Option<Entity<ui::screens::gpts::Page>>,
     cloud_modal: Option<Entity<ui::screens::cloud::CloudModal>>,
     /// The Settings nav item the next Settings route opens at (`General` when `None`).
     settings_section: Option<&'static str>,
@@ -929,6 +930,7 @@ impl Root {
             sites_page: None,
             maps_page: None,
             images_page: None,
+            gpts_page: None,
             cloud_modal: None,
             settings_section: None,
             settings_page: None,
@@ -1374,6 +1376,10 @@ impl Root {
         self.images_page.as_ref()
     }
 
+    pub fn gpts_page(&self) -> Option<&Entity<ui::screens::gpts::Page>> {
+        self.gpts_page.as_ref()
+    }
+
     /// The Home route's main panel.
     pub fn home(&self) -> &Entity<HomeMain> {
         &self.home
@@ -1518,6 +1524,9 @@ impl Root {
         }
         if let Some(page) = self.images_page.clone() {
             self.load_images(page, cx);
+        }
+        if let Some(page) = self.gpts_page.clone() {
+            self.load_gpts(page, cx);
         }
         cx.notify();
     }

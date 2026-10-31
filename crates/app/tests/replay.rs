@@ -447,6 +447,8 @@ fn check_state(fx: &mut Fx, state: &Value) -> Result<()> {
                 Route::Sites => "sites".to_owned(),
                 Route::Maps => "maps".to_owned(),
                 Route::Images => "images".to_owned(),
+                Route::Gpts(None) => "gpts".to_owned(),
+                Route::Gpts(Some(id)) => format!("g/{id}"),
             }
             .into(),
             "selectedRail" => fx.shell(|s| s.selected_rail).into(),
