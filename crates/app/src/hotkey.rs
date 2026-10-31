@@ -1488,20 +1488,35 @@ mod tests {
         })
     }
 
+    /// Text goes in through the composer's input handler, as the platform's text input does;
+    /// named keys (`enter`, `backspace`) are keystrokes.
     fn type_keys(popup: &mut Popup, keys: &[&str]) -> Result<()> {
         for key in keys {
-            let keystroke = if key.chars().count() == 1 {
-                gpui::Keystroke {
-                    key: (*key).into(),
-                    ..Default::default()
-                }
-            } else {
-                gpui::Keystroke::parse(key)?
-            };
+            let composer = popup
+                .popup_root
+                .read_with(&popup.app, |root, cx| root.composer(cx));
+            let text = (key.chars().count() == 1).then_some(*key);
+            let keystroke = gpui::Keystroke::parse(key)?;
+            if text.is_none() {
+                popup
+                    .app
+                    .update_window(popup.popup.into(), |_, window, _| window.refresh())?;
+                popup.app.run_until_parked();
+                let focused = popup
+                    .app
+                    .update_window(popup.popup.into(), |_, window, cx| {
+                        composer.read(cx).focus_handle(cx).is_focused(window)
+                    })?;
+                anyhow::ensure!(focused, "`{key}` would miss the unfocused composer");
+            }
             popup
                 .app
-                .update_window(popup.popup.into(), |_, window, cx| {
-                    window.dispatch_keystroke(keystroke, cx)
+                .update_window(popup.popup.into(), |_, window, cx| match text {
+                    Some(text) => composer.update(cx, |composer, cx| {
+                        use gpui::EntityInputHandler as _;
+                        composer.replace_text_in_range(None, text, window, cx)
+                    }),
+                    None => _ = window.dispatch_keystroke(keystroke, cx),
                 })?;
             popup.app.run_until_parked();
         }
@@ -1525,14 +1540,6 @@ mod tests {
             .popup_root
             .read_with(&popup.app, |root, _| root.threads.first().cloned())
             .context("The recorded session lists no chats")?;
-        let composer = popup
-            .popup_root
-            .read_with(&popup.app, |root, cx| root.composer(cx));
-        popup
-            .app
-            .update_window(popup.popup.into(), |_, window, cx| {
-                composer.read(cx).focus_handle(cx).focus(window, cx)
-            })?;
         type_keys(&mut popup, &["/"])?;
         if let Some(directory) = std::env::var_os("CGX_HOTKEY_EVIDENCE") {
             std::fs::create_dir_all(&directory)?;
@@ -1567,6 +1574,9 @@ mod tests {
             .popup_root
             .read_with(&popup.app, |root, _| root.state.route.clone());
         anyhow::ensure!(route == Route::Thread(recent.id.clone()), "{route:?}");
+        // The recording has no `thread/read` for this chat, so its composer is not drawn and
+        // takes no keystrokes: text goes in through the input handler, and the picked `/new`
+        // row is emitted as Enter on it would.
         type_keys(&mut popup, &["/"])?;
         let rows = slash_rows(&popup);
         anyhow::ensure!(
@@ -1577,7 +1587,7 @@ mod tests {
             !rows.iter().any(|row| row.starts_with("New chat")),
             "{rows:?}"
         );
-        type_keys(&mut popup, &["r", "e", "s", "u", "m", "e", "enter"])?;
+        type_keys(&mut popup, &["r", "e", "s", "u", "m", "e"])?;
         // The chat on screen is not offered again.
         let rows = slash_rows(&popup);
         anyhow::ensure!(!rows.iter().any(|row| row.starts_with(&title)), "{rows:?}");
@@ -1597,7 +1607,11 @@ mod tests {
             rows.first().is_some_and(|row| row.starts_with("New\n")),
             "{rows:?}"
         );
-        type_keys(&mut popup, &["enter"])?;
+        popup.popup_root.update(&mut popup.app, |root, cx| {
+            root.composer(cx)
+                .update(cx, |_, cx| cx.emit(ui::composer::SlashCommand::HotkeyNew))
+        });
+        popup.app.run_until_parked();
         let route = popup
             .popup_root
             .read_with(&popup.app, |root, _| root.state.route.clone());
