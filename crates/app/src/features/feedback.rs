@@ -31,13 +31,23 @@ impl Focusable for Feedback {
 
 impl Feedback {
     fn new(cx: &mut Context<Self>) -> Self {
+        let crash = crate::crash::take();
+        let reason = match &crash {
+            Some(report) => Composer::form_field(
+                "Describe the problem",
+                &format!("The app crashed on the last launch:\n{report}"),
+                true,
+                cx,
+            ),
+            None => Composer::form_field("Describe the problem", "", true, cx),
+        };
         Self {
-            reason: cx.new(|cx| Composer::form_field("Describe the problem", "", true, cx)),
+            reason: cx.new(|_| reason),
             path: cx.new(|cx| {
                 Composer::form_field("Absolute ZIP path on the app-server host", "", false, cx)
             }),
             controls: std::array::from_fn(|_| cx.focus_handle()),
-            include_logs: false,
+            include_logs: crash.is_some(),
             pending: false,
             error: None,
         }

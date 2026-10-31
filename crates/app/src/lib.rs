@@ -14,6 +14,7 @@ mod automation_notifications;
 pub mod computer_use_requests;
 pub mod connections;
 mod context_status;
+pub(crate) mod crash;
 pub mod deep_link;
 mod destinations;
 pub mod dictation;
