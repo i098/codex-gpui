@@ -218,3 +218,39 @@ fn row_menu_items_run_on_the_row_thread() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn copy_conversation_path_uses_the_thread_read_path() -> Result<()> {
+    const PATH: &str = "/tmp/codex/sessions/rollout.jsonl";
+    let mut lines = script(None, |_| {})?;
+    for line in &mut lines {
+        if line["dir"] == "recv" && line["msg"]["result"]["thread"]["id"] == GREETING {
+            line["msg"]["result"]["thread"]["path"] = PATH.into();
+        }
+    }
+    let mut read = exchange(
+        "thread/read",
+        json!({"thread": recorded_thread(GREETING)?}),
+    );
+    read[0]["msg"]["params"] = json!({"threadId": GREETING, "includeTurns": false});
+    read[1]["msg"]["result"]["thread"]["path"] = PATH.into();
+    lines.extend(read);
+
+    let mut fx = Fx::scripted(lines)?;
+    fx.keys("cmd-1")?;
+    fx.wait_thread(GREETING)?;
+    fx.keys("cmd-alt-shift-c")?;
+    fx.wait("Copied conversation path", |fx| {
+        fx.read(|root, cx| root.toasts(cx))
+            .iter()
+            .any(|toast| toast == "Copied conversation path")
+    })?;
+    ensure!(clipboard(&mut fx).as_deref() == Some(PATH));
+    ensure!(
+        sent(&mut fx, "thread/read")?
+            .iter()
+            .any(|params| params["threadId"] == GREETING && params["includeTurns"] == false),
+        "copy path did not read the thread without turns"
+    );
+    Ok(())
+}
