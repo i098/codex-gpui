@@ -8,6 +8,7 @@ Each release has a section below; `tools/version.sh MAJOR.MINOR.PATCH` adds it.
 
 ### Added
 - Open the failed recording from a dictation failure notice in Settings ▸ Voice, with `Retry`, `Download audio` and `Show all recordings`, and show a voice or dictation shortcut capture failure under its row, with the original's conflict and fallback messages.
+- Add Settings ▸ `Appshots` on macOS: press both ⌘, ⌥ or ⇧ keys to capture the frontmost window into the current chat, a new chat or a visible Mini, with destination and sound settings.
 - Show an image or PDF in the Files tab as a preview (PDFs with page arrows), not as text lines that fail with `Could not open file`.
 - Open the latest plan from Thread summary ▸ `Plan` in an editable `Plan` side panel tab that saves to `$CODEX_HOME/plans/<thread>/<plan item>/PLAN.md`.
 - Open the Maps page from the Explore menu: the ChatGPT backend `/local/home` prompt suggestions and map, with loading, error with Try again, and empty states.
