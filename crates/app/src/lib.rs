@@ -3755,6 +3755,14 @@ impl Root {
                     composer.update(cx, |composer, cx| composer.confirm_full_access(cx));
                     window.focus(&composer.focus_handle(cx), cx);
                 }
+                DialogOutcome::FullAccessAvailable => {
+                    window.focus(&focus, cx);
+                    if let Some(page) = this.settings_page.clone() {
+                        page.update(cx, |page, cx| {
+                            page.set(settings::FULL_ACCESS_SHOWN, Value::Bool(true), cx)
+                        });
+                    }
+                }
                 DialogOutcome::CloseWindow { do_not_ask_again } => {
                     if *do_not_ask_again {
                         this.state.confirm_before_close = ConfirmBeforeClose::Never;
@@ -6206,7 +6214,12 @@ impl Root {
                 if key == context_status::SETTING {
                     self.sync_context_usage(cx);
                 }
-                if matches!(key, "reduced-motion-preference" | "dock-icon-preference") {
+                if matches!(
+                    key,
+                    "reduced-motion-preference"
+                        | "dock-icon-preference"
+                        | "show-full-access-in-composer"
+                ) {
                     host_settings::apply(cx);
                 }
                 self.git_setting_saved(key, cx);

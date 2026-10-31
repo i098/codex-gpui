@@ -614,6 +614,7 @@ impl Composer {
     /// `How should ChatGPT actions be approved?`
     pub(super) fn permissions_menu(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
         let hover = t.menu_item_hover;
+        let presets = permission_presets(cx);
         popover(t, 320., |d| {
             d.child(div().px(px(8.)).py(px(6.)).child(text(
                 "How should ChatGPT actions be approved?",
@@ -623,7 +624,7 @@ impl Composer {
                 t.text_tertiary,
             )))
             .children(
-                Permission::ALL
+                presets
                     .iter()
                     .map(|p| (p, p.description()))
                     .chain(

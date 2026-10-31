@@ -138,6 +138,8 @@ pub enum Kind {
     Shortcuts,
     CloseWindow,
     FullAccess,
+    /// `Make Full Access available?` before Settings shows Full access in the composer.
+    FullAccessAvailable,
     LogOut,
     RevertChanges,
     ModelAnnouncement,
@@ -167,6 +169,7 @@ pub enum Kind {
 pub enum Outcome {
     Dismiss,
     FullAccess,
+    FullAccessAvailable,
     LogOut,
     DiscardInstructions,
     DeleteMemories,
@@ -1668,8 +1671,8 @@ impl Dialog {
             (Kind::RevertChanges, 0) => "Cancel",
             (Kind::RevertChanges, 1) => "Confirm",
             (Kind::RevertChanges, _) => "Don't ask again",
-            (Kind::FullAccess, 0) => "Cancel",
-            (Kind::FullAccess, _) => "Confirm",
+            (Kind::FullAccess | Kind::FullAccessAvailable, 0) => "Cancel",
+            (Kind::FullAccess | Kind::FullAccessAvailable, _) => "Confirm",
             (Kind::DeleteTask, 0) => "Cancel",
             (Kind::DeleteTask, _) => "Delete scheduled task",
             (Kind::LogOut, 0) => "Cancel",
@@ -1868,6 +1871,7 @@ impl Dialog {
             }
             (Kind::ScheduleTask, 0 | 4) => {}
             (Kind::FullAccess, 1) => cx.emit(Outcome::FullAccess),
+            (Kind::FullAccessAvailable, 1) => cx.emit(Outcome::FullAccessAvailable),
             (Kind::LogOut, 1) => cx.emit(Outcome::LogOut),
             (Kind::ArchiveSection, 1) => cx.emit(Outcome::ArchiveSection(self.thread.clone())),
             (Kind::DiscardInstructions, 1) => cx.emit(Outcome::DiscardInstructions),
@@ -2099,6 +2103,7 @@ impl Dialog {
                 let order: Vec<usize> = match self.kind {
                     Kind::Shortcuts
                     | Kind::FullAccess
+                    | Kind::FullAccessAvailable
                     | Kind::LogOut
                     | Kind::ArchiveSection
                     | Kind::DiscardInstructions => vec![0, 1],
@@ -2151,6 +2156,7 @@ impl Dialog {
                     self.kind,
                     Kind::CloseWindow
                         | Kind::FullAccess
+                        | Kind::FullAccessAvailable
                         | Kind::LogOut
                         | Kind::ArchiveSection
                         | Kind::DeleteTask
@@ -2210,6 +2216,7 @@ impl Dialog {
                 matches!(
                     self.kind,
                     Kind::FullAccess
+                        | Kind::FullAccessAvailable
                         | Kind::RevertChanges
                         | Kind::ArchiveSection
                         | Kind::DiscardInstructions
@@ -2269,6 +2276,7 @@ impl Dialog {
                 if matches!(
                     self.kind,
                     Kind::FullAccess
+                        | Kind::FullAccessAvailable
                         | Kind::RevertChanges
                         | Kind::ArchiveSection
                         | Kind::DiscardInstructions
@@ -2667,6 +2675,47 @@ impl Dialog {
                     .justify_center()
                     .child(icon("close", 16., t.text_tertiary))
                     .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
+            )
+    }
+
+    fn full_access_available_content(&self, t: &Theme, cx: &Context<Self>) -> Div {
+        div()
+            .relative()
+            .size_full()
+            .p(px(20.))
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .child(text("Make Full Access available?", 20., 28., 600., t.text))
+            .child(
+                text(
+                    "When selected, ChatGPT can access the internet and read and edit files without asking for approval — including potentially destructive commands",
+                    14.,
+                    20.,
+                    430.,
+                    t.text_secondary,
+                )
+                .whitespace_normal(),
+            )
+            .child(
+                text(
+                    "Turning this on adds Full Access to the permissions menu. It does not turn Full Access on.",
+                    14.,
+                    20.,
+                    430.,
+                    t.text_secondary,
+                )
+                .whitespace_normal(),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .bottom(px(20.))
+                    .right(px(20.))
+                    .flex()
+                    .gap(px(12.))
+                    .child(self.button(0, "Cancel", 88., t, cx))
+                    .child(self.button(1, "Confirm", 115., t, cx)),
             )
     }
 
@@ -4072,6 +4121,7 @@ impl Render for Dialog {
             Kind::Rename | Kind::NewSection | Kind::EditSection => (420., 185.),
             Kind::ArchiveSection => (420., 181.),
             Kind::FullAccess => (520., 420.),
+            Kind::FullAccessAvailable => (420., 205.),
             Kind::LogOut => (380., 145. + if self.email.is_some() { 25. } else { 0. }),
             Kind::DiscardInstructions => (420., 180.),
             Kind::DeleteMemories => (420., 137.),
@@ -4108,6 +4158,7 @@ impl Render for Dialog {
             Kind::Rename | Kind::NewSection | Kind::EditSection => self.rename_content(t, cx),
             Kind::ArchiveSection => self.archive_section_content(t, cx),
             Kind::FullAccess => self.full_access_content(t, cx),
+            Kind::FullAccessAvailable => self.full_access_available_content(t, cx),
             Kind::LogOut => self.logout_content(t, cx),
             Kind::DiscardInstructions => self.discard_instructions_content(t, cx),
             Kind::DeleteMemories => self.memory_delete_content(t, cx),
@@ -4165,6 +4216,7 @@ impl Render for Dialog {
                             .clone()
                             .into(),
                         Kind::FullAccess => "Turn on Full Access?".into(),
+                        Kind::FullAccessAvailable => "Make Full Access available?".into(),
                         Kind::LogOut => "Log out?".into(),
                         Kind::DiscardInstructions => "Discard changes?".into(),
                         Kind::DeleteMemories => "Delete all Codex memories?".into(),
