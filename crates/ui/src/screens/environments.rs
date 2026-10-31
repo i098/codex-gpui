@@ -40,6 +40,9 @@ pub struct State {
     pub error: Option<String>,
     pub conflict: bool,
     pub saved_generation: usize,
+    /// A `local-environments/create` route waiting to open its editor: workspace root and
+    /// optional config path.
+    pub create: Option<(String, Option<String>)>,
     pub dispatch: Option<Dispatch>,
 }
 impl Global for State {}
@@ -1015,13 +1018,31 @@ impl Environments {
 }
 
 impl Render for Environments {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
         let state = cx.try_global::<State>().cloned().unwrap_or_default();
         if state.saved_generation != self.generation {
             self.generation = state.saved_generation;
             self.editing = false;
             self.fields = None;
+        }
+        if let Some((root, path)) = state.create.clone() {
+            let path = path.or_else(|| match &state.projects {
+                Load::Ready(projects) => projects
+                    .iter()
+                    .find(|project| project["root"] == root.as_str())
+                    .and_then(|project| project["nextConfigPath"].as_str())
+                    .map(str::to_owned),
+                _ => None,
+            });
+            if path.is_some() || !matches!(state.projects, Load::Loading) {
+                cx.defer_in(window, move |this, window, cx| {
+                    cx.update_global::<State, _>(|state, _| state.create = None);
+                    if let Some(path) = path {
+                        this.open(root, path, true, window, cx);
+                    }
+                });
+            }
         }
         if self.root.is_none() {
             return self.projects(&state, &t, cx);

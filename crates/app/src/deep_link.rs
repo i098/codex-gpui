@@ -30,6 +30,11 @@ pub enum Link {
         project_path: Option<String>,
         enabled: bool,
     },
+    /// `codex://settings/local-environments/create`: opens the environment editor.
+    CreateEnvironment {
+        workspace_root: String,
+        config_path: Option<String>,
+    },
     Scheduled,
     Automation {
         id: String,
@@ -163,6 +168,13 @@ fn settings(sub: &[&str], params: &Params<'_>) -> Link {
         }
         ["connections", "ssh"] => Link::Connections(Tab::Ssh),
         ["browser-use"] => Link::Settings(Some("Browser")),
+        ["local-environments", "create"] => match params.value("workspaceRoot") {
+            Some(workspace_root) if workspace_root.starts_with('/') => Link::CreateEnvironment {
+                workspace_root,
+                config_path: params.value("configPath"),
+            },
+            _ => Link::Settings(Some("Worktrees")),
+        },
         _ => Link::Settings(None),
     }
 }
@@ -293,6 +305,16 @@ impl Root {
             }
             Link::Settings(None) => self.navigate(Route::Settings, window, cx),
             Link::Settings(Some(label)) => self.open_settings_section(label, window, cx),
+            Link::CreateEnvironment {
+                workspace_root,
+                config_path,
+            } => {
+                let create = (workspace_root.clone(), config_path.clone());
+                cx.update_global::<ui::screens::environments::State, _>(|state, _| {
+                    state.create = Some(create)
+                });
+                self.open_settings_section("Worktrees", window, cx);
+            }
             Link::Connections(tab) => self.open_connections(*tab, window, cx),
             Link::AddSsh {
                 name,
@@ -446,6 +468,23 @@ mod tests {
     }
 
     #[test]
+    fn local_environment_create_requires_an_absolute_workspace_root() {
+        assert_eq!(
+            parse(
+                "codex://settings/local-environments/create?workspaceRoot=%2Fwork&configPath=%2Fwork%2F.codex%2Fenvironments%2Fa.toml"
+            ),
+            Some(Link::CreateEnvironment {
+                workspace_root: "/work".into(),
+                config_path: Some("/work/.codex/environments/a.toml".into()),
+            })
+        );
+        assert_eq!(
+            parse("codex://settings/local-environments/create?workspaceRoot=work"),
+            Some(Link::Settings(Some("Worktrees")))
+        );
+    }
+
+    #[test]
     fn matches_original_native_acceptance() {
         let cases: serde_json::Value =
             serde_json::from_str(include_str!("../tests/fixtures/deep_links.json")).unwrap();
@@ -497,7 +536,12 @@ mod tests {
                     assert_eq!(url, expected["fullRedirectUrl"].as_str().unwrap())
                 }
                 Some(Link::Scheduled) => assert_eq!(expected["kind"], "automations", "{value}"),
-                Some(Link::Settings(_) | Link::Connections(_) | Link::AddSsh { .. }) => {
+                Some(
+                    Link::Settings(_)
+                    | Link::Connections(_)
+                    | Link::AddSsh { .. }
+                    | Link::CreateEnvironment { .. },
+                ) => {
                     assert_eq!(expected["kind"], "settings", "{value}")
                 }
                 Some(Link::Launch) | None => {}
