@@ -666,37 +666,107 @@ mod tests {
     #[test]
     fn new_window_action_opens_an_additional_home_window() {
         use gpui::HeadlessAppContext;
+        use serde_json::Value;
         use std::sync::Arc;
-        use std::time::Duration;
+        use std::time::{Duration, Instant};
 
+        // Replay the recorded app-server transcript so the primary window becomes
+        // ready; only a ready Root renders the main tree that binds NewWindow.
+        let recorded = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/readback.jsonl"),
+        )
+        .expect("read the recorded app-server transcript");
+        let lines = recorded
+            .lines()
+            .map(serde_json::from_str::<Value>)
+            .collect::<serde_json::Result<Vec<_>>>()
+            .expect("parse the recorded app-server transcript");
+        let requested = lines
+            .iter()
+            .filter(|line| {
+                line["dir"] == "send"
+                    && matches!(
+                        line["msg"]["method"].as_str(),
+                        Some(
+                            "account/read"
+                                | "thread/list"
+                                | "model/list"
+                                | "config/read"
+                                | "skills/list"
+                        )
+                    )
+            })
+            .map(|line| line["msg"]["id"].clone())
+            .collect::<Vec<_>>();
+        let repeated = lines
+            .iter()
+            .filter(|line| !line["msg"]["id"].is_null() && requested.contains(&line["msg"]["id"]))
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let recording = tempfile::NamedTempFile::new().expect("create the replay file");
+        std::fs::write(
+            recording.path(),
+            format!("{recorded}\n{repeated}\n{repeated}\n"),
+        )
+        .expect("write the replay file");
+        let (bridge, events) =
+            bridge::Bridge::replay(recording.path()).expect("build the replayed app-server bridge");
+
+        // Linux checks need layout and input without a GPU; macOS captures render headlessly.
+        #[cfg(not(target_os = "linux"))]
+        let renderer = gpui_platform::current_headless_renderer;
+        #[cfg(target_os = "linux")]
+        let renderer = || Ok(None);
         let mut cx = HeadlessAppContext::with_platform(
             textsys::text_system(),
             Arc::new(theme::Assets),
-            gpui_platform::current_headless_renderer,
+            renderer,
         );
-        let window = cx
-            .update(|cx| {
-                // Mirror main.rs startup: fonts, theme global, then app::init.
-                theme::load_fonts(cx);
-                cx.set_global(theme::Theme::dark());
-                crate::init(cx);
-                open_primary(
-                    State::default(),
-                    std::env::temp_dir().to_string_lossy().into_owned(),
-                    cx,
-                )
+        // Mirror main.rs startup: fonts, theme global, then app::init.
+        cx.update(|cx| {
+            theme::load_fonts(cx);
+            cx.set_global(theme::Theme::dark());
+            crate::init(cx);
+        });
+        cx.allow_parking();
+        let handle = cx
+            .open_window(gpui::size(gpui::px(900.), gpui::px(700.)), |window, cx| {
+                cx.new(|cx| {
+                    Root::new(
+                        State {
+                            theme: crate::ThemeSetting::Dark,
+                            ..Default::default()
+                        },
+                        bridge,
+                        events,
+                        std::env::temp_dir().to_string_lossy().into_owned(),
+                        window,
+                        cx,
+                    )
+                })
             })
-            .expect("open primary window");
-        let window: gpui::AnyWindowHandle = window.into();
-        cx.test_window(window).simulate_scale_factor_change(1.);
-        // Root registers its action handlers during render: draw one frame first.
-        cx.advance_clock(Duration::ZERO);
+            .expect("open the primary window");
+        let window: gpui::AnyWindowHandle = handle.into();
+        let root = cx.read_window(&handle, |root, _| root).expect("read Root");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !root.read_with(&cx, |root, _| root.ready()) {
+            assert!(
+                Instant::now() < deadline,
+                "the primary window never became ready"
+            );
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // Draw the ready main tree so its NewWindow handler is in the dispatch tree.
+        cx.advance_clock(Duration::from_millis(16));
         cx.test_window(window)
             .simulate_frame_request(gpui::RequestFrameOptions {
                 require_presentation: true,
                 ..Default::default()
             });
         cx.run_until_parked();
+
         cx.update_window(window, |_, window, cx| {
             window.dispatch_action(Box::new(NewWindow), cx);
         })
