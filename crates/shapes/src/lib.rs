@@ -140,6 +140,24 @@ pub enum Corner {
     Squircle,
 }
 
+/// GPU debug switches (Settings > Debug): each turns one compositing effect off for the
+/// session, to isolate it as a tearing trigger. Refresh the windows after a change.
+pub mod debug {
+    use std::sync::atomic::AtomicBool;
+
+    /// Skips [`super::top_fade`] and [`super::x_fade`] masks.
+    pub static NO_SCROLL_FADE: AtomicBool = AtomicBool::new(false);
+    /// Paints [`super::backdrop_blur`] boxes as plain decorations.
+    pub static NO_BACKDROP_BLUR: AtomicBool = AtomicBool::new(false);
+    /// Draws [`super::Corner::Squircle`] as [`super::Corner::Round`].
+    pub static NO_SQUIRCLES: AtomicBool = AtomicBool::new(false);
+}
+
+#[cfg(target_os = "macos")]
+fn debug_off(switch: &std::sync::atomic::AtomicBool) -> bool {
+    switch.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// One `box-shadow` layer, CSS px.
 #[derive(Clone, Copy, Debug)]
 pub struct Shadow {
@@ -560,7 +578,11 @@ pub fn backdrop_blur(blur: Pixels, fill: Fill, gap_row: bool, d: Decoration) -> 
         |_, _, _| {},
         move |bounds, (), window, _| {
             #[cfg(target_os = "macos")]
-            backdrop::paint(blur, fill, gap_row, &d, bounds, window);
+            if debug_off(&debug::NO_BACKDROP_BLUR) {
+                quads(&d, bounds, window);
+            } else {
+                backdrop::paint(blur, fill, gap_row, &d, bounds, window);
+            }
             #[cfg(not(target_os = "macos"))]
             {
                 let _ = (blur, fill, gap_row);
@@ -580,7 +602,9 @@ pub fn top_fade(fade: Pixels) -> impl IntoElement {
         |_, _, _| {},
         move |bounds, (), window, cx| {
             #[cfg(target_os = "macos")]
-            mask::paint_top_fade(fade, bounds, window, cx);
+            if !debug_off(&debug::NO_SCROLL_FADE) {
+                mask::paint_top_fade(fade, bounds, window, cx);
+            }
             #[cfg(not(target_os = "macos"))]
             let _ = (fade, bounds, window, cx);
         },
@@ -619,7 +643,7 @@ pub fn x_fade_with(edges: impl FnOnce() -> (Pixels, Pixels) + 'static) -> impl I
         |_, _, _| {},
         move |bounds, (), window, cx| {
             #[cfg(target_os = "macos")]
-            {
+            if !debug_off(&debug::NO_SCROLL_FADE) {
                 let (left, right) = edges();
                 mask::paint_x_fade(left, right, bounds, window, cx);
             }
