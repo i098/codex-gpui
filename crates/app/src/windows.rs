@@ -675,9 +675,10 @@ mod tests {
         );
         let window = cx
             .update(|cx| {
-                // The real app sets the theme global during bootstrap, before any window.
+                // Mirror main.rs startup: fonts, theme global, then app::init.
                 theme::load_fonts(cx);
                 cx.set_global(theme::Theme::dark());
+                crate::init(cx);
                 open_primary(
                     State::default(),
                     std::env::temp_dir().to_string_lossy().into_owned(),
