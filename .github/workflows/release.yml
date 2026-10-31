@@ -52,7 +52,7 @@ jobs:
   linux-x86_64:
     # The AppImage self-updates from latest.json, which is signed with an Ed25519 key.
     # Without the three secrets below the release ships no Linux build.
-    needs: macos-arm64
+    needs: macos
     runs-on: ubuntu-24.04
     env:
       GH_TOKEN: ${{ github.token }}
