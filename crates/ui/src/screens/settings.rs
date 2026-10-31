@@ -276,6 +276,7 @@ pub mod storage;
 #[path = "settings_integrations.rs"]
 pub mod integrations;
 
+pub mod account;
 #[path = "archived_chats.rs"]
 pub mod archived_chats;
 
@@ -1428,6 +1429,9 @@ impl Render for SettingsPane {
         }
         if section == "Archived chats" {
             return archived_chats::render(window, cx);
+        }
+        if section == "Account" {
+            return account::render(window, cx);
         }
         if section == "Worktrees" {
             return worktrees::render(self.page.clone(), window, cx);
