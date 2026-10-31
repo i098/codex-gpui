@@ -1949,12 +1949,15 @@ mod tests {
             );
             settings.update(cx, |settings, cx| {
                 settings.set("approval_policy", json!("on-request"), cx);
-                settings.set(browser_settings::FULL_CDP, json!("allow"), cx);
+                settings.set(super::browser_settings::FULL_CDP, json!("allow"), cx);
             });
             let page = settings.read(cx);
             assert_eq!(page.choice("approval_policy", "never"), "on-request");
             assert_eq!(page.values["desktop"]["x"], 1);
-            assert_eq!(page.choice(browser_settings::FULL_CDP, "deny"), "allow");
+            assert_eq!(
+                page.choice(super::browser_settings::FULL_CDP, "deny"),
+                "allow"
+            );
             assert_eq!(
                 page.values["browser_use"]["default_origin_policy"]["full_cdp_access"],
                 "allow"
