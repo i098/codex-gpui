@@ -13,11 +13,11 @@ use bridge::{
 };
 use gpui::{
     Action, AnimationExt as _, AnyView, App, AppContext as _, ClickEvent, ClipboardItem, Context,
-    Corners, CursorStyle, Div, Entity, FocusHandle, Font, FontFeatures, FontWeight, Global,
-    HighlightStyle, Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Render, ScrollHandle, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black, combine_highlights,
-    deferred, div, font, prelude::FluentBuilder as _, px, rgb,
+    Corners, CursorStyle, Div, Entity, ExternalDragPayload, FileDragPaths, FocusHandle, Font,
+    FontFeatures, FontWeight, Global, HighlightStyle, Hsla, InteractiveElement, IntoElement,
+    KeyDownEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Render, ScrollHandle,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText, TextRun, Window, black,
+    combine_highlights, deferred, div, font, prelude::FluentBuilder as _, px, rgb,
 };
 use shapes::Decoration;
 use std::{
@@ -2073,6 +2073,16 @@ impl SplitScreen {
         }
     }
 
+    /// A browser tab's page title changed: its strip label follows.
+    pub fn set_tab_label(&mut self, index: usize, label: SharedString, cx: &mut Context<Self>) {
+        if let Some(tab) = self.tabs.get_mut(index)
+            && tab.label != label
+        {
+            tab.label = label;
+            cx.notify();
+        }
+    }
+
     /// Titlebar row over a side panel (`Task tabs`): tabs use slots up to 240 px wide (the
     /// selected one on its surface, the others `text-tertiary`, surface and `×` on hover),
     /// `New tab`, and the `Enter full view` / `Hide tabs` buttons. The caller places it from
@@ -2846,6 +2856,8 @@ pub struct FileView {
     tree: file_tree::WorkspaceTree,
     revision: u64,
     preview: bool,
+    /// An image or PDF ([`Self::previews`]) shown instead of text lines.
+    media: Option<preview::FileMedia>,
 }
 
 impl FileView {
@@ -2869,6 +2881,7 @@ impl FileView {
             tree,
             revision: 0,
             preview: true,
+            media: None,
         }
     }
 
@@ -3138,7 +3151,11 @@ impl Render for FileView {
         let t = cx.theme().clone();
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let blame = self.active_blame(cx);
-        let body = self.file_content(&t, blame, cx);
+        self.request_media(window, cx);
+        let body = match self.media_view(window, cx) {
+            Some(media) => media,
+            None => self.file_content(&t, blame, cx),
+        };
         div()
             .id("file-view")
             .relative()
@@ -3278,6 +3295,17 @@ pub fn stats(added: usize, removed: usize, size: f32, t: &Theme) -> Div {
         .child(tracked(removed, '-', t.git_deleted))
 }
 
+pub(super) fn file_drag_payload(path: &str) -> Option<ExternalDragPayload> {
+    let path = std::path::PathBuf::from(path);
+    path.is_file()
+        .then(|| ExternalDragPayload::Files(FileDragPaths::new([(path, false)])))
+}
+
+pub(super) fn draggable_file_row(row: Stateful<Div>, path: String) -> Stateful<Div> {
+    row.on_drag(path, |_, _, _, cx| cx.new(|_| crate::EmptyMain))
+        .external_drag_payload(|path: &String, _, _| file_drag_payload(path))
+}
+
 fn file_header(
     i: usize,
     file: &FileDiff,
@@ -3286,10 +3314,13 @@ fn file_header(
     cx: &Context<DiffPanel>,
 ) -> Stateful<Div> {
     if panel.standalone {
-        return panel.standalone_file_header(i, file, t, cx);
+        return draggable_file_row(
+            panel.standalone_file_header(i, file, t, cx),
+            file.path_key.clone(),
+        );
     }
     let small = |name| round_icon(name, 20., t);
-    div()
+    let header = div()
         .id(("diff-file", i))
         .flex_none()
         .h(px(38.))
@@ -3399,7 +3430,8 @@ fn file_header(
                             },
                         )),
                 ),
-        )
+        );
+    draggable_file_row(header, file.path_key.clone())
 }
 
 fn line_colors(kind: Kind, t: &Theme) -> (Hsla, Hsla, Hsla) {
@@ -4103,6 +4135,29 @@ fn relative(base: &str, path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_drag_payload_offers_only_existing_files() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let file = directory.path().join("dragged.txt");
+        std::fs::write(&file, "drag me").expect("create drag file");
+
+        assert_eq!(
+            file_drag_payload(file.to_str().expect("UTF-8 path")),
+            Some(ExternalDragPayload::Files(FileDragPaths::new([(
+                file.clone(),
+                false,
+            )])))
+        );
+        assert_eq!(
+            file_drag_payload(directory.path().to_str().expect("UTF-8 path")),
+            None
+        );
+        assert_eq!(
+            file_drag_payload(directory.path().join("missing").to_str().unwrap()),
+            None
+        );
+    }
 
     #[test]
     fn aggregate_changes_do_not_allow_staging() {

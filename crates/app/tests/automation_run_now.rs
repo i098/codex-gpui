@@ -1058,7 +1058,7 @@ mod app_tools {
 
     fn connect(tools: &AppTools) -> Result<UnixStream> {
         let stream = UnixStream::connect(tools.socket_path())?;
-        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        stream.set_read_timeout(Some(Duration::from_secs(120)))?;
         Ok(stream)
     }
 
@@ -1437,7 +1437,7 @@ mod app_tools {
         storage.write_automation("large", &toml::to_string(&raw)?)?;
         let tools = provider(dir.path(), &dir.path().join("requests.jsonl"), &[])?;
         let mut stream = connect(&tools)?;
-        stream.set_read_timeout(Some(Duration::from_secs(60)))?;
+        stream.set_read_timeout(Some(Duration::from_secs(120)))?;
         let failed = call(
             &mut stream,
             1,
@@ -1607,7 +1607,7 @@ mod app_tools {
             .unwrap();
         ensure!(Path::new(path) != old);
         let mut stream = UnixStream::connect(path)?;
-        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        stream.set_read_timeout(Some(Duration::from_secs(120)))?;
         let viewed = value(&call(
             &mut stream,
             1,

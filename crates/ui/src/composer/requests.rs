@@ -23,6 +23,11 @@ impl Approval {
                 }
                 ("Answer the questions".to_owned(), fields.clone(), false)
             }
+            "item/tool/requestOptionPicker" => {
+                params["turnId"].as_str()?;
+                let (title, field) = Form::picker_field(params)?;
+                (title, vec![field], false)
+            }
             "item/tool/call" => match params["tool"].as_str()? {
                 "request_onboarding_input" => {
                     let mut fields = params["arguments"]["questions"].as_array()?.clone();
@@ -40,11 +45,8 @@ impl Approval {
                     ("Answer the questions".to_owned(), fields, false)
                 }
                 "request_option_picker" => {
-                    let mut field = params["arguments"].clone();
-                    field.as_object()?;
-                    field["options"].as_array()?;
-                    field["id"] = "selection".into();
-                    (field["question"].as_str()?.to_owned(), vec![field], false)
+                    let (title, field) = Form::picker_field(&params["arguments"])?;
+                    (title, vec![field], false)
                 }
                 _ => return None,
             },
@@ -165,7 +167,26 @@ impl Approval {
 
 impl Form {
     fn picker(&self) -> bool {
-        self.method == "item/tool/call" && self.params["tool"] == "request_option_picker"
+        self.method == "item/tool/requestOptionPicker"
+            || self.method == "item/tool/call" && self.params["tool"] == "request_option_picker"
+    }
+
+    /// The picker's `{question, options, ...}`: the tool call's `arguments`, or the
+    /// `item/tool/requestOptionPicker` params themselves.
+    fn picker_args(&self) -> &Value {
+        if self.method == "item/tool/call" {
+            &self.params["arguments"]
+        } else {
+            &self.params
+        }
+    }
+
+    fn picker_field(args: &Value) -> Option<(String, Value)> {
+        let mut field = args.clone();
+        field.as_object()?;
+        field["options"].as_array()?;
+        field["id"] = "selection".into();
+        Some((field["question"].as_str()?.to_owned(), field))
     }
 
     fn choices(field: &Value) -> Vec<(String, Value)> {
@@ -342,11 +363,16 @@ impl Form {
                 return Err((0, "Select an option or type an answer".into()));
             }
             let dismissed = decision == ApprovalDecision::Cancel;
-            return Ok(tool_response(json!({
+            let response = json!({
                 "action": if accept { "submit" } else if dismissed { "dismiss" } else { "skip" },
                 "selectedOptions": if dismissed { vec![] } else { selected[0].clone() },
                 "freeformAnswer": if !dismissed && !freeform.is_empty() { Some(freeform) } else { None }
-            })));
+            });
+            return Ok(if self.method == "item/tool/call" {
+                tool_response(response)
+            } else {
+                response
+            });
         }
         if decision == ApprovalDecision::Cancel && self.method == "item/tool/requestUserInput" {
             return Ok(if self.params["isBlocking"] == false {
@@ -1092,7 +1118,7 @@ impl Composer {
             );
         }
         let submit: SharedString = if form.picker() {
-            form.params["arguments"]["submitLabel"]
+            form.picker_args()["submitLabel"]
                 .as_str()
                 .unwrap_or("Submit")
                 .to_owned()
@@ -1861,6 +1887,12 @@ mod tests {
                 let response = composer.request_response(ApprovalDecision::Decline, cx).unwrap();
                 let content: Value = serde_json::from_str(response["contentItems"][0]["text"].as_str().unwrap()).unwrap();
                 assert_eq!(content, json!({ "action": "skip", "selectedOptions": ["Rust"], "freeformAnswer": null }));
+                let direct = json!({ "threadId": "thread-a", "turnId": "turn-a",
+                    "question": "Choose a language", "options": [{ "label": "Rust" }] });
+                composer.set_approval(Approval::form(json!(3), "item/tool/requestOptionPicker", &direct), cx);
+                composer.request_draft.selected[0].push(json!("Rust"));
+                assert_eq!(composer.request_response(ApprovalDecision::Accept, cx).unwrap(),
+                    json!({ "action": "submit", "selectedOptions": ["Rust"], "freeformAnswer": null }));
             });
         });
     }
