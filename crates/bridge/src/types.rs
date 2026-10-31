@@ -241,6 +241,9 @@ pub struct Model {
     pub default_reasoning_effort: String,
     pub supported_reasoning_efforts: Vec<Value>,
     pub is_default: bool,
+    /// `inputModalities`; absent means the server default, text and image.
+    #[serde(default)]
+    pub input_modalities: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
