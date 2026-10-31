@@ -7,6 +7,7 @@ mod activity_access;
 mod archived_chats;
 mod chatgpt_chats;
 mod cloud_task;
+mod data_controls;
 pub use cloud_task::parse_task_response;
 mod cloud;
 pub use cloud::{CloudTaskRequest, create_cloud_task};
@@ -654,6 +655,7 @@ impl Root {
         features::install_shortcuts(cx);
         let this = cx.weak_entity();
         usage::install(this.clone(), cx);
+        data_controls::install(this.clone(), cx);
         notifications::install(this.clone(), cx);
         settings_git::init(this.clone(), cx);
         let computer_use = this.clone();
