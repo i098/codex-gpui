@@ -19,7 +19,7 @@ anyhow = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 # gpui from zed main: needed for `HeadlessAppContext` + Metal `render_to_image` (not in gpui 0.2.2).
 gpui = { git = "https://github.com/zed-industries/zed", rev = "3e145061d861ed32bb6a08dad7b03f2b5e455ad8" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "3e145061d861ed32bb6a08dad7b03f2b5e455ad8", default-features = false, features = ["font-kit"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "3e145061d861ed32bb6a08dad7b03f2b5e455ad8", default-features = false, features = ["font-kit", "wayland", "x11"] }
 
 # Same forks zed's own workspace patches in; gpui is built against them.
 [patch.crates-io]
