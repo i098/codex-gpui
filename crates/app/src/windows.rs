@@ -578,7 +578,7 @@ fn remember_bounds(window: &Window, cx: &mut App) {
     }
 }
 
-actions!(windows, [OpenThreadWindow]);
+actions!(windows, [OpenThreadWindow, NewWindow]);
 
 pub(crate) fn bind_root(window: &mut Window, cx: &mut Context<Root>) {
     cx.observe_window_activation(window, |root, window, cx| {
@@ -591,7 +591,16 @@ pub(crate) fn bind_root(window: &mut Window, cx: &mut Context<Root>) {
 }
 
 pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
-    root.on_action(cx.listener(|this, _: &OpenThreadWindow, _, cx| {
+    root.on_action(cx.listener(|this, _: &NewWindow, _, cx| {
+        if let Err(error) = open_primary(new_window_state(State::load()), this.cwd.clone(), cx) {
+            this.toast(
+                ui::toast::Toast::danger("Could not open the window")
+                    .description(format!("{error:#}")),
+                cx,
+            );
+        }
+    }))
+    .on_action(cx.listener(|this, _: &OpenThreadWindow, _, cx| {
         if !matches!(this.route(), Route::Thread(_)) {
             return;
         }
@@ -617,6 +626,11 @@ pub(crate) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
     }))
 }
 
+fn new_window_state(mut state: State) -> State {
+    state.route = Route::Home;
+    state
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -638,6 +652,51 @@ mod tests {
         for kind in [Kind::HotkeyHome, Kind::HotkeyThread] {
             let bounds = kind.bounds(small, small);
             assert_eq!(small.intersect(&bounds), bounds);
+        }
+    }
+    #[test]
+    fn new_window_state_always_starts_on_home() {
+        let state = new_window_state(State {
+            route: Route::Thread("thread".into()),
+            ..State::default()
+        });
+        assert!(matches!(state.route, Route::Home));
+    }
+
+    #[test]
+    fn new_window_action_opens_an_additional_home_window() {
+        use gpui::{AppContext as _, HeadlessAppContext};
+        use std::sync::Arc;
+
+        let mut cx = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx
+            .update(|cx| {
+                open_primary(
+                    State::default(),
+                    std::env::temp_dir().to_string_lossy().into_owned(),
+                    cx,
+                )
+            })
+            .expect("open primary window");
+        cx.test_window(window.into())
+            .simulate_scale_factor_change(1.);
+        cx.update_window(window.into(), |_, window, cx| {
+            window.dispatch_action(Box::new(NewWindow), cx);
+        })
+        .expect("dispatch NewWindow");
+
+        let windows = cx.windows();
+        assert_eq!(windows.len(), 2);
+        for handle in windows {
+            let root = handle.downcast::<Root>().expect("primary root");
+            let route = cx
+                .read_window(&root, |root, _| root.route().clone())
+                .expect("read primary route");
+            assert!(matches!(route, Route::Home));
         }
     }
 }
