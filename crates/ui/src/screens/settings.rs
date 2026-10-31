@@ -51,6 +51,7 @@ fn focus_on_pointer(
 }
 
 mod account_page;
+mod ads_controls;
 pub mod backend;
 mod languages;
 pub mod personalization;
@@ -398,6 +399,7 @@ const NAV: &[(&str, &[(&str, &str)])] = &[
             ("Keyboard shortcuts", "settings-keyboard-shortcuts"),
             ("Usage & billing", "settings-usage"),
             ("Data controls", "settings-data-controls"),
+            ("Ads controls", "settings-data-controls"),
         ],
     ),
     (
@@ -1431,6 +1433,9 @@ impl Render for SettingsPane {
         }
         if section == "Archived chats" {
             return archived_chats::render(window, cx);
+        }
+        if section == "Ads controls" {
+            return ads_controls::render(window, cx);
         }
         if section == "Trusted contact" {
             return trusted_contact::render(window, cx);
