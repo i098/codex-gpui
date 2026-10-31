@@ -294,6 +294,9 @@ pub mod worktrees;
 #[path = "environments.rs"]
 pub mod environments;
 
+#[path = "browser_settings.rs"]
+mod browser_settings;
+
 /// The app's theme setting (`ThemeSetting`): `system`, `light` or `dark`.
 pub const THEME: &str = "host.appearance-theme";
 
@@ -493,12 +496,10 @@ impl SettingsPage {
         self.toaster = Some(toaster);
     }
 
-    /// `store.key`, or a top-level `config.toml` key such as `approval_policy`.
+    /// `store.key` (`browser_use.default_origin_policy.access` nests further), or a
+    /// top-level `config.toml` key such as `approval_policy`.
     fn get(&self, path: &str) -> &Value {
-        match path.split_once('.') {
-            Some((store, key)) => &self.values[store][key],
-            None => &self.values[path],
-        }
+        path.split('.').fold(&self.values, |value, key| &value[key])
     }
 
     fn flag(&self, path: &str, default: bool) -> bool {
@@ -513,11 +514,10 @@ impl SettingsPage {
     pub fn set(&mut self, path: &'static str, value: Value, cx: &mut Context<Self>) {
         self.pending_instructions
             .retain(|change| change.path != path);
-        // `IndexMut` makes a missing store an object on its first key.
-        match path.split_once('.') {
-            Some((store, key)) => self.values[store][key] = value.clone(),
-            None => self.values[path] = value.clone(),
-        }
+        // `IndexMut` makes each missing level an object on its first key.
+        *path
+            .split('.')
+            .fold(&mut self.values, |value, key| &mut value[key]) = value.clone();
         cx.emit(SettingChanged { path, value });
         cx.notify();
     }
@@ -994,10 +994,15 @@ impl SettingsPane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let on = if key == "host.git-review-mode" {
-            self.page.read(cx).choice(key, "full") == "last-turn-only"
-        } else {
-            self.page.read(cx).flag(key, default)
+        // A string setting shown as a switch: its (on, off) values.
+        let strings = match key {
+            "host.git-review-mode" => Some(("last-turn-only", "full")),
+            browser_settings::FULL_CDP => Some(("allow", "deny")),
+            _ => None,
+        };
+        let on = match strings {
+            Some((on, off)) => self.page.read(cx).choice(key, off) == on,
+            None => self.page.read(cx).flag(key, default),
         };
         let focus = focus::handle(key, 0, window, cx);
         focus::ring(
@@ -1009,10 +1014,9 @@ impl SettingsPane {
         )
         .on_mouse_down(gpui::MouseButton::Left, focus_on_pointer(focus))
         .on_click(cx.listener(move |this, _, _, cx| {
-            let value = if key == "host.git-review-mode" {
-                json!(if on { "full" } else { "last-turn-only" })
-            } else {
-                Value::Bool(!on)
+            let value = match strings {
+                Some((on_value, off_value)) => json!(if on { off_value } else { on_value }),
+                None => Value::Bool(!on),
             };
             this.page.update(cx, |p, cx| p.set(key, value, cx))
         }))
@@ -1448,6 +1452,7 @@ impl Render for SettingsPane {
         let groups = match section {
             "General" => self.general(&t, window, cx),
             "Notifications" => self.notifications_page(&t, window, cx),
+            "Browser" => self.browser(&t, window, cx),
             _ => Vec::new(),
         };
         let card_border = over(t.border, t.background_panel);
@@ -1943,11 +1948,17 @@ mod tests {
                 "read-only"
             );
             settings.update(cx, |settings, cx| {
-                settings.set("approval_policy", json!("on-request"), cx)
+                settings.set("approval_policy", json!("on-request"), cx);
+                settings.set(browser_settings::FULL_CDP, json!("allow"), cx);
             });
             let page = settings.read(cx);
             assert_eq!(page.choice("approval_policy", "never"), "on-request");
             assert_eq!(page.values["desktop"]["x"], 1);
+            assert_eq!(page.choice(browser_settings::FULL_CDP, "deny"), "allow");
+            assert_eq!(
+                page.values["browser_use"]["default_origin_policy"]["full_cdp_access"],
+                "allow"
+            );
         });
     }
 
