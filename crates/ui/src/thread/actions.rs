@@ -369,6 +369,12 @@ fn response_html_tag(tag: pulldown_cmark::TagEnd) -> Option<&'static str> {
     })
 }
 
+/// `environmentAction1..9` and the header's run menu: run the selected local environment's
+/// Nth action (0-based) in a terminal.
+#[derive(Clone, PartialEq, Action)]
+#[action(namespace = thread, no_json)]
+pub struct RunEnvironmentAction(pub usize);
+
 /// `Fork chat from here` under a turn: a new chat with the thread up to that turn (its id).
 #[derive(Clone, PartialEq, Action)]
 #[action(namespace = thread, no_json)]

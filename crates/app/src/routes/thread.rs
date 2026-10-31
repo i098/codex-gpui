@@ -131,6 +131,11 @@ pub(super) fn actions(root: Div, cx: &mut Context<Root>) -> Div {
             this.open_browser_tab(url, window, cx);
         }),
     )
+    .on_action(cx.listener(
+        |this, a: &ui::screens::thread::view::RunEnvironmentAction, window, cx| {
+            this.run_environment_action(a.0, window, cx);
+        },
+    ))
     .on_action(cx.listener(Root::find_in_chat))
     .on_action(cx.listener(Root::find_in_diff))
     .on_action(cx.listener(|this, _: &FindNext, _, cx| this.next_search_result(false, cx)))
