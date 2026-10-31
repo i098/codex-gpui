@@ -206,17 +206,19 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
             );
         }
     }))
-    .on_action(cx.listener(|this, _: &CopyConversationMarkdown, window, cx| {
-        if let Route::Thread(id) = this.state.route.clone() {
-            window.dispatch_action(
-                Box::new(ui::screens::sidebar::ThreadMenuAction {
-                    thread: id,
-                    command: ui::screens::sidebar::ThreadCommand::CopyMarkdown,
-                }),
-                cx,
-            );
-        }
-    }))
+    .on_action(
+        cx.listener(|this, _: &CopyConversationMarkdown, window, cx| {
+            if let Route::Thread(id) = this.state.route.clone() {
+                window.dispatch_action(
+                    Box::new(ui::screens::sidebar::ThreadMenuAction {
+                        thread: id,
+                        command: ui::screens::sidebar::ThreadCommand::CopyMarkdown,
+                    }),
+                    cx,
+                );
+            }
+        }),
+    )
     .on_action(cx.listener(|this, _: &FocusMainChat, window, cx| {
         window.focus(&this.route_focus(cx), cx);
     }))
@@ -849,7 +851,10 @@ fn last_code_block(markdown: &str) -> Option<String> {
                     offset += chunk.len();
                     continue;
                 }
-                if let Some(code) = line.strip_prefix("    ").or_else(|| line.strip_prefix('\t')) {
+                if let Some(code) = line
+                    .strip_prefix("    ")
+                    .or_else(|| line.strip_prefix('\t'))
+                {
                     indented.extend((0..blank_lines).map(|_| String::new()));
                     indented.push(code.to_owned());
                     blank_lines = 0;
@@ -861,7 +866,10 @@ fn last_code_block(markdown: &str) -> Option<String> {
             }
             if let Some((marker, length)) = opens_fence(line) {
                 fence = Some((marker, length, offset + chunk.len()));
-            } else if let Some(code) = line.strip_prefix("    ").or_else(|| line.strip_prefix('\t')) {
+            } else if let Some(code) = line
+                .strip_prefix("    ")
+                .or_else(|| line.strip_prefix('\t'))
+            {
                 indented.push(code.to_owned());
             }
         }
@@ -889,8 +897,7 @@ fn opens_fence(line: &str) -> Option<(char, usize)> {
         return None;
     }
     let length = rest.chars().take_while(|char| *char == marker).count();
-    (length >= 3 && !(marker == '`' && rest[length..].contains('`')))
-        .then_some((marker, length))
+    (length >= 3 && !(marker == '`' && rest[length..].contains('`'))).then_some((marker, length))
 }
 
 fn closes_fence(line: &str, marker: char, minimum: usize) -> bool {
