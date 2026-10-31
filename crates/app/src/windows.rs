@@ -649,4 +649,28 @@ mod tests {
             assert_eq!(small.intersect(&bounds), bounds);
         }
     }
+    #[test]
+    fn new_primary_window_opens_the_home_route() {
+        use gpui::{AppContext as _, HeadlessAppContext};
+        use std::sync::Arc;
+
+        let mut cx = HeadlessAppContext::with_platform(
+            textsys::text_system(),
+            Arc::new(theme::Assets),
+            gpui_platform::current_headless_renderer,
+        );
+        let window = cx
+            .update(|cx| {
+                open_primary(
+                    State::default(),
+                    std::env::temp_dir().to_string_lossy().into_owned(),
+                    cx,
+                )
+            })
+            .expect("open primary window");
+        let route = cx
+            .read_window(&window, |root, _| root.route().clone())
+            .expect("read primary window");
+        assert!(matches!(route, Route::Home));
+    }
 }
