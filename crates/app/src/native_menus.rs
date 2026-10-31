@@ -30,11 +30,13 @@ actions!(
         TextReplacement,
         TogglePinnedSummary,
         ToggleNavigationPanel,
+        ToggleDebugPanel,
     ]
 );
 
 pub(crate) fn init(cx: &mut App) {
     cx.on_action(|_: &ShowAbout, cx| cx.defer(about::open));
+    cx.on_action(|_: &ToggleDebugPanel, cx| cx.defer(features::debug::toggle_panel));
     cx.bind_keys([
         KeyBinding::new("cmd-shift-v", PasteAndMatchStyle, None),
         KeyBinding::new("cmd-alt-shift-v", PasteAndMatchStyle, None),
@@ -245,6 +247,12 @@ fn menus_for_route(sidebar_collapsible: bool, updates: bool) -> Vec<Menu> {
             MenuItem::action("Documentation", OpenDocumentation),
             MenuItem::action("Keyboard Shortcuts", ShowKeyboardShortcuts),
             MenuItem::action("What's New", OpenChangelog),
+            MenuItem::separator(),
+            MenuItem::action(
+                "Start Performance Trace",
+                features::debug::ToggleTraceRecording,
+            ),
+            MenuItem::action("Show Local Trace", ToggleDebugPanel),
             MenuItem::separator(),
             MenuItem::action("Troubleshooting", OpenTroubleshooting),
             MenuItem::action("System Status", OpenSystemStatus),
