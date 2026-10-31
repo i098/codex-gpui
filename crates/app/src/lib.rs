@@ -6196,6 +6196,7 @@ impl Root {
                     }
                     "appshotDestination" => "Could not save Appshot destination",
                     "notifications-sound" => "Couldn't change the notification sound. Try again",
+                    "preferred-file-viewers" => "Could not save your file handler preference",
                     key if key.starts_with("notifications-") => {
                         "Could not save notification preference"
                     }
