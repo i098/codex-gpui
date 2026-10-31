@@ -133,7 +133,6 @@ struct DataControls {
 
 impl DataControls {
     fn button(
-        &self,
         id: &'static str,
         label: &'static str,
         primary: bool,
@@ -273,7 +272,7 @@ impl DataControls {
         let t = cx.theme().clone();
         let mut rows = Vec::new();
         if state.export_available {
-            let export = self.button(
+            let export = Self::button(
                 "data-controls-export",
                 "Export",
                 false,
@@ -285,7 +284,7 @@ impl DataControls {
             rows.push(settings_row("Export data", None, export, &t));
         }
         if state.privacy_available {
-            let manage = self.button(
+            let manage = Self::button(
                 "data-controls-marketing-privacy",
                 "Manage",
                 false,
@@ -302,7 +301,7 @@ impl DataControls {
     fn privacy_rows(&self, state: &State, window: &mut Window, cx: &mut Context<Self>) -> Vec<Div> {
         let t = cx.theme().clone();
         if let Load::Failed(_) = &state.consents {
-            let retry = self.button(
+            let retry = Self::button(
                 "data-controls-privacy-retry",
                 "Retry",
                 false,
@@ -351,7 +350,7 @@ impl DataControls {
 
     fn export_dialog(&self, state: &State, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let t = cx.theme().clone();
-        let cancel = self.button(
+        let cancel = Self::button(
             "data-controls-export-cancel",
             "Cancel",
             false,
@@ -360,7 +359,7 @@ impl DataControls {
             cx,
             |this, _| this.export_open = false,
         );
-        let confirm = self.button(
+        let confirm = Self::button(
             "data-controls-export-confirm",
             "Confirm export",
             true,
@@ -440,7 +439,7 @@ impl Render for DataControls {
             .justify_center()
             .gap(px(8.));
         if privacy {
-            header = header.child(div().flex().child(self.button(
+            header = header.child(div().flex().child(Self::button(
                 "data-controls-privacy-back",
                 "Back",
                 false,
