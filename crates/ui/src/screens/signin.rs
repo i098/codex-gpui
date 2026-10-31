@@ -530,6 +530,58 @@ pub struct Login {
 
 impl EventEmitter<LoginEvent> for Login {}
 
+async fn gateway_oauth_request<R>(
+    request: impl Future<Output = anyhow::Result<R>>,
+    timeout: impl Future<Output = ()>,
+) -> (anyhow::Result<R>, bool) {
+    let mut request = std::pin::pin!(request);
+    let mut timeout = std::pin::pin!(timeout);
+    std::future::poll_fn(|cx| {
+        if let std::task::Poll::Ready(result) = request.as_mut().poll(cx) {
+            return std::task::Poll::Ready((result, false));
+        }
+        if timeout.as_mut().poll(cx).is_ready() {
+            return std::task::Poll::Ready((
+                Err(anyhow::anyhow!("Gateway sign-in timed out")),
+                true,
+            ));
+        }
+        std::task::Poll::Pending
+    })
+    .await
+}
+
+#[cfg(test)]
+mod gateway_oauth_tests {
+    use super::*;
+    use std::task::{Context as TaskContext, Poll, Waker};
+
+    #[test]
+    fn gateway_oauth_request_races_completion_and_timeout() {
+        let mut completed = std::pin::pin!(gateway_oauth_request(
+            async { Ok::<_, anyhow::Error>(()) },
+            async {},
+        ));
+        assert!(matches!(
+            completed
+                .as_mut()
+                .poll(&mut TaskContext::from_waker(Waker::noop())),
+            Poll::Ready((Ok(()), false))
+        ));
+
+        let mut timed_out = std::pin::pin!(gateway_oauth_request(
+            std::future::pending::<anyhow::Result<()>>(),
+            async {},
+        ));
+        assert!(matches!(
+            timed_out
+                .as_mut()
+                .poll(&mut TaskContext::from_waker(Waker::noop())),
+            Poll::Ready((Err(_), true))
+        ));
+    }
+}
+
 impl Login {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let text_color = login_theme(cx).text;
@@ -728,9 +780,17 @@ impl Login {
         self.attempt += 1;
         let attempt = self.attempt;
         cx.spawn(async move |this, cx| {
-            let result = bridge
-                .request::<_, Value>("account/gatewayOAuth/login", Option::<()>::None)
-                .await;
+            let (result, timed_out) = gateway_oauth_request(
+                bridge.request::<_, Value>("account/gatewayOAuth/login", Option::<()>::None),
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(240)),
+            )
+            .await;
+            if timed_out {
+                let _ = bridge
+                    .request::<_, Value>("account/gatewayOAuth/cancel", Option::<()>::None)
+                    .await;
+            }
             this.update(cx, |this, cx| {
                 if this.attempt != attempt {
                     return;
