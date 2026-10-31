@@ -19,6 +19,7 @@ use std::time::Instant;
 use theme::{ActiveTheme as _, Theme};
 use tooltip::{Side, tooltip};
 
+pub mod browser;
 pub mod composer;
 pub mod confirmation;
 pub mod dialog;
@@ -56,6 +57,8 @@ actions!(
         LogOut,
         ShowKeyboardShortcuts,
         OpenMini,
+        /// Rail `Space`: the Spaces list (`/space`).
+        OpenSpace,
         /// Rail `Scheduled`: the Automations page.
         OpenScheduled,
         OpenPullRequests,
@@ -66,6 +69,12 @@ actions!(
         OpenSecurityCloud,
         /// Rail `Sites` (`/sites`).
         OpenSites,
+        /// Explore ▸ `Maps` (`/maps`).
+        OpenMaps,
+        /// Explore ▸ `Images` (`/images`).
+        OpenImages,
+        /// Explore ▸ `GPTs` (`/gpts`).
+        OpenGpts,
         /// Home beacon `Start Voice` and the composer's `Start new voice chat`.
         StartVoiceChat,
         /// Profile menu ▸ Help ▸ `Set up mobile`.
@@ -76,6 +85,8 @@ actions!(
         OpenChangesPanel,
         /// Thread summary ▸ `Background processes` row: the command's terminal tab.
         OpenBackgroundTerminal,
+        /// Thread summary ▸ `Plan`: the latest plan in its editable side panel tab.
+        OpenPlanPanel,
         ShowWorkspaceTabView,
         StepWorkspaceLayout,
         /// `⌘K`, `⌘⇧P`, sidebar `Search`: the command menu.
@@ -1219,7 +1230,10 @@ impl Shell {
                             }),
                         "Home",
                     ))
-                    .child(rail_tip(item("space"), "Space"))
+                    .child(rail_tip(
+                        item("space").on_click(dispatch::<OpenSpace>),
+                        "Space",
+                    ))
                     .child(rail_tip(
                         item("scheduled")
                             .when(self.scheduled_attention, |d| d.child(dot(6.)))
@@ -1342,11 +1356,26 @@ impl Shell {
     }
 
     /// The Explore `…` menu (`sidebarCustomization.moreMenu`), right of the rail item: the
-    /// secondary destinations the port has, plus the `Security Cloud` MCP destination.
+    /// secondary destinations the port has, in the original's order (`Images`, `Maps`,
+    /// `GPTs`), then `Security` and the `Security Cloud` MCP destination when available.
     /// `Customize sidebar` and other MCP destinations need the sidebar-customization store,
     /// which the port lacks.
     fn explore_menu(&self, t: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let hover = t.menu_item_hover;
+        let menu_item = |id: &'static str, label: &'static str, action: Box<dyn gpui::Action>| {
+            div()
+                .id(id)
+                .px(px(8.))
+                .py(px(6.))
+                .rounded(px(12.))
+                .hover(move |s| s.bg(hover))
+                .child(text(label, 14., 20., 430., t.text))
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.explore_menu = false;
+                    cx.notify();
+                    window.dispatch_action(action.boxed_clone(), cx);
+                }))
+        };
         div()
             .absolute()
             .left(RAIL_WIDTH)
@@ -1358,45 +1387,23 @@ impl Shell {
                 }
             }))
             .child(composer::popover(t, 220., |d| {
-                let item = |id: &'static str, label: &'static str| {
-                    div()
-                        .id(id)
-                        .px(px(8.))
-                        .py(px(6.))
-                        .rounded(px(12.))
-                        .hover(move |s| s.bg(hover))
-                        .child(text(label, 14., 20., 430., t.text))
-                };
-                let d = d
+                d.child(menu_item("explore-images", "Images", Box::new(OpenImages)))
+                    .child(menu_item("explore-maps", "Maps", Box::new(OpenMaps)))
+                    .child(menu_item("explore-gpts", "GPTs", Box::new(OpenGpts)))
                     .when(self.security_available, |d| {
-                        d.child(item("explore-security", "Security").on_click(cx.listener(
-                            |this, _, window, cx| {
-                                this.explore_menu = false;
-                                cx.notify();
-                                window.dispatch_action(Box::new(OpenSecurity), cx);
-                            },
-                        )))
+                        d.child(menu_item(
+                            "explore-security",
+                            "Security",
+                            Box::new(OpenSecurity),
+                        ))
                     })
                     .when(self.security_cloud_available, |d| {
-                        d.child(item("explore-security-cloud", "Security Cloud").on_click(
-                            cx.listener(|this, _, window, cx| {
-                                this.explore_menu = false;
-                                cx.notify();
-                                window.dispatch_action(Box::new(OpenSecurityCloud), cx);
-                            }),
+                        d.child(menu_item(
+                            "explore-security-cloud",
+                            "Security Cloud",
+                            Box::new(OpenSecurityCloud),
                         ))
-                    });
-                if self.security_available || self.security_cloud_available {
-                    d
-                } else {
-                    d.child(div().px(px(8.)).py(px(6.)).child(text(
-                        "No more destinations",
-                        14.,
-                        20.,
-                        400.,
-                        t.text_tertiary,
-                    )))
-                }
+                    })
             }))
     }
 
