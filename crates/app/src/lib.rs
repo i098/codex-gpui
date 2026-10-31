@@ -6260,6 +6260,9 @@ impl Root {
         if !matches!(store, "desktop" | "features" | "sandbox_workspace_write") && !key.is_empty() {
             return apply(&mut self.config);
         }
+        if settings_configuration::write_on_selected_host(self, e, cx) {
+            return;
+        }
         let params = json!({
             "keyPath": e.path,
             "value": e.value,
