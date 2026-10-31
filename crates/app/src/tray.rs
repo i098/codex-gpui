@@ -7,6 +7,7 @@ use gpui::App;
 use std::cell::RefCell;
 
 /// Recent chats shown in the menu.
+#[cfg(target_os = "macos")]
 const RECENT_LIMIT: usize = 8;
 
 /// A recent chat: thread id and display title.
