@@ -175,31 +175,31 @@ pub(super) fn actions(root: gpui::Div, owner: &Root, cx: &mut Context<Root>) -> 
         }),
     )
     .on_action(cx.listener(|this, _: &EnvironmentAction1, window, cx| {
-        this.run_environment_action(1, window, cx)
+        this.run_selected_environment_action(1, window, cx)
     }))
     .on_action(cx.listener(|this, _: &EnvironmentAction2, window, cx| {
-        this.run_environment_action(2, window, cx)
+        this.run_selected_environment_action(2, window, cx)
     }))
     .on_action(cx.listener(|this, _: &EnvironmentAction3, window, cx| {
-        this.run_environment_action(3, window, cx)
+        this.run_selected_environment_action(3, window, cx)
     }))
     .on_action(cx.listener(|this, _: &EnvironmentAction4, window, cx| {
-        this.run_environment_action(4, window, cx)
+        this.run_selected_environment_action(4, window, cx)
     }))
     .on_action(cx.listener(|this, _: &EnvironmentAction5, window, cx| {
-        this.run_environment_action(5, window, cx)
+        this.run_selected_environment_action(5, window, cx)
     }))
     .on_action(cx.listener(|this, _: &EnvironmentAction6, window, cx| {
-        this.run_environment_action(6, window, cx)
+        this.run_selected_environment_action(6, window, cx)
     }))
     .on_action(cx.listener(|this, _: &EnvironmentAction7, window, cx| {
-        this.run_environment_action(7, window, cx)
+        this.run_selected_environment_action(7, window, cx)
     }))
     .on_action(cx.listener(|this, _: &EnvironmentAction8, window, cx| {
-        this.run_environment_action(8, window, cx)
+        this.run_selected_environment_action(8, window, cx)
     }))
     .on_action(cx.listener(|this, _: &EnvironmentAction9, window, cx| {
-        this.run_environment_action(9, window, cx)
+        this.run_selected_environment_action(9, window, cx)
     }))
     .on_action(cx.listener(|this, _: &ZoomIn, window, cx| this.change_zoom(Some(1), window, cx)))
     .on_action(cx.listener(|this, _: &ZoomOut, window, cx| this.change_zoom(Some(-1), window, cx)))

@@ -380,7 +380,8 @@ impl Root {
         }
     }
 
-    pub(crate) fn run_environment_action(
+    /// Runs an `environmentAction1`…`9` shortcut from the environment selected in settings.
+    pub(crate) fn run_selected_environment_action(
         &mut self,
         number: usize,
         window: &mut Window,
