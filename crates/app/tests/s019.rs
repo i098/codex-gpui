@@ -95,6 +95,9 @@ fn mention_list_replay() -> Result<()> {
     // the notifications of the query after `sessionUpdate`. The replay matches requests by
     // method and emits what follows the recorded response.
     let mut lines = script(None, |_| {})?;
+    // The recorded Plugins rows are the original host's installs: `plugin_mentions` tests the
+    // section, so this replay lists none.
+    lines.retain(|l| l["msg"]["method"] != "plugin/list");
     lines.extend(common::exchange("fuzzyFileSearch/sessionStart", json!({})));
     lines.extend(common::exchange("fuzzyFileSearch/sessionUpdate", json!({})));
     lines.extend(search_notifications(
@@ -162,7 +165,9 @@ fn mention_list_replay() -> Result<()> {
             ensure!(state.is_none(), "step {index}: mention list must close");
             continue;
         }
-        let state = state.context(format!("step {index}: mention list did not open"))?;
+        let mut state = state.context(format!("step {index}: mention list did not open"))?;
+        // `Loading plugins...` shows until the refused `plugin/list` answers.
+        state.retain(|(heading, _)| *heading != Some("Plugins"));
         // The replay answers at once, so the files of a pending query (recorded 150 ms after
         // typing) may already be listed: the next `wait` step records the order then.
         let order = match recording["steps"].get(index + 1) {
