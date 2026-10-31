@@ -162,7 +162,7 @@ impl Page {
         }))
     }
 
-    fn row(&self, gpt: &Gpt, cx: &mut Context<Self>) -> impl IntoElement {
+    fn row(&self, gpt: &Gpt, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let t = cx.theme().clone();
         let hover = t.menu_item_hover;
         let id = gpt.id.clone();
